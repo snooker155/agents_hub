@@ -1,0 +1,72 @@
+{
+  "agents": [
+    {
+      "id": "decomposer",
+      "name": "Task Decomposer (LangChain)",
+      "type": "langchain",
+      "entrypoint": "orchestrator.agent:build_agent",
+      "default_params": {},
+      "capabilities": [
+        "decompose",
+        "tasks.create",
+        "tasks.update",
+        "tasks.sequence"
+      ],
+      "capacity": 1,
+      "is_remote": false,
+      "agent_url": null,
+      "original_id": null,
+      "memory_type": "shared",
+      "memory_data": "fa3c9678-270c-4f06-a0fb-f4c7f8833689"
+    },
+    {
+      "id": "swe-fs",
+      "name": "SWE Agent (Filesystem)",
+      "type": "langchain",
+      "entrypoint": "swe_agent.agent:build_agent",
+      "default_params": {},
+      "capabilities": [
+        "code.modify",
+        "fs",
+        "patch"
+      ]
+    },
+    {
+      "id": "swe-fs-cloned-ui-2",
+      "name": "Cloned SWE Agent UI 2",
+      "type": "langchain",
+      "entrypoint": "orchestrator.agent:build_agent",
+      "default_params": {},
+      "capabilities": [
+        "decompose",
+        "tasks.create",
+        "tasks.update",
+        "tasks.sequence"
+      ]
+    },
+    {
+      "id": "test-remote",
+      "name": "Test Remote Agent",
+      "type": "http",
+      "entrypoint": "unused",
+      "default_params": {},
+      "capabilities": [],
+      "capacity": 5,
+      "is_remote": true,
+      "agent_url": "http://localhost:8888"
+    },
+    {
+      "id": "sample-remote",
+      "name": "Sample Remote Agent",
+      "type": "http",
+      "entrypoint": "remote",
+      "default_params": {},
+      "capabilities": [
+        "remote"
+      ],
+      "capacity": 5,
+      "is_remote": true,
+      "agent_url": "http://localhost:9000"
+    }
+  ]
+}

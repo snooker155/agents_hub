@@ -1,0 +1,29 @@
+{
+  "nodes": {
+    "router1": {
+      "id": "router1",
+      "type": "access_point",
+      "links": [
+        "core1"
+      ],
+      "status": "healthy",
+      "traffic_speed": 457.28,
+      "traffic_volume": 177,
+      "error": null
+    },
+    "core1": {
+      "id": "core1",
+      "type": "switch",
+      "links": [
+        "router1"
+      ],
+      "config": {
+        "datacenter": "Berlin-DC"
+      },
+      "status": "healthy",
+      "traffic_speed": 304.4220754025961,
+      "traffic_volume": 38,
+      "error": null
+    }
+  }
+}

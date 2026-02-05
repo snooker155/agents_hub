@@ -1,0 +1,8 @@
+# Base dependencies for the orchestrator package
+# Versions are intentionally broad to ease installation across environments.
+langchain
+langchain-openai
+openai
+pydantic>=1.10
+filelock
+pydantic-settings

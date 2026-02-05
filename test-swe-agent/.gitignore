@@ -1,0 +1,15 @@
+examples/
+tasks.json
+*.lock
+.env
+tests/
+orchestrator/state/
+__pycache__/
+*.egg-info/
+*.egg
+dist/
+build/
+.vscode/
+.pyc
+.DS_Store
+workspaces/*

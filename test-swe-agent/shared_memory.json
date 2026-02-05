@@ -1,0 +1,16 @@
+[
+  {
+    "id": "fa3c9678-270c-4f06-a0fb-f4c7f8833689",
+    "name": "Verified Pool",
+    "type": "text",
+    "description": "Pool for visual verification",
+    "files": [
+      {
+        "name": "verification.txt",
+        "content": "This is verified content."
+      }
+    ],
+    "created_at": "2026-02-05T14:24:31.761923+00:00",
+    "updated_at": "2026-02-05T14:24:32.061014+00:00"
+  }
+]

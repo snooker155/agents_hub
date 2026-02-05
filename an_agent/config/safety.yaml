@@ -1,0 +1,22 @@
+safety:
+  # Общие системные ограничения
+  deadlines:
+    reactive_ms: 10
+    proactive_ms: 200
+
+  # Доменные ограничения (пример под RAN LA Agent)
+  constraints:
+    mcs:
+      min_index: 0
+      max_index: 27
+      max_step: 2            # насколько можно менять MCS за одно действие
+    mimo_rank:
+      allowed: [1, 2, 4]
+    bler:
+      embb_max: 0.10
+      urllc_max: 0.001
+
+  # Политики деградации по дедлайну
+  fallback:
+    on_deadline_exceeded: "rules_only"  # rules_only|last_action|no_op
+    disable_rag_if_late: true

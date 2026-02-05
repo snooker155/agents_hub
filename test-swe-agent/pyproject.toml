@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swe_agent"
+version = "0.1.0"
+description = "SWE agent package: public API and CLI wrapper for orchestrator integration"
+authors = [{ name = "Auto SWE" }]
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+  "langchain>=0.2.10",
+  "langchain-openai>=0.1.7",
+  "pydantic>=2.5",
+  "PyYAML>=6.0",
+  "filelock",
+  "pydantic-settings",
+]
+
+[project.scripts]
+swe-agent = "swe_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["swe_agent*", "tasks*"]

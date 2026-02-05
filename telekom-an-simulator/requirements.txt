@@ -1,0 +1,8 @@
+fastapi
+pydantic
+uvicorn
+websockets
+httpx
+langchain
+langchain-ollama
+uvloop

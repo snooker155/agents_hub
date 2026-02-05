@@ -1,0 +1,36 @@
+models:
+  situation_awareness:
+    sinr_kalman:
+      enabled: true
+      process_var: 1.0e-3
+      meas_var: 1.0e-2
+    smoothing:
+      window: 20
+
+    bler_lstm:
+      enabled: false         # включишь, когда добавишь веса/torch
+      history_ttis: 100
+      horizon_ttis: 5
+      weights_path: "./data/models/bler_lstm.pt"
+
+  policy:
+    goal_mlp:
+      enabled: true
+      hidden_sizes: [64, 32]
+      temperature: 1.0
+    dqn:
+      enabled: false         # включишь, когда добавишь веса/torch
+      weights_path: "./data/models/dqn.pt"
+      epsilon: 0.05
+      gamma: 0.99
+
+  reward_shaping:
+    mode: "embb"             # embb|urllc
+    embb:
+      max_bler: 0.10
+      w_tpt: 1.0
+      w_bler: -0.5
+    urllc:
+      max_bler: 0.001        # 0.1%
+      w_bler: -2.0
+      w_tpt: 0.2

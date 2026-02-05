@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""
+Console entrypoint for the orchestrator daemon.
+
+Usage:
+  orchestratord
+
+This thin wrapper invokes orchestrator.runner:main.
+Environment variables:
+  ORCH_POLL_INTERVAL - seconds between polls (default 5.0)
+  ORCH_LOG_LEVEL     - logging level (DEBUG|INFO|WARNING|ERROR), default INFO
+"""
+import sys
+from orchestrator.runner import main
+
+if __name__ == "__main__":
+    sys.exit(main())
