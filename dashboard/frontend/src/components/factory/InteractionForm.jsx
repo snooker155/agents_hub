@@ -1,0 +1,65 @@
+import React, { useState, useEffect } from 'react';
+import { checkWaiting, provideInput } from '../../api';
+
+function InteractionForm({ workspace }) {
+  const [waiting, setWaiting] = useState({ questions: [] });
+  const [answers, setAnswers] = useState({});
+
+  useEffect(() => {
+    if (!workspace) return;
+
+    const fetchWaiting = async () => {
+      try {
+        const res = await checkWaiting(workspace);
+        setWaiting(res.data);
+      } catch (e) {
+        // console.error("Failed to fetch waiting status", e);
+      }
+    };
+
+    fetchWaiting();
+    const interval = setInterval(fetchWaiting, 5000);
+    return () => clearInterval(interval);
+  }, [workspace]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await provideInput({ answers, workspace });
+      setAnswers({});
+      setWaiting({ questions: [] });
+      alert("Answers sent!");
+    } catch (e) {
+      alert("Failed to send answers");
+    }
+  };
+
+  if (!waiting.questions || waiting.questions.length === 0) return null;
+
+  return (
+    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 space-y-4">
+      <h3 className="text-lg font-medium text-yellow-800">User Input Required</h3>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {waiting.questions.map((q, i) => (
+          <div key={i} className="space-y-1">
+            <label className="block text-sm font-medium text-yellow-700">{q}</label>
+            <input
+              type="text"
+              className="w-full border border-yellow-300 rounded-md px-3 py-2 focus:ring-yellow-500 focus:border-yellow-500"
+              onChange={(e) => setAnswers({ ...answers, [q]: e.target.value })}
+              required
+            />
+          </div>
+        ))}
+        <button
+          type="submit"
+          className="bg-yellow-600 text-white px-4 py-2 rounded-md hover:bg-yellow-700 transition-colors font-medium shadow-sm"
+        >
+          Submit Answers
+        </button>
+      </form>
+    </div>
+  );
+}
+
+export default InteractionForm;

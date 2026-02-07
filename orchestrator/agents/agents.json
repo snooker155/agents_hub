@@ -1,0 +1,105 @@
+{
+  "agents": [
+    {
+      "id": "decomposer",
+      "name": "Task Decomposer (LangChain)",
+      "type": "langchain",
+      "entrypoint": "orchestrator.agent:build_agent",
+      "default_params": {},
+      "capabilities": [
+        "decompose",
+        "tasks.create",
+        "tasks.update",
+        "tasks.sequence"
+      ],
+      "capacity": 1,
+      "is_remote": false,
+      "agent_url": null,
+      "original_id": null,
+      "memory_type": "shared",
+      "memory_data": "fa3c9678-270c-4f06-a0fb-f4c7f8833689"
+    },
+    {
+      "id": "swe-fs",
+      "name": "SWE Agent (Filesystem)",
+      "type": "langchain",
+      "entrypoint": "swe_agent.agent:build_agent",
+      "default_params": {},
+      "capabilities": [
+        "code.modify",
+        "fs",
+        "patch"
+      ]
+    },
+    {
+      "id": "factory-pm",
+      "name": "Factory PM",
+      "type": "factory",
+      "entrypoint": "agents.pm:intake",
+      "capabilities": ["pm", "intake"]
+    },
+    {
+      "id": "factory-ba",
+      "name": "Factory BA",
+      "type": "factory",
+      "entrypoint": "agents.ba:generate_brd",
+      "capabilities": ["ba", "brd"]
+    },
+    {
+      "id": "factory-sd",
+      "name": "Factory SD",
+      "type": "factory",
+      "entrypoint": "agents.sd:generate_all",
+      "capabilities": ["sd", "spec"]
+    },
+    {
+      "id": "factory-tl",
+      "name": "Factory TL",
+      "type": "factory",
+      "entrypoint": "agents.tl:split_tasks",
+      "capabilities": ["tl", "planning"]
+    },
+    {
+      "id": "factory-be",
+      "name": "Factory Backend Dev",
+      "type": "factory",
+      "entrypoint": "agents.dev_backend:run_backend",
+      "capabilities": ["dev", "backend"]
+    },
+    {
+      "id": "factory-fe",
+      "name": "Factory Frontend Dev",
+      "type": "factory",
+      "entrypoint": "agents.dev_frontend:run_frontend",
+      "capabilities": ["dev", "frontend"]
+    },
+    {
+      "id": "factory-qa",
+      "name": "Factory QA",
+      "type": "factory",
+      "entrypoint": "agents.qa:run_qa",
+      "capabilities": ["qa", "test"]
+    },
+    {
+      "id": "factory-ops",
+      "name": "Factory DevOps",
+      "type": "factory",
+      "entrypoint": "agents.dev_ops:run_ops",
+      "capabilities": ["ops", "deploy"]
+    },
+    {
+      "id": "factory-graph",
+      "name": "Full Factory Graph",
+      "type": "factory",
+      "entrypoint": "run_graph:main",
+      "capabilities": ["full_flow"]
+    },
+    {
+      "id": "factory-custom-graph",
+      "name": "Custom Factory Graph",
+      "type": "factory",
+      "entrypoint": "run_custom_graph:main",
+      "capabilities": ["custom_flow"]
+    }
+  ]
+}
