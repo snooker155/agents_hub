@@ -34,57 +34,42 @@ def main():
         with open(status_path, "w") as f:
             json.dump({"active_node": node_id}, f)
 
-    # Simple topological sort for a custom graph
-    # For now, we assume it's small and manageable
+    ws = args.workspace
 
-    # Map node labels to execution functions
     agent_map = {
-        "pm": lambda: pm.intake(args.desc or ""),
-        "ba": lambda: ba.generate_brd(),
-        "sd": lambda: sd.generate_all(),
-        "tl": lambda: tl.split_tasks(),
-        "be": lambda: dev_backend.run_backend(load_json(Paths().plan + "/stack.json", default={"backend_lang":"python"})["backend_lang"]),
-        "fe": lambda: dev_frontend.run_frontend(),
-        "qa": lambda: qa.run_qa(),
-        "ops": lambda: dev_ops.run_ops(),
+        "pm": lambda: pm.intake(args.desc or "", workspace=ws),
+        "ba": lambda: ba.generate_brd(workspace=ws),
+        "sd": lambda: sd.generate_all(workspace=ws),
+        "tl": lambda: tl.split_tasks(workspace=ws),
+        "be": lambda: dev_backend.run_backend(workspace=ws),
+        "fe": lambda: dev_frontend.run_frontend(workspace=ws),
+        "qa": lambda: qa.run_qa_agent(workspace=ws),
+        "ops": lambda: dev_ops.run_ops_agent(workspace=ws),
     }
 
-    # Helper to find agent type from label or id
     def get_agent_key(node):
         label = node.get("data", {}).get("label", "").lower()
         if label in agent_map: return label
-        # fallback to id prefix
         node_id = node.get("id", "").lower()
         for key in agent_map:
             if node_id.startswith(key):
                 return key
         return None
 
-    # Topological sort
-    visited = set()
-    order = []
-
-    def sort_node(node_id):
-        if node_id in visited: return
-        # find outgoing edges (wait, for topo sort we need incoming)
-        # actually, standard topo sort uses outgoing but in reverse
-        pass
-
-    # Simplified: just run in the order they appear if no clear structure
-    # or just use the edges to determine dependency.
-    # For a POC, let's just run them one by one based on edges.
-
     adj = {n["id"]: [] for n in nodes}
     in_degree = {n["id"]: 0 for n in nodes}
     for e in edges:
-        adj[e["source"]].append(e["target"])
-        in_degree[e["target"]] += 1
+        if e["source"] in adj and e["target"] in in_degree:
+            adj[e["source"]].append(e["target"])
+            in_degree[e["target"]] += 1
 
-    queue = [n["id"] for n in nodes if in_degree[n["id"]] == 0]
+    queue = [n["id"] for n in nodes if in_degree.get(n["id"], 0) == 0]
 
     while queue:
         curr_id = queue.pop(0)
-        node = next(n for n in nodes if n["id"] == curr_id)
+        node = next((n for n in nodes if n["id"] == curr_id), None)
+        if not node: continue
+
         agent_key = get_agent_key(node)
 
         if agent_key:
@@ -95,7 +80,7 @@ def main():
             except Exception as e:
                 print(f"Error executing {agent_key}: {e}")
 
-        for neighbor in adj[curr_id]:
+        for neighbor in adj.get(curr_id, []):
             in_degree[neighbor] -= 1
             if in_degree[neighbor] == 0:
                 queue.append(neighbor)
