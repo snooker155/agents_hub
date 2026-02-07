@@ -17,8 +17,6 @@ def main():
 
     if args.workspace:
         os.environ["WORKSPACE_ROOT"] = args.workspace
-        # Re-import settings and paths if they were already imported,
-        # but here we import them after setting the env var.
 
     from common.utils import ensure_dirs
     from agents import pm, ba, sd, tl, dev_backend, dev_frontend, dev_ops, qa
@@ -28,28 +26,24 @@ def main():
     Settings.mode_full = (args.mode=="full")
     ensure_dirs()
 
-    if args.agent=="pm" and args.action=="intake":
-        assert args.desc, "--desc обязателен"
-        pm.intake(args.desc, mode_full=Settings.mode_full)
-    elif args.agent=="ba" and args.action=="generate":
-        ba.generate_brd(mode_full=Settings.mode_full)
-    elif args.agent=="sd" and args.action=="generate":
-        sd.generate_all()
-    elif args.agent=="tl" and args.action=="choose":
-        print("stack:", tl.choose_stack())
-    elif args.agent=="tl" and args.action=="split":
-        tl.split_tasks()
-    elif args.agent=="tl" and args.action=="scaffold":
-        tl.scaffold_env()
+    ws = args.workspace or os.environ.get("WORKSPACE_ROOT", "./out")
+
+    if args.agent=="pm":
+        pm.intake(args.desc or "", workspace=ws)
+    elif args.agent=="ba":
+        ba.generate_brd(workspace=ws)
+    elif args.agent=="sd":
+        sd.generate_all(workspace=ws)
+    elif args.agent=="tl":
+        tl.split_tasks(workspace=ws)
     elif args.agent=="be":
-        stack = load_json(Paths().plan + "/stack.json", default={"backend_lang":"python"})
-        dev_backend.run_backend(stack["backend_lang"], task_id=args.task_id, title_query=args.task_title)
+        dev_backend.run_backend(workspace=ws, task_id=args.task_id)
     elif args.agent=="fe":
-        dev_frontend.run_frontend(task_id=args.task_id, title_query=args.task_title)
+        dev_frontend.run_frontend(workspace=ws, task_id=args.task_id)
     elif args.agent=="ops":
-        dev_ops.run_ops(task_id=args.task_id, title_query=args.task_title)
+        dev_ops.run_ops_agent(workspace=ws, task_id=args.task_id)
     elif args.agent=="qa":
-        qa.run_qa(task_id=args.task_id, title_query=args.task_title, run_checks=bool(args.run_checks))
+        qa.run_qa_agent(workspace=ws, task_id=args.task_id)
     else:
         ap.error("неизвестная комбинация agent/action")
 
