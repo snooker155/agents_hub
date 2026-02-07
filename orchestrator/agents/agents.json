@@ -170,6 +170,22 @@
       "original_id": null,
       "memory_type": "none",
       "memory_data": null
+    },
+    {
+      "id": "research-remote",
+      "name": "Remote Research",
+      "type": "http",
+      "entrypoint": "swe_agent.agent:build_agent",
+      "description": "",
+      "domain": "research",
+      "default_params": {},
+      "capabilities": [],
+      "capacity": 1,
+      "is_remote": true,
+      "agent_url": "http://localhost:8080",
+      "original_id": null,
+      "memory_type": "none",
+      "memory_data": null
     }
   ]
 }
