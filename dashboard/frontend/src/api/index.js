@@ -28,6 +28,12 @@ export const getTaskProgress = (taskId) => api.get(`/tasks/${taskId}/progress`);
 export const getLogs = (runId) => api.get(`/logs/${runId}`);
 export const runDecomposer = (taskId, payload) => api.post(`/tasks/${taskId}/decompose`, payload || {});
 
+// Stats & Manifests
+export const getStats = () => api.get('/stats');
+export const applyAgentManifest = (data) => api.post('/agents/apply', data);
+export const getTools = () => api.get('/tools');
+export const getRuns = () => api.get('/runs');
+
 // Workspaces
 export const getWorkspaces = () => api.get('/workspaces');
 export const createWorkspace = (name) => api.post('/workspaces', { name });

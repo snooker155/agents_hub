@@ -33,6 +33,8 @@ class AgentSpec:
     name: str
     type: str
     entrypoint: str
+    description: str = ""
+    domain: str = "general"
     default_params: Dict[str, Any] = field(default_factory=dict)
     capabilities: List[str] = field(default_factory=list)
     capacity: int = 1
@@ -48,6 +50,8 @@ class AgentSpec:
             "name": self.name,
             "type": self.type,
             "entrypoint": self.entrypoint,
+            "description": self.description,
+            "domain": self.domain,
             "default_params": dict(self.default_params) if self.default_params else {},
             "capabilities": list(self.capabilities) if self.capabilities else [],
             "capacity": self.capacity,
@@ -151,11 +155,16 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     if not is_remote:
         _split_entrypoint(ad["entrypoint"])  # raises if malformed
 
+    description = ad.get("description", "")
+    domain = ad.get("domain", "general")
+
     return AgentSpec(
         id=ad["id"].strip(),
         name=ad["name"].strip(),
         type=ad["type"].strip(),
         entrypoint=ad["entrypoint"].strip(),
+        description=description,
+        domain=domain,
         default_params=default_params,
         capabilities=capabilities,
         capacity=capacity,

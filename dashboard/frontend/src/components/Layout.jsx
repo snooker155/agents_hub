@@ -1,15 +1,29 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, CheckSquare, Folder, Database, Factory } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Users,
+  CheckSquare,
+  Folder,
+  Database,
+  Factory,
+  Zap,
+  FileCode,
+  Wrench,
+  Shield
+} from 'lucide-react';
 
 const Layout = ({ children }) => {
   const location = useLocation();
 
   const menuItems = [
-    { name: 'Tasks', path: '/', icon: CheckSquare },
-    { name: 'Agents', path: '/agents', icon: Users },
+    { name: 'Dashboard', path: '/', icon: LayoutDashboard },
+    { name: 'Tasks', path: '/tasks', icon: CheckSquare },
+    { name: 'Agent Nodes', path: '/agents', icon: Shield },
+    { name: 'Apply YAML', path: '/manifest', icon: FileCode },
+    { name: 'Toolbox', path: '/tools', icon: Wrench },
     { name: 'Workspaces', path: '/workspaces', icon: Folder },
-    { name: 'Memory', path: '/memory', icon: Database },
+    { name: 'Shared Memory', path: '/memory', icon: Database },
     { name: 'Agent Factory', path: '/factory', icon: Factory },
   ];
 
