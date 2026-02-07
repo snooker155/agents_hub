@@ -9,16 +9,22 @@ import WorkspaceManager from './pages/WorkspaceManager';
 import WorkspaceDetails from './pages/WorkspaceDetails';
 import MemoryManager from './pages/MemoryManager';
 import AgentFactory from './pages/AgentFactory';
+import Dashboard from './pages/Dashboard';
+import AgentManifest from './pages/AgentManifest';
+import ToolsExplorer from './pages/ToolsExplorer';
 
 function App() {
   return (
     <Router>
       <Layout>
         <Routes>
-          <Route path="/" element={<TaskManager />} />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/tasks" element={<TaskManager />} />
           <Route path="/tasks/:id" element={<TaskDetails />} />
           <Route path="/agents" element={<AgentManager />} />
           <Route path="/agents/:id" element={<AgentDetails />} />
+          <Route path="/manifest" element={<AgentManifest />} />
+          <Route path="/tools" element={<ToolsExplorer />} />
           <Route path="/workspaces" element={<WorkspaceManager />} />
           <Route path="/workspaces/:name" element={<WorkspaceDetails />} />
           <Route path="/memory" element={<MemoryManager />} />

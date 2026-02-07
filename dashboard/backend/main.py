@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import os
 import json
+import yaml
 from pathlib import Path
 from uuid import UUID
 import threading
@@ -34,6 +35,8 @@ class AgentClone(BaseModel):
 class AgentConnect(BaseModel):
     id: str
     name: str
+    description: str = ""
+    domain: str = "general"
     agent_url: str
     capacity: int = 1
     capabilities: List[str] = ["remote"]
@@ -41,6 +44,8 @@ class AgentConnect(BaseModel):
 class AgentCreateCustom(BaseModel):
     id: str
     name: str
+    description: str = ""
+    domain: str = "general"
     system_prompt: str
     tools: List[str] = ["read_file", "write_file", "list_files"]
     capacity: int = 1
@@ -81,6 +86,9 @@ class MemoryFileAdd(BaseModel):
     name: str
     content: str
 
+class YamlManifest(BaseModel):
+    yaml: str
+
 def task_to_dict(task):
     data = task.model_dump() if hasattr(task, "model_dump") else task.dict()
     data["id"] = str(data["id"])
@@ -100,6 +108,58 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"message": "Orchestrator Dashboard API is running"}
+
+@app.get("/api/stats")
+async def get_stats():
+    tasks = tasks_service.list_tasks()
+    runs = run_manager._load_runs()
+    agents = registry.list_agents()
+
+    total_tasks = len(tasks)
+    completed_tasks = 0
+    for t in tasks:
+        # handle both enum and string status
+        status = str(getattr(t, "status", ""))
+        if "done" in status.lower() or "completed" in status.lower():
+            completed_tasks += 1
+
+    # Active runs
+    active_runs = [r for r in runs if r.get("status") == "running"]
+
+    # Agent usage distribution
+    agent_usage = {}
+    for r in runs:
+        aid = r.get("agent_id")
+        agent_usage[aid] = agent_usage.get(aid, 0) + 1
+
+    # Domain usage distribution
+    domain_usage = {}
+    agent_map = {a.id: a for a in agents}
+    for r in runs:
+        aid = r.get("agent_id")
+        agent = agent_map.get(aid)
+        domain = agent.domain if agent else "unknown"
+        domain_usage[domain] = domain_usage.get(domain, 0) + 1
+
+    # Resource availability (capacity vs active)
+    total_capacity = sum(getattr(a, "capacity", 1) for a in agents)
+    active_count = len(active_runs)
+
+    # Recent runs
+    recent_runs = sorted(runs, key=lambda r: r.get("started_at", ""), reverse=True)[:10]
+
+    return {
+        "total_tasks": total_tasks,
+        "completed_tasks": completed_tasks,
+        "completion_rate": round((completed_tasks / total_tasks * 100), 2) if total_tasks > 0 else 0,
+        "active_runs": active_count,
+        "total_capacity": total_capacity,
+        "available_slots": max(0, total_capacity - active_count),
+        "agent_usage": agent_usage,
+        "domain_usage": domain_usage,
+        "recent_runs": recent_runs,
+        "total_agents": len(agents)
+    }
 
 @app.get("/api/tasks")
 async def list_tasks():
@@ -232,6 +292,38 @@ async def list_agents():
     agents = registry.list_agents()
     return [a.to_dict() for a in agents]
 
+@app.get("/api/tools")
+async def list_tools():
+    # Gather factory tools
+    from agents.tools import get_factory_tools
+    factory_tools = get_factory_tools()
+
+    # Gather SWE tools (dummy workspace for listing)
+    from swe_agent.tools.langchain_tools import get_default_tools
+    swe_tools = get_default_tools()
+
+    def tool_to_dict(t):
+        if hasattr(t, "name"):
+            return {
+                "name": t.name,
+                "description": t.description,
+                "args": t.args if hasattr(t, "args") else {}
+            }
+        return {"name": str(t), "description": ""}
+
+    return {
+        "factory": [tool_to_dict(t) for t in factory_tools],
+        "swe": [tool_to_dict(t) for t in swe_tools],
+        "all": [tool_to_dict(t) for t in factory_tools + swe_tools]
+    }
+
+@app.get("/api/runs")
+async def list_runs():
+    runs = run_manager._load_runs()
+    # Sort by started_at desc
+    runs.sort(key=lambda r: r.get("started_at", ""), reverse=True)
+    return runs
+
 @app.get("/api/agents/{agent_id}")
 async def get_agent_details(agent_id: str):
     spec = registry.get_agent(agent_id)
@@ -276,6 +368,8 @@ async def connect_agent(data: AgentConnect):
     spec = registry.AgentSpec(
         id=data.id,
         name=data.name,
+        description=data.description,
+        domain=data.domain,
         type="http",
         entrypoint="remote", # dummy for remote
         capacity=data.capacity,
@@ -353,6 +447,45 @@ async def health_agent(agent_id: str):
     from orchestrator.agents.remote_runner import check_health
     return check_health(spec.agent_url)
 
+@app.post("/api/agents/apply")
+async def apply_agent_manifest(data: YamlManifest):
+    try:
+        manifest = yaml.safe_load(data.yaml)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
+
+    if not manifest or manifest.get("kind") != "Agent":
+        raise HTTPException(status_code=400, detail="Manifest must have 'kind: Agent'")
+
+    metadata = manifest.get("metadata", {})
+    spec_data = manifest.get("spec", {})
+
+    agent_id = metadata.get("name")
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="Manifest must have metadata.name")
+
+    # Build AgentSpec
+    spec = registry.AgentSpec(
+        id=agent_id,
+        name=spec_data.get("displayName", agent_id),
+        description=spec_data.get("description", ""),
+        domain=spec_data.get("domain", "general"),
+        type=spec_data.get("type", "langchain"),
+        entrypoint=spec_data.get("entrypoint", "swe_agent.agent:build_agent"),
+        capacity=spec_data.get("capacity", 1),
+        is_remote=spec_data.get("isRemote", False),
+        agent_url=spec_data.get("agentUrl"),
+        capabilities=spec_data.get("capabilities", []),
+        default_params=spec_data.get("defaultParams", {})
+    )
+
+    try:
+        registry.add_agent(spec)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return spec.to_dict()
+
 @app.post("/api/agents/create")
 async def create_custom_agent(data: AgentCreateCustom):
     # Base it on swe-fs but with custom system prompt and tools
@@ -366,6 +499,8 @@ async def create_custom_agent(data: AgentCreateCustom):
     spec = registry.AgentSpec(
         id=data.id,
         name=data.name,
+        description=data.description,
+        domain=data.domain,
         type="langchain",
         entrypoint=entrypoint,
         default_params={"system_prompt": data.system_prompt, "tools": data.tools},
