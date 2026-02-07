@@ -1,7 +1,0 @@
-tabulate
-websockets
-matplotlib
-openai-agents[viz]
-pymongo
-requests
-opencv-python

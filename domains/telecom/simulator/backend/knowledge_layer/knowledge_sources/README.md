@@ -1,1 +1,0 @@
-To register new knowledge sources, simply follow the examples in this folder and import them in the `__init__.py` file.
