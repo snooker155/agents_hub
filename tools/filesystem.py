@@ -14,14 +14,16 @@ from pathlib import Path
 from typing import Iterable, List, Dict, Any, Optional
 
 # Centralized settings for sandbox and limits
-from swe_agent.config import get_config, workspace_root as _cfg_workspace_root
+from common.config import get_swe_config, settings
 
 
 def _workspace_root(workspace: Optional[Path] = None) -> Path:
     """Get the workspace root path."""
     if workspace:
         return workspace.resolve()
-    return _cfg_workspace_root()
+    if get_swe_config().workspace_root is not None:
+        return get_swe_config().workspace_root
+    return Path(settings.workspace_root).resolve()
 
 
 def _resolve_within_workspace(path: str, workspace: Optional[Path] = None) -> Path:
@@ -64,7 +66,7 @@ def _is_binary(sample: bytes) -> bool:
 
 def read_file(path: str, workspace: Optional[Path] = None, config: Optional[Any] = None) -> str:
     """Read UTF-8 text file from the workspace respecting config limits."""
-    cfg = config or get_config()
+    cfg = config or get_swe_config()
     abs_path = _resolve_within_workspace(path, workspace=workspace)
     if not abs_path.is_file():
         raise FileNotFoundError(f"File not found: {_rel(abs_path, workspace=workspace)}")
@@ -127,7 +129,7 @@ def _is_ignored(rel_posix: str, ignore: Iterable[str]) -> bool:
 
 def list_files(glob: str = "**/*", ignore: Iterable[str] | None = None, workspace: Optional[Path] = None, config: Optional[Any] = None) -> List[str]:
     """List files in the workspace matching a glob, excluding ignored paths."""
-    cfg = config or get_config()
+    cfg = config or get_swe_config()
     if ignore is None:
         ignore = cfg.ignore_globs
 
@@ -161,7 +163,7 @@ def list_files(glob: str = "**/*", ignore: Iterable[str] | None = None, workspac
 
 def search_text(pattern: str, file_glob: str, workspace: Optional[Path] = None, config: Optional[Any] = None) -> List[Dict[str, Any]]:
     """Search for a regex pattern across files matched by file_glob."""
-    cfg = config or get_config()
+    cfg = config or get_swe_config()
     regex = re.compile(pattern)
     results: List[Dict[str, Any]] = []
     for rel in list_files(file_glob, workspace=workspace, config=cfg):

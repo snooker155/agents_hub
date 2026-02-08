@@ -18,7 +18,7 @@ from tools.filesystem import (
     list_files as _list_files,
     search_text as _search_text,
 )
-from swe_agent.config import SweAgentConfig, DEFAULT_IGNORE
+from common.config import SweAgentConfig, DEFAULT_IGNORE
 
 
 # -------------------- I/O Schemas --------------------
@@ -178,6 +178,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
 
     def _apply_impl(diff_text: str) -> str:
         try:
+            from tools.patch import apply_unified_diff as _apply_unified_diff
             result = _apply_unified_diff(diff_text, workspace=str(ws_path) if ws_path else None, config=cfg)
             files = [FileOp(**fo) for fo in (result.get("files") or [])]
             out = ApplyUnifiedDiffOutput(applied=bool(result.get("applied")), files=files)
@@ -194,6 +195,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
 
     def _create_impl(path: str, content: str = "") -> str:
         try:
+            from tools.patch import create_file as _create_file
             rel = _create_file(path, content, workspace=str(ws_path) if ws_path else None)
             return CreateFileOutput(path=rel).model_dump_json(ensure_ascii=False)
         except Exception as e:

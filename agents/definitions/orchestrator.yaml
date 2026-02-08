@@ -12,6 +12,7 @@ capabilities:
 
 tools:
   - task_management
+  - agent_coordination
 
 system_prompt: |
   You are the Orchestrator Agent.

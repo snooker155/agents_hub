@@ -54,6 +54,25 @@ TOOL_CATALOG: List[ToolSpec] = [
         requires_workspace=True,
     ),
     ToolSpec(
+        id="apply_unified_diff",
+        name="Apply Diff",
+        category="filesystem",
+        description="Apply a unified diff patch to files in workspace",
+        parameters=[{"name": "diff_text", "type": "string", "required": True}],
+        requires_workspace=True,
+    ),
+    ToolSpec(
+        id="create_file",
+        name="Create File",
+        category="filesystem",
+        description="Create a new file with initial content",
+        parameters=[
+            {"name": "path", "type": "string", "required": True},
+            {"name": "content", "type": "string", "required": False},
+        ],
+        requires_workspace=True,
+    ),
+    ToolSpec(
         id="list_files",
         name="List Files",
         category="filesystem",
@@ -115,6 +134,47 @@ TOOL_CATALOG: List[ToolSpec] = [
         category="task_management",
         description="List all tasks in the system",
         parameters=[],
+        requires_workspace=False,
+    ),
+    ToolSpec(
+        id="update_task",
+        name="Update Task",
+        category="task_management",
+        description="Update fields of an existing task",
+        parameters=[
+            {"name": "id", "type": "string", "required": True},
+            {"name": "status", "type": "string", "required": False},
+            {"name": "description", "type": "string", "required": False},
+        ],
+        requires_workspace=False,
+    ),
+
+    # Agent coordination tools
+    ToolSpec(
+        id="list_agents_tool",
+        name="List Available Agents",
+        category="agent_coordination",
+        description="List all registered agent nodes and their capabilities",
+        parameters=[],
+        requires_workspace=False,
+    ),
+    ToolSpec(
+        id="assign_and_start_agent_tool",
+        name="Assign & Start Agent",
+        category="agent_coordination",
+        description="Assign a specific agent node to a task and start execution",
+        parameters=[
+            {"name": "task_id", "type": "string", "required": True},
+            {"name": "agent_id", "type": "string", "required": True},
+        ],
+        requires_workspace=False,
+    ),
+    ToolSpec(
+        id="get_agent_status_tool",
+        name="Get Agent Status",
+        category="agent_coordination",
+        description="Query current execution status of an agent assigned to a task",
+        parameters=[{"name": "task_id", "type": "string", "required": True}],
         requires_workspace=False,
     ),
 ]

@@ -1,10 +1,76 @@
 from __future__ import annotations
 
 import os
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Union
 from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings
+from dataclasses import dataclass, field
+
+DEFAULT_IGNORE: List[str] = [
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+    ".mypy_cache",
+    ".DS_Store",
+]
+
+@dataclass
+class SweAgentConfig:
+    workspace_root: Optional[Path] = None
+    max_read_bytes: int = 1_000_000
+    ignore_globs: List[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
+    allow_delete: bool = True
+    binary_threshold: int = 4096
+
+_swe_config = SweAgentConfig()
+
+def get_swe_config() -> SweAgentConfig:
+    return _swe_config
+
+def update_swe_config(
+    *,
+    workspace_root: Optional[Union[str, Path]] = None,
+    max_read_bytes: Optional[int] = None,
+    ignore_globs: Optional[List[str]] = None,
+    allow_delete: Optional[bool] = None,
+    binary_threshold: Optional[int] = None,
+) -> SweAgentConfig:
+    global _swe_config
+
+    ws = None
+    if workspace_root is not None:
+        ws = Path(workspace_root).resolve()
+    else:
+        ws = _swe_config.workspace_root
+
+    max_r = max_read_bytes if max_read_bytes is not None else _swe_config.max_read_bytes
+    allow_del = allow_delete if allow_delete is not None else _swe_config.allow_delete
+    bin_thr = binary_threshold if binary_threshold is not None else _swe_config.binary_threshold
+
+    if ignore_globs is None:
+        ig = list(_swe_config.ignore_globs)
+    else:
+        seen = set()
+        ig = []
+        for item in (ignore_globs or []) + DEFAULT_IGNORE:
+            if item not in seen:
+                seen.add(item)
+                ig.append(item)
+
+    _swe_config = SweAgentConfig(
+        workspace_root=ws,
+        max_read_bytes=int(max_r),
+        ignore_globs=ig,
+        allow_delete=bool(allow_del),
+        binary_threshold=int(bin_thr),
+    )
+    return _swe_config
+
 
 class Settings(BaseSettings):
     """

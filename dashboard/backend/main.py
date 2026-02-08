@@ -21,7 +21,7 @@ from uuid import uuid4
 from common import tasks_service
 from orchestrator.agents import registry, run_manager
 from tasks import AgentState, CreatedBy, TaskStatus
-from orchestrator.workspace import create_workspace_folder, list_workspace_folders
+from orchestrator.workspace import create_workspace_folder, list_workspace_folders, get_workspace_metadata, update_workspace_metadata
 from orchestrator.agent import run_decomposing_agent
 from tasks.storage import MemoryStore
 from tasks.models import SharedMemory
@@ -99,6 +99,16 @@ class MemoryFileAdd(BaseModel):
 class YamlManifest(BaseModel):
     yaml: str
 
+class OrchestratorSettings(BaseModel):
+    enabled: bool = False
+
+def get_orchestrator_settings_path():
+    path = Path("orchestrator/state/orchestrator_settings.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(json.dumps({"enabled": False}))
+    return path
+
 def task_to_dict(task):
     data = task.model_dump() if hasattr(task, "model_dump") else task.dict()
     data["id"] = str(data["id"])
@@ -141,9 +151,25 @@ else:
 async def root():
     return {"message": "Orchestrator Dashboard API is running"}
 
+@app.get("/api/orchestrator/settings")
+async def get_orchestrator_settings():
+    path = get_orchestrator_settings_path()
+    return json.loads(path.read_text())
+
+@app.post("/api/orchestrator/settings")
+async def update_orchestrator_settings(settings: OrchestratorSettings):
+    path = get_orchestrator_settings_path()
+    path.write_text(json.dumps(settings.model_dump()))
+    return settings
+
 @app.get("/api/stats")
-async def get_stats():
-    tasks = tasks_service.list_tasks()
+async def get_stats(workspace: Optional[str] = None):
+    all_tasks = tasks_service.list_tasks()
+    if workspace:
+        tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
+    else:
+        tasks = all_tasks
+
     runs = run_manager._load_runs()
     agents = registry.list_agents()
 
@@ -194,9 +220,14 @@ async def get_stats():
     }
 
 @app.get("/api/tasks")
-async def list_tasks():
-    tasks = tasks_service.list_tasks()
+async def list_tasks(workspace: Optional[str] = None):
+    all_tasks = tasks_service.list_tasks()
     
+    if workspace:
+        tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
+    else:
+        tasks = all_tasks
+
     # Synchronize agent state with task status for all tasks
     for t in tasks:
         if t.assigned_agent_run_id:
@@ -250,6 +281,20 @@ async def create_task(task: TaskCreate):
         workspace=ws_name,
         should_decompose=task.should_decompose
     )
+
+    # Trigger orchestrator if enabled
+    settings_path = get_orchestrator_settings_path()
+    orch_settings = json.loads(settings_path.read_text())
+    if orch_settings.get("enabled"):
+        try:
+            # For Orchestrator, we use 'orchestrator' as the agent ID
+            agent_id = "orchestrator"
+            run_id = run_manager.start_run(str(t.id), agent_id, None)
+            tasks_service.assign_agent(t.id, agent_id, None, run_id=run_id)
+            tasks_service.set_agent_state(t.id, AgentState.running, run_id=run_id)
+        except Exception as e:
+            print(f"Failed to auto-trigger orchestrator: {e}")
+
     return task_to_dict(t)
 
 class TaskWorkspaceUpdate(BaseModel):
@@ -356,14 +401,18 @@ async def list_agents():
     """List all available agents from registry and factory definitions."""
     # Get agents from existing registry
     registry_agents = registry.list_agents()
+    reg_ids = {a.id for a in registry_agents}
     
     # Get agent definitions from factory
     factory = get_factory()
     factory_agents = factory.list_available_agents()
     
     # Combine into single array for backward compatibility with frontend
-    # Registry agents come first, then factory agents
-    all_agents = [a.to_dict() for a in registry_agents] + factory_agents
+    # Registry agents come first, then factory agents (if not already in registry)
+    all_agents = [a.to_dict() for a in registry_agents]
+    for fa in factory_agents:
+        if fa["id"] not in reg_ids:
+            all_agents.append(fa)
     
     return all_agents
 
@@ -596,6 +645,14 @@ async def assign_agent(task_id: UUID, assign: AgentAssign):
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    # Check if agent is allowed in workspace
+    if t.workspace:
+        metadata = get_workspace_metadata(t.workspace)
+        allowed = metadata.get("allowed_agents", [])
+        # Always allow orchestrator to be assigned (it's the manager)
+        if assign.agent_id not in allowed and assign.agent_id not in ["orchestrator", "decomposer"]:
+            raise HTTPException(status_code=403, detail=f"Agent '{assign.agent_id}' is not authorized for workspace '{t.workspace}'")
+
     # Policy: only user-created tasks may be assigned a decomposer-capable agent
     try:
         caps = list(getattr(spec, "capabilities", []) or [])
@@ -813,12 +870,37 @@ async def get_workspace(name: str):
             **task_to_dict(t),
             "progress": _calc_task_progress(t, all_tasks),
         })
+
+    metadata = get_workspace_metadata(root.name)
+
     # files separately via endpoint, here basic info
     return {
         "name": root.name,
         "path": str(root),
         "tasks": tasks_info,
+        "metadata": metadata
     }
+
+class WorkspaceAgentAction(BaseModel):
+    agent_id: str
+
+@app.post("/api/workspaces/{name}/agents")
+async def add_agent_to_workspace(name: str, action: WorkspaceAgentAction):
+    metadata = get_workspace_metadata(name)
+    allowed = metadata.get("allowed_agents", [])
+    if action.agent_id not in allowed:
+        allowed.append(action.agent_id)
+        update_workspace_metadata(name, {"allowed_agents": allowed})
+    return {"allowed_agents": allowed}
+
+@app.delete("/api/workspaces/{name}/agents/{agent_id}")
+async def remove_agent_from_workspace(name: str, agent_id: str):
+    metadata = get_workspace_metadata(name)
+    allowed = metadata.get("allowed_agents", [])
+    if agent_id in allowed:
+        allowed.remove(agent_id)
+        update_workspace_metadata(name, {"allowed_agents": allowed})
+    return {"allowed_agents": allowed}
 
 
 @app.get("/api/shared-memory")

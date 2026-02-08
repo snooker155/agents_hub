@@ -13,6 +13,7 @@ from agents.agent_base import AgentBase, AgentResult
 from common.agent_utils import build_chat_model, SharedProgressCallback
 from tools.filesystem_langchain import create_filesystem_tools
 from tools.task_management import create_task, add_subtask, get_task, list_tasks
+from common.tasks_service import update_task, stop_task, block_task, create_sequence
 
 
 class StandardAgent(AgentBase):
@@ -95,8 +96,25 @@ class AgentFactory:
             tools.extend(create_filesystem_tools(workspace=workspace))
         
         if "task_management" in tool_list:
+            # Basic task tools
             tools.extend([create_task, add_subtask, get_task, list_tasks])
+            # Advanced task tools
+            tools.extend([update_task, stop_task, block_task, create_sequence])
         
+        if "agent_coordination" in tool_list:
+            from orchestrator.tools.langchain_tools import (
+                list_agents_tool,
+                assign_and_start_agent_tool,
+                stop_agent_tool,
+                get_agent_status_tool,
+            )
+            tools.extend([
+                list_agents_tool,
+                assign_and_start_agent_tool,
+                stop_agent_tool,
+                get_agent_status_tool,
+            ])
+
         return tools
     
     def create_agent(self, agent_id: str, workspace: Optional[str] = None, **override_params) -> AgentBase:
@@ -164,4 +182,10 @@ def create_agent(agent_id: str, workspace: Optional[str] = None, **params) -> Ag
     return _factory.create_agent(agent_id, workspace=workspace, **params)
 
 
-__all__ = ["AgentFactory", "StandardAgent", "get_factory", "create_agent"]
+def build_agent_executor(agent_id: str, workspace: Optional[str] = None, **params) -> Any:
+    """Entrypoint for orchestrator registry that returns a LangChain AgentExecutor."""
+    agent = create_agent(agent_id, workspace=workspace, **params)
+    return agent.executor
+
+
+__all__ = ["AgentFactory", "StandardAgent", "get_factory", "create_agent", "build_agent_executor"]

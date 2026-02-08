@@ -156,11 +156,8 @@ def start_run(task_id: str, agent_id: str, params: Optional[Dict[str, Any]] = No
     if not task:
         raise ValueError(f"Task not found: {task_id}")
 
-    # Choose runner based on agent id or type
-    if agent_id.startswith("factory-") or agent_id == "decomposer":
-        run_spec = build_factory_run_spec(task, agent_id, params)
-    else:
-        run_spec = build_run_spec(task, params)
+    # All agents now follow the factory structure
+    run_spec = build_factory_run_spec(task, agent_id, params)
 
     cwd = run_spec.cwd
     run_id = str(uuid4())

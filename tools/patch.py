@@ -13,10 +13,10 @@ from typing import Dict, List, Optional, Tuple
 # current working directory if None.
 
 # Centralized config for sandbox policies
-from ..config import get_config, update_config
+from common.config import get_swe_config, update_swe_config
 
 
-from .fs import _resolve_within_workspace, _workspace_root
+from .filesystem import _resolve_within_workspace, _workspace_root
 
 
 def _atomic_write(target: Path, data: str) -> None:
@@ -213,7 +213,7 @@ def apply_unified_diff(diff_text: str, workspace: Optional[str] = None, config: 
     plan: Dict[Path, Optional[str]] = {}
     file_ops: List[Dict[str, str]] = []
 
-    cfg = config or get_config()
+    cfg = config or get_swe_config()
 
     # Dry-run: build plan
     for fp in patches:

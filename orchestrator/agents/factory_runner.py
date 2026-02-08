@@ -51,8 +51,17 @@ def build_factory_run_spec(task: Any, agent_id: str, params: Optional[Dict[str, 
         ]
     else:
         # Standard factory agents
+        # Map legacy IDs to new factory IDs
+        legacy_map = {
+            "swe-fs": "swe_agent",
+            "swe": "swe_agent",
+            "decomposer": "orchestrator",
+        }
+
         # Strip 'factory-' prefix if present
         actual_agent = agent_id[8:] if agent_id.startswith("factory-") else agent_id
+        actual_agent = legacy_map.get(actual_agent, actual_agent)
+
         action = (params or {}).get("action")
 
         cmd = [
