@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useWorkspace } from './WorkspaceContext';
 import { getWorkspaces } from '../api';
 import {
@@ -17,6 +17,7 @@ import {
 
 const Layout = ({ children }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const { selectedWorkspace, setSelectedWorkspace } = useWorkspace();
   const [workspaces, setWorkspaces] = useState([]);
 
@@ -25,7 +26,7 @@ const Layout = ({ children }) => {
       try {
         const resp = await getWorkspaces();
         setWorkspaces(resp.data);
-        if (!selectedWorkspace && resp.data.length > 0) {
+        if ((!selectedWorkspace || selectedWorkspace === '') && resp.data.length > 0) {
           setSelectedWorkspace(resp.data[0].name);
         }
       } catch (error) {
@@ -33,19 +34,29 @@ const Layout = ({ children }) => {
       }
     };
     fetchWorkspaces();
-  }, []);
+  }, [selectedWorkspace, setSelectedWorkspace]);
 
   const menuItems = [
+    { name: 'Workspaces', path: '/workspaces', icon: Folder },
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Orchestrator', path: '/orchestrator', icon: Zap },
     { name: 'Tasks', path: '/tasks', icon: CheckSquare },
     { name: 'Agent Nodes', path: '/agents', icon: Shield },
     { name: 'Apply YAML', path: '/manifest', icon: FileCode },
     { name: 'Toolbox', path: '/tools', icon: Wrench },
-    { name: 'Workspaces', path: '/workspaces', icon: Folder },
     { name: 'Shared Memory', path: '/memory', icon: Database },
     { name: 'Agent Factory', path: '/factory', icon: Factory },
   ];
+
+  const handleWorkspaceChange = (e) => {
+    const newWs = e.target.value;
+    setSelectedWorkspace(newWs);
+
+    // Redirect if on a task-related page
+    if (location.pathname.startsWith('/tasks') || location.pathname.startsWith('/workspaces/')) {
+      navigate('/');
+    }
+  };
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -57,7 +68,9 @@ const Layout = ({ children }) => {
         <nav className="mt-6">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = location.pathname === item.path;
+            const isActive = item.path === '/'
+              ? location.pathname === '/'
+              : location.pathname.startsWith(item.path);
             return (
               <Link
                 key={item.name}
@@ -83,9 +96,8 @@ const Layout = ({ children }) => {
             <select
               className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               value={selectedWorkspace}
-              onChange={(e) => setSelectedWorkspace(e.target.value)}
+              onChange={handleWorkspaceChange}
             >
-              <option value="">-- No Workspace --</option>
               {workspaces.map(ws => (
                 <option key={ws.name} value={ws.name}>{ws.name}</option>
               ))}
