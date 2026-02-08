@@ -55,7 +55,7 @@ def build_factory_run_spec(task: Any, agent_id: str, params: Optional[Dict[str, 
         legacy_map = {
             "swe-fs": "swe_agent",
             "swe": "swe_agent",
-            "decomposer": "orchestrator",
+            "decomposer": "decomposer",
         }
 
         # Strip 'factory-' prefix if present

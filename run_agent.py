@@ -35,7 +35,7 @@ def main():
         "fe": "dev_agent",
         "ops": "devops_agent",
         "qa": "qa_agent",
-        "decomposer": "orchestrator",
+        "decomposer": "decomposer",
         "swe": "swe_agent",
         "swe-fs": "swe_agent"
     }

@@ -41,9 +41,8 @@ const AgentManager = () => {
   const fetchData = async () => {
     try {
       const [agentsResp, tasksResp] = await Promise.all([getAgents(), getTasks()]);
-      // Filter out the orchestrator agent from the general list
-      const filteredAgents = agentsResp.data.filter(a => a.id !== 'orchestrator' && a.id !== 'decomposer');
-      setAgents(filteredAgents);
+      // Show all agents including orchestrator and decomposer
+      setAgents(agentsResp.data);
       setTasks(tasksResp.data);
       setLoading(false);
 
@@ -141,29 +140,33 @@ const AgentManager = () => {
 
   return (
     <div className="space-y-8">
-      <div className="flex justify-between items-center">
+      {/* Header / Sub-Navbar */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Agent Nodes</h2>
-          <p className="text-gray-500 text-sm">Manage the lifecycle and connectivity of your AI agents.</p>
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center">
+            <Shield className="w-6 h-6 mr-2 text-indigo-600" />
+            Agent Cluster Manager
+          </h2>
+          <p className="text-gray-500 text-sm">Orchestrate your fleet of specialized AI nodes.</p>
         </div>
-        <div className="flex space-x-3">
+        <div className="flex flex-wrap items-center gap-3">
             <Link
               to="/manifest"
-              className="bg-gray-800 text-white px-4 py-2 rounded-md flex items-center hover:bg-gray-900 shadow-sm"
+              className="bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2 rounded-lg flex items-center hover:bg-gray-100 transition-colors shadow-sm text-sm font-semibold"
             >
-              <FileCode className="w-4 h-4 mr-2" />
+              <FileCode className="w-4 h-4 mr-2 text-indigo-500" />
               Apply YAML
             </Link>
             <button
               onClick={() => setShowConnectModal(true)}
-              className="bg-emerald-600 text-white px-4 py-2 rounded-md flex items-center hover:bg-emerald-700 shadow-sm"
+              className="bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2 rounded-lg flex items-center hover:bg-gray-100 transition-colors shadow-sm text-sm font-semibold"
             >
-              <Server className="w-4 h-4 mr-2" />
+              <Server className="w-4 h-4 mr-2 text-emerald-500" />
               Connect Remote
             </button>
             <button
               onClick={() => setShowCreateCustomModal(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md flex items-center hover:bg-blue-700 shadow-sm"
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-indigo-700 transition-all shadow-md text-sm font-bold"
             >
               <Box className="w-4 h-4 mr-2" />
               Create Custom

@@ -22,10 +22,9 @@ from common import tasks_service
 from orchestrator.agents import registry, run_manager
 from tasks import AgentState, CreatedBy, TaskStatus
 from orchestrator.workspace import create_workspace_folder, list_workspace_folders, get_workspace_metadata, update_workspace_metadata
-from orchestrator.agent import run_decomposing_agent
 from tasks.storage import MemoryStore
 from tasks.models import SharedMemory
-from agents.factory import get_factory
+from agents.factory import get_factory, create_agent
 from tools.registry import get_all_tools, get_tools_by_category
 
 app = FastAPI(title="Orchestrator Dashboard API")
@@ -786,32 +785,36 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
                 fh.write("[decomposer] start\n")
                 fh.flush()
                 try:
-                    res = run_decomposing_agent(
-                        str(t.id),
-                        t.title,
-                        t.description or "",
-                        model=(payload.model if payload else None),
-                        temperature=(payload.temperature if payload else None),
-                        max_tokens=(payload.max_tokens if payload else None),
-                        verbose=(payload.verbose if payload else True),
+                    # Use factory instead of legacy run_decomposing_agent
+                    agent = create_agent(
+                        "decomposer",
+                        workspace=str(root),
+                        model=(payload.model if payload and payload.model else None),
+                        temperature=(payload.temperature if payload and payload.temperature is not None else None),
+                        max_tokens=(payload.max_tokens if payload and payload.max_tokens else None),
+                        verbose=(payload.verbose if payload and payload.verbose is not None else True)
                     )
-                    if isinstance(res, dict):
-                        out = res.get("output")
-                        if out:
-                            fh.write(str(out) + "\n")
-                        created = res.get("created") or []
-                        if created:
-                            fh.write(f"created_subtasks={len(created)}\n")
+
+                    prompt = (
+                        "Decompose the following high-level task into concrete, small, and verifiable subtasks. "
+                        f"Create subtasks ONLY using the add_subtask tool with parent_id={task_id}. "
+                        "Do not create other high-level tasks. Establish sequence between subtasks if needed.\n\n"
+                        f"Task Data:\nID: {task_id}\nTITLE: {t.title}\nDESCRIPTION: {t.description or ''}\n\n"
+                        "Provide a brief summary of the created subtasks at the end."
+                    )
+
+                    result = agent.run(prompt)
+                    if result.ok:
+                        fh.write(str(result.agent_output) + "\n")
                     else:
-                        fh.write("agent finished\n")
+                        fh.write(f"error: {result.error}\n")
                 except Exception as e:  # capture errors
                     fh.write(f"error: {e}\n")
                 fh.flush()
         finally:
             try:
                 tasks_service.set_agent_state(task_id, AgentState.completed)
-                # Also update task status to done when agent completes
-                tasks_service.update_task(task_id, status=TaskStatus.done)
+                # Decomposition does not complete the parent task
             except Exception:
                 pass
 
@@ -824,6 +827,14 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
 @app.get("/api/workspaces")
 async def list_workspaces():
     roots = list_workspace_folders()
+    if not roots:
+        # Create default workspace if none exists
+        try:
+            p = create_workspace_folder("default")
+            roots = [p]
+        except Exception:
+            pass
+
     all_tasks = tasks_service.list_tasks()
     items = []
     for p in roots:

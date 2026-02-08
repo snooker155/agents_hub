@@ -163,7 +163,7 @@ const WorkspaceDetails = () => {
               </h4>
               <div className="grid grid-cols-1 gap-3 max-h-80 overflow-y-auto pr-2">
                 {allAgents
-                  .filter(a => !ws.metadata?.allowed_agents?.includes(a.id) && a.id !== 'orchestrator' && a.id !== 'decomposer')
+                  .filter(a => !ws.metadata?.allowed_agents?.includes(a.id))
                   .map(agent => (
                     <div key={agent.id} className="flex items-center justify-between p-3 border border-gray-100 rounded-xl hover:bg-gray-50 transition-colors">
                       <div className="flex items-center space-x-3">

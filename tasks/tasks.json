@@ -74,5 +74,24 @@
     "agent_state": "none",
     "created_at": "2026-02-08T04:51:26.801433+00:00",
     "updated_at": "2026-02-08T04:51:26.801437+00:00"
+  },
+  {
+    "id": "ccd4f9fe-3fb7-43fe-be8d-1317a4bcb51a",
+    "title": "Complex Task",
+    "description": "This task needs decomposition. 1. Step one. 2. Step two.",
+    "status": "todo",
+    "created_by": "user",
+    "parent_id": null,
+    "sequence_id": null,
+    "order": null,
+    "blocked_reason": null,
+    "should_decompose": false,
+    "workspace": "default",
+    "assigned_agent_type": "decomposer",
+    "assigned_agent_params": null,
+    "assigned_agent_run_id": "a5bb1444-f401-4457-b723-7e3c7e6f26ac",
+    "agent_state": "completed",
+    "created_at": "2026-02-08T13:48:13.066587+00:00",
+    "updated_at": "2026-02-08T13:48:15.464864+00:00"
   }
 ]
