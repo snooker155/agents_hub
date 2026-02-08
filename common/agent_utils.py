@@ -29,7 +29,6 @@ def build_chat_model(
 class SharedProgressCallback(BaseCallbackHandler):
     """
     Console logger and file-based progress tracker.
-    Adapted from swe_agent._PrintProgressCallback.
     """
 
     def __init__(self, workspace: Optional[Path] = None, model_name: str = "unknown") -> None:

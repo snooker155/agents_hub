@@ -12,6 +12,7 @@ import AgentFactory from './pages/AgentFactory';
 import Dashboard from './pages/Dashboard';
 import AgentManifest from './pages/AgentManifest';
 import ToolsExplorer from './pages/ToolsExplorer';
+import Orchestrator from './pages/Orchestrator';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/orchestrator" element={<Orchestrator />} />
           <Route path="/tasks" element={<TaskManager />} />
           <Route path="/tasks/:id" element={<TaskDetails />} />
           <Route path="/agents" element={<AgentManager />} />

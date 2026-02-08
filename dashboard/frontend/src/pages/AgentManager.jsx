@@ -41,7 +41,9 @@ const AgentManager = () => {
   const fetchData = async () => {
     try {
       const [agentsResp, tasksResp] = await Promise.all([getAgents(), getTasks()]);
-      setAgents(agentsResp.data);
+      // Filter out the orchestrator agent from the general list
+      const filteredAgents = agentsResp.data.filter(a => a.id !== 'orchestrator' && a.id !== 'decomposer');
+      setAgents(filteredAgents);
       setTasks(tasksResp.data);
       setLoading(false);
 

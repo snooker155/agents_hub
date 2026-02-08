@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Plus, CheckCircle, Clock, AlertCircle, StopCircle, ChevronRight } from 'lucide-react';
 import { getTasks, createTask, getWorkspaces } from '../api';
+import { useWorkspace } from '../components/WorkspaceContext';
 
 const TaskManager = () => {
+  const { selectedWorkspace } = useWorkspace();
   const [tasks, setTasks] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
   const navigate = useNavigate();
@@ -18,7 +20,7 @@ const TaskManager = () => {
 
   const fetchTasks = async () => {
     try {
-      const response = await getTasks();
+      const response = await getTasks(selectedWorkspace);
       try {
           const wsResp = await getWorkspaces();
           setWorkspaces(wsResp.data);
@@ -47,12 +49,16 @@ const TaskManager = () => {
     fetchTasks();
     const interval = setInterval(fetchTasks, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedWorkspace]);
 
   const handleCreateTask = async (e) => {
     e.preventDefault();
     try {
-      await createTask(newSchema);
+      const taskData = { ...newSchema };
+      if (!taskData.workspace_name && selectedWorkspace) {
+        taskData.workspace_name = selectedWorkspace;
+      }
+      await createTask(taskData);
       setNewSchema({ title: '', description: '', workspace_name: '', should_decompose: false });
       setShowModal(false);
       fetchTasks();

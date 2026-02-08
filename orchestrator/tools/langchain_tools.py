@@ -29,10 +29,7 @@ from pydantic import BaseModel, Field, validator, model_validator
 from langchain_core.tools import tool
 
 # Local imports from the orchestrator package
-from ..tasks_service import (
-    CreatedBy,
-    Task,
-    TaskStatus,
+from common.tasks_service import (
     add_subtask as svc_add_subtask,
     block_task as svc_block_task,
     create_sequence as svc_create_sequence,
@@ -44,7 +41,7 @@ from ..tasks_service import (
     assign_agent as svc_assign_agent,
     set_agent_state as svc_set_agent_state,
 )
-from tasks import AgentState
+from tasks import Task, TaskStatus, CreatedBy, AgentState
 from ..workspace import create_workspace_folder as ws_create_workspace_folder
 from ..agents.registry import (
     list_agents as reg_list_agents,

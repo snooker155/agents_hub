@@ -4,7 +4,7 @@ const api = axios.create({
   baseURL: 'http://localhost:8000/api',
 });
 
-export const getTasks = () => api.get('/tasks');
+export const getTasks = (workspace) => api.get('/tasks', { params: { workspace } });
 export const createTask = (data) => api.post('/tasks', data);
 export const getTask = (id) => api.get(`/tasks/${id}`);
 export const stopTask = (id) => api.post(`/tasks/${id}/stop`);
@@ -28,8 +28,12 @@ export const getTaskProgress = (taskId) => api.get(`/tasks/${taskId}/progress`);
 export const getLogs = (runId) => api.get(`/logs/${runId}`);
 export const runDecomposer = (taskId, payload) => api.post(`/tasks/${taskId}/decompose`, payload || {});
 
+// Orchestrator
+export const getOrchestratorSettings = () => api.get('/orchestrator/settings');
+export const updateOrchestratorSettings = (data) => api.post('/orchestrator/settings', data);
+
 // Stats & Manifests
-export const getStats = () => api.get('/stats');
+export const getStats = (workspace) => api.get('/stats', { params: { workspace } });
 export const applyAgentManifest = (data) => api.post('/agents/apply', data);
 export const getTools = () => api.get('/tools');
 export const getRuns = () => api.get('/runs');
@@ -39,6 +43,8 @@ export const getWorkspaces = () => api.get('/workspaces');
 export const createWorkspace = (name) => api.post('/workspaces', { name });
 export const getWorkspace = (name) => api.get(`/workspaces/${encodeURIComponent(name)}`);
 export const getWorkspaceFilesByName = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/files`);
+export const addAgentToWorkspace = (name, agentId) => api.post(`/workspaces/${encodeURIComponent(name)}/agents`, { agent_id: agentId });
+export const removeAgentFromWorkspace = (name, agentId) => api.delete(`/workspaces/${encodeURIComponent(name)}/agents/${encodeURIComponent(agentId)}`);
 
 // Shared Memory
 export const getSharedMemories = () => api.get('/shared-memory');

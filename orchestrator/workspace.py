@@ -8,8 +8,9 @@ preferred 'workspace' helpers.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import uuid
+import json
 
 # Default workspaces root relative to test-swe-agent root
 WORKSPACES_ROOT = Path(__file__).parent.parent / "workspaces"
@@ -23,7 +24,7 @@ def ensure_workspaces_dir() -> Path:
 
 def create_project_folder(project_name: Optional[str] = None) -> Path:
     """
-    Create a new workspace folder in the workspaces directory.
+    Create a new workspace folder in the workspaces directory and initialize metadata.
     
     Args:
         project_name: Optional name for the workspace folder. If not provided,
@@ -40,7 +41,38 @@ def create_project_folder(project_name: Optional[str] = None) -> Path:
     project_path = WORKSPACES_ROOT / project_name
     project_path.mkdir(parents=True, exist_ok=True)
     
+    # Initialize workspace metadata if not exists
+    meta_path = project_path / ".workspace.json"
+    if not meta_path.exists():
+        default_meta = {
+            "name": project_name,
+            "created_at": str(uuid.uuid4()), # Placeholder for actual time if needed
+            "allowed_agents": ["swe_agent", "orchestrator"]
+        }
+        meta_path.write_text(json.dumps(default_meta, indent=2))
+
     return project_path.resolve()
+
+def get_workspace_metadata(name: str) -> Dict[str, Any]:
+    """Get metadata for a workspace."""
+    folder = get_workspace_folder(name)
+    if not folder:
+        return {}
+    meta_path = folder / ".workspace.json"
+    if meta_path.exists():
+        return json.loads(meta_path.read_text())
+    return {}
+
+def update_workspace_metadata(name: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    """Update metadata for a workspace."""
+    folder = get_workspace_folder(name)
+    if not folder:
+        return {}
+    meta_path = folder / ".workspace.json"
+    meta = get_workspace_metadata(name)
+    meta.update(updates)
+    meta_path.write_text(json.dumps(meta, indent=2))
+    return meta
 
 
 def get_project_folder(project_name: str) -> Optional[Path]:

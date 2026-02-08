@@ -1,14 +1,18 @@
 {
   "agents": [
     {
-      "id": "decomposer",
-      "name": "Task Decomposer (LangChain)",
+      "id": "orchestrator",
+      "name": "Orchestrator Agent",
       "type": "langchain",
-      "entrypoint": "orchestrator.agent:build_agent",
-      "description": "Decomposes complex tasks into smaller subtasks.",
+      "entrypoint": "agents.factory:build_agent_executor",
+      "default_params": {
+        "agent_id": "orchestrator"
+      },
+      "description": "Special agent for managing task status and coordinating agent execution",
       "domain": "orchestration",
-      "default_params": {},
       "capabilities": [
+        "task_management",
+        "agent_coordination",
         "decompose",
         "tasks.create",
         "tasks.update",
@@ -22,17 +26,19 @@
       "memory_data": "fa3c9678-270c-4f06-a0fb-f4c7f8833689"
     },
     {
-      "id": "swe-fs",
-      "name": "SWE Agent (Filesystem)",
+      "id": "swe_agent",
+      "name": "Software Engineering Agent",
       "type": "langchain",
-      "entrypoint": "swe_agent.agent:build_agent",
-      "description": "Specialized agent for filesystem operations and code patching.",
+      "entrypoint": "agents.factory:build_agent_executor",
+      "description": "Agent specialized in file system operations and code modifications",
       "domain": "development",
-      "default_params": {},
+      "default_params": {
+        "agent_id": "swe_agent"
+      },
       "capabilities": [
-        "code.modify",
-        "fs",
-        "patch"
+        "code_modification",
+        "file_operations",
+        "diff_patching"
       ]
     },
     {
@@ -157,7 +163,7 @@
       "id": "test-agent",
       "name": "Test Agent",
       "type": "langchain",
-      "entrypoint": "swe_agent.agent:build_agent",
+      "entrypoint": "agents.factory:build_agent_executor",
       "description": "A test agent added via YAML",
       "domain": "testing",
       "default_params": {},

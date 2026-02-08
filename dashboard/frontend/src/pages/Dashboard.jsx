@@ -12,8 +12,10 @@ import {
   Zap
 } from 'lucide-react';
 import { getStats, getAgents, getRuns } from '../api';
+import { useWorkspace } from '../components/WorkspaceContext';
 
 const Dashboard = () => {
+  const { selectedWorkspace } = useWorkspace();
   const [stats, setStats] = useState(null);
   const [agents, setAgents] = useState([]);
   const [runs, setRuns] = useState([]);
@@ -22,7 +24,7 @@ const Dashboard = () => {
   const fetchData = async () => {
     try {
       const [statsResp, agentsResp, runsResp] = await Promise.all([
-        getStats(),
+        getStats(selectedWorkspace),
         getAgents(),
         getRuns()
       ]);
@@ -40,7 +42,7 @@ const Dashboard = () => {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedWorkspace]);
 
   if (loading || !stats) {
     return (

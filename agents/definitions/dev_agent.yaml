@@ -1,0 +1,27 @@
+id: dev_agent
+name: Developer Agent
+description: Agent specialized in backend and frontend development
+model: gpt-4o
+temperature: 0.0
+max_tokens: 20000
+verbose: false
+
+capabilities:
+  - development
+  - code_modification
+  - file_operations
+
+tools:
+  - filesystem
+  - task_management
+
+system_prompt: |
+  You are a Developer Agent.
+
+  Your role is to implement features and fix bugs based on task requirements.
+
+  Rules:
+  - Use read_file to read files before modifying them
+  - Use write_file or apply_unified_diff to make changes
+  - Work ONLY within the provided workspace
+  - Finish work when the task is complete

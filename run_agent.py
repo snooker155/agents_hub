@@ -4,14 +4,13 @@ import sys
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("agent", choices=["pm","ba","sd","tl","be","fe","ops","qa"])
-    ap.add_argument("action", nargs="?")
-    ap.add_argument("--desc", help="Изначальное описание для PM intake")
+    ap.add_argument("agent", help="Agent ID from definitions (e.g. pm_agent, swe_agent)")
+    ap.add_argument("action", nargs="?", help="Optional action/instruction")
+    ap.add_argument("--desc", help="Initial description for the task")
     ap.add_argument("--mode", choices=["full","simple"], default="simple")
-    ap.add_argument("--task-id", help="Выполнить только одну задачу по ID (например, TASK-BE-3)")
-    ap.add_argument("--task-title", help="Выполнить задачи по части названия (case-insensitive)")
-    ap.add_argument("--run-checks", action="store_true", help="QA: выполнить 'сухую' проверку синтаксиса тестов")
+    ap.add_argument("--task-id", help="Optional task ID to associate with")
     ap.add_argument("--workspace", help="Path to workspace")
+    ap.add_argument("-v", "--verbose", action="store_true")
 
     args = ap.parse_args()
 
@@ -19,33 +18,44 @@ def main():
         os.environ["WORKSPACE_ROOT"] = args.workspace
 
     from common.utils import ensure_dirs
-    from agents import pm, ba, sd, tl, dev_backend, dev_frontend, dev_ops, qa
-    from common.config import Settings, Paths
-    from common.utils import load_json
+    from agents.factory import create_agent
+    from common.config import settings
 
-    Settings.mode_full = (args.mode=="full")
     ensure_dirs()
 
     ws = args.workspace or os.environ.get("WORKSPACE_ROOT", "./out")
 
-    if args.agent=="pm":
-        pm.intake(args.desc or "", workspace=ws)
-    elif args.agent=="ba":
-        ba.generate_brd(workspace=ws)
-    elif args.agent=="sd":
-        sd.generate_all(workspace=ws)
-    elif args.agent=="tl":
-        tl.split_tasks(workspace=ws)
-    elif args.agent=="be":
-        dev_backend.run_backend(workspace=ws, task_id=args.task_id)
-    elif args.agent=="fe":
-        dev_frontend.run_frontend(workspace=ws, task_id=args.task_id)
-    elif args.agent=="ops":
-        dev_ops.run_ops_agent(workspace=ws, task_id=args.task_id)
-    elif args.agent=="qa":
-        qa.run_qa_agent(workspace=ws, task_id=args.task_id)
+    # Map legacy names to factory agent IDs if needed
+    agent_map = {
+        "pm": "pm_agent",
+        "ba": "ba_agent",
+        "sd": "sd_agent",
+        "tl": "tl_agent",
+        "be": "dev_agent",
+        "fe": "dev_agent",
+        "ops": "devops_agent",
+        "qa": "qa_agent",
+        "decomposer": "orchestrator",
+        "swe": "swe_agent",
+        "swe-fs": "swe_agent"
+    }
+
+    agent_id = agent_map.get(args.agent, args.agent)
+
+    print(f"Creating agent: {agent_id} in workspace: {ws}")
+    agent = create_agent(agent_id, workspace=ws, verbose=args.verbose)
+
+    instruction = args.action or args.desc or f"Process task {args.task_id or ''}"
+
+    print(f"Running agent with instruction: {instruction}")
+    result = agent.run(instruction)
+
+    if result.ok:
+        print("Agent output:")
+        print(result.agent_output)
     else:
-        ap.error("неизвестная комбинация agent/action")
+        print(f"Agent failed: {result.error}")
+        sys.exit(1)
 
 if __name__=="__main__":
     main()

@@ -47,7 +47,7 @@ from .tools.langchain_tools import (
 )
 
 # Direct service imports for fallback behaviors
-from .tasks_service import add_subtask as svc_add_subtask, list_tasks as svc_list_tasks
+from common.tasks_service import add_subtask as svc_add_subtask, list_tasks as svc_list_tasks
 
 load_dotenv()
 

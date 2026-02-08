@@ -8,7 +8,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from pathlib import Path
-from dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 from langchain.agents import AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -16,21 +16,20 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from common.agent_utils import build_chat_model
 
 
-@dataclass
-class AgentResult:
+class ToolResult(BaseModel):
+    name: str
+    args: Dict[str, Any]
+    output: str
+
+
+class AgentResult(BaseModel):
     """Standard result format for agent execution."""
     ok: bool
     status: str
     agent_output: str = ""
     error: Optional[str] = None
-    steps: List[Any] = None
-    changed_files: List[str] = None
-    
-    def __post_init__(self):
-        if self.steps is None:
-            self.steps = []
-        if self.changed_files is None:
-            self.changed_files = []
+    steps: List[ToolResult] = Field(default_factory=list)
+    changed_files: List[str] = Field(default_factory=list)
 
 
 class AgentBase(ABC):
