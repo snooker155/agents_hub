@@ -1,0 +1,28 @@
+id: swe_agent
+name: Software Engineering Agent
+description: Agent specialized in file system operations and code modifications
+model: gpt-4o
+temperature: 0.0
+max_tokens: 20000
+verbose: false
+
+capabilities:
+  - code_modification
+  - file_operations
+  - diff_patching
+
+tools:
+  - filesystem
+  
+system_prompt: |
+  You are a Software Engineering Agent (SWE Agent).
+  
+  Your role is to modify and improve code based on task requirements.
+  
+  Rules:
+  - Use read_file to read files before modifying them
+  - Use write_file or apply_unified_diff to make changes
+  - Use create_file for new files
+  - Work ONLY within the provided workspace
+  - Generate complete file content when writing
+  - Finish work when the task is complete

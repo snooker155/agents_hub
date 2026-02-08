@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path as PathlibPath
+
+# Ensure project root is on sys.path when running this file as a script
+project_root = PathlibPath(__file__).resolve().parents[2]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,13 +18,15 @@ from uuid import UUID
 import threading
 from uuid import uuid4
 
-from orchestrator import tasks_service
+from common import tasks_service
 from orchestrator.agents import registry, run_manager
-from tasks import AgentState, CreatedBy
+from tasks import AgentState, CreatedBy, TaskStatus
 from orchestrator.workspace import create_workspace_folder, list_workspace_folders
 from orchestrator.agent import run_decomposing_agent
 from tasks.storage import MemoryStore
 from tasks.models import SharedMemory
+from agents.factory import get_factory
+from tools.registry import get_all_tools, get_tools_by_category
 
 app = FastAPI(title="Orchestrator Dashboard API")
 
@@ -97,13 +107,35 @@ def task_to_dict(task):
     return data
 
 # Enable CORS for frontend development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Adjust in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS configuration (safe defaults for local dev; override with ALLOW_ORIGINS)
+_env_allowed = os.getenv("ALLOW_ORIGINS", "").strip()
+if _env_allowed == "*":
+    # Allow any origin (use only for local dev / proxies)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_origin_regex=r".*",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    _default_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://0.0.0.0:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    _origins = [o.strip() for o in _env_allowed.split(",") if o.strip()] or _default_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_origin_regex=r"http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 @app.get("/")
 async def root():
@@ -164,6 +196,24 @@ async def get_stats():
 @app.get("/api/tasks")
 async def list_tasks():
     tasks = tasks_service.list_tasks()
+    
+    # Synchronize agent state with task status for all tasks
+    for t in tasks:
+        if t.assigned_agent_run_id:
+            status = run_manager.get_status(str(t.id))
+            if status:
+                run_status = status.get("status")
+                # If agent run is completed, mark task as done
+                if run_status in ("completed", "done", "finished"):
+                    if t.status != TaskStatus.done:
+                        tasks_service.update_task(t.id, status=TaskStatus.done)
+                        t.status = TaskStatus.done
+                # If agent run failed, mark task as blocked
+                elif run_status in ("failed", "error"):
+                    if t.status not in (TaskStatus.blocked, TaskStatus.stopped):
+                        tasks_service.update_task(t.id, status=TaskStatus.blocked, blocked_reason=f"Agent execution {run_status}")
+                        t.status = TaskStatus.blocked
+    
     return [task_to_dict(t) for t in tasks]
 
 @app.post("/api/tasks")
@@ -272,6 +322,20 @@ async def get_task(task_id: UUID):
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    # Synchronize task status with agent state if agent is assigned
+    if t.assigned_agent_run_id:
+        status = run_manager.get_status(str(task_id))
+        if status:
+            run_status = status.get("status")
+            # If agent run is completed, mark task as done
+            if run_status in ("completed", "done", "finished"):
+                if t.status != TaskStatus.done:
+                    t = tasks_service.update_task(task_id, status=TaskStatus.done) or t
+            # If agent run failed, mark task as blocked
+            elif run_status in ("failed", "error"):
+                if t.status not in (TaskStatus.blocked, TaskStatus.stopped):
+                    t = tasks_service.update_task(task_id, status=TaskStatus.blocked, blocked_reason=f"Agent execution {run_status}") or t
+
     # Also fetch subtasks
     all_tasks = tasks_service.list_tasks()
     subtasks = [task_to_dict(st) for st in all_tasks if st.parent_id == task_id]
@@ -289,32 +353,41 @@ async def stop_task(task_id: UUID):
 
 @app.get("/api/agents")
 async def list_agents():
-    agents = registry.list_agents()
-    return [a.to_dict() for a in agents]
+    """List all available agents from registry and factory definitions."""
+    # Get agents from existing registry
+    registry_agents = registry.list_agents()
+    
+    # Get agent definitions from factory
+    factory = get_factory()
+    factory_agents = factory.list_available_agents()
+    
+    # Combine into single array for backward compatibility with frontend
+    # Registry agents come first, then factory agents
+    all_agents = [a.to_dict() for a in registry_agents] + factory_agents
+    
+    return all_agents
 
 @app.get("/api/tools")
 async def list_tools():
-    # Gather factory tools
-    from agents.tools import get_factory_tools
-    factory_tools = get_factory_tools()
-
-    # Gather SWE tools (dummy workspace for listing)
-    from swe_agent.tools.langchain_tools import get_default_tools
-    swe_tools = get_default_tools()
-
-    def tool_to_dict(t):
-        if hasattr(t, "name"):
-            return {
-                "name": t.name,
-                "description": t.description,
-                "args": t.args if hasattr(t, "args") else {}
-            }
-        return {"name": str(t), "description": ""}
-
+    """List all available tools. Returns factory, swe, and all for backward compatibility."""
+    # Get tools from centralized registry
+    all_registry_tools = get_all_tools()
+    
+    # Convert registry tools to dict format expected by frontend
+    def tool_spec_to_dict(spec):
+        return {
+            "name": spec.id,
+            "description": spec.description,
+            "args": {p["name"]: p["type"] for p in spec.parameters}
+        }
+    
+    registry_tools_dicts = [tool_spec_to_dict(t) for t in all_registry_tools]
+    
+    # For backward compatibility, return in the format the frontend expects
     return {
-        "factory": [tool_to_dict(t) for t in factory_tools],
-        "swe": [tool_to_dict(t) for t in swe_tools],
-        "all": [tool_to_dict(t) for t in factory_tools + swe_tools]
+        "factory": registry_tools_dicts,  # All tools from registry
+        "swe": registry_tools_dicts,      # Same tools (for compatibility)
+        "all": registry_tools_dicts,      # Combined list
     }
 
 @app.get("/api/runs")
@@ -553,6 +626,20 @@ async def stop_agent(task_id: UUID):
 @app.get("/api/tasks/{task_id}/agent-status")
 async def get_agent_status(task_id: UUID):
     status = run_manager.get_status(str(task_id))
+    task = tasks_service.get_task(task_id)
+    
+    # Synchronize task status with agent state
+    if task and status:
+        run_status = status.get("status")
+        # If agent run is completed or done, mark task as done
+        if run_status in ("completed", "done", "finished"):
+            if task.status != TaskStatus.done:
+                tasks_service.update_task(task_id, status=TaskStatus.done)
+        # If agent run failed, mark task as blocked
+        elif run_status in ("failed", "error"):
+            if task.status not in (TaskStatus.blocked, TaskStatus.stopped):
+                tasks_service.update_task(task_id, status=TaskStatus.blocked, blocked_reason=f"Agent execution {run_status}")
+    
     return status
 
 @app.get("/api/tasks/{task_id}/progress")
@@ -666,6 +753,8 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
         finally:
             try:
                 tasks_service.set_agent_state(task_id, AgentState.completed)
+                # Also update task status to done when agent completes
+                tasks_service.update_task(task_id, status=TaskStatus.done)
             except Exception:
                 pass
 

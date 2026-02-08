@@ -17,3 +17,5 @@ data/*.db
 node_modules/
 *.log
 shared_memory.json
+.DS_Store
+tasks.json

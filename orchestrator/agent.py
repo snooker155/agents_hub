@@ -23,11 +23,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional, List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.agents import AgentExecutor, create_tool_calling_agent
+from dotenv import load_dotenv
+from uuid import UUID
 
-# Local orchestrator package imports
+from common.agent_utils import build_chat_model
 from .config import get_settings, require_openai_key
 from .tools.langchain_tools import (
     create_task,
@@ -44,9 +45,6 @@ from .tools.langchain_tools import (
     stop_agent_tool,
     get_agent_status_tool,
 )
-
-from dotenv import load_dotenv
-from uuid import UUID
 
 # Direct service imports for fallback behaviors
 from .tasks_service import add_subtask as svc_add_subtask, list_tasks as svc_list_tasks
@@ -114,10 +112,10 @@ def build_agent(
     # Ensure key is present; raises a clear RuntimeError if missing
     api_key = require_openai_key(st)
 
-    llm = ChatOpenAI(
+    llm = build_chat_model(
         model=model or st.model,
-        temperature=0.0 if temperature is None else float(temperature),
-        max_tokens=max_tokens if max_tokens is not None else st.max_tokens,
+        temperature=temperature,
+        max_tokens=max_tokens,
         api_key=api_key,
     )
 

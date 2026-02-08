@@ -38,8 +38,10 @@ from .tasks_service import (
     list_tasks as svc_list_tasks,
     update_task as svc_update_task,
 )
-from tasks import Task, TaskStatus, CreatedBy
+
+from tasks import Task, TaskStatus, CreatedBy, AgentState
 from .config import get_settings, require_openai_key
+from .agents.run_manager import get_status as get_agent_run_status
 
 
 # Lazy import agent pieces to avoid import costs when not needed
@@ -127,12 +129,66 @@ def _process_task(t: Task) -> None:
         log.error(f"Task {t.id} planning failed: {msg}")
 
 
+def _reconcile_agent_states() -> None:
+    """Check running agents and update task status if they finished."""
+    log = logging.getLogger("orchestratord")
+    try:
+        # Get all tasks - simpler than filtering in service for now
+        tasks = svc_list_tasks()
+        running_tasks = [t for t in tasks if t.agent_state == AgentState.running]
+        
+        for t in running_tasks:
+            # Check actual run status
+            status_info = get_agent_run_status(str(t.id))
+            if not status_info:
+                # No run info found?
+                # If it's been running for long without run info, maybe it crashed?
+                # For now, ignore or log warning.
+                continue
+
+            run_status = status_info.get("status")  # running|stop|completed|stopped|failed|error
+            
+            if run_status in ("completed", "done", "finished"):
+                log.info(f"Agent for task {t.id} completed. Updating task status.")
+                svc_update_task(
+                    t.id, 
+                    agent_state=AgentState.completed, 
+                    status=TaskStatus.done
+                )
+            elif run_status in ("failed", "error"):
+                err = status_info.get("error") or "Unknown agent failure"
+                log.warning(f"Agent for task {t.id} failed: {err}")
+                svc_update_task(
+                    t.id, 
+                    agent_state=AgentState.failed, 
+                    status=TaskStatus.blocked,
+                    blocked_reason=f"Agent execution failed: {err}"
+                )
+            elif run_status in ("stopped", "stop"):
+                 log.info(f"Agent for task {t.id} was stopped.")
+                 svc_update_task(
+                    t.id, 
+                    agent_state=AgentState.stopped,
+                    # We don't necessarily change task status to blocked, 
+                    # but if it was running, it usually means it didn't finish work.
+                    # Let's verify if we should block it.
+                    # For now, just mark agent_state.
+                 )
+
+    except Exception as e:
+        log.exception(f"Error in reconciliation loop: {e}")
+
+
 def run_loop(poll_interval: float, stop_event: threading.Event) -> None:
     log = logging.getLogger("orchestratord")
     log.info(f"Runner started. poll_interval={poll_interval}")
 
     while not stop_event.is_set():
         try:
+            # 1. Reconcile states
+            _reconcile_agent_states()
+
+            # 2. Poll new tasks
             tasks = svc_list_tasks()
             # Iterate over a snapshot and pick one-by-one to reduce race windows
             for t in tasks:

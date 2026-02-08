@@ -1,22 +1,18 @@
 from __future__ import annotations
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 import json
 
-from langchain_openai import ChatOpenAI
 from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import Runnable
 
 from .config import get_settings
-
 # Public result models
 from .models import AgentResult, ToolResult
 # Our LangChain tool adapters (filesystem-oriented)
 from .tools.langchain_tools import get_default_tools
-
+from common.agent_utils import build_chat_model, SharedProgressCallback
 
 SYSTEM_PROMPT = (
     "Ты — SWE-агент-исполнитель.\n\n"
@@ -32,93 +28,6 @@ SYSTEM_PROMPT = (
 
 
 # -------------------- Helpers --------------------
-
-class _PrintProgressCallback(BaseCallbackHandler):
-    """Lightweight console logger for agent progress when verbose is enabled.
-
-    Emits step-by-step progress for tools and short LLM status messages.
-    Also writes progress to .progress.json if workspace is provided.
-    """
-
-    def __init__(self, workspace: Optional[Path] = None, model_name: str = "unknown") -> None:
-        self._step = 0
-        self.workspace = workspace
-        self.model_name = model_name
-        self.steps_data: List[Dict[str, Any]] = []
-
-    def _save_progress(self):
-        if not self.workspace:
-            return
-        try:
-            prog_file = self.workspace / ".progress.json"
-            with prog_file.open("w", encoding="utf-8") as f:
-                json.dump({"steps": self.steps_data}, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    # LLM lifecycle
-    def on_llm_start(self, serialized, prompts, **kwargs):  # type: ignore[override]
-        try:
-            print(f"[SWE][{self.model_name}] LLM: start")
-        except Exception:
-            pass
-
-    def on_llm_end(self, response, **kwargs):  # type: ignore[override]
-        try:
-            print(f"[SWE][{self.model_name}] LLM: end")
-        except Exception:
-            pass
-
-    def on_tool_start(self, serialized, input_str, **kwargs):  # type: ignore[override]
-        try:
-            self._step += 1
-            name = None
-            try:
-                name = serialized.get("name") if isinstance(serialized, dict) else None
-            except Exception:
-                name = None
-
-            self.steps_data.append({
-                "step": self._step,
-                "tool": name or "tool",
-                "input": str(input_str),
-                "started_at": datetime.now(timezone.utc).isoformat()
-            })
-            self._save_progress()
-
-            preview = str(input_str)
-            # For file-writing tools, only show the filename/path if possible
-            if name in {"write_file", "create_file", "apply_unified_diff"}:
-                try:
-                    # input_str is often a string representation of a dict for StructuredTool
-                    # or just a JSON string.
-                    import json
-                    if preview.startswith("{"):
-                        data = json.loads(preview.replace("'", "\""))
-                        if "path" in data:
-                            preview = data["path"]
-                except Exception:
-                    pass
-
-            if len(preview) > 200:
-                preview = preview[:200] + "..."
-            print(f"[SWE][{self.model_name}] Step {self._step}: {name or 'tool'} ← {preview}")
-        except Exception:
-            pass
-
-    def on_tool_end(self, output, **kwargs):  # type: ignore[override]
-        try:
-            if self.steps_data:
-                self.steps_data[-1]["output"] = str(output)
-                self.steps_data[-1]["finished_at"] = datetime.now(timezone.utc).isoformat()
-                self._save_progress()
-
-            text = str(output)
-            if len(text) > 300:
-                text = text[:300] + "..."
-            print(f"[SWE][{self.model_name}] Step {self._step}: result → {text}")
-        except Exception:
-            pass
 
 def _collect_steps(intermediate_steps: Any) -> List[ToolResult]:
     steps: List[ToolResult] = []
@@ -193,14 +102,8 @@ def build_agent(
     verbose: bool = False,
 ) -> Runnable:
     """Build a generic agent runnable with default tools (no fixed workspace)."""
-    st = get_settings()
-    llm = ChatOpenAI(
-        model=model or st.model,
-        temperature=0.0 if temperature is None else float(temperature),
-        max_tokens=max_tokens if max_tokens is not None else st.max_tokens,
-        api_key=st.openai_api_key,
-    )
-
+    
+    llm = build_chat_model(model=model, temperature=temperature, max_tokens=max_tokens)
     tools = list(get_default_tools())
 
     prompt = ChatPromptTemplate.from_messages(
@@ -254,28 +157,12 @@ def run_task(
     max_tool_calls: int = 30,
     verbose: bool = False,
 ) -> AgentResult:
-    """Run a ReAct-like agent with filesystem tools in a given workspace.
-
-    Args:
-        instruction: High-level instruction for the worker agent.
-        workspace: Root directory where file operations are allowed.
-        system_prompt: Optional override of the system prompt. If None, uses default.
-        max_tool_calls: Upper bound on tool interactions (AgentExecutor iterations).
-
-    Returns:
-        AgentResult with agent_output, collected tool steps and list of changed files.
-    """
+    """Run a ReAct-like agent with filesystem tools in a given workspace."""
     ws = Path(workspace).resolve()
     ws.mkdir(parents=True, exist_ok=True)
     st = get_settings()
 
-    llm = ChatOpenAI(
-        model=st.model,
-        temperature=0.0,
-        max_tokens=st.max_tokens,
-        api_key=st.openai_api_key,
-    )
-
+    llm = build_chat_model()
     tools = get_default_tools(workspace=str(ws))
 
     prompt = ChatPromptTemplate.from_messages(
@@ -302,7 +189,7 @@ def run_task(
     )
 
     try:
-        callbacks = [_PrintProgressCallback(workspace=ws, model_name=st.model)]
+        callbacks = [SharedProgressCallback(workspace=ws, model_name=st.model)]
         cfg: Dict[str, Any] = {"input": instruction}
         result = executor.invoke(cfg, config={"callbacks": callbacks} if callbacks else None)
         output = result.get("output", "") if isinstance(result, dict) else str(result)

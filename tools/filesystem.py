@@ -14,11 +14,11 @@ from pathlib import Path
 from typing import Iterable, List, Dict, Any, Optional
 
 # Centralized settings for sandbox and limits
-from ..config import get_config, workspace_root as _cfg_workspace_root
+from swe_agent.config import get_config, workspace_root as _cfg_workspace_root
 
 
 def _workspace_root(workspace: Optional[Path] = None) -> Path:
-    # Use explicit workspace if provided, otherwise config-provided or CWD
+    """Get the workspace root path."""
     if workspace:
         return workspace.resolve()
     return _cfg_workspace_root()
@@ -26,11 +26,8 @@ def _workspace_root(workspace: Optional[Path] = None) -> Path:
 
 def _resolve_within_workspace(path: str, workspace: Optional[Path] = None) -> Path:
     """Resolve a user-provided path to an absolute path inside workspace.
-
-    - Normalizes path (resolves '..', symlinks, etc.).
-    - Treats relative paths as relative to workspace root from config.
-    - Absolute paths are allowed only if they are within the workspace root.
-    - Raises ValueError if the resolved path escapes the workspace.
+    
+    Raises ValueError if the resolved path escapes the workspace.
     """
     root = _workspace_root(workspace)
     p = Path(path)
@@ -42,7 +39,7 @@ def _resolve_within_workspace(path: str, workspace: Optional[Path] = None) -> Pa
     return abs_path
 
 
-esscape_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+escape_re = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _rel(path: Path, workspace: Optional[Path] = None) -> str:
@@ -51,7 +48,6 @@ def _rel(path: Path, workspace: Optional[Path] = None) -> str:
     try:
         return str(path.relative_to(root).as_posix())
     except Exception:
-        # Fallback: should not happen if we only pass resolved paths inside workspace
         return path.as_posix()
 
 
@@ -67,10 +63,7 @@ def _is_binary(sample: bytes) -> bool:
 
 
 def read_file(path: str, workspace: Optional[Path] = None, config: Optional[Any] = None) -> str:
-    """Read UTF-8 text file from the workspace respecting config limits.
-
-    Raises if file size exceeds max_read_bytes or looks binary.
-    """
+    """Read UTF-8 text file from the workspace respecting config limits."""
     cfg = config or get_config()
     abs_path = _resolve_within_workspace(path, workspace=workspace)
     if not abs_path.is_file():
@@ -83,7 +76,6 @@ def read_file(path: str, workspace: Optional[Path] = None, config: Optional[Any]
     if size is not None and size > int(cfg.max_read_bytes):
         raise ValueError(f"File too large to read (>{cfg.max_read_bytes} bytes): {_rel(abs_path, workspace=workspace)}")
 
-    # Read once, then check for binary content
     content_bytes = abs_path.read_bytes()
     if _is_binary(content_bytes[: int(cfg.binary_threshold)]):
         raise ValueError(f"Binary or non-UTF8 file: {_rel(abs_path, workspace=workspace)}")
@@ -93,18 +85,17 @@ def read_file(path: str, workspace: Optional[Path] = None, config: Optional[Any]
 
 def write_file(path: str, content: str, create_dirs: bool = True, workspace: Optional[Path] = None) -> str:
     """Write UTF-8 text to a file in the workspace.
-
+    
     Returns workspace-relative path to the written file.
     """
     abs_path = _resolve_within_workspace(path, workspace=workspace)
     if create_dirs:
         abs_path.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic-like write: write to temp file then replace
+    
     tmp_path: Optional[Path] = None
     try:
         tmp_dir = abs_path.parent
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        # Use os to avoid race on NamedTemporaryFile on Windows
         import tempfile, os as _os
         fd, tmp_name = tempfile.mkstemp(prefix=".tmp_write_", dir=str(tmp_dir))
         _os.close(fd)
@@ -121,12 +112,7 @@ def write_file(path: str, content: str, create_dirs: bool = True, workspace: Opt
 
 
 def _is_ignored(rel_posix: str, ignore: Iterable[str]) -> bool:
-    """Check whether a relative posix path should be ignored.
-
-    Matches if any of the patterns in ignore match any path segment or the
-    whole path via fnmatch. Default ignores like '.git' and '.venv' are handled
-    by segment check as well.
-    """
+    """Check whether a relative posix path should be ignored."""
     parts = rel_posix.split("/")
     ig_set = set(ignore)
     if any(p in ig_set for p in parts):
@@ -134,24 +120,19 @@ def _is_ignored(rel_posix: str, ignore: Iterable[str]) -> bool:
     for pat in ignore:
         if fnmatch.fnmatch(rel_posix, pat):
             return True
-        # If pattern looks like a directory name, also match subtree
         if rel_posix.startswith(pat.rstrip("/") + "/"):
             return True
     return False
 
 
 def list_files(glob: str = "**/*", ignore: Iterable[str] | None = None, workspace: Optional[Path] = None, config: Optional[Any] = None) -> List[str]:
-    """List files in the workspace matching a glob, excluding ignored paths.
-
-    If ignore is None, uses ignore_globs from swe_agent.config.
-    """
+    """List files in the workspace matching a glob, excluding ignored paths."""
     cfg = config or get_config()
     if ignore is None:
         ignore = cfg.ignore_globs
 
     root = _workspace_root(workspace)
 
-    # Normalize glob: treat absolute glob as workspace-relative equivalent
     try:
         gpath = Path(glob)
         if gpath.is_absolute():
@@ -179,16 +160,12 @@ def list_files(glob: str = "**/*", ignore: Iterable[str] | None = None, workspac
 
 
 def search_text(pattern: str, file_glob: str, workspace: Optional[Path] = None, config: Optional[Any] = None) -> List[Dict[str, Any]]:
-    """Search for a regex pattern across files matched by file_glob.
-
-    Respects max_read_bytes and binary detection; such files are skipped.
-    """
+    """Search for a regex pattern across files matched by file_glob."""
     cfg = config or get_config()
     regex = re.compile(pattern)
     results: List[Dict[str, Any]] = []
     for rel in list_files(file_glob, workspace=workspace, config=cfg):
         abs_path = _resolve_within_workspace(rel, workspace=workspace)
-        # Skip large or binary files
         try:
             st = abs_path.stat()
             if st.st_size > int(cfg.max_read_bytes):
@@ -213,3 +190,11 @@ def search_text(pattern: str, file_glob: str, workspace: Optional[Path] = None, 
         except UnicodeDecodeError:
             continue
     return results
+
+
+__all__ = [
+    "read_file",
+    "write_file",
+    "list_files",
+    "search_text",
+]
