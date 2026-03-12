@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Users,
   Copy,
@@ -11,22 +11,27 @@ import {
   Server,
   Trash2,
   RefreshCw,
-  FileCode
+  FileCode,
+  Activity,
 } from 'lucide-react';
 import {
   getAgents,
   getTasks,
+  getNodes,
   cloneAgent,
   assignAgent,
   connectAgent,
   createCustomAgent,
   disconnectAgent,
-  getAgentHealth
+  getAgentHealth,
+  startNode,
 } from '../api';
 
 const AgentManager = () => {
+  const navigate = useNavigate();
   const [agents, setAgents] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [nodes, setNodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCloneModal, setShowCloneModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -37,13 +42,15 @@ const AgentManager = () => {
   const [connectData, setConnectData] = useState({ id: '', name: '', description: '', domain: 'general', agent_url: '', capacity: 1 });
   const [customData, setCustomData] = useState({ id: '', name: '', description: '', domain: 'general', system_prompt: '', tools: ['read_file', 'write_file'], capacity: 1 });
   const [healthData, setHealthData] = useState({});
+  const [startingNode, setStartingNode] = useState(null);
 
   const fetchData = async () => {
     try {
-      const [agentsResp, tasksResp] = await Promise.all([getAgents(), getTasks()]);
+      const [agentsResp, tasksResp, nodesResp] = await Promise.all([getAgents(), getTasks(), getNodes()]);
       // Show all agents including orchestrator and decomposer
       setAgents(agentsResp.data);
       setTasks(tasksResp.data);
+      setNodes(nodesResp.data);
       setLoading(false);
 
       // Fetch health for remote agents
@@ -52,7 +59,7 @@ const AgentManager = () => {
               try {
                   const h = await getAgentHealth(a.id);
                   setHealthData(prev => ({ ...prev, [a.id]: h.data }));
-              } catch (e) {
+              } catch {
                 setHealthData(prev => ({ ...prev, [a.id]: { status: 'error' } }));
               }
           }
@@ -124,7 +131,8 @@ const AgentManager = () => {
   };
 
   const getAgentMetrics = (agent) => {
-    const activeTasks = tasks.filter(t => t.assigned_agent_type === agent.id && t.agent_state === 'running');
+    const assignedTasks = tasks.filter(t => t.assigned_agent_type === agent.id);
+    const activeTasks = assignedTasks.filter(t => t.agent_state === 'running');
     const used = activeTasks.length;
     const capacity = agent.capacity || 1;
     const loadFactor = (used / capacity) * 100;
@@ -134,8 +142,25 @@ const AgentManager = () => {
         capacity,
         loadFactor,
         isFull: used >= capacity,
-        activeTask: activeTasks[0]
+        activeTask: activeTasks[0],
+        runningTasks: activeTasks.length,
+        assignedTasks: assignedTasks.length,
     };
+  };
+
+  const getRunningNodeCount = (agentId) =>
+    nodes.filter(n => n.agent_id === agentId && (n.status === 'running' || n.status === 'starting')).length;
+
+  const handleStartNode = async (agentId) => {
+    setStartingNode(agentId);
+    try {
+      await startNode({ agent_id: agentId });
+      navigate('/nodes');
+    } catch (err) {
+      alert('Failed to start node: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setStartingNode(null);
+    }
   };
 
   return (
@@ -180,122 +205,117 @@ const AgentManager = () => {
            <p className="text-gray-500 font-medium">Scanning cluster for agent nodes...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
           {agents.map((agent) => {
             const metrics = getAgentMetrics(agent);
             const health = healthData[agent.id];
             const isHealthy = !agent.is_remote || (health && health.status === 'up');
+            const nodeCount = getRunningNodeCount(agent.id);
 
             return (
-              <div key={agent.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group">
-                <div className="p-6">
-                  <div className="flex justify-between items-start mb-6">
-                    <div className="flex items-start space-x-4">
-                      <div className={`p-3 rounded-lg ${isHealthy ? 'bg-indigo-50 text-indigo-600' : 'bg-red-50 text-red-600'}`}>
-                        <Shield className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">
-                          <Link to={`/agents/${agent.id}`}>{agent.name}</Link>
-                        </h3>
-                        <div className="flex items-center mt-1 space-x-3 text-xs">
-                          <span className="font-mono text-gray-400">node/{agent.id}</span>
-                          <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded uppercase font-bold tracking-tighter">
-                            {agent.domain}
-                          </span>
-                        </div>
-                      </div>
+              <div key={agent.id} className="bg-white rounded-lg border border-gray-100 p-4 shadow-sm hover:shadow-md transition-shadow">
+                <div className="flex items-start justify-between gap-2 mb-3">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <div className={`p-1.5 rounded ${isHealthy ? 'bg-indigo-50 text-indigo-600' : 'bg-red-50 text-red-600'}`}>
+                      <Shield className="w-4 h-4" />
                     </div>
-                    <div className="flex flex-col items-end space-y-2">
-                      <div className={`text-[10px] font-bold uppercase px-2 py-1 rounded flex items-center ${
-                        metrics.isFull ? 'bg-orange-100 text-orange-800' : 'bg-green-100 text-green-800'
-                      }`}>
-                        <div className={`w-1.5 h-1.5 rounded-full mr-2 ${metrics.isFull ? 'bg-orange-500' : 'bg-green-500'} animate-pulse`}></div>
-                        {metrics.isFull ? 'At Capacity' : 'Available'}
-                      </div>
-                      {agent.is_remote && (
-                        <div className={`text-[10px] font-bold uppercase ${isHealthy ? 'text-green-600' : 'text-red-600'}`}>
-                          {isHealthy ? '● Online' : '○ Offline'}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <p className="text-sm text-gray-500 mb-6 line-clamp-2 min-h-[40px]">
-                    {agent.description || "No description provided for this agent node."}
-                  </p>
-
-                  <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div className="bg-gray-50 p-3 rounded-lg">
-                      <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Utilization</div>
-                      <div className="flex items-end justify-between">
-                        <span className="text-xl font-bold text-gray-700">{metrics.used}<span className="text-sm text-gray-400 font-normal">/{metrics.capacity}</span></span>
-                        <span className="text-xs text-gray-500">{Math.round(metrics.loadFactor)}%</span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-                        <div
-                          className={`h-1.5 rounded-full transition-all duration-1000 ${metrics.loadFactor > 80 ? 'bg-orange-500' : 'bg-indigo-500'}`}
-                          style={{ width: `${metrics.loadFactor}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                    <div className="bg-gray-50 p-3 rounded-lg">
-                      <div className="text-[10px] text-gray-400 uppercase font-bold mb-1">Capabilities</div>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {agent.capabilities.slice(0, 3).map(cap => (
-                          <span key={cap} className="text-[9px] bg-white border border-gray-200 px-1.5 py-0.5 rounded text-gray-600">
-                            {cap}
-                          </span>
-                        ))}
-                        {agent.capabilities.length > 3 && (
-                          <span className="text-[9px] text-gray-400">+{agent.capabilities.length - 3} more</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {metrics.activeTask && (
-                    <div className="mb-6 p-3 bg-indigo-50 rounded-lg border border-indigo-100 flex justify-between items-center">
-                      <div>
-                        <div className="text-[10px] text-indigo-400 font-bold uppercase">Active Processing</div>
-                        <div className="text-sm font-semibold text-indigo-900 truncate max-w-[200px]">{metrics.activeTask.title}</div>
-                      </div>
-                      <Link to={`/tasks/${metrics.activeTask.id}`} className="p-2 hover:bg-indigo-100 rounded-full transition-colors text-indigo-600">
-                        <ExternalLink className="w-4 h-4" />
+                    <div className="min-w-0">
+                      <Link to={`/agents/${agent.id}`} className="text-sm font-semibold text-gray-900 hover:text-indigo-600 truncate block">
+                        {agent.name}
                       </Link>
+                      <div className="text-[11px] text-gray-400 font-mono truncate">{agent.id}</div>
+                      <div className="text-[11px] text-gray-500 truncate mt-1">
+                        {agent.description || 'No description provided'}
+                      </div>
                     </div>
-                  )}
-
-                  <div className="flex space-x-3">
-                    {!metrics.isFull && (
-                      <button
-                        onClick={() => {
-                          setAssignData({ ...assignData, agent_id: agent.id });
-                          setShowAssignModal(true);
-                        }}
-                        className="flex-1 flex items-center justify-center px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
-                      >
-                        <Play className="w-4 h-4 mr-2" /> Assign Task
-                      </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        setCloneData({ ...cloneData, original_id: agent.id, new_id: `${agent.id}-clone`, new_name: `${agent.name} (Clone)` });
-                        setShowCloneModal(true);
-                      }}
-                      className="p-2 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50 hover:text-indigo-600 transition-all"
-                      title="Clone Node"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDisconnect(agent.id)}
-                      className="p-2 border border-gray-200 text-gray-500 rounded-lg hover:bg-red-50 hover:text-red-600 transition-all"
-                      title="Disconnect Node"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded uppercase font-semibold">
+                      {agent.domain}
+                    </span>
+                    {agent.is_remote ? (
+                      <span className={`text-[11px] font-semibold ${isHealthy ? 'text-green-700' : 'text-red-700'}`}>
+                        {isHealthy ? 'Online' : 'Offline'}
+                      </span>
+                    ) : (
+                      <Link to="/nodes" className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${
+                        nodeCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        <Activity className={`w-3 h-3 ${nodeCount > 0 ? 'animate-pulse' : ''}`} />
+                        {nodeCount > 0 ? `${nodeCount} running` : 'No nodes'}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-green-50 border border-green-100 rounded-md px-2 py-1.5">
+                      <div className="text-[9px] uppercase tracking-wide text-green-600 font-semibold">Capacity</div>
+                      <div className="text-xs font-semibold text-green-900">{nodeCount}</div>
+                    </div>
+                    <div className="bg-blue-50 border border-blue-100 rounded-md px-2 py-1.5">
+                      <div className="text-[9px] uppercase tracking-wide text-blue-500 font-semibold">Load</div>
+                      <div className="text-xs font-semibold text-blue-900">{metrics.used}/{metrics.capacity}</div>
+                    </div>
+                    <div className="bg-amber-50 border border-amber-100 rounded-md px-2 py-1.5">
+                      <div className="text-[9px] uppercase tracking-wide text-amber-500 font-semibold">Tasks</div>
+                      <div className="text-xs font-semibold text-amber-900">{metrics.runningTasks}/{metrics.assignedTasks}</div>
+                    </div>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+                    <div
+                      className={`h-1.5 rounded-full ${metrics.loadFactor > 80 ? 'bg-orange-500' : 'bg-indigo-500'}`}
+                      style={{ width: `${Math.min(100, Math.max(0, metrics.loadFactor))}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
+                    <span>Load {Math.round(metrics.loadFactor)}%</span>
+                    <span>Tasks running/assigned</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-1 mb-3 min-h-[22px]">
+                  {(agent.capabilities || []).slice(0, 3).map((cap) => (
+                    <span key={cap} className="text-[10px] bg-white border border-gray-200 px-1.5 py-0.5 rounded text-gray-600">
+                      {cap}
+                    </span>
+                  ))}
+                  {(agent.capabilities || []).length > 3 && (
+                    <span className="text-[10px] text-gray-400">+{agent.capabilities.length - 3}</span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {!agent.is_remote && (
+                    <button
+                      onClick={() => handleStartNode(agent.id)}
+                      disabled={startingNode === agent.id}
+                      className="flex-1 inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {startingNode === agent.id
+                        ? <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin" />
+                        : <Play className="w-3.5 h-3.5 mr-1" />}
+                      Start
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setCloneData({ ...cloneData, original_id: agent.id, new_id: `${agent.id}-clone`, new_name: `${agent.name} (Clone)` });
+                      setShowCloneModal(true);
+                    }}
+                    className="p-1.5 border border-gray-200 text-gray-500 rounded hover:bg-gray-50 hover:text-indigo-600 transition-colors"
+                    title="Clone Node"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDisconnect(agent.id)}
+                    className="p-1.5 border border-gray-200 text-gray-500 rounded hover:bg-red-50 hover:text-red-600 transition-colors"
+                    title="Disconnect Node"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             );

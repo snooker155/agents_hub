@@ -28,7 +28,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, validator, model_validator
 from langchain_core.tools import tool
 
-# Local imports from the orchestrator package
+# Local imports from the project
 from common.tasks_service import (
     add_subtask as svc_add_subtask,
     block_task as svc_block_task,
@@ -42,12 +42,12 @@ from common.tasks_service import (
     set_agent_state as svc_set_agent_state,
 )
 from tasks import Task, TaskStatus, CreatedBy, AgentState
-from ..workspace import create_workspace_folder as ws_create_workspace_folder
-from ..agents.registry import (
+from common.workspace import create_workspace_folder as ws_create_workspace_folder
+from agents.registry import (
     list_agents as reg_list_agents,
     get_agent as reg_get_agent,
 )
-from ..agents.run_manager import (
+from agents.run_manager import (
     start_run as rm_start_run,
     stop_run as rm_stop_run,
     get_status as rm_get_status,

@@ -12,8 +12,17 @@ from typing import Any, Dict, List, Optional
 from agents.agent_base import AgentBase, AgentResult
 from common.agent_utils import build_chat_model, SharedProgressCallback
 from tools.filesystem_langchain import create_filesystem_tools
-from tools.task_management import create_task, add_subtask, get_task, list_tasks
-from common.tasks_service import update_task, stop_task, block_task, create_sequence
+from tools.calculator import calculator
+from tools.task_management import (
+    create_task,
+    add_subtask,
+    get_task,
+    list_tasks,
+    update_task,
+    stop_task,
+    block_task,
+    create_sequence,
+)
 
 
 class StandardAgent(AgentBase):
@@ -30,6 +39,7 @@ class StandardAgent(AgentBase):
         max_tokens: Optional[int] = None,
         verbose: bool = False,
         workspace: Optional[str] = None,
+        streaming: bool = False,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -40,6 +50,7 @@ class StandardAgent(AgentBase):
             temperature=temperature,
             max_tokens=max_tokens,
             verbose=verbose,
+            streaming=streaming,
         )
         self.workspace = workspace
     
@@ -53,6 +64,11 @@ class StandardAgent(AgentBase):
                     workspace=Path(workspace),
                     model_name=self.model or "gpt-4o"
                 ))
+            extra_callbacks = kwargs.get("callbacks") or []
+            if isinstance(extra_callbacks, list):
+                callbacks.extend(extra_callbacks)
+            elif extra_callbacks:
+                callbacks.append(extra_callbacks)
             
             config = {"callbacks": callbacks} if callbacks else None
             result = self.executor.invoke({"input": instruction}, config=config)
@@ -90,8 +106,9 @@ class AgentFactory:
     
     def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None) -> List[Any]:
         """Create tool instances based on tool list."""
-        tools = []
-        
+        # Calculator is always available to every agent
+        tools: List[Any] = [calculator]
+
         if "filesystem" in tool_list:
             tools.extend(create_filesystem_tools(workspace=workspace))
         
@@ -102,7 +119,7 @@ class AgentFactory:
             tools.extend([update_task, stop_task, block_task, create_sequence])
         
         if "agent_coordination" in tool_list:
-            from orchestrator.tools.langchain_tools import (
+            from tools.langchain_tools import (
                 list_agents_tool,
                 assign_and_start_agent_tool,
                 stop_agent_tool,
@@ -147,6 +164,7 @@ class AgentFactory:
             max_tokens=config.get("max_tokens"),
             verbose=config.get("verbose", False),
             workspace=workspace,
+            streaming=bool(config.get("streaming", False)),
         )
         
         return agent

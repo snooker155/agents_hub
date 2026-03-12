@@ -3,7 +3,7 @@ name: Orchestrator Agent
 description: Special agent for managing task status and coordinating agent execution.
 model: gpt-4o
 temperature: 0.0
-max_tokens: 20000
+max_tokens: 15000
 verbose: false
 
 capabilities:

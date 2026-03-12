@@ -1,5 +1,5 @@
 """
-Workspace management utilities for orchestrator.
+Workspace management utilities shared across the project.
 
 Handles creation and management of per-task workspaces within the workspaces directory.
 This module keeps backward-compatible helpers named with 'project' but exposes
@@ -8,12 +8,12 @@ preferred 'workspace' helpers.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 import uuid
 import json
 
-# Default workspaces root relative to test-swe-agent root
-WORKSPACES_ROOT = Path(__file__).parent.parent / "workspaces"
+# Default workspaces root relative to project root
+WORKSPACES_ROOT = Path(__file__).resolve().parents[1] / "workspaces"
 
 
 def ensure_workspaces_dir() -> Path:
@@ -46,12 +46,13 @@ def create_project_folder(project_name: Optional[str] = None) -> Path:
     if not meta_path.exists():
         default_meta = {
             "name": project_name,
-            "created_at": str(uuid.uuid4()), # Placeholder for actual time if needed
-            "allowed_agents": ["swe_agent", "orchestrator"]
+            "created_at": str(uuid.uuid4()),  # Placeholder for actual time if needed
+            "allowed_agents": ["swe_agent", "orchestrator"],
         }
         meta_path.write_text(json.dumps(default_meta, indent=2))
 
     return project_path.resolve()
+
 
 def get_workspace_metadata(name: str) -> Dict[str, Any]:
     """Get metadata for a workspace."""
@@ -62,6 +63,7 @@ def get_workspace_metadata(name: str) -> Dict[str, Any]:
     if meta_path.exists():
         return json.loads(meta_path.read_text())
     return {}
+
 
 def update_workspace_metadata(name: str, updates: Dict[str, Any]) -> Dict[str, Any]:
     """Update metadata for a workspace."""

@@ -1,8 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, CheckCircle, Clock, AlertCircle, StopCircle, ChevronRight } from 'lucide-react';
-import { getTasks, createTask, getWorkspaces } from '../api';
+import { Plus, CheckCircle, Clock, AlertCircle, StopCircle, Loader, ExternalLink, Trash2 } from 'lucide-react';
+import { getTasks, createTask, getWorkspaces, deleteTask } from '../api';
 import { useWorkspace } from '../components/WorkspaceContext';
+
+const STATUS_STYLES = {
+  in_progress: { bg: 'bg-blue-100', text: 'text-blue-700', icon: Loader },
+  done: { bg: 'bg-green-100', text: 'text-green-700', icon: CheckCircle },
+  blocked: { bg: 'bg-red-100', text: 'text-red-700', icon: AlertCircle },
+  stopped: { bg: 'bg-gray-100', text: 'text-gray-600', icon: StopCircle },
+  todo: { bg: 'bg-gray-100', text: 'text-gray-500', icon: Clock },
+};
+
+function StatusBadge({ status }) {
+  const s = STATUS_STYLES[status] || { bg: 'bg-gray-100', text: 'text-gray-500', icon: AlertCircle };
+  const Icon = s.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
+      <Icon className={`w-3 h-3 ${status === 'in_progress' ? 'animate-spin' : ''}`} />
+      {String(status || 'unknown').replace('_', ' ')}
+    </span>
+  );
+}
 
 const TaskManager = () => {
   const { selectedWorkspace } = useWorkspace();
@@ -17,6 +36,7 @@ const TaskManager = () => {
     should_decompose: false
   });
   const [loading, setLoading] = useState(true);
+  const [deletingById, setDeletingById] = useState({});
 
   const fetchTasks = async () => {
     try {
@@ -67,13 +87,18 @@ const TaskManager = () => {
     }
   };
 
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'done': return <CheckCircle className="w-5 h-5 text-green-500" />;
-      case 'in_progress': return <Clock className="w-5 h-5 text-blue-500" />;
-      case 'blocked': return <AlertCircle className="w-5 h-5 text-red-500" />;
-      case 'stopped': return <StopCircle className="w-5 h-5 text-gray-500" />;
-      default: return <Clock className="w-5 h-5 text-gray-400" />;
+  const handleDeleteTask = async (taskId, title) => {
+    const confirmed = window.confirm(`Delete task "${title}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setDeletingById((prev) => ({ ...prev, [taskId]: true }));
+    try {
+      await deleteTask(taskId, { cascade: true });
+      fetchTasks();
+    } catch (error) {
+      alert('Error deleting task: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setDeletingById((prev) => ({ ...prev, [taskId]: false }));
     }
   };
 
@@ -121,10 +146,7 @@ const TaskManager = () => {
                     onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/tasks/${task.id}`); }}
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        {getStatusIcon(task.status)}
-                        <span className="ml-2 capitalize text-sm text-gray-900">{task.status.replace('_', ' ')}</span>
-                      </div>
+                      <StatusBadge status={task.status} />
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-sm font-medium text-gray-900">{task.title}</div>
@@ -146,9 +168,34 @@ const TaskManager = () => {
                       {new Date(task.created_at).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <Link to={`/tasks/${task.id}`} className="text-indigo-600 hover:text-indigo-900 flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
-                        Details <ChevronRight className="w-4 h-4 ml-1" />
-                      </Link>
+                      <div className="flex items-center justify-end gap-2">
+                        <Link
+                          to={`/tasks/${task.id}`}
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Open task details"
+                          aria-label="Open task details"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </Link>
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-md text-red-600 hover:text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteTask(task.id, task.title);
+                          }}
+                          disabled={!!deletingById[task.id]}
+                          title="Delete task"
+                          aria-label="Delete task"
+                        >
+                          {deletingById[task.id] ? (
+                            <Loader className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

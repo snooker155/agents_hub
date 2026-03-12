@@ -149,6 +149,24 @@ TOOL_CATALOG: List[ToolSpec] = [
         requires_workspace=False,
     ),
 
+    # Calculator tool (always available to all agents)
+    ToolSpec(
+        id="calculator",
+        name="Calculator",
+        category="calculator",
+        description=(
+            "Evaluate mathematical expressions. Supports +, -, *, /, **, %, //, "
+            "parentheses, and functions: sqrt, abs, floor, ceil, round, log, log10, "
+            "log2, exp, sin, cos, tan, asin, acos, atan, degrees, radians, factorial, gcd. "
+            "Constants: pi, e, tau."
+        ),
+        parameters=[
+            {"name": "expression", "type": "string", "required": True,
+             "description": "e.g. 'sqrt(144)', '(3**2 + 4**2)**0.5', 'log(100, 10)'"},
+        ],
+        requires_workspace=False,
+    ),
+
     # Agent coordination tools
     ToolSpec(
         id="list_agents_tool",

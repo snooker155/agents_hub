@@ -4,7 +4,6 @@ import { useWorkspace } from './WorkspaceContext';
 import { getWorkspaces } from '../api';
 import {
   LayoutDashboard,
-  Users,
   CheckSquare,
   Folder,
   Database,
@@ -12,7 +11,11 @@ import {
   Zap,
   FileCode,
   Wrench,
-  Shield
+  Users,
+  PlayCircle,
+  MessageCircle,
+  Server,
+  Settings,
 } from 'lucide-react';
 
 const Layout = ({ children }) => {
@@ -37,15 +40,18 @@ const Layout = ({ children }) => {
   }, [selectedWorkspace, setSelectedWorkspace]);
 
   const menuItems = [
+    { name: 'Chat', path: '/', icon: MessageCircle },
     { name: 'Workspaces', path: '/workspaces', icon: Folder },
-    { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { name: 'Orchestrator', path: '/orchestrator', icon: Zap },
+    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     { name: 'Tasks', path: '/tasks', icon: CheckSquare },
-    { name: 'Agent Nodes', path: '/agents', icon: Shield },
+    { name: 'Sessions', path: '/sessions', icon: PlayCircle },
+    { name: 'Agents', path: '/agents', icon: Users },
+    { name: 'Nodes', path: '/nodes', icon: Server },
     { name: 'Apply YAML', path: '/manifest', icon: FileCode },
     { name: 'Toolbox', path: '/tools', icon: Wrench },
     { name: 'Shared Memory', path: '/memory', icon: Database },
     { name: 'Agent Factory', path: '/factory', icon: Factory },
+    { name: 'Settings', path: '/settings', icon: Settings },
   ];
 
   const handleWorkspaceChange = (e) => {
@@ -59,18 +65,19 @@ const Layout = ({ children }) => {
   };
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-gray-100 overflow-hidden">
       {/* Sidebar */}
-      <div className="w-64 bg-white shadow-md">
+      <div className="w-64 bg-white shadow-md h-screen overflow-y-auto">
         <div className="p-6">
           <h1 className="text-2xl font-bold text-indigo-600">Orchestrator</h1>
         </div>
         <nav className="mt-6">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = item.path === '/'
-              ? location.pathname === '/'
-              : location.pathname.startsWith(item.path);
+            const isActive =
+              item.path === '/' || item.path === '/dashboard'
+                ? location.pathname === item.path
+                : location.pathname.startsWith(item.path);
             return (
               <Link
                 key={item.name}
@@ -88,9 +95,9 @@ const Layout = ({ children }) => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-auto flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Top Navbar */}
-        <header className="bg-white shadow-sm h-16 flex items-center justify-between px-8 z-10">
+        <header className="bg-white shadow-sm h-16 shrink-0 flex items-center justify-between px-8 z-10">
           <div className="flex items-center space-x-4">
             <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">Workspace:</span>
             <select
@@ -109,7 +116,7 @@ const Layout = ({ children }) => {
             </div>
           </div>
         </header>
-        <main className="p-8 flex-1">{children}</main>
+        <main className="p-8 flex-1 min-h-0 overflow-y-auto">{children}</main>
       </div>
     </div>
   );

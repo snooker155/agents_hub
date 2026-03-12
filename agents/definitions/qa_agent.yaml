@@ -3,7 +3,7 @@ name: Quality Assurance Agent
 description: Agent specialized in generating automated tests
 model: gpt-4o
 temperature: 0.1
-max_tokens: 20000
+max_tokens: 15000
 verbose: false
 
 capabilities:

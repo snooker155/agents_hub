@@ -3,7 +3,7 @@ name: Developer Agent
 description: Agent specialized in backend and frontend development
 model: gpt-4o
 temperature: 0.0
-max_tokens: 20000
+max_tokens: 15000
 verbose: false
 
 capabilities:

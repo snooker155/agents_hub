@@ -1,7 +1,7 @@
 """
 AgentRunManager: starts, tracks and stops agent runs as subprocesses.
 
-State is stored in orchestrator/state/agent_runs.json with entries:
+State is stored in agents/state/agent_runs.json with entries:
 - run_id (str, uuid4)
 - task_id (str)
 - agent_id (str)
@@ -52,7 +52,8 @@ from .remote_runner import start_remote_run, get_remote_status, stop_remote_run
 
 # -------------------- Paths & constants --------------------
 HERE = Path(__file__).resolve().parent
-STATE_DIR = HERE.parent / "state"
+PROJECT_ROOT = HERE.parent
+STATE_DIR = PROJECT_ROOT / "agents" / "state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 RUNS_FILE = STATE_DIR / "agent_runs.json"
 RUNS_LOCK = STATE_DIR / "agent_runs.json.lock"
@@ -138,8 +139,7 @@ def start_run(task_id: str, agent_id: str, params: Optional[Dict[str, Any]] = No
     Checks for agent capacity before starting.
     Supports local subprocess runs and remote HTTP-based runs.
     """
-    from ..tasks_service import get_task as svc_get_task
-    from .swe_runner import build_run_spec
+    from common.tasks_service import get_task as svc_get_task
     from .factory_runner import build_factory_run_spec
 
     spec = get_agent(agent_id)
@@ -235,7 +235,7 @@ def start_run(task_id: str, agent_id: str, params: Optional[Dict[str, Any]] = No
         worker_args = [
             sys.executable,
             "-m",
-            "orchestrator.agents.run_manager",
+            "agents.run_manager",
             "worker",
             "--run-id",
             run_id,
@@ -251,11 +251,14 @@ def start_run(task_id: str, agent_id: str, params: Optional[Dict[str, Any]] = No
         # But some env might be needed. For now, let's assume inheritance is enough for background.
         # Actually, let's pass a few critical ones if needed, or just rely on inheritance.
 
+        # Pass the prepared environment to the worker so critical vars (OPENAI_API_KEY etc.)
+        # are explicitly available instead of relying on inheritance alone.
         proc = subprocess.Popen(
             worker_args,
             start_new_session=start_new_session,
             creationflags=creationflags,
             cwd=os.getcwd(), # run worker from project root
+            env=run_spec.env,
         )
 
         run_rec: Dict[str, Any] = {
@@ -406,6 +409,12 @@ def _worker_main():
             log_fh.write(f"--- Worker started at {_utc_now_iso()} ---\n")
             log_fh.write(f"Command: {cmd}\n")
             log_fh.write(f"CWD: {cwd}\n\n")
+                # Do not log the API key itself, only whether it's present
+            try:
+                has_key = bool(os.environ.get("OPENAI_API_KEY"))
+                log_fh.write(f"OPENAI_API_KEY present: {has_key}\n\n")
+            except Exception:
+                pass
             log_fh.flush()
 
             proc = subprocess.run(

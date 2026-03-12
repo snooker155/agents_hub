@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 from pydantic import BaseModel, Field
 
-from langchain.agents import AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from common.agent_utils import build_chat_model
@@ -45,6 +44,7 @@ class AgentBase(ABC):
         temperature: float = 0.0,
         max_tokens: Optional[int] = None,
         verbose: bool = False,
+        streaming: bool = False,
     ):
         self.agent_id = agent_id
         self.name = name
@@ -54,16 +54,18 @@ class AgentBase(ABC):
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.verbose = verbose
-        self._executor: Optional[AgentExecutor] = None
+        self.streaming = streaming
+        self._executor: Optional[Any] = None
     
-    def build_executor(self) -> AgentExecutor:
+    def build_executor(self) -> Any:
         """Build and return the LangChain AgentExecutor."""
-        from langchain.agents import create_tool_calling_agent
+        from langchain.agents import create_tool_calling_agent, AgentExecutor
         
         llm = build_chat_model(
             model=self.model,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            streaming=self.streaming,
         )
         
         prompt = ChatPromptTemplate.from_messages([
@@ -86,7 +88,7 @@ class AgentBase(ABC):
         return executor
     
     @property
-    def executor(self) -> AgentExecutor:
+    def executor(self) -> Any:
         """Get or create the executor."""
         if self._executor is None:
             self._executor = self.build_executor()

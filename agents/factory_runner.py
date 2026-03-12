@@ -4,12 +4,13 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from dataclasses import dataclass
 
-from ..workspace import WORKSPACES_ROOT
+from common.workspace import WORKSPACES_ROOT
+from common.config import settings
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 @dataclass(frozen=True)
 class RunSpec:
@@ -32,6 +33,10 @@ def build_factory_run_spec(task: Any, agent_id: str, params: Optional[Dict[str, 
     # Environment
     env = os.environ.copy()
     env["WORKSPACE_ROOT"] = str(workspace)
+    
+    # Ensure OpenAI API key is available in subprocess
+    if settings.openai_api_key:
+        env["OPENAI_API_KEY"] = settings.openai_api_key
 
     # Special case for graph
     if agent_id == "factory-graph":

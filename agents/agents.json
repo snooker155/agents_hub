@@ -42,6 +42,27 @@
       ]
     },
     {
+      "id": "decomposer",
+      "name": "Decomposer Agent",
+      "type": "langchain",
+      "entrypoint": "agents.factory:build_agent_executor",
+      "description": "Specialized agent for breaking down complex tasks into actionable subtasks.",
+      "domain": "orchestration",
+      "default_params": {
+        "agent_id": "decomposer"
+      },
+      "capabilities": [
+        "task_management",
+        "decompose"
+      ],
+      "capacity": 1,
+      "is_remote": false,
+      "agent_url": null,
+      "original_id": null,
+      "memory_type": "none",
+      "memory_data": null
+    },
+    {
       "id": "factory-pm",
       "name": "Factory PM",
       "type": "factory",
@@ -189,6 +210,52 @@
       "capacity": 1,
       "is_remote": true,
       "agent_url": "http://localhost:8080",
+      "original_id": null,
+      "memory_type": "none",
+      "memory_data": null
+    },
+    {
+      "id": "example-agent",
+      "name": "Example Agent",
+      "type": "langchain",
+      "entrypoint": "swe_agent.agent:build_agent",
+      "description": "A new agent deployed via YAML manifest",
+      "domain": "development",
+      "default_params": {
+        "temperature": 0.6
+      },
+      "capabilities": [
+        "code.modify",
+        "fs.read"
+      ],
+      "capacity": 2,
+      "is_remote": false,
+      "agent_url": null,
+      "original_id": null,
+      "memory_type": "none",
+      "memory_data": null
+    },
+    {
+      "id": "1",
+      "name": "Test agent",
+      "type": "langchain",
+      "entrypoint": "swe_agent.agent:build_agent",
+      "description": "Test agent",
+      "domain": "general",
+      "default_params": {
+        "system_prompt": "You are a test agent, you basic assumption to answer common questions from the user.",
+        "tools": [
+          "read_file",
+          "write_file"
+        ]
+      },
+      "capabilities": [
+        "read_file",
+        "write_file"
+      ],
+      "capacity": 1,
+      "is_remote": false,
+      "agent_url": null,
       "original_id": null,
       "memory_type": "none",
       "memory_data": null

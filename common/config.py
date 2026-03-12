@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Tuple, List, Optional, Union
+from typing import Tuple, List, Optional, Union, Literal
 from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -79,32 +79,46 @@ class Settings(BaseSettings):
     """
     # Core LLM settings
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
-    model: str = Field(default="gpt-4o", alias="OPENAI_MODEL")
-    temperature: float = Field(default=0.0, alias="LLM_TEMPERATURE")
-    max_tokens: int = Field(default=20000, alias="LLM_MAX_TOKENS")
+    model: str = Field(default="gpt-4o", env="OPENAI_MODEL")
+    temperature: float = Field(default=0.0, env="LLM_TEMPERATURE")
+    max_tokens: int = Field(default=15000, env="LLM_MAX_TOKENS")
 
     # Application settings
     mode_full: bool = True          # full (extensions/validations) or simple
     backend_lang_default: str = "python"  # fallback
 
     # Directories (defaults usually relative to running process, can be overridden)
-    workspace_root: str = Field(default="./out", alias="WORKSPACE_ROOT")
+    workspace_root: str = Field(default="./out", env="WORKSPACE_ROOT")
 
     # Policies / safety
     allow_shell: Tuple[str, ...] = Field(
         default_factory=lambda: tuple(("python,pytest,ruff,black").split(",")),
-        alias="ALLOW_SHELL",
+        env="ALLOW_SHELL",
     )
+
+    # Orchestrator-specific settings (merged from orchestrator.config)
+    orch_poll_interval: float = Field(default=5.0, env="ORCH_POLL_INTERVAL")
+    orch_log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default="INFO", env="ORCH_LOG_LEVEL"
+    )
+
+    # Tasks storage (path to tasks.json). If None or empty, defaults to tasks/tasks.json
+    tasks_file: Optional[str] = Field(default="tasks/tasks.json", env="TASKS_FILE")
 
     class Config:
         case_sensitive = False
-        env_file = ".env"
+        env_file = str(Path(__file__).resolve().parents[1] / ".env")
         env_file_encoding = "utf-8"
-        populate_by_name = True
         extra = "ignore"
 
 # Global settings instance
 settings = Settings()
+
+# Ensure API key is available (strip quotes if present)
+if settings.openai_api_key:
+    _api_key = settings.openai_api_key.strip('"\'')
+    os.environ["OPENAI_API_KEY"] = _api_key
+    settings.openai_api_key = _api_key
 
 class Paths:
     """Helper to resolve standardized paths based on settings.workspace_root."""
@@ -129,3 +143,17 @@ class Models:
         self.sd = m
         self.tl = m
         self.dev = m
+
+
+# Convenience accessors to align with previous orchestrator.config API
+def get_settings() -> Settings:
+    return settings
+
+
+def require_openai_key(st: Settings) -> str:
+    if not st.openai_api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Please export it in the environment or put it in a .env file."
+        )
+    return st.openai_api_key
+

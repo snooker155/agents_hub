@@ -7,6 +7,7 @@ const api = axios.create({
 export const getTasks = (workspace) => api.get('/tasks', { params: { workspace } });
 export const createTask = (data) => api.post('/tasks', data);
 export const getTask = (id) => api.get(`/tasks/${id}`);
+export const deleteTask = (id, params) => api.delete(`/tasks/${id}`, { params });
 export const stopTask = (id) => api.post(`/tasks/${id}/stop`);
 export const setTaskWorkspace = (id, payload) => api.post(`/tasks/${id}/workspace`, payload);
 export const getWorkspaceFiles = (id) => api.get(`/tasks/${id}/workspace-files`);
@@ -14,6 +15,7 @@ export const getWorkspaceFiles = (id) => api.get(`/tasks/${id}/workspace-files`)
 export const getAgents = () => api.get('/agents');
 export const getAgent = (id) => api.get(`/agents/${id}`);
 export const getAgentHistory = (id) => api.get(`/agents/${id}/history`);
+export const getAgentDefinition = (id) => api.get(`/agents/${id}/definition`);
 export const cloneAgent = (data) => api.post('/agents/clone', data);
 export const connectAgent = (data) => api.post('/agents/connect', data);
 export const disconnectAgent = (id) => api.post(`/agents/${id}/disconnect`);
@@ -36,6 +38,8 @@ export const updateOrchestratorSettings = (data) => api.post('/orchestrator/sett
 export const getStats = (workspace) => api.get('/stats', { params: { workspace } });
 export const applyAgentManifest = (data) => api.post('/agents/apply', data);
 export const getTools = () => api.get('/tools');
+export const getToolSource = (toolId) => api.get(`/tools/${encodeURIComponent(toolId)}/source`);
+export const updateToolSource = (toolId, data) => api.put(`/tools/${encodeURIComponent(toolId)}/source`, data);
 export const getRuns = () => api.get('/runs');
 
 // Workspaces
@@ -43,6 +47,8 @@ export const getWorkspaces = () => api.get('/workspaces');
 export const createWorkspace = (name) => api.post('/workspaces', { name });
 export const getWorkspace = (name) => api.get(`/workspaces/${encodeURIComponent(name)}`);
 export const getWorkspaceFilesByName = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/files`);
+export const getWorkspaceFileContent = (name, path) =>
+  api.get(`/workspaces/${encodeURIComponent(name)}/file-content`, { params: { path } });
 export const addAgentToWorkspace = (name, agentId) => api.post(`/workspaces/${encodeURIComponent(name)}/agents`, { agent_id: agentId });
 export const removeAgentFromWorkspace = (name, agentId) => api.delete(`/workspaces/${encodeURIComponent(name)}/agents/${encodeURIComponent(agentId)}`);
 
@@ -52,6 +58,23 @@ export const createSharedMemory = (data) => api.post('/shared-memory', data);
 export const getSharedMemory = (id) => api.get(`/shared-memory/${id}`);
 export const deleteSharedMemory = (id) => api.delete(`/shared-memory/${id}`);
 export const addMemoryFile = (id, data) => api.post(`/shared-memory/${id}/files`, data);
+
+// Sessions API
+export const getSessions = (params) => api.get('/sessions', { params });
+export const createSession = (data) => api.post('/sessions', data);
+export const getSession = (runId) => api.get(`/sessions/${runId}`);
+export const getSessionLogs = (runId) => api.get(`/sessions/${runId}/logs`);
+export const getSessionInsights = (runId) => api.get(`/sessions/${runId}/insights`);
+export const stopSession = (runId) => api.post(`/sessions/${runId}/stop`);
+export const deleteSession = (runId, params) => api.delete(`/sessions/${runId}`, { params });
+
+// Nodes API
+export const getNodes = () => api.get('/nodes');
+export const startNode = (data) => api.post('/nodes', data);
+export const getNodeById = (nodeId) => api.get(`/nodes/${nodeId}`);
+export const getNodeLogs = (nodeId) => api.get(`/nodes/${nodeId}/logs`);
+export const stopNode = (nodeId) => api.post(`/nodes/${nodeId}/stop`);
+export const deleteNode = (nodeId) => api.delete(`/nodes/${nodeId}`);
 
 // Factory API
 export const getFactoryGraph = () => api.get('/factory/graph');

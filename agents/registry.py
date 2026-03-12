@@ -277,31 +277,3 @@ def add_agent(spec: AgentSpec) -> None:
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
-
-
-def remove_agent(agent_id: str) -> bool:
-    """Remove an agent by id from agents.json. Returns True if found."""
-    path = _config_path()
-    try:
-        data = _load_file_raw(path)
-    except FileNotFoundError:
-        return False
-
-    if not isinstance(data, dict) or "agents" not in data:
-        return False
-
-    original_len = len(data["agents"])
-    data["agents"] = [a for a in data["agents"] if a.get("id") != agent_id]
-
-    if len(data["agents"]) == original_len:
-        return False
-
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    # Force reload on next access
-    _REGISTRY_CACHE["mtime"] = None
-    return True
-
-
-__all__ = ["AgentSpec", "list_agents", "get_agent", "add_agent", "remove_agent"]

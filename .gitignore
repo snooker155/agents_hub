@@ -4,6 +4,7 @@ tasks.json
 .env
 tests/
 orchestrator/state/
+agents/state/
 __pycache__/
 *.egg-info/
 *.egg

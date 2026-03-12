@@ -89,6 +89,11 @@ def update_task(task_id: UUID, *, store: TaskStore = default_store, **fields) ->
     return store.update(task_id, **fields)
 
 
+def delete_task(task_id: UUID, *, cascade: bool = False, store: TaskStore = default_store) -> int:
+    """Delete a task by id. Returns the number of deleted tasks."""
+    return store.delete(task_id, cascade=cascade)
+
+
 # -------------------- Utilities --------------------
 
 def add_subtask(
@@ -225,6 +230,7 @@ __all__ = [
     "get_task",
     "list_tasks",
     "update_task",
+    "delete_task",
     "add_subtask",
     "stop_task",
     "block_task",

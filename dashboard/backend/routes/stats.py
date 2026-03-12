@@ -1,0 +1,131 @@
+"""
+Statistics and system settings API routes.
+"""
+from fastapi import APIRouter, HTTPException
+from typing import Optional
+import json
+from pathlib import Path
+
+from common import tasks_service
+from agents import registry, run_manager
+from models import OrchestratorSettings
+
+
+router = APIRouter(tags=["stats"])
+
+
+@router.get("/api/stats")
+async def get_stats(workspace: Optional[str] = None):
+    all_tasks = tasks_service.list_tasks()
+    if workspace:
+        tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
+    else:
+        tasks = all_tasks
+
+    runs = run_manager._load_runs()
+    agents = registry.list_agents()
+
+    total_tasks = len(tasks)
+    completed_tasks = 0
+    for t in tasks:
+        # handle both enum and string status
+        status = str(getattr(t, "status", ""))
+        if "done" in status.lower() or "completed" in status.lower():
+            completed_tasks += 1
+
+    # Active runs
+    active_runs = [r for r in runs if r.get("status") == "running"]
+
+    # Agent usage distribution
+    agent_usage = {}
+    for r in runs:
+        aid = r.get("agent_id")
+        agent_usage[aid] = agent_usage.get(aid, 0) + 1
+
+    # Domain usage distribution
+    domain_usage = {}
+    agent_map = {a.id: a for a in agents}
+    for r in runs:
+        aid = r.get("agent_id")
+        agent = agent_map.get(aid)
+        domain = agent.domain if agent else "unknown"
+        domain_usage[domain] = domain_usage.get(domain, 0) + 1
+
+    # Resource availability (capacity vs active)
+    total_capacity = sum(getattr(a, "capacity", 1) for a in agents)
+    active_count = len(active_runs)
+
+    # Recent runs
+    recent_runs = sorted(runs, key=lambda r: r.get("started_at", ""), reverse=True)[:10]
+
+    return {
+        "total_tasks": total_tasks,
+        "completed_tasks": completed_tasks,
+        "completion_rate": round((completed_tasks / total_tasks * 100), 2) if total_tasks > 0 else 0,
+        "active_runs": active_count,
+        "total_capacity": total_capacity,
+        "available_slots": max(0, total_capacity - active_count),
+        "agent_usage": agent_usage,
+        "domain_usage": domain_usage,
+        "recent_runs": recent_runs,
+        "total_agents": len(agents)
+    }
+
+
+@router.get("/api/runs")
+async def list_runs():
+    runs = run_manager._load_runs()
+    # Sort by started_at desc
+    runs.sort(key=lambda r: r.get("started_at", ""), reverse=True)
+    return runs
+
+
+@router.get("/api/logs/{run_id}")
+async def get_logs(run_id: str):
+    # Prefer explicit log_file path from the run state if available
+    try:
+        run = getattr(run_manager, "get_run_by_id", None)
+        run_rec = run(run_id) if callable(run) else None
+    except Exception:
+        run_rec = None
+
+    if isinstance(run_rec, dict):
+        log_path = run_rec.get("log_file")
+        if isinstance(log_path, str) and Path(log_path).exists():
+            return {"logs": Path(log_path).read_text(encoding="utf-8")}
+
+    # Fallback search: state logs and workspaces
+    log_name = f"agent_run_{run_id}.log"
+
+    state_logs = run_manager.STATE_DIR / "logs" / log_name
+    if state_logs.exists():
+        return {"logs": state_logs.read_text(encoding="utf-8")}
+
+    from common.workspace import create_workspace_folder
+    for t in tasks_service.list_tasks():
+        if t.workspace:
+            try:
+                # t.workspace stores only the NAME; resolve to absolute
+                root = create_workspace_folder(str(t.workspace))
+                ws_logs = root / ".logs" / log_name
+                if ws_logs.exists():
+                    return {"logs": ws_logs.read_text(encoding="utf-8")}
+            except Exception:
+                continue
+
+    raise HTTPException(status_code=404, detail="Log file not found")
+
+
+@router.get("/api/orchestrator/settings")
+async def get_orchestrator_settings():
+    from main import get_orchestrator_settings_path
+    path = get_orchestrator_settings_path()
+    return json.loads(path.read_text())
+
+
+@router.post("/api/orchestrator/settings")
+async def update_orchestrator_settings(settings: OrchestratorSettings):
+    from main import get_orchestrator_settings_path
+    path = get_orchestrator_settings_path()
+    path.write_text(json.dumps(settings.model_dump()))
+    return settings

@@ -3,7 +3,7 @@ name: Decomposer Agent
 description: Specialized agent for breaking down complex tasks into actionable subtasks.
 model: gpt-4o
 temperature: 0.2
-max_tokens: 20000
+max_tokens: 15000
 verbose: false
 
 capabilities:

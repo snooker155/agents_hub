@@ -159,6 +159,36 @@ class TaskStore:
             self._atomic_write([_model_to_dict(t) for t in new_list])
             return updated
 
+    def delete(self, task_id: UUID | str, *, cascade: bool = False, timeout: float = 10.0) -> int:
+        """Delete a task by id.
+
+        If cascade=True, also deletes all descendants where parent_id links recursively
+        to the given task.
+        Returns the number of deleted tasks.
+        """
+        tid_str = str(task_id)
+        with FileLock(str(self.lock_path), timeout=timeout):
+            tasks = self._load_unlocked()
+            to_delete = {tid_str}
+
+            if cascade:
+                stack = [tid_str]
+                while stack:
+                    parent = stack.pop()
+                    for t in tasks:
+                        if t.parent_id and str(t.parent_id) == parent:
+                            child_id = str(t.id)
+                            if child_id not in to_delete:
+                                to_delete.add(child_id)
+                                stack.append(child_id)
+
+            new_list = [t for t in tasks if str(t.id) not in to_delete]
+            deleted = len(tasks) - len(new_list)
+            if deleted == 0:
+                return 0
+            self._atomic_write([_model_to_dict(t) for t in new_list])
+            return deleted
+
     # ------------- internals -------------
     def _load_unlocked(self) -> List[Task]:
         try:

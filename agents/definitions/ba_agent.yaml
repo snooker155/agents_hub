@@ -3,7 +3,7 @@ name: Business Analyst Agent
 description: Agent specialized in creating Business Requirements Documents (BRD)
 model: gpt-4o
 temperature: 0.2
-max_tokens: 20000
+max_tokens: 15000
 verbose: false
 
 capabilities:

@@ -27,10 +27,15 @@ const WorkspaceManager = () => {
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
-      await createWorkspace(name || null);
+      const resp = await createWorkspace(name || null);
+      const created = resp?.data;
       setName('');
       setShowModal(false);
-      fetchData();
+      if (created?.name) {
+        navigate(`/workspaces/${encodeURIComponent(created.name)}`);
+      } else {
+        fetchData();
+      }
     } catch (e) {
       alert('Failed to create workspace');
     }

@@ -6,7 +6,6 @@ from pathlib import Path
 import json
 
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -16,7 +15,8 @@ def build_chat_model(
     model: Optional[str] = None,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    streaming: bool = False,
 ) -> ChatOpenAI:
     """Standardized ChatOpenAI builder using unified settings."""
     return ChatOpenAI(
@@ -24,6 +24,7 @@ def build_chat_model(
         temperature=temperature if temperature is not None else settings.temperature,
         max_tokens=max_tokens if max_tokens is not None else settings.max_tokens,
         api_key=api_key or settings.openai_api_key,
+        streaming=streaming,
     )
 
 class SharedProgressCallback(BaseCallbackHandler):
