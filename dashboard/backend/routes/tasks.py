@@ -239,12 +239,8 @@ async def assign_agent(task_id: UUID, assign: AgentAssign):
         if assign.agent_id not in allowed and assign.agent_id not in ["orchestrator", "decomposer"]:
             raise HTTPException(status_code=403, detail=f"Agent '{assign.agent_id}' is not authorized for workspace '{t.workspace}'")
 
-    # Policy: only user-created tasks may be assigned a decomposer-capable agent
-    try:
-        caps = list(getattr(spec, "capabilities", []) or [])
-    except Exception:
-        caps = []
-    if "decompose" in caps and getattr(t, "created_by", None) != CreatedBy.user:
+    # Policy: only user-created tasks may be assigned to the dedicated decomposer agent
+    if assign.agent_id == "decomposer" and getattr(t, "created_by", None) != CreatedBy.user:
         raise HTTPException(status_code=400, detail="Decomposer agent can only be assigned to user-created tasks")
 
     try:

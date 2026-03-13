@@ -40,9 +40,12 @@ class AgentBase(ABC):
         name: str,
         system_prompt: str,
         tools: List[Any],
+        provider: Optional[str] = None,
         model: Optional[str] = None,
         temperature: float = 0.0,
         max_tokens: Optional[int] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         verbose: bool = False,
         streaming: bool = False,
     ):
@@ -50,9 +53,12 @@ class AgentBase(ABC):
         self.name = name
         self.system_prompt = system_prompt
         self._tools = tools
+        self.provider = provider
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.api_key = api_key
+        self.base_url = base_url
         self.verbose = verbose
         self.streaming = streaming
         self._executor: Optional[Any] = None
@@ -62,9 +68,12 @@ class AgentBase(ABC):
         from langchain.agents import create_tool_calling_agent, AgentExecutor
         
         llm = build_chat_model(
+            provider=self.provider,
             model=self.model,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            api_key=self.api_key,
+            base_url=self.base_url,
             streaming=self.streaming,
         )
         

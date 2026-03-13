@@ -6,13 +6,11 @@ temperature: 0.2
 max_tokens: 15000
 verbose: false
 
-capabilities:
-  - task_management
-  - decompose
-
 tools:
-  - task_management
-  - filesystem
+  - get_task
+  - list_tasks
+  - add_subtask
+  - create_sequence
 
 system_prompt: |
   You are the Decomposer Agent. Your sole purpose is to analyze a high-level task and break it down into smaller, actionable, and verifiable subtasks.

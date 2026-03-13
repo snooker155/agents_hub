@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useWorkspace } from '../components/WorkspaceContext';
 import { getNodes, startNode, stopNode, deleteNode, getNodeLogs, getAgents, getWorkspaces } from '../api';
 import {
   Play,
+  RotateCw,
   Square,
   Trash2,
   FileText,
@@ -15,6 +18,8 @@ import {
   Clock,
   Server,
   Activity,
+  Globe,
+  ExternalLink,
 } from 'lucide-react';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
@@ -61,6 +66,7 @@ function LogsModal({ node, onClose }) {
   const [logs, setLogs] = useState('');
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef(null);
+  const { liveUpdates } = useWorkspace();
 
   useEffect(() => {
     let cancelled = false;
@@ -75,9 +81,10 @@ function LogsModal({ node, onClose }) {
     load();
     // Auto-refresh logs every 3s while node is active (running/starting/stopping)
     const isActive = ['running', 'starting', 'stopping'].includes(node.status);
-    const interval = isActive ? setInterval(load, 3000) : null;
-    return () => { cancelled = true; if (interval) clearInterval(interval); };
-  }, [node.node_id, node.status]);
+    if (!liveUpdates || !isActive) return () => { cancelled = true; };
+    const interval = setInterval(load, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [node.node_id, node.status, liveUpdates]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView(); }, [logs]);
 
@@ -252,6 +259,8 @@ function SummaryChips({ nodes }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function Nodes() {
+  const navigate = useNavigate();
+  const { liveUpdates } = useWorkspace();
   const [nodes, setNodes]       = useState([]);
   const [agents, setAgents]     = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
@@ -281,9 +290,10 @@ export default function Nodes() {
 
   useEffect(() => {
     fetchNodes();
+    if (!liveUpdates) return;
     const id = setInterval(fetchNodes, 4000);
     return () => clearInterval(id);
-  }, [fetchNodes]);
+  }, [fetchNodes, liveUpdates]);
 
   const handleStop = async (nodeId) => {
     setBusyNodes(b => ({ ...b, [nodeId]: 'stopping' }));
@@ -298,6 +308,25 @@ export default function Nodes() {
     try { await deleteNode(nodeId); await fetchNodes(); }
     catch (e) { alert(e.response?.data?.detail || 'Cannot delete'); }
     finally { setBusyNodes(b => { const n = { ...b }; delete n[nodeId]; return n; }); }
+  };
+
+  const handleStart = async (node) => {
+    setBusyNodes(b => ({ ...b, [node.node_id]: 'starting' }));
+    try {
+      await startNode({ agent_id: node.agent_id, workspace: node.workspace || null, label: node.label || null });
+      await fetchNodes();
+    } catch (e) { alert(e.response?.data?.detail || 'Cannot start'); }
+    finally { setBusyNodes(b => { const n = { ...b }; delete n[node.node_id]; return n; }); }
+  };
+
+  const handleRestart = async (node) => {
+    setBusyNodes(b => ({ ...b, [node.node_id]: 'restarting' }));
+    try {
+      await stopNode(node.node_id);
+      await startNode({ agent_id: node.agent_id, workspace: node.workspace || null, label: node.label || null });
+      await fetchNodes();
+    } catch (e) { alert(e.response?.data?.detail || 'Cannot restart'); }
+    finally { setBusyNodes(b => { const n = { ...b }; delete n[node.node_id]; return n; }); }
   };
 
   const openStart = (agentId = '') => { setStartAgentId(agentId); setShowStart(true); };
@@ -408,7 +437,11 @@ export default function Nodes() {
                       const isActive = node.status === 'running' || node.status === 'starting';
                       const busy = busyNodes[node.node_id];
                       return (
-                        <tr key={node.node_id} className="hover:bg-gray-50 transition-colors">
+                        <tr
+                          key={node.node_id}
+                          className="hover:bg-gray-50 transition-colors cursor-pointer"
+                          onClick={() => navigate(`/nodes/${node.node_id}`)}
+                        >
                           <td className="px-5 py-3">
                             <StatusBadge status={node.status} />
                           </td>
@@ -420,6 +453,12 @@ export default function Nodes() {
                             {node.is_default && (
                               <span className="ml-2 text-[9px] font-bold uppercase bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">
                                 default
+                              </span>
+                            )}
+                            {node.is_exposed && (
+                              <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-bold uppercase bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
+                                <Globe className="w-2.5 h-2.5" />
+                                exposed
                               </span>
                             )}
                           </td>
@@ -435,7 +474,16 @@ export default function Nodes() {
                             {uptime(node.started_at, node.finished_at)}
                           </td>
                           <td className="px-5 py-3">
-                            <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
+                              {/* Open detail */}
+                              <button
+                                onClick={() => navigate(`/nodes/${node.node_id}`)}
+                                title="Open node detail"
+                                className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                              >
+                                <ExternalLink className="w-4 h-4" />
+                              </button>
+
                               {/* Logs */}
                               <button
                                 onClick={() => setLogsNode(node)}
@@ -444,6 +492,18 @@ export default function Nodes() {
                               >
                                 <FileText className="w-4 h-4" />
                               </button>
+
+                              {/* Restart (active nodes) */}
+                              {isActive && (
+                                <button
+                                  onClick={() => handleRestart(node)}
+                                  disabled={!!busy}
+                                  title="Restart node"
+                                  className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40"
+                                >
+                                  {busy === 'restarting' ? <Loader className="w-4 h-4 animate-spin" /> : <RotateCw className="w-4 h-4" />}
+                                </button>
+                              )}
 
                               {/* Stop (active nodes) */}
                               {isActive && (
@@ -454,6 +514,18 @@ export default function Nodes() {
                                   className="p-1.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition-colors disabled:opacity-40"
                                 >
                                   {busy === 'stopping' ? <Loader className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                                </button>
+                              )}
+
+                              {/* Start (stopped/failed) */}
+                              {!isActive && (
+                                <button
+                                  onClick={() => handleStart(node)}
+                                  disabled={!!busy}
+                                  title="Start new node with same config"
+                                  className="p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors disabled:opacity-40"
+                                >
+                                  {busy === 'starting' ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                                 </button>
                               )}
 

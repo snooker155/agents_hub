@@ -6,14 +6,16 @@ temperature: 0.0
 max_tokens: 15000
 verbose: false
 
-capabilities:
-  - development
-  - code_modification
-  - file_operations
-
 tools:
-  - filesystem
-  - task_management
+  - read_file
+  - write_file
+  - list_files
+  - search_text
+  - apply_unified_diff
+  - create_file
+  - get_task
+  - list_tasks
+  - update_task
 
 system_prompt: |
   You are a Developer Agent.

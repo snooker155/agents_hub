@@ -21,7 +21,7 @@ Every agent must provide the following metadata:
 - `entrypoint`:
     - For local agents: `module.path:attribute` (a callable).
     - For remote agents: Set to `remote`.
-- `capabilities`: A list of strings representing the agent's skills (e.g., `code.modify`, `web.search`).
+- `tools`: A list of tool IDs available to the agent (e.g., `read_file`, `search_text`, `assign_and_start_agent_tool`).
 - `capacity`: The maximum number of concurrent runs allowed for this agent.
 - `is_remote`: Boolean indicating if the agent is served externally.
 - `agent_url`: The base URL for remote agents.

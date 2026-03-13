@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     model: str = Field(default="gpt-4o", env="OPENAI_MODEL")
     temperature: float = Field(default=0.0, env="LLM_TEMPERATURE")
     max_tokens: int = Field(default=15000, env="LLM_MAX_TOKENS")
+    # Other cloud providers
+    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
+    google_api_key: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
+    # Local models
+    ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
+    ollama_model: str = Field(default="", env="OLLAMA_MODEL")
+    lmstudio_base_url: str = Field(default="http://localhost:1234", env="LMSTUDIO_BASE_URL")
+    lmstudio_model: str = Field(default="", env="LMSTUDIO_MODEL")
 
     # Application settings
     mode_full: bool = True          # full (extensions/validations) or simple

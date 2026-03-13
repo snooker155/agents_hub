@@ -74,7 +74,8 @@ class SharedMemory(BaseModel):
     name: str
     type: str = "text"
     description: str = ""
-    files: List[Dict[str, str]] = Field(default_factory=list) # [{name, content}]
+    workspace: Optional[str] = None
+    files: List[Dict[str, Any]] = Field(default_factory=list)  # [{name, content, rag_status, ...}]
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

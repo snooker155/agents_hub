@@ -6,13 +6,12 @@ temperature: 0.2
 max_tokens: 15000
 verbose: false
 
-capabilities:
-  - requirements_analysis
-  - documentation
-
 tools:
-  - filesystem
-  - task_management
+  - read_file
+  - write_file
+  - list_files
+  - search_text
+  - create_file
 
 system_prompt: |
   You are the Business Analyst.

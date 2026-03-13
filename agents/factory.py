@@ -34,9 +34,12 @@ class StandardAgent(AgentBase):
         name: str,
         system_prompt: str,
         tools: List[Any],
+        provider: Optional[str] = None,
         model: Optional[str] = None,
         temperature: float = 0.0,
         max_tokens: Optional[int] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         verbose: bool = False,
         workspace: Optional[str] = None,
         streaming: bool = False,
@@ -46,9 +49,12 @@ class StandardAgent(AgentBase):
             name=name,
             system_prompt=system_prompt,
             tools=tools,
+            provider=provider,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            api_key=api_key,
+            base_url=base_url,
             verbose=verbose,
             streaming=streaming,
         )
@@ -105,34 +111,71 @@ class AgentFactory:
             return yaml.safe_load(f)
     
     def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None) -> List[Any]:
-        """Create tool instances based on tool list."""
-        # Calculator is always available to every agent
-        tools: List[Any] = [calculator]
+        """Create tool instances based on tool ids.
 
-        if "filesystem" in tool_list:
-            tools.extend(create_filesystem_tools(workspace=workspace))
-        
-        if "task_management" in tool_list:
-            # Basic task tools
-            tools.extend([create_task, add_subtask, get_task, list_tasks])
-            # Advanced task tools
-            tools.extend([update_task, stop_task, block_task, create_sequence])
-        
-        if "agent_coordination" in tool_list:
-            from tools.langchain_tools import (
-                list_agents_tool,
-                assign_and_start_agent_tool,
-                stop_agent_tool,
-                get_agent_status_tool,
-            )
-            tools.extend([
-                list_agents_tool,
-                assign_and_start_agent_tool,
-                stop_agent_tool,
-                get_agent_status_tool,
-            ])
+        Also supports legacy group aliases:
+        - filesystem
+        - task_management
+        - agent_coordination
+        """
+        requested = list(tool_list or [])
+        fs_tools = create_filesystem_tools(workspace=workspace)
 
-        return tools
+        task_tools = [
+            create_task,
+            add_subtask,
+            get_task,
+            list_tasks,
+            update_task,
+            stop_task,
+            block_task,
+            create_sequence,
+        ]
+
+        from tools.langchain_tools import (
+            list_agents_tool,
+            assign_and_start_agent_tool,
+            stop_agent_tool,
+            get_agent_status_tool,
+        )
+        coordination_tools = [
+            list_agents_tool,
+            assign_and_start_agent_tool,
+            stop_agent_tool,
+            get_agent_status_tool,
+        ]
+
+        alias_groups: Dict[str, List[str]] = {
+            "filesystem": [getattr(t, "name", getattr(t, "__name__", "")) for t in fs_tools],
+            "task_management": [getattr(t, "name", getattr(t, "__name__", "")) for t in task_tools],
+            "agent_coordination": [getattr(t, "name", getattr(t, "__name__", "")) for t in coordination_tools],
+        }
+
+        expanded: List[str] = []
+        for name in requested:
+            expanded.extend(alias_groups.get(name, [name]))
+
+        # Calculator remains globally available unless explicitly excluded.
+        available = [calculator, *fs_tools, *task_tools, *coordination_tools]
+        by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
+
+        selected_names: List[str] = []
+        if "calculator" not in expanded:
+            selected_names.append("calculator")
+        selected_names.extend(expanded)
+
+        result: List[Any] = []
+        seen: set[str] = set()
+        for tool_name in selected_names:
+            if tool_name in seen:
+                continue
+            tool_obj = by_name.get(tool_name)
+            if not tool_obj:
+                continue
+            seen.add(tool_name)
+            result.append(tool_obj)
+
+        return result
     
     def create_agent(self, agent_id: str, workspace: Optional[str] = None, **override_params) -> AgentBase:
         """Create an agent from its YAML definition.
@@ -150,7 +193,7 @@ class AgentFactory:
         config = {**definition, **override_params}
         
         # Create tools
-        tool_list = config.get("tools", [])
+        tool_list = config.get("tools", config.get("capabilities", []))
         tools = self._create_tools(tool_list, workspace=workspace)
         
         # Create agent
@@ -159,9 +202,12 @@ class AgentFactory:
             name=config["name"],
             system_prompt=config["system_prompt"],
             tools=tools,
+            provider=config.get("provider"),
             model=config.get("model"),
             temperature=config.get("temperature", 0.0),
             max_tokens=config.get("max_tokens"),
+            api_key=config.get("api_key"),
+            base_url=config.get("base_url"),
             verbose=config.get("verbose", False),
             workspace=workspace,
             streaming=bool(config.get("streaming", False)),
@@ -179,7 +225,7 @@ class AgentFactory:
                     "id": definition.get("id", yaml_file.stem),
                     "name": definition.get("name", yaml_file.stem),
                     "description": definition.get("description", ""),
-                    "capabilities": definition.get("capabilities", []),
+                    "tools": definition.get("tools", definition.get("capabilities", [])),
                 })
             except Exception:
                 continue

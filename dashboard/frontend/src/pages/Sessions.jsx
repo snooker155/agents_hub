@@ -191,7 +191,7 @@ function NewSessionModal({ onClose, onCreated, workspaces, agents, defaultWorksp
 // ---- Main page --------------------------------------------------------------
 
 export default function Sessions() {
-  const { selectedWorkspace } = useWorkspace();
+  const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const navigate = useNavigate();
 
   const [sessions, setSessions]       = useState([]);
@@ -200,8 +200,8 @@ export default function Sessions() {
   const [loading, setLoading]         = useState(true);
   const [sessionContextById, setSessionContextById] = useState({});
 
-  // local filters
-  const [filterWorkspace, setFilterWorkspace] = useState('');
+  // local filters — initialized from global workspace context
+  const [filterWorkspace, setFilterWorkspace] = useState(workspaceFilter || '');
   const [filterAgent,     setFilterAgent]     = useState('');
   const [filterStatus,    setFilterStatus]    = useState('');
   const [filterFrom,      setFilterFrom]      = useState('');
@@ -234,6 +234,11 @@ export default function Sessions() {
     }
   }, [effectiveWorkspace, filterAgent, filterStatus, filterFrom, filterTo]);
 
+  // Sync local filter when global workspace changes
+  useEffect(() => {
+    setFilterWorkspace(workspaceFilter || '');
+  }, [workspaceFilter]);
+
   // Initial data load (agents + workspaces)
   useEffect(() => {
     getAgents().then(r => setAgents(r.data)).catch(() => {});
@@ -244,9 +249,10 @@ export default function Sessions() {
   useEffect(() => {
     setLoading(true);
     fetchSessions();
+    if (!liveUpdates) return;
     const id = setInterval(fetchSessions, 5000);
     return () => clearInterval(id);
-  }, [fetchSessions]);
+  }, [fetchSessions, liveUpdates]);
 
   useEffect(() => {
     let cancelled = false;
@@ -549,7 +555,7 @@ export default function Sessions() {
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="hidden md:grid grid-cols-[36px_minmax(0,2.1fr)_1fr_1.1fr_1fr_1.4fr_0.7fr_auto] gap-3 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 bg-gray-50 border-b border-gray-200">
+            <div className="hidden md:grid grid-cols-[36px_minmax(0,2.1fr)_1fr_1.1fr_1fr_1.4fr_0.7fr_140px] gap-3 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 bg-gray-50 border-b border-gray-200">
               <div className="flex items-center justify-center">
                 <input
                   ref={selectAllRef}
@@ -581,7 +587,7 @@ export default function Sessions() {
                       navigate(`/sessions/${session.run_id}`);
                     }
                   }}
-                  className="grid grid-cols-1 md:grid-cols-[36px_minmax(0,2.1fr)_1fr_1.1fr_1fr_1.4fr_0.7fr_auto] gap-3 px-4 py-3 hover:bg-indigo-50/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-inset"
+                  className="grid grid-cols-1 md:grid-cols-[36px_minmax(0,2.1fr)_1fr_1.1fr_1fr_1.4fr_0.7fr_140px] gap-3 px-4 py-3 hover:bg-indigo-50/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-inset"
                 >
                   <div className="hidden md:flex items-center justify-center">
                     <input

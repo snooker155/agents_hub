@@ -4,7 +4,7 @@ Nodes API – manage long-running agent nodes (Kubernetes pod-style).
 A node is a persistent subprocess running an agent in service/worker mode,
 decoupled from any specific task.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from typing import Optional
 from pathlib import Path
 from pydantic import BaseModel
@@ -32,9 +32,11 @@ def _enrich(node: dict) -> dict:
 
 
 @router.get("")
-async def list_nodes():
-    """List all nodes sorted newest-first."""
+async def list_nodes(workspace: Optional[str] = None):
+    """List all nodes sorted newest-first, optionally filtered by workspace."""
     nodes = node_manager.list_nodes()
+    if workspace:
+        nodes = [n for n in nodes if n.get("workspace") == workspace]
     enriched = [_enrich(n) for n in nodes]
     enriched.sort(key=lambda n: n.get("started_at") or "", reverse=True)
     return enriched
@@ -104,3 +106,39 @@ async def delete_node(node_id: str):
             detail="Node not found or is still running (stop it first)",
         )
     return {"deleted": True}
+
+
+@router.post("/{node_id}/expose")
+async def expose_node(node_id: str, request: Request):
+    """Enable external access for a node, generating a unique access token."""
+    node = node_manager.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    updated = node_manager.expose_node(node_id)
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to expose node")
+    base_url = str(request.base_url).rstrip("/")
+    token = updated.get("expose_token", "")
+    return {
+        **_enrich(updated),
+        "external_url": f"{base_url}/api/external/{token}/run",
+    }
+
+
+@router.delete("/{node_id}/expose")
+async def unexpose_node(node_id: str):
+    """Disable external access for a node."""
+    node = node_manager.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    ok = node_manager.unexpose_node(node_id)
+    return {"unexposed": ok}
+
+
+@router.get("/{node_id}/connections")
+async def get_node_connections(node_id: str):
+    """Return connection history for an exposed node."""
+    node = node_manager.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return node_manager.get_connections(node_id)

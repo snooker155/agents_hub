@@ -14,9 +14,10 @@ spec:
   description: "A new agent deployed via YAML manifest"
   type: langchain
   capacity: 2
-  capabilities:
-    - code.modify
-    - fs.read
+  tools:
+    - read_file
+    - write_file
+    - list_files
   defaultParams:
     temperature: 0.7
 `);
@@ -133,8 +134,8 @@ spec:
                 <p className="text-gray-500">Max concurrent runs allowed</p>
               </div>
               <div>
-                <span className="font-mono text-indigo-600">spec.capabilities</span>
-                <p className="text-gray-500">List of skills exposed by the agent</p>
+                <span className="font-mono text-indigo-600">spec.tools</span>
+                <p className="text-gray-500">List of tool IDs exposed by the agent</p>
               </div>
             </div>
           </div>

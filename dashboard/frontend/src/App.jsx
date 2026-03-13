@@ -9,6 +9,7 @@ import WorkspaceManager from './pages/WorkspaceManager';
 import WorkspaceDetails from './pages/WorkspaceDetails';
 import MemoryManager from './pages/MemoryManager';
 import AgentFactory from './pages/AgentFactory';
+import FactoryEditor from './pages/FactoryEditor';
 import Dashboard from './pages/Dashboard';
 import AgentManifest from './pages/AgentManifest';
 import ToolsExplorer from './pages/ToolsExplorer';
@@ -17,7 +18,9 @@ import Sessions from './pages/Sessions';
 import SessionDetails from './pages/SessionDetails';
 import Chat from './pages/Chat';
 import Nodes from './pages/Nodes';
+import NodeDetail from './pages/NodeDetail';
 import Settings from './pages/Settings';
+import WorkspaceEnv from './pages/WorkspaceEnv';
 
 function App() {
   return (
@@ -37,9 +40,12 @@ function App() {
           <Route path="/workspaces/:name" element={<WorkspaceDetails />} />
           <Route path="/memory" element={<MemoryManager />} />
           <Route path="/factory" element={<AgentFactory />} />
+          <Route path="/factory/:factoryId" element={<FactoryEditor />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:runId" element={<SessionDetails />} />
           <Route path="/nodes" element={<Nodes />} />
+          <Route path="/nodes/:nodeId" element={<NodeDetail />} />
+          <Route path="/env" element={<WorkspaceEnv />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>

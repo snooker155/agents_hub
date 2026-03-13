@@ -2,37 +2,45 @@
 Agent-related API routes.
 """
 from fastapi import APIRouter, HTTPException
-from typing import List
+from typing import List, Optional
 import yaml
 from pathlib import Path
 
 from agents import registry, run_manager
 from agents.factory import get_factory
 from tools.registry import get_all_tools
-from models import AgentClone, AgentConnect, AgentCreateCustom, AgentMemoryUpdate, YamlManifest
+from models import AgentClone, AgentConnect, AgentCreateCustom, AgentMemoryUpdate, AgentToolsUpdate, AgentModelUpdate, YamlManifest
 
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
 @router.get("")
-async def list_agents():
+async def list_agents(workspace: Optional[str] = None):
     """List all available agents from registry and factory definitions."""
     # Get agents from existing registry
     registry_agents = registry.list_agents()
     reg_ids = {a.id for a in registry_agents}
-    
+
     # Get agent definitions from factory
     factory = get_factory()
     factory_agents = factory.list_available_agents()
-    
+
     # Combine into single array for backward compatibility with frontend
     # Registry agents come first, then factory agents (if not already in registry)
     all_agents = [a.to_dict() for a in registry_agents]
     for fa in factory_agents:
         if fa["id"] not in reg_ids:
             all_agents.append(fa)
-    
+
+    # Filter by workspace's allowed_agents if workspace is specified
+    if workspace:
+        from common.workspace import get_workspace_metadata
+        metadata = get_workspace_metadata(workspace)
+        allowed = metadata.get("allowed_agents")
+        if allowed is not None:
+            all_agents = [a for a in all_agents if a["id"] in allowed]
+
     return all_agents
 
 
@@ -107,7 +115,7 @@ async def get_agent_definition(agent_id: str):
                 "capacity": spec.capacity,
                 "isRemote": spec.is_remote,
                 "agentUrl": spec.agent_url,
-                "capabilities": spec.capabilities,
+                "tools": spec.tools,
                 "defaultParams": spec.default_params,
                 "memoryType": spec.memory_type,
                 "memoryData": spec.memory_data,
@@ -145,7 +153,7 @@ async def clone_agent(clone: AgentClone):
         type=original.type,
         entrypoint=original.entrypoint,
         default_params=original.default_params,
-        capabilities=original.capabilities,
+        tools=original.tools,
         capacity=original.capacity,
         is_remote=original.is_remote,
         agent_url=original.agent_url,
@@ -170,7 +178,7 @@ async def connect_agent(data: AgentConnect):
         capacity=data.capacity,
         is_remote=True,
         agent_url=data.agent_url,
-        capabilities=data.capabilities
+        tools=data.tools
     )
     try:
         registry.add_agent(spec)
@@ -199,7 +207,7 @@ async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
         type=spec.type,
         entrypoint=spec.entrypoint,
         default_params=spec.default_params,
-        capabilities=spec.capabilities,
+        tools=spec.tools,
         capacity=spec.capacity,
         is_remote=spec.is_remote,
         agent_url=spec.agent_url,
@@ -223,7 +231,7 @@ async def erase_agent_memory(agent_id: str):
         type=spec.type,
         entrypoint=spec.entrypoint,
         default_params=spec.default_params,
-        capabilities=spec.capabilities,
+        tools=spec.tools,
         capacity=spec.capacity,
         is_remote=spec.is_remote,
         agent_url=spec.agent_url,
@@ -233,6 +241,126 @@ async def erase_agent_memory(agent_id: str):
     )
     registry.add_agent(new_spec)
     return new_spec.to_dict()
+
+
+@router.post("/{agent_id}/tools")
+async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    default_params = dict(spec.default_params or {})
+    if data.tools:
+        default_params["tools"] = list(data.tools)
+    else:
+        default_params.pop("tools", None)
+
+    new_spec = registry.AgentSpec(
+        id=spec.id,
+        name=spec.name,
+        type=spec.type,
+        entrypoint=spec.entrypoint,
+        default_params=default_params,
+        tools=list(data.tools),
+        capacity=spec.capacity,
+        is_remote=spec.is_remote,
+        agent_url=spec.agent_url,
+        original_id=spec.original_id,
+        memory_type=spec.memory_type,
+        memory_data=spec.memory_data,
+    )
+    registry.add_agent(new_spec)
+    return new_spec.to_dict()
+
+
+@router.get("/{agent_id}/model")
+async def get_agent_model(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    dp = dict(spec.default_params or {})
+    return {
+        "provider":    dp.get("provider", "inherit"),
+        "model":       dp.get("model", ""),
+        "base_url":    dp.get("base_url", ""),
+        "temperature": dp.get("temperature"),   # None means "inherit global"
+        "max_tokens":  dp.get("max_tokens"),    # None means "inherit global"
+        "has_api_key": bool(dp.get("api_key")), # never expose the key value
+    }
+
+
+@router.post("/{agent_id}/model")
+async def update_agent_model(agent_id: str, data: AgentModelUpdate):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    dp = dict(spec.default_params or {})
+
+    # Provider
+    if data.provider is not None:
+        if data.provider == "inherit":
+            dp.pop("provider", None)
+        else:
+            dp["provider"] = data.provider
+
+    # Model name
+    if data.model is not None:
+        if data.model.strip():
+            dp["model"] = data.model.strip()
+        else:
+            dp.pop("model", None)
+
+    # API key override (only store if non-empty; clear_api_key removes it)
+    if data.clear_api_key:
+        dp.pop("api_key", None)
+    elif data.api_key is not None and data.api_key.strip():
+        dp["api_key"] = data.api_key.strip()
+
+    # Base URL override
+    if data.base_url is not None:
+        if data.base_url.strip():
+            dp["base_url"] = data.base_url.strip()
+        else:
+            dp.pop("base_url", None)
+
+    # Temperature override
+    if data.clear_temperature:
+        dp.pop("temperature", None)
+    elif data.temperature is not None:
+        dp["temperature"] = data.temperature
+
+    # Max tokens override
+    if data.clear_max_tokens:
+        dp.pop("max_tokens", None)
+    elif data.max_tokens is not None:
+        dp["max_tokens"] = data.max_tokens
+
+    new_spec = registry.AgentSpec(
+        id=spec.id,
+        name=spec.name,
+        type=spec.type,
+        entrypoint=spec.entrypoint,
+        description=spec.description,
+        domain=spec.domain,
+        default_params=dp,
+        tools=spec.tools,
+        capacity=spec.capacity,
+        is_remote=spec.is_remote,
+        agent_url=spec.agent_url,
+        original_id=spec.original_id,
+        memory_type=spec.memory_type,
+        memory_data=spec.memory_data,
+    )
+    registry.add_agent(new_spec)
+    return {
+        "provider":    dp.get("provider", "inherit"),
+        "model":       dp.get("model", ""),
+        "base_url":    dp.get("base_url", ""),
+        "temperature": dp.get("temperature"),
+        "max_tokens":  dp.get("max_tokens"),
+        "has_api_key": bool(dp.get("api_key")),
+    }
 
 
 @router.get("/{agent_id}/health")
@@ -275,7 +403,7 @@ async def apply_agent_manifest(data: YamlManifest):
         capacity=spec_data.get("capacity", 1),
         is_remote=spec_data.get("isRemote", False),
         agent_url=spec_data.get("agentUrl"),
-        capabilities=spec_data.get("capabilities", []),
+        tools=spec_data.get("tools", spec_data.get("capabilities", [])),
         default_params=spec_data.get("defaultParams", {})
     )
 
@@ -305,7 +433,7 @@ async def create_custom_agent(data: AgentCreateCustom):
         type="langchain",
         entrypoint=entrypoint,
         default_params={"system_prompt": data.system_prompt, "tools": data.tools},
-        capabilities=data.tools,
+        tools=data.tools,
         capacity=data.capacity
     )
     try:

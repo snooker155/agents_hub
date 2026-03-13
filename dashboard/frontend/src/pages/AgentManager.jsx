@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useWorkspace } from '../components/WorkspaceContext';
 import {
   Users,
   Copy,
@@ -29,6 +30,7 @@ import {
 
 const AgentManager = () => {
   const navigate = useNavigate();
+  const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const [agents, setAgents] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [nodes, setNodes] = useState([]);
@@ -46,7 +48,7 @@ const AgentManager = () => {
 
   const fetchData = async () => {
     try {
-      const [agentsResp, tasksResp, nodesResp] = await Promise.all([getAgents(), getTasks(), getNodes()]);
+      const [agentsResp, tasksResp, nodesResp] = await Promise.all([getAgents(workspaceFilter), getTasks(workspaceFilter), getNodes(workspaceFilter)]);
       // Show all agents including orchestrator and decomposer
       setAgents(agentsResp.data);
       setTasks(tasksResp.data);
@@ -72,9 +74,10 @@ const AgentManager = () => {
 
   useEffect(() => {
     fetchData();
+    if (!liveUpdates) return;
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedWorkspace, liveUpdates]);
 
   const handleClone = async (e) => {
     e.preventDefault();
@@ -276,13 +279,13 @@ const AgentManager = () => {
                 </div>
 
                 <div className="flex flex-wrap gap-1 mb-3 min-h-[22px]">
-                  {(agent.capabilities || []).slice(0, 3).map((cap) => (
-                    <span key={cap} className="text-[10px] bg-white border border-gray-200 px-1.5 py-0.5 rounded text-gray-600">
-                      {cap}
+                  {((agent.tools || agent.capabilities || [])).slice(0, 3).map((tool) => (
+                    <span key={tool} className="text-[10px] bg-white border border-gray-200 px-1.5 py-0.5 rounded text-gray-600">
+                      {tool}
                     </span>
                   ))}
-                  {(agent.capabilities || []).length > 3 && (
-                    <span className="text-[10px] text-gray-400">+{agent.capabilities.length - 3}</span>
+                  {((agent.tools || agent.capabilities || [])).length > 3 && (
+                    <span className="text-[10px] text-gray-400">+{(agent.tools || agent.capabilities || []).length - 3}</span>
                   )}
                 </div>
 

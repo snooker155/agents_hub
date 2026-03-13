@@ -937,7 +937,7 @@ export default function Chat() {
     <div className="-m-8 flex overflow-hidden" style={{ height: 'calc(100vh - 4rem)' }}>
 
       {/* ── Sidebar ── */}
-      <div className="w-60 flex-shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col">
+      <div className="w-60 flex-shrink-0 bg-gray-50 border-l border-r border-gray-200 flex flex-col">
         <div className="p-3">
           <button
             onClick={newConversation}
@@ -989,7 +989,7 @@ export default function Chat() {
       <div className="flex-1 flex flex-col min-w-0 bg-gray-50">
 
         {/* Top bar */}
-        <div className="flex-shrink-0 bg-white border-b border-gray-200 px-5 py-2.5 flex items-center gap-4">
+        <div className="flex-shrink-0 bg-white border-b border-gray-200 px-5 h-[60px] flex items-center gap-4">
           <AgentDropdown agents={selectableAgents} value={selectedAgent} onChange={(id) => {
             setSelectedAgent(id);
             // update current conv's agent
@@ -1123,7 +1123,7 @@ export default function Chat() {
             )}
 
             <div
-              className="flex items-end gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-3
+              className="flex items-center gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-3
                 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
                 shadow-sm transition-all"
             >
@@ -1184,7 +1184,7 @@ export default function Chat() {
       {/* ── Process side panel ── */}
       {processOpen && (
         <div className="w-[420px] flex-shrink-0 bg-white border-l border-gray-200 flex flex-col">
-          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+          <div className="px-4 h-[60px] border-b border-gray-200 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-gray-800">Agent Process</h3>
               <p className="text-[11px] text-gray-500 font-mono mt-0.5">

@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import route modules organized by domain
-from routes import agents, tasks, factory, stats, memory, workspaces, tools, sessions, chat, nodes
+from routes import agents, tasks, factory, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external
 from routes import settings as settings_router
 
 # Import settings for API key validation
@@ -148,6 +148,9 @@ app.include_router(tasks.router)
 # Factory domain: AI factory workflow integration
 app.include_router(factory.router)
 
+# Flows domain: user-defined factories / visual pipelines
+app.include_router(flows.router)
+
 # Stats domain: system statistics and monitoring
 app.include_router(stats.router)
 
@@ -168,6 +171,9 @@ app.include_router(chat.router)
 
 # Nodes domain: long-running agent node management
 app.include_router(nodes.router)
+
+# External domain: token-authenticated access for exposed nodes
+app.include_router(external.router)
 
 # Settings domain: LLM and application settings
 app.include_router(settings_router.router)

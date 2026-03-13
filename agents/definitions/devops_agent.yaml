@@ -6,13 +6,12 @@ temperature: 0.1
 max_tokens: 15000
 verbose: false
 
-capabilities:
-  - deployment
-  - infrastructure
-  - ci_cd
-
 tools:
-  - filesystem
+  - read_file
+  - write_file
+  - list_files
+  - search_text
+  - create_file
 
 system_prompt: |
   You are the DevOps Engineer.

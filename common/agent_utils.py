@@ -11,18 +11,59 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 from common.config import settings
 
+
 def build_chat_model(
+    provider: Optional[str] = None,
     model: Optional[str] = None,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
     streaming: bool = False,
-) -> ChatOpenAI:
-    """Standardized ChatOpenAI builder using unified settings."""
+):
+    """Build a LangChain chat model for the given provider.
+
+    provider: 'openai' | 'anthropic' | 'google' | 'ollama' | 'lmstudio' | None/'inherit'
+    Falls back to the global settings when parameters are not supplied.
+    """
+    temp = temperature if temperature is not None else settings.temperature
+    tok = max_tokens if max_tokens is not None else settings.max_tokens
+
+    if provider == "ollama":
+        from langchain_ollama import ChatOllama
+        url = base_url or settings.ollama_base_url
+        mdl = model or settings.ollama_model or "llama3"
+        return ChatOllama(model=mdl, base_url=url, temperature=temp)
+
+    if provider == "lmstudio":
+        url = (base_url or settings.lmstudio_base_url).rstrip("/")
+        mdl = model or settings.lmstudio_model or "local-model"
+        return ChatOpenAI(
+            model=mdl,
+            base_url=f"{url}/v1",
+            api_key="lm-studio",  # LM Studio ignores the key value
+            temperature=temp,
+            max_tokens=tok,
+            streaming=streaming,
+        )
+
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        key = api_key or settings.anthropic_api_key
+        mdl = model or "claude-opus-4-6"
+        return ChatAnthropic(model=mdl, api_key=key, temperature=temp, max_tokens=tok)
+
+    if provider == "google":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        key = api_key or settings.google_api_key
+        mdl = model or "gemini-2.0-flash"
+        return ChatGoogleGenerativeAI(model=mdl, google_api_key=key, temperature=temp)
+
+    # Default: OpenAI (or inherit global settings)
     return ChatOpenAI(
         model=model or settings.model,
-        temperature=temperature if temperature is not None else settings.temperature,
-        max_tokens=max_tokens if max_tokens is not None else settings.max_tokens,
+        temperature=temp,
+        max_tokens=tok,
         api_key=api_key or settings.openai_api_key,
         streaming=streaming,
     )

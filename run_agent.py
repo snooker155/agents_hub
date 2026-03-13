@@ -42,8 +42,23 @@ def main():
 
     agent_id = agent_map.get(args.agent, args.agent)
 
-    print(f"Creating agent: {agent_id} in workspace: {ws}")
-    agent = create_agent(agent_id, workspace=ws, verbose=args.verbose)
+    # Apply per-agent model overrides injected by factory_runner via environment variables
+    agent_overrides: dict = {}
+    if os.environ.get("AGENT_PROVIDER"):
+        agent_overrides["provider"] = os.environ["AGENT_PROVIDER"]
+    if os.environ.get("AGENT_MODEL"):
+        agent_overrides["model"] = os.environ["AGENT_MODEL"]
+    if os.environ.get("AGENT_BASE_URL"):
+        agent_overrides["base_url"] = os.environ["AGENT_BASE_URL"]
+    if os.environ.get("AGENT_API_KEY"):
+        agent_overrides["api_key"] = os.environ["AGENT_API_KEY"]
+    if os.environ.get("AGENT_TEMPERATURE"):
+        agent_overrides["temperature"] = float(os.environ["AGENT_TEMPERATURE"])
+    if os.environ.get("AGENT_MAX_TOKENS"):
+        agent_overrides["max_tokens"] = int(os.environ["AGENT_MAX_TOKENS"])
+
+    print(f"Creating agent: {agent_id} in workspace: {ws}" + (f" (provider: {agent_overrides['provider']}" + (f", model: {agent_overrides['model']}" if 'model' in agent_overrides else "") + ")" if 'provider' in agent_overrides else ""))
+    agent = create_agent(agent_id, workspace=ws, verbose=args.verbose, **agent_overrides)
 
     instruction = args.action or args.desc or f"Process task {args.task_id or ''}"
 

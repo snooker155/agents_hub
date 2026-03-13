@@ -30,6 +30,25 @@ from models import ChatRequest
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
+
+def _agent_overrides(agent_id: str) -> dict:
+    """Read per-agent model overrides from registry default_params."""
+    try:
+        spec = registry.get_agent(agent_id)
+        if not spec:
+            return {}
+        dp = dict(spec.default_params or {})
+        overrides = {}
+        provider = dp.get("provider")
+        if provider and provider != "inherit":
+            overrides["provider"] = provider
+        for key in ("model", "base_url", "api_key", "temperature", "max_tokens"):
+            if dp.get(key) is not None:
+                overrides[key] = dp[key]
+        return overrides
+    except Exception:
+        return {}
+
 CHAT_LOGS_DIR = STATE_DIR / "chat_logs"
 CHAT_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -388,7 +407,8 @@ async def send_message(request: ChatRequest):
     run_id, _, log_file, log_lines = _create_chat_run(request)
 
     def _run_agent():
-        agent = create_agent(request.agent_id, workspace=workspace_abs)
+        overrides = _agent_overrides(request.agent_id)
+        agent = create_agent(request.agent_id, workspace=workspace_abs, **overrides)
         return agent.run(full_prompt)
 
     try:
@@ -453,7 +473,8 @@ async def stream_message(request: ChatRequest):
         final_error: str | None = None
 
         def _run_agent():
-            agent = create_agent(request.agent_id, workspace=workspace_abs, streaming=True)
+            overrides = _agent_overrides(request.agent_id)
+            agent = create_agent(request.agent_id, workspace=workspace_abs, streaming=True, **overrides)
             return agent.run(full_prompt, callbacks=[callback])
 
         task = asyncio.create_task(asyncio.to_thread(_run_agent))

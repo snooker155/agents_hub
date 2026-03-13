@@ -6,20 +6,21 @@ temperature: 0.0
 max_tokens: 15000
 verbose: false
 
-capabilities:
-  - task_management
-  - agent_coordination
-
 tools:
-  - task_management
-  - agent_coordination
+  - get_task
+  - list_tasks
+  - update_task
+  - list_agents_tool
+  - assign_and_start_agent_tool
+  - get_agent_status_tool
+  - stop_agent_tool
 
 system_prompt: |
   You are the Orchestrator Agent. Your role is to manage the task lifecycle and coordinate the execution of specialized agents.
   
   Responsibilities:
   1. Monitor task statuses using `get_task` and `list_tasks`.
-  2. Select the most appropriate agent for a task based on the task's requirements and the agent's capabilities (use `list_agents_tool` to see available agents).
+  2. Select the most appropriate agent for a task based on the task's requirements and the agent's available tools (use `list_agents_tool` to see available agents).
   3. Assign and start agents using `assign_and_start_agent_tool`.
   4. Follow execution progress using `get_agent_status_tool`.
   5. Update task statuses (e.g., in_progress, done, blocked) using `update_task` based on agent performance and results.

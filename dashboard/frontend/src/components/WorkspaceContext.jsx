@@ -6,6 +6,9 @@ export const WorkspaceProvider = ({ children }) => {
   const [selectedWorkspace, setSelectedWorkspace] = useState(
     localStorage.getItem('selectedWorkspace') || ''
   );
+  const [liveUpdates, setLiveUpdates] = useState(
+    () => localStorage.getItem('dashboard_live') !== 'false'
+  );
 
   useEffect(() => {
     if (selectedWorkspace) {
@@ -15,8 +18,19 @@ export const WorkspaceProvider = ({ children }) => {
     }
   }, [selectedWorkspace]);
 
+  const toggleLiveUpdates = () => {
+    setLiveUpdates(prev => {
+      const next = !prev;
+      localStorage.setItem('dashboard_live', String(next));
+      return next;
+    });
+  };
+
+  // When "default" workspace is selected, show all data (no filtering)
+  const workspaceFilter = selectedWorkspace === 'default' ? undefined : selectedWorkspace || undefined;
+
   return (
-    <WorkspaceContext.Provider value={{ selectedWorkspace, setSelectedWorkspace }}>
+    <WorkspaceContext.Provider value={{ selectedWorkspace, setSelectedWorkspace, workspaceFilter, liveUpdates, toggleLiveUpdates }}>
       {children}
     </WorkspaceContext.Provider>
   );

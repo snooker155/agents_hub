@@ -4,9 +4,128 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Sora', 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background:
+    radial-gradient(circle at top, rgba(34, 211, 238, 0.08), transparent 28%),
+    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
 }
+
+#root {
+  min-height: 100vh;
+}
+
+.factory-canvas .react-flow__attribution {
+  display: none;
+}
+
+.factory-canvas .react-flow__controls-button,
+.factory-canvas .react-flow__minimap {
+  border-radius: 16px;
+}
+
+/* ── Dark mode global overrides ─────────────────────────────────────────────
+   Uses html.dark selector so Tailwind utility classes are overridden without
+   needing to edit every component. Applies slate-900/800/700 dark palette.
+   ────────────────────────────────────────────────────────────────────────── */
+
+html.dark {
+  color-scheme: dark;
+}
+
+/* Page / app backgrounds */
+html.dark body,
+html.dark .bg-gray-100 {
+  background-color: #0f172a;
+}
+
+/* Card / panel backgrounds */
+html.dark .bg-white {
+  background-color: #1e293b;
+}
+
+html.dark .bg-gray-50 {
+  background-color: #0f172a;
+}
+
+html.dark .bg-gray-200 {
+  background-color: #334155;
+}
+
+/* Text */
+html.dark .text-gray-900 { color: #f1f5f9; }
+html.dark .text-gray-800 { color: #e2e8f0; }
+html.dark .text-gray-700 { color: #cbd5e1; }
+html.dark .text-gray-600 { color: #94a3b8; }
+html.dark .text-gray-500 { color: #64748b; }
+html.dark .text-gray-400 { color: #475569; }
+
+/* Borders */
+html.dark .border-gray-100 { border-color: #334155; }
+html.dark .border-gray-200 { border-color: #334155; }
+html.dark .border-gray-300 { border-color: #475569; }
+
+/* Inputs, selects, textareas */
+html.dark input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+html.dark select,
+html.dark textarea {
+  background-color: #334155;
+  color: #e2e8f0;
+  border-color: #475569;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #64748b;
+}
+
+/* Hover states */
+html.dark .hover\:bg-indigo-50:hover { background-color: #1e1b4b; }
+html.dark .hover\:bg-gray-50:hover   { background-color: #1e293b; }
+html.dark .hover\:bg-gray-100:hover  { background-color: #334155; }
+html.dark .hover\:text-gray-900:hover { color: #f1f5f9; }
+
+/* Active/selected sidebar item */
+html.dark .bg-indigo-50 { background-color: #1e1b4b; }
+
+/* Status / alert backgrounds */
+html.dark .bg-green-50   { background-color: #14532d; }
+html.dark .bg-red-50     { background-color: #7f1d1d; }
+html.dark .bg-yellow-50  { background-color: #713f12; }
+html.dark .bg-blue-50    { background-color: #1e3a5f; }
+html.dark .bg-orange-50  { background-color: #7c2d12; }
+html.dark .bg-amber-50   { background-color: #78350f; }
+html.dark .bg-emerald-50 { background-color: #14532d; }
+html.dark .bg-purple-50  { background-color: #4c1d95; }
+html.dark .bg-indigo-100 { background-color: #312e81; }
+
+/* Status text */
+html.dark .text-green-700   { color: #86efac; }
+html.dark .text-red-700     { color: #fca5a5; }
+html.dark .text-yellow-700  { color: #fcd34d; }
+html.dark .text-blue-700    { color: #93c5fd; }
+html.dark .text-orange-700  { color: #fdba74; }
+html.dark .text-amber-700   { color: #fcd34d; }
+html.dark .text-emerald-700 { color: #6ee7b7; }
+html.dark .text-purple-700  { color: #c4b5fd; }
+html.dark .text-indigo-600  { color: #818cf8; }
+
+/* Borders for colored sections */
+html.dark .border-green-200   { border-color: #166534; }
+html.dark .border-red-200     { border-color: #991b1b; }
+html.dark .border-blue-200    { border-color: #1d4ed8; }
+html.dark .border-orange-200  { border-color: #9a3412; }
+html.dark .border-indigo-200  { border-color: #4338ca; }
+
+/* Shadows */
+html.dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.5); }
+html.dark .shadow-md { box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
+html.dark .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7); }
+
+/* Dividers / hr */
+html.dark hr,
+html.dark .divide-gray-100 > * + * { border-color: #334155; }
+
+/* Focus ring override */
+html.dark .focus\:ring-indigo-500:focus { --tw-ring-color: #6366f1; }

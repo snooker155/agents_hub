@@ -24,7 +24,7 @@ function StatusBadge({ status }) {
 }
 
 const TaskManager = () => {
-  const { selectedWorkspace } = useWorkspace();
+  const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const [tasks, setTasks] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
   const navigate = useNavigate();
@@ -40,7 +40,7 @@ const TaskManager = () => {
 
   const fetchTasks = async () => {
     try {
-      const response = await getTasks(selectedWorkspace);
+      const response = await getTasks(workspaceFilter);
       try {
           const wsResp = await getWorkspaces();
           setWorkspaces(wsResp.data);
@@ -67,9 +67,10 @@ const TaskManager = () => {
 
   useEffect(() => {
     fetchTasks();
+    if (!liveUpdates) return;
     const interval = setInterval(fetchTasks, 5000);
     return () => clearInterval(interval);
-  }, [selectedWorkspace]);
+  }, [selectedWorkspace, liveUpdates]);
 
   const handleCreateTask = async (e) => {
     e.preventDefault();

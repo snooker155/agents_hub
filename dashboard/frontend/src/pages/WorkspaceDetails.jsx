@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useWorkspace } from '../components/WorkspaceContext';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, createTask } from '../api';
 import { ChevronLeft, ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare } from 'lucide-react';
 
@@ -63,6 +64,7 @@ const parentDirPaths = (filePath) => {
 const WorkspaceDetails = () => {
   const { name } = useParams();
   const navigate = useNavigate();
+  const { liveUpdates } = useWorkspace();
   const [ws, setWs] = useState(null);
   const [files, setFiles] = useState([]);
   const [allAgents, setAllAgents] = useState([]);
@@ -121,7 +123,7 @@ const WorkspaceDetails = () => {
     }
   };
 
-  useEffect(() => { fetchData(); const i = setInterval(fetchData, 5000); return () => clearInterval(i); }, [name]);
+  useEffect(() => { fetchData(); if (!liveUpdates) return; const i = setInterval(fetchData, 5000); return () => clearInterval(i); }, [name, liveUpdates]);
 
   const handleAddAgent = async (agentId) => {
     try {

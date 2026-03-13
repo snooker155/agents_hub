@@ -73,8 +73,10 @@ async def get_stats(workspace: Optional[str] = None):
 
 
 @router.get("/api/runs")
-async def list_runs():
+async def list_runs(workspace: Optional[str] = None):
     runs = run_manager._load_runs()
+    if workspace:
+        runs = [r for r in runs if r.get("workspace") == workspace]
     # Sort by started_at desc
     runs.sort(key=lambda r: r.get("started_at", ""), reverse=True)
     return runs

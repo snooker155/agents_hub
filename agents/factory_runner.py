@@ -67,6 +67,28 @@ def build_factory_run_spec(task: Any, agent_id: str, params: Optional[Dict[str, 
         actual_agent = agent_id[8:] if agent_id.startswith("factory-") else agent_id
         actual_agent = legacy_map.get(actual_agent, actual_agent)
 
+        # Inject per-agent model overrides from registry into the subprocess environment
+        try:
+            from agents.registry import registry
+            spec = registry.get_agent(actual_agent)
+            if spec:
+                dp = dict(spec.default_params or {})
+                provider = dp.get("provider", "inherit")
+                if provider and provider != "inherit":
+                    env["AGENT_PROVIDER"] = provider
+                if dp.get("model"):
+                    env["AGENT_MODEL"] = dp["model"]
+                if dp.get("base_url"):
+                    env["AGENT_BASE_URL"] = dp["base_url"]
+                if dp.get("api_key"):
+                    env["AGENT_API_KEY"] = dp["api_key"]
+                if dp.get("temperature") is not None:
+                    env["AGENT_TEMPERATURE"] = str(dp["temperature"])
+                if dp.get("max_tokens") is not None:
+                    env["AGENT_MAX_TOKENS"] = str(dp["max_tokens"])
+        except Exception:
+            pass  # If registry lookup fails, continue without overrides
+
         action = (params or {}).get("action")
 
         cmd = [

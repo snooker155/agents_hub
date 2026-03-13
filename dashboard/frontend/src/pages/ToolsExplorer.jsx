@@ -106,7 +106,7 @@ const ToolsExplorer = () => {
             <Wrench className="w-6 h-6 mr-2 text-indigo-600" />
             Tool Inventory
           </h2>
-          <p className="text-gray-500 text-sm">Browse capabilities available to agents in the cluster.</p>
+          <p className="text-gray-500 text-sm">Browse tools available to agents in the cluster.</p>
         </div>
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />

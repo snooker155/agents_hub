@@ -51,7 +51,7 @@ spec:
   isRemote: true
   agentUrl: "http://localhost:8080"
   capacity: 5
-  capabilities:
+  tools:
     - web.search
     - data.analysis
 ```

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useWorkspace } from '../components/WorkspaceContext';
 import { ChevronLeft, CheckCircle, Clock, AlertCircle, StopCircle, Terminal, Play, Square, Split, Trash2, Folder } from 'lucide-react';
 import { getTask, getAgents, assignAgent, stopAgent, getLogs, runDecomposer, getTaskProgress, deleteTask } from '../api';
 import api from '../api';
@@ -7,6 +8,7 @@ import api from '../api';
 const TaskDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { liveUpdates } = useWorkspace();
   const [task, setTask] = useState(null);
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -72,11 +74,10 @@ const TaskDetails = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(() => {
-        fetchData();
-    }, 5000);
+    if (!liveUpdates) return;
+    const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, [id]);
+  }, [id, liveUpdates]);
 
   const handleAssignAgent = async () => {
     try {

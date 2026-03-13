@@ -6,13 +6,12 @@ temperature: 0.0
 max_tokens: 15000
 verbose: false
 
-capabilities:
-  - management
-  - planning
-  - task_splitting
-
 tools:
-  - task_management
+  - get_task
+  - list_tasks
+  - add_subtask
+  - create_sequence
+  - update_task
 
 system_prompt: |
   You are a Team Lead Agent.

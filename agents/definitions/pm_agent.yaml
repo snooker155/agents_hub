@@ -6,14 +6,16 @@ temperature: 0.3
 max_tokens: 15000
 verbose: false
 
-capabilities:
-  - requirements_analysis
-  - project_planning
-  - decompose
-
 tools:
-  - task_management
-  - filesystem
+  - create_task
+  - add_subtask
+  - get_task
+  - list_tasks
+  - update_task
+  - create_sequence
+  - read_file
+  - write_file
+  - list_files
 
 system_prompt: |
   You are a Project Manager Agent with task decomposition capabilities.

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, Activity, History, Server, Wrench, Cpu, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText } from 'lucide-react';
-import { getAgent, getAgentHistory, getAgentHealth, getLogs, updateAgentMemory, eraseAgentMemory, getNodes, getAgentDefinition, getTasks, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs } from '../api';
+import { useWorkspace } from '../components/WorkspaceContext';
+import { ChevronLeft, Activity, History, Server, Wrench, Cpu, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi } from 'lucide-react';
+import { getAgent, getAgentHistory, getAgentHealth, getLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, getAgentModel, updateAgentModel, getNodes, getAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel } from '../api';
 
 const NODE_STATUS = {
   running: { dot: 'bg-green-500 animate-pulse', badge: 'bg-green-100 text-green-800', label: 'Running' },
@@ -39,8 +40,235 @@ function nodeUptime(startedAt, finishedAt) {
   return `${s}s`;
 }
 
+const EMPTY_MODEL = { provider: 'inherit', model: '', api_key: '', base_url: '', temperature: '', max_tokens: '' };
+
+// ── Memory pool helpers ───────────────────────────────────────────────────────
+
+const fmtBytes = (b) => {
+  if (!b) return '0 B';
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const RAG_STATUS = {
+  raw:     { label: 'Raw text',  color: 'bg-gray-100 text-gray-600',    dot: 'bg-gray-400' },
+  indexed: { label: 'Indexed',   color: 'bg-green-100 text-green-700',  dot: 'bg-green-500' },
+  failed:  { label: 'Failed',    color: 'bg-red-100 text-red-700',      dot: 'bg-red-500' },
+};
+
+function RagBadge({ status, vectorized }) {
+  const cfg = RAG_STATUS[status] || RAG_STATUS.raw;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.color}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+      {vectorized ? 'Vectorized' : cfg.label}
+    </span>
+  );
+}
+
+function MemoryFileCard({ file, poolId }) {
+  const [showPreview, setShowPreview] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const toolArgs = JSON.stringify({ memory_id: poolId, file_name: file.name }, null, 2);
+
+  const copyTool = () => {
+    navigator.clipboard.writeText(toolArgs).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+      {/* Header */}
+      <div className="px-4 py-3 flex items-start gap-3 border-b border-gray-100">
+        <div className="p-2 bg-indigo-50 rounded-lg shrink-0">
+          <FileText className="w-4 h-4 text-indigo-500" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold text-gray-900 text-sm">{file.name}</p>
+            {ext && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-mono uppercase">{ext}</span>}
+            <RagBadge status={file.rag_status || 'raw'} vectorized={file.vectorized} />
+          </div>
+          <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
+            {file.size_bytes > 0 && <span>{fmtBytes(file.size_bytes)}</span>}
+            {file.rag_chunks > 0 && <span>{file.rag_chunks} chunks</span>}
+            {file.embedding_dims > 0 && <span>{file.embedding_dims}d</span>}
+          </div>
+        </div>
+        <button onClick={() => setShowPreview(v => !v)}
+          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 border border-gray-200 px-2 py-1 rounded-lg hover:bg-gray-50 shrink-0">
+          <Eye className="w-3 h-3" /> {showPreview ? 'Hide' : 'Preview'}
+        </button>
+      </div>
+
+      <div className="px-4 py-3 space-y-3">
+        {/* read_memory tool call */}
+        <div>
+          <p className="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+            <Hash className="w-3 h-3" /> Retrieval — <code className="text-indigo-600">read_memory</code> tool
+          </p>
+          <div className="bg-gray-900 rounded-lg px-3 py-2 flex items-start justify-between gap-2">
+            <pre className="text-xs text-green-300 font-mono overflow-x-auto flex-1">{toolArgs}</pre>
+            <button onClick={copyTool}
+              className="text-gray-400 hover:text-white shrink-0 mt-0.5 transition-colors" title="Copy">
+              {copied ? <CheckCircle className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Vector metadata */}
+        {file.vectorized && (
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs bg-indigo-50 rounded-lg px-3 py-2.5">
+            <div className="flex items-center gap-1.5 col-span-2">
+              <Zap className="w-3 h-3 text-indigo-500" />
+              <span className="font-medium text-indigo-800">Vector Search Available</span>
+            </div>
+            {file.vector_db && <div><span className="text-gray-500">Vector DB:</span> <span className="font-medium text-gray-800">{file.vector_db}</span></div>}
+            {file.vector_db_collection && <div><span className="text-gray-500">Collection:</span> <span className="font-medium text-gray-800 font-mono">{file.vector_db_collection}</span></div>}
+            {file.embedding_model && <div><span className="text-gray-500">Model:</span> <span className="font-medium text-gray-800 font-mono">{file.embedding_model}</span></div>}
+            {file.embedding_dims > 0 && <div><span className="text-gray-500">Dims:</span> <span className="font-medium text-gray-800">{file.embedding_dims}</span></div>}
+            {file.rag_chunk_size && <div><span className="text-gray-500">Chunk size:</span> <span className="font-medium text-gray-800">{file.rag_chunk_size} chars</span></div>}
+          </div>
+        )}
+
+        {/* RAG only (no vector) */}
+        {file.rag_status === 'indexed' && !file.vectorized && (
+          <div className="text-xs bg-green-50 rounded-lg px-3 py-2 text-green-700 flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5" />
+            Text chunked into {file.rag_chunks} chunks ({file.rag_chunk_size} chars each).
+            Configure a vector DB in <strong>Settings → RAG & Vectors</strong> to enable semantic search.
+          </div>
+        )}
+
+        {/* Content preview */}
+        {showPreview && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1"><Eye className="w-3 h-3" /> Content preview</p>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 font-mono text-xs text-gray-700 whitespace-pre-wrap max-h-48 overflow-y-auto">
+              {file.content
+                ? (file.content.length > 800 ? file.content.slice(0, 800) + '\n…' : file.content)
+                : <span className="italic text-gray-400">No content</span>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MemoryPoolDetails({ pool }) {
+  const files = pool.files || [];
+  const rawFiles      = files.filter(f => !f.rag_status || f.rag_status === 'raw');
+  const indexedFiles  = files.filter(f => f.rag_status === 'indexed');
+  const vectorized    = files.filter(f => f.vectorized);
+  const totalChunks   = files.reduce((s, f) => s + (f.rag_chunks || 0), 0);
+
+  const [filter, setFilter] = useState('all'); // all | raw | indexed | vectorized
+
+  const visible = filter === 'all' ? files
+    : filter === 'raw'       ? rawFiles
+    : filter === 'indexed'   ? indexedFiles
+    :                          vectorized;
+
+  return (
+    <div className="space-y-4">
+      {/* Pool header */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-indigo-500 shrink-0" />
+              <h3 className="font-bold text-gray-900">{pool.name}</h3>
+              <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                <CheckCircle className="w-3 h-3" /> Connected
+              </span>
+            </div>
+            {pool.description && <p className="text-sm text-gray-500 mt-1 ml-6">{pool.description}</p>}
+            <p className="text-xs text-gray-400 mt-1 ml-6 font-mono">{pool.id}</p>
+          </div>
+          <a href="/memory" className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50 whitespace-nowrap flex items-center gap-1">
+            <ExternalLink className="w-3 h-3" /> Manage
+          </a>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-4 gap-3 mt-4">
+          {[
+            { label: 'Total Files', value: files.length, icon: FileText, color: 'text-gray-600 bg-gray-50' },
+            { label: 'Raw Text',    value: rawFiles.length, icon: FileSearch, color: 'text-gray-500 bg-gray-50' },
+            { label: 'Indexed',     value: indexedFiles.length, icon: Layers, color: 'text-green-700 bg-green-50' },
+            { label: 'Vectorized',  value: vectorized.length, icon: Zap, color: 'text-indigo-700 bg-indigo-50' },
+          ].map(({ label, value, icon: Icon, color }) => (
+            <div key={label} className={`rounded-lg px-3 py-2.5 flex items-center gap-2.5 ${color}`}>
+              <Icon className="w-4 h-4 shrink-0" />
+              <div>
+                <p className="text-lg font-bold leading-none">{value}</p>
+                <p className="text-xs mt-0.5 opacity-70">{label}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {totalChunks > 0 && (
+          <p className="text-xs text-gray-400 mt-3 flex items-center gap-1">
+            <BarChart2 className="w-3 h-3" /> {totalChunks} total chunks across indexed files
+          </p>
+        )}
+      </div>
+
+      {/* File catalog */}
+      {files.length === 0 ? (
+        <div className="bg-white rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-400">
+          <FileText className="w-10 h-10 mx-auto mb-3 opacity-20" />
+          <p className="text-sm">No files in this pool yet. Add files in the <strong>Shared Memory</strong> page.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {/* Filter bar */}
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-gray-700">Data Sources</p>
+            <div className="flex gap-1 ml-auto">
+              {[
+                { id: 'all',        label: `All (${files.length})` },
+                { id: 'raw',        label: `Raw (${rawFiles.length})` },
+                { id: 'indexed',    label: `Indexed (${indexedFiles.length})` },
+                { id: 'vectorized', label: `Vectorized (${vectorized.length})` },
+              ].map(btn => (
+                <button key={btn.id} onClick={() => setFilter(btn.id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                    filter === btn.id ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}>
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {visible.length === 0 ? (
+            <p className="text-center text-sm text-gray-400 py-6">No files in this category.</p>
+          ) : (
+            <div className="space-y-3">
+              {visible.map((f, i) => (
+                <MemoryFileCard key={i} file={f} poolId={pool.id} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const AgentDetails = () => {
   const { id } = useParams();
+  const { workspaceFilter, liveUpdates } = useWorkspace();
   const [agent, setAgent] = useState(null);
   const [history, setHistory] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -54,7 +282,11 @@ const AgentDetails = () => {
 
   const [memoryType, setMemoryType] = useState('none');
   const [memoryData, setMemoryData] = useState('');
+  const memoryDraftDirty = useRef(false);
   const [isUpdatingMemory, setIsUpdatingMemory] = useState(false);
+  const [sharedMemories, setSharedMemories] = useState([]);
+  const [connectedPool, setConnectedPool] = useState(null);
+  const [loadingPool, setLoadingPool] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [showStartNodeModal, setShowStartNodeModal] = useState(false);
   const [startWorkspace, setStartWorkspace] = useState('');
@@ -64,21 +296,45 @@ const AgentDetails = () => {
   const [logsNode, setLogsNode] = useState(null);
   const [logsNodeText, setLogsNodeText] = useState('');
   const [logsNodeLoading, setLogsNodeLoading] = useState(false);
+  const [availableTools, setAvailableTools] = useState([]);
+  const [selectedTools, setSelectedTools] = useState([]);
+  const [toolsDraftDirty, setToolsDraftDirty] = useState(false);
+  const [toolsSaving, setToolsSaving] = useState(false);
+  const [toolsMessage, setToolsMessage] = useState('');
+
+  // Model config tab state
+  const [modelForm, setModelForm] = useState(EMPTY_MODEL);
+  const [modelHasApiKey, setModelHasApiKey] = useState(false);
+  const [modelSaving, setModelSaving] = useState(false);
+  const [modelMessage, setModelMessage] = useState('');
+  const [modelShowKey, setModelShowKey] = useState(false);
+  const [localModels, setLocalModels] = useState([]);   // fetched model list
+  const [localModelsFetching, setLocalModelsFetching] = useState(false);
+  const [localModelsError, setLocalModelsError] = useState('');
 
   const fetchData = async () => {
     try {
       const [agentResp, historyResp, tasksResp, workspacesResp] = await Promise.all([
         getAgent(id),
         getAgentHistory(id),
-        getTasks(),
+        getTasks(workspaceFilter),
         getWorkspaces(),
       ]);
       setAgent(agentResp.data);
       setHistory(historyResp.data);
       setTasks(tasksResp.data || []);
       setWorkspaces(workspacesResp.data || []);
-      setMemoryType(agentResp.data.memory_type || 'none');
-      setMemoryData(typeof agentResp.data.memory_data === 'string' ? agentResp.data.memory_data : JSON.stringify(agentResp.data.memory_data || '', null, 2));
+      const savedTools = Array.isArray(agentResp.data?.tools)
+        ? agentResp.data.tools
+        : (Array.isArray(agentResp.data?.capabilities) ? agentResp.data.capabilities : []);
+      const paramsTools = Array.isArray(agentResp.data?.default_params?.tools) ? agentResp.data.default_params.tools : [];
+      if (!toolsDraftDirty) {
+        setSelectedTools([...new Set([...savedTools, ...paramsTools])]);
+      }
+      if (!memoryDraftDirty.current) {
+        setMemoryType(agentResp.data.memory_type || 'none');
+        setMemoryData(typeof agentResp.data.memory_data === 'string' ? agentResp.data.memory_data : JSON.stringify(agentResp.data.memory_data || '', null, 2));
+      }
       try {
         const nodesResp = await getNodes();
         setNodes((nodesResp.data || []).filter((n) => n.agent_id === id));
@@ -109,9 +365,50 @@ const AgentDetails = () => {
 
   useEffect(() => {
     fetchData();
+    if (!liveUpdates) return;
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
+  }, [id, liveUpdates]);
+
+  useEffect(() => {
+    setToolsDraftDirty(false);
+    setToolsMessage('');
+    memoryDraftDirty.current = false;
+    setModelForm(EMPTY_MODEL);
+    setModelMessage('');
   }, [id]);
+
+  useEffect(() => {
+    getAgentModel(id)
+      .then(r => {
+        const d = r.data;
+        setModelHasApiKey(!!d.has_api_key);
+        setModelForm({
+          provider: d.provider || 'inherit',
+          model: d.model || '',
+          api_key: '',
+          base_url: d.base_url || '',
+          temperature: d.temperature != null ? String(d.temperature) : '',
+          max_tokens: d.max_tokens != null ? String(d.max_tokens) : '',
+        });
+      })
+      .catch(() => {});
+  }, [id]);
+
+  useEffect(() => {
+    const fetchTools = async () => {
+      try {
+        const resp = await getTools();
+        const ids = (resp.data?.all || [])
+          .map((t) => t.id || t.name)
+          .filter(Boolean);
+        setAvailableTools([...new Set(ids)].sort());
+      } catch {
+        setAvailableTools([]);
+      }
+    };
+    fetchTools();
+  }, []);
 
   const handleUpdateMemory = async () => {
     setIsUpdatingMemory(true);
@@ -123,6 +420,7 @@ const AgentDetails = () => {
         // keep as string
       }
       await updateAgentMemory(id, { memory_type: memoryType, memory_data: data });
+      memoryDraftDirty.current = false;
       fetchData();
     } catch (error) {
       console.error('Error updating memory:', error);
@@ -136,6 +434,7 @@ const AgentDetails = () => {
     setIsUpdatingMemory(true);
     try {
       await eraseAgentMemory(id);
+      memoryDraftDirty.current = false;
       fetchData();
     } catch (error) {
       console.error('Error erasing memory:', error);
@@ -143,6 +442,24 @@ const AgentDetails = () => {
       setIsUpdatingMemory(false);
     }
   };
+
+  // Load shared memory pools when the memory tab opens
+  useEffect(() => {
+    if (activeTab !== 'memory') return;
+    getSharedMemories().then(r => setSharedMemories(r.data || [])).catch(() => {});
+  }, [activeTab]);
+
+  // Load full pool details whenever the selected pool ID changes
+  useEffect(() => {
+    if (memoryType !== 'shared' || !memoryData) { setConnectedPool(null); return; }
+    const poolId = memoryData.trim();
+    if (!poolId) { setConnectedPool(null); return; }
+    setLoadingPool(true);
+    getSharedMemory(poolId)
+      .then(r => setConnectedPool(r.data))
+      .catch(() => setConnectedPool(null))
+      .finally(() => setLoadingPool(false));
+  }, [memoryType, memoryData]);
 
   const viewLogs = async (runId) => {
     try {
@@ -219,13 +536,98 @@ const AgentDetails = () => {
     }
   };
 
+  const toggleTool = (toolId) => {
+    setSelectedTools((prev) => (
+      prev.includes(toolId)
+        ? prev.filter((t) => t !== toolId)
+        : [...prev, toolId]
+    ));
+    setToolsDraftDirty(true);
+    setToolsMessage('');
+  };
+
+  const handleSaveTools = async () => {
+    setToolsSaving(true);
+    setToolsMessage('');
+    try {
+      await updateAgentTools(id, { tools: selectedTools });
+      setToolsMessage('Tools updated');
+      setToolsDraftDirty(false);
+      await fetchData();
+    } catch (error) {
+      setToolsMessage(error.response?.data?.detail || 'Failed to update tools');
+    } finally {
+      setToolsSaving(false);
+    }
+  };
+
+  const handleFetchLocalModels = async () => {
+    const provider = modelForm.provider; // 'ollama' | 'lmstudio'
+    const baseUrl = modelForm.base_url ||
+      (provider === 'ollama' ? 'http://localhost:11434' : 'http://localhost:1234');
+    setLocalModelsFetching(true);
+    setLocalModelsError('');
+    setLocalModels([]);
+    try {
+      const { data } = await testLocalModel(provider, baseUrl);
+      if (data.ok) {
+        setLocalModels(data.models || []);
+        if (!data.models?.length) setLocalModelsError('Connected but no models found.');
+      } else {
+        setLocalModelsError(data.error || 'Connection failed.');
+      }
+    } catch (e) {
+      setLocalModelsError(e.message);
+    } finally {
+      setLocalModelsFetching(false);
+    }
+  };
+
+  const handleSaveModel = async () => {
+    setModelSaving(true);
+    setModelMessage('');
+    try {
+      const payload = {
+        provider: modelForm.provider,
+        model: modelForm.model,
+        base_url: modelForm.base_url,
+      };
+      if (modelForm.api_key.trim()) {
+        payload.api_key = modelForm.api_key.trim();
+      }
+      const tempVal = parseFloat(modelForm.temperature);
+      if (modelForm.temperature.trim() === '') {
+        payload.clear_temperature = true;
+      } else if (!isNaN(tempVal)) {
+        payload.temperature = tempVal;
+      }
+      const tokVal = parseInt(modelForm.max_tokens, 10);
+      if (modelForm.max_tokens.trim() === '') {
+        payload.clear_max_tokens = true;
+      } else if (!isNaN(tokVal)) {
+        payload.max_tokens = tokVal;
+      }
+      const resp = await updateAgentModel(id, payload);
+      setModelHasApiKey(!!resp.data.has_api_key);
+      setModelForm(f => ({ ...f, api_key: '' }));
+      setModelMessage('Model settings saved');
+      setTimeout(() => setModelMessage(''), 3000);
+    } catch (error) {
+      setModelMessage(error.response?.data?.detail || 'Failed to save');
+    } finally {
+      setModelSaving(false);
+    }
+  };
+
   if (loading) return <div className="text-center py-10">Loading agent details...</div>;
   if (!agent) return <div className="text-center py-10">Agent not found</div>;
 
   const activeTask = history.find(r => r.status === 'running');
   const configuredTools = Array.isArray(agent?.default_params?.tools) ? agent.default_params.tools : [];
-  const capabilities = Array.isArray(agent?.capabilities) ? agent.capabilities : [];
-  const mergedTools = [...new Set([...configuredTools, ...capabilities])];
+  const agentTools = Array.isArray(agent?.tools) ? agent.tools : (Array.isArray(agent?.capabilities) ? agent.capabilities : []);
+  const mergedTools = [...new Set([...configuredTools, ...agentTools])];
+  const visibleToolIds = [...new Set([...availableTools, ...mergedTools, ...selectedTools])];
+  const toolsDirty = toolsDraftDirty || ([...selectedTools].sort().join('|') !== [...mergedTools].sort().join('|'));
   const runningNodesCount = nodes.filter((n) => n.status === 'running' || n.status === 'starting').length;
   const agentTasks = (tasks || []).filter((t) => t.assigned_agent_type === id);
   const runningTasks = agentTasks.filter((t) => t.agent_state === 'running');
@@ -259,7 +661,8 @@ const AgentDetails = () => {
         <nav className="flex flex-wrap gap-2 -mb-px">
           {[
             { id: 'overview', label: 'Overview', icon: Activity },
-            { id: 'history', label: 'History', icon: History },
+            { id: 'history', label: 'Sessions', icon: History },
+            { id: 'model', label: 'Model', icon: BrainCircuit },
             { id: 'memory', label: 'Memory', icon: Database },
             { id: 'tools', label: 'Tools', icon: Wrench },
             { id: 'nodes', label: 'Nodes', icon: Server },
@@ -315,23 +718,87 @@ const AgentDetails = () => {
                 </div>
               )}
 
-              {agent.default_params?.model && (
-                <div className="flex items-center justify-between py-2 border-b border-gray-50">
-                  <span className="text-gray-500 flex items-center"><Cpu className="w-4 h-4 mr-2" /> Model</span>
-                  <span className="font-mono text-sm">{agent.default_params.model}</span>
-                </div>
-              )}
-
               <div className="py-2">
-                <span className="text-gray-500 flex items-center mb-2"><Wrench className="w-4 h-4 mr-2" /> Capabilities</span>
+                <span className="text-gray-500 flex items-center mb-2"><Wrench className="w-4 h-4 mr-2" /> Tools</span>
                 <div className="flex flex-wrap gap-2">
-                  {capabilities.map(cap => (
-                    <span key={cap} className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{cap}</span>
-                  ))}
+                  {agentTools.length > 0 ? agentTools.map(tool => (
+                    <span key={tool} className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{tool}</span>
+                  )) : <span className="text-xs text-gray-400 italic">None configured</span>}
                 </div>
               </div>
             </div>
           </div>
+
+          {/* Model & Parameters card */}
+          {(() => {
+            const dp = agent.default_params || {};
+            const provider = dp.provider && dp.provider !== 'inherit' ? dp.provider : null;
+            const hasModelConfig = provider || dp.model || dp.base_url || dp.temperature != null || dp.max_tokens != null || dp.api_key;
+            if (!hasModelConfig) return null;
+            const providerColors = {
+              openai:    'bg-green-100 text-green-700',
+              anthropic: 'bg-orange-100 text-orange-700',
+              google:    'bg-blue-100 text-blue-700',
+              ollama:    'bg-purple-100 text-purple-700',
+              lmstudio:  'bg-pink-100 text-pink-700',
+            };
+            return (
+              <div className="bg-white p-6 shadow-md rounded-lg">
+                <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-4">
+                  <BrainCircuit className="w-4 h-4 text-indigo-500" /> Model Configuration
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('model')}
+                    className="ml-auto text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50"
+                  >
+                    Edit
+                  </button>
+                </h3>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                  {provider && (
+                    <div className="col-span-2 flex items-center gap-2">
+                      <span className="text-gray-500 w-28 shrink-0">Provider</span>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${providerColors[provider] || 'bg-gray-100 text-gray-700'}`}>
+                        {provider}
+                      </span>
+                    </div>
+                  )}
+                  {dp.model && (
+                    <div className="col-span-2 flex items-center gap-2">
+                      <span className="text-gray-500 w-28 shrink-0">Model</span>
+                      <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{dp.model}</span>
+                    </div>
+                  )}
+                  {dp.base_url && (
+                    <div className="col-span-2 flex items-center gap-2 min-w-0">
+                      <span className="text-gray-500 w-28 shrink-0">Base URL</span>
+                      <span className="font-mono text-xs text-indigo-600 truncate">{dp.base_url}</span>
+                    </div>
+                  )}
+                  {dp.temperature != null && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500">Temperature</span>
+                      <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{dp.temperature}</span>
+                    </div>
+                  )}
+                  {dp.max_tokens != null && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500">Max Tokens</span>
+                      <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{dp.max_tokens.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {dp.api_key && (
+                    <div className="col-span-2 flex items-center gap-2">
+                      <span className="text-gray-500 w-28 shrink-0">API Key</span>
+                      <span className="flex items-center gap-1 text-xs text-green-700">
+                        <CheckCircle className="w-3 h-3" /> Custom key stored
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {agent.is_remote && health && (
             <div className={`p-4 rounded-lg shadow-sm border ${health.status === 'up' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
@@ -429,75 +896,166 @@ const AgentDetails = () => {
       )}
 
       {activeTab === 'memory' && (
-        <div className="bg-white p-6 shadow-md rounded-lg border-t-4 border-amber-500">
-          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
-            <Database className="w-5 h-5 mr-2 text-amber-500" /> Memory Management
-          </h3>
+        <div className="space-y-5">
+          {/* ── Configuration card ── */}
+          <div className="bg-white rounded-xl border border-t-4 border-t-amber-500 border-gray-200 p-6 shadow-sm">
+            <h3 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <Database className="w-5 h-5 text-amber-500" /> Memory Configuration
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Memory Type</label>
+                <select
+                  value={memoryType}
+                  onChange={(e) => { setMemoryType(e.target.value); memoryDraftDirty.current = true; if (e.target.value !== 'shared') setConnectedPool(null); }}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="none">None</option>
+                  <option value="local">Local (Agent-specific)</option>
+                  <option value="shared">Shared Memory Pool</option>
+                </select>
+              </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Memory Type</label>
-              <select
-                value={memoryType}
-                onChange={(e) => setMemoryType(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="none">None</option>
-                <option value="local">Local (Agent-specific)</option>
-                <option value="shared">Shared Memory</option>
-              </select>
-            </div>
+              {memoryType === 'shared' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Connected Pool</label>
+                  {sharedMemories.length > 0 ? (
+                    <select
+                      value={memoryData}
+                      onChange={(e) => { setMemoryData(e.target.value); memoryDraftDirty.current = true; }}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">— Select a memory pool —</option>
+                      {sharedMemories.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}  ({(m.files || []).length} files)
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={memoryData}
+                      onChange={(e) => { setMemoryData(e.target.value); memoryDraftDirty.current = true; }}
+                      placeholder="Shared Memory Pool ID (UUID)"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  )}
+                  {memoryData && (
+                    <p className="text-xs text-gray-400 mt-1 font-mono truncate">ID: {memoryData}</p>
+                  )}
+                </div>
+              )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Memory Data / ID</label>
-              <textarea
-                value={memoryData}
-                onChange={(e) => setMemoryData(e.target.value)}
-                placeholder={memoryType === 'shared' ? 'Enter Shared Memory ID' : 'Enter memory content or configuration'}
-                rows={6}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
+              {memoryType === 'local' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Memory Content</label>
+                  <textarea
+                    value={memoryData}
+                    onChange={(e) => { setMemoryData(e.target.value); memoryDraftDirty.current = true; }}
+                    placeholder="Enter memory content or configuration"
+                    rows={5}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              )}
 
-            <div className="flex space-x-2">
-              <button
-                onClick={handleUpdateMemory}
-                disabled={isUpdatingMemory}
-                className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-700 flex items-center justify-center disabled:opacity-50"
-              >
-                <Save className="w-4 h-4 mr-2" /> {isUpdatingMemory ? 'Updating...' : 'Update'}
-              </button>
-              <button
-                onClick={handleEraseMemory}
-                disabled={isUpdatingMemory || agent.memory_type === 'none'}
-                className="bg-red-50 text-red-600 px-4 py-2 rounded-md text-sm font-medium hover:bg-red-100 flex items-center justify-center disabled:opacity-50 border border-red-200"
-              >
-                <Trash2 className="w-4 h-4 mr-2" /> Erase
-              </button>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleUpdateMemory}
+                  disabled={isUpdatingMemory}
+                  className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isUpdatingMemory ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {isUpdatingMemory ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  onClick={handleEraseMemory}
+                  disabled={isUpdatingMemory || agent.memory_type === 'none'}
+                  className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-100 flex items-center justify-center gap-2 disabled:opacity-50 border border-red-200"
+                >
+                  <Trash2 className="w-4 h-4" /> Erase
+                </button>
+              </div>
             </div>
           </div>
+
+          {/* ── Connected pool details ── */}
+          {memoryType === 'shared' && (
+            loadingPool ? (
+              <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-200">
+                <Loader className="w-5 h-5 animate-spin text-indigo-400 mr-2" />
+                <span className="text-sm text-gray-500">Loading pool…</span>
+              </div>
+            ) : connectedPool ? (
+              <MemoryPoolDetails pool={connectedPool} />
+            ) : memoryData ? (
+              <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                Pool not found. Check the ID or create a pool in <strong>Shared Memory</strong>.
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center bg-white rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-400">
+                <Database className="w-10 h-10 mb-3 opacity-20" />
+                <p className="text-sm">Select a shared memory pool above to browse its data sources.</p>
+              </div>
+            )
+          )}
         </div>
       )}
 
       {activeTab === 'tools' && (
         <div className="space-y-6">
           <div className="bg-white p-6 shadow-md rounded-lg">
-            <h3 className="text-lg font-bold mb-4 flex items-center">
-              <Wrench className="w-5 h-5 mr-2 text-indigo-600" />
-              Tools
-            </h3>
-            {mergedTools.length ? (
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold flex items-center">
+                <Wrench className="w-5 h-5 mr-2 text-indigo-600" />
+                Tools
+              </h3>
+              <button
+                type="button"
+                onClick={handleSaveTools}
+                disabled={toolsSaving || !toolsDirty}
+                className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {toolsSaving ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1" />}
+                Save Tools
+              </button>
+            </div>
+            {toolsMessage && (
+              <div className={`text-xs mb-3 ${toolsMessage === 'Tools updated' ? 'text-green-600' : 'text-red-600'}`}>
+                {toolsMessage}
+              </div>
+            )}
+            {visibleToolIds.length ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {mergedTools.map((tool) => (
-                  <div key={tool} className="p-3 border border-gray-100 rounded-lg bg-gray-50">
-                    <div className="text-sm font-semibold text-gray-800">{tool}</div>
-                    <div className="text-xs text-gray-500 mt-1 font-mono">source: {configuredTools.includes(tool) ? 'default_params.tools' : 'capabilities'}</div>
-                  </div>
-                ))}
+                {visibleToolIds.map((tool) => {
+                  const enabled = selectedTools.includes(tool);
+                  return (
+                    <div key={tool} className="p-3 border border-gray-100 rounded-lg bg-gray-50 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-800">{tool}</div>
+                        <div className="text-xs text-gray-500 mt-1 font-mono">source: {configuredTools.includes(tool) ? 'default_params.tools' : 'tools'}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleTool(tool)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                          enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'
+                        }`}
+                      >
+                        {enabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <p className="text-sm text-gray-500 italic">No tools configured for this agent.</p>
             )}
+            <p className="text-xs text-gray-500 mt-3">
+              Toggle tools on/off, then click <span className="font-semibold">Save Tools</span> to apply changes.
+            </p>
           </div>
 
           {agent.default_params && Object.keys(agent.default_params).length > 0 && (
@@ -722,6 +1280,208 @@ const AgentDetails = () => {
               <p className="text-sm text-gray-500 italic">No YAML definition available.</p>
             )}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'model' && (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <BrainCircuit className="w-5 h-5 text-indigo-600" /> Model & Access Settings
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Override the global model settings for this agent. Leave fields blank to inherit from global settings.
+              </p>
+            </div>
+            <button
+              onClick={handleSaveModel}
+              disabled={modelSaving}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+            >
+              {modelSaving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {modelSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+
+          {modelMessage && (
+            <div className={`rounded-lg px-4 py-2 text-sm ${modelMessage.includes('saved') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+              {modelMessage}
+            </div>
+          )}
+
+          {/* Provider */}
+          <div className="bg-white p-6 shadow-md rounded-lg space-y-5">
+            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Provider</h4>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              {[
+                { value: 'inherit',   label: 'Inherit',    sub: 'global' },
+                { value: 'openai',    label: 'OpenAI',     sub: 'Cloud' },
+                { value: 'anthropic', label: 'Anthropic',  sub: 'Claude' },
+                { value: 'google',    label: 'Google',     sub: 'Gemini' },
+                { value: 'ollama',    label: 'Ollama',     sub: 'Local' },
+                { value: 'lmstudio', label: 'LM Studio',  sub: 'Local' },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => { setModelForm(f => ({ ...f, provider: opt.value })); setLocalModels([]); setLocalModelsError(''); }}
+                  className={`flex flex-col items-center gap-0.5 px-3 py-3 rounded-xl border-2 text-sm font-semibold transition-colors ${
+                    modelForm.provider === opt.value
+                      ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                      : 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {opt.label}
+                  <span className="text-[10px] font-normal text-gray-400">{opt.sub}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Model name */}
+          <div className="bg-white p-6 shadow-md rounded-lg space-y-5">
+            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Model</h4>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Model name</label>
+              <p className="text-xs text-gray-500 mb-2">
+                {modelForm.provider === 'inherit' && 'Inheriting model from global settings.'}
+                {modelForm.provider === 'openai' && 'e.g. gpt-4o, gpt-4o-mini, gpt-4-turbo'}
+                {modelForm.provider === 'anthropic' && 'e.g. claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001'}
+                {modelForm.provider === 'google' && 'e.g. gemini-2.0-flash, gemini-1.5-pro'}
+                {modelForm.provider === 'ollama' && 'e.g. llama3, mistral, phi3 (must be pulled via ollama pull)'}
+                {modelForm.provider === 'lmstudio' && 'Model identifier shown in LM Studio'}
+              </p>
+              {(modelForm.provider === 'ollama' || modelForm.provider === 'lmstudio') && localModels.length > 0 ? (
+                <select
+                  value={modelForm.model}
+                  onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                >
+                  <option value="">— select a model —</option>
+                  {localModels.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={modelForm.model}
+                  onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
+                  placeholder={modelForm.provider === 'inherit' ? '(inheriting from global settings)' : 'Enter model name…'}
+                  disabled={modelForm.provider === 'inherit'}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:opacity-50 disabled:bg-gray-50"
+                />
+              )}
+              {localModelsError && (
+                <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{localModelsError}</p>
+              )}
+            </div>
+
+            {/* Base URL */}
+            {(modelForm.provider === 'openai' || modelForm.provider === 'ollama' || modelForm.provider === 'lmstudio') && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Base URL override</label>
+                <p className="text-xs text-gray-500 mb-2">
+                  {modelForm.provider === 'openai' && 'Leave blank for api.openai.com. Use for Azure or compatible proxies.'}
+                  {modelForm.provider === 'ollama' && 'Ollama server address (default: http://localhost:11434)'}
+                  {modelForm.provider === 'lmstudio' && 'LM Studio server address (default: http://localhost:1234)'}
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={modelForm.base_url}
+                    onChange={e => { setModelForm(f => ({ ...f, base_url: e.target.value })); setLocalModels([]); setLocalModelsError(''); }}
+                    placeholder={
+                      modelForm.provider === 'ollama' ? 'http://localhost:11434' :
+                      modelForm.provider === 'lmstudio' ? 'http://localhost:1234' :
+                      'https://api.openai.com/v1'
+                    }
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                  {(modelForm.provider === 'ollama' || modelForm.provider === 'lmstudio') && (
+                    <button
+                      type="button"
+                      onClick={handleFetchLocalModels}
+                      disabled={localModelsFetching}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {localModelsFetching
+                        ? <Loader className="w-4 h-4 animate-spin" />
+                        : <Wifi className="w-4 h-4" />}
+                      Fetch models
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Temperature override</label>
+                <input
+                  type="number"
+                  value={modelForm.temperature}
+                  onChange={e => setModelForm(f => ({ ...f, temperature: e.target.value }))}
+                  placeholder="(inherit global)"
+                  min="0" max="2" step="0.05"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+                <p className="text-xs text-gray-400 mt-1">Clear to inherit from global settings</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max tokens override</label>
+                <input
+                  type="number"
+                  value={modelForm.max_tokens}
+                  onChange={e => setModelForm(f => ({ ...f, max_tokens: e.target.value }))}
+                  placeholder="(inherit global)"
+                  min="256" step="256"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+                <p className="text-xs text-gray-400 mt-1">Clear to inherit from global settings</p>
+              </div>
+            </div>
+          </div>
+
+          {/* API Key override */}
+          {(modelForm.provider !== 'inherit' && modelForm.provider !== 'ollama' && modelForm.provider !== 'lmstudio') && (
+            <div className="bg-white p-6 shadow-md rounded-lg space-y-4">
+              <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">API Key Override</h4>
+              <p className="text-sm text-gray-500">
+                Optionally store a per-agent API key. This overrides the key from global settings for this agent only.
+                {modelHasApiKey && <span className="ml-1 text-green-600 font-medium">A key is currently stored.</span>}
+              </p>
+              <div className="relative">
+                <input
+                  type={modelShowKey ? 'text' : 'password'}
+                  value={modelForm.api_key}
+                  onChange={e => setModelForm(f => ({ ...f, api_key: e.target.value }))}
+                  placeholder={modelHasApiKey ? '(key stored — enter new to replace)' : 'Enter API key…'}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setModelShowKey(s => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {modelShowKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {modelHasApiKey && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateAgentModel(id, { clear_api_key: true })
+                      .then(r => { setModelHasApiKey(!!r.data.has_api_key); setModelMessage('API key removed'); setTimeout(() => setModelMessage(''), 3000); })
+                      .catch(() => setModelMessage('Failed to remove key'));
+                  }}
+                  className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Remove stored key
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 

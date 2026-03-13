@@ -395,12 +395,8 @@ def assign_and_start_agent_tool(task_id: str, agent_id: str, params_json: Option
         if not spec:
             return _json_err("Agent not found", code="not_found", extra={"agent_id": agent_id})
 
-        # Policy: decomposer-capable agents may only be assigned to user-created tasks
-        try:
-            caps = list(getattr(spec, "capabilities", []) or [])
-        except Exception:
-            caps = []
-        if "decompose" in caps:
+        # Policy: the dedicated decomposer agent may only be assigned to user-created tasks
+        if agent_id == "decomposer":
             try:
                 if getattr(task, "created_by", None) != CreatedBy.user:
                     return _json_err(

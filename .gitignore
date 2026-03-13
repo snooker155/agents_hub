@@ -20,3 +20,5 @@ node_modules/
 shared_memory.json
 .DS_Store
 tasks.json
+.claude
+agents.json

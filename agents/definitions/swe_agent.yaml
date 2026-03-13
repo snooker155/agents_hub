@@ -6,13 +6,14 @@ temperature: 0.0
 max_tokens: 15000
 verbose: false
 
-capabilities:
-  - code_modification
-  - file_operations
-  - diff_patching
-
 tools:
-  - filesystem
+  - read_file
+  - write_file
+  - list_files
+  - search_text
+  - apply_unified_diff
+  - create_file
+  - read_memory
   
 system_prompt: |
   You are a Software Engineering Agent (SWE Agent).

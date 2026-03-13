@@ -150,6 +150,23 @@ async def get_workspace_file_content(name: str, path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/{name}/env")
+async def get_workspace_env(name: str):
+    """Return workspace-scoped environment variables."""
+    metadata = get_workspace_metadata(name)
+    return {"env_vars": metadata.get("env_vars", {})}
+
+
+@router.put("/{name}/env")
+async def update_workspace_env(name: str, payload: dict):
+    """Replace workspace-scoped environment variables."""
+    env_vars = payload.get("env_vars", {})
+    if not isinstance(env_vars, dict):
+        raise HTTPException(status_code=400, detail="env_vars must be a key-value object")
+    update_workspace_metadata(name, {"env_vars": env_vars})
+    return {"env_vars": env_vars}
+
+
 @router.post("/{name}/agents")
 async def add_agent_to_workspace(name: str, action: WorkspaceAgentAction):
     metadata = get_workspace_metadata(name)

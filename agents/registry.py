@@ -10,7 +10,7 @@ Validation rules:
 - JSON must contain object with key "agents": [ ... ]
 - Each agent must provide: id, name, type, entrypoint
 - default_params is a dict (defaults to {})
-- capabilities is a list of strings (defaults to [])
+- tools is a list of strings (defaults to [])
 - Agent IDs must be unique
 - entrypoint must be in the form "module.sub:attr" (importable)
 
@@ -36,7 +36,7 @@ class AgentSpec:
     description: str = ""
     domain: str = "general"
     default_params: Dict[str, Any] = field(default_factory=dict)
-    capabilities: List[str] = field(default_factory=list)
+    tools: List[str] = field(default_factory=list)
     capacity: int = 1
     is_remote: bool = False
     agent_url: Optional[str] = None
@@ -53,7 +53,9 @@ class AgentSpec:
             "description": self.description,
             "domain": self.domain,
             "default_params": dict(self.default_params) if self.default_params else {},
-            "capabilities": list(self.capabilities) if self.capabilities else [],
+            "tools": list(self.tools) if self.tools else [],
+            # Backward compatibility for older frontend/API consumers
+            "capabilities": list(self.tools) if self.tools else [],
             "capacity": self.capacity,
             "is_remote": self.is_remote,
             "agent_url": self.agent_url,
@@ -130,12 +132,13 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
             f"Agent default_params must be an object (dict): id={ad.get('id')}"
         )
 
-    capabilities = ad.get("capabilities")
-    if capabilities is None:
-        capabilities = []
-    if not isinstance(capabilities, list) or not all(isinstance(x, str) for x in capabilities):
+    tools = ad.get("tools")
+    if tools is None:
+        # Backward compatibility with older configs
+        tools = ad.get("capabilities", [])
+    if not isinstance(tools, list) or not all(isinstance(x, str) for x in tools):
         raise ValueError(
-            f"Agent capabilities must be a list of strings: id={ad.get('id')}"
+            f"Agent tools must be a list of strings: id={ad.get('id')}"
         )
 
     capacity = ad.get("capacity", 1)
@@ -166,7 +169,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         description=description,
         domain=domain,
         default_params=default_params,
-        capabilities=capabilities,
+        tools=tools,
         capacity=capacity,
         is_remote=is_remote,
         agent_url=agent_url,

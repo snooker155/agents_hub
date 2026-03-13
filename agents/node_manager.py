@@ -16,11 +16,17 @@ get_node(node_id)                       -> Optional[dict]
 update_node(node_id, updates)           -> Optional[dict]  (also called by node_runner subprocess)
 get_running_nodes_for_agent(agent_id)   -> List[dict]
 ensure_default_node()                   -> Optional[str]   (auto-start orchestrator)
+expose_node(node_id)                    -> Optional[dict]  (generate token, mark exposed)
+unexpose_node(node_id)                  -> bool
+get_node_by_token(token)               -> Optional[dict]
+log_connection(node_id, record)         -> None
+get_connections(node_id)               -> List[dict]
 """
 from __future__ import annotations
 
 import json
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -43,6 +49,8 @@ NODES_FILE = STATE_DIR / "nodes.json"
 NODES_LOCK = STATE_DIR / "nodes.json.lock"
 NODE_LOGS_DIR = STATE_DIR / "node_logs"
 NODE_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+NODE_CONNECTIONS_DIR = STATE_DIR / "node_connections"
+NODE_CONNECTIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -324,3 +332,91 @@ def ensure_default_node() -> Optional[str]:
     except Exception as e:
         print(f"[node_manager] Failed to start default orchestrator node: {e}")
         return None
+
+
+# ── Expose / External access ──────────────────────────────────────────────────
+
+def expose_node(node_id: str) -> Optional[Dict[str, Any]]:
+    """Generate an access token and mark the node as externally exposed.
+
+    Returns the updated node record, or None if not found.
+    """
+    node = get_node(node_id)
+    if not node:
+        return None
+    token = secrets.token_hex(32)
+    updates: Dict[str, Any] = {
+        "is_exposed": True,
+        "expose_token": token,
+        "exposed_at": _utc_now_iso(),
+    }
+    updated = update_node(node_id, updates)
+    if updated:
+        _append_node_log(updated, f"[expose] node exposed, token={token[:8]}…")
+    return updated
+
+
+def unexpose_node(node_id: str) -> bool:
+    """Remove the external access token and mark the node as not exposed."""
+    node = get_node(node_id)
+    if not node:
+        return False
+    updates: Dict[str, Any] = {
+        "is_exposed": False,
+        "expose_token": None,
+        "exposed_at": None,
+    }
+    updated = update_node(node_id, updates)
+    if updated:
+        _append_node_log(updated, "[expose] node unexposed")
+    return updated is not None
+
+
+def get_node_by_token(token: str) -> Optional[Dict[str, Any]]:
+    """Find an exposed node by its access token."""
+    if not token:
+        return None
+    for n in list_nodes():
+        if n.get("is_exposed") and n.get("expose_token") == token:
+            return n
+    return None
+
+
+# ── Connection logging ────────────────────────────────────────────────────────
+
+def _connections_file(node_id: str) -> Path:
+    return NODE_CONNECTIONS_DIR / f"{node_id}.json"
+
+
+def _connections_lock(node_id: str) -> str:
+    return str(NODE_CONNECTIONS_DIR / f"{node_id}.json.lock")
+
+
+def log_connection(node_id: str, record: Dict[str, Any]) -> None:
+    """Append a connection record to the node's connection history."""
+    cf = _connections_file(node_id)
+    lock_path = _connections_lock(node_id)
+    with FileLock(lock_path, timeout=10.0):
+        existing: List[Dict[str, Any]] = []
+        if cf.exists():
+            try:
+                existing = json.loads(cf.read_text(encoding="utf-8"))
+            except Exception:
+                existing = []
+        existing.append(record)
+        # Keep last 500 connection records per node
+        if len(existing) > 500:
+            existing = existing[-500:]
+        cf.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_connections(node_id: str) -> List[Dict[str, Any]]:
+    """Return connection history for a node, newest first."""
+    cf = _connections_file(node_id)
+    if not cf.exists():
+        return []
+    try:
+        records = json.loads(cf.read_text(encoding="utf-8"))
+        return list(reversed(records))
+    except Exception:
+        return []
