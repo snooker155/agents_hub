@@ -266,7 +266,7 @@ const Layout = ({ children }) => {
       {/* Sidebar */}
       <div className="w-64 bg-white shadow-md border-r border-gray-200 h-screen overflow-y-auto flex flex-col">
         <div className="p-6">
-          <h1 className="text-2xl font-bold text-indigo-600">Orchestrator</h1>
+          <h1 className="text-2xl font-bold text-indigo-600">Agents Hub</h1>
         </div>
         <nav className="mt-2 flex-1">
           {menuGroups.map((group, gi) => (

@@ -1,5 +1,5 @@
 """
-Orchestrator Dashboard API
+Agents Hub API
 
 Organized by domains:
 - agents: Agent management (registry, connections, memory)
@@ -36,7 +36,7 @@ from common.config import settings
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Orchestrator Dashboard API",
+    title="Agents Hub",
     description="Multi-domain agent orchestration and task management",
     version="1.0.0"
 )
@@ -131,7 +131,7 @@ else:
 async def root():
     """Root endpoint providing API information."""
     return {
-        "message": "Orchestrator Dashboard API is running",
+        "message": "Agents Hub API is running",
         "version": "1.0.0",
         "domains": [
             "agents",
