@@ -31,7 +31,7 @@ from common.tasks_service import (
     create_sequence as svc_create_sequence,
     get_task_result as svc_get_task_result,
 )
-from common.workspace import create_workspace_folder as ws_create_workspace_folder
+from workspace import create_workspace_folder as ws_create_workspace_folder
 
 # -------------------- helpers --------------------
 

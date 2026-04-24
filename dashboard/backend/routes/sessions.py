@@ -29,7 +29,7 @@ from uuid import uuid4
 
 from agents import run_manager, registry
 from common import tasks_service
-from common.workspace import create_workspace_folder
+from workspace import create_workspace_folder
 from common.session_service import (
     load_contexts as _load_contexts,
     save_contexts as _save_contexts,
@@ -254,7 +254,7 @@ def _resolve_session_model(run: dict) -> str:
     workspace = run.get("workspace") or run.get("task_workspace")
     if workspace:
         try:
-            from common.workspace import get_workspace_metadata, get_workspace_default_model_config
+            from workspace import get_workspace_metadata, get_workspace_default_model_config
             meta = get_workspace_metadata(workspace) or {}
             override = meta.get("model_override") or {}
             op = (override.get("provider") or "").strip()

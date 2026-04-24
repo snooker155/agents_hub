@@ -11,6 +11,7 @@ from filelock import FileLock
 from pydantic import BaseModel
 
 from .models import Project
+from common.paths import PROJECTS_FILE
 
 
 def _model_to_dict(obj: BaseModel) -> dict:
@@ -44,7 +45,7 @@ class ProjectStore:
 
     def __init__(self, path: Path | str | None = None):
         if path is None:
-            path = "projects/projects.json"
+            path = PROJECTS_FILE
         self.path = Path(path)
         self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         self.path.parent.mkdir(parents=True, exist_ok=True)

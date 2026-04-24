@@ -10,6 +10,7 @@ from uuid import UUID
 from filelock import FileLock
 
 from .models import SharedMemory
+from common.paths import SHARED_MEMORY_FILE
 
 try:  # pydantic v1
     from pydantic.json import pydantic_encoder as _pydantic_encoder  # type: ignore
@@ -43,7 +44,7 @@ class MemoryStore:
 
     def __init__(self, path: Path | str | None = None):
         if path is None:
-            path = "shared_memory.json"
+            path = SHARED_MEMORY_FILE
         self.path = Path(path)
         self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -230,7 +230,7 @@ def start_node(
     abs_workspace: Optional[str] = None
     if workspace:
         try:
-            from common.workspace import create_workspace_folder
+            from workspace import create_workspace_folder
             abs_workspace = str(create_workspace_folder(workspace))
         except Exception:
             abs_workspace = None
@@ -267,7 +267,7 @@ def start_node(
     _ws_agent_mode: Optional[str] = None
     if workspace:
         try:
-            from common.workspace import get_workspace_metadata
+            from workspace import get_workspace_metadata
             _ws_agent_mode = (get_workspace_metadata(workspace).get("settings") or {}).get("agent_mode") or None
         except Exception:
             pass

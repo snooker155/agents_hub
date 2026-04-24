@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from common import tasks_service
 from agents import run_manager, worker_runner, flow_runner
-from common.workspace import create_workspace_folder
+from workspace import create_workspace_folder
 
 try:
     from filelock import FileLock
@@ -343,7 +343,7 @@ async def generate_flow(data: FlowGenerateRequest):
             all_agents.append(fa)
 
     if data.workspace:
-        from common.workspace import get_workspace_metadata
+        from workspace import get_workspace_metadata
         metadata = get_workspace_metadata(data.workspace)
         allowed = metadata.get("allowed_agents")
         if allowed is not None:

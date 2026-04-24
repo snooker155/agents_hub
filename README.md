@@ -62,7 +62,7 @@ agents_hub/
 ├── projects/                # Project models and storage
 ├── tasks/                   # Task storage, logs, execution artifacts
 ├── tools/                   # Tool implementations exposed to agents
-├── workspaces/              # Generated local workspaces and project folders
+├── .agents_hub/             # Runtime state: workspaces, tasks, projects, memory, agents registry
 ├── cli.py                   # Terminal client for the backend
 ├── run_agent.py             # Direct agent run entrypoint
 ├── run_flow.py              # Flow execution entrypoint
@@ -87,14 +87,16 @@ agents_hub/
   Builds agent images and manages agent containers when Docker execution is enabled.
 - `common/config.py`
   Central environment-driven settings shared across the app.
-- `common/workspace.py`
+- `workspace/storage.py`
   Workspace and project path helpers.
 - `common/tasks_service.py`
   High-level task operations used across routes and agent logic.
-- `projects/projects.json`
+- `.agents_hub/projects.json`
   JSON-backed project metadata store.
-- `tasks/tasks.json`
+- `.agents_hub/tasks.json`
   JSON-backed task store.
+- `.agents_hub/workspaces/`
+  Generated workspace folders and per-workspace metadata.
 
 ## Setup
 
@@ -277,8 +279,8 @@ The project currently uses local JSON-backed persistence for several domains.
 
 Examples:
 
-- `tasks/tasks.json`
-- `projects/projects.json`
+- `.agents_hub/tasks.json`
+- `.agents_hub/projects.json`
 - `agents/state/...`
 
 Generated runtime artifacts may include:
@@ -352,3 +354,4 @@ This repository is under active development. Some legacy wording and earlier str
 ## Additional Docs
 
 - [Usage Scenarios And Runtime Settings](./USAGE_SCENARIOS_AND_SETTINGS.md)
+- [Examples](./examples/README.md)

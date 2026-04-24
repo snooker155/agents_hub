@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from agents.stats_callback import RunStatsCallback
+from common.paths import PROJECTS_FILE
 
 _INTERNAL_PREFIXES = (".logs/", ".progress.json", ".task_result")
 
@@ -116,7 +117,7 @@ class _SessionPublishCallback(BaseCallbackHandler):
 def _collect_changed_files(task_id: str, started_at_iso: Optional[str]) -> list:
     """Return project files modified at or after the run's started_at time.
 
-    Scans the project subfolder (workspaces/{ws}/{project}/) when a project is
+    Scans the project subfolder (.agents_hub/workspaces/{ws}/{project}/) when a project is
     set on the task, so only project-level files appear in the task Files tab.
     Falls back to the workspace root when no project is set."""
     if not started_at_iso:
@@ -125,7 +126,7 @@ def _collect_changed_files(task_id: str, started_at_iso: Optional[str]) -> list:
         from datetime import datetime, timezone
         from common import tasks_service as _ts
         from uuid import UUID as _UUID
-        from common.workspace import resolve_project_root, project_folder_name
+        from workspace import resolve_project_root, project_folder_name
         task = _ts.get_task(_UUID(str(task_id)))
         ws_name = (getattr(task, "workspace", None) or "").strip() if task else ""
         if not ws_name:
@@ -135,9 +136,8 @@ def _collect_changed_files(task_id: str, started_at_iso: Optional[str]) -> list:
             pid = getattr(task, "project_id", None) if task else None
             if pid:
                 try:
-                    from pathlib import Path as _P
                     from projects.storage import ProjectStore as _PS
-                    _pstore = _PS(_P(__file__).resolve().parent / "projects" / "projects.json")
+                    _pstore = _PS(PROJECTS_FILE)
                     _proj = _pstore.get(str(pid))
                     if _proj:
                         project_name = project_folder_name(_proj.name)

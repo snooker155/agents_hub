@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List
 from dataclasses import dataclass
 
-from common.workspace import WORKSPACES_ROOT, resolve_project_root, project_folder_name
+from workspace import WORKSPACES_ROOT, resolve_project_root, project_folder_name
 from common.config import settings
+from common.paths import PROJECTS_FILE, TASKS_FILE as DEFAULT_TASKS_FILE
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -46,7 +47,7 @@ def build_run_spec(task: Any, agent_id: str, params: Optional[Dict[str, Any]] = 
             try:
                 from pathlib import Path as _Path
                 from projects.storage import ProjectStore as _PS
-                _pstore = _PS(path=_Path(__file__).resolve().parents[1] / "projects" / "projects.json")
+                _pstore = _PS(path=PROJECTS_FILE)
                 _proj = _pstore.get(str(project_id))
                 if _proj:
                     project_name = project_folder_name(_proj.name)
@@ -64,7 +65,7 @@ def build_run_spec(task: Any, agent_id: str, params: Optional[Dict[str, Any]] = 
     # Ensure the subprocess resolves tasks.json relative to the project root,
     # not the workspace cwd.  Without this, task status updates written by
     # run_agent.py land in a different file and are never seen by the server.
-    tasks_file = str(settings.tasks_file or "tasks/tasks.json")
+    tasks_file = str(settings.tasks_file or DEFAULT_TASKS_FILE)
     if not Path(tasks_file).is_absolute():
         tasks_file = str((PROJECT_ROOT / tasks_file).resolve())
     env["TASKS_FILE"] = tasks_file
@@ -83,7 +84,7 @@ def build_run_spec(task: Any, agent_id: str, params: Optional[Dict[str, Any]] = 
     #    (= "inherit system default").
     # Per-agent registry overrides applied below take the highest priority.
     try:
-        from common.workspace import get_workspace_metadata as _get_ws_meta, get_workspace_default_model_config as _get_ws_default
+        from workspace import get_workspace_metadata as _get_ws_meta, get_workspace_default_model_config as _get_ws_default
         ws_meta = _get_ws_meta(workspace.name)
         if isinstance(ws_meta, dict):
             override = ws_meta.get("model_override") or {}

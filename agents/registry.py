@@ -1,7 +1,7 @@
 """
 Agent registry loader.
 
-Loads and validates available agents from `agents.json` located next to this
+Loads and validates available agents from the shared `.agents_hub/agents.json`
 module and exposes a small API:
 - list_agents() -> list[AgentSpec]
 - get_agent(agent_id: str) -> AgentSpec | None
@@ -24,6 +24,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import json
+from common.paths import AGENTS_FILE
 
 
 # -------------------- Data models --------------------
@@ -152,7 +153,7 @@ _REGISTRY_CACHE: dict[str, Any] = {
 
 
 def _config_path() -> Path:
-    return Path(__file__).with_name("agents.json")
+    return AGENTS_FILE
 
 
 def _split_entrypoint(entrypoint: str) -> tuple[str, str]:

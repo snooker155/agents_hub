@@ -125,7 +125,7 @@ def _build_chat_context(request: ChatRequest) -> tuple[str, str | None]:
     workspace_abs: str | None = None
     if request.workspace:
         try:
-            from common.workspace import create_workspace_folder
+            from workspace import create_workspace_folder
             workspace_abs = str(create_workspace_folder(request.workspace))
         except Exception:
             workspace_abs = None
@@ -490,7 +490,7 @@ def _materialize_attachments(request: ChatRequest) -> None:
                     detail=f"Attachment '{att.filename}' is marked to store in workspace, but no workspace is selected.",
                 )
             if workspace_root is None:
-                from common.workspace import create_workspace_folder
+                from workspace import create_workspace_folder
                 workspace_root = create_workspace_folder(request.workspace)
 
             uploads_dir = workspace_root / "chat_uploads"

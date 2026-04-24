@@ -35,7 +35,7 @@ async def list_agents(workspace: Optional[str] = None):
 
     # Filter by workspace
     if workspace and workspace != "default":
-        from common.workspace import get_workspace_metadata
+        from workspace import get_workspace_metadata
         metadata = get_workspace_metadata(workspace)
         allowed = metadata.get("allowed_agents")
         if allowed is not None:
@@ -143,7 +143,7 @@ async def get_agent_definition(agent_id: str):
 @router.get("/{agent_id}/workspace-capacities")
 async def get_agent_workspace_capacities(agent_id: str):
     """Return workspace-specific capacity overrides for this agent (excludes 'default')."""
-    from common.workspace import list_workspace_folders, get_workspace_metadata
+    from workspace import list_workspace_folders, get_workspace_metadata
     result = {}
     for ws_path in list_workspace_folders():
         ws_name = ws_path.name

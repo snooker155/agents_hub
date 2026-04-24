@@ -43,15 +43,10 @@ from tasks.storage import (
 )
 from common.config import settings
 from datetime import datetime, timezone
+from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
 
-# Default store points to a single shared tasks file
-# We use settings.workspace_root to locate tasks if needed, but TaskStore usually takes a direct path.
-# For now, we keep the default relative path "tasks/tasks.json" or use a setting if available.
-# In the original code, orchestrator used get_settings().tasks_file. 
-# We'll support that via our unified settings if we added it, but for now we default to "tasks/tasks.json".
-
-# Attempt to get tasks_file from settings if it exists (it wasn't in the unified base yet, but we can add it or just use default)
-TASKS_FILE = getattr(settings, "tasks_file", "tasks/tasks.json") or "tasks/tasks.json"
+# Default store points to the shared tasks file under .agents_hub, unless overridden via settings/.env.
+TASKS_FILE = getattr(settings, "tasks_file", str(DEFAULT_TASKS_FILE)) or str(DEFAULT_TASKS_FILE)
 
 default_store = TaskStore(TASKS_FILE)
 

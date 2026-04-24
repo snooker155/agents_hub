@@ -319,7 +319,7 @@ class AgentFactory:
 
         if not resolved_provider and workspace:
             ws_name = Path(workspace).name
-            from common.workspace import get_workspace_metadata, get_workspace_default_model_config
+            from workspace import get_workspace_metadata, get_workspace_default_model_config
             ws_meta = get_workspace_metadata(ws_name)
             override = (ws_meta.get("model_override") or {}) if isinstance(ws_meta, dict) else {}
             ws_default = get_workspace_default_model_config(ws_meta) if isinstance(ws_meta, dict) else {}
@@ -342,7 +342,7 @@ class AgentFactory:
         if workspace:
             try:
                 _ws_name = Path(workspace).name
-                from common.workspace import get_effective_settings as _get_eff, get_workspace_metadata as _get_meta
+                from workspace import get_effective_settings as _get_eff, get_workspace_metadata as _get_meta
                 _ws_raw_overrides = (_get_meta(_ws_name) or {}).get("settings") or {}
                 if _ws_raw_overrides:
                     _eff = _get_eff(_ws_name)

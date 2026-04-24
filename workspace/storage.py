@@ -1,9 +1,9 @@
 """
 Workspace management utilities shared across the project.
 
-Handles creation and management of per-task workspaces within the workspaces directory.
-This module keeps backward-compatible helpers named with 'project' but exposes
-preferred 'workspace' helpers.
+Handles creation and management of per-task workspaces inside the shared
+`.agents_hub/workspaces` directory. This module keeps backward-compatible
+helpers named with 'project' but exposes preferred 'workspace' helpers.
 """
 from __future__ import annotations
 
@@ -12,36 +12,38 @@ from typing import Optional, Dict, Any
 import re
 import uuid
 import json
+import shutil
 
-# Default workspaces root relative to project root
-WORKSPACES_ROOT = Path(__file__).resolve().parents[1] / "workspaces"
+from common.paths import WORKSPACES_ROOT as DEFAULT_WORKSPACES_ROOT, ensure_workspaces_root
+
+# Default workspaces root under the shared .agents_hub state directory
+WORKSPACES_ROOT = DEFAULT_WORKSPACES_ROOT
 
 
 def ensure_workspaces_dir() -> Path:
     """Ensure the workspaces root directory exists."""
-    WORKSPACES_ROOT.mkdir(parents=True, exist_ok=True)
-    return WORKSPACES_ROOT
+    return ensure_workspaces_root()
 
 
 def create_project_folder(project_name: Optional[str] = None) -> Path:
     """
     Create a new workspace folder in the workspaces directory and initialize metadata.
-    
+
     Args:
         project_name: Optional name for the workspace folder. If not provided,
                      generates a unique name using UUID.
-    
+
     Returns:
         Path to the created workspace folder (absolute).
     """
     ensure_workspaces_dir()
-    
+
     if project_name is None:
         project_name = str(uuid.uuid4())[:8]
-    
+
     project_path = WORKSPACES_ROOT / project_name
     project_path.mkdir(parents=True, exist_ok=True)
-    
+
     # Initialize workspace metadata if not exists
     meta_path = project_path / ".workspace.json"
     if not meta_path.exists():
@@ -158,10 +160,10 @@ def update_workspace_metadata(name: str, updates: Dict[str, Any]) -> Dict[str, A
 def get_project_folder(project_name: str) -> Optional[Path]:
     """
     Get the path to an existing workspace folder.
-    
+
     Args:
         project_name: Name of the workspace folder.
-    
+
     Returns:
         Path to the workspace folder if it exists, None otherwise.
     """
@@ -174,7 +176,7 @@ def get_project_folder(project_name: str) -> Optional[Path]:
 def list_project_folders() -> list[Path]:
     """
     List all existing workspace folders.
-    
+
     Returns:
         List of absolute paths to all workspace folders.
     """
@@ -182,10 +184,22 @@ def list_project_folders() -> list[Path]:
     return [p for p in WORKSPACES_ROOT.iterdir() if p.is_dir()]
 
 
+def delete_project_folder(project_name: str) -> bool:
+    """Delete an existing workspace folder recursively.
+
+    Returns True when the folder existed and was removed, otherwise False.
+    """
+    project_path = WORKSPACES_ROOT / project_name
+    if not project_path.exists() or not project_path.is_dir():
+        return False
+    shutil.rmtree(project_path)
+    return True
+
+
 def project_folder_name(name: str) -> str:
     """Convert a human-readable project name to a filesystem-safe folder name.
 
-    Examples: "My Cool Project" → "My_Cool_Project", "test-app" → "test-app"
+    Examples: "My Cool Project" -> "My_Cool_Project", "test-app" -> "test-app"
     """
     slug = re.sub(r"[^\w\s.\-]", "", name.strip())
     slug = re.sub(r"[\s]+", "_", slug)
@@ -196,8 +210,8 @@ def resolve_project_root(workspace_name: str, project_name: Optional[str] = None
     """Return the directory agents should operate in.
 
     Structure:
-      workspaces/{workspace_name}/                  ← .workspace.json and .logs/ live here
-      workspaces/{workspace_name}/{project_name}/   ← agents read/write here when project is set
+      .agents_hub/workspaces/{workspace_name}/                  <- .workspace.json and .logs/ live here
+      .agents_hub/workspaces/{workspace_name}/{project_name}/   <- agents read/write here when project is set
 
     Creates the project subfolder if it does not exist.
     Falls back to the workspace root when project_name is empty/None.
@@ -224,11 +238,15 @@ def list_workspace_folders() -> list[Path]:
     return list_project_folders()
 
 
+def delete_workspace_folder(name: str) -> bool:
+    return delete_project_folder(name)
+
+
 def resolve_var_references(value: str, env_vars: Dict[str, str]) -> str:
     """Resolve ${VAR_NAME} references in a string using workspace env_vars."""
     def _replace(m: re.Match) -> str:
         return env_vars.get(m.group(1), m.group(0))
-    return re.sub(r'\$\{([^}]+)\}', _replace, value)
+    return re.sub(r"\$\{([^}]+)\}", _replace, value)
 
 
 def get_effective_settings(workspace_name: str) -> Dict[str, Any]:
@@ -239,7 +257,7 @@ def get_effective_settings(workspace_name: str) -> Dict[str, Any]:
     """
     from common.config import read_dot_env
 
-    # Map field names → env var names (same mapping as in routes/settings.py)
+    # Map field names -> env var names (same mapping as in routes/settings.py)
     field_to_env: Dict[str, str] = {
         "default_provider":        "DEFAULT_PROVIDER",
         "openai_api_key":          "OPENAI_API_KEY",
@@ -276,36 +294,22 @@ def get_effective_settings(workspace_name: str) -> Dict[str, Any]:
         "task_assignment_mode":    "TASK_ASSIGNMENT_MODE",
     }
 
-    # Start with global .env values (keyed by field name)
-    dot_env = read_dot_env()
-    effective: Dict[str, Any] = {
-        field: dot_env[env_key]
-        for field, env_key in field_to_env.items()
-        if env_key in dot_env
-    }
+    env = read_dot_env()
+    effective: Dict[str, Any] = {}
+    for field_name, env_key in field_to_env.items():
+        if env_key in env:
+            effective[field_name] = env[env_key]
 
     meta = get_workspace_metadata(workspace_name)
-    if not meta:
-        return effective
+    settings = get_workspace_settings_meta(meta)
+    env_vars = meta.get("env_vars", {}) if isinstance(meta, dict) else {}
+    if not isinstance(env_vars, dict):
+        env_vars = {}
 
-    env_vars: Dict[str, str] = meta.get("env_vars") or {}
-    overrides: Dict[str, Any] = meta.get("settings") or {}
-
-    for field, raw_value in overrides.items():
-        if raw_value is None or str(raw_value).strip() == "":
-            continue
-        effective[field] = resolve_var_references(str(raw_value), env_vars)
+    for key, value in settings.items():
+        if isinstance(value, str):
+            effective[key] = resolve_var_references(value, env_vars)
+        else:
+            effective[key] = value
 
     return effective
-
-
-def delete_workspace_folder(name: str) -> bool:
-    """Delete a workspace folder and all its contents. The 'default' workspace cannot be deleted."""
-    import shutil
-    if name == "default":
-        raise ValueError("The default workspace cannot be deleted")
-    folder = get_workspace_folder(name)
-    if not folder:
-        return False
-    shutil.rmtree(folder)
-    return True

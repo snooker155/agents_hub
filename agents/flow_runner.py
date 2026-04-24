@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 from .run_manager import STATE_DIR, _upsert_run, _update_run, _utc_now_iso
+from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _FLOWS_FILE = PROJECT_ROOT / "agents" / "state" / "flows.json"
@@ -50,7 +51,7 @@ def start_flow_run(
     from common.tasks_service import get_task as svc_get_task
     from common import tasks_service as _ts
     from common.session_service import get_or_create_task_session, add_run_to_session
-    from common.workspace import WORKSPACES_ROOT
+    from workspace import WORKSPACES_ROOT
 
     params = params or {}
 
@@ -151,7 +152,7 @@ def _build_env(ws_path: Path, ws_name: str, session_id: str, log_file: str) -> D
 
     # Propagate tasks file path so node runs update the same store
     from common.config import settings
-    tasks_file = str(settings.tasks_file or "tasks/tasks.json")
+    tasks_file = str(settings.tasks_file or DEFAULT_TASKS_FILE)
     if not Path(tasks_file).is_absolute():
         tasks_file = str((PROJECT_ROOT / tasks_file).resolve())
     env["TASKS_FILE"] = tasks_file
@@ -161,7 +162,7 @@ def _build_env(ws_path: Path, ws_name: str, session_id: str, log_file: str) -> D
 
     # Inject workspace / global model settings
     try:
-        from common.workspace import get_workspace_metadata, get_workspace_default_model_config
+        from workspace import get_workspace_metadata, get_workspace_default_model_config
         ws_meta = get_workspace_metadata(ws_name)
         if isinstance(ws_meta, dict):
             override = ws_meta.get("model_override") or {}

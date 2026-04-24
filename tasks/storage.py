@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from .models import Task, TaskStatus, CreatedBy
 from memory.models import SharedMemory
 from memory.store import MemoryStore  # noqa: F401 — re-exported for backward compatibility
+from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
 
 # Try to import pydantic v1 encoder; provide fallback for v2 or missing
 try:  # pydantic v1
@@ -74,7 +75,7 @@ class TaskStore:
 
     def __init__(self, path: Path | str | None = None):
         if path is None:
-            path = os.environ.get("TASKS_FILE", "tasks.yaml")
+            path = os.environ.get("TASKS_FILE", str(DEFAULT_TASKS_FILE))
         self.path = Path(path)
         self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         # Ensure directory exists
@@ -451,5 +452,4 @@ def delete_task_result(tasks_path: Path, task_id: str) -> None:
         p.unlink(missing_ok=True)
     except Exception:
         pass
-
 

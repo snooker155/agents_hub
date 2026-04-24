@@ -206,7 +206,7 @@ Recommended setup:
 The platform has several layers of runtime configuration:
 
 1. Global environment settings in `.env`
-2. Workspace metadata in `workspaces/<name>/.workspace.json`
+2. Workspace metadata in `.agents_hub/workspaces/<name>/.workspace.json`
 3. Per-agent registry overrides from `agents/definitions/*.yaml` and agent settings in the UI
 4. Per-run environment injection performed by the execution layer
 
@@ -243,7 +243,7 @@ These settings influence how agents themselves are executed.
 | `AGENT_DOCKER_NETWORK` | Global `.env` | `agents-hub`, `host` | Docker network attached to agent containers | Set when agents must reach shared services |
 | `AGENT_DOCKER_EXTRA_ARGS` | Global `.env` | `--memory 2g --cpus 1` | Extra `docker run` flags passed to containers | Use carefully for resource controls |
 | `WORKSPACE_ROOT` | Global `.env` and injected per run | `./out` | Default workspace root path used across the app | Keep stable so logs and artifacts resolve consistently |
-| `TASKS_FILE` | Global `.env` or runtime | `tasks/tasks.json` | Path to the JSON task store | Change only if you intentionally move task storage |
+| `TASKS_FILE` | Global `.env` or runtime | `.agents_hub/tasks.json` | Path to the JSON task store | Change only if you intentionally move task storage |
 | `ALLOW_SHELL` | Global `.env` | `python,pytest,ruff,black` | Allowed shell command list for agent tool policy | Keep narrow in conservative environments |
 | `AGENT_WORKSPACE` | Per run, injected | `default`, `Test1` | Workspace scope provided to the running agent | Usually managed automatically |
 | `AGENT_PROVIDER` | Per run, injected | `openai`, `anthropic`, `google`, `ollama`, `lmstudio` | Effective provider selected for that run | Set indirectly through workspace or agent overrides |

@@ -12,11 +12,12 @@ from pathlib import Path
 from common import tasks_service
 from agents import registry, run_manager, worker_runner
 from tasks import AgentState, CreatedBy, TaskStatus
-from common.workspace import create_workspace_folder, resolve_project_root, project_folder_name
-from common.workspace import get_workspace_metadata
+from workspace import create_workspace_folder, resolve_project_root, project_folder_name
+from workspace import get_workspace_metadata
 from agents.agent_factory import create_agent
 from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate
 from common.session_service import add_event_to_session
+from common.paths import PROJECTS_FILE
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -93,7 +94,7 @@ async def create_task(task: TaskCreate):
     if not project_name and task.project_id:
         try:
             from projects.storage import ProjectStore as _PS
-            _pstore = _PS(path=Path(__file__).resolve().parents[3] / "projects" / "projects.json")
+            _pstore = _PS(path=PROJECTS_FILE)
             _proj = _pstore.get(task.project_id)
             if _proj:
                 project_name = project_folder_name(_proj.name)

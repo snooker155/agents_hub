@@ -292,7 +292,7 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                 if current_task and current_task.status not in agent_set_statuses:
                     ws_name = str(getattr(current_task, "workspace", "") or "default")
                     try:
-                        from common.workspace import get_workspace_metadata
+                        from workspace import get_workspace_metadata
                         followup_mode = get_workspace_metadata(ws_name).get("orchestrator", {}).get("followup_mode", "single")
                     except Exception:
                         followup_mode = "single"

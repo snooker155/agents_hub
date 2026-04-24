@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Iterable, List, Optional, TypeVar
 
-from common.workspace import get_workspace_metadata
+from workspace import get_workspace_metadata
 
 T = TypeVar("T")
 
@@ -80,4 +80,3 @@ def filter_agents_for_workspace(specs: Iterable[T], workspace: Optional[str]) ->
             continue
         out.append(spec)
     return out
-

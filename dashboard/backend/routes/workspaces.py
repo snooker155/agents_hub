@@ -6,7 +6,7 @@ from typing import Optional
 from pathlib import Path
 
 from common import tasks_service
-from common.workspace import (
+from workspace import (
     create_workspace_folder,
     list_workspace_folders,
     get_workspace_metadata,

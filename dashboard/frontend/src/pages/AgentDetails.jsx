@@ -1913,7 +1913,7 @@ const AgentDetails = () => {
               {agentCmds.length === 0 && (
                 <div className="mb-6 flex items-center gap-3 p-4 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-700">
                   <Hash className="w-4 h-4 shrink-0" />
-                  No agent-specific commands defined. Add a <span className=" mx-1">"commands"</span> array to this agent in <span className=" ml-1">agents.json</span>.
+                  No agent-specific commands defined. Add a <span className=" mx-1">"commands"</span> array to this agent in <span className=" ml-1">.agents_hub/agents.json</span>.
                 </div>
               )}
 

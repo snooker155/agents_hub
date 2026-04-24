@@ -175,7 +175,7 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
 
         ws_name = task.workspace or "default"
         try:
-            from common.workspace import get_workspace_metadata
+            from workspace import get_workspace_metadata
             orch_settings = get_workspace_metadata(ws_name).get("orchestrator", {})
             assignment_mode = orch_settings.get("assignment_mode", "manual")
         except Exception:
@@ -456,7 +456,7 @@ _FAILED_RUN_STATUSES = {"failed", "error"}
 def _get_followup_mode(workspace: Optional[str]) -> str:
     """Read followup_mode from workspace orchestrator settings. Defaults to 'single'."""
     try:
-        from common.workspace import get_workspace_metadata
+        from workspace import get_workspace_metadata
         ws_name = workspace or "default"
         return get_workspace_metadata(ws_name).get("orchestrator", {}).get("followup_mode", "single")
     except Exception:
@@ -466,7 +466,7 @@ def _get_followup_mode(workspace: Optional[str]) -> str:
 def _get_wait_for_completion(workspace: Optional[str]) -> bool:
     """Read wait_for_completion from workspace orchestrator settings. Defaults to False."""
     try:
-        from common.workspace import get_workspace_metadata
+        from workspace import get_workspace_metadata
         ws_name = workspace or "default"
         return get_workspace_metadata(ws_name).get("orchestrator", {}).get("wait_for_completion", False)
     except Exception:
@@ -476,7 +476,7 @@ def _get_wait_for_completion(workspace: Optional[str]) -> bool:
 def _get_execution_mode(workspace: Optional[str]) -> str:
     """Read execution_mode from workspace orchestrator settings. Defaults to 'subprocess'."""
     try:
-        from common.workspace import get_workspace_metadata
+        from workspace import get_workspace_metadata
         ws_name = workspace or "default"
         return get_workspace_metadata(ws_name).get("orchestrator", {}).get("execution_mode", "subprocess")
     except Exception:
@@ -701,4 +701,3 @@ __all__ = [
     "get_agent_tool",
     "delete_agent_tool",
 ]
-

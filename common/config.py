@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 from dataclasses import dataclass, field
+from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
 
 DEFAULT_IGNORE: List[str] = [
     ".git",
@@ -111,8 +112,8 @@ class Settings(BaseSettings):
         default="INFO", env="ORCH_LOG_LEVEL"
     )
 
-    # Tasks storage (path to tasks.json). If None or empty, defaults to tasks/tasks.json
-    tasks_file: Optional[str] = Field(default="tasks/tasks.json", env="TASKS_FILE")
+    # Tasks storage (path to tasks.json). If None or empty, defaults to .agents_hub/tasks.json
+    tasks_file: Optional[str] = Field(default=str(DEFAULT_TASKS_FILE), env="TASKS_FILE")
 
     # Agent mode: "local" runs agents as local subprocesses,
     # "docker" wraps each agent in a docker run invocation.
@@ -191,4 +192,3 @@ def require_openai_key(st: Settings) -> str:
             "OPENAI_API_KEY is not set. Please export it in the environment or put it in a .env file."
         )
     return st.openai_api_key
-

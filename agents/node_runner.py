@@ -22,6 +22,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+from common.paths import PROJECTS_FILE
 
 # Ensure project root is on sys.path when running as a module
 HERE = Path(__file__).resolve().parent
@@ -108,7 +109,7 @@ def run_orchestrator_loop(node_id: str, workspace: str | None) -> None:
 
             # Read workspace orchestrator settings
             try:
-                from common.workspace import get_workspace_metadata as _get_ws_meta
+                from workspace import get_workspace_metadata as _get_ws_meta
                 _orch_cfg = _get_ws_meta(node_workspace).get("orchestrator", {})
                 _followup_mode = _orch_cfg.get("followup_mode", "continuous")
                 _enabled = _orch_cfg.get("enabled", True)
@@ -160,15 +161,14 @@ def run_orchestrator_loop(node_id: str, workspace: str | None) -> None:
                 abs_ws = workspace
                 if task.workspace:
                     try:
-                        from common.workspace import resolve_project_root, project_folder_name
+                        from workspace import resolve_project_root, project_folder_name
                         proj = getattr(task, "project", None) or None
                         if not proj:
                             pid = getattr(task, "project_id", None)
                             if pid:
                                 try:
-                                    from pathlib import Path as _P
                                     from projects.storage import ProjectStore as _PS
-                                    _pr = _PS(_P(__file__).resolve().parents[1] / "projects" / "projects.json")
+                                    _pr = _PS(PROJECTS_FILE)
                                     _obj = _pr.get(str(pid))
                                     if _obj:
                                         proj = project_folder_name(_obj.name)
@@ -429,7 +429,7 @@ def run_worker_loop(node_id: str, agent_id: str, workspace: str | None) -> None:
 
             # Check execution_mode — skip if the workspace uses subprocess-based execution
             try:
-                from common.workspace import get_workspace_metadata as _get_ws_meta
+                from workspace import get_workspace_metadata as _get_ws_meta
                 _execution_mode = _get_ws_meta(node_workspace).get("orchestrator", {}).get("execution_mode", "subprocess")
             except Exception:
                 _execution_mode = "subprocess"
@@ -450,15 +450,14 @@ def run_worker_loop(node_id: str, agent_id: str, workspace: str | None) -> None:
                 abs_ws = workspace
                 if task.workspace:
                     try:
-                        from common.workspace import resolve_project_root, project_folder_name
+                        from workspace import resolve_project_root, project_folder_name
                         proj = getattr(task, "project", None) or None
                         if not proj:
                             pid = getattr(task, "project_id", None)
                             if pid:
                                 try:
-                                    from pathlib import Path as _P
                                     from projects.storage import ProjectStore as _PS
-                                    _pr = _PS(_P(__file__).resolve().parents[1] / "projects" / "projects.json")
+                                    _pr = _PS(PROJECTS_FILE)
                                     _obj = _pr.get(str(pid))
                                     if _obj:
                                         proj = project_folder_name(_obj.name)

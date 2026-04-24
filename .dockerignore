@@ -1,6 +1,7 @@
 .git
 .gitignore
 .env
+.agents_hub
 .DS_Store
 __pycache__
 *.pyc

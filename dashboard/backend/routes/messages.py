@@ -14,7 +14,7 @@ from pathlib import Path
 from agents import run_manager
 from agents.run_manager import update_run as update_message_run, load_runs as load_all_runs, save_runs as save_all_runs
 from common import tasks_service
-from common.workspace import create_workspace_folder
+from workspace import create_workspace_folder
 from models import SessionCreate
 
 # Re-use all helper logic from sessions module

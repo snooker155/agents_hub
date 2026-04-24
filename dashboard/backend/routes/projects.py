@@ -25,14 +25,15 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from common import tasks_service
-from common.workspace import get_workspace_folder, resolve_project_root, project_folder_name
+from workspace import get_workspace_folder, resolve_project_root, project_folder_name
 from models import ProjectCreate, ProjectUpdate, ProjectApiRequest
 from projects.models import Project
 from projects.storage import ProjectStore
+from common.paths import PROJECTS_FILE
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
-_store = ProjectStore(path=_project_root / "projects" / "projects.json")
+_store = ProjectStore(path=PROJECTS_FILE)
 
 
 def _project_to_dict(project: Project) -> dict:

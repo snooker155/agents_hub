@@ -8,7 +8,7 @@ from pathlib import Path
 from common import tasks_service
 from agents import registry, run_manager
 from models import OrchestratorSettings
-from common.workspace import create_workspace_folder, get_workspace_metadata, update_workspace_metadata
+from workspace import create_workspace_folder, get_workspace_metadata, update_workspace_metadata
 from common.orchestrator_context import normalize_workspace_name
 
 
@@ -111,7 +111,7 @@ async def get_logs(run_id: str):
             if candidate.exists():
                 return {"logs": candidate.read_text(encoding="utf-8")}
 
-    from common.workspace import create_workspace_folder
+    from workspace import create_workspace_folder
     for t in tasks_service.list_tasks():
         if t.workspace:
             try:
