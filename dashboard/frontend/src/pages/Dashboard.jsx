@@ -157,7 +157,7 @@ const Dashboard = () => {
           icon={GitBranch}
           color="bg-rose-500"
           subtext="custom pipelines"
-          to="/factory"
+          to="/flows"
         />
         <StatCard
           title="Nodes"
@@ -191,11 +191,11 @@ const Dashboard = () => {
             description="Auto-route tasks to specialized agents"
           />
           <FeatureCard
-            to="/factory"
+            to="/flows"
             icon={Layers}
             iconColor="text-rose-600"
             bgColor="bg-rose-50"
-            title="Agent Factory"
+            title="Agent Flows"
             description={`${flows.length} visual workflows`}
           />
           <FeatureCard
@@ -267,7 +267,7 @@ const Dashboard = () => {
                     <div className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
                     <div>
                       <div className="text-sm font-semibold text-gray-700">{run.agent_id}</div>
-                      <div className="font-mono text-[10px] text-gray-400">
+                      <div className=" text-[10px] text-gray-400">
                         {run.task_id ? (
                           <Link to={`/tasks/${run.task_id}`} className="hover:text-indigo-600">
                             task/{run.task_id.slice(0, 8)}
@@ -380,7 +380,7 @@ const Dashboard = () => {
                   <tr key={run.run_id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-3.5">
                       <div className="font-medium text-gray-900 text-sm">{run.agent_id}</div>
-                      <div className="text-[10px] font-mono text-gray-400">{run.run_id.slice(0, 12)}…</div>
+                      <div className="text-[10px] text-gray-400">{run.run_id.slice(0, 12)}…</div>
                     </td>
                     <td className="px-6 py-3.5 text-xs text-gray-500">
                       {run.workspace || <span className="italic text-gray-300">—</span>}
@@ -397,7 +397,7 @@ const Dashboard = () => {
                         {run.status}
                       </span>
                     </td>
-                    <td className="px-6 py-3.5 text-xs text-gray-500 font-mono">{duration}</td>
+                    <td className="px-6 py-3.5 text-xs text-gray-500">{duration}</td>
                     <td className="px-6 py-3.5 text-xs text-gray-400">
                       {run.finished_at ? new Date(run.finished_at).toLocaleString() : '—'}
                     </td>

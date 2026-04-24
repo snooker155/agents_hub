@@ -1,0 +1,72 @@
+Project: ArcLight Platform
+Version: 2.4.1
+Last Updated: 2026-04-22
+
+=== OVERVIEW ===
+
+ArcLight is an internal data analytics platform used by the engineering and product teams.
+It ingests events from microservices, runs aggregation pipelines, and serves dashboards
+and alerts to stakeholders. The platform handles approximately 4 million events per day.
+
+=== ARCHITECTURE ===
+
+Components:
+- Ingestion Service: Receives events over HTTP and writes to Kafka topic `arclight.events.raw`
+- Pipeline Workers: Flink jobs that consume from Kafka, apply transformations, and write to ClickHouse
+- Query API: FastAPI service exposing REST endpoints backed by ClickHouse
+- Dashboard UI: React app consuming the Query API
+- Alert Engine: Python service polling ClickHouse for threshold breaches, notifies via Slack
+
+Infrastructure:
+- All services run on Kubernetes (EKS, us-east-1)
+- ClickHouse cluster: 3 shards, 2 replicas each
+- Kafka cluster: 5 brokers, retention 48 hours
+- Redis used for Query API response caching (TTL 60s)
+
+=== KEY BUSINESS RULES ===
+
+1. Events older than 90 days are archived to S3 (Parquet) and removed from ClickHouse.
+2. The `user_id` field is pseudonymised using HMAC-SHA256 before storage (compliance requirement).
+3. Revenue events must be processed within 5 minutes of receipt (SLA).
+4. Dashboard refresh interval is 30 seconds; real-time mode polls every 5 seconds.
+5. Alerts fire when error rate exceeds 2% over a 10-minute rolling window.
+6. Pipeline Workers auto-scale: min 2, max 12 replicas based on Kafka consumer lag.
+
+=== API ENDPOINTS ===
+
+GET  /api/v1/events          — List events with filters (service, type, time range)
+GET  /api/v1/metrics/summary — Aggregated counts grouped by service and event type
+GET  /api/v1/metrics/series  — Time-series data for charting (1m, 5m, 1h buckets)
+POST /api/v1/ingest          — Internal endpoint for event ingestion (mTLS required)
+GET  /api/v1/alerts          — List active and recent alert history
+POST /api/v1/alerts/ack      — Acknowledge an alert by ID
+
+Authentication: All external endpoints require Bearer token (JWT, 1h expiry).
+Rate limit: 200 requests/minute per token.
+
+=== KNOWN ISSUES ===
+
+- BUG-4412: ClickHouse query planner occasionally chooses a full-scan on the `events` table
+  when filtering by `service_name` alone. Workaround: always include a time-range filter.
+- BUG-4487: Alert Engine misses the first 30 seconds of data after a restart due to a
+  consumer offset initialization race. Tracked for fix in v2.5.0.
+- BUG-4501: Dashboard UI freezes when loading series data spanning more than 7 days at
+  1-minute resolution. Workaround: use 5-minute or 1-hour buckets for long ranges.
+
+=== CONTACTS ===
+
+Platform Lead:   Sofia Marchetti  (sofia@example.com)
+On-call Runbook: https://wiki.internal/arclight/oncall
+Slack Channel:   #arclight-platform
+Incident Board:  Linear project "ARCLIGHT"
+
+=== CHANGELOG ===
+
+v2.4.1 (2026-04-10): Hotfix — corrected HMAC key rotation logic that caused pseudonymisation
+  mismatches across shards after a key rotation event.
+
+v2.4.0 (2026-03-28): Added real-time dashboard mode (5s polling). Upgraded ClickHouse to 24.3.
+  Introduced per-token rate limiting. Deprecated v0 API (removal planned for v2.6.0).
+
+v2.3.0 (2026-02-14): Pipeline Workers migrated from Spark to Flink. P95 processing latency
+  dropped from 38s to 4.2s. Added auto-scaling for workers.

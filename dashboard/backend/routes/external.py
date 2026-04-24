@@ -6,7 +6,7 @@ exposed node using only its access token.  No dashboard auth required.
 """
 import time
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -22,22 +22,29 @@ class ExternalRunRequest(BaseModel):
     workspace: Optional[str] = None
 
 
-@router.post("/{token}/run")
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@router.post("/{token}/run", status_code=202)
 async def external_run(token: str, body: ExternalRunRequest, request: Request):
     """
     Submit a task prompt to an exposed node identified by its access token.
+
+    For worker nodes the task is assigned directly to the node's agent so the
+    worker picks it up on its next poll cycle.  For orchestrator nodes the task
+    is queued as a ready external task and the orchestrator routes it normally.
 
     The request is logged to the node's connection history regardless of
     whether the node is currently running.
     """
     client_ip = request.client.host if request.client else "unknown"
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = _utc_now()
     connection_id = str(uuid4())
     t_start = time.time()
 
     node = node_manager.get_node_by_token(token)
 
-    # Build a base connection record (status filled in below)
     def _log(status_code: int, detail: str):
         elapsed_ms = int((time.time() - t_start) * 1000)
         node_manager.log_connection(
@@ -57,12 +64,10 @@ async def external_run(token: str, body: ExternalRunRequest, request: Request):
         )
 
     if not node:
-        # Still try to log even without a node – use a placeholder bucket
-        elapsed_ms = int((time.time() - t_start) * 1000)
-        # We can't call log_connection with __unknown__ meaningfully; just raise
         raise HTTPException(status_code=404, detail="No exposed node found for this token")
 
     node_id = node["node_id"]
+    agent_id = node.get("agent_id", "")
 
     if not node.get("is_exposed"):
         _log(403, "node_not_exposed")
@@ -75,22 +80,51 @@ async def external_run(token: str, body: ExternalRunRequest, request: Request):
             detail=f"Node is not running (status={node.get('status')})",
         )
 
-    # Create a task for the node's agent and workspace
     try:
         from common import tasks_service
+        from tasks import TaskStatus, CreatedBy
+
         workspace = body.workspace or node.get("workspace")
+
+        # Create the task marked as externally submitted and immediately ready
         task = tasks_service.create_task(
             title=body.prompt[:120],
             description=body.prompt,
             workspace=workspace,
+            status=TaskStatus.ready,
+            created_by=CreatedBy.external,
         )
         task_id = str(task.id)
+
+        # For worker nodes (non-orchestrator): assign directly so the node's
+        # worker loop can pick it up without waiting for the orchestrator.
+        if agent_id != "orchestrator":
+            run_id = str(uuid4())
+            from agents.run_manager import _upsert_run
+            _upsert_run({
+                "run_id": run_id,
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "node_id": node_id,
+                "pid": None,
+                "status": "assigned",
+                "session_type": "task",
+                "session_id": None,
+                "started_at": None,
+                "finished_at": None,
+                "exit_code": None,
+                "error": None,
+                "log_file": None,
+                "input": body.prompt,
+            })
+            tasks_service.assign_agent(UUID(task_id), agent_type=agent_id, run_id=run_id)
+
         _log(202, f"task_created:{task_id}")
         return {
             "accepted": True,
             "task_id": task_id,
             "node_id": node_id,
-            "agent_id": node.get("agent_id"),
+            "agent_id": agent_id,
         }
     except Exception as e:
         _log(500, f"error:{str(e)[:120]}")

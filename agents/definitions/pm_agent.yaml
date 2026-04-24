@@ -1,7 +1,6 @@
 id: pm_agent
 name: Project Manager Agent
 description: Agent for project planning and requirements management with task decomposition
-model: gpt-4o
 temperature: 0.3
 max_tokens: 15000
 verbose: false

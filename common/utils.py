@@ -10,8 +10,6 @@ TEXT_EXTS = {
 
 def ensure_dirs():
     P = Paths()
-    for p in [P.out, P.docs, P.plan, P.logs, P.code_be, P.code_fe, P.ops, P.tests]:
-        pathlib.Path(p).mkdir(parents=True, exist_ok=True)
 
 def write(path: str, content: str):
     p = pathlib.Path(path); p.parent.mkdir(parents=True, exist_ok=True)
@@ -123,28 +121,3 @@ def build_repo_snapshot_per_root(
             total_chars += len(block)
 
     return "\n".join(lines).strip()
-
-def build_dev_context(agent: str) -> str:
-    ensure_dirs()
-    P = Paths()
-
-    if agent == "BE":
-        roots = [
-            (P.code_be, ["**/*.py","**/*.js","**/*.json","**/*.yaml","**/*.yml","**/*.env","**/*.md","**/*.sql","**/*.ini","**/*.toml","**/*.cfg","**/*.sh"]),
-            (P.docs,    ["SD_openapi.yaml","BRD.json","SD_data_model.sql","SD_tech_spec.md"]),
-        ]
-    elif agent == "FE":
-        roots = [
-            (P.code_fe, ["**/*.tsx","**/*.ts","**/*.jsx","**/*.js","**/*.json","**/*.md","**/*.css","**/*.html"]),
-            (P.code_be, ["**/*.json","**/*.yaml","**/*.yml"]),
-            (P.docs,    ["SD_openapi.yaml","BRD.json"]),
-        ]
-    else:  # OPS
-        roots = [
-            (P.ops,     ["**/*.yml","**/*.yaml","**/*.env","**/*.md","**/*.sh","**/*.json"]),
-            (P.code_be, ["Dockerfile",".env","*.txt","**/*.json","**/*.md"]),
-            (P.code_fe, ["Dockerfile",".env","*.txt","**/*.json","**/*.md"]),
-            (P.docs,    ["SD_openapi.yaml","BRD.json"]),
-        ]
-    excludes = ["**/__pycache__/**","**/node_modules/**","**/dist/**","**/.venv/**","**/.git/**","**/.DS_Store"]
-    return build_repo_snapshot_per_root(roots_with_patterns=roots, excludes=excludes, max_chars=250000)

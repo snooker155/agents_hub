@@ -29,7 +29,7 @@ function LogPanel({ workspace }) {
           <p className="text-sm text-gray-500 italic">No logs yet for this workspace.</p>
         ) : (
           logs.map((log, i) => (
-            <div key={i} className="text-xs bg-gray-50 p-2 rounded border border-gray-100 font-mono">
+            <div key={i} className="text-xs bg-gray-50 p-2 rounded border border-gray-100">
               <span className="text-gray-400">[{new Date(log.timestamp).toLocaleTimeString()}]</span> <span className="text-indigo-600 font-bold">{log.type}:</span> {log.content}
             </div>
           ))

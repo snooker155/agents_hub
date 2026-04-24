@@ -1,7 +1,6 @@
 id: tl_agent
 name: Team Lead Agent
 description: Agent specialized in task splitting and planning
-model: gpt-4o
 temperature: 0.0
 max_tokens: 15000
 verbose: false

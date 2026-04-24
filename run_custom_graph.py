@@ -3,7 +3,7 @@ import json
 import os
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
@@ -32,7 +32,14 @@ def _update_status(node_id: Optional[str]) -> None:
         json.dump({"active_node": node_id}, handle)
 
 
-def _log_event(event_type: str, content: str, node: Optional[Dict[str, Any]] = None, status: Optional[str] = None) -> None:
+def _log_event(
+    event_type: str,
+    content: str,
+    node: Optional[Dict[str, Any]] = None,
+    status: Optional[str] = None,
+    input_text: Optional[str] = None,
+    output_text: Optional[str] = None,
+) -> None:
     payload: Dict[str, Any] = {
         "timestamp": _utc_now_iso(),
         "type": event_type,
@@ -45,23 +52,36 @@ def _log_event(event_type: str, content: str, node: Optional[Dict[str, Any]] = N
         payload["tag"] = _node_value(node, "domain") or "factory"
     if status:
         payload["status"] = status
+    if input_text is not None:
+        payload["input"] = input_text
+    if output_text is not None:
+        payload["output"] = output_text
     append_log_json(payload)
 
 
-def _build_runner(agent_id: str, workspace: str, shared_prompt: str):
-    from agents import ba, dev_backend, dev_frontend, dev_ops, pm, qa, sd, tl
+# Maps factory-style agent IDs used in flow nodes to YAML definition IDs
+_FACTORY_AGENT_MAP: Dict[str, str] = {
+    "factory-pm": "pm_agent",
+    "factory-ba": "ba_agent",
+    "factory-sd": "sd_agent",
+    "factory-tl": "tl_agent",
+    "factory-be": "dev_agent",
+    "factory-fe": "dev_agent",
+    "factory-qa": "qa_agent",
+    "factory-ops": "devops_agent",
+}
 
-    runners = {
-        "factory-pm": lambda: pm.intake(shared_prompt, workspace=workspace),
-        "factory-ba": lambda: ba.generate_brd(workspace=workspace),
-        "factory-sd": lambda: sd.generate_all(workspace=workspace),
-        "factory-tl": lambda: tl.split_tasks(workspace=workspace),
-        "factory-be": lambda: dev_backend.run_backend(workspace=workspace),
-        "factory-fe": lambda: dev_frontend.run_frontend(workspace=workspace),
-        "factory-qa": lambda: qa.run_qa_agent(workspace=workspace),
-        "factory-ops": lambda: dev_ops.run_ops_agent(workspace=workspace),
-    }
-    return runners.get(agent_id)
+
+def _run_agent(agent_id: str, workspace: str, prompt: str) -> str:
+    """Create and run an agent with the given prompt. Returns the agent's text output."""
+    from agents.agent_factory import create_agent
+
+    yaml_id = _FACTORY_AGENT_MAP.get(agent_id, agent_id)
+    agent = create_agent(yaml_id, workspace=workspace)
+    result = agent.run(prompt)
+    if result.ok:
+        return result.agent_output or ""
+    raise RuntimeError(result.error or f"Agent '{agent_id}' returned an error with no message")
 
 
 def _resolve_agent_id(node: Dict[str, Any]) -> Optional[str]:
@@ -126,6 +146,47 @@ def _topological_order(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]])
     return ordered
 
 
+def _build_predecessors(edges: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """Return a mapping of node_id -> list of predecessor node_ids."""
+    preds: Dict[str, List[str]] = {}
+    for edge in edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        if source and target:
+            preds.setdefault(target, []).append(source)
+    return preds
+
+
+def _build_agent_input(
+    shared_prompt: str,
+    node_id: str,
+    predecessors: Dict[str, List[str]],
+    node_outputs: Dict[str, str],
+) -> str:
+    """
+    Build the prompt for an agent.
+
+    - First nodes (no predecessors) receive only the shared_prompt.
+    - Subsequent nodes receive the shared_prompt plus the output(s) from their
+      predecessor(s), clearly delimited so the agent knows what came before.
+    """
+    pred_ids = predecessors.get(node_id, [])
+    pred_outputs = [(pid, node_outputs[pid]) for pid in pred_ids if pid in node_outputs]
+
+    if not pred_outputs:
+        return shared_prompt
+
+    parts = [shared_prompt, ""]
+    parts.append("=" * 60)
+    parts.append("CONTEXT FROM PREVIOUS AGENTS IN THIS FLOW")
+    parts.append("=" * 60)
+    for pred_id, pred_out in pred_outputs:
+        parts.append(f"\n[{pred_id}]:\n{pred_out}\n")
+    parts.append("=" * 60)
+    parts.append("\nContinue the work based on the above context.")
+    return "\n".join(parts)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--graph", required=True, help="JSON string of graph structure")
@@ -144,6 +205,10 @@ def main():
     factory_task = graph_data.get("task", {}) if isinstance(graph_data.get("task"), dict) else {}
     shared_prompt = graph_data.get("shared_context") or factory_task.get("description") or args.desc or ""
 
+    predecessors = _build_predecessors(edges)
+    # Stores the text output of each successfully completed node, keyed by node_id
+    node_outputs: Dict[str, str] = {}
+
     _log_event(
         "factory_run",
         factory_task.get("title") or "Starting factory graph execution",
@@ -157,22 +222,47 @@ def main():
 
         agent_id = _resolve_agent_id(node)
         if not agent_id:
-            _log_event("factory_skip", f"Skipping node '{node_id}' because no agent is assigned.", node=node, status="skipped")
+            _log_event(
+                "factory_skip",
+                f"Skipping node '{node_id}' because no agent is assigned.",
+                node=node,
+                status="skipped",
+            )
             continue
 
-        runner = _build_runner(agent_id, args.workspace, shared_prompt)
-        if not runner:
-            _log_event("factory_skip", f"Skipping node '{node_id}' because agent '{agent_id}' is unsupported in graph mode.", node=node, status="skipped")
-            continue
+        agent_input = _build_agent_input(shared_prompt, node_id, predecessors, node_outputs)
+        agent_label = _node_value(node, "label", agent_id)
 
         _update_status(node_id)
-        _log_event("agent_start", f"Running {_node_value(node, 'label', agent_id)}", node=node, status="running")
+        _log_event(
+            "agent_start",
+            f"Running {agent_label}",
+            node=node,
+            status="running",
+            input_text=agent_input,
+        )
 
         try:
-            runner()
-            _log_event("agent_finish", f"Completed {_node_value(node, 'label', agent_id)}", node=node, status="completed")
+            output = _run_agent(agent_id, args.workspace, agent_input)
+            node_outputs[node_id] = output
+            _log_event(
+                "agent_finish",
+                f"Completed {agent_label}",
+                node=node,
+                status="completed",
+                input_text=agent_input,
+                output_text=output,
+            )
         except Exception as exc:
-            _log_event("agent_error", f"{_node_value(node, 'label', agent_id)} failed: {exc}", node=node, status="failed")
+            error_msg = str(exc)
+            _log_event(
+                "agent_error",
+                f"{agent_label} failed: {error_msg}",
+                node=node,
+                status="failed",
+                input_text=agent_input,
+                output_text=error_msg,
+            )
 
     _update_status(None)
     _log_event(

@@ -1,98 +1,66 @@
 """
-LangChain tools wrapping the orchestrator task service.
+Compatibility wrapper for LangChain tools.
 
-Provided tools (names):
-- create_task
-- add_subtask
-- get_task
-- list_tasks
-- update_task
-- stop_task
-- block_task
-- create_sequence
-
-Agent management tools:
-- list_agents_tool
-- assign_and_start_agent_tool(task_id, agent_id, params_json)
-- stop_agent_tool(task_id)
-- get_agent_status_tool(task_id)
-
-All tools validate inputs with Pydantic and return structured JSON strings.
+The task and coordination tools are implemented in `tools.task_management`.
+This module re-exports them for backward compatibility and keeps only the
+agent-factory-specific tools local.
 """
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Dict, List, Optional
-from uuid import UUID
+from uuid import uuid4
 
-from pydantic import BaseModel, Field, validator, model_validator
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field, field_validator
 
-# Local imports from the project
-from common.tasks_service import (
-    add_subtask as svc_add_subtask,
-    block_task as svc_block_task,
-    create_sequence as svc_create_sequence,
-    create_task as svc_create_task,
-    get_task as svc_get_task,
-    list_tasks as svc_list_tasks,
-    stop_task as svc_stop_task,
-    update_task as svc_update_task,
-    assign_agent as svc_assign_agent,
-    set_agent_state as svc_set_agent_state,
-)
-from tasks import Task, TaskStatus, CreatedBy, AgentState
-from common.workspace import create_workspace_folder as ws_create_workspace_folder
+from agents import run_manager
 from agents.registry import (
-    list_agents as reg_list_agents,
+    AgentSpec,
+    add_agent as reg_add_agent,
     get_agent as reg_get_agent,
+    list_agents as reg_list_agents,
+    remove_agent as reg_remove_agent,
 )
 from agents.run_manager import (
-    start_run as rm_start_run,
     stop_run as rm_stop_run,
-    get_status as rm_get_status,
+)
+from agents.worker_runner import (
+    start_run as rm_start_run,
+    preregister_run as rm_preregister_run
+)
+from common.orchestrator_context import (
+    filter_agents_for_workspace,
+    task_in_workspace,
+)
+from common.session_service import get_or_create_task_session, add_run_to_session
+from common.tasks_service import (
+    CreatedBy,
+    TaskStatus,
+    assign_agent as svc_assign_agent,
+    clear_agent as svc_clear_agent,
+    get_task as svc_get_task,
+    update_task as svc_update_task,
+    append_routing_log_entry as svc_append_routing_log,
+)
+from tools.task_management import (
+    add_subtask,
+    block_task,
+    create_sequence,
+    create_task,
+    get_task,
+    list_tasks,
+    stop_task,
+    update_task,
+    _uuid_from_str,
+    _task_to_dict,
+    _active_workspace,
 )
 
 
-# -------------------- helpers --------------------
-
-def _uuid_from_str(value: Optional[str]) -> Optional[UUID]:
-    if value is None:
-        return None
-    try:
-        return UUID(str(value))
-    except Exception as e:
-        raise ValueError(f"Invalid UUID: {value}") from e
-
-
-def _task_to_dict(t: Task) -> Dict[str, Any]:
-    # Compatible with pydantic v1/v2
-    data = t.model_dump() if hasattr(t, "model_dump") else t.dict()
-    # Normalize enums to their values
-    if isinstance(data.get("status"), TaskStatus):
-        data["status"] = data["status"].value
-    if isinstance(data.get("created_by"), CreatedBy):
-        data["created_by"] = data["created_by"].value
-    # Normalize agent_state enum if present
-    if "agent_state" in data and isinstance(data.get("agent_state"), AgentState):
-        data["agent_state"] = data["agent_state"].value
-    # UUID fields to str
-    for key in ("id", "parent_id"):
-        if data.get(key) is not None:
-            data[key] = str(data[key])
-    # Datetime to ISO strings
-    for ts in ("created_at", "updated_at"):
-        if data.get(ts) is not None:
-            try:
-                data[ts] = data[ts].isoformat()
-            except Exception:
-                pass
-    return data
-
-
-def _json_ok(payload: Dict[str, Any]) -> str:
-    body = {"ok": True, **payload}
-    return json.dumps(body, ensure_ascii=False, indent=2)
+def _json_ok(payload: Dict[str, object]) -> str:
+    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
 
 
 def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[str, Any]] = None) -> str:
@@ -102,370 +70,97 @@ def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[s
     return json.dumps(body, ensure_ascii=False, indent=2)
 
 
-# -------------------- input schemas --------------------
 
-class CreateTaskInput(BaseModel):
-    title: str = Field(..., min_length=1)
-    description: str = ""
-    created_by: CreatedBy = CreatedBy.user
-    parent_id: Optional[str] = Field(None, description="UUID of parent task")
-    status: TaskStatus = TaskStatus.todo
-    workspace_name: Optional[str] = Field(
-        None,
-        description="Optional workspace NAME to create under global workspaces/ root.",
-    )
-    workspace: Optional[str] = Field(
-        None,
-        description="Optional path or name to an existing workspace directory (only NAME will be stored).",
-    )
-
-    @validator("parent_id")
-    def _validate_parent(cls, v):
-        if v is None or v == "":
-            return None
-        _uuid_from_str(v)  # will raise if invalid
-        return v
-
-
-@tool("create_task", args_schema=CreateTaskInput)
-def create_task(
-    title: str,
-    description: str = "",
-    created_by: CreatedBy = CreatedBy.user,
-    parent_id: Optional[str] = None,
-    status: TaskStatus = TaskStatus.todo,
-    workspace_name: Optional[str] = None,
-    workspace: Optional[str] = None,
-) -> str:
-    """Create a new task. Returns JSON with the created task."""
-    try:
-        # Resolve workspace and store only the NAME (not absolute path).
-        ws_name: Optional[str] = None
-        if workspace_name:
-            try:
-                p = ws_create_workspace_folder(workspace_name)
-                ws_name = p.name
-            except Exception as e:
-                return _json_err(f"Failed to prepare workspace '{workspace_name}': {e}")
-        elif workspace:
-            try:
-                # Accept path or name; keep only the terminal name and ensure exists
-                from pathlib import Path as _Path
-                name = _Path(workspace).name
-                p = ws_create_workspace_folder(name)
-                ws_name = p.name
-            except Exception as e:
-                return _json_err(f"Invalid workspace '{workspace}': {e}")
-        else:
-            # Auto-create a fresh workspace when not provided
-            try:
-                p = ws_create_workspace_folder()
-                ws_name = p.name
-            except Exception as e:
-                return _json_err(f"Failed to auto-create workspace: {e}")
-
-        task = svc_create_task(
-            title=title,
-            description=description,
-            created_by=created_by,
-            parent_id=_uuid_from_str(parent_id),
-            status=status,
-            workspace=ws_name,
-        )
-        return _json_ok({"task": _task_to_dict(task)})
-    except Exception as e:
-        return _json_err(f"Failed to create task: {e}")
-
-
-class AddSubtaskInput(BaseModel):
-    parent_id: str = Field(..., description="UUID of the parent task")
-    title: str = Field(..., min_length=1)
-    description: str = ""
-
-    @validator("parent_id")
-    def _valid_uuid(cls, v):
-        _uuid_from_str(v)
-        return v
-
-
-@tool("add_subtask", args_schema=AddSubtaskInput)
-def add_subtask(parent_id: str, title: str, description: str = "") -> str:
-    """Create a subtask under the given parent. Returns JSON with the created task."""
-    try:
-        task = svc_add_subtask(
-            parent_id=_uuid_from_str(parent_id),
-            title=title,
-            description=description,
-        )
-        return _json_ok({"task": _task_to_dict(task)})
-    except Exception as e:
-        return _json_err(f"Failed to add subtask: {e}")
-
-
-class IdInput(BaseModel):
-    id: str = Field(..., description="UUID of the task")
-
-    @validator("id")
-    def _valid_uuid(cls, v):
-        _uuid_from_str(v)
-        return v
-
-
-@tool("get_task", args_schema=IdInput)
-def get_task(id: str) -> str:
-    """Get a task by id. Returns JSON with task or not_found."""
-    try:
-        tid = _uuid_from_str(id)
-        task = svc_get_task(tid)
-        if not task:
-            return _json_err("Task not found", code="not_found", extra={"id": id})
-        return _json_ok({"task": _task_to_dict(task)})
-    except Exception as e:
-        return _json_err(f"Failed to get task: {e}")
-
-
-@tool("list_tasks")
-def list_tasks() -> str:
-    """List all tasks. Returns JSON with an array of tasks."""
-    try:
-        tasks = svc_list_tasks()
-        return _json_ok({"tasks": [_task_to_dict(t) for t in tasks]})
-    except Exception as e:
-        return _json_err(f"Failed to list tasks: {e}")
-
-
-class UpdateTaskInput(BaseModel):
-    id: str = Field(..., description="UUID of the task to update")
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[TaskStatus] = None
-    blocked_reason: Optional[str] = None
-    parent_id: Optional[str] = None
-    sequence_id: Optional[str] = None
-    order: Optional[int] = Field(None, ge=0)
-    created_by: Optional[CreatedBy] = None
-    workspace: Optional[str] = Field(
-        default=None,
-        description="Optional new workspace (path or name); only NAME will be stored",
-    )
-
-    @validator("id")
-    def _valid_id(cls, v):
-        _uuid_from_str(v)
-        return v
-
-    @validator("parent_id")
-    def _valid_parent(cls, v):
-        if v is None:
-            return v
-        _uuid_from_str(v)
-        return v
-
-    @model_validator(mode="after")
-    def _at_least_one_field(cls, values):
-        fields = [
-            values.get("title"),
-            values.get("description"),
-            values.get("status"),
-            values.get("blocked_reason"),
-            values.get("parent_id"),
-            values.get("sequence_id"),
-            values.get("order"),
-            values.get("created_by"),
-        ]
-        if all(v is None for v in fields):
-            raise ValueError("No fields to update provided")
-        return values
-
-
-@tool("update_task", args_schema=UpdateTaskInput)
-def update_task(
-    id: str,
-    title: Optional[str] = None,
-    description: Optional[str] = None,
-    status: Optional[TaskStatus] = None,
-    blocked_reason: Optional[str] = None,
-    parent_id: Optional[str] = None,
-    sequence_id: Optional[str] = None,
-    order: Optional[int] = None,
-    created_by: Optional[CreatedBy] = None,
-    workspace: Optional[str] = None,
-) -> str:
-    """Update task fields. Returns JSON with the updated task."""
-    try:
-        tid = _uuid_from_str(id)
-        fields: Dict[str, Any] = {}
-        if title is not None:
-            fields["title"] = title
-        if description is not None:
-            fields["description"] = description
-        if status is not None:
-            fields["status"] = status
-        if blocked_reason is not None:
-            fields["blocked_reason"] = blocked_reason
-        if parent_id is not None:
-            fields["parent_id"] = _uuid_from_str(parent_id)
-        if sequence_id is not None:
-            fields["sequence_id"] = sequence_id
-        if order is not None:
-            fields["order"] = int(order)
-        if created_by is not None:
-            fields["created_by"] = created_by
-        if workspace is not None:
-            try:
-                # Accept path or name; keep only the name and ensure it exists
-                from pathlib import Path as _Path
-                name = _Path(workspace).name
-                p = ws_create_workspace_folder(name)
-                fields["workspace"] = p.name
-            except Exception as e:
-                return _json_err(f"Failed to set workspace '{workspace}': {e}")
-
-        updated = svc_update_task(tid, **fields)
-        if not updated:
-            return _json_err("Task not found", code="not_found", extra={"id": id})
-        return _json_ok({"task": _task_to_dict(updated)})
-    except Exception as e:
-        return _json_err(f"Failed to update task: {e}")
-
-
-class StopTaskInput(BaseModel):
-    id: str
-
-    @validator("id")
-    def _valid_id(cls, v):
-        _uuid_from_str(v)
-        return v
-
-
-@tool("stop_task", args_schema=StopTaskInput)
-def stop_task(id: str) -> str:
-    """Set task status to stopped. Returns JSON with updated task."""
-    try:
-        tid = _uuid_from_str(id)
-        updated = svc_stop_task(tid)
-        if not updated:
-            return _json_err("Task not found", code="not_found", extra={"id": id})
-        return _json_ok({"task": _task_to_dict(updated)})
-    except Exception as e:
-        return _json_err(f"Failed to stop task: {e}")
-
-
-class BlockTaskInput(BaseModel):
-    id: str
-    reason: str = Field(..., min_length=1)
-
-    @validator("id")
-    def _valid_id(cls, v):
-        _uuid_from_str(v)
-        return v
-
-
-@tool("block_task", args_schema=BlockTaskInput)
-def block_task(id: str, reason: str) -> str:
-    """Block a task with a reason. Returns JSON with updated task."""
-    try:
-        tid = _uuid_from_str(id)
-        updated = svc_block_task(tid, reason)
-        if not updated:
-            return _json_err("Task not found", code="not_found", extra={"id": id})
-        return _json_ok({"task": _task_to_dict(updated)})
-    except Exception as e:
-        return _json_err(f"Failed to block task: {e}")
-
-
-class CreateSequenceInput(BaseModel):
-    task_ids: List[str] = Field(..., min_items=1, description="List of UUIDs")
-    sequence_id: Optional[str] = None
-    start_order: int = Field(1, ge=0)
-
-    @validator("task_ids")
-    def _validate_ids(cls, v):
-        if not v:
-            raise ValueError("task_ids must not be empty")
-        for s in v:
-            _uuid_from_str(s)
-        return v
-
-
-@tool("create_sequence", args_schema=CreateSequenceInput)
-def create_sequence(task_ids: List[str], sequence_id: Optional[str] = None, start_order: int = 1) -> str:
-    """Assign a common sequence_id and order to given task IDs. Returns JSON with sequence info and tasks."""
-    try:
-        uuids = [UUID(s) for s in task_ids]
-        seq_id = svc_create_sequence(uuids, sequence_id=sequence_id, start_order=start_order)
-        # Fetch updated tasks for response
-        tasks = []
-        for tid in uuids:
-            t = svc_get_task(tid)
-            if t:
-                tasks.append(_task_to_dict(t))
-        return _json_ok({"sequence_id": seq_id, "tasks": tasks})
-    except ValueError as e:
-        return _json_err(str(e), code="not_found")
-    except Exception as e:
-        return _json_err(f"Failed to create sequence: {e}")
-
-
-# -------------------- Agent management tools --------------------
+# -------------------- Agent coordination tools --------------------
 
 @tool("list_agents_tool")
 def list_agents_tool() -> str:
     """List all available agents from the registry. Returns JSON with an array of agents."""
     try:
-        specs = reg_list_agents()
-        return _json_ok({"agents": [s.to_dict() for s in specs]})
+        ws = _active_workspace()
+        specs = filter_agents_for_workspace(reg_list_agents(), ws)
+        agents = [{"id": s.id, "name": s.name, "description": s.description} for s in specs]
+        return _json_ok({"agents": agents})
     except Exception as e:
         return _json_err(f"Failed to list agents: {e}")
 
 
-class AssignAndStartAgentInput(BaseModel):
+class AssignAgentInput(BaseModel):
     task_id: str = Field(..., description="UUID of the task")
     agent_id: str = Field(..., min_length=1, description="Agent identifier from the registry")
     params_json: Optional[str] = Field(
         None, description="Optional JSON object string with agent parameters"
     )
+    reason: Optional[str] = Field(
+        None, description="Brief explanation of why this agent was chosen for this task"
+    )
 
-    @validator("task_id")
-    def _valid_task_id(cls, v):
-        _uuid_from_str(v)
+    @field_validator("params_json", mode="before")
+    @classmethod
+    def coerce_params_json(cls, v):
+        if isinstance(v, (dict, list)):
+            return json.dumps(v)
         return v
 
 
-@tool("assign_and_start_agent_tool", args_schema=AssignAndStartAgentInput)
-def assign_and_start_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = None) -> str:
-    """Assign an agent to a task and start its run.
+@tool("assign_agent_tool", args_schema=AssignAgentInput)
+def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = None, reason: Optional[str] = None) -> str:
+    """Assign an agent to a task without starting it.
 
-    Returns JSON with the updated task, run status and agent info.
+    Always creates a pending run and returns assignment_mode so the caller
+    knows whether to ask for user approval before calling start_agent_tool.
+    Returns JSON with the updated task, agent info, assignment_mode, and run_id.
     """
     try:
         tid = _uuid_from_str(task_id)
-
-        # Ensure task exists
         task = svc_get_task(tid)
         if not task:
             return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
-
-        # Ensure agent exists
+        ws = _active_workspace()
+        if ws and not task_in_workspace(task, ws):
+            return _json_err(
+                f"Task '{task_id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
+        if getattr(task, "status", None) == TaskStatus.stopped:
+            return _json_err("Task is stopped and cannot be assigned", code="invalid_task")
+        existing_agent = getattr(task, "assigned_agent_type", None)
+        existing_run_id = getattr(task, "assigned_agent_run_id", None)
+        if existing_run_id:
+            run = run_manager.get_run_by_id(str(existing_run_id))
+            run_status = str((run or {}).get("status") or "")
+            if run_status == "awaiting_approval" and existing_agent:
+                spec = reg_get_agent(existing_agent)
+                return _json_ok({
+                    "message": "Task already has a pending assignment.",
+                    "existing_assignment": True,
+                    "run_id": str(existing_run_id),
+                    "assigned_agent_id": existing_agent,
+                    "assigned_agent_name": spec.name if spec else existing_agent,
+                    "task": _task_to_dict(task),
+                })
+            if run_status in {"running", "stop"} and existing_agent != "orchestrator":
+                return _json_ok({
+                    "message": "Task already has an active run; stop it before reassigning",
+                    "run_id": str(existing_run_id),
+                    "existing_assignment": True,
+                    "status": run,
+                    "task": _task_to_dict(task),
+                })
         spec = reg_get_agent(agent_id)
         if not spec:
             return _json_err("Agent not found", code="not_found", extra={"agent_id": agent_id})
-
-        # Policy: the dedicated decomposer agent may only be assigned to user-created tasks
+        if ws and not filter_agents_for_workspace([spec], ws):
+            return _json_err(
+                f"Agent '{agent_id}' is not available in workspace '{ws}'",
+                code="forbidden",
+            )
         if agent_id == "decomposer":
-            try:
-                if getattr(task, "created_by", None) != CreatedBy.user:
-                    return _json_err(
-                        "Decomposer agent can only be assigned to user-created tasks",
-                        code="invalid_task",
-                    )
-            except Exception:
+            if getattr(task, "created_by", None) != CreatedBy.user:
                 return _json_err(
                     "Decomposer agent can only be assigned to user-created tasks",
                     code="invalid_task",
                 )
-
-        # Parse params JSON if provided
         params: Optional[Dict[str, Any]] = None
         if params_json:
             try:
@@ -475,41 +170,247 @@ def assign_and_start_agent_tool(task_id: str, agent_id: str, params_json: Option
                 params = obj
             except Exception as e:
                 return _json_err(f"Invalid params_json: {e}", code="bad_params")
+        if reason:
+            svc_update_task(task.id, routing_reason=reason.strip())
 
-        # Start run first to obtain run_id
-        run_id = rm_start_run(str(task.id), agent_id, params)
+        ws_name = task.workspace or "default"
+        try:
+            from common.workspace import get_workspace_metadata
+            orch_settings = get_workspace_metadata(ws_name).get("orchestrator", {})
+            assignment_mode = orch_settings.get("assignment_mode", "manual")
+        except Exception:
+            assignment_mode = "manual"
 
-        # Record assignment and mark as running
+        session_id = getattr(task, "session_id", None)
+        if not session_id:
+            try:
+                session_id = get_or_create_task_session(
+                    title=task.title,
+                    workspace=task.workspace,
+                )
+                svc_update_task(task.id, session_id=session_id)
+            except Exception:
+                session_id = None
+
+        # Live mode: pre-register with "pending" so the task shows as pending (not awaiting_approval).
+        # Manual mode: pre-register with "awaiting_approval" for the approval gate.
+        run_id = rm_preregister_run(str(task.id), agent_id, session_id=session_id)
+        if assignment_mode == "live":
+            run_manager.update_run(run_id, {"status": "pending"})
+            # Link to session immediately in live mode — start_agent_tool follows right away.
+            # In manual mode the run stays awaiting_approval until approved, so we defer
+            # the session link to start_agent_tool to avoid a spurious message entry.
+            if session_id:
+                try:
+                    add_run_to_session(session_id, run_id)
+                except Exception:
+                    pass
+
         svc_assign_agent(task.id, agent_id, params, run_id=run_id)
-        svc_set_agent_state(task.id, AgentState.running, run_id=run_id)
+        try:
+            svc_append_routing_log(
+                task_id=task.id,
+                task_title=task.title,
+                agent_id=agent_id,
+                reason=reason.strip() if reason else None,
+                workspace=getattr(task, "workspace", None),
+            )
+        except Exception:
+            pass
+        if agent_id == "code_reviewer":
+            svc_update_task(task.id, status=TaskStatus.reviewing)
+        if assignment_mode != "live":
+            svc_update_task(task.id, status=TaskStatus.pending)
 
         updated = svc_get_task(task.id)
-        status = rm_get_status(str(task.id))
-
-        payload: Dict[str, Any] = {
-            "message": "Agent assigned and started",
+        
+        _task_ws = str(getattr(task, "workspace", "") or "")
+        wait_for_completion = _get_wait_for_completion(_task_ws or ws)
+        message = (
+            "Agent assigned. Call start_agent_tool now with task id."
+            if assignment_mode == "live"
+            else 
+                "Agent assigned. NEXT: call wait_for_agent_tool with task id to monitor."
+                if wait_for_completion
+                else "Agent assigned. STOP — report this assignment to the user."
+        )
+        return _json_ok({
+            "message": message,
             "run_id": run_id,
-            "status": status,
+            "assignment_mode": assignment_mode,
             "task": _task_to_dict(updated) if updated else None,
             "agent": spec.to_dict(),
-        }
-        return _json_ok(payload)
+        })
     except Exception as e:
-        return _json_err(f"Failed to assign/start agent: {e}")
+        return _json_err(f"Failed to assign agent: {e}")
+
+
+class StartAgentInput(BaseModel):
+    task_id: str = Field(..., description="UUID of the task with an assigned agent")
+
+
+@tool("start_agent_tool", args_schema=StartAgentInput)
+def start_agent_tool(task_id: str) -> str:
+    """Start execution of the agent already assigned to a task.
+
+    The task must have an agent assigned via assign_agent_tool.
+    Returns JSON with run status and updated task.
+    """
+    try:
+        tid = _uuid_from_str(task_id)
+        task = svc_get_task(tid)
+        if not task:
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
+        ws = _active_workspace()
+        if ws and not task_in_workspace(task, ws):
+            return _json_err(
+                f"Task '{task_id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
+        agent_id = getattr(task, "assigned_agent_type", None)
+        if not agent_id:
+            return _json_err(
+                "No agent assigned to this task; call assign_agent_tool first",
+                code="invalid_task",
+            )
+        existing_run_id = getattr(task, "assigned_agent_run_id", None)
+        if existing_run_id:
+            run = run_manager.get_run_by_id(str(existing_run_id))
+            run_status = str((run or {}).get("status") or "")
+            if run_status == "running":
+                return _json_ok({
+                    "message": "Agent is already running",
+                    "run_id": str(existing_run_id),
+                    "status": run,
+                    "task": _task_to_dict(task),
+                })
+            if run_status in {"stop", "stopped"}:
+                return _json_err(
+                    "Previous run was stopped; cannot start agent. Please assign again to create a new run.",
+                    code="invalid_task",
+                    extra={"run_id": str(existing_run_id), "run_status": run_status},
+                )
+            if run_status not in {"awaiting_approval", "pending", ""}:
+                return _json_err(
+                    "Task is not awaiting approval; it has already been started. "
+                    "Use assign_agent_tool to reassign first.",
+                    code="invalid_state",
+                    extra={"task": _task_to_dict(task)},
+                )
+        params = getattr(task, "assigned_agent_params", None)
+        preregistered_run_id = str(existing_run_id) if existing_run_id else None
+        _task_ws = str(getattr(task, "workspace", "") or "")
+        execution_mode = _get_execution_mode(_task_ws or ws)
+
+        if execution_mode == "node":
+            # Node mode: flip the pre-registered run to "assigned" so agent_state
+            # resolves to AgentState.assigned (not pending_approval). Keep task status
+            # as in_progress — the worker node will pick it up via agent_state alone.
+            run_id = preregistered_run_id or str(uuid4())
+            run_manager.update_run(run_id, {"status": "assigned"})
+            svc_assign_agent(task.id, agent_id, params, run_id=run_id)
+            svc_update_task(task.id, status=TaskStatus.in_progress)
+        else:
+            # Subprocess mode: launch immediately, reusing the pre-registered run_id.
+            run_id, _ = rm_start_run(str(task.id), agent_id, params, run_id=preregistered_run_id)
+            svc_assign_agent(task.id, agent_id, params, run_id=run_id)
+            svc_update_task(task.id, status=TaskStatus.in_progress)
+        # Link the run to the task's session now that it has actually started.
+        # Idempotent — safe to call even if live mode already linked it in assign_agent_tool.
+        try:
+            _start_session_id = getattr(task, "session_id", None)
+            if _start_session_id:
+                add_run_to_session(_start_session_id, run_id)
+        except Exception:
+            pass
+        wait_for_completion = _get_wait_for_completion(_task_ws or ws)
+
+        # Register a session continuation only in fire-and-forget mode.
+        # When wait_for_completion=true the orchestrator polls and handles followup
+        # itself — registering a continuation would spawn a second orchestrator.
+        try:
+            _fmode = _get_followup_mode(_task_ws or ws)
+            if _fmode == "continuous" and not wait_for_completion:
+                from common.agent_context import current_session_id as _sess_ctx
+                from common.session_service import register_continuation
+                _sid = _sess_ctx.get() or os.environ.get("AGENT_SESSION_ID")
+                if _sid:
+                    register_continuation(
+                        session_id=_sid,
+                        task_id=str(task.id),
+                        workspace=_task_ws or None,
+                    )
+        except Exception:
+            pass
+        if execution_mode == "node":
+            message = (
+                "Task queued for node execution. NEXT: call wait_for_agent_tool with task id to monitor."
+                if wait_for_completion
+                else "Task queued for node execution. YOUR TURN IS DONE. Do not call any more tools."
+            )
+        else:
+            message = (
+                "Agent started. NEXT: call wait_for_agent_tool with task id to monitor."
+                if wait_for_completion
+                else "Agent started. YOUR TURN IS DONE. Do not call any more tools."
+            )
+        return _json_ok({
+            "message": message,
+            "run_id": run_id,
+            "execution_mode": execution_mode,
+            "wait_for_completion": wait_for_completion,
+        })
+    except Exception as e:
+        return _json_err(f"Failed to start agent: {e}")
 
 
 class TaskIdInput(BaseModel):
-    task_id: str
+    task_id: str = Field(..., description="UUID of the task")
 
-    @validator("task_id")
-    def _valid_task_id(cls, v):
-        _uuid_from_str(v)
-        return v
+
+@tool("reject_assignment_tool", args_schema=TaskIdInput)
+def reject_assignment_tool(task_id: str) -> str:
+    """Reject the pending agent assignment for a task.
+
+    Clears the assigned agent and resets the task status to 'todo' so it can be reassigned.
+    Call this when the user rejects the proposed assignment.
+    """
+    try:
+        tid = _uuid_from_str(task_id)
+        task = svc_get_task(tid)
+        if not task:
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
+        ws = _active_workspace()
+        if ws and not task_in_workspace(task, ws):
+            return _json_err(
+                f"Task '{task_id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
+        if getattr(task, "assigned_agent_run_id", None):
+            return _json_err(
+                "Task already has an active run and cannot be rejected; stop it first",
+                code="invalid_state",
+            )
+        _FINISHED_STATUSES = {TaskStatus.resolved, TaskStatus.reviewing, TaskStatus.reviewed, TaskStatus.done}
+        restore_status = (
+            task.pre_assignment_status
+            if getattr(task, "pre_assignment_status", None) in _FINISHED_STATUSES
+            else TaskStatus.todo
+        )
+        svc_clear_agent(tid)
+        svc_update_task(tid, status=restore_status)
+        updated = svc_get_task(tid)
+        return _json_ok({
+            "message": f"Assignment rejected. Task returned to '{restore_status.value}' — you can assign a different agent.",
+            "task": _task_to_dict(updated) if updated else None,
+        })
+    except Exception as e:
+        return _json_err(f"Failed to reject assignment: {e}")
 
 
 @tool("stop_agent_tool", args_schema=TaskIdInput)
 def stop_agent_tool(task_id: str) -> str:
-    """Attempt to stop the latest running agent process for the task. Also marks agent_state=stopped.
+    """Attempt to stop the latest running agent process for the task.
 
     Returns JSON with {stopped: bool, status: dict, task: Task}.
     """
@@ -518,14 +419,29 @@ def stop_agent_tool(task_id: str) -> str:
         task = svc_get_task(tid)
         if not task:
             return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
-
-        stopped = rm_stop_run(str(task.id))
-        # Reflect in task state (best-effort)
-        svc_set_agent_state(task.id, AgentState.stopped)
+        ws = _active_workspace()
+        if ws and not task_in_workspace(task, ws):
+            return _json_err(
+                f"Task '{task_id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
+        current_run_id = str(getattr(task, "assigned_agent_run_id", None) or "")
+        stopped = rm_stop_run(str(task.id), run_id=current_run_id or None)
+        if not stopped:
+            try:
+                svc_update_task(
+                    task.id,
+                    status=TaskStatus.stopped,
+                    assigned_agent_type=None,
+                    assigned_agent_params=None,
+                    assigned_agent_run_id=None,
+                )
+            except Exception:
+                pass
         updated = svc_get_task(task.id)
-        status = rm_get_status(str(task.id))
+        status = run_manager.get_run_by_id(current_run_id) if current_run_id else None
         return _json_ok({
-            "stopped": bool(stopped),
+            "stopped": True if not stopped else bool(stopped),
             "status": status,
             "task": _task_to_dict(updated) if updated else None,
         })
@@ -533,19 +449,236 @@ def stop_agent_tool(task_id: str) -> str:
         return _json_err(f"Failed to stop agent: {e}")
 
 
+_DONE_RUN_STATUSES = {"completed", "done", "finished"}
+_FAILED_RUN_STATUSES = {"failed", "error"}
+
+
+def _get_followup_mode(workspace: Optional[str]) -> str:
+    """Read followup_mode from workspace orchestrator settings. Defaults to 'single'."""
+    try:
+        from common.workspace import get_workspace_metadata
+        ws_name = workspace or "default"
+        return get_workspace_metadata(ws_name).get("orchestrator", {}).get("followup_mode", "single")
+    except Exception:
+        return "single"
+
+
+def _get_wait_for_completion(workspace: Optional[str]) -> bool:
+    """Read wait_for_completion from workspace orchestrator settings. Defaults to False."""
+    try:
+        from common.workspace import get_workspace_metadata
+        ws_name = workspace or "default"
+        return get_workspace_metadata(ws_name).get("orchestrator", {}).get("wait_for_completion", False)
+    except Exception:
+        return False
+
+
+def _get_execution_mode(workspace: Optional[str]) -> str:
+    """Read execution_mode from workspace orchestrator settings. Defaults to 'subprocess'."""
+    try:
+        from common.workspace import get_workspace_metadata
+        ws_name = workspace or "default"
+        return get_workspace_metadata(ws_name).get("orchestrator", {}).get("execution_mode", "subprocess")
+    except Exception:
+        return "subprocess"
+
+
+class WaitForAgentInput(BaseModel):
+    task_id: str = Field(..., description="UUID of the task to wait on")
+    interval: int = Field(2, ge=2, le=2, description="Seconds to wait before checking status (2–2)")
+
+
+@tool("wait_for_agent_tool", args_schema=WaitForAgentInput)
+def wait_for_agent_tool(task_id: str, interval: int = 2) -> str:
+    """Wait a short time, then return the current agent status for a task.
+
+    Use this after start_agent_tool to poll progress without busy-waiting.
+    Call it repeatedly until agent_finished or agent_failed is true.
+    Returns the same fields as get_agent_status_tool.
+    """
+    import time
+    time.sleep(max(2, min(interval, 60)))
+    # return get_agent_status_tool.invoke({"task_id": task_id})
+    task = svc_get_task(task_id)
+    return _json_ok({
+            "message": "Agent status update after waiting. Call get_agent_status_tool with task id.",
+            "task": _task_to_dict(task) if task else None,
+        })
+
+
 @tool("get_agent_status_tool", args_schema=TaskIdInput)
 def get_agent_status_tool(task_id: str) -> str:
-    """Get the latest agent run status for a task along with task assignment info."""
+    """Get the latest agent run status for a task along with task assignment info.
+
+    Key fields in the response:
+    - agent_finished: true when the agent completed successfully (task status 'resolved' or 'reviewed').
+    - agent_failed: true when the agent run failed (task status 'blocked').
+    - agent_running: true when the agent is still executing.
+    - followup_mode: workspace setting — 'continuous' means automatically chain the next step;
+      'single' means report back to the user and wait for their instructions before proceeding.
+    - wait_for_completion: workspace setting — true means poll until the agent finishes;
+      false means fire-and-forget (start the agent, report to the user, and stop).
+    """
     try:
         tid = _uuid_from_str(task_id)
         task = svc_get_task(tid)
-        status = rm_get_status(str(task_id))
+        ws = _active_workspace()
+        if task and ws and not task_in_workspace(task, ws):
+            return _json_err(
+                f"Task '{task_id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
+        # Use the run_id already on the task — no need to scan all runs by task_id.
+        current_run_id = getattr(task, "assigned_agent_run_id", None)
+        status = run_manager.get_run_by_id(str(current_run_id)) if current_run_id else None
+
+        # If the assigned run belongs to the orchestrator itself (continuation),
+        # check the most recent worker run instead — not the orchestrator's own status.
+        if status and str(status.get("agent_id") or "") == "orchestrator":
+            all_runs = run_manager.load_runs()
+            worker_runs = sorted(
+                [r for r in all_runs
+                 if r.get("task_id") == str(tid)
+                 and r.get("agent_id") != "orchestrator"
+                 and r.get("run_id") != str(current_run_id)],
+                key=lambda r: r.get("started_at") or "",
+            )
+            if worker_runs:
+                status = worker_runs[-1]
+
+        task_status = str(getattr(task, "status", "") or "")
+        run_status = str((status or {}).get("status") or "")
+
+        agent_finished = (
+            task_status in {"resolved", "reviewed"}
+            or run_status in _DONE_RUN_STATUSES
+        )
+        agent_failed = (
+            task_status in {"blocked", "stopped"}
+            or run_status in (_FAILED_RUN_STATUSES | {"stopped"})
+        )
+        # "pending"/"stop" are transient active states; treat as running
+        agent_running = run_status in {"running", "in_progress", "pending", "stop"}
+
+        # Catch-all: if no flag matched (e.g. awaiting_approval, unknown, no run),
+        # keep polling rather than leaving the orchestrator with no branch to follow.
+        if not agent_running and not agent_finished and not agent_failed:
+            agent_running = True
+
+        # In fire-and-forget mode (wait_for_completion=false) the orchestrator's job
+        # is done as soon as the agent was started without error.  Treat any
+        # non-failed state as "finished" so the LLM stops polling and goes to Step 5.
+        _task_ws = str(getattr(task, "workspace", "") or "") if task else ""
+        if not agent_failed and _get_wait_for_completion(_task_ws or ws) is False:
+            agent_finished = True
+            agent_running = False
+
+        assigned_agent = str(getattr(task, "assigned_agent_type", "") or "") if task else ""
+        routing_reason = str(getattr(task, "routing_reason", "") or "") if task else ""
+
+        if agent_finished:
+            message = "DONE. Task completed successfully. Stop all tool calls and summarise the orchestration: which agent was assigned, why, and that the task finished successfully."
+        elif agent_failed:
+            message = "DONE. Task failed. Stop all tool calls and summarise the orchestration: which agent was assigned, why, and that the task failed."
+        else:
+            message = "RUNNING. Use wait_for_agent_tool again."
+
         return _json_ok({
-            "task": _task_to_dict(task) if task else None,
-            "status": status,
+            "message": message,
+            "agent_finished": agent_finished,
+            "agent_failed": agent_failed,
+            "agent_running": agent_running,
+            "assigned_agent": assigned_agent,
+            "routing_reason": routing_reason,
+            "task_status": task_status,
         })
     except Exception as e:
         return _json_err(f"Failed to get agent status: {e}")
+
+
+# -------------------- Agent factory tools --------------------
+
+class CreateAgentInput(BaseModel):
+    agent_id: str = Field(..., min_length=1, description="Unique identifier for the new agent (no spaces)")
+    name: str = Field(..., min_length=1, description="Human-readable display name")
+    description: str = Field("", description="What the agent does")
+    domain: str = Field("general", description="Domain: general, development, orchestration, testing, etc.")
+    system_prompt: str = Field(..., min_length=1, description="System instructions for the agent")
+    tools: List[str] = Field(
+        default_factory=lambda: ["read_file", "write_file", "list_files"],
+        description="List of tool IDs to equip the agent with",
+    )
+    capacity: int = Field(1, ge=1, description="Max concurrent sessions")
+
+
+@tool("create_agent_tool", args_schema=CreateAgentInput)
+def create_agent_tool(
+    agent_id: str,
+    name: str,
+    description: str = "",
+    domain: str = "general",
+    system_prompt: str = "",
+    tools: Optional[List[str]] = None,
+    capacity: int = 1,
+) -> str:
+    """Create a new agent in the system registry."""
+    try:
+        if tools is None:
+            tools = ["read_file", "write_file", "list_files"]
+        if reg_get_agent(agent_id):
+            return _json_err(f"Agent with id '{agent_id}' already exists", code="conflict")
+
+        spec = AgentSpec(
+            id=agent_id,
+            name=name,
+            description=description,
+            domain=domain,
+            type="langchain",
+            entrypoint="agents.agent_factory:build_agent_executor",
+            system_prompt=system_prompt,
+            tools=tools,
+            capacity=capacity,
+            default_params={},
+        )
+        reg_add_agent(spec)
+        return _json_ok({"agent": spec.to_dict(), "message": f"Agent '{name}' created successfully"})
+    except Exception as e:
+        return _json_err(f"Failed to create agent: {e}")
+
+
+class GetAgentInput(BaseModel):
+    agent_id: str = Field(..., min_length=1, description="ID of the agent to retrieve")
+
+
+@tool("get_agent_tool", args_schema=GetAgentInput)
+def get_agent_tool(agent_id: str) -> str:
+    """Get details of a specific agent by ID."""
+    try:
+        spec = reg_get_agent(agent_id)
+        if not spec:
+            return _json_err(f"Agent '{agent_id}' not found", code="not_found")
+        return _json_ok({"agent": spec.to_dict()})
+    except Exception as e:
+        return _json_err(f"Failed to get agent: {e}")
+
+
+class DeleteAgentInput(BaseModel):
+    agent_id: str = Field(..., min_length=1, description="ID of the agent to delete")
+
+
+@tool("delete_agent_tool", args_schema=DeleteAgentInput)
+def delete_agent_tool(agent_id: str) -> str:
+    """Delete an agent from the system registry by ID."""
+    try:
+        protected = {"orchestrator", "decomposer", "agent_flows"}
+        if agent_id in protected:
+            return _json_err(f"Agent '{agent_id}' is a system agent and cannot be deleted", code="forbidden")
+        removed = reg_remove_agent(agent_id)
+        if not removed:
+            return _json_err(f"Agent '{agent_id}' not found", code="not_found")
+        return _json_ok({"message": f"Agent '{agent_id}' deleted successfully", "agent_id": agent_id})
+    except Exception as e:
+        return _json_err(f"Failed to delete agent: {e}")
 
 
 __all__ = [
@@ -557,9 +690,15 @@ __all__ = [
     "stop_task",
     "block_task",
     "create_sequence",
-    # New agent tools
     "list_agents_tool",
-    "assign_and_start_agent_tool",
+    "assign_agent_tool",
+    "start_agent_tool",
+    "reject_assignment_tool",
     "stop_agent_tool",
     "get_agent_status_tool",
+    "wait_for_agent_tool",
+    "create_agent_tool",
+    "get_agent_tool",
+    "delete_agent_tool",
 ]
+

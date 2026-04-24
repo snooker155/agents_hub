@@ -18,11 +18,17 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 import os
+
+# Load .env into os.environ so RagConfig and other direct os.environ readers
+# pick up saved settings on startup (pydantic BaseSettings reads .env into its
+# own fields but does NOT populate os.environ).
+from dotenv import load_dotenv
+load_dotenv(project_root / ".env", override=False)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import route modules organized by domain
-from routes import agents, tasks, factory, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external
+from routes import agents, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages
 from routes import settings as settings_router
 
 # Import settings for API key validation
@@ -38,7 +44,10 @@ app = FastAPI(
 # Startup event to validate OpenAI API key
 @app.on_event("startup")
 async def startup_event():
-    """Validate API key and launch the default orchestrator node."""
+    """Validate API key, wire session broker, and launch the default orchestrator node."""
+    import asyncio
+    from common.session_broker import broker
+    broker.set_loop(asyncio.get_running_loop())
     if not settings.openai_api_key:
         print("\n" + "="*70)
         print("WARNING: OPENAI_API_KEY is not set!")
@@ -145,9 +154,6 @@ app.include_router(agents.router)
 # Tasks domain: task creation, assignment, execution
 app.include_router(tasks.router)
 
-# Factory domain: AI factory workflow integration
-app.include_router(factory.router)
-
 # Flows domain: user-defined factories / visual pipelines
 app.include_router(flows.router)
 
@@ -163,8 +169,11 @@ app.include_router(workspaces.router)
 # Tools domain: tools listing and exploration
 app.include_router(tools.router)
 
-# Sessions domain: agent run sessions management
+# Sessions domain: process-level session contexts
 app.include_router(sessions.router)
+
+# Messages domain: individual agent run logs
+app.include_router(messages.router)
 
 # Chat domain: direct in-process agent conversation
 app.include_router(chat.router)
@@ -175,6 +184,12 @@ app.include_router(nodes.router)
 # External domain: token-authenticated access for exposed nodes
 app.include_router(external.router)
 
+# Projects domain: project management, repo, frontend/backend preview
+app.include_router(projects.router)
+
+# Containers domain: Docker image builds and container lifecycle
+app.include_router(containers.router)
+
 # Settings domain: LLM and application settings
 app.include_router(settings_router.router)
 
@@ -183,4 +198,17 @@ app.include_router(settings_router.router)
 # ============================================================================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, port=8000)
+    from pathlib import Path as _Path
+    _root = _Path(__file__).resolve().parents[2]
+    uvicorn.run(
+        "main:app",
+        port=8000,
+        reload=True,
+        reload_dirs=[
+            str(_Path(__file__).parent),   # dashboard/backend
+            str(_root / "agents"),
+            str(_root / "common"),
+            str(_root / "tools"),
+            str(_root / "tasks"),
+        ],
+    )

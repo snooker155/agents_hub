@@ -1,7 +1,6 @@
 id: devops_agent
 name: DevOps Agent
 description: Agent specialized in deployment and infrastructure
-model: gpt-4o
 temperature: 0.1
 max_tokens: 15000
 verbose: false

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -12,13 +12,13 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Link2, WandSparkles } from 'lucide-react';
-import FactoryNode from './FactoryNode';
+import FlowNode from './FlowNode';
 
 const nodeTypes = {
-  factoryNode: FactoryNode,
+  flowNode: FlowNode,
 };
 
-function FactoryCanvasInner({
+function FlowCanvasInner({
   availableAgents,
   nodes,
   edges,
@@ -28,10 +28,16 @@ function FactoryCanvasInner({
   setEdges,
   setNodes,
   setSelectedNodeId,
+  activeNodeId,
 }) {
   const wrapperRef = useRef(null);
   const reactFlow = useReactFlow();
   const [isOver, setIsOver] = useState(false);
+
+  const enrichedNodes = useMemo(
+    () => nodes.map((n) => ({ ...n, data: { ...n.data, isActive: n.id === activeNodeId } })),
+    [nodes, activeNodeId]
+  );
 
   const onConnect = (connection) => {
     setEdges((current) =>
@@ -39,7 +45,7 @@ function FactoryCanvasInner({
         {
           ...connection,
           type: 'smoothstep',
-          animated: true,
+          animated: false,
           markerEnd: { type: MarkerType.ArrowClosed, color: '#0891b2' },
           style: { stroke: '#0891b2', strokeWidth: 2 },
         },
@@ -49,14 +55,14 @@ function FactoryCanvasInner({
   };
 
   const handleDragStart = (event, agent) => {
-    event.dataTransfer.setData('application/agent-factory', JSON.stringify(agent));
+    event.dataTransfer.setData('application/agent-flow', JSON.stringify(agent));
     event.dataTransfer.effectAllowed = 'move';
   };
 
   const handleDrop = (event) => {
     event.preventDefault();
     setIsOver(false);
-    const raw = event.dataTransfer.getData('application/agent-factory');
+    const raw = event.dataTransfer.getData('application/agent-flow');
     if (!raw) return;
 
     const agent = JSON.parse(raw);
@@ -69,7 +75,7 @@ function FactoryCanvasInner({
     setNodes((current) =>
       current.concat({
         id: nodeId,
-        type: 'factoryNode',
+        type: 'flowNode',
         position,
         style: { width: 90 },
         data: {
@@ -124,7 +130,7 @@ function FactoryCanvasInner({
           setIsOver(true);
         }}
         onDragLeave={() => setIsOver(false)}
-        className={`factory-canvas h-full overflow-hidden rounded-[28px] border ${
+        className={`flow-canvas h-full overflow-hidden rounded-[28px] border ${
           isOver ? 'border-cyan-400 bg-cyan-50/50' : 'border-slate-200 bg-white'
         }`}
       >
@@ -138,7 +144,7 @@ function FactoryCanvasInner({
           </div>
         ) : null}
         <ReactFlow
-          nodes={nodes}
+          nodes={enrichedNodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -149,7 +155,7 @@ function FactoryCanvasInner({
           nodeTypes={nodeTypes}
           defaultEdgeOptions={{
             type: 'smoothstep',
-            animated: true,
+            animated: false,
             markerEnd: { type: MarkerType.ArrowClosed, color: '#0891b2' },
             style: { stroke: '#0891b2', strokeWidth: 2 },
           }}
@@ -163,10 +169,10 @@ function FactoryCanvasInner({
   );
 }
 
-export default function FactoryCanvas(props) {
+export default function FlowCanvas(props) {
   return (
     <ReactFlowProvider>
-      <FactoryCanvasInner {...props} />
+      <FlowCanvasInner {...props} />
     </ReactFlowProvider>
   );
 }

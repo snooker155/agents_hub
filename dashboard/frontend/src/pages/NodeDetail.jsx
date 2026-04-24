@@ -5,6 +5,7 @@ import {
   getNodeById,
   getNodeLogs,
   getNodeConnections,
+  getNodeRuns,
   exposeNode,
   unexposeNode,
   startNode,
@@ -31,6 +32,7 @@ import {
   AlertTriangle,
   RefreshCw,
   ExternalLink,
+  Box,
 } from 'lucide-react';
 
 // ── Status helpers ─────────────────────────────────────────────────────────
@@ -100,9 +102,12 @@ function ExposePanel({ node, onNodeUpdated }) {
   const [toggling, setToggling] = useState(false);
   const [error, setError] = useState('');
   const isExposed = !!node.is_exposed;
-  const externalUrl = node.external_url || (node.expose_token
-    ? `http://localhost:8000/api/external/${node.expose_token}/run`
-    : null);
+  const isService = (node.node_type || 'worker') === 'service';
+
+  const servicePort = node.http_host_port || node.http_port;
+  const serviceUrl = node.http_url || (servicePort ? `http://localhost:${servicePort}` : null);
+  const runUrl = serviceUrl ? `${serviceUrl}/run` : null;
+  const gatewayUrl = node.expose_token ? `http://localhost:8000/api/external/${node.expose_token}/run` : null;
 
   const handleToggle = async () => {
     setToggling(true);
@@ -122,6 +127,80 @@ function ExposePanel({ node, onNodeUpdated }) {
     }
   };
 
+  // ── HTTP Service node: always visible, no toggle, token is optional auth ───
+  if (isService) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <Globe className="w-5 h-5 text-violet-600" />
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800">HTTP Service</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              This node runs its own HTTP server and accepts requests directly.
+              {node.expose_token
+                ? ' Bearer token authentication is active.'
+                : ' Generate a token to enable bearer token authentication.'}
+            </p>
+          </div>
+        </div>
+
+        {error && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
+        )}
+
+        {runUrl && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1.5">Service URL</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs text-indigo-800 break-all">{runUrl}</code>
+              <CopyButton text={runUrl} />
+            </div>
+          </div>
+        )}
+
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Access Token</p>
+            <button
+              onClick={handleToggle}
+              disabled={toggling}
+              className="text-[10px] font-semibold px-2 py-0.5 rounded border transition-colors disabled:opacity-50
+                border-gray-300 text-gray-600 hover:bg-gray-100"
+            >
+              {toggling ? '…' : node.expose_token ? 'Revoke' : 'Generate'}
+            </button>
+          </div>
+          {node.expose_token ? (
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs text-gray-700 break-all">{node.expose_token}</code>
+              <CopyButton text={node.expose_token} />
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 italic">No token — endpoint is open</p>
+          )}
+        </div>
+
+        {runUrl && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">Example Request</p>
+            <pre className="text-xs text-amber-800 whitespace-pre-wrap break-all leading-5">{node.expose_token
+              ? `curl -X POST "${runUrl}" \\\n  -H "Authorization: Bearer ${node.expose_token}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"prompt": "Hello, what can you do?"}'`
+              : `curl -X POST "${runUrl}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"prompt": "Hello, what can you do?"}'`
+            }</pre>
+          </div>
+        )}
+
+        {serviceUrl && (
+          <div className="bg-violet-50 border border-violet-200 rounded-lg p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-violet-600 mb-1.5">Health Check</p>
+            <pre className="text-xs text-violet-800 whitespace-pre-wrap break-all leading-5">{`curl "${serviceUrl}/health"`}</pre>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Task Worker node: expose toggle + gateway URL ─────────────────────────
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="flex items-start justify-between">
@@ -140,7 +219,6 @@ function ExposePanel({ node, onNodeUpdated }) {
           </div>
         </div>
 
-        {/* Toggle switch */}
         <button
           onClick={handleToggle}
           disabled={toggling}
@@ -157,18 +235,16 @@ function ExposePanel({ node, onNodeUpdated }) {
       </div>
 
       {error && (
-        <div className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          {error}
-        </div>
+        <div className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
       )}
 
-      {isExposed && externalUrl && (
+      {isExposed && gatewayUrl && (
         <div className="mt-4 space-y-3">
           <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1.5">External URL</p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs font-mono text-indigo-800 break-all">{externalUrl}</code>
-              <CopyButton text={externalUrl} />
+              <code className="flex-1 text-xs text-indigo-800 break-all">{gatewayUrl}</code>
+              <CopyButton text={gatewayUrl} />
             </div>
           </div>
 
@@ -176,17 +252,15 @@ function ExposePanel({ node, onNodeUpdated }) {
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
               <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Access Token</p>
               <div className="flex items-center gap-2">
-                <code className="flex-1 text-xs font-mono text-gray-700 break-all">{node.expose_token}</code>
+                <code className="flex-1 text-xs text-gray-700 break-all">{node.expose_token}</code>
                 <CopyButton text={node.expose_token} />
               </div>
             </div>
           )}
 
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">
-              Example Request
-            </p>
-            <pre className="text-xs font-mono text-amber-800 whitespace-pre-wrap break-all leading-5">{`curl -X POST "${externalUrl}" \\
+            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">Example Request</p>
+            <pre className="text-xs text-amber-800 whitespace-pre-wrap break-all leading-5">{`curl -X POST "${gatewayUrl}" \\
   -H "Content-Type: application/json" \\
   -d '{"prompt": "Your task description here"}'`}</pre>
           </div>
@@ -214,21 +288,42 @@ const CONN_STATUS_COLOR = {
   503: 'bg-red-100 text-red-700',
 };
 
-function ConnectionHistory({ nodeId }) {
+const RUN_STATUS_HTTP = { completed: 200, failed: 500, running: 202, stopped: 0 };
+const RUN_STATUS_HTTP_COLOR = {
+  completed: 'bg-green-100 text-green-700',
+  failed: 'bg-red-100 text-red-700',
+  running: 'bg-yellow-100 text-yellow-800',
+  stopped: 'bg-gray-100 text-gray-600',
+};
+
+function elapsedMs(startedAt, finishedAt) {
+  if (!startedAt || !finishedAt) return null;
+  return Math.max(0, new Date(finishedAt) - new Date(startedAt));
+}
+
+function ConnectionHistory({ node }) {
+  const nodeId = node.node_id;
+  const isService = (node.node_type || 'worker') === 'service';
   const [connections, setConnections] = useState([]);
   const [loading, setLoading] = useState(true);
   const { liveUpdates } = useWorkspace();
+  const navigate = useNavigate();
 
   const fetchConnections = useCallback(async () => {
     try {
-      const r = await getNodeConnections(nodeId);
-      setConnections(r.data);
+      if (isService) {
+        const r = await getNodeRuns(nodeId);
+        setConnections(r.data);
+      } else {
+        const r = await getNodeConnections(nodeId);
+        setConnections(r.data);
+      }
     } catch {
       // ignore
     } finally {
       setLoading(false);
     }
-  }, [nodeId]);
+  }, [nodeId, isService]);
 
   useEffect(() => {
     fetchConnections();
@@ -260,7 +355,55 @@ function ConnectionHistory({ nodeId }) {
         <div className="py-12 text-center">
           <WifiOff className="w-8 h-8 text-gray-300 mx-auto mb-2" />
           <p className="text-sm text-gray-400">No connections yet.</p>
-          <p className="text-xs text-gray-400 mt-0.5">Expose the node and make your first external request.</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {isService ? 'Make your first POST /run request to this service.' : 'Expose the node and make your first external request.'}
+          </p>
+        </div>
+      ) : isService ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-100">
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Time</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Run ID</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Prompt</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Output</th>
+                <th className="text-right px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">ms</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {connections.map((r) => (
+                <tr key={r.run_id || r.started_at} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(r.started_at)}</td>
+                  <td className="px-4 py-2.5 font-mono">
+                    {r.run_id ? (
+                      <button
+                        onClick={() => navigate(`/messages/${r.run_id}`)}
+                        className="text-indigo-600 hover:text-indigo-900 hover:underline"
+                      >
+                        {r.run_id.slice(0, 8)}…
+                      </button>
+                    ) : '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-gray-700 max-w-xs truncate" title={r.title}>{r.title || '—'}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`px-2 py-0.5 rounded-full font-semibold text-[10px] ${RUN_STATUS_HTTP_COLOR[r.status] || 'bg-gray-100 text-gray-600'}`}>
+                      {RUN_STATUS_HTTP[r.status] ?? r.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-gray-500 max-w-xs truncate" title={r.output || r.error}>
+                    {r.status === 'failed'
+                      ? <span className="text-red-600">{r.error || 'error'}</span>
+                      : (r.output ? r.output.slice(0, 80) : '—')}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-gray-500 whitespace-nowrap">
+                    {elapsedMs(r.started_at, r.finished_at) ?? '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -280,29 +423,150 @@ function ConnectionHistory({ nodeId }) {
                 const colorClass = CONN_STATUS_COLOR[c.response_status] || 'bg-gray-100 text-gray-600';
                 return (
                   <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap font-mono">
-                      {fmtDate(c.timestamp)}
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-gray-600 whitespace-nowrap">
-                      {c.client_ip}
-                    </td>
-                    <td className="px-4 py-2.5 text-gray-700 max-w-xs truncate" title={c.prompt_preview}>
-                      {c.prompt_preview || '—'}
-                    </td>
+                    <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(c.timestamp)}</td>
+                    <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{c.client_ip}</td>
+                    <td className="px-4 py-2.5 text-gray-700 max-w-xs truncate" title={c.prompt_preview}>{c.prompt_preview || '—'}</td>
                     <td className="px-4 py-2.5">
                       <span className={`px-2 py-0.5 rounded-full font-semibold text-[10px] ${colorClass}`}>
                         {c.response_status}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-gray-500 max-w-xs truncate" title={c.response_detail}>
-                      {c.response_detail || '—'}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-gray-500 whitespace-nowrap">
-                      {c.elapsed_ms != null ? c.elapsed_ms : '—'}
-                    </td>
+                    <td className="px-4 py-2.5 text-gray-500 max-w-xs truncate" title={c.response_detail}>{c.response_detail || '—'}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-500 whitespace-nowrap">{c.elapsed_ms != null ? c.elapsed_ms : '—'}</td>
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Runs panel ─────────────────────────────────────────────────────────────
+
+const RUN_STATUS = {
+  running:   'bg-yellow-100 text-yellow-800',
+  completed: 'bg-green-100 text-green-800',
+  failed:    'bg-red-100 text-red-700',
+  stopped:   'bg-gray-100 text-gray-600',
+  stop:      'bg-orange-100 text-orange-700',
+};
+
+function RunsPanel({ node }) {
+  const isService = (node.node_type || 'worker') === 'service';
+  const { liveUpdates } = useWorkspace();
+  const navigate = useNavigate();
+  const isActive = ['running', 'starting'].includes(node.status);
+
+  // Service nodes: fetch full run history from backend
+  const [runs, setRuns] = useState([]);
+  const [loadingRuns, setLoadingRuns] = useState(isService);
+
+  const fetchRuns = useCallback(async () => {
+    try {
+      const r = await getNodeRuns(node.node_id);
+      setRuns(r.data);
+    } catch {
+      // silently ignore
+    } finally {
+      setLoadingRuns(false);
+    }
+  }, [node.node_id]);
+
+  useEffect(() => {
+    if (!isService) return;
+    fetchRuns();
+    if (!liveUpdates || !isActive) return;
+    const id = setInterval(fetchRuns, 5000);
+    return () => clearInterval(id);
+  }, [fetchRuns, isService, isActive, liveUpdates]);
+
+  // Worker nodes: use in-progress sessions from enriched node data
+  const workerRuns = Array.isArray(node.running_sessions) ? node.running_sessions : [];
+  const displayRuns = isService ? runs : workerRuns;
+  const emptyMsg = isService ? 'No runs yet for this service node.' : 'No sessions currently running on this node.';
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
+        <h2 className="text-sm font-semibold text-gray-800">
+          {isService ? 'Runs' : 'Running Sessions'}
+        </h2>
+        <div className="flex items-center gap-2">
+          {isService && (
+            <button onClick={fetchRuns} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <span className="text-xs text-gray-500">{displayRuns.length}</span>
+        </div>
+      </div>
+
+      {loadingRuns ? (
+        <div className="flex justify-center py-8">
+          <Loader className="w-5 h-5 animate-spin text-indigo-400" />
+        </div>
+      ) : displayRuns.length === 0 ? (
+        <div className="px-5 py-8 text-sm text-gray-400">{emptyMsg}</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-100">
+                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Run ID</th>
+                {isService ? (
+                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Prompt</th>
+                ) : (
+                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Task ID</th>
+                )}
+                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
+                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Started</th>
+                {isService && (
+                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Finished</th>
+                )}
+                {isService && (
+                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Output</th>
+                )}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {displayRuns.map((r) => (
+                <tr key={r.run_id || r.started_at} className="hover:bg-gray-50">
+                  <td className="px-5 py-2.5 font-mono">
+                    {r.run_id ? (
+                      <button
+                        onClick={() => navigate(`/messages/${r.run_id}`)}
+                        className="text-indigo-600 hover:text-indigo-900 hover:underline"
+                      >
+                        {r.run_id.slice(0, 8)}…
+                      </button>
+                    ) : '—'}
+                  </td>
+                  {isService ? (
+                    <td className="px-5 py-2.5 text-gray-600 max-w-[180px] truncate" title={r.title}>{r.title || '—'}</td>
+                  ) : (
+                    <td className="px-5 py-2.5 text-gray-600">{r.task_id ? `${r.task_id.slice(0, 8)}…` : '—'}</td>
+                  )}
+                  <td className="px-5 py-2.5">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${RUN_STATUS[r.status] || 'bg-gray-100 text-gray-600'}`}>
+                      {r.status || 'running'}
+                    </span>
+                  </td>
+                  <td className="px-5 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(r.started_at)}</td>
+                  {isService && (
+                    <td className="px-5 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(r.finished_at)}</td>
+                  )}
+                  {isService && (
+                    <td className="px-5 py-2.5 text-gray-600 max-w-[200px] truncate" title={r.output || r.error}>
+                      {r.status === 'failed'
+                        ? <span className="text-red-600">{r.error || 'error'}</span>
+                        : (r.output ? r.output.slice(0, 80) : '—')}
+                    </td>
+                  )}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -365,7 +629,7 @@ function LogsPanel({ node }) {
             <Loader className="w-5 h-5 animate-spin text-indigo-400" />
           </div>
         ) : (
-          <pre className="text-xs font-mono text-green-400 whitespace-pre-wrap break-words leading-5">{logs}</pre>
+          <pre className="text-xs text-green-400 whitespace-pre-wrap break-words leading-5">{logs}</pre>
         )}
         <div ref={bottomRef} />
       </div>
@@ -449,6 +713,17 @@ export default function NodeDetail() {
         workspace: node.workspace || null,
         label: node.label || null,
       });
+      // For local-process restarts, remove the previous node record once stoppable.
+      if ((node.execution_mode || 'local') !== 'docker') {
+        for (let i = 0; i < 12; i++) {
+          try {
+            await deleteNode(nodeId);
+            break;
+          } catch (_) {
+            await new Promise((res) => setTimeout(res, 500));
+          }
+        }
+      }
       navigate(`/nodes/${r.data.node_id}`);
     } catch (e) {
       setError(e.response?.data?.detail || 'Failed to restart node');
@@ -499,7 +774,7 @@ export default function NodeDetail() {
                 </span>
               )}
             </h1>
-            <p className="text-xs text-gray-400 font-mono mt-0.5">{node.node_id}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{node.node_id}</p>
           </div>
         </div>
 
@@ -550,40 +825,76 @@ export default function NodeDetail() {
       </div>
 
       {/* Info cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Status</p>
           <StatusBadge status={node.status} />
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Uptime</p>
-          <p className="text-sm font-mono font-semibold text-gray-700">
+          <p className="text-sm font-semibold text-gray-700">
             {uptime(node.started_at, node.finished_at)}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Workspace</p>
-          <p className="text-sm font-mono text-gray-700 truncate">{node.workspace || '—'}</p>
+          <p className="text-sm text-gray-700 truncate">{node.workspace || '—'}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">PID</p>
-          <p className="text-sm font-mono text-gray-700">{node.pid || '—'}</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Node Type</p>
+          {(node.node_type || 'worker') === 'service' ? (
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-violet-700">
+              HTTP Service
+            </span>
+          ) : (
+            <span className="text-sm font-semibold text-gray-600">Task Worker</span>
+          )}
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4 col-span-2">
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Agent Mode</p>
+          {node.execution_mode === 'docker' ? (
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-700">
+              <Box className="w-4 h-4" />
+              Container
+            </span>
+          ) : (
+            <span className="text-sm font-semibold text-gray-600">Local Process</span>
+          )}
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+            {node.execution_mode === 'docker' ? 'Container' : 'PID'}
+          </p>
+          {node.execution_mode === 'docker' ? (
+            <div className="flex items-center gap-1.5">
+              <p className="text-sm text-blue-800 truncate">{node.container_name || '—'}</p>
+              {node.container_name && <CopyButton text={node.container_name} />}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-700">{node.pid || '—'}</p>
+          )}
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Started</p>
           <p className="text-sm text-gray-700">{fmtDate(node.started_at)}</p>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4 col-span-2">
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Runs</p>
+          <p className="text-sm font-semibold text-indigo-700">{node.running_sessions_count ?? 0}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Finished</p>
           <p className="text-sm text-gray-700">{fmtDate(node.finished_at)}</p>
         </div>
       </div>
 
+      <RunsPanel node={node} />
+
       {/* Expose panel */}
       <ExposePanel node={node} onNodeUpdated={setNode} />
 
       {/* Connection history */}
-      <ConnectionHistory nodeId={nodeId} />
+      <ConnectionHistory node={node} />
 
       {/* Activity log */}
       <LogsPanel node={node} />

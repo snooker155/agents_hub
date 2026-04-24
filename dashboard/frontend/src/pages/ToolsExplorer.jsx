@@ -147,7 +147,7 @@ const ToolsExplorer = () => {
                         }`}
                       >
                         <div className="flex justify-between items-center mb-1">
-                          <span className="font-bold text-gray-800 font-mono text-xs">{tool.display_name || tool.name}</span>
+                          <span className="font-bold text-gray-800 text-xs">{tool.display_name || tool.name}</span>
                           <ChevronRight className={`w-4 h-4 text-gray-300 transition-transform ${(selectedTool?.id || selectedTool?.name) === (tool.id || tool.name) ? 'rotate-90' : ''}`} />
                         </div>
                         <p className="text-xs text-gray-500 line-clamp-2">{tool.description}</p>
@@ -185,7 +185,7 @@ const ToolsExplorer = () => {
                 <div className="p-6 flex-1 min-h-0 overflow-y-auto">
                   <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Arguments Schema</h4>
                   <div className="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-                    <pre className="text-indigo-300 text-xs font-mono">
+                    <pre className="text-indigo-300 text-xs">
                       {JSON.stringify(selectedArgs, null, 2)}
                     </pre>
                   </div>
@@ -195,7 +195,7 @@ const ToolsExplorer = () => {
                       <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Source Code</h4>
                       <div className="flex items-center gap-2">
                         {sourceMeta?.path && (
-                          <span className="text-[11px] font-mono text-gray-500 inline-flex items-center gap-1">
+                          <span className="text-[11px] text-gray-500 inline-flex items-center gap-1">
                             <FileCode2 className="w-3.5 h-3.5" />
                             {sourceMeta.path}:{sourceMeta.line || 1}
                           </span>
@@ -219,7 +219,7 @@ const ToolsExplorer = () => {
                           value={sourceCode}
                           onChange={(e) => setSourceCode(e.target.value)}
                           spellCheck={false}
-                          className="w-full h-full p-3 bg-gray-950 text-emerald-300 text-xs font-mono outline-none"
+                          className="w-full h-full p-3 bg-gray-950 text-emerald-300 text-xs outline-none"
                           placeholder="No source available for this tool."
                           disabled={!sourceMeta}
                         />

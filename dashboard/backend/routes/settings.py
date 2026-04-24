@@ -16,7 +16,7 @@ from common.config import settings as _cfg
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 # Locate the .env file at project root (two levels up from this file)
-_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
+_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -42,19 +42,17 @@ def _read_env() -> dict[str, str]:
 
 
 def _write_env_key(key: str, value: str) -> None:
-    """Update or append a single key in the .env file."""
-    if not _ENV_FILE.exists():
-        _ENV_FILE.write_text(f'{key} = "{value}"\n', encoding="utf-8")
-        return
-
-    text = _ENV_FILE.read_text(encoding="utf-8")
+    """Set or add KEY=value in the .env file."""
+    content = _ENV_FILE.read_text(encoding="utf-8") if _ENV_FILE.exists() else ""
+    escaped = value.replace('"', '\\"')
+    replacement = f'{key}="{escaped}"'
     pattern = re.compile(rf'^{re.escape(key)}\s*=.*$', re.MULTILINE)
-    replacement = f'{key} = "{value}"'
-    if pattern.search(text):
-        text = pattern.sub(replacement, text)
+    if pattern.search(content):
+        content = pattern.sub(replacement, content)
     else:
-        text = text.rstrip("\n") + f'\n{replacement}\n'
-    _ENV_FILE.write_text(text, encoding="utf-8")
+        content = content.rstrip('\n') + ('\n' if content else '') + replacement + '\n'
+    _ENV_FILE.write_text(content, encoding="utf-8")
+
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -64,8 +62,12 @@ class SettingsResponse(BaseModel):
     openai_api_key_masked: str
     anthropic_api_key_masked: str
     google_api_key_masked: str
+    # Global default provider
+    default_provider: str
     # Model settings
     model: str
+    anthropic_model: str
+    google_model: str
     openai_base_url: str
     temperature: float
     max_tokens: int
@@ -92,54 +94,70 @@ class SettingsResponse(BaseModel):
     rag_embedding_model: str
     rag_embedding_api_key_masked: str
     rag_embedding_base_url: str
+    # Agent mode
+    agent_mode: str
+    agent_docker_image: str
+    agent_docker_network: str
+    agent_docker_extra_args: str
+    # Task assignment
+    task_assignment_mode: str
+    # Fields explicitly set in .env (not just defaults)
+    env_defined_fields: list[str] = []
 
-
-class SettingsUpdate(BaseModel):
-    # Cloud providers
-    openai_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-    google_api_key: Optional[str] = None
-    # Model settings
-    model: Optional[str] = None
-    openai_base_url: Optional[str] = None
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
-    # Local models
-    ollama_base_url: Optional[str] = None
-    ollama_model: Optional[str] = None
-    lmstudio_base_url: Optional[str] = None
-    lmstudio_model: Optional[str] = None
-    # Observability
-    langfuse_secret_key: Optional[str] = None
-    langfuse_public_key: Optional[str] = None
-    langfuse_base_url: Optional[str] = None
-    # System
-    workspace_root: Optional[str] = None
-    orch_poll_interval: Optional[float] = None
-    orch_log_level: Optional[str] = None
-    # RAG — vector store
-    rag_vector_db: Optional[str] = None
-    rag_vector_db_url: Optional[str] = None
-    rag_vector_db_api_key: Optional[str] = None
-    rag_vector_db_collection: Optional[str] = None
-    # RAG — embedding model
-    rag_embedding_provider: Optional[str] = None
-    rag_embedding_model: Optional[str] = None
-    rag_embedding_api_key: Optional[str] = None
-    rag_embedding_base_url: Optional[str] = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+_FIELD_TO_ENV = {
+    "openai_api_key": "OPENAI_API_KEY",
+    "anthropic_api_key": "ANTHROPIC_API_KEY",
+    "google_api_key": "GOOGLE_API_KEY",
+    "default_provider": "DEFAULT_PROVIDER",
+    "model": "OPENAI_MODEL",
+    "anthropic_model": "ANTHROPIC_MODEL",
+    "google_model": "GOOGLE_MODEL",
+    "openai_base_url": "OPENAI_BASE_URL",
+    "temperature": "LLM_TEMPERATURE",
+    "max_tokens": "LLM_MAX_TOKENS",
+    "ollama_base_url": "OLLAMA_BASE_URL",
+    "ollama_model": "OLLAMA_MODEL",
+    "lmstudio_base_url": "LMSTUDIO_BASE_URL",
+    "lmstudio_model": "LMSTUDIO_MODEL",
+    "langfuse_secret_key": "LANGFUSE_SECRET_KEY",
+    "langfuse_public_key": "LANGFUSE_PUBLIC_KEY",
+    "langfuse_base_url": "LANGFUSE_BASE_URL",
+    "workspace_root": "WORKSPACE_ROOT",
+    "orch_poll_interval": "ORCH_POLL_INTERVAL",
+    "orch_log_level": "ORCH_LOG_LEVEL",
+    "rag_vector_db": "RAG_VECTOR_DB",
+    "rag_vector_db_url": "RAG_VECTOR_DB_URL",
+    "rag_vector_db_api_key": "RAG_VECTOR_DB_API_KEY",
+    "rag_vector_db_collection": "RAG_VECTOR_DB_COLLECTION",
+    "rag_embedding_provider": "RAG_EMBEDDING_PROVIDER",
+    "rag_embedding_model": "RAG_EMBEDDING_MODEL",
+    "rag_embedding_api_key": "RAG_EMBEDDING_API_KEY",
+    "rag_embedding_base_url": "RAG_EMBEDDING_BASE_URL",
+    "agent_mode": "AGENT_EXECUTION_MODE",
+    "agent_docker_image": "AGENT_DOCKER_IMAGE",
+    "agent_docker_network": "AGENT_DOCKER_NETWORK",
+    "agent_docker_extra_args": "AGENT_DOCKER_EXTRA_ARGS",
+    "task_assignment_mode": "TASK_ASSIGNMENT_MODE",
+}
+
 
 @router.get("", response_model=SettingsResponse)
 async def get_settings():
     """Return current settings (API keys are masked)."""
     env = _read_env()
+    env_defined_fields = [field for field, env_key in _FIELD_TO_ENV.items() if env.get(env_key)]
     return SettingsResponse(
         openai_api_key_masked=_mask_key(env.get("OPENAI_API_KEY") or _cfg.openai_api_key),
         anthropic_api_key_masked=_mask_key(env.get("ANTHROPIC_API_KEY")),
         google_api_key_masked=_mask_key(env.get("GOOGLE_API_KEY")),
+        default_provider=env.get("DEFAULT_PROVIDER") or "openai",
         model=env.get("OPENAI_MODEL") or _cfg.model,
+        anthropic_model=env.get("ANTHROPIC_MODEL") or "",
+        google_model=env.get("GOOGLE_MODEL") or "",
         openai_base_url=env.get("OPENAI_BASE_URL") or "",
         temperature=float(env.get("LLM_TEMPERATURE") or _cfg.temperature),
         max_tokens=int(env.get("LLM_MAX_TOKENS") or _cfg.max_tokens),
@@ -162,66 +180,64 @@ async def get_settings():
         rag_embedding_model=env.get("RAG_EMBEDDING_MODEL") or "text-embedding-3-small",
         rag_embedding_api_key_masked=_mask_key(env.get("RAG_EMBEDDING_API_KEY")),
         rag_embedding_base_url=env.get("RAG_EMBEDDING_BASE_URL") or "http://localhost:11434",
+        # Agent mode
+        agent_mode=env.get("AGENT_EXECUTION_MODE") or "local",
+        agent_docker_image=env.get("AGENT_DOCKER_IMAGE") or "",
+        agent_docker_network=env.get("AGENT_DOCKER_NETWORK") or "",
+        agent_docker_extra_args=env.get("AGENT_DOCKER_EXTRA_ARGS") or "",
+        # Task assignment
+        task_assignment_mode=env.get("TASK_ASSIGNMENT_MODE") or "any",
+        env_defined_fields=env_defined_fields,
     )
+
+
+
+# ── Update settings ───────────────────────────────────────────────────────────
+
+class SettingsUpdate(BaseModel):
+    default_provider: Optional[str] = None
+    model: Optional[str] = None
+    anthropic_model: Optional[str] = None
+    google_model: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+    lmstudio_base_url: Optional[str] = None
+    lmstudio_model: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    google_api_key: Optional[str] = None
+    langfuse_secret_key: Optional[str] = None
+    langfuse_public_key: Optional[str] = None
+    langfuse_base_url: Optional[str] = None
+    orch_poll_interval: Optional[float] = None
+    orch_log_level: Optional[str] = None
+    rag_vector_db: Optional[str] = None
+    rag_vector_db_url: Optional[str] = None
+    rag_vector_db_api_key: Optional[str] = None
+    rag_vector_db_collection: Optional[str] = None
+    rag_embedding_provider: Optional[str] = None
+    rag_embedding_model: Optional[str] = None
+    rag_embedding_api_key: Optional[str] = None
+    rag_embedding_base_url: Optional[str] = None
+    agent_mode: Optional[str] = None
+    agent_docker_image: Optional[str] = None
+    agent_docker_network: Optional[str] = None
+    agent_docker_extra_args: Optional[str] = None
+    task_assignment_mode: Optional[str] = None
 
 
 @router.put("")
 async def update_settings(data: SettingsUpdate):
-    """Persist changed settings to the .env file."""
-    mapping = {
-        # Cloud providers
-        "openai_api_key":   "OPENAI_API_KEY",
-        "anthropic_api_key": "ANTHROPIC_API_KEY",
-        "google_api_key":   "GOOGLE_API_KEY",
-        # Model settings
-        "model":            "OPENAI_MODEL",
-        "openai_base_url":  "OPENAI_BASE_URL",
-        "temperature":      "LLM_TEMPERATURE",
-        "max_tokens":       "LLM_MAX_TOKENS",
-        # Local models
-        "ollama_base_url":  "OLLAMA_BASE_URL",
-        "ollama_model":     "OLLAMA_MODEL",
-        "lmstudio_base_url": "LMSTUDIO_BASE_URL",
-        "lmstudio_model":   "LMSTUDIO_MODEL",
-        # Observability
-        "langfuse_secret_key": "LANGFUSE_SECRET_KEY",
-        "langfuse_public_key": "LANGFUSE_PUBLIC_KEY",
-        "langfuse_base_url":   "LANGFUSE_BASE_URL",
-        # System
-        "workspace_root":      "WORKSPACE_ROOT",
-        "orch_poll_interval":  "ORCH_POLL_INTERVAL",
-        "orch_log_level":      "ORCH_LOG_LEVEL",
-        # RAG — vector store
-        "rag_vector_db":            "RAG_VECTOR_DB",
-        "rag_vector_db_url":        "RAG_VECTOR_DB_URL",
-        "rag_vector_db_api_key":    "RAG_VECTOR_DB_API_KEY",
-        "rag_vector_db_collection": "RAG_VECTOR_DB_COLLECTION",
-        # RAG — embedding
-        "rag_embedding_provider":  "RAG_EMBEDDING_PROVIDER",
-        "rag_embedding_model":     "RAG_EMBEDDING_MODEL",
-        "rag_embedding_api_key":   "RAG_EMBEDDING_API_KEY",
-        "rag_embedding_base_url":  "RAG_EMBEDDING_BASE_URL",
-    }
-    # Secret fields — only write when non-empty (blank = keep existing)
-    secret_fields = {
-        "openai_api_key", "anthropic_api_key", "google_api_key",
-        "langfuse_secret_key", "langfuse_public_key",
-        "rag_vector_db_api_key", "rag_embedding_api_key",
-    }
-    changed = []
-    for field, env_key in mapping.items():
-        val = getattr(data, field)
-        if val is None:
-            continue
-        if field in secret_fields and not str(val).strip():
-            continue
-        _write_env_key(env_key, str(val))
-        # Apply immediately to os.environ so process_rag picks it up without restart
-        import os
-        os.environ[env_key] = str(val)
-        changed.append(env_key)
-
-    return {"updated": changed, "note": "Changes are applied immediately for RAG; other settings require a backend restart."}
+    """Persist settings to the .env file."""
+    updates = data.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        env_key = _FIELD_TO_ENV.get(field)
+        if env_key:
+            _write_env_key(env_key, str(value))
+    return {"ok": True, "updated": list(updates.keys())}
 
 
 # ── Local model connectivity test ─────────────────────────────────────────────
@@ -260,3 +276,111 @@ async def test_local_model(data: TestLocalModelRequest):
         return {"ok": False, "error": f"Connection timed out after 5 s."}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+# ── Universal provider availability test ──────────────────────────────────────
+
+class TestProviderRequest(BaseModel):
+    provider: str             # openai | anthropic | google | ollama | lmstudio
+    api_key: Optional[str] = None   # override – use env if omitted
+    base_url: Optional[str] = None  # override – use env if omitted
+
+
+@router.post("/test-provider")
+async def test_provider(data: TestProviderRequest):
+    """Test connectivity for any provider. Falls back to env-file credentials."""
+    import time
+    env = _read_env()
+    start = time.time()
+
+    def _elapsed() -> int:
+        return int((time.time() - start) * 1000)
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+
+            if data.provider == "openai":
+                key = data.api_key or env.get("OPENAI_API_KEY") or _cfg.openai_api_key or ""
+                base = (data.base_url or env.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+                if not key:
+                    return {"ok": False, "error": "No API key configured"}
+                resp = await client.get(f"{base}/models", headers={"Authorization": f"Bearer {key}"})
+                resp.raise_for_status()
+                models = [m["id"] for m in resp.json().get("data", [])]
+                return {"ok": True, "models": sorted(models)[:30], "latency_ms": _elapsed()}
+
+            elif data.provider == "anthropic":
+                key = data.api_key or env.get("ANTHROPIC_API_KEY") or ""
+                if not key:
+                    return {"ok": False, "error": "No API key configured"}
+                resp = await client.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+                )
+                resp.raise_for_status()
+                models = [m["id"] for m in resp.json().get("data", [])]
+                return {"ok": True, "models": models, "latency_ms": _elapsed()}
+
+            elif data.provider == "google":
+                key = data.api_key or env.get("GOOGLE_API_KEY") or ""
+                if not key:
+                    return {"ok": False, "error": "No API key configured"}
+                resp = await client.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+                )
+                resp.raise_for_status()
+                models = [m["name"].replace("models/", "") for m in resp.json().get("models", [])]
+                return {"ok": True, "models": models, "latency_ms": _elapsed()}
+
+            elif data.provider in ("ollama", "lmstudio"):
+                default_base = "http://localhost:11434" if data.provider == "ollama" else "http://localhost:1234"
+                env_key = "OLLAMA_BASE_URL" if data.provider == "ollama" else "LMSTUDIO_BASE_URL"
+                base = (data.base_url or env.get(env_key) or default_base).rstrip("/")
+                probe_url = f"{base}/api/tags" if data.provider == "ollama" else f"{base}/v1/models"
+                resp = await client.get(probe_url)
+                resp.raise_for_status()
+                body = resp.json()
+                models = [m["name"] for m in body.get("models", [])] if data.provider == "ollama" \
+                    else [m["id"] for m in body.get("data", [])]
+                return {"ok": True, "models": models, "latency_ms": _elapsed()}
+
+            else:
+                raise HTTPException(status_code=400, detail=f"Unknown provider: {data.provider}")
+
+    except httpx.ConnectError:
+        return {"ok": False, "error": "Connection refused – is the service running?"}
+    except httpx.TimeoutException:
+        return {"ok": False, "error": "Timed out after 8 s"}
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401:
+            return {"ok": False, "error": "Invalid API key (401 Unauthorized)"}
+        if exc.response.status_code == 403:
+            return {"ok": False, "error": "Access denied (403 Forbidden)"}
+        return {"ok": False, "error": f"HTTP {exc.response.status_code}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:200]}
+
+
+# ── Active workspace context ──────────────────────────────────────────────────
+
+class WorkspaceContextUpdate(BaseModel):
+    workspace: Optional[str] = None
+
+
+@router.get("/workspace")
+async def get_active_workspace():
+    """Return the workspace currently selected by the user in the UI."""
+    from common.user_context import get_active_workspace as _get
+    return {"workspace": _get()}
+
+
+@router.put("/workspace")
+async def set_active_workspace(data: WorkspaceContextUpdate):
+    """Persist the user's workspace selection so agent tools can read it."""
+    from common.user_context import set_active_workspace as _set
+    ws = data.workspace.strip() if data.workspace else None
+    # Treat "default" the same as no filter (agents see all workspaces)
+    if ws == "default":
+        ws = None
+    _set(ws)
+    return {"workspace": ws}

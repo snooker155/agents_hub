@@ -62,7 +62,7 @@ spec:
         <div className="lg:col-span-2">
           <form onSubmit={handleApply} className="space-y-4">
             <div className="bg-gray-900 rounded-lg overflow-hidden shadow-lg border border-gray-800">
-              <div className="flex items-center justify-between px-4 py-2 bg-gray-800 text-gray-400 text-xs font-mono border-b border-gray-700">
+              <div className="flex items-center justify-between px-4 py-2 bg-gray-800 text-gray-400 text-xs border-b border-gray-700">
                 <span>manifest.yaml</span>
                 <span className="flex items-center">
                   <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span>
@@ -72,7 +72,7 @@ spec:
               <textarea
                 value={yaml}
                 onChange={(e) => setYaml(e.target.value)}
-                className="w-full h-[500px] bg-gray-900 text-indigo-300 font-mono p-4 focus:outline-none resize-none"
+                className="w-full h-[500px] bg-gray-900 text-indigo-300 p-4 focus:outline-none resize-none"
                 spellCheck="false"
               />
             </div>
@@ -118,23 +118,23 @@ spec:
             </h3>
             <div className="space-y-4 text-xs">
               <div>
-                <span className="font-mono text-indigo-600">kind</span>
+                <span className=" text-indigo-600">kind</span>
                 <p className="text-gray-500">Must be "Agent"</p>
               </div>
               <div>
-                <span className="font-mono text-indigo-600">metadata.name</span>
+                <span className=" text-indigo-600">metadata.name</span>
                 <p className="text-gray-500">Unique identifier for the agent</p>
               </div>
               <div>
-                <span className="font-mono text-indigo-600">spec.domain</span>
+                <span className=" text-indigo-600">spec.domain</span>
                 <p className="text-gray-500">Agent domain (development, analysis, etc.)</p>
               </div>
               <div>
-                <span className="font-mono text-indigo-600">spec.capacity</span>
+                <span className=" text-indigo-600">spec.capacity</span>
                 <p className="text-gray-500">Max concurrent runs allowed</p>
               </div>
               <div>
-                <span className="font-mono text-indigo-600">spec.tools</span>
+                <span className=" text-indigo-600">spec.tools</span>
                 <p className="text-gray-500">List of tool IDs exposed by the agent</p>
               </div>
             </div>

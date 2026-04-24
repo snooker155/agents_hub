@@ -4,7 +4,7 @@ Both steps are optional — if the provider is "none" the function
 returns success with vectorized=False so callers degrade gracefully.
 """
 from __future__ import annotations
-from typing import List, Tuple
+from typing import Callable, List, Tuple
 
 from .config import rag_config
 from .embeddings import (
@@ -80,6 +80,82 @@ def _store_vectors(
         return meta, ""
     except Exception as exc:
         return {}, f"Vector store error ({db}): {exc}"
+
+
+def process_rag_with_progress(
+    chunks: List[str],
+    file_id: str,
+    on_event: Callable[[dict], None],
+) -> Tuple[bool, str, dict]:
+    """
+    Like process_rag but calls on_event for each progress step so callers
+    can stream status to clients.  on_event receives dicts with a "type" key.
+    """
+    cfg = rag_config
+
+    on_event({"type": "chunked", "chunks": len(chunks)})
+
+    if cfg.vector_db == "none" or cfg.embedding_provider == "none":
+        result: dict = {"vectorized": False}
+        on_event({"type": "done", **result})
+        return True, "", result
+
+    on_event({
+        "type": "embedding_start",
+        "provider": cfg.embedding_provider,
+        "model": cfg.embedding_model,
+        "total": len(chunks),
+    })
+
+    embeddings: EmbeddingResult | None = None
+    emb_err = ""
+    provider = cfg.embedding_provider
+
+    try:
+        if provider == "ollama":
+            # Embed one chunk at a time so we can report per-chunk progress.
+            vectors: list = []
+            for i, chunk in enumerate(chunks):
+                r = embed_ollama([chunk], cfg.embedding_model, cfg.embedding_base_url)
+                vectors.extend(r.vectors)
+                on_event({"type": "embedding_progress", "done": i + 1, "total": len(chunks)})
+            embeddings = EmbeddingResult(vectors=vectors, model=cfg.embedding_model, provider="ollama")
+        elif provider == "openai":
+            embeddings = embed_openai(chunks, cfg.embedding_model, cfg.embedding_api_key)
+            on_event({"type": "embedding_progress", "done": len(chunks), "total": len(chunks)})
+        elif provider == "sentence-transformers":
+            embeddings = embed_sentence_transformers(chunks, cfg.embedding_model)
+            on_event({"type": "embedding_progress", "done": len(chunks), "total": len(chunks)})
+        elif provider == "google":
+            embeddings = embed_google(chunks, cfg.embedding_model, cfg.embedding_api_key)
+            on_event({"type": "embedding_progress", "done": len(chunks), "total": len(chunks)})
+        else:
+            emb_err = f"Unknown embedding provider: {provider}"
+    except Exception as exc:
+        emb_err = f"Embedding error ({provider}): {exc}"
+
+    if emb_err:
+        on_event({"type": "error", "message": emb_err})
+        return False, emb_err, {"vectorized": False}
+
+    on_event({"type": "storing", "db": cfg.vector_db, "collection": cfg.vector_db_collection})
+
+    store_meta, store_err = _store_vectors(chunks, embeddings, file_id)
+    if store_err:
+        on_event({"type": "error", "message": store_err})
+        return False, store_err, {"vectorized": False}
+
+    result = {
+        "vectorized": True,
+        "embedding_provider": cfg.embedding_provider,
+        "embedding_model": cfg.embedding_model,
+        "embedding_dims": embeddings.dims if embeddings else 0,
+        "vector_db": cfg.vector_db,
+        "vector_db_collection": cfg.vector_db_collection,
+        **store_meta,
+    }
+    on_event({"type": "done", **result})
+    return True, "", result
 
 
 def process_rag(

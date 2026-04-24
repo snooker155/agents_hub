@@ -1,6 +1,12 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import { createContext, useState, useContext, useEffect } from 'react';
+import { setActiveWorkspace as apiSetActiveWorkspace } from '../api';
 
 const WorkspaceContext = createContext();
+
+function pushWorkspaceToBackend(workspace) {
+  // best-effort — don't block or throw
+  apiSetActiveWorkspace(workspace || null).catch(() => {});
+}
 
 export const WorkspaceProvider = ({ children }) => {
   const [selectedWorkspace, setSelectedWorkspace] = useState(
@@ -16,7 +22,14 @@ export const WorkspaceProvider = ({ children }) => {
     } else {
       localStorage.removeItem('selectedWorkspace');
     }
+    // Keep backend in sync so agent tools can read the active workspace
+    pushWorkspaceToBackend(selectedWorkspace || null);
   }, [selectedWorkspace]);
+
+  // Push the stored workspace on first load so backend is always up to date
+  useEffect(() => {
+    pushWorkspaceToBackend(selectedWorkspace || null);
+  }, []);
 
   const toggleLiveUpdates = () => {
     setLiveUpdates(prev => {

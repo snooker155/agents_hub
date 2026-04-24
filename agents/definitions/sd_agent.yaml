@@ -1,7 +1,6 @@
 id: sd_agent
 name: Solution Designer Agent
 description: Agent specialized in creating technical specifications and architecture
-model: gpt-4o
 temperature: 0.2
 max_tokens: 15000
 verbose: false

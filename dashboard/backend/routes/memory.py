@@ -1,17 +1,25 @@
 """
 Shared memory related API routes.
 """
+import asyncio
+import json
 import re
+import threading
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from typing import Optional
 from uuid import UUID
 
-from tasks.storage import MemoryStore
-from tasks.models import SharedMemory
-from models import MemoryCreate, MemoryFileAdd, MemoryFileUpdate, MemoryFileProcess
+from memory.store import MemoryStore
+from memory.models import SharedMemory
+from models import (
+    MemoryCreate, MemoryFileAdd, MemoryFileUpdate, MemoryFileProcess,
+    MemoryNoteAdd, MemoryNoteUpdate, MemoryKVAdd, MemoryKVUpdate,
+)
 from rag import process_rag, get_rag_status
+from rag.service import process_rag_with_progress
 
 
 router = APIRouter(prefix="/api/shared-memory", tags=["memory"])
@@ -251,4 +259,173 @@ async def process_memory_file_rag(memory_id: UUID, file_name: str, data: MemoryF
 
     if not found:
         raise HTTPException(status_code=404, detail="File not found")
+    return _mem_dump(_persist_mem(store, mem))
+
+
+@router.get("/{memory_id}/files/{file_name}/process-stream")
+async def process_memory_file_rag_stream(
+    memory_id: UUID,
+    file_name: str,
+    chunk_size: int = 500,
+    overlap: int = 50,
+):
+    """Stream RAG processing progress as Server-Sent Events."""
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    found_file = next((f for f in mem.files if _file_name(f) == file_name), None)
+    if not found_file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    content = found_file.get("content", "") if isinstance(found_file, dict) else found_file["content"]
+    chunks = _chunk_text(content, chunk_size=chunk_size, overlap=overlap)
+    file_id = f"{str(memory_id)}::{file_name}"
+
+    loop = asyncio.get_running_loop()
+    event_queue: asyncio.Queue = asyncio.Queue()
+
+    def _on_event(event: dict) -> None:
+        loop.call_soon_threadsafe(event_queue.put_nowait, event)
+
+    def _run_processing() -> None:
+        try:
+            process_rag_with_progress(chunks, file_id, _on_event)
+        except Exception as exc:
+            _on_event({"type": "error", "message": str(exc)})
+
+    thread = threading.Thread(target=_run_processing, daemon=True)
+    thread.start()
+
+    async def _generate():
+        while True:
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=300)
+            except asyncio.TimeoutError:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Processing timed out'})}\n\n"
+                break
+
+            yield f"data: {json.dumps(event)}\n\n"
+
+            if event.get("type") in ("done", "error"):
+                # Persist result to memory store
+                rag_ok = event["type"] == "done"
+                rag_err = event.get("message") if not rag_ok else None
+                rag_meta = {k: v for k, v in event.items() if k != "type"}
+
+                # Reload store to get latest state (avoid races with other writes)
+                fresh_store = MemoryStore()
+                fresh_mem = fresh_store.get(memory_id)
+                if fresh_mem:
+                    for i, f in enumerate(fresh_mem.files):
+                        if _file_name(f) == file_name:
+                            base = f if isinstance(f, dict) else {"name": file_name, "content": content}
+                            fresh_mem.files[i] = {
+                                **base,
+                                "rag_status": "indexed" if rag_ok else "failed",
+                                "rag_chunks": len(chunks),
+                                "rag_chunk_size": chunk_size,
+                                "rag_overlap": overlap,
+                                "rag_processed_at": datetime.now(timezone.utc).isoformat(),
+                                "rag_error": rag_err or None,
+                                **rag_meta,
+                            }
+                            break
+                    _persist_mem(fresh_store, fresh_mem)
+                break
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Notes
+# ---------------------------------------------------------------------------
+
+@router.post("/{memory_id}/notes")
+async def add_note(memory_id: UUID, data: MemoryNoteAdd):
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    from uuid import uuid4
+    note = {
+        "id": str(uuid4()),
+        "title": data.title,
+        "content": data.content,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    mem.notes.append(note)
+    return _mem_dump(_persist_mem(store, mem))
+
+
+@router.put("/{memory_id}/notes/{note_id}")
+async def update_note(memory_id: UUID, note_id: str, data: MemoryNoteUpdate):
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    for note in mem.notes:
+        if note.get("id") == note_id:
+            if data.title is not None:
+                note["title"] = data.title
+            if data.content is not None:
+                note["content"] = data.content
+            return _mem_dump(_persist_mem(store, mem))
+    raise HTTPException(status_code=404, detail="Note not found")
+
+
+@router.delete("/{memory_id}/notes/{note_id}")
+async def delete_note(memory_id: UUID, note_id: str):
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    mem.notes = [n for n in mem.notes if n.get("id") != note_id]
+    return _mem_dump(_persist_mem(store, mem))
+
+
+# ---------------------------------------------------------------------------
+# Key-Value pairs
+# ---------------------------------------------------------------------------
+
+@router.post("/{memory_id}/kv")
+async def add_kv(memory_id: UUID, data: MemoryKVAdd):
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    if any(kv["key"] == data.key for kv in mem.kv_pairs):
+        raise HTTPException(status_code=409, detail=f"Key '{data.key}' already exists")
+    mem.kv_pairs.append({"key": data.key, "value": data.value, "description": data.description})
+    return _mem_dump(_persist_mem(store, mem))
+
+
+@router.put("/{memory_id}/kv/{key}")
+async def update_kv(memory_id: UUID, key: str, data: MemoryKVUpdate):
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    for kv in mem.kv_pairs:
+        if kv["key"] == key:
+            if data.value is not None:
+                kv["value"] = data.value
+            if data.description is not None:
+                kv["description"] = data.description
+            return _mem_dump(_persist_mem(store, mem))
+    raise HTTPException(status_code=404, detail="Key not found")
+
+
+@router.delete("/{memory_id}/kv/{key}")
+async def delete_kv(memory_id: UUID, key: str):
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    mem.kv_pairs = [kv for kv in mem.kv_pairs if kv["key"] != key]
     return _mem_dump(_persist_mem(store, mem))

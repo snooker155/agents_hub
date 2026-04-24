@@ -18,16 +18,29 @@ class NodeCreate(BaseModel):
     agent_id: str
     workspace: Optional[str] = None
     label: Optional[str] = None
+    node_type: Optional[str] = None
 
 
 def _enrich(node: dict) -> dict:
     """Add agent display name and domain to a node record."""
     agent_id = node.get("agent_id", "")
     spec = registry.get_agent(agent_id)
+    running_sessions = node_manager.get_running_sessions_for_node(node.get("node_id", ""))
     return {
         **node,
         "agent_name": spec.name if spec else agent_id,
         "agent_domain": getattr(spec, "domain", "") if spec else "",
+        "running_sessions_count": len(running_sessions),
+        "running_sessions": [
+            {
+                "run_id": r.get("run_id"),
+                "task_id": r.get("task_id"),
+                "agent_id": r.get("agent_id"),
+                "status": r.get("status"),
+                "started_at": r.get("started_at"),
+            }
+            for r in running_sessions
+        ],
     }
 
 
@@ -55,6 +68,7 @@ async def start_node(data: NodeCreate):
             data.agent_id,
             workspace=data.workspace,
             label=data.label,
+            node_type=data.node_type,
         )
         node = node_manager.get_node(node_id)
         return _enrich(node)
@@ -96,6 +110,24 @@ async def stop_node(node_id: str):
     return {"stopped": stopped}
 
 
+@router.post("/{node_id}/restart")
+async def restart_node(node_id: str):
+    """Restart a Docker node container in place (docker restart).
+
+    Only available for nodes with execution_mode='docker'.  The container keeps
+    its ID and name — no new image build or record is created.
+    """
+    node = node_manager.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if node.get("execution_mode") != "docker":
+        raise HTTPException(status_code=400, detail="In-place restart is only supported for Docker nodes")
+    ok = node_manager.restart_node(node_id)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to restart container")
+    return _enrich(node_manager.get_node(node_id))
+
+
 @router.delete("/{node_id}")
 async def delete_node(node_id: str):
     """Remove a stopped/failed node record."""
@@ -133,6 +165,31 @@ async def unexpose_node(node_id: str):
         raise HTTPException(status_code=404, detail="Node not found")
     ok = node_manager.unexpose_node(node_id)
     return {"unexposed": ok}
+
+
+@router.get("/{node_id}/runs")
+async def get_node_runs(node_id: str, limit: int = 50):
+    """Return all runs for a node, newest first."""
+    node = node_manager.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    from agents.run_manager import get_all_runs_for_node
+    runs = get_all_runs_for_node(node_id, limit=limit)
+    return [
+        {
+            "run_id": r.get("run_id"),
+            "agent_id": r.get("agent_id"),
+            "task_id": r.get("task_id"),
+            "session_type": r.get("session_type"),
+            "status": r.get("status"),
+            "title": r.get("title"),
+            "output": r.get("output"),
+            "error": r.get("error"),
+            "started_at": r.get("started_at"),
+            "finished_at": r.get("finished_at"),
+        }
+        for r in runs
+    ]
 
 
 @router.get("/{node_id}/connections")

@@ -48,6 +48,7 @@ class AgentBase(ABC):
         base_url: Optional[str] = None,
         verbose: bool = False,
         streaming: bool = False,
+        max_tool_repeats: int = 3,
     ):
         self.agent_id = agent_id
         self.name = name
@@ -61,6 +62,7 @@ class AgentBase(ABC):
         self.base_url = base_url
         self.verbose = verbose
         self.streaming = streaming
+        self.max_tool_repeats = max_tool_repeats
         self._executor: Optional[Any] = None
     
     def build_executor(self) -> Any:
@@ -90,7 +92,7 @@ class AgentBase(ABC):
             tools=self._tools,
             verbose=self.verbose,
             handle_parsing_errors=True,
-            max_iterations=40,
+            max_iterations=60,
             return_intermediate_steps=True,
         )
         

@@ -16,12 +16,12 @@ body {
   min-height: 100vh;
 }
 
-.factory-canvas .react-flow__attribution {
+.flow-canvas .react-flow__attribution {
   display: none;
 }
 
-.factory-canvas .react-flow__controls-button,
-.factory-canvas .react-flow__minimap {
+.flow-canvas .react-flow__controls-button,
+.flow-canvas .react-flow__minimap {
   border-radius: 16px;
 }
 

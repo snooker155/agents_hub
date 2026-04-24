@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Tuple, List, Optional, Union, Literal
 from pathlib import Path
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 from dataclasses import dataclass, field
 
@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     Merges logic from original tasks/config.py and common/config.py.
     """
     # Core LLM settings
+    default_provider: str = Field(default="lmstudio", env="DEFAULT_PROVIDER")
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
     model: str = Field(default="gpt-4o", env="OPENAI_MODEL")
     temperature: float = Field(default=0.0, env="LLM_TEMPERATURE")
@@ -113,6 +114,26 @@ class Settings(BaseSettings):
     # Tasks storage (path to tasks.json). If None or empty, defaults to tasks/tasks.json
     tasks_file: Optional[str] = Field(default="tasks/tasks.json", env="TASKS_FILE")
 
+    # Agent mode: "local" runs agents as local subprocesses,
+    # "docker" wraps each agent in a docker run invocation.
+    agent_mode: Literal["local", "docker"] = Field(
+        default="local", env="AGENT_EXECUTION_MODE",
+        validate_default=False,
+    )
+
+    @field_validator("agent_mode", mode="before")
+    @classmethod
+    def _default_agent_mode(cls, v: object) -> object:
+        if v == "" or v is None:
+            return "local"
+        return v
+    # Docker image to use when agent_mode = "docker"
+    agent_docker_image: str = Field(default="", env="AGENT_DOCKER_IMAGE")
+    # Optional Docker network (e.g. "host" or a named bridge network)
+    agent_docker_network: str = Field(default="", env="AGENT_DOCKER_NETWORK")
+    # Extra flags passed verbatim to `docker run` (e.g. "--memory 2g --cpus 1")
+    agent_docker_extra_args: str = Field(default="", env="AGENT_DOCKER_EXTRA_ARGS")
+
     class Config:
         case_sensitive = False
         env_file = str(Path(__file__).resolve().parents[1] / ".env")
@@ -132,25 +153,31 @@ class Paths:
     """Helper to resolve standardized paths based on settings.workspace_root."""
     def __init__(self):
         self.root = Path(settings.workspace_root).resolve()
-        self.out = str(self.root)
-        self.docs = str(self.root / "docs")
-        self.plan = str(self.root / "plan")
-        self.logs = str(self.root / "logs")
-        self.code_be = str(self.root / "code" / "backend")
-        self.code_fe = str(self.root / "code" / "frontend")
-        self.ops = str(self.root / "ops")
-        self.tests = str(self.root / "tests")
 
 class Models:
     """Helper for role-based model names (defaults to main model)."""
     def __init__(self):
         m = settings.model
-        self.pm = m
-        self.ba_json = m
-        self.ba_md = m
-        self.sd = m
-        self.tl = m
-        self.dev = m
+
+
+def read_dot_env() -> dict:
+    """Read the .env file and return only explicitly configured key-value pairs.
+
+    This is intentionally separate from the Settings object, which merges in
+    field defaults that are indistinguishable from user-configured values.
+    Use this when you need to know what the user has *actually set* via the UI.
+    """
+    env_file = Path(__file__).resolve().parents[1] / ".env"
+    result: dict = {}
+    if not env_file.exists():
+        return result
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        result[key.strip()] = val.strip().strip('"\'')
+    return result
 
 
 # Convenience accessors to align with previous orchestrator.config API

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/WorkspaceContext';
-import { getNodes, startNode, stopNode, deleteNode, getNodeLogs, getAgents, getWorkspaces } from '../api';
+import { getNodes, startNode, stopNode, restartNode, deleteNode, getNodeLogs, getAgents, getWorkspaces, getWorkspace, setWorkspaceAgentMode, getSettings } from '../api';
 import {
   Play,
   RotateCw,
@@ -20,6 +20,7 @@ import {
   Activity,
   Globe,
   ExternalLink,
+  Box,
 } from 'lucide-react';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
@@ -94,10 +95,10 @@ function LogsModal({ node, onClose }) {
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
           <div className="flex items-center gap-3">
             <StatusBadge status={node.status} />
-            <span className="text-gray-200 font-mono text-sm font-semibold">
+            <span className="text-gray-200 text-sm font-semibold">
               {node.agent_name || node.agent_id}
             </span>
-            <span className="text-gray-500 font-mono text-xs">{node.node_id.slice(0, 12)}…</span>
+            <span className="text-gray-500 text-xs">{node.node_id.slice(0, 12)}…</span>
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition-colors">
             <X className="w-5 h-5" />
@@ -109,7 +110,7 @@ function LogsModal({ node, onClose }) {
               <Loader className="w-5 h-5 animate-spin text-indigo-400" />
             </div>
           ) : (
-            <pre className="text-xs font-mono text-green-400 whitespace-pre-wrap break-words leading-5">{logs}</pre>
+            <pre className="text-xs text-green-400 whitespace-pre-wrap break-words leading-5">{logs}</pre>
           )}
           <div ref={bottomRef} />
         </div>
@@ -126,20 +127,35 @@ function LogsModal({ node, onClose }) {
 
 // ── Start Node modal ──────────────────────────────────────────────────────────
 
-function StartNodeModal({ onClose, onStarted, agents, workspaces, defaultAgentId }) {
+function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, currentWorkspace, wsCapacityOverrides, wsAllowedAgents, agentMode, wsAgentMode, onSetAgentMode }) {
   const [agentId, setAgentId] = useState(defaultAgentId || '');
-  const [workspace, setWorkspace] = useState('');
   const [label, setLabel] = useState('');
+  const [nodeType, setNodeType] = useState('worker');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  const isDefaultWs = !currentWorkspace || currentWorkspace === 'default';
+
+  // Filter agents: local only, and if workspace has allowed_agents, restrict to those
+  const localAgents = agents.filter(a => !a.is_remote);
+  const visibleAgents = currentWorkspace && wsAllowedAgents && wsAllowedAgents.length > 0
+    ? localAgents.filter(a => wsAllowedAgents.includes(a.id))
+    : localAgents;
+
+  const wsCapacity = !isDefaultWs && agentId ? (wsCapacityOverrides[agentId] ?? 1) : null;
+  const runningForSelection = agentId && currentWorkspace
+    ? nodes.filter(n => n.agent_id === agentId && n.workspace === currentWorkspace && (n.status === 'running' || n.status === 'starting')).length
+    : 0;
+  const capacityExceeded = wsCapacity !== null && runningForSelection >= wsCapacity;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!agentId) { setError('Select an agent'); return; }
+    if (capacityExceeded) { setError(`Node limit (${wsCapacity}) reached for this agent in workspace "${currentWorkspace}"`); return; }
     setError('');
     setSubmitting(true);
     try {
-      const r = await startNode({ agent_id: agentId, workspace: workspace || null, label: label || null });
+      const r = await startNode({ agent_id: agentId, workspace: currentWorkspace || null, label: label || null, node_type: nodeType });
       onStarted(r.data);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to start node');
@@ -147,8 +163,6 @@ function StartNodeModal({ onClose, onStarted, agents, workspaces, defaultAgentId
       setSubmitting(false);
     }
   };
-
-  const localAgents = agents.filter(a => !a.is_remote);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -165,6 +179,53 @@ function StartNodeModal({ onClose, onStarted, agents, workspaces, defaultAgentId
             <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">{error}</div>
           )}
 
+          {/* Agent mode badge */}
+          <div className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs border ${
+            agentMode === 'docker'
+              ? 'bg-blue-50 border-blue-200 text-blue-800'
+              : 'bg-gray-50 border-gray-200 text-gray-700'
+          }`}>
+            <div className="flex items-center gap-2">
+              {agentMode === 'docker'
+                ? <Box className="w-3.5 h-3.5 text-blue-500" />
+                : <Server className="w-3.5 h-3.5 text-gray-400" />}
+              <span>Agent mode:</span>
+              <span className="font-semibold">
+                {agentMode === 'docker' ? 'Docker container' : 'Local process'}
+              </span>
+              {currentWorkspace && wsAgentMode && (
+                <span className="text-xs opacity-60">(workspace)</span>
+              )}
+            </div>
+            {onSetAgentMode ? (
+              <button
+                type="button"
+                onClick={() => onSetAgentMode(agentMode === 'docker' ? 'local' : 'docker')}
+                className={`text-xs font-medium px-2 py-0.5 rounded-full border transition-colors ${
+                  agentMode === 'docker'
+                    ? 'border-blue-300 text-blue-700 hover:bg-blue-100'
+                    : 'border-gray-300 text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Switch to {agentMode === 'docker' ? 'local' : 'docker'}
+              </button>
+            ) : (
+              <span className="text-xs opacity-50">global setting</span>
+            )}
+          </div>
+
+          {currentWorkspace && currentWorkspace !== 'default' && (
+            <div className="flex items-center gap-2 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <span className="text-gray-500">Workspace:</span>
+              <span className=" font-semibold text-gray-800">{currentWorkspace}</span>
+              {agentId && wsCapacity !== null && (
+                <span className={`ml-auto font-medium ${capacityExceeded ? 'text-orange-600' : 'text-gray-400'}`}>
+                  {runningForSelection}/{wsCapacity} running
+                </span>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
               Agent <span className="text-red-500">*</span>
@@ -175,26 +236,15 @@ function StartNodeModal({ onClose, onStarted, agents, workspaces, defaultAgentId
               onChange={e => setAgentId(e.target.value)}
             >
               <option value="">— Select agent —</option>
-              {localAgents.map(a => (
+              {visibleAgents.map(a => (
                 <option key={a.id} value={a.id}>{a.name} {a.domain ? `(${a.domain})` : ''}</option>
               ))}
             </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-              Workspace
-            </label>
-            <select
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={workspace}
-              onChange={e => setWorkspace(e.target.value)}
-            >
-              <option value="">— None —</option>
-              {workspaces.map(ws => (
-                <option key={ws.name} value={ws.name}>{ws.name}</option>
-              ))}
-            </select>
+            {capacityExceeded && (
+              <p className="text-xs text-orange-600 mt-1 font-medium">
+                Node limit reached — stop a running node first
+              </p>
+            )}
           </div>
 
           <div>
@@ -209,13 +259,41 @@ function StartNodeModal({ onClose, onStarted, agents, workspaces, defaultAgentId
             />
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+              Node Type
+            </label>
+            <div className="flex gap-2">
+              {[
+                { value: 'worker', label: 'Task Worker', desc: 'Polls for assigned tasks' },
+                { value: 'service', label: 'HTTP Service', desc: 'Serves external requests' },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setNodeType(opt.value)}
+                  className={`flex-1 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                    nodeType === opt.value
+                      ? opt.value === 'service'
+                        ? 'border-violet-400 bg-violet-50 text-violet-800'
+                        : 'border-indigo-400 bg-indigo-50 text-indigo-800'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="text-xs font-semibold">{opt.label}</div>
+                  <div className="text-xs opacity-60 mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose}
               className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
               Cancel
             </button>
-            <button type="submit" disabled={submitting || !agentId}
-              className="flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+            <button type="submit" disabled={submitting || !agentId || capacityExceeded}
+              className="flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed">
               {submitting ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
               {submitting ? 'Starting…' : 'Start Node'}
             </button>
@@ -260,11 +338,13 @@ function SummaryChips({ nodes }) {
 
 export default function Nodes() {
   const navigate = useNavigate();
-  const { liveUpdates } = useWorkspace();
+  const { liveUpdates, workspaceFilter } = useWorkspace();
   const [nodes, setNodes]       = useState([]);
   const [agents, setAgents]     = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading]   = useState(true);
+  // agentId -> capacity override for current workspace filter
+  const [wsCapacityOverrides, setWsCapacityOverrides] = useState({});
 
   const [showStart, setShowStart]     = useState(false);
   const [startAgentId, setStartAgentId] = useState('');
@@ -273,20 +353,58 @@ export default function Nodes() {
 
   const fetchNodes = useCallback(async () => {
     try {
-      const r = await getNodes();
+      const r = await getNodes(workspaceFilter);
       setNodes(r.data);
     } catch (err) {
       console.error('Failed to load nodes', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [workspaceFilter]);
 
   useEffect(() => {
     Promise.all([getAgents(), getWorkspaces()])
       .then(([ar, wr]) => { setAgents(ar.data); setWorkspaces(wr.data); })
       .catch(() => {});
   }, []);
+
+  const [wsAllowedAgents, setWsAllowedAgents] = useState([]);
+  // null = no workspace override (global setting applies), 'local' | 'docker' = workspace-specific
+  const [wsAgentMode, setWsAgentMode] = useState(null);
+  const [globalAgentMode, setGlobalAgentMode] = useState('local');
+
+  // Load global agent mode once on mount
+  useEffect(() => {
+    getSettings().then(r => setGlobalAgentMode(r.data?.agent_mode || 'local')).catch(() => {});
+  }, []);
+
+  // Load capacity overrides, allowed agents, and agent mode for the current workspace
+  useEffect(() => {
+    const ws = workspaceFilter;
+    if (!ws || ws === 'default') {
+      setWsCapacityOverrides({});
+      setWsAllowedAgents([]);
+      setWsAgentMode(null);
+      return;
+    }
+    getWorkspace(ws)
+      .then(r => {
+        setWsCapacityOverrides(r.data?.metadata?.agent_capacity_overrides || {});
+        setWsAllowedAgents(r.data?.metadata?.allowed_agents || []);
+        setWsAgentMode(r.data?.metadata?.settings?.agent_mode || null);
+      })
+      .catch(() => { setWsCapacityOverrides({}); setWsAllowedAgents([]); setWsAgentMode(null); });
+  }, [workspaceFilter]);
+
+  const handleSetWsAgentMode = async (mode) => {
+    if (!workspaceFilter || workspaceFilter === 'default') return;
+    try {
+      await setWorkspaceAgentMode(workspaceFilter, mode);
+      setWsAgentMode(mode);
+    } catch (e) {
+      console.error('Failed to set workspace agent mode', e);
+    }
+  };
 
   useEffect(() => {
     fetchNodes();
@@ -311,6 +429,16 @@ export default function Nodes() {
   };
 
   const handleStart = async (node) => {
+    // Capacity check before starting
+    const ws = node.workspace;
+    if (ws && ws !== 'default') {
+      const capacity = wsCapacityOverrides[node.agent_id] ?? 1;
+      const running = nodes.filter(n => n.agent_id === node.agent_id && n.workspace === ws && (n.status === 'running' || n.status === 'starting')).length;
+      if (running >= capacity) {
+        alert(`Cannot start: node limit (${capacity}) reached for this agent in workspace "${ws}". Stop a running node first.`);
+        return;
+      }
+    }
     setBusyNodes(b => ({ ...b, [node.node_id]: 'starting' }));
     try {
       await startNode({ agent_id: node.agent_id, workspace: node.workspace || null, label: node.label || null });
@@ -322,8 +450,22 @@ export default function Nodes() {
   const handleRestart = async (node) => {
     setBusyNodes(b => ({ ...b, [node.node_id]: 'restarting' }));
     try {
-      await stopNode(node.node_id);
-      await startNode({ agent_id: node.agent_id, workspace: node.workspace || null, label: node.label || null });
+      if ((node.execution_mode || 'local') === 'docker' && node.container_name) {
+        // Docker mode: restart the existing container in place — no new record created.
+        await restartNode(node.node_id);
+      } else {
+        // Local mode: stop the process and start a fresh subprocess.
+        await stopNode(node.node_id);
+        await startNode({ agent_id: node.agent_id, workspace: node.workspace || null, label: node.label || null });
+        for (let i = 0; i < 12; i++) {
+          try {
+            await deleteNode(node.node_id);
+            break;
+          } catch (_) {
+            await new Promise((r) => setTimeout(r, 500));
+          }
+        }
+      }
       await fetchNodes();
     } catch (e) { alert(e.response?.data?.detail || 'Cannot restart'); }
     finally { setBusyNodes(b => { const n = { ...b }; delete n[node.node_id]; return n; }); }
@@ -390,6 +532,9 @@ export default function Nodes() {
         <div className="space-y-4">
           {Object.entries(grouped).map(([agentId, group]) => {
             const runningInGroup = group.nodes.filter(n => n.status === 'running' || n.status === 'starting').length;
+            const isDefaultWs = !workspaceFilter || workspaceFilter === 'default';
+            const groupCapacity = isDefaultWs ? Infinity : (wsCapacityOverrides[agentId] ?? 1);
+            const groupAtCapacity = runningInGroup >= groupCapacity;
             return (
               <div key={agentId} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 {/* Agent group header */}
@@ -401,17 +546,21 @@ export default function Nodes() {
                         {group.domain}
                       </span>
                     )}
-                    <span className="text-xs text-gray-400 font-mono">{agentId}</span>
+                    <span className="text-xs text-gray-400">{agentId}</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${
-                      runningInGroup > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                      groupAtCapacity ? 'bg-orange-100 text-orange-700' : runningInGroup > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                     }`}>
-                      {runningInGroup}/{group.nodes.length} running
+                      {runningInGroup}{groupCapacity !== Infinity ? `/${groupCapacity}` : ''} running
                     </span>
+                    {groupAtCapacity && (
+                      <span className="text-xs text-orange-600 font-medium">Limit reached</span>
+                    )}
                     <button
                       onClick={() => openStart(agentId)}
-                      className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 hover:border-indigo-400 px-2.5 py-1 rounded-lg transition-colors"
+                      disabled={groupAtCapacity}
+                      className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 hover:border-indigo-400 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-indigo-200 disabled:hover:text-indigo-600"
                     >
                       <Plus className="w-3 h-3" />
                       Add node
@@ -425,15 +574,20 @@ export default function Nodes() {
                     <tr className="border-b border-gray-100">
                       <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
                       <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Node ID</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Mode</th>
                       <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Label</th>
                       <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Workspace</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Sessions</th>
                       <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Started</th>
                       <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Uptime</th>
                       <th className="text-right px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {group.nodes.map(node => {
+                    {[...group.nodes].sort((a, b) => {
+                      const order = { running: 0, starting: 1, stopping: 2, failed: 3, completed: 4, stopped: 5 };
+                      return (order[a.status] ?? 6) - (order[b.status] ?? 6);
+                    }).map(node => {
                       const isActive = node.status === 'running' || node.status === 'starting';
                       const busy = busyNodes[node.node_id];
                       return (
@@ -446,7 +600,7 @@ export default function Nodes() {
                             <StatusBadge status={node.status} />
                           </td>
                           <td className="px-5 py-3">
-                            <span className="font-mono text-xs text-gray-600">
+                            <span className=" text-xs text-gray-600">
                               {node.node_id.slice(0, 8)}
                               <span className="text-gray-400">…</span>
                             </span>
@@ -462,15 +616,41 @@ export default function Nodes() {
                               </span>
                             )}
                           </td>
+                          <td className="px-5 py-3">
+                            <div className="flex flex-col gap-1">
+                              {node.execution_mode === 'docker'
+                                ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
+                                    <Box className="w-3 h-3" />
+                                    Container
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                                    Local
+                                  </span>
+                                )
+                              }
+                              {(node.node_type || 'worker') === 'service' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded-full">
+                                  HTTP Service
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-5 py-3 text-gray-600 text-xs">{node.label || '—'}</td>
                           <td className="px-5 py-3">
                             {node.workspace
-                              ? <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded font-mono">{node.workspace}</span>
+                              ? <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">{node.workspace}</span>
                               : <span className="text-gray-400 text-xs">—</span>
                             }
                           </td>
+                          <td className="px-5 py-3 text-gray-700 text-xs">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold">
+                              {node.running_sessions_count ?? 0}
+                            </span>
+                          </td>
                           <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">{fmtDate(node.started_at)}</td>
-                          <td className="px-5 py-3 text-gray-600 text-xs font-mono whitespace-nowrap">
+                          <td className="px-5 py-3 text-gray-600 text-xs whitespace-nowrap">
                             {uptime(node.started_at, node.finished_at)}
                           </td>
                           <td className="px-5 py-3">
@@ -521,9 +701,9 @@ export default function Nodes() {
                               {!isActive && (
                                 <button
                                   onClick={() => handleStart(node)}
-                                  disabled={!!busy}
-                                  title="Start new node with same config"
-                                  className="p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors disabled:opacity-40"
+                                  disabled={!!busy || groupAtCapacity}
+                                  title={groupAtCapacity ? `Node limit (${groupCapacity}) reached` : 'Start new node with same config'}
+                                  className="p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
                                   {busy === 'starting' ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                                 </button>
@@ -559,8 +739,14 @@ export default function Nodes() {
           onClose={() => setShowStart(false)}
           onStarted={() => { setShowStart(false); fetchNodes(); }}
           agents={agents}
-          workspaces={workspaces}
           defaultAgentId={startAgentId}
+          nodes={nodes}
+          currentWorkspace={workspaceFilter && workspaceFilter !== 'default' ? workspaceFilter : ''}
+          wsCapacityOverrides={wsCapacityOverrides}
+          wsAllowedAgents={wsAllowedAgents}
+          agentMode={wsAgentMode || globalAgentMode}
+          wsAgentMode={wsAgentMode}
+          onSetAgentMode={workspaceFilter && workspaceFilter !== 'default' ? handleSetWsAgentMode : null}
         />
       )}
       {logsNode && (

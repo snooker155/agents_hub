@@ -11,12 +11,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, validator, model_validator
 from langchain_core.tools import tool
+from common.orchestrator_context import (
+    resolve_active_workspace,
+    task_in_workspace,
+    filter_tasks_for_workspace,
+)
 
 from common.tasks_service import (
     CreatedBy,
     Task,
     TaskStatus,
-    AgentState,
     create_task as svc_create_task,
     add_subtask as svc_add_subtask,
     get_task as svc_get_task,
@@ -25,20 +29,31 @@ from common.tasks_service import (
     stop_task as svc_stop_task,
     block_task as svc_block_task,
     create_sequence as svc_create_sequence,
-    assign_agent as svc_assign_agent,
-    set_agent_state as svc_set_agent_state,
+    get_task_result as svc_get_task_result,
 )
+from common.workspace import create_workspace_folder as ws_create_workspace_folder
 
 # -------------------- helpers --------------------
 
 def _uuid_from_str(value: Optional[str]) -> Optional[UUID]:
-    """Convert string to UUID, raise ValueError if invalid."""
+    """Convert string to UUID, raise ValueError if invalid.
+
+    Attempts to auto-correct UUIDs with misplaced hyphens (e.g. LLM output
+    where a hyphen was dropped) by stripping all hyphens and reformatting
+    as the standard 8-4-4-4-12 layout when the hex content is exactly 32 chars.
+    """
     if value is None:
         return None
+    s = str(value).strip()
     try:
-        return UUID(str(value))
-    except Exception as e:
-        raise ValueError(f"Invalid UUID: {value}") from e
+        return UUID(s)
+    except Exception:
+        hex_only = s.replace("-", "").replace(" ", "")
+        if len(hex_only) == 32 and all(c in "0123456789abcdefABCDEF" for c in hex_only):
+            return UUID(f"{hex_only[:8]}-{hex_only[8:12]}-{hex_only[12:16]}-{hex_only[16:20]}-{hex_only[20:]}")
+        raise ValueError(
+            f"Invalid task ID '{s}'. Use the exact Task ID from your context without modification."
+        )
 
 
 def _task_to_dict(t: Task) -> Dict[str, Any]:
@@ -50,9 +65,7 @@ def _task_to_dict(t: Task) -> Dict[str, Any]:
         data["status"] = data["status"].value
     if isinstance(data.get("created_by"), CreatedBy):
         data["created_by"] = data["created_by"].value
-    if "agent_state" in data and isinstance(data.get("agent_state"), AgentState):
-        data["agent_state"] = data["agent_state"].value
-    
+
     # UUID to str
     for key in ("id", "parent_id"):
         if data.get(key) is not None:
@@ -80,6 +93,11 @@ def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[s
     return json.dumps(body, ensure_ascii=False, indent=2)
 
 
+def _active_workspace(explicit: Optional[str] = None) -> Optional[str]:
+    return resolve_active_workspace(explicit)
+
+
+
 # -------------------- Tool Schemas --------------------
 
 class CreateTaskInput(BaseModel):
@@ -94,8 +112,7 @@ class CreateTaskInput(BaseModel):
     def _validate_parent(cls, v):
         if v is None or v == "":
             return None
-        _uuid_from_str(v)
-        return v
+        return str(_uuid_from_str(v))
 
 
 @tool("create_task", args_schema=CreateTaskInput)
@@ -109,13 +126,20 @@ def create_task(
 ) -> str:
     """Create a new task. Returns JSON with the created task."""
     try:
+        ws_name = workspace
+        if workspace:
+            ws_name = ws_create_workspace_folder(workspace).name
+        else:
+            active_ws = _active_workspace()
+            if active_ws:
+                ws_name = ws_create_workspace_folder(active_ws).name
         task = svc_create_task(
             title=title,
             description=description,
             created_by=created_by,
             parent_id=_uuid_from_str(parent_id),
             status=status,
-            workspace=workspace,
+            workspace=ws_name,
         )
         return _json_ok({"task": _task_to_dict(task)})
     except Exception as e:
@@ -129,8 +153,7 @@ class AddSubtaskInput(BaseModel):
 
     @validator("parent_id")
     def _valid_uuid(cls, v):
-        _uuid_from_str(v)
-        return v
+        return str(_uuid_from_str(v))
 
 
 @tool("add_subtask", args_schema=AddSubtaskInput)
@@ -152,8 +175,7 @@ class IdInput(BaseModel):
 
     @validator("id")
     def _valid_uuid(cls, v):
-        _uuid_from_str(v)
-        return v
+        return str(_uuid_from_str(v))
 
 
 @tool("get_task", args_schema=IdInput)
@@ -164,6 +186,12 @@ def get_task(id: str) -> str:
         task = svc_get_task(tid)
         if not task:
             return _json_err("Task not found", code="not_found", extra={"id": id})
+        ws = _active_workspace()
+        if ws and not task_in_workspace(task, ws):
+            return _json_err(
+                f"Task '{id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
         return _json_ok({"task": _task_to_dict(task)})
     except Exception as e:
         return _json_err(f"Failed to get task: {e}")
@@ -171,10 +199,50 @@ def get_task(id: str) -> str:
 
 @tool("list_tasks")
 def list_tasks() -> str:
-    """List all tasks. Returns JSON with an array of tasks."""
+    """List tasks in compact form (bounded output) to avoid oversized tool payloads."""
     try:
-        tasks = svc_list_tasks()
-        return _json_ok({"tasks": [_task_to_dict(t) for t in tasks]})
+        ws = _active_workspace()
+        tasks = filter_tasks_for_workspace(svc_list_tasks(), ws)
+
+        # Deterministic order: most recently updated first.
+        def _sort_key(t: Task):
+            upd = getattr(t, "updated_at", None)
+            cre = getattr(t, "created_at", None)
+            return ((upd.isoformat() if upd else ""), (cre.isoformat() if cre else ""), str(getattr(t, "id", "")))
+
+        tasks_sorted = sorted(tasks, key=_sort_key, reverse=True)
+        total_count = len(tasks_sorted)
+        max_items = 40
+        selected = tasks_sorted[:max_items]
+        # print(f"Total tasks: {total_count}, returning {len(selected)} (max {max_items}) for workspace '{ws}'")
+
+        compact = []
+        for t in selected:
+            d = _task_to_dict(t)
+            compact.append({
+                "id": d.get("id"),
+                "title": d.get("title"),
+                "status": d.get("status"),
+                "workspace": d.get("workspace"),
+                "parent_id": d.get("parent_id"),
+                "assigned_agent_type": d.get("assigned_agent_type"),
+                "agent_state": d.get("agent_state"),
+                "updated_at": d.get("updated_at"),
+            })
+
+        by_status = {}
+        for t in tasks_sorted:
+            s = str(getattr(t, "status", ""))
+            by_status[s] = by_status.get(s, 0) + 1
+
+        return _json_ok({
+            "workspace": ws or "default",
+            "total_count": total_count,
+            "returned_count": len(compact),
+            "truncated": total_count > len(compact),
+            "by_status": by_status,
+            "tasks": compact,
+        })
     except Exception as e:
         return _json_err(f"Failed to list tasks: {e}")
 
@@ -195,31 +263,30 @@ class UpdateTaskInput(BaseModel):
 
     @validator("id")
     def _valid_id(cls, v):
-        _uuid_from_str(v)
-        return v
+        return str(_uuid_from_str(v))
 
     @validator("parent_id")
     def _valid_parent(cls, v):
         if v is None:
             return v
-        _uuid_from_str(v)
-        return v
+        return str(_uuid_from_str(v))
 
     @model_validator(mode="after")
-    def _at_least_one_field(cls, values):
+    def _at_least_one_field(self):
         fields = [
-            values.get("title"),
-            values.get("description"),
-            values.get("status"),
-            values.get("blocked_reason"),
-            values.get("parent_id"),
-            values.get("sequence_id"),
-            values.get("order"),
-            values.get("created_by"),
+            self.title,
+            self.description,
+            self.status,
+            self.blocked_reason,
+            self.parent_id,
+            self.sequence_id,
+            self.order,
+            self.created_by,
+            self.workspace,
         ]
         if all(v is None for v in fields):
             raise ValueError("No fields to update provided")
-        return values
+        return self
 
 
 @tool("update_task", args_schema=UpdateTaskInput)
@@ -238,6 +305,15 @@ def update_task(
     """Update task fields. Returns JSON with the updated task."""
     try:
         tid = _uuid_from_str(id)
+        existing = svc_get_task(tid)
+        if not existing:
+            return _json_err("Task not found", code="not_found", extra={"id": id})
+        ws = _active_workspace()
+        if ws and not task_in_workspace(existing, ws):
+            return _json_err(
+                f"Task '{id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
         fields: Dict[str, Any] = {}
         if title is not None:
             fields["title"] = title
@@ -278,8 +354,7 @@ class StopTaskInput(BaseModel):
 
     @validator("id")
     def _valid_id(cls, v):
-        _uuid_from_str(v)
-        return v
+        return str(_uuid_from_str(v))
 
 
 @tool("stop_task", args_schema=StopTaskInput)
@@ -287,6 +362,15 @@ def stop_task(id: str) -> str:
     """Set task status to stopped. Returns JSON with updated task."""
     try:
         tid = _uuid_from_str(id)
+        existing = svc_get_task(tid)
+        if not existing:
+            return _json_err("Task not found", code="not_found", extra={"id": id})
+        ws = _active_workspace()
+        if ws and not task_in_workspace(existing, ws):
+            return _json_err(
+                f"Task '{id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
         updated = svc_stop_task(tid)
         if not updated:
             return _json_err("Task not found", code="not_found", extra={"id": id})
@@ -301,8 +385,7 @@ class BlockTaskInput(BaseModel):
 
     @validator("id")
     def _valid_id(cls, v):
-        _uuid_from_str(v)
-        return v
+        return str(_uuid_from_str(v))
 
 
 @tool("block_task", args_schema=BlockTaskInput)
@@ -310,6 +393,15 @@ def block_task(id: str, reason: str) -> str:
     """Block a task with a reason. Returns JSON with updated task."""
     try:
         tid = _uuid_from_str(id)
+        existing = svc_get_task(tid)
+        if not existing:
+            return _json_err("Task not found", code="not_found", extra={"id": id})
+        ws = _active_workspace()
+        if ws and not task_in_workspace(existing, ws):
+            return _json_err(
+                f"Task '{id}' is outside the active workspace '{ws}'",
+                code="forbidden",
+            )
         updated = svc_block_task(tid, reason)
         if not updated:
             return _json_err("Task not found", code="not_found", extra={"id": id})
@@ -327,9 +419,7 @@ class CreateSequenceInput(BaseModel):
     def _validate_ids(cls, v):
         if not v:
             raise ValueError("task_ids must not be empty")
-        for s in v:
-            _uuid_from_str(s)
-        return v
+        return [str(_uuid_from_str(s)) for s in v]
 
 
 @tool("create_sequence", args_schema=CreateSequenceInput)
@@ -337,6 +427,17 @@ def create_sequence(task_ids: List[str], sequence_id: Optional[str] = None, star
     """Assign a common sequence_id and order to given task IDs. Returns JSON with sequence info and tasks."""
     try:
         uuids = [UUID(s) for s in task_ids]
+        ws = _active_workspace()
+        if ws:
+            for tid in uuids:
+                t = svc_get_task(tid)
+                if t is None:
+                    return _json_err(str(tid), code="not_found")
+                if not task_in_workspace(t, ws):
+                    return _json_err(
+                        f"Task '{tid}' is outside the active workspace '{ws}'",
+                        code="forbidden",
+                    )
         seq_id = svc_create_sequence(uuids, sequence_id=sequence_id, start_order=start_order)
         # Fetch updated tasks for response
         tasks = []
@@ -351,145 +452,30 @@ def create_sequence(task_ids: List[str], sequence_id: Optional[str] = None, star
         return _json_err(f"Failed to create sequence: {e}")
 
 
-# -------------------- Agent management tools --------------------
-
-@tool("list_agents_tool")
-def list_agents_tool() -> str:
-    """List all available agents from the registry. Returns JSON with an array of agents."""
-    try:
-        specs = reg_list_agents()
-        return _json_ok({"agents": [s.to_dict() for s in specs]})
-    except Exception as e:
-        return _json_err(f"Failed to list agents: {e}")
+class GetTaskResultInput(BaseModel):
+    task_id: str = Field(..., description="UUID of the task whose result to retrieve")
 
 
-class AssignAndStartAgentInput(BaseModel):
-    task_id: str = Field(..., description="UUID of the task")
-    agent_id: str = Field(..., min_length=1, description="Agent identifier from the registry")
-    params_json: Optional[str] = Field(
-        None, description="Optional JSON object string with agent parameters"
-    )
+@tool("get_task_result", args_schema=GetTaskResultInput)
+def get_task_result(task_id: str) -> str:
+    """Get the output produced by the agent that last ran on a task.
 
-    @validator("task_id")
-    def _valid_task_id(cls, v):
-        _uuid_from_str(v)
-        return v
+    Use this to read the result of a completed task before assigning the next
+    agent in a chain, so the next agent receives the previous agent's output
+    as part of its description.
 
-
-@tool("assign_and_start_agent_tool", args_schema=AssignAndStartAgentInput)
-def assign_and_start_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = None) -> str:
-    """Assign an agent to a task and start its run.
-
-    Returns JSON with the updated task, run status and agent info.
+    Returns JSON with the result text, or an error if no result exists yet.
     """
     try:
         tid = _uuid_from_str(task_id)
-
-        # Ensure task exists
-        task = svc_get_task(tid)
-        if not task:
-            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
-
-        # Ensure agent exists
-        spec = reg_get_agent(agent_id)
-        if not spec:
-            return _json_err("Agent not found", code="not_found", extra={"agent_id": agent_id})
-
-        # Policy: the dedicated decomposer agent may only be assigned to user-created tasks
-        if agent_id == "decomposer":
-            try:
-                if getattr(task, "created_by", None) != CreatedBy.user:
-                    return _json_err(
-                        "Decomposer agent can only be assigned to user-created tasks",
-                        code="invalid_task",
-                    )
-            except Exception:
-                return _json_err(
-                    "Decomposer agent can only be assigned to user-created tasks",
-                    code="invalid_task",
-                )
-
-        # Parse params JSON if provided
-        params: Optional[Dict[str, Any]] = None
-        if params_json:
-            try:
-                obj = json.loads(params_json)
-                if obj is not None and not isinstance(obj, dict):
-                    return _json_err("params_json must be a JSON object", code="bad_params")
-                params = obj
-            except Exception as e:
-                return _json_err(f"Invalid params_json: {e}", code="bad_params")
-
-        # Start run first to obtain run_id
-        run_id = rm_start_run(str(task.id), agent_id, params)
-
-        # Record assignment and mark as running
-        svc_assign_agent(task.id, agent_id, params, run_id=run_id)
-        svc_set_agent_state(task.id, AgentState.running, run_id=run_id)
-
-        updated = svc_get_task(task.id)
-        status = rm_get_status(str(task.id))
-
-        payload: Dict[str, Any] = {
-            "message": "Agent assigned and started",
-            "run_id": run_id,
-            "status": status,
-            "task": _task_to_dict(updated) if updated else None,
-            "agent": spec.to_dict(),
-        }
-        return _json_ok(payload)
+        if tid is None:
+            return _json_err("Invalid task_id", code="bad_request")
+        result = svc_get_task_result(tid)
+        if result is None:
+            return _json_err("No result found for this task", code="not_found")
+        return _json_ok({"task_id": task_id, "result": result})
     except Exception as e:
-        return _json_err(f"Failed to assign/start agent: {e}")
-
-
-class TaskIdInput(BaseModel):
-    task_id: str
-
-    @validator("task_id")
-    def _valid_task_id(cls, v):
-        _uuid_from_str(v)
-        return v
-
-
-@tool("stop_agent_tool", args_schema=TaskIdInput)
-def stop_agent_tool(task_id: str) -> str:
-    """Attempt to stop the latest running agent process for the task. Also marks agent_state=stopped.
-
-    Returns JSON with {stopped: bool, status: dict, task: Task}.
-    """
-    try:
-        tid = _uuid_from_str(task_id)
-        task = svc_get_task(tid)
-        if not task:
-            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
-
-        stopped = rm_stop_run(str(task.id))
-        # Reflect in task state (best-effort)
-        svc_set_agent_state(task.id, AgentState.stopped)
-        updated = svc_get_task(task.id)
-        status = rm_get_status(str(task.id))
-        return _json_ok({
-            "stopped": bool(stopped),
-            "status": status,
-            "task": _task_to_dict(updated) if updated else None,
-        })
-    except Exception as e:
-        return _json_err(f"Failed to stop agent: {e}")
-
-
-@tool("get_agent_status_tool", args_schema=TaskIdInput)
-def get_agent_status_tool(task_id: str) -> str:
-    """Get the latest agent run status for a task along with task assignment info."""
-    try:
-        tid = _uuid_from_str(task_id)
-        task = svc_get_task(tid)
-        status = rm_get_status(str(task_id))
-        return _json_ok({
-            "task": _task_to_dict(task) if task else None,
-            "status": status,
-        })
-    except Exception as e:
-        return _json_err(f"Failed to get agent status: {e}")
+        return _json_err(f"Failed to get task result: {e}")
 
 
 __all__ = [
@@ -501,9 +487,5 @@ __all__ = [
     "stop_task",
     "block_task",
     "create_sequence",
-    # New agent tools
-    "list_agents_tool",
-    "assign_and_start_agent_tool",
-    "stop_agent_tool",
-    "get_agent_status_tool",
+    "get_task_result",
 ]

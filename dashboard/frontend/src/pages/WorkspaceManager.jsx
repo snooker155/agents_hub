@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { getWorkspaces, createWorkspace } from '../api';
-import { FolderPlus, Folder, Plus } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { getWorkspaces, createWorkspace, deleteWorkspace } from '../api';
+import { FolderPlus, Folder, Plus, Trash2 } from 'lucide-react';
 
 const WorkspaceManager = () => {
   const [items, setItems] = useState([]);
@@ -23,6 +23,17 @@ const WorkspaceManager = () => {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  const handleDelete = async (wsName, e) => {
+    e.stopPropagation();
+    if (!window.confirm(`Delete workspace "${wsName}"? This cannot be undone.`)) return;
+    try {
+      await deleteWorkspace(wsName);
+      fetchData();
+    } catch {
+      alert('Failed to delete workspace');
+    }
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -81,13 +92,21 @@ const WorkspaceManager = () => {
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/workspaces/${encodeURIComponent(ws.name)}`); }}
                   >
-                    <td className="px-6 py-4 font-medium text-gray-900">{ws.name}</td>
-                    <td className="px-6 py-4 text-gray-600 font-mono text-xs truncate max-w-xs">{ws.path}</td>
-                    <td className="px-6 py-4">{ws.tasks_count}</td>
+                    <td className="px-6 py-4 text-sm font-medium text-gray-800">{ws.name}</td>
+                    <td className="px-6 py-4 text-gray-600 text-xs truncate max-w-xs">{ws.path}</td>
+                    <td className="px-6 py-4 text-sm font-medium text-gray-800">{ws.tasks_count}</td>
                     <td className="px-6 py-4 text-right">
-                      <Link to={`/workspaces/${encodeURIComponent(ws.name)}`} className="text-indigo-600 hover:text-indigo-900" onClick={(e) => e.stopPropagation()}>
-                        Open
-                      </Link>
+                      {ws.name !== 'default' ? (
+                        <button
+                          onClick={(e) => handleDelete(ws.name, e)}
+                          className="text-gray-400 hover:text-red-600 transition-colors"
+                          title="Delete workspace"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400 italic">default</span>
+                      )}
                     </td>
                   </tr>
                 ))

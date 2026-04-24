@@ -66,6 +66,7 @@ def _log_now() -> str:
 def _append_node_log(node: Dict[str, Any], message: str) -> None:
     log_file = node.get("log_file")
     if not log_file:
+        print(f"Warning: no log file for node {node.get('node_id')}, skipping log append")
         return
     try:
         p = Path(log_file)
@@ -135,6 +136,11 @@ def _pid_exists(pid: int) -> bool:
     if pid <= 0:
         return False
     try:
+        # Non-blocking wait to reap zombie processes before checking existence
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+    try:
         os.kill(pid, 0)
     except OSError:
         return False
@@ -144,14 +150,33 @@ def _pid_exists(pid: int) -> bool:
 
 
 def _sync_status(node: Dict[str, Any]) -> Dict[str, Any]:
-    """If a node is marked running/starting/stopping but its PID is gone, mark it stopped."""
+    """If a node is marked running/starting/stopping but its process/container is gone, mark it stopped."""
     if node.get("status") in ("running", "starting", "stopping"):
-        pid = int(node.get("pid") or 0)
-        if pid > 0 and not _pid_exists(pid):
-            updates = {"status": "stopped", "finished_at": _utc_now_iso(), "exit_code": -1}
-            patched = update_node(node["node_id"], updates)
-            return patched if patched else {**node, **updates}
+        if node.get("execution_mode") == "docker":
+            container_name = node.get("container_name")
+            if container_name:
+                from .container_manager import container_running
+                if not container_running(container_name):
+                    updates = {"status": "stopped", "finished_at": _utc_now_iso(), "exit_code": -1}
+                    patched = update_node(node["node_id"], updates)
+                    _fail_in_progress_sessions(node["node_id"])
+                    return patched if patched else {**node, **updates}
+        else:
+            pid = int(node.get("pid") or 0)
+            if pid > 0 and not _pid_exists(pid):
+                updates = {"status": "stopped", "finished_at": _utc_now_iso(), "exit_code": -1}
+                patched = update_node(node["node_id"], updates)
+                _fail_in_progress_sessions(node["node_id"])
+                return patched if patched else {**node, **updates}
     return node
+
+
+def _fail_in_progress_sessions(node_id: str, reason: str = "Running node was stopped") -> int:
+    try:
+        from . import run_manager
+        return run_manager.fail_in_progress_runs_for_node(node_id, reason)
+    except Exception:
+        return 0
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -173,11 +198,23 @@ def get_running_nodes_for_agent(agent_id: str) -> List[Dict[str, Any]]:
     return [n for n in list_nodes() if n.get("agent_id") == agent_id and n.get("status") == "running"]
 
 
+def get_running_sessions_for_node(node_id: str) -> List[Dict[str, Any]]:
+    """Return in-progress sessions currently bound to a specific node."""
+    try:
+        from . import run_manager
+        runs = run_manager.get_in_progress_runs_for_node(node_id)
+    except Exception:
+        runs = []
+    runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    return runs
+
+
 def start_node(
     agent_id: str,
     workspace: Optional[str] = None,
     label: Optional[str] = None,
     is_default: bool = False,
+    node_type: Optional[str] = None,
 ) -> str:
     """Launch a new agent node subprocess.  Returns node_id."""
     spec = get_agent(agent_id)
@@ -198,35 +235,86 @@ def start_node(
         except Exception:
             abs_workspace = None
 
-    cmd = [
+    # Node type drives the process mode; caller override takes precedence over spec
+    resolved_node_type = node_type if node_type in ("worker", "service") else getattr(spec, "node_type", "worker")
+
+    # HTTP settings — service nodes require HTTP; worker nodes use it optionally
+    http_expose: bool = getattr(spec, "http_expose", False) or resolved_node_type == "service"
+    http_port: int = getattr(spec, "http_port", 8080)
+    http_host_port: Optional[int] = getattr(spec, "http_host_port", None)
+
+    inner_cmd = [
         sys.executable, "-m", "agents.node_runner",
         "--node-id", node_id,
         "--agent-id", agent_id,
         "--log-file", str(log_file),
     ]
     if abs_workspace:
-        cmd.extend(["--workspace", abs_workspace])
+        inner_cmd.extend(["--workspace", abs_workspace])
+    if http_expose:
+        inner_cmd.extend(["--http-port", str(http_port)])
+    if resolved_node_type == "service":
+        inner_cmd.append("--service-mode")
 
     env = os.environ.copy()
-    creationflags = 0
-    start_new_session = False
-    if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    else:
-        start_new_session = True
+    if workspace:
+        env["AGENT_WORKSPACE"] = str(workspace)
+    # Execution mode priority:
+    #   1. Workspace-specific override stored in .workspace.json
+    #   2. Live os.environ value (written by the settings API at runtime)
+    #   3. Pydantic-settings value loaded from .env at startup (NOT in os.environ)
+    from common.config import settings as _cfg
+    _ws_agent_mode: Optional[str] = None
+    if workspace:
+        try:
+            from common.workspace import get_workspace_metadata
+            _ws_agent_mode = (get_workspace_metadata(workspace).get("settings") or {}).get("agent_mode") or None
+        except Exception:
+            pass
+    execution_mode = _ws_agent_mode or env.get("AGENT_EXECUTION_MODE") or _cfg.agent_mode
+    container_name: Optional[str] = None
+    pid: Optional[int] = None
+    http_url: Optional[str] = None
 
-    # Open in binary mode so the fd can be safely inherited by the child.
-    # Close the parent's handle immediately after Popen — the child keeps its own copy.
-    with open(log_file, "wb") as log_fh:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            creationflags=creationflags,
-            start_new_session=start_new_session,
+    if execution_mode == "docker":
+        # Detached container — no local subprocess PID to track.
+        # --write-stdout-to-log tells node_runner to mirror its stdout into the
+        # shared log file (agents/state is volume-mounted into the container).
+        docker_inner_cmd = inner_cmd + ["--write-stdout-to-log"]
+        from .docker_runner import start_node_container, container_name_for_node
+        container_name = container_name_for_node(node_id)
+        result = start_node_container(
+            node_id, agent_id, docker_inner_cmd, workspace, env,
+            http_expose=http_expose,
+            http_port=http_port,
+            http_host_port=http_host_port,
         )
+        if not result["success"]:
+            raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
+        if http_expose:
+            http_url = result.get("http_url")
+    else:
+        # Local subprocess — pipe output to log file
+        creationflags = 0
+        start_new_session = False
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            start_new_session = True
+
+        # Open in binary mode so the fd can be safely inherited by the child.
+        # Close the parent's handle immediately after Popen — the child keeps its own copy.
+        with open(log_file, "wb") as log_fh:
+            proc = subprocess.Popen(
+                inner_cmd,
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                creationflags=creationflags,
+                start_new_session=start_new_session,
+            )
+        pid = proc.pid
 
     node_rec: Dict[str, Any] = {
         "node_id": node_id,
@@ -234,30 +322,55 @@ def start_node(
         "workspace": workspace,
         "label": label or agent_id,
         "is_default": is_default,
-        "pid": proc.pid,
+        "pid": pid,
         "status": "starting",
+        "node_type": resolved_node_type,
+        "execution_mode": execution_mode,
+        "container_name": container_name,
         "started_at": _utc_now_iso(),
         "finished_at": None,
         "exit_code": None,
         "error": None,
         "log_file": str(log_file),
+        "http_expose": http_expose,
+        "http_port": http_port if http_expose else None,
+        "http_host_port": (http_host_port if http_host_port is not None else http_port) if http_expose else None,
+        "http_url": http_url,
     }
     _upsert_node(node_rec)
+    pid_info = str(pid) if pid is not None else container_name or "—"
     _append_node_log(
         node_rec,
         (
-            f"[node_start] agent={agent_id} pid={proc.pid} "
+            f"[node_start] agent={agent_id} pid={pid_info} "
             f"workspace={workspace or '—'} label={label or agent_id}"
+            + (f" http={http_url}" if http_url else "")
         ),
     )
     return node_id
 
 
 def stop_node(node_id: str) -> bool:
-    """Send SIGTERM to a running node.  Returns True if signal was sent."""
+    """Stop a running node (signal for local, docker stop for containers). Returns True on success."""
     node = get_node(node_id)
     if not node or node.get("status") not in ("running", "starting"):
         return False
+
+    _append_node_log(node, "[node_stop] stop requested")
+
+    # Docker mode — just stop the container
+    if node.get("execution_mode") == "docker":
+        cname = node.get("container_name")
+        if not cname:
+            return False
+        update_node(node_id, {"status": "stopping"})
+        from .container_manager import stop_container
+        sent = stop_container(cname)
+        if not sent:
+            update_node(node_id, {"status": node.get("status", "stopped")})
+        else:
+            _fail_in_progress_sessions(node_id)
+        return sent
 
     pid = int(node.get("pid") or 0)
     if pid <= 0:
@@ -265,6 +378,12 @@ def stop_node(node_id: str) -> bool:
         return False
 
     _append_node_log(node, f"[node_stop] stop requested pid={pid}")
+
+    # Set "stopping" BEFORE sending the signal to prevent the race where
+    # the process exits and writes "stopped" before we write "stopping",
+    # producing an out-of-order log sequence.
+    update_node(node_id, {"status": "stopping"})
+
     sent = False
     if os.name == "nt":
         try:
@@ -293,23 +412,64 @@ def stop_node(node_id: str) -> bool:
                 pass
 
     if sent:
+        _fail_in_progress_sessions(node_id)
         _append_node_log(node, f"[node_stop] stop signal sent pid={pid}")
-        update_node(node_id, {"status": "stopping"})
     else:
+        # Revert status — signal could not be delivered
+        update_node(node_id, {"status": node.get("status", "stopped")})
         _append_node_log(node, f"[node_stop] failed to send stop signal pid={pid}")
     return sent
 
 
+def restart_node(node_id: str) -> bool:
+    """Restart a Docker node container in place via docker restart.
+
+    Only valid for nodes with execution_mode == 'docker'.  The container keeps
+    its ID and name; the agent process inside is restarted from scratch.
+    Returns True on success, False if the node is not a Docker node or the
+    restart command fails.
+    """
+    node = get_node(node_id)
+    if not node:
+        return False
+    if node.get("execution_mode") != "docker":
+        return False
+    cname = node.get("container_name")
+    if not cname:
+        return False
+
+    _append_node_log(node, "[node_restart] restart requested")
+    update_node(node_id, {"status": "starting"})
+
+    from .container_manager import restart_container
+    ok = restart_container(cname)
+    if ok:
+        _append_node_log(get_node(node_id), "[node_restart] container restarted")
+    else:
+        update_node(node_id, {"status": "failed", "error": "docker restart failed"})
+        _append_node_log(get_node(node_id), "[node_restart] docker restart failed")
+    return ok
+
+
 def delete_node(node_id: str) -> bool:
-    """Remove a stopped/failed node record.  Returns True if removed."""
+    """Remove a stopped/failed node record and its log file.  Returns True if removed."""
     nodes = _load_nodes()
     original = len(nodes)
-    nodes = [
-        n for n in nodes
-        if not (n.get("node_id") == node_id and n.get("status") not in ("running", "starting"))
-    ]
-    if len(nodes) < original:
-        _save_nodes(nodes)
+    removed_node = None
+    kept = []
+    for n in nodes:
+        if n.get("node_id") == node_id and n.get("status") not in ("running", "starting"):
+            removed_node = n
+        else:
+            kept.append(n)
+    if removed_node is not None:
+        _save_nodes(kept)
+        log_file = removed_node.get("log_file")
+        if log_file:
+            try:
+                Path(log_file).unlink(missing_ok=True)
+            except Exception:
+                pass
         return True
     return False
 

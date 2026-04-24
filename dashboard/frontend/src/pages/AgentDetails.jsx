@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useWorkspace } from '../components/WorkspaceContext';
-import { ChevronLeft, Activity, History, Server, Wrench, Cpu, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi } from 'lucide-react';
-import { getAgent, getAgentHistory, getAgentHealth, getLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, getAgentModel, updateAgentModel, getNodes, getAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel } from '../api';
+import { ChevronLeft, Activity, History, Server, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare } from 'lucide-react';
+import { getAgent, getAgentHistory, getAgentHealth, getAgentLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, getAgentModel, updateAgentModel, getAgentReasoning, updateAgentReasoning, getNodes, getAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, getDockerfile, buildBaseImage, buildAgentImage, getContainerImages, getContainers, getContainerLogs, stopContainerByName, removeContainer, setDefaultChatAgent, clearDefaultChatAgent } from '../api';
 
 const NODE_STATUS = {
   running: { dot: 'bg-green-500 animate-pulse', badge: 'bg-green-100 text-green-800', label: 'Running' },
@@ -91,7 +91,7 @@ function MemoryFileCard({ file, poolId }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="font-semibold text-gray-900 text-sm">{file.name}</p>
-            {ext && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-mono uppercase">{ext}</span>}
+            {ext && <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase">{ext}</span>}
             <RagBadge status={file.rag_status || 'raw'} vectorized={file.vectorized} />
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
@@ -113,7 +113,7 @@ function MemoryFileCard({ file, poolId }) {
             <Hash className="w-3 h-3" /> Retrieval — <code className="text-indigo-600">read_memory</code> tool
           </p>
           <div className="bg-gray-900 rounded-lg px-3 py-2 flex items-start justify-between gap-2">
-            <pre className="text-xs text-green-300 font-mono overflow-x-auto flex-1">{toolArgs}</pre>
+            <pre className="text-xs text-green-300 overflow-x-auto flex-1">{toolArgs}</pre>
             <button onClick={copyTool}
               className="text-gray-400 hover:text-white shrink-0 mt-0.5 transition-colors" title="Copy">
               {copied ? <CheckCircle className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -129,8 +129,8 @@ function MemoryFileCard({ file, poolId }) {
               <span className="font-medium text-indigo-800">Vector Search Available</span>
             </div>
             {file.vector_db && <div><span className="text-gray-500">Vector DB:</span> <span className="font-medium text-gray-800">{file.vector_db}</span></div>}
-            {file.vector_db_collection && <div><span className="text-gray-500">Collection:</span> <span className="font-medium text-gray-800 font-mono">{file.vector_db_collection}</span></div>}
-            {file.embedding_model && <div><span className="text-gray-500">Model:</span> <span className="font-medium text-gray-800 font-mono">{file.embedding_model}</span></div>}
+            {file.vector_db_collection && <div><span className="text-gray-500">Collection:</span> <span className="font-medium text-gray-800">{file.vector_db_collection}</span></div>}
+            {file.embedding_model && <div><span className="text-gray-500">Model:</span> <span className="font-medium text-gray-800">{file.embedding_model}</span></div>}
             {file.embedding_dims > 0 && <div><span className="text-gray-500">Dims:</span> <span className="font-medium text-gray-800">{file.embedding_dims}</span></div>}
             {file.rag_chunk_size && <div><span className="text-gray-500">Chunk size:</span> <span className="font-medium text-gray-800">{file.rag_chunk_size} chars</span></div>}
           </div>
@@ -149,7 +149,7 @@ function MemoryFileCard({ file, poolId }) {
         {showPreview && (
           <div>
             <p className="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1"><Eye className="w-3 h-3" /> Content preview</p>
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 font-mono text-xs text-gray-700 whitespace-pre-wrap max-h-48 overflow-y-auto">
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 whitespace-pre-wrap max-h-48 overflow-y-auto">
               {file.content
                 ? (file.content.length > 800 ? file.content.slice(0, 800) + '\n…' : file.content)
                 : <span className="italic text-gray-400">No content</span>}
@@ -189,7 +189,7 @@ function MemoryPoolDetails({ pool }) {
               </span>
             </div>
             {pool.description && <p className="text-sm text-gray-500 mt-1 ml-6">{pool.description}</p>}
-            <p className="text-xs text-gray-400 mt-1 ml-6 font-mono">{pool.id}</p>
+            <p className="text-xs text-gray-400 mt-1 ml-6">{pool.id}</p>
           </div>
           <a href="/memory" className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50 whitespace-nowrap flex items-center gap-1">
             <ExternalLink className="w-3 h-3" /> Manage
@@ -268,16 +268,16 @@ function MemoryPoolDetails({ pool }) {
 
 const AgentDetails = () => {
   const { id } = useParams();
-  const { workspaceFilter, liveUpdates } = useWorkspace();
+  const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const [agent, setAgent] = useState(null);
   const [history, setHistory] = useState([]);
+  const [agentLogsData, setAgentLogsData] = useState({ runs: [], nodes: [] });
   const [tasks, setTasks] = useState([]);
   const [nodes, setNodes] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [health, setHealth] = useState(null);
-  const [selectedLog, setSelectedLog] = useState(null);
-  const [logs, setLogs] = useState('');
+
   const [agentDefinition, setAgentDefinition] = useState({ system_prompt: '', yaml: '', source: '', yaml_path: '' });
 
   const [memoryType, setMemoryType] = useState('none');
@@ -298,9 +298,36 @@ const AgentDetails = () => {
   const [logsNodeLoading, setLogsNodeLoading] = useState(false);
   const [availableTools, setAvailableTools] = useState([]);
   const [selectedTools, setSelectedTools] = useState([]);
-  const [toolsDraftDirty, setToolsDraftDirty] = useState(false);
+  const toolsDraftDirty = useRef(false);
   const [toolsSaving, setToolsSaving] = useState(false);
   const [toolsMessage, setToolsMessage] = useState('');
+
+  // Reasoning capability settings (think / plan) — persisted to localStorage per agent
+  const REASONING_TOOLS = ['think', 'plan'];
+  const MEMORY_TOOLS = ['read_memory', 'write_memory'];
+  const THINK_MODES = [
+    { value: 'standard', label: 'Standard', desc: 'Reason before and after key actions' },
+    { value: 'deep', label: 'Deep', desc: 'Reason extensively at every step' },
+    { value: 'analytical', label: 'Analytical', desc: 'Focus on error diagnosis and logic checking' },
+  ];
+  const PLAN_FORMATS = [
+    { value: 'structured', label: 'Structured', desc: 'Sections with headers and sub-steps' },
+    { value: 'bullet', label: 'Bullet List', desc: 'Flat list of action items' },
+    { value: 'numbered', label: 'Numbered Steps', desc: 'Ordered numbered checklist' },
+    { value: 'freeform', label: 'Free-form', desc: 'Unstructured narrative plan' },
+  ];
+  const defaultReasoningSettings = { thinkMode: 'standard', planFormat: 'structured' };
+  const [reasoningSettings, setReasoningSettings] = useState(defaultReasoningSettings);
+
+  // Default chat agent state
+  const [isDefaultChat, setIsDefaultChat] = useState(false);
+  const [defaultChatSaving, setDefaultChatSaving] = useState(false);
+  const [defaultChatMessage, setDefaultChatMessage] = useState('');
+
+  // Workspace capacity overrides state
+  const [wsCapacities, setWsCapacities] = useState({});
+  const [wsCapacityEdits, setWsCapacityEdits] = useState({});
+  const [wsCapacitySaving, setWsCapacitySaving] = useState(null);
 
   // Model config tab state
   const [modelForm, setModelForm] = useState(EMPTY_MODEL);
@@ -312,31 +339,134 @@ const AgentDetails = () => {
   const [localModelsFetching, setLocalModelsFetching] = useState(false);
   const [localModelsError, setLocalModelsError] = useState('');
 
+  // Docker tab state
+  const [dockerfileContent, setDockerfileContent] = useState('');
+  const [dockerfileLoading, setDockerfileLoading] = useState(false);
+  const [dockerImages, setDockerImages] = useState([]);
+  const [dockerContainers, setDockerContainers] = useState([]);
+  const [dockerLoading, setDockerLoading] = useState(false);
+  const [buildingBase, setBuildingBase] = useState(false);
+  const [buildingAgent, setBuildingAgent] = useState(false);
+  const [buildLog, setBuildLog] = useState('');
+  const [buildError, setBuildError] = useState('');
+  const [containerLogsName, setContainerLogsName] = useState(null);
+  const [containerLogsText, setContainerLogsText] = useState('');
+  const [containerLogsLoading, setContainerLogsLoading] = useState(false);
+  const [dockerActionBusy, setDockerActionBusy] = useState({});
+
+  const fetchDockerData = async () => {
+    setDockerLoading(true);
+    try {
+      const [imagesResp, containersResp] = await Promise.all([
+        getContainerImages(),
+        getContainers(),
+      ]);
+      setDockerImages(imagesResp.data?.images || []);
+      const allContainers = containersResp.data?.containers || [];
+      setDockerContainers(allContainers.filter(c => c.agent_id === id || c.name?.includes(id)));
+    } catch (_) {}
+    setDockerLoading(false);
+  };
+
+  const fetchDockerfile = async () => {
+    setDockerfileLoading(true);
+    try {
+      const resp = await getDockerfile(id);
+      setDockerfileContent(typeof resp.data === 'string' ? resp.data : resp.data);
+    } catch (_) {
+      setDockerfileContent('');
+    }
+    setDockerfileLoading(false);
+  };
+
+  const handleBuildBase = async () => {
+    setBuildingBase(true);
+    setBuildLog('');
+    setBuildError('');
+    try {
+      const resp = await buildBaseImage({ no_cache: false });
+      setBuildLog(resp.data?.log || 'Build complete.');
+    } catch (e) {
+      setBuildError(e.response?.data?.detail || e.message || 'Build failed');
+    } finally {
+      setBuildingBase(false);
+      fetchDockerData();
+    }
+  };
+
+  const handleBuildAgent = async () => {
+    setBuildingAgent(true);
+    setBuildLog('');
+    setBuildError('');
+    try {
+      const resp = await buildAgentImage(id, { no_cache: false });
+      setBuildLog(resp.data?.log || 'Build complete.');
+    } catch (e) {
+      setBuildError(e.response?.data?.detail || e.message || 'Build failed');
+    } finally {
+      setBuildingAgent(false);
+      fetchDockerData();
+    }
+  };
+
+  const handleShowContainerLogs = async (name) => {
+    setContainerLogsName(name);
+    setContainerLogsLoading(true);
+    setContainerLogsText('');
+    try {
+      const resp = await getContainerLogs(name, 300);
+      setContainerLogsText(typeof resp.data === 'string' ? resp.data : '');
+    } catch (e) {
+      setContainerLogsText(`[error: ${e.message}]`);
+    }
+    setContainerLogsLoading(false);
+  };
+
+  const handleStopContainer = async (name) => {
+    setDockerActionBusy(b => ({ ...b, [name]: true }));
+    try {
+      await stopContainerByName(name);
+      fetchDockerData();
+    } catch (_) {}
+    setDockerActionBusy(b => ({ ...b, [name]: false }));
+  };
+
+  const handleRemoveContainer = async (name) => {
+    setDockerActionBusy(b => ({ ...b, [name]: true }));
+    try {
+      await removeContainer(name);
+      fetchDockerData();
+    } catch (_) {}
+    setDockerActionBusy(b => ({ ...b, [name]: false }));
+  };
+
   const fetchData = async () => {
     try {
-      const [agentResp, historyResp, tasksResp, workspacesResp] = await Promise.all([
+      const [agentResp, historyResp, tasksResp, workspacesResp, wsCapResp, logsResp] = await Promise.all([
         getAgent(id),
         getAgentHistory(id),
         getTasks(workspaceFilter),
         getWorkspaces(),
+        getAgentWorkspaceCapacities(id).catch(() => ({ data: {} })),
+        getAgentLogs(id).catch(() => ({ data: { runs: [], nodes: [] } })),
       ]);
       setAgent(agentResp.data);
+      setIsDefaultChat(!!agentResp.data?.is_default_chat_agent);
       setHistory(historyResp.data);
+      setAgentLogsData(logsResp.data || { runs: [], nodes: [] });
       setTasks(tasksResp.data || []);
       setWorkspaces(workspacesResp.data || []);
-      const savedTools = Array.isArray(agentResp.data?.tools)
-        ? agentResp.data.tools
-        : (Array.isArray(agentResp.data?.capabilities) ? agentResp.data.capabilities : []);
-      const paramsTools = Array.isArray(agentResp.data?.default_params?.tools) ? agentResp.data.default_params.tools : [];
-      if (!toolsDraftDirty) {
-        setSelectedTools([...new Set([...savedTools, ...paramsTools])]);
+      setWsCapacities(wsCapResp.data || {});
+      const savedTools = Array.isArray(agentResp.data?.tools) ? agentResp.data.tools : [];
+      if (!toolsDraftDirty.current) {
+        setSelectedTools([...new Set([...savedTools])]);
       }
       if (!memoryDraftDirty.current) {
         setMemoryType(agentResp.data.memory_type || 'none');
         setMemoryData(typeof agentResp.data.memory_data === 'string' ? agentResp.data.memory_data : JSON.stringify(agentResp.data.memory_data || '', null, 2));
       }
       try {
-        const nodesResp = await getNodes();
+        const nodesResp = await getNodes(workspaceFilter);
         setNodes((nodesResp.data || []).filter((n) => n.agent_id === id));
       } catch {
         setNodes([]);
@@ -368,14 +498,22 @@ const AgentDetails = () => {
     if (!liveUpdates) return;
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
-  }, [id, liveUpdates]);
+  }, [id, liveUpdates, workspaceFilter]);
 
   useEffect(() => {
-    setToolsDraftDirty(false);
+    toolsDraftDirty.current = false;
     setToolsMessage('');
     memoryDraftDirty.current = false;
     setModelForm(EMPTY_MODEL);
     setModelMessage('');
+    setReasoningSettings(defaultReasoningSettings);
+  }, [id]);
+
+  // Load reasoning settings from server whenever agent changes
+  useEffect(() => {
+    getAgentReasoning(id)
+      .then(r => setReasoningSettings({ thinkMode: r.data.think_mode || 'standard', planFormat: r.data.plan_format || 'structured' }))
+      .catch(() => setReasoningSettings(defaultReasoningSettings));
   }, [id]);
 
   useEffect(() => {
@@ -443,10 +581,62 @@ const AgentDetails = () => {
     }
   };
 
+  const handleSaveWsCapacity = async (wsName) => {
+    const raw = wsCapacityEdits[wsName];
+    const val = raw === '' || raw === undefined ? null : parseInt(raw, 10);
+    if (val !== null && (isNaN(val) || val < 1)) return;
+    setWsCapacitySaving(wsName);
+    try {
+      if (val === null) {
+        await removeWorkspaceAgentCapacity(wsName, id);
+      } else {
+        await setWorkspaceAgentCapacity(wsName, id, val);
+      }
+      setWsCapacities(prev => {
+        const next = { ...prev };
+        if (val === null) delete next[wsName]; else next[wsName] = val;
+        return next;
+      });
+      setWsCapacityEdits(prev => { const n = { ...prev }; delete n[wsName]; return n; });
+    } catch {
+      alert('Failed to save capacity');
+    } finally {
+      setWsCapacitySaving(null);
+    }
+  };
+
+  const handleToggleDefaultChat = async (checked) => {
+    setDefaultChatSaving(true);
+    setDefaultChatMessage('');
+    try {
+      if (checked) {
+        await setDefaultChatAgent(id);
+        setIsDefaultChat(true);
+        setDefaultChatMessage('Set as default chat agent.');
+      } else {
+        await clearDefaultChatAgent(id);
+        setIsDefaultChat(false);
+        setDefaultChatMessage('Default cleared.');
+      }
+      setTimeout(() => setDefaultChatMessage(''), 3000);
+    } catch {
+      setDefaultChatMessage('Failed to update default chat agent.');
+    } finally {
+      setDefaultChatSaving(false);
+    }
+  };
+
   // Load shared memory pools when the memory tab opens
   useEffect(() => {
     if (activeTab !== 'memory') return;
-    getSharedMemories().then(r => setSharedMemories(r.data || [])).catch(() => {});
+    getSharedMemories(workspaceFilter).then(r => setSharedMemories(r.data || [])).catch(() => {});
+  }, [activeTab, workspaceFilter]);
+
+  // Load Docker data + Dockerfile when the docker tab opens
+  useEffect(() => {
+    if (activeTab !== 'docker') return;
+    fetchDockerData();
+    fetchDockerfile();
   }, [activeTab]);
 
   // Load full pool details whenever the selected pool ID changes
@@ -461,16 +651,6 @@ const AgentDetails = () => {
       .finally(() => setLoadingPool(false));
   }, [memoryType, memoryData]);
 
-  const viewLogs = async (runId) => {
-    try {
-      setSelectedLog(runId);
-      setLogs('Loading logs...');
-      const resp = await getLogs(runId);
-      setLogs(resp.data.logs);
-    } catch {
-      setLogs('Could not fetch logs for this run.');
-    }
-  };
 
   const handleStartNode = async () => {
     if (agent?.is_remote) return;
@@ -542,7 +722,7 @@ const AgentDetails = () => {
         ? prev.filter((t) => t !== toolId)
         : [...prev, toolId]
     ));
-    setToolsDraftDirty(true);
+    toolsDraftDirty.current = true;
     setToolsMessage('');
   };
 
@@ -552,7 +732,7 @@ const AgentDetails = () => {
     try {
       await updateAgentTools(id, { tools: selectedTools });
       setToolsMessage('Tools updated');
-      setToolsDraftDirty(false);
+      toolsDraftDirty.current = false;
       await fetchData();
     } catch (error) {
       setToolsMessage(error.response?.data?.detail || 'Failed to update tools');
@@ -623,14 +803,25 @@ const AgentDetails = () => {
   if (!agent) return <div className="text-center py-10">Agent not found</div>;
 
   const activeTask = history.find(r => r.status === 'running');
-  const configuredTools = Array.isArray(agent?.default_params?.tools) ? agent.default_params.tools : [];
-  const agentTools = Array.isArray(agent?.tools) ? agent.tools : (Array.isArray(agent?.capabilities) ? agent.capabilities : []);
-  const mergedTools = [...new Set([...configuredTools, ...agentTools])];
+  const agentTools = Array.isArray(agent?.tools) ? agent.tools : [];
+  const mergedTools = [...new Set([...agentTools])];
   const visibleToolIds = [...new Set([...availableTools, ...mergedTools, ...selectedTools])];
-  const toolsDirty = toolsDraftDirty || ([...selectedTools].sort().join('|') !== [...mergedTools].sort().join('|'));
+  const toolsDirty = toolsDraftDirty.current || ([...selectedTools].sort().join('|') !== [...mergedTools].sort().join('|'));
   const runningNodesCount = nodes.filter((n) => n.status === 'running' || n.status === 'starting').length;
   const agentTasks = (tasks || []).filter((t) => t.assigned_agent_type === id);
   const runningTasks = agentTasks.filter((t) => t.agent_state === 'running');
+  const agentSingleCapacity = agent?.capacity || 1;
+  const isDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
+  // workspace-level session cap (enforced by backend); unlimited in default workspace
+  const wsSessionCap = isDefaultWorkspace ? Infinity : (wsCapacities[selectedWorkspace] ?? 1);
+  // max sessions = nodes × per-node capacity, capped by workspace limit
+  const maxSessions = Math.min(runningNodesCount * agentSingleCapacity, wsSessionCap === Infinity ? Infinity : wsSessionCap);
+  const nodesOverWsCap = !isDefaultWorkspace && runningNodesCount >= wsSessionCap;
+  const atCapacity = maxSessions !== Infinity && maxSessions > 0 && runningTasks.length >= maxSessions;
+  const noNodes = runningNodesCount === 0;
+  const sessionLoadFactor = maxSessions > 0 && maxSessions !== Infinity
+    ? Math.min(100, Math.round((runningTasks.length / maxSessions) * 100))
+    : (maxSessions === Infinity && runningTasks.length > 0 ? Math.min(100, Math.round((runningTasks.length / (runningTasks.length + 1)) * 100)) : 0);
 
   return (
     <div>
@@ -640,19 +831,47 @@ const AgentDetails = () => {
 
       <div className="bg-white p-6 shadow-md rounded-lg border-t-4 border-indigo-600 mb-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-2">{agent.name}</h2>
-        <p className="text-sm text-gray-500 font-mono mb-4">{agent.id}</p>
+        <p className="text-sm text-gray-500 mb-4">{agent.id}</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
-            <div className="text-[10px] uppercase tracking-wider text-indigo-500 font-semibold">Current Capacity</div>
-            <div className="text-sm font-semibold text-indigo-900">{runningTasks.length} / {agent.capacity || 1}</div>
+          {/* Nodes card */}
+          <div className={`border rounded-lg px-3 py-2 ${nodesOverWsCap ? 'bg-orange-50 border-orange-300' : 'bg-indigo-50 border-indigo-100'}`}>
+            <div className={`text-[10px] uppercase tracking-wider font-semibold ${nodesOverWsCap ? 'text-orange-500' : 'text-indigo-500'}`}>Nodes</div>
+            <div className={`text-sm font-semibold ${nodesOverWsCap ? 'text-orange-900' : 'text-indigo-900'}`}>
+              {runningNodesCount} / {isDefaultWorkspace ? '∞' : wsSessionCap} running
+            </div>
+            {nodesOverWsCap && (
+              <div className="text-[10px] text-orange-600 mt-0.5 font-medium">Exceeds workspace cap</div>
+            )}
           </div>
-          <div className="bg-green-50 border border-green-100 rounded-lg px-3 py-2">
-            <div className="text-[10px] uppercase tracking-wider text-green-500 font-semibold">Running Nodes</div>
-            <div className="text-sm font-semibold text-green-900">{runningNodesCount}</div>
+
+          {/* Sessions card */}
+          <div className={`border rounded-lg px-3 py-2 ${atCapacity ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-100'}`}>
+            <div className={`text-[10px] uppercase tracking-wider font-semibold ${atCapacity ? 'text-red-500' : 'text-green-500'}`}>Sessions</div>
+            {noNodes ? (
+              <div className="text-xs text-amber-700 font-medium mt-0.5">No nodes running — start a node to accept tasks</div>
+            ) : (
+              <>
+                <div className={`text-sm font-semibold mb-1 ${atCapacity ? 'text-red-900' : 'text-green-900'}`}>
+                  {runningTasks.length} / {maxSessions === Infinity ? '∞' : maxSessions} open
+                </div>
+                <div className={`h-1.5 rounded-full overflow-hidden ${atCapacity ? 'bg-red-200' : 'bg-green-200'}`}>
+                  <div
+                    className={`h-full rounded-full ${atCapacity ? 'bg-red-500' : sessionLoadFactor > 80 ? 'bg-orange-500' : 'bg-indigo-500'}`}
+                    style={{ width: `${maxSessions === Infinity ? 0 : sessionLoadFactor}%` }}
+                  />
+                </div>
+                <div className={`text-[10px] mt-0.5 ${atCapacity ? 'text-red-600 font-semibold' : 'text-green-700'}`}>
+                  {atCapacity ? 'At capacity — no slots available' : `Load ${maxSessions === Infinity ? '—' : sessionLoadFactor + '%'}`}
+                </div>
+              </>
+            )}
           </div>
+
+          {/* Running tasks card */}
           <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
             <div className="text-[10px] uppercase tracking-wider text-amber-500 font-semibold">Running Tasks</div>
             <div className="text-sm font-semibold text-amber-900">{runningTasks.length}</div>
+            <div className="text-[10px] text-amber-600 mt-0.5">{agentTasks.length} total assigned</div>
           </div>
         </div>
       </div>
@@ -662,12 +881,15 @@ const AgentDetails = () => {
           {[
             { id: 'overview', label: 'Overview', icon: Activity },
             { id: 'history', label: 'Sessions', icon: History },
+            { id: 'logs', label: 'Runs', icon: FileText },
             { id: 'model', label: 'Model', icon: BrainCircuit },
             { id: 'memory', label: 'Memory', icon: Database },
             { id: 'tools', label: 'Tools', icon: Wrench },
+            { id: 'commands', label: 'Commands', icon: Terminal },
             { id: 'nodes', label: 'Nodes', icon: Server },
             { id: 'tasks', label: 'Tasks', icon: Clock },
             { id: 'config', label: 'Config', icon: FileCode },
+            { id: 'docker', label: 'Docker', icon: Layers },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -692,48 +914,173 @@ const AgentDetails = () => {
 
       {activeTab === 'overview' && (
         <div className="space-y-6">
+
+          {/* ── Agent Identity ── */}
           <div className="bg-white p-6 shadow-md rounded-lg">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between py-2 border-b border-gray-50">
-                <span className="text-gray-500 flex items-center"><Server className="w-4 h-4 mr-2" /> Type</span>
-                <span className="font-medium capitalize">{agent.is_remote ? 'Remote' : 'Local'}</span>
+            <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-4">
+              <Activity className="w-4 h-4 text-indigo-500" /> Agent Identity
+            </h3>
+            {agent.description && (
+              <p className="text-base text-gray-600 mb-5 leading-relaxed">{agent.description}</p>
+            )}
+            <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">ID</span>
+                <span className=" text-gray-700 text-xs break-all">{agent.id}</span>
               </div>
-
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Type</span>
+                <span className="font-medium capitalize">{agent.is_remote ? 'Remote' : 'Local'}{agent.type ? <> · <span className=" text-xs">{agent.type}</span></> : ''}</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Domain</span>
+                <span className=" text-gray-700 text-xs">{agent.domain || 'general'}</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Entrypoint</span>
+                <span className=" text-xs text-gray-700 break-all">{agent.entrypoint || '—'}</span>
+              </div>
+              {agentDefinition.source && (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Definition Source</span>
+                  <span className=" text-xs text-gray-700">{agentDefinition.source}</span>
+                </div>
+              )}
+              {agentDefinition.yaml_path && (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">YAML Path</span>
+                  <span className=" text-xs text-indigo-600 break-all">{agentDefinition.yaml_path}</span>
+                </div>
+              )}
               {agent.is_remote && (
-                <div className="py-2 border-b border-gray-50">
-                  <span className="text-gray-500 flex items-center mb-1"><ExternalLink className="w-4 h-4 mr-2" /> URL</span>
-                  <p className="text-xs font-mono text-indigo-600 break-all">{agent.agent_url}</p>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">URL</span>
+                  <span className=" text-xs text-indigo-600 break-all">{agent.agent_url}</span>
                 </div>
               )}
-
-              <div className="flex items-center justify-between py-2 border-b border-gray-50">
-                <span className="text-gray-500 flex items-center"><Activity className="w-4 h-4 mr-2" /> Capacity</span>
-                <span className="font-medium">{agent.capacity} concurrent runs</span>
-              </div>
-
               {agent.original_id && (
-                <div className="flex items-center justify-between py-2 border-b border-gray-50">
-                  <span className="text-gray-500 flex items-center"><History className="w-4 h-4 mr-2" /> Cloned From</span>
-                  <Link to={`/agents/${agent.original_id}`} className="text-indigo-600 hover:underline font-medium">{agent.original_id}</Link>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Cloned From</span>
+                  <Link to={`/agents/${agent.original_id}`} className="text-indigo-600 hover:underline text-sm font-medium">{agent.original_id}</Link>
                 </div>
               )}
-
-              <div className="py-2">
-                <span className="text-gray-500 flex items-center mb-2"><Wrench className="w-4 h-4 mr-2" /> Tools</span>
-                <div className="flex flex-wrap gap-2">
-                  {agentTools.length > 0 ? agentTools.map(tool => (
-                    <span key={tool} className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{tool}</span>
-                  )) : <span className="text-xs text-gray-400 italic">None configured</span>}
+              {selectedWorkspace && selectedWorkspace !== 'default' && (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Workspace Capacity</span>
+                  {(() => {
+                    const effectiveCapacity = wsCapacities[selectedWorkspace] ?? 1;
+                    const editVal = wsCapacityEdits[selectedWorkspace];
+                    const isEditing = editVal !== undefined;
+                    const isSaving = wsCapacitySaving === selectedWorkspace;
+                    return isEditing ? (
+                      <div className="flex items-center gap-2">
+                        <input type="number" min="1" value={editVal}
+                          onChange={e => setWsCapacityEdits(prev => ({ ...prev, [selectedWorkspace]: e.target.value }))}
+                          className="w-24 border border-gray-300 rounded px-2 py-0.5 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                        <button onClick={() => handleSaveWsCapacity(selectedWorkspace)} disabled={isSaving}
+                          className="text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-1 rounded disabled:opacity-50">
+                          {isSaving ? '...' : 'Save'}
+                        </button>
+                        <button onClick={() => setWsCapacityEdits(prev => { const n = { ...prev }; delete n[selectedWorkspace]; return n; })}
+                          className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{effectiveCapacity} concurrent runs</span>
+                        <button onClick={() => setWsCapacityEdits(prev => ({ ...prev, [selectedWorkspace]: String(effectiveCapacity) }))}
+                          className="text-xs text-indigo-600 hover:text-indigo-800">Edit</button>
+                      </div>
+                    );
+                  })()}
                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Tools & Memory stats ── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Tools */}
+            <div className="bg-white p-5 shadow-md rounded-lg">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-indigo-500" /> Tools
+                </h3>
+                <button type="button" onClick={() => setActiveTab('tools')}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50">
+                  Manage
+                </button>
+              </div>
+              <div className="flex items-center gap-6 mb-4">
+                <div className="text-center">
+                  <p className="text-3xl font-bold text-indigo-700">{selectedTools.length}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Enabled</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-3xl font-bold text-gray-300">{availableTools.length}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Available</p>
+                </div>
+              </div>
+              {selectedTools.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedTools.slice(0, 8).map(tool => (
+                    <span key={tool} className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full">{tool}</span>
+                  ))}
+                  {selectedTools.length > 8 && (
+                    <button type="button" onClick={() => setActiveTab('tools')}
+                      className="text-xs text-gray-400 hover:text-indigo-600 px-1 py-0.5">
+                      +{selectedTools.length - 8} more
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 italic">No tools enabled. Click Manage to configure.</p>
+              )}
+            </div>
+
+            {/* Memory */}
+            <div className="bg-white p-5 shadow-md rounded-lg">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+                  <Database className="w-4 h-4 text-amber-500" /> Memory
+                </h3>
+                <button type="button" onClick={() => setActiveTab('memory')}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50">
+                  Configure
+                </button>
+              </div>
+              <div className="space-y-3">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
+                  memoryType === 'none'   ? 'bg-gray-100 text-gray-500' :
+                  memoryType === 'local'  ? 'bg-blue-100 text-blue-700' :
+                                            'bg-amber-100 text-amber-700'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${
+                    memoryType === 'none'  ? 'bg-gray-400' :
+                    memoryType === 'local' ? 'bg-blue-500' : 'bg-amber-500 animate-pulse'
+                  }`} />
+                  {memoryType === 'none' ? 'No memory' : memoryType === 'local' ? 'Local (agent-specific)' : 'Shared pool'}
+                </span>
+                {memoryType === 'shared' && memoryData && (
+                  <div className="text-xs text-gray-500 truncate">Pool: {memoryData}</div>
+                )}
+                {memoryType === 'local' && memoryData && (
+                  <div className="text-xs text-gray-500 italic line-clamp-2">{memoryData.slice(0, 120)}{memoryData.length > 120 ? '…' : ''}</div>
+                )}
+                {memoryType === 'none' && (
+                  <p className="text-xs text-gray-400">No memory persistence between sessions.</p>
+                )}
               </div>
             </div>
           </div>
 
           {/* Model & Parameters card */}
           {(() => {
-            const dp = agent.default_params || {};
-            const provider = dp.provider && dp.provider !== 'inherit' ? dp.provider : null;
-            const hasModelConfig = provider || dp.model || dp.base_url || dp.temperature != null || dp.max_tokens != null || dp.api_key;
+            // All model fields are top-level on the agent object
+            const provider = agent.provider && agent.provider !== 'inherit' ? agent.provider : null;
+            const agentModel = agent.model || null;
+            const agentBaseUrl = agent.base_url || null;
+            const hasModelConfig = provider || agentModel || agentBaseUrl || agent.temperature != null || agent.max_tokens != null;
             if (!hasModelConfig) return null;
             const providerColors = {
               openai:    'bg-green-100 text-green-700',
@@ -763,36 +1110,28 @@ const AgentDetails = () => {
                       </span>
                     </div>
                   )}
-                  {dp.model && (
+                  {agentModel && (
                     <div className="col-span-2 flex items-center gap-2">
                       <span className="text-gray-500 w-28 shrink-0">Model</span>
-                      <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{dp.model}</span>
+                      <span className=" text-xs bg-gray-100 px-2 py-0.5 rounded">{agentModel}</span>
                     </div>
                   )}
-                  {dp.base_url && (
+                  {agentBaseUrl && (
                     <div className="col-span-2 flex items-center gap-2 min-w-0">
                       <span className="text-gray-500 w-28 shrink-0">Base URL</span>
-                      <span className="font-mono text-xs text-indigo-600 truncate">{dp.base_url}</span>
+                      <span className=" text-xs text-indigo-600 truncate">{agentBaseUrl}</span>
                     </div>
                   )}
-                  {dp.temperature != null && (
+                  {agent.temperature != null && (
                     <div className="flex items-center gap-2">
                       <span className="text-gray-500">Temperature</span>
-                      <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{dp.temperature}</span>
+                      <span className=" text-xs bg-gray-100 px-2 py-0.5 rounded">{agent.temperature}</span>
                     </div>
                   )}
-                  {dp.max_tokens != null && (
+                  {agent.max_tokens != null && (
                     <div className="flex items-center gap-2">
                       <span className="text-gray-500">Max Tokens</span>
-                      <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{dp.max_tokens.toLocaleString()}</span>
-                    </div>
-                  )}
-                  {dp.api_key && (
-                    <div className="col-span-2 flex items-center gap-2">
-                      <span className="text-gray-500 w-28 shrink-0">API Key</span>
-                      <span className="flex items-center gap-1 text-xs text-green-700">
-                        <CheckCircle className="w-3 h-3" /> Custom key stored
-                      </span>
+                      <span className=" text-xs bg-gray-100 px-2 py-0.5 rounded">{agent.max_tokens.toLocaleString()}</span>
                     </div>
                   )}
                 </div>
@@ -819,6 +1158,36 @@ const AgentDetails = () => {
               <Link to={`/tasks/${activeTask.task_id}`} className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 inline-block">
                 View Task Details
               </Link>
+            </div>
+          )}
+
+          {/* ── Chat Settings ── */}
+          {!agent.is_remote && (
+            <div className="bg-white p-6 shadow-md rounded-lg">
+              <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-1">
+                <MessageSquare className="w-4 h-4 text-indigo-500" /> Chat Settings
+              </h3>
+              <p className="text-xs text-gray-500 mb-4">Configure how this agent appears in the Chat interface.</p>
+              <label className="flex items-center gap-3 cursor-pointer select-none">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={isDefaultChat}
+                    disabled={defaultChatSaving}
+                    onChange={e => handleToggleDefaultChat(e.target.checked)}
+                  />
+                  <div className={`w-10 h-6 rounded-full transition-colors ${isDefaultChat ? 'bg-indigo-600' : 'bg-gray-300'} ${defaultChatSaving ? 'opacity-50' : ''}`} />
+                  <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${isDefaultChat ? 'translate-x-4' : 'translate-x-0'}`} />
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-800">Default chat agent</div>
+                  <div className="text-xs text-gray-500">Pre-select this agent when opening the Chat page or starting a new conversation.</div>
+                </div>
+              </label>
+              {defaultChatMessage && (
+                <p className="mt-3 text-xs text-indigo-600">{defaultChatMessage}</p>
+              )}
             </div>
           )}
         </div>
@@ -857,19 +1226,24 @@ const AgentDetails = () => {
                             <span className="text-sm capitalize">{run.status}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-2 whitespace-nowrap text-sm font-mono text-gray-600">
-                          {String(run.task_id || '').slice(0, 8)}...
+                        <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-600">
+                          {run.task_id ? (
+                            <Link to={`/tasks/${run.task_id}`} className="text-indigo-600 hover:text-indigo-900 hover:underline font-mono">
+                              {String(run.task_id).slice(0, 8)}…
+                            </Link>
+                          ) : '—'}
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap text-xs text-gray-500">
                           {new Date(run.started_at).toLocaleString()}
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap text-right">
-                          <button
-                            onClick={() => viewLogs(run.run_id)}
-                            className="text-indigo-600 hover:text-indigo-900 text-xs font-medium flex items-center justify-end"
-                          >
-                            <Terminal className="w-3 h-3 mr-1" /> Logs
-                          </button>
+                          <div className="flex items-center justify-end gap-3">
+                            {run.session_id && (
+                              <Link to={`/sessions/${run.session_id}`} className="text-indigo-600 hover:text-indigo-900 text-xs font-medium flex items-center gap-1">
+                                <History className="w-3 h-3" /> Session
+                              </Link>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -879,19 +1253,121 @@ const AgentDetails = () => {
             </div>
           </div>
 
-          {selectedLog && (
-            <div className="bg-gray-900 rounded-lg shadow-md overflow-hidden flex flex-col h-[500px]">
-              <div className="bg-gray-800 px-4 py-2 flex items-center justify-between border-b border-gray-700">
-                <div className="flex items-center text-gray-300 text-sm font-medium">
-                  <Terminal className="w-4 h-4 mr-2" /> Run Logs: {selectedLog.slice(0, 8)}
-                </div>
-                <button onClick={() => setSelectedLog(null)} className="text-gray-400 hover:text-white">&times;</button>
-              </div>
-              <div className="p-4 flex-1 overflow-auto font-mono text-xs text-green-400 bg-black">
-                <pre className="whitespace-pre-wrap">{logs}</pre>
-              </div>
+        </div>
+      )}
+
+      {activeTab === 'logs' && (
+        <div className="space-y-6">
+          <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4">
+            <div className="text-sm font-semibold text-indigo-900 mb-1">Node-scoped logs</div>
+            <div className="text-xs text-indigo-700">
+              Agent run/chat logs are written to node folders under <code>agents/state/node_runs/&lt;node_id&gt;/</code>.
             </div>
-          )}
+          </div>
+
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <h3 className="text-lg font-bold mb-4 flex items-center">
+              <FileText className="w-5 h-5 mr-2 text-indigo-600" /> Run Logs
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Node</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Task</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Log File</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {(agentLogsData.runs || []).length === 0 ? (
+                    <tr>
+                      <td colSpan="5" className="px-4 py-8 text-center text-gray-500 italic">No run logs found for this agent.</td>
+                    </tr>
+                  ) : (
+                    (agentLogsData.runs || []).map((run) => (
+                      <tr key={run.run_id} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 whitespace-nowrap text-sm capitalize">{run.status || '—'}</td>
+                        <td className="px-4 py-2 whitespace-nowrap text-xs">
+                          {run.node_id ? (
+                            <Link to={`/nodes/${run.node_id}`} className="text-indigo-600 hover:text-indigo-900 hover:underline font-mono">
+                              {String(run.node_id).slice(0, 8)}…
+                            </Link>
+                          ) : '—'}
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-xs">
+                          {run.task_id ? (
+                            <Link to={`/tasks/${run.task_id}`} className="text-indigo-600 hover:text-indigo-900 hover:underline font-mono">
+                              {String(run.task_id).slice(0, 8)}…
+                            </Link>
+                          ) : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-xs text-gray-500 max-w-[500px] truncate">{run.log_file || '—'}</td>
+                        <td className="px-4 py-2 whitespace-nowrap text-right">
+                          <div className="flex items-center justify-end gap-3">
+                            <Link to={`/messages/${run.run_id}`} className="text-indigo-600 hover:text-indigo-900 text-xs font-medium flex items-center gap-1">
+                              <MessageSquare className="w-3 h-3" /> Message
+                            </Link>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <h3 className="text-lg font-bold mb-4 flex items-center">
+              <Server className="w-5 h-5 mr-2 text-indigo-600" /> Node Process Logs
+            </h3>
+            <div className="overflow-x-auto border border-gray-100 rounded-lg">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Node</th>
+                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
+                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Workspace</th>
+                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Log File</th>
+                    <th className="text-right px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {(agentLogsData.nodes || []).length === 0 ? (
+                    <tr>
+                      <td colSpan="5" className="px-4 py-8 text-center text-gray-500 italic">No node logs found for this agent.</td>
+                    </tr>
+                  ) : (
+                    (agentLogsData.nodes || []).map((node) => {
+                      const nodeId = node.node_id || node.id;
+                      return (
+                        <tr key={nodeId} className="hover:bg-gray-50">
+                          <td className="px-4 py-2 text-xs">
+                            <Link to={`/nodes/${nodeId}`} className="text-indigo-600 hover:text-indigo-900 hover:underline font-mono">
+                              {String(nodeId || '').slice(0, 8)}…
+                            </Link>
+                          </td>
+                          <td className="px-4 py-2"><NodeStatusBadge status={node.status} /></td>
+                          <td className="px-4 py-2 text-xs text-gray-600">{node.workspace || '—'}</td>
+                          <td className="px-4 py-2 text-xs text-gray-500 max-w-[500px] truncate">{node.log_file || '—'}</td>
+                          <td className="px-4 py-2 text-right">
+                            <button
+                              onClick={() => openNodeLogs(node)}
+                              className="text-indigo-600 hover:text-indigo-900 text-xs font-medium inline-flex items-center justify-end"
+                            >
+                              <Terminal className="w-3 h-3 mr-1" /> Open
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -938,11 +1414,11 @@ const AgentDetails = () => {
                       value={memoryData}
                       onChange={(e) => { setMemoryData(e.target.value); memoryDraftDirty.current = true; }}
                       placeholder="Shared Memory Pool ID (UUID)"
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   )}
                   {memoryData && (
-                    <p className="text-xs text-gray-400 mt-1 font-mono truncate">ID: {memoryData}</p>
+                    <p className="text-xs text-gray-400 mt-1 truncate">ID: {memoryData}</p>
                   )}
                 </div>
               )}
@@ -955,7 +1431,7 @@ const AgentDetails = () => {
                     onChange={(e) => { setMemoryData(e.target.value); memoryDraftDirty.current = true; }}
                     placeholder="Enter memory content or configuration"
                     rows={5}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
               )}
@@ -979,6 +1455,55 @@ const AgentDetails = () => {
               </div>
             </div>
           </div>
+
+          {/* ── Memory Tools ── */}
+          {memoryType === 'shared' && memoryData && (
+            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+              <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Wrench className="w-4 h-4 text-indigo-500" /> Memory Tools
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* read_memory — always on */}
+                <div className="p-3 border-2 border-green-200 bg-green-50 rounded-xl flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">Read Memory</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Read files, notes, and key-value pairs from the pool</div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-semibold border bg-green-600 text-white border-green-600 shrink-0">
+                    Always On
+                  </span>
+                </div>
+                {/* write_memory — toggleable */}
+                {(() => {
+                  const enabled = selectedTools.includes('write_memory');
+                  return (
+                    <div className={`p-3 border-2 rounded-xl flex items-center justify-between gap-3 transition-colors ${enabled ? 'border-indigo-200 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900">Write Memory</div>
+                        <div className="text-xs text-gray-500 mt-0.5">Create or update files, notes, and key-value pairs</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const next = enabled
+                            ? selectedTools.filter(t => t !== 'write_memory')
+                            : [...selectedTools, 'write_memory'];
+                          setSelectedTools(next);
+                          setToolsSaving(true);
+                          try { await updateAgentTools(id, { tools: next }); await fetchData(); } catch {} finally { setToolsSaving(false); }
+                        }}
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold border shrink-0 ${
+                          enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-500 border-gray-300'
+                        }`}
+                      >
+                        {enabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
 
           {/* ── Connected pool details ── */}
           {memoryType === 'shared' && (
@@ -1006,6 +1531,127 @@ const AgentDetails = () => {
 
       {activeTab === 'tools' && (
         <div className="space-y-6">
+
+          {/* ── Reasoning Capabilities ── */}
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <h3 className="text-lg font-bold flex items-center mb-1">
+              <BrainCircuit className="w-5 h-5 mr-2 text-violet-600" />
+              Reasoning Capabilities
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Enable structured reasoning and planning for this agent. These capabilities are configured separately from regular tools.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Think card */}
+              {(() => {
+                const enabled = selectedTools.includes('think');
+                return (
+                  <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50'}`}>
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className={`p-2 rounded-lg ${enabled ? 'bg-violet-100' : 'bg-gray-200'}`}>
+                          <BrainCircuit className={`w-4 h-4 ${enabled ? 'text-violet-600' : 'text-gray-400'}`} />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-gray-900 text-sm">Think</div>
+                          <div className="text-xs text-gray-500">Step-by-step reasoning</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleTool('think')}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 ${
+                          enabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
+                        }`}
+                      >
+                        {enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-600 mb-3">
+                      Gives the agent a scratchpad to reason before and after actions — diagnose errors, check logic, and analyse results.
+                    </p>
+                    {enabled && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Reasoning Depth</label>
+                        <select
+                          value={reasoningSettings.thinkMode}
+                          onChange={e => {
+                            const next = { ...reasoningSettings, thinkMode: e.target.value };
+                            setReasoningSettings(next);
+                            updateAgentReasoning(id, { think_mode: e.target.value }).catch(() => {});
+                          }}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-500 bg-white"
+                        >
+                          {THINK_MODES.map(m => (
+                            <option key={m.value} value={m.value}>{m.label} — {m.desc}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Plan card */}
+              {(() => {
+                const enabled = selectedTools.includes('plan');
+                return (
+                  <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className={`p-2 rounded-lg ${enabled ? 'bg-indigo-100' : 'bg-gray-200'}`}>
+                          <Layers className={`w-4 h-4 ${enabled ? 'text-indigo-600' : 'text-gray-400'}`} />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-gray-900 text-sm">Plan</div>
+                          <div className="text-xs text-gray-500">Upfront structured planning</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleTool('plan')}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 ${
+                          enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-500 border-gray-300'
+                        }`}
+                      >
+                        {enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-600 mb-3">
+                      Lets the agent produce a full execution plan before starting work — outlining steps, dependencies, and risks upfront.
+                    </p>
+                    {enabled && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Planning Format</label>
+                        <select
+                          value={reasoningSettings.planFormat}
+                          onChange={e => {
+                            const next = { ...reasoningSettings, planFormat: e.target.value };
+                            setReasoningSettings(next);
+                            updateAgentReasoning(id, { plan_format: e.target.value }).catch(() => {});
+                          }}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                        >
+                          {PLAN_FORMATS.map(f => (
+                            <option key={f.value} value={f.value}>{f.label} — {f.desc}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {toolsMessage && REASONING_TOOLS.some(t => selectedTools.includes(t)) && (
+              <div className={`text-xs mt-3 ${toolsMessage === 'Tools updated' ? 'text-green-600' : 'text-red-600'}`}>
+                {toolsMessage}
+              </div>
+            )}
+          </div>
+
+          {/* ── Regular Tools ── */}
           <div className="bg-white p-6 shadow-md rounded-lg">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold flex items-center">
@@ -1027,15 +1673,15 @@ const AgentDetails = () => {
                 {toolsMessage}
               </div>
             )}
-            {visibleToolIds.length ? (
+            {visibleToolIds.filter(t => !REASONING_TOOLS.includes(t) && !MEMORY_TOOLS.includes(t)).length ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {visibleToolIds.map((tool) => {
+                {visibleToolIds.filter(t => !REASONING_TOOLS.includes(t) && !MEMORY_TOOLS.includes(t)).map((tool) => {
                   const enabled = selectedTools.includes(tool);
                   return (
                     <div key={tool} className="p-3 border border-gray-100 rounded-lg bg-gray-50 flex items-center justify-between gap-3">
                       <div>
                         <div className="text-sm font-semibold text-gray-800">{tool}</div>
-                        <div className="text-xs text-gray-500 mt-1 font-mono">source: {configuredTools.includes(tool) ? 'default_params.tools' : 'tools'}</div>
+                        <div className="text-xs text-gray-500 mt-1">source: tools</div>
                       </div>
                       <button
                         type="button"
@@ -1058,14 +1704,6 @@ const AgentDetails = () => {
             </p>
           </div>
 
-          {agent.default_params && Object.keys(agent.default_params).length > 0 && (
-            <div className="bg-white p-6 shadow-md rounded-lg">
-              <h4 className="text-md font-bold mb-3 text-gray-800">Default Params</h4>
-              <pre className="text-xs bg-gray-900 text-green-300 p-4 rounded-lg overflow-auto">
-                {JSON.stringify(agent.default_params, null, 2)}
-              </pre>
-            </div>
-          )}
         </div>
       )}
 
@@ -1077,14 +1715,20 @@ const AgentDetails = () => {
               Agent Nodes
             </h3>
             {!agent.is_remote && (
-              <button
-                type="button"
-                onClick={() => setShowStartNodeModal(true)}
-                className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
-              >
-                <Play className="w-3.5 h-3.5 mr-1" />
-                Start Node
-              </button>
+              <div className="flex items-center gap-2">
+                {nodesOverWsCap && (
+                  <span className="text-xs text-orange-600 font-medium">Node limit reached ({wsSessionCap})</span>
+                )}
+                <button
+                  type="button"
+                  disabled={nodesOverWsCap}
+                  onClick={() => { setStartWorkspace(selectedWorkspace && selectedWorkspace !== 'default' ? selectedWorkspace : ''); setShowStartNodeModal(true); }}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Play className="w-3.5 h-3.5 mr-1" />
+                  Start Node
+                </button>
+              </div>
             )}
           </div>
           {agent.is_remote && (
@@ -1117,7 +1761,7 @@ const AgentDetails = () => {
                           <NodeStatusBadge status={node.status} />
                         </td>
                         <td className="px-5 py-3">
-                          <span className="font-mono text-xs text-gray-600">
+                          <span className=" text-xs text-gray-600">
                             {String(nodeId).slice(0, 8)}
                             <span className="text-gray-400">…</span>
                           </span>
@@ -1125,11 +1769,11 @@ const AgentDetails = () => {
                         <td className="px-5 py-3 text-gray-600 text-xs">{node.label || '—'}</td>
                         <td className="px-5 py-3">
                           {node.workspace
-                            ? <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded font-mono">{node.workspace}</span>
+                            ? <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">{node.workspace}</span>
                             : <span className="text-gray-400 text-xs">—</span>}
                         </td>
                         <td className="px-5 py-3 text-gray-500 text-xs whitespace-nowrap">{fmtNodeDate(node.started_at)}</td>
-                        <td className="px-5 py-3 text-gray-600 text-xs font-mono whitespace-nowrap">
+                        <td className="px-5 py-3 text-gray-600 text-xs whitespace-nowrap">
                           {nodeUptime(node.started_at, node.finished_at)}
                         </td>
                         <td className="px-5 py-3">
@@ -1202,8 +1846,8 @@ const AgentDetails = () => {
                         <Link to={`/tasks/${task.id}`} className="text-sm font-semibold text-indigo-700 hover:underline truncate block">
                           {task.title || task.id}
                         </Link>
-                        <div className="text-xs text-gray-500 font-mono mt-1 truncate">{task.id}</div>
-                        <div className="text-xs text-gray-500 mt-1">Workspace: <span className="font-mono">{task.workspace || '—'}</span></div>
+                        <div className="text-xs text-gray-500 mt-1 truncate">{task.id}</div>
+                        <div className="text-xs text-gray-500 mt-1">Workspace: <span className="">{task.workspace || '—'}</span></div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <span className={`text-xs px-2 py-0.5 rounded font-semibold capitalize ${
@@ -1231,28 +1875,68 @@ const AgentDetails = () => {
         </div>
       )}
 
+      {activeTab === 'commands' && (() => {
+        const agentCmds = agent?.commands || [];
+        const globalCmds = [
+          { name: '/help', description: 'Show available commands', template: '/help' },
+          { name: '/clear', description: 'Clear the current conversation', template: '/clear' },
+          { name: '/new', description: 'Start a new conversation', template: '/new' },
+          { name: '/config', description: 'Show configuration for the current agent', template: '/config' },
+        ];
+        return (
+          <div className="space-y-6">
+            <div className="bg-white p-6 shadow-md rounded-lg">
+              <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
+                <Terminal className="w-5 h-5 text-indigo-600" /> Slash Commands
+              </h3>
+              <p className="text-sm text-gray-500 mb-5">
+                Type <span className=" bg-gray-100 px-1 rounded">/</span> in the chat to trigger these commands. Use <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">↑↓</kbd> to navigate, <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">Enter</kbd> or <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">Tab</kbd> to select, <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">Esc</kbd> to dismiss.
+              </p>
+
+              {agentCmds.length > 0 && (
+                <div className="mb-6">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Agent Commands</h4>
+                  <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden">
+                    {agentCmds.map((cmd) => (
+                      <div key={cmd.name} className="flex items-start gap-4 px-4 py-3 bg-white hover:bg-gray-50 transition-colors">
+                        <span className=" text-sm font-semibold text-indigo-600 shrink-0 w-40">{cmd.name}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-700">{cmd.description}</p>
+                          <p className="text-xs text-gray-400 mt-0.5 truncate">Template: {cmd.template}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {agentCmds.length === 0 && (
+                <div className="mb-6 flex items-center gap-3 p-4 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-700">
+                  <Hash className="w-4 h-4 shrink-0" />
+                  No agent-specific commands defined. Add a <span className=" mx-1">"commands"</span> array to this agent in <span className=" ml-1">agents.json</span>.
+                </div>
+              )}
+
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Global Commands</h4>
+                <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden">
+                  {globalCmds.map((cmd) => (
+                    <div key={cmd.name} className="flex items-start gap-4 px-4 py-3 bg-white hover:bg-gray-50 transition-colors">
+                      <span className=" text-sm font-semibold text-gray-600 shrink-0 w-40">{cmd.name}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-gray-700">{cmd.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {activeTab === 'config' && (
         <div className="space-y-6">
-          <div className="bg-white p-6 shadow-md rounded-lg">
-            <h3 className="text-lg font-bold mb-4 flex items-center">
-              <Activity className="w-5 h-5 mr-2 text-indigo-600" />
-              Agent Metadata
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <div><span className="text-gray-500">ID:</span> <span className="font-mono">{agent.id}</span></div>
-              <div><span className="text-gray-500">Name:</span> <span className="font-medium">{agent.name}</span></div>
-              <div><span className="text-gray-500">Type:</span> <span className="font-mono">{agent.type}</span></div>
-              <div><span className="text-gray-500">Domain:</span> <span className="font-mono">{agent.domain || 'general'}</span></div>
-              <div><span className="text-gray-500">Entrypoint:</span> <span className="font-mono break-all">{agent.entrypoint}</span></div>
-              <div><span className="text-gray-500">Capacity:</span> <span className="font-mono">{agent.capacity}</span></div>
-              <div><span className="text-gray-500">Memory Type:</span> <span className="font-mono">{agent.memory_type || 'none'}</span></div>
-              <div><span className="text-gray-500">Definition Source:</span> <span className="font-mono">{agentDefinition.source || '—'}</span></div>
-            </div>
-            {agentDefinition.yaml_path && (
-              <p className="text-xs text-gray-500 mt-3 font-mono break-all">YAML path: {agentDefinition.yaml_path}</p>
-            )}
-          </div>
-
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-lg font-bold mb-4 flex items-center">
               <Terminal className="w-5 h-5 mr-2 text-indigo-600" />
@@ -1357,7 +2041,7 @@ const AgentDetails = () => {
                 <select
                   value={modelForm.model}
                   onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 >
                   <option value="">— select a model —</option>
                   {localModels.map(m => <option key={m} value={m}>{m}</option>)}
@@ -1369,7 +2053,7 @@ const AgentDetails = () => {
                   onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
                   placeholder={modelForm.provider === 'inherit' ? '(inheriting from global settings)' : 'Enter model name…'}
                   disabled={modelForm.provider === 'inherit'}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:opacity-50 disabled:bg-gray-50"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:opacity-50 disabled:bg-gray-50"
                 />
               )}
               {localModelsError && (
@@ -1457,7 +2141,7 @@ const AgentDetails = () => {
                   value={modelForm.api_key}
                   onChange={e => setModelForm(f => ({ ...f, api_key: e.target.value }))}
                   placeholder={modelHasApiKey ? '(key stored — enter new to replace)' : 'Enter API key…'}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
                 <button
                   type="button"
@@ -1485,6 +2169,184 @@ const AgentDetails = () => {
         </div>
       )}
 
+      {activeTab === 'docker' && (
+        <div className="space-y-6">
+          {/* Image status + build actions */}
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-500" /> Docker Images
+              </h3>
+              <button
+                onClick={fetchDockerData}
+                disabled={dockerLoading}
+                className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-2 py-1 rounded-lg hover:bg-gray-50 flex items-center gap-1 disabled:opacity-40"
+              >
+                {dockerLoading ? <Loader className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
+                Refresh
+              </button>
+            </div>
+
+            {/* Image rows */}
+            <div className="space-y-2 mb-5">
+              {[
+                { label: 'Base image', tag: 'agents-hub/base:latest' },
+                { label: `Agent image (${id})`, tag: `agents-hub/${id}:latest` },
+              ].map(({ label, tag }) => {
+                const exists = dockerImages.some(img => `${img.repository}:${img.tag}` === tag || img.repository === tag.split(':')[0]);
+                return (
+                  <div key={tag} className="flex items-center justify-between px-4 py-3 rounded-lg border border-gray-200 bg-gray-50">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-800">{label}</p>
+                      <p className="text-xs text-gray-400 font-mono mt-0.5">{tag}</p>
+                    </div>
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold ${exists ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${exists ? 'bg-green-500' : 'bg-gray-400'}`} />
+                      {exists ? 'Built' : 'Not built'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Build buttons */}
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleBuildBase}
+                disabled={buildingBase || buildingAgent}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-gray-700 rounded-lg hover:bg-gray-800 disabled:opacity-50"
+              >
+                {buildingBase ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                {buildingBase ? 'Building base…' : 'Build base image'}
+              </button>
+              <button
+                onClick={handleBuildAgent}
+                disabled={buildingBase || buildingAgent}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {buildingAgent ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                {buildingAgent ? 'Building…' : `Build agent image`}
+              </button>
+            </div>
+
+            {/* Build output */}
+            {(buildLog || buildError) && (
+              <div className="mt-4">
+                {buildError && (
+                  <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />{buildError}
+                  </div>
+                )}
+                {buildLog && (
+                  <pre className="text-xs bg-gray-900 text-green-300 rounded-lg p-4 overflow-auto max-h-48 whitespace-pre-wrap">{buildLog}</pre>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Dockerfile preview */}
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-3">
+              <FileCode className="w-4 h-4 text-indigo-500" /> Dockerfile
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Auto-generated per-agent Dockerfile. Extends <code className="text-indigo-600">agents-hub/base:latest</code> and sets the agent identity.
+              Saved to <code className="text-indigo-600">agents/state/dockerfiles/{id}.Dockerfile</code>.
+            </p>
+            {dockerfileLoading ? (
+              <div className="flex justify-center py-8"><Loader className="w-5 h-5 animate-spin text-indigo-400" /></div>
+            ) : dockerfileContent ? (
+              <pre className="text-xs bg-gray-900 text-green-300 rounded-lg p-4 overflow-auto max-h-72 whitespace-pre-wrap">{dockerfileContent}</pre>
+            ) : (
+              <p className="text-sm text-gray-400 italic">Dockerfile preview unavailable.</p>
+            )}
+          </div>
+
+          {/* Running containers */}
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-4">
+              <Server className="w-4 h-4 text-indigo-500" /> Containers
+              <span className="text-xs text-gray-400 font-normal">(for this agent)</span>
+            </h3>
+            {dockerLoading ? (
+              <div className="flex justify-center py-6"><Loader className="w-5 h-5 animate-spin text-indigo-400" /></div>
+            ) : dockerContainers.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <Server className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                <p className="text-sm">No containers found for this agent.</p>
+                <p className="text-xs mt-1">Start a node in Docker mode from the Nodes tab.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {dockerContainers.map(c => {
+                  const isRunning = c.state === 'running';
+                  const busy = dockerActionBusy[c.name];
+                  return (
+                    <div key={c.id || c.name} className="flex items-center gap-3 px-4 py-3 border border-gray-200 rounded-lg">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${isRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-mono font-medium text-gray-800 truncate">{c.name}</p>
+                        <div className="flex items-center gap-3 text-xs text-gray-400 mt-0.5">
+                          <span>{c.status || c.state}</span>
+                          {c.image && <span className="truncate font-mono">{c.image}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handleShowContainerLogs(c.name)}
+                          className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-2 py-1 rounded-lg hover:bg-gray-50"
+                        >
+                          Logs
+                        </button>
+                        {isRunning && (
+                          <button
+                            onClick={() => handleStopContainer(c.name)}
+                            disabled={busy}
+                            className="text-xs text-orange-600 hover:text-orange-800 border border-orange-200 px-2 py-1 rounded-lg hover:bg-orange-50 disabled:opacity-40"
+                          >
+                            {busy ? <Loader className="w-3 h-3 animate-spin inline" /> : 'Stop'}
+                          </button>
+                        )}
+                        {!isRunning && (
+                          <button
+                            onClick={() => handleRemoveContainer(c.name)}
+                            disabled={busy}
+                            className="text-xs text-red-600 hover:text-red-800 border border-red-200 px-2 py-1 rounded-lg hover:bg-red-50 disabled:opacity-40"
+                          >
+                            {busy ? <Loader className="w-3 h-3 animate-spin inline" /> : 'Remove'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Container logs modal */}
+      {containerLogsName && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-950 rounded-xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col border border-gray-800">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+              <span className="text-gray-200 text-sm font-semibold font-mono">{containerLogsName}</span>
+              <button onClick={() => setContainerLogsName(null)} className="text-gray-500 hover:text-gray-300">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-5">
+              {containerLogsLoading ? (
+                <div className="flex justify-center py-12"><Loader className="w-5 h-5 animate-spin text-indigo-400" /></div>
+              ) : (
+                <pre className="text-xs text-green-400 whitespace-pre-wrap break-words leading-5">{containerLogsText || '(no output)'}</pre>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showStartNodeModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
@@ -1509,7 +2371,7 @@ const AgentDetails = () => {
                 >
                   <option value="">— None —</option>
                   {workspaces.map((ws) => (
-                    <option key={ws.name} value={ws.name}>{ws.name}</option>
+                    <option key={ws.name} value={ws.name}>{ws.label || ws.id || ws.name}</option>
                   ))}
                 </select>
               </div>
@@ -1554,10 +2416,10 @@ const AgentDetails = () => {
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
               <div className="flex items-center gap-3">
                 <NodeStatusBadge status={logsNode.status} />
-                <span className="text-gray-200 font-mono text-sm font-semibold">
+                <span className="text-gray-200 text-sm font-semibold">
                   {logsNode.agent_name || logsNode.agent_id || agent?.name || id}
                 </span>
-                <span className="text-gray-500 font-mono text-xs">
+                <span className="text-gray-500 text-xs">
                   {(logsNode.node_id || logsNode.id || '').toString().slice(0, 12)}…
                 </span>
               </div>
@@ -1571,7 +2433,7 @@ const AgentDetails = () => {
                   <Loader className="w-5 h-5 animate-spin text-indigo-400" />
                 </div>
               ) : (
-                <pre className="text-xs font-mono text-green-400 whitespace-pre-wrap break-words leading-5">{logsNodeText}</pre>
+                <pre className="text-xs text-green-400 whitespace-pre-wrap break-words leading-5">{logsNodeText}</pre>
               )}
             </div>
           </div>

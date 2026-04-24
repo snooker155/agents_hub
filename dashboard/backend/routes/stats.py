@@ -3,15 +3,17 @@ Statistics and system settings API routes.
 """
 from fastapi import APIRouter, HTTPException
 from typing import Optional
-import json
 from pathlib import Path
 
 from common import tasks_service
 from agents import registry, run_manager
 from models import OrchestratorSettings
+from common.workspace import create_workspace_folder, get_workspace_metadata, update_workspace_metadata
+from common.orchestrator_context import normalize_workspace_name
 
 
 router = APIRouter(tags=["stats"])
+_DEFAULT_ORCHESTRATOR_SETTINGS = {"enabled": False, "assignment_mode": "manual", "followup_mode": "single", "wait_for_completion": False, "execution_mode": "subprocess"}
 
 
 @router.get("/api/stats")
@@ -22,7 +24,7 @@ async def get_stats(workspace: Optional[str] = None):
     else:
         tasks = all_tasks
 
-    runs = run_manager._load_runs()
+    runs = run_manager.load_runs()
     agents = registry.list_agents()
 
     total_tasks = len(tasks)
@@ -56,7 +58,7 @@ async def get_stats(workspace: Optional[str] = None):
     active_count = len(active_runs)
 
     # Recent runs
-    recent_runs = sorted(runs, key=lambda r: r.get("started_at", ""), reverse=True)[:10]
+    recent_runs = sorted(runs, key=lambda r: r.get("started_at") or "", reverse=True)[:10]
 
     return {
         "total_tasks": total_tasks,
@@ -74,11 +76,11 @@ async def get_stats(workspace: Optional[str] = None):
 
 @router.get("/api/runs")
 async def list_runs(workspace: Optional[str] = None):
-    runs = run_manager._load_runs()
+    runs = run_manager.load_runs()
     if workspace:
         runs = [r for r in runs if r.get("workspace") == workspace]
     # Sort by started_at desc
-    runs.sort(key=lambda r: r.get("started_at", ""), reverse=True)
+    runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return runs
 
 
@@ -103,6 +105,12 @@ async def get_logs(run_id: str):
     if state_logs.exists():
         return {"logs": state_logs.read_text(encoding="utf-8")}
 
+    node_runs_root = run_manager.STATE_DIR / "node_runs"
+    if node_runs_root.exists():
+        for candidate in node_runs_root.glob(f"*/{log_name}"):
+            if candidate.exists():
+                return {"logs": candidate.read_text(encoding="utf-8")}
+
     from common.workspace import create_workspace_folder
     for t in tasks_service.list_tasks():
         if t.workspace:
@@ -119,15 +127,33 @@ async def get_logs(run_id: str):
 
 
 @router.get("/api/orchestrator/settings")
-async def get_orchestrator_settings():
-    from main import get_orchestrator_settings_path
-    path = get_orchestrator_settings_path()
-    return json.loads(path.read_text())
+async def get_orchestrator_settings(workspace: Optional[str] = None):
+    ws_name = normalize_workspace_name(workspace) or "default"
+    create_workspace_folder(ws_name)
+    meta = get_workspace_metadata(ws_name) or {}
+    value = meta.get("orchestrator", {})
+    if not isinstance(value, dict):
+        value = {}
+    return {
+        **_DEFAULT_ORCHESTRATOR_SETTINGS,
+        **value,
+        "workspace": ws_name,
+    }
 
 
 @router.post("/api/orchestrator/settings")
-async def update_orchestrator_settings(settings: OrchestratorSettings):
-    from main import get_orchestrator_settings_path
-    path = get_orchestrator_settings_path()
-    path.write_text(json.dumps(settings.model_dump()))
-    return settings
+async def update_orchestrator_settings(settings: OrchestratorSettings, workspace: Optional[str] = None):
+    ws_name = normalize_workspace_name(workspace) or "default"
+    create_workspace_folder(ws_name)
+    payload = {**_DEFAULT_ORCHESTRATOR_SETTINGS, **settings.model_dump()}
+    update_workspace_metadata(ws_name, {"orchestrator": payload})
+    return {
+        **payload,
+        "workspace": ws_name,
+    }
+
+
+@router.get("/api/orchestrator/routing-log")
+async def get_routing_log(workspace: Optional[str] = None):
+    ws_name = normalize_workspace_name(workspace) if workspace else None
+    return tasks_service.get_routing_log(workspace=ws_name)

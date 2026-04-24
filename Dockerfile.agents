@@ -1,0 +1,70 @@
+# ============================================================
+# Agents Hub — unified base image
+# ============================================================
+# All agents run from this single image.  The agent identity
+# (--agent-id) is supplied at runtime via CMD arguments.
+#
+# Build the base:
+#   docker build -t agents-hub/base:latest -f Dockerfile.agents .
+#
+# Per-agent images are derived from this base by the
+# ContainerManager (agents/container_manager.py).  They just
+# set AGENT_ID and CMD; no additional layers are required.
+#
+# At runtime the project root is mounted at /app so that:
+#   • State files (nodes.json, agent_runs.json, logs) are
+#     shared with the host in real time.
+#   • Workspace directories (inside the project root) are
+#     accessible to the agent.
+#
+# Security
+# --------
+# The Docker socket is NEVER mounted inside these containers.
+# Agents can communicate with other containers on the
+# "agents-hub" bridge network (by container name) but they
+# cannot spawn new containers.
+# ============================================================
+
+FROM python:3.11-slim
+
+LABEL agents-hub.managed="true"
+LABEL agents-hub.image-type="base"
+
+WORKDIR /app
+
+# ---------- system dependencies ----------
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------- Python dependencies ----------
+# Backend requirements first (small, fast layer)
+COPY dashboard/backend/requirements.txt /tmp/req-backend.txt
+RUN pip install --no-cache-dir -r /tmp/req-backend.txt
+
+# Agent / LLM runtime libraries (pinned in requirements-agents.txt)
+COPY requirements-agents.txt /tmp/requirements-agents.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-agents.txt
+
+# ---------- project source ----------
+# Copied here so the image is self-contained.
+# In production the live source is volume-mounted over /app,
+# which takes precedence over these layers.
+COPY . .
+
+# ---------- runtime environment ----------
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+# Containers must NOT try to launch further containers
+ENV AGENT_EXECUTION_MODE=local
+
+# ---------- security: non-root user ----------
+RUN groupadd -g 1001 agent \
+    && useradd -u 1001 -g agent -m agent --shell /bin/bash \
+    && chown -R agent:agent /app
+USER agent
+
+# Default entrypoint — overridden by per-agent images
+CMD ["python", "-m", "agents.node_runner"]

@@ -1,54 +1,49 @@
 """
-AgentRunManager: starts, tracks and stops agent runs as subprocesses.
+AgentRunManager: shared run state, lifecycle tracking, and stop coordination.
+
+Manages the agent_runs.json state file which records every run — whether started
+by worker_runner (subprocess/Docker/remote) or directly for in-process chat runs.
 
 State is stored in agents/state/agent_runs.json with entries:
 - run_id (str, uuid4)
 - task_id (str)
 - agent_id (str)
-- pid (int)
+- pid (int | None)
 - status (str): running|stop|completed|stopped|failed|error
 - started_at (iso str)
 - finished_at (iso str | None)
 - exit_code (int | None)
 - error (str | None)
 
-Public API:
-- start_run(task_id: str, agent_id: str, params: dict | None) -> str (run_id)
-- stop_run(task_id: str) -> bool
-- get_status(task_id: str) -> dict | None
+Public API (state):
+- load_runs() -> list
+- save_runs(runs)
+- upsert_run(run)
+- update_run(run_id, updates) -> dict | None
+- get_run_by_id(run_id) -> dict | None
+- utc_now_iso() -> str
 
-Implementation details:
-- Runs are executed as a Python subprocess that invokes this module in a
-  special "worker" mode. The worker imports the agent entrypoint from the
-  registry and attempts to execute a single step (best-effort). Regardless of
-  the agent execution result, the worker updates the shared state with the final
-  status, exit code and error.
-- Process termination uses SIGTERM/SIGKILL on POSIX and TerminateProcess on
-  Windows. We start a new process session so we can terminate the whole group on
-  POSIX.
+Public API (lifecycle):
+- get_status(task_id) -> dict | None
+- stop_run(task_id) -> bool
+- stop_run_by_id(run_id) -> bool
+- get_in_progress_runs_for_node(node_id) -> list
+- fail_in_progress_runs_for_node(node_id, reason) -> int
+- get_node_run_logs_dir(node_id) -> Path
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import argparse
+from uuid import uuid4
 import json
 import os
-import platform
 import signal
-import subprocess
-import sys
-import traceback
-import time
-from uuid import uuid4
 
 from filelock import FileLock
 
-# Local imports
-from .registry import get_agent
-from .remote_runner import start_remote_run, get_remote_status, stop_remote_run
+from .remote_runner import get_remote_status, stop_remote_run
 
 # -------------------- Paths & constants --------------------
 HERE = Path(__file__).resolve().parent
@@ -57,8 +52,11 @@ STATE_DIR = PROJECT_ROOT / "agents" / "state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 RUNS_FILE = STATE_DIR / "agent_runs.json"
 RUNS_LOCK = STATE_DIR / "agent_runs.json.lock"
+NODE_RUNS_DIR = STATE_DIR / "node_runs"
+CHAT_LOGS_DIR = STATE_DIR / "chat_logs"
+CHAT_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# -------------------- Utilities --------------------
+# -------------------- Private state helpers --------------------
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -86,14 +84,12 @@ def _save_runs(runs: List[Dict[str, Any]], timeout: float = 10.0) -> None:
 
 def _upsert_run(run: Dict[str, Any]) -> None:
     runs = _load_runs()
-    found = False
     for i, r in enumerate(runs):
         if r.get("run_id") == run.get("run_id"):
             runs[i] = {**r, **run}
-            found = True
-            break
-    if not found:
-        runs.append(run)
+            _save_runs(runs)
+            return
+    runs.append(run)
     _save_runs(runs)
 
 
@@ -107,21 +103,10 @@ def _update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]
             return newr
     return None
 
-
-def _find_latest_running_for_task(task_id: str) -> Optional[Dict[str, Any]]:
-    runs = _load_runs()
-    candidates = [r for r in runs if r.get("task_id") == str(task_id) and r.get("status") in {"running", "stop"}]
-    # Pick the most recent by started_at
-    def _key(r: Dict[str, Any]) -> str:
-        return r.get("started_at") or ""
-    return max(candidates, key=_key) if candidates else None
-
-
 def _pid_exists(pid: int) -> bool:
     if pid <= 0:
         return False
     try:
-        # On POSIX, signal 0 checks existence. On Windows, os.kill raises if process doesn't exist.
         os.kill(pid, 0)
     except OSError:
         return False
@@ -131,186 +116,496 @@ def _pid_exists(pid: int) -> bool:
         return True
 
 
-# -------------------- Public API --------------------
+# -------------------- Public shared state API --------------------
 
-def start_run(task_id: str, agent_id: str, params: Optional[Dict[str, Any]] = None, foreground: bool = False) -> str:
-    """Start an agent run and record its state. Returns run_id.
+def load_runs(timeout: float = 10.0) -> List[Dict[str, Any]]:
+    """Return all run records from shared state."""
+    return _load_runs(timeout)
 
-    Checks for agent capacity before starting.
-    Supports local subprocess runs and remote HTTP-based runs.
+
+def save_runs(runs: List[Dict[str, Any]], timeout: float = 10.0) -> None:
+    """Overwrite the entire run list. Use only when bulk mutations are needed."""
+    _save_runs(runs, timeout)
+
+
+def upsert_run(run: Dict[str, Any]) -> None:
+    """Insert or update a run record by run_id."""
+    _upsert_run(run)
+
+
+def update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Apply partial updates to a run record and return the merged record."""
+    return _update_run(run_id, updates)
+
+
+def utc_now_iso() -> str:
+    """Return current UTC time as ISO 8601 string."""
+    return _utc_now_iso()
+
+
+def new_unique_run_id() -> str:
+    """Return a UUID that does not collide with any existing run_id in state."""
+    try:
+        existing = {str(r.get("run_id")) for r in (_load_runs() or []) if r.get("run_id")}
+    except Exception:
+        existing = set()
+    rid = str(uuid4())
+    while rid in existing:
+        rid = str(uuid4())
+    return rid
+
+
+def open_run(
+    run_id: str,
+    agent_id: str,
+    *,
+    task_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    session_type: Optional[str] = None,
+    log_file: Optional[str] = None,
+    workspace: Optional[str] = None,
+    title: Optional[str] = None,
+    message_origin: Optional[str] = None,
+    pid: Optional[int] = None,
+    status: str = "running",
+    link_to_session: bool = True,
+    **extra: Any,
+) -> str:
+    """Create a run record and optionally link it to a session.
+
+    Extra keyword arguments are merged directly into the record (e.g.
+    execution_mode, provider, model, is_flow).  Returns run_id.
     """
-    from common.tasks_service import get_task as svc_get_task
-    from .factory_runner import build_factory_run_spec
-
-    spec = get_agent(agent_id)
-    if not spec:
-        raise ValueError(f"Unknown agent_id: {agent_id}")
-
-    # Capacity check
-    runs = _load_runs()
-    active_runs = [r for r in runs if r.get("agent_id") == agent_id and r.get("status") == "running"]
-    if len(active_runs) >= getattr(spec, "capacity", 1):
-        raise RuntimeError(f"Agent '{agent_id}' has reached its capacity ({spec.capacity})")
-
-    task = svc_get_task(task_id)
-    if not task:
-        raise ValueError(f"Task not found: {task_id}")
-
-    # All agents now follow the factory structure
-    run_spec = build_factory_run_spec(task, agent_id, params)
-
-    cwd = run_spec.cwd
-    run_id = str(uuid4())
-
-    if getattr(spec, "is_remote", False) and spec.agent_url:
-        # Remote execution
-        run_id = start_remote_run(
-            spec.agent_url,
-            str(task_id),
-            " ".join(run_spec.cmd),  # simplified for remote
-            cwd,
-            params
-        )
-        run_rec: Dict[str, Any] = {
-            "run_id": run_id,
-            "task_id": str(task_id),
-            "agent_id": agent_id,
-            "pid": None,
-            "status": "running",
-            "is_remote": True,
-            "agent_url": spec.agent_url,
-            "started_at": _utc_now_iso(),
-            "finished_at": None,
-            "exit_code": None,
-            "error": None,
-        }
-        _upsert_run(run_rec)
-        return run_id
-
-    # Local subprocess execution
-    args = run_spec.cmd
-    env = run_spec.env
-    creationflags = 0
-    start_new_session = False
-    if os.name == "nt":
-        # Create a new process group on Windows for better termination control
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    else:
-        # POSIX: start new session to be able to kill the whole group
-        start_new_session = True
-
-    # Prepare log directory
-    log_dir = Path(cwd) / ".logs" if cwd else STATE_DIR / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"agent_run_{run_id}.log"
-
-    if foreground:
-        # Run in foreground, wait and stream output
-        # Also tee output to log file if possible, or just run normally
-        proc = subprocess.run(
-            args,
-            cwd=cwd,
-            env=env,
-            check=False,
-        )
-        status = "completed" if proc.returncode == 0 else "failed"
-        run_rec: Dict[str, Any] = {
-            "run_id": run_id,
-            "task_id": str(task_id),
-            "agent_id": agent_id,
-            "pid": None,
-            "status": status,
-            "started_at": _utc_now_iso(),
-            "finished_at": _utc_now_iso(),
-            "exit_code": proc.returncode,
-            "error": None if status == "completed" else f"process exited with code {proc.returncode}",
-            "log_file": str(log_file),
-        }
-        _upsert_run(run_rec)
-        if status == "failed":
-            # Re-raise to propagate error to CLI user
-            raise subprocess.CalledProcessError(proc.returncode, args)
-    else:
-        # Background execution via worker wrapper to ensure status is updated on completion
-        worker_args = [
-            sys.executable,
-            "-m",
-            "agents.run_manager",
-            "worker",
-            "--run-id",
-            run_id,
-            "--log-file",
-            str(log_file),
-            "--cwd",
-            str(cwd),
-            "--cmd-json",
-            json.dumps(args),
-        ]
-
-        # We don't pass full env via CLI, instead we let the worker inherit or re-setup.
-        # But some env might be needed. For now, let's assume inheritance is enough for background.
-        # Actually, let's pass a few critical ones if needed, or just rely on inheritance.
-
-        # Pass the prepared environment to the worker so critical vars (OPENAI_API_KEY etc.)
-        # are explicitly available instead of relying on inheritance alone.
-        proc = subprocess.Popen(
-            worker_args,
-            start_new_session=start_new_session,
-            creationflags=creationflags,
-            cwd=os.getcwd(), # run worker from project root
-            env=run_spec.env,
-        )
-
-        run_rec: Dict[str, Any] = {
-            "run_id": run_id,
-            "task_id": str(task_id),
-            "agent_id": agent_id,
-            "pid": proc.pid, # This is the PID of the worker wrapper
-            "status": "running",
-            "started_at": _utc_now_iso(),
-            "finished_at": None,
-            "exit_code": None,
-            "error": None,
-            "log_file": str(log_file),
-        }
-        _upsert_run(run_rec)
+    record: Dict[str, Any] = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "pid": pid,
+        "status": status,
+        "session_id": session_id,
+        "started_at": _utc_now_iso(),
+        "finished_at": None,
+        "exit_code": None,
+        "error": None,
+        **extra,
+    }
+    if session_type is not None:
+        record["session_type"] = session_type
+    if log_file is not None:
+        record["log_file"] = str(log_file)
+    if workspace is not None:
+        record["workspace"] = workspace
+    if title is not None:
+        record["title"] = title
+    if message_origin is not None:
+        record["message_origin"] = message_origin
+    _upsert_run(record)
+    if link_to_session and session_id:
+        try:
+            from common.session_service import add_run_to_session as _link
+            _link(session_id, run_id)
+        except Exception:
+            pass
+    if task_id and status == "running":
+        try:
+            from common import tasks_service as _ts
+            from uuid import UUID as _UUID
+            _ts.upsert_task_execution_log_entry(
+                _UUID(str(task_id)),
+                run_id,
+                agent_id=agent_id,
+                status="running",
+                started_at=record["started_at"],
+                finished_at=None,
+                model=extra.get("model") or "",
+            )
+        except Exception:
+            pass
     return run_id
 
 
+def close_run(
+    run_id: str,
+    *,
+    status: str,
+    exit_code: int,
+    error: Optional[str] = None,
+    **extra: Any,
+) -> Optional[Dict[str, Any]]:
+    """Mark a run as finished and return the updated record.
+
+    Extra keyword arguments (e.g. process=...) are merged into the update.
+    """
+    return _update_run(run_id, {
+        "status": status,
+        "finished_at": _utc_now_iso(),
+        "exit_code": exit_code,
+        "error": error,
+        **extra,
+    })
+
+
+def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
+    """Update the owning task's status after a run completes or fails."""
+    try:
+        run = get_run_by_id(run_id)
+        task_id_str = (run or {}).get("task_id")
+        if not task_id_str:
+            return
+        from common import tasks_service as _ts
+        from uuid import UUID as _UUID
+        tid = _UUID(str(task_id_str))
+
+        # Update execution log entry with final status and token usage
+        try:
+            process = (run or {}).get("process") or {}
+            token_usage = process.get("token_usage") or {}
+            _ts.upsert_task_execution_log_entry(
+                tid,
+                run_id,
+                agent_id=str((run or {}).get("agent_id") or ""),
+                status=status,
+                finished_at=(run or {}).get("finished_at") or _utc_now_iso(),
+                exit_code=exit_code,
+                error=str((run or {}).get("error") or "") or None,
+                inbound_tokens=int(token_usage.get("inbound_tokens") or 0),
+                outbound_tokens=int(token_usage.get("outbound_tokens") or 0),
+                total_tokens=int(token_usage.get("total_tokens") or 0),
+            )
+        except Exception:
+            pass
+
+        if status == "completed":
+            # Only advance to 'resolved' if the agent didn't already set a
+            # terminal status itself (e.g. code_reviewer sets 'reviewed' or 'blocked').
+            # Orchestrator and code_reviewer are not workers — they must not set 'resolved'.
+            agent_id_for_run = str((run or {}).get("agent_id") or "")
+            non_resolving_agents = {"orchestrator", "code_reviewer"}
+            agent_set_statuses = {
+                _ts.TaskStatus.reviewing,
+                _ts.TaskStatus.reviewed,
+                _ts.TaskStatus.blocked,
+                _ts.TaskStatus.done,
+            }
+            if agent_id_for_run not in non_resolving_agents:
+                current_task = _ts.get_task(tid)
+                if current_task and current_task.status not in agent_set_statuses:
+                    ws_name = str(getattr(current_task, "workspace", "") or "default")
+                    try:
+                        from common.workspace import get_workspace_metadata
+                        followup_mode = get_workspace_metadata(ws_name).get("orchestrator", {}).get("followup_mode", "single")
+                    except Exception:
+                        followup_mode = "single"
+                    if followup_mode == "continuous":
+                        # Keep in_progress so the UI shows work is ongoing, but clear
+                        # the agent assignment (agent_state=none) so the orchestrator's
+                        # _followup filter picks it up to decide the next step.
+                        _ts.update_task(tid, status=_ts.TaskStatus.in_progress)
+                        _ts.clear_agent(tid)
+                    else:
+                        _ts.update_task(tid, status=_ts.TaskStatus.resolved)
+                        _ts.clear_agent(tid)
+            elif agent_id_for_run == "orchestrator":
+                # Orchestrator is a non-resolving agent: do not auto-set resolved.
+                # The orchestrator must call update_task with status=resolved via
+                # tool when the work is complete.
+                pass
+        else:
+            error_msg = str((run or {}).get("error") or "").strip()
+            reason = error_msg or f"process exited with code {exit_code}"
+            _ts.block_task(tid, reason=reason)
+            _ts.clear_agent(tid)
+            # Surface the error in the activity log so the task page shows it
+            try:
+                agent_id_str = str((run or {}).get("agent_id") or "")
+                _ts.append_task_activity_log(
+                    tid,
+                    "run_failed",
+                    f"Run failed: {reason}",
+                    run_id=run_id,
+                    agent_id=agent_id_str,
+                    exit_code=exit_code,
+                )
+            except Exception:
+                pass
+
+        # Trigger any session continuations waiting for this task
+        try:
+            from common.session_service import pop_continuations_for_task
+            continuations = pop_continuations_for_task(str(task_id_str))
+            for cont in continuations:
+                try:
+                    _trigger_session_continuation(cont, status)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _trigger_session_continuation(cont: dict, finished_status: str) -> None:
+    """Spawn the orchestrator as a background subprocess to continue the session."""
+    import subprocess, sys
+    from pathlib import Path as _Path
+
+    task_id = cont.get("task_id")
+    session_id = cont.get("session_id")
+    workspace = cont.get("workspace") or ""
+    agent_id = cont.get("agent_id", "orchestrator")
+    if not task_id or not session_id:
+        return
+
+    project_root = _Path(__file__).resolve().parents[1]
+    env = dict(__import__("os").environ)
+    env["AGENT_SESSION_ID"] = session_id
+    if workspace:
+        env["AGENT_WORKSPACE"] = workspace
+
+    # Pre-register the orchestrator run and assign it to the task so it is
+    # visible in the UI as the active agent during continuation processing.
+    run_id = str(uuid4())
+    _upsert_run({
+        "run_id": run_id,
+        "task_id": str(task_id),
+        "agent_id": agent_id,
+        "status": "pending",
+        "session_type": "task",
+        "session_id": session_id,
+        "created_at": _utc_now_iso(),
+        "started_at": None,
+        "finished_at": None,
+        "pid": None,
+        "exit_code": None,
+        "error": None,
+    })
+    try:
+        from common import tasks_service as _ts
+        from uuid import UUID as _UUID
+        _ts.assign_agent(_UUID(task_id), agent_id, run_id=run_id)
+        _ts.update_task(_UUID(task_id), status=_ts.TaskStatus.in_progress)
+    except Exception:
+        pass
+
+    env["AGENT_LOG_FILE"] = ""  # run_agent.py will create its own log
+
+    # Build a minimal instruction file so the agent gets context.
+    # [MONITOR] prefix tells the orchestrator to skip Steps 1-3 and go directly
+    # to Step 4 (get_agent_status_tool) so it does not re-assign the same task.
+    instruction = (
+        f"[MONITOR] Task ID: {task_id}\n\n"
+        "A previously started agent has finished. "
+        "Skip Steps 1-3. Go directly to Step 4 of your instructions."
+    )
+    args = [
+        sys.executable, str(project_root / "run_agent.py"),
+        agent_id,       # positional: agent
+        instruction,    # positional: action
+        "--task-id", task_id,
+        "--run-id", run_id,
+    ]
+    if workspace:
+        args += ["--workspace", workspace]
+
+    log_dir = _Path(__file__).resolve().parent / "state" / "continuation_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"continuation_{task_id[:8]}_{utc_now_iso()[:10]}.log"
+
+    with open(log_file, "w", encoding="utf-8") as lf:
+        lf.write(f"[continuation] task={task_id} session={session_id} trigger_status={finished_status}\n\n")
+        subprocess.Popen(
+            args,
+            cwd=str(project_root),
+            env=env,
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
+def get_node_run_logs_dir(node_id: str) -> Path:
+    """Return node-scoped directory for run/chat logs."""
+    safe = (str(node_id or "").strip() or "unknown").replace("/", "_")
+    path = NODE_RUNS_DIR / safe
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+# -------------------- Public lifecycle API --------------------
+
 def get_run_by_id(run_id: str) -> Optional[Dict[str, Any]]:
-    """Return a run record by run_id if present in state, else None."""
-    runs = _load_runs()
-    for r in runs:
+    """Return a run record by run_id, or None."""
+    for r in _load_runs():
         if r.get("run_id") == run_id:
             return r
     return None
 
 
-def stop_run(task_id: str) -> bool:
-    """Attempt to terminate the latest running run for a task. Returns True if successful."""
-    rec = _find_latest_running_for_task(str(task_id))
+def delete_awaiting_approval_run(task_id: str) -> bool:
+    """Delete the awaiting_approval run record for a task. Returns True if one was removed."""
+    runs = _load_runs()
+    filtered = [
+        r for r in runs
+        if not (r.get("task_id") == task_id and r.get("status") == "awaiting_approval")
+    ]
+    if len(filtered) == len(runs):
+        return False
+    _save_runs(filtered)
+    return True
+
+
+def delete_assigned_run(task_id: str) -> bool:
+    """Delete the assigned (node-queued) run record for a task. Returns True if one was removed."""
+    runs = _load_runs()
+    filtered = [
+        r for r in runs
+        if not (r.get("task_id") == task_id and r.get("status") == "assigned")
+    ]
+    if len(filtered) == len(runs):
+        return False
+    _save_runs(filtered)
+    return True
+
+
+def get_all_runs_for_node(node_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """Return all runs for a node, newest first."""
+    runs = [r for r in _load_runs() if r.get("node_id") == node_id]
+    runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    return runs[:limit]
+
+
+def get_in_progress_runs_for_node(node_id: str) -> List[Dict[str, Any]]:
+    """Return node-bound runs that are currently in progress."""
+    in_progress = {"running", "stop"}
+    return [
+        r for r in _load_runs()
+        if r.get("node_id") == node_id and r.get("status") in in_progress
+    ]
+
+
+def fail_in_progress_runs_for_node(node_id: str, reason: str) -> int:
+    """Mark all in-progress runs on a node as failed and return count."""
+    runs = get_in_progress_runs_for_node(node_id)
+    if not runs:
+        return 0
+
+    finished_at = _utc_now_iso()
+    failed_count = 0
+    for run in runs:
+        run_id = run.get("run_id")
+        if not run_id:
+            continue
+        updated = _update_run(run_id, {
+            "status": "failed",
+            "finished_at": finished_at,
+            "exit_code": 1,
+            "error": reason,
+        })
+        if updated:
+            failed_count += 1
+            try:
+                from common import tasks_service
+                from uuid import UUID
+                task_id = updated.get("task_id")
+                if task_id:
+                    tid = UUID(str(task_id))
+                    task = tasks_service.get_task(tid)
+                    if task and getattr(task, "status", None) == "in_progress":
+                        tasks_service.block_task(tid, reason=reason)
+            except Exception:
+                pass
+
+    return failed_count
+
+
+def stop_run(task_id: str, run_id: Optional[str] = None) -> bool:
+    """Attempt to terminate the running run for a task.
+
+    If run_id is provided it is looked up directly (preferred — avoids scanning
+    all runs).  Falls back to scanning by task_id when run_id is not known.
+    """
+    rec = get_run_by_id(run_id)
     if not rec:
         return False
+    return _stop_run_record(rec)
+
+
+def stop_run_by_id(run_id: str) -> bool:
+    """Attempt to terminate a specific running run by run_id."""
+    rec = get_run_by_id(run_id)
+    if not rec or rec.get("status") not in {"running", "stop"}:
+        return False
+    return _stop_run_record(rec)
+
+
+def _stop_run_record(rec: Dict[str, Any]) -> bool:
+    """Best-effort stop for local, docker, remote, and node-managed runs."""
+    task_id = str(rec.get("task_id") or "")
+    run_id = str(rec.get("run_id") or "")
+
+    def _mark_task_stopped() -> None:
+        if not task_id:
+            return
+        try:
+            from common import tasks_service
+            from uuid import UUID
+            tasks_service.clear_agent(UUID(task_id))
+            tasks_service.stop_task(UUID(task_id))
+        except Exception:
+            pass
 
     if rec.get("is_remote") and rec.get("agent_url"):
         stopped = stop_remote_run(rec["agent_url"], rec["run_id"])
         if stopped:
-             _update_run(rec["run_id"], {"status": "stop"})
+            _update_run(rec["run_id"], {"status": "stop", "finished_at": _utc_now_iso()})
+            _mark_task_stopped()
         return stopped
+
+    if rec.get("execution_mode") == "docker" and rec.get("container_name"):
+        from .container_manager import stop_container
+        sent = stop_container(rec["container_name"])
+        if sent:
+            _update_run(rec["run_id"], {"status": "stop", "finished_at": _utc_now_iso()})
+            _mark_task_stopped()
+        return sent
 
     pid = int(rec.get("pid") or 0)
     if pid <= 0:
+        # Node-managed run: mark stop request and let node_runner finalize.
+        if rec.get("node_id"):
+            _update_run(run_id, {"status": "stop", "finished_at": _utc_now_iso(), "error": "stop requested by user"})
+            log_file_path = rec.get("log_file")
+            if log_file_path:
+                try:
+                    with open(log_file_path, "a", encoding="utf-8") as _lf:
+                        _lf.write(f"\n[stopped] Run stopped by user at {_utc_now_iso()}\nStatus  : stopped\n")
+                except Exception:
+                    pass
+            _mark_task_stopped()
+            return True
+        # In-process chat run: mark stop so the streaming handler can finalize.
+        if str(rec.get("session_type") or "") == "chat":
+            _update_run(run_id, {"status": "stop", "finished_at": _utc_now_iso(), "error": "stop requested by user"})
+            _mark_task_stopped()
+            return True
         return False
+
+    # If the process has already exited, clean up the stale "running" record.
+    if not _pid_exists(pid):
+        _update_run(run_id, {
+            "status": "stopped",
+            "finished_at": _utc_now_iso(),
+            "exit_code": 0,
+        })
+        _mark_task_stopped()
+        return True
 
     sent = False
     if os.name == "nt":
-        # Best-effort termination on Windows
         try:
-            # Try graceful first
             os.kill(pid, signal.SIGTERM)
             sent = True
         except Exception:
-            # Force kill using TerminateProcess via ctypes
             try:
                 import ctypes  # type: ignore
                 PROCESS_TERMINATE = 0x0001
@@ -323,7 +618,6 @@ def stop_run(task_id: str) -> bool:
                 sent = False
     else:
         try:
-            # Try to terminate the whole process group first
             os.killpg(pid, signal.SIGTERM)
             sent = True
         except Exception:
@@ -334,17 +628,28 @@ def stop_run(task_id: str) -> bool:
                 sent = False
 
     if sent:
-        _update_run(rec["run_id"], {"status": "stop"})
+        _update_run(run_id, {"status": "stop", "finished_at": _utc_now_iso()})
+        _mark_task_stopped()
+    elif not _pid_exists(pid):
+        # Process exited between our existence check and the signal attempt.
+        _update_run(run_id, {
+            "status": "stopped",
+            "finished_at": _utc_now_iso(),
+            "exit_code": 0,
+        })
+        _mark_task_stopped()
+        return True
     return sent
 
 
-def get_status(task_id: str) -> Optional[Dict[str, Any]]:
-    """Return the latest run status for the given task id (dict) or None if not found.
+def get_status(task_id: str, run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Return run status for a task, or None.
 
-    If the run is marked running but the process no longer exists, we will mark it as
-    failed with exit_code=1.
+    If run_id is provided it is looked up directly (preferred — avoids scanning
+    all runs).  Falls back to scanning by task_id when run_id is not known.
+    Auto-corrects the status if a process/container has exited without updating state.
     """
-    rec = _find_latest_running_for_task(str(task_id))
+    rec = get_run_by_id(run_id)
     if rec:
         if rec.get("is_remote") and rec.get("agent_url"):
             remote_stat = get_remote_status(rec["agent_url"], rec["run_id"])
@@ -352,98 +657,49 @@ def get_status(task_id: str) -> Optional[Dict[str, Any]]:
                 rec = _update_run(rec["run_id"], {
                     "status": "completed",
                     "finished_at": _utc_now_iso(),
-                    "exit_code": 0
+                    "exit_code": 0,
                 }) or rec
             elif remote_stat.get("status") in {"failed", "error"}:
                 rec = _update_run(rec["run_id"], {
                     "status": "failed",
                     "finished_at": _utc_now_iso(),
                     "exit_code": 1,
-                    "error": remote_stat.get("error", "remote error")
+                    "error": remote_stat.get("error", "remote error"),
                 }) or rec
             return rec
 
-        pid = int(rec.get("pid") or 0)
-        if pid > 0 and not _pid_exists(pid):
-            # Process vanished; finalize
-            rec = _update_run(
-                rec["run_id"],
-                {
+        if rec.get("execution_mode") == "docker" and rec.get("container_name"):
+            from .container_manager import container_running
+            if not container_running(rec["container_name"]):
+                rec = _update_run(rec["run_id"], {
                     "status": "failed",
                     "finished_at": _utc_now_iso(),
                     "exit_code": 1,
-                    "error": rec.get("error") or "process exited unexpectedly",
-                },
-            ) or rec
+                    "error": rec.get("error") or "container exited unexpectedly",
+                }) or rec
+        else:
+            pid = int(rec.get("pid") or 0)
+            if pid > 0 and not _pid_exists(pid):
+                was_stopped = rec.get("status") == "stop"
+                if was_stopped:
+                    log_file_path = rec.get("log_file")
+                    if log_file_path:
+                        try:
+                            with open(log_file_path, "a", encoding="utf-8") as _lf:
+                                _lf.write(f"\n[stopped] Run stopped by user at {_utc_now_iso()}\nStatus  : stopped\n")
+                        except Exception:
+                            pass
+                rec = _update_run(rec["run_id"], {
+                    "status": "stopped" if was_stopped else "failed",
+                    "finished_at": _utc_now_iso(),
+                    "exit_code": 0 if was_stopped else 1,
+                    "error": None if was_stopped else (rec.get("error") or "process exited unexpectedly"),
+                }) or rec
         return rec
 
-    # If not running, return the most recent by finished_at
+    # Not running — return the most recent completed/failed record for this task.
     runs = _load_runs()
     by_task = [r for r in runs if r.get("task_id") == str(task_id)]
     if not by_task:
         return None
-    def _key(r: Dict[str, Any]) -> str:
-        return r.get("finished_at") or r.get("started_at") or ""
-    return max(by_task, key=_key)
-
-
-# -------------------- Worker mode --------------------
-
-def _worker_main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["worker"])
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--log-file", required=True)
-    parser.add_argument("--cwd", required=True)
-    parser.add_argument("--cmd-json", required=True)
-    args = parser.parse_args()
-
-    cmd = json.loads(args.cmd_json)
-    run_id = args.run_id
-    log_file = Path(args.log_file)
-    cwd = args.cwd
-
-    try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_file, "w", encoding="utf-8") as log_fh:
-            log_fh.write(f"--- Worker started at {_utc_now_iso()} ---\n")
-            log_fh.write(f"Command: {cmd}\n")
-            log_fh.write(f"CWD: {cwd}\n\n")
-                # Do not log the API key itself, only whether it's present
-            try:
-                has_key = bool(os.environ.get("OPENAI_API_KEY"))
-                log_fh.write(f"OPENAI_API_KEY present: {has_key}\n\n")
-            except Exception:
-                pass
-            log_fh.flush()
-
-            proc = subprocess.run(
-                cmd,
-                cwd=cwd,
-                stdout=log_fh,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-
-            status = "completed" if proc.returncode == 0 else "failed"
-            _update_run(run_id, {
-                "status": status,
-                "finished_at": _utc_now_iso(),
-                "exit_code": proc.returncode,
-                "error": None if status == "completed" else f"process exited with code {proc.returncode}",
-            })
-    except Exception as e:
-        error_msg = f"Worker error: {e}\n{traceback.format_exc()}"
-        try:
-            with open(log_file, "a", encoding="utf-8") as log_fh:
-                log_fh.write(error_msg)
-        except Exception:
-            pass
-        _update_run(run_id, {
-            "status": "failed",
-            "finished_at": _utc_now_iso(),
-            "error": str(e),
-        })
-
-if __name__ == "__main__":
-    _worker_main()
+    return max(by_task, key=lambda r: r.get("finished_at") or r.get("started_at") or "")

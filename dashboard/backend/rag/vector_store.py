@@ -5,8 +5,13 @@ returns a metadata dict. Raises RuntimeError with an install hint if the
 required package is missing.
 """
 from __future__ import annotations
+from pathlib import Path
 from typing import List, Optional
 from .embeddings import EmbeddingResult
+
+# Use a fixed absolute path so the backend and agent subprocesses share the same DB.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_CHROMA_PATH = str(_PROJECT_ROOT / "chroma_db")
 
 
 # ── ChromaDB ──────────────────────────────────────────────────────────────────
@@ -31,8 +36,8 @@ def upsert_chroma(
         port = int(port_str) if port_str.isdigit() else 8000
         client = HttpClient(host=host, port=port)
     else:
-        # Local persistent storage
-        client = chromadb.PersistentClient(path="./chroma_db")
+        # Local persistent storage — absolute path shared with agent subprocesses
+        client = chromadb.PersistentClient(path=_CHROMA_PATH)
 
     collection = client.get_or_create_collection(collection_name)
     ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks))]

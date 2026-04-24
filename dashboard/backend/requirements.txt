@@ -4,3 +4,4 @@ pydantic
 python-dotenv
 filelock
 PyYAML
+python-multipart

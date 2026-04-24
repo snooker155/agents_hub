@@ -12,15 +12,26 @@ const TAG_STYLES = {
   general: 'bg-slate-100 text-slate-600',
 };
 
-function FactoryNode({ data, selected }) {
+function FlowNode({ data, selected }) {
   const tagStyle = TAG_STYLES[data.domain] || TAG_STYLES.general;
+  const { isActive } = data;
 
   return (
     <div
-      className={`w-[90px] rounded-xl border bg-white px-1.5 py-2 shadow-sm transition ${
-        selected ? 'border-cyan-400 shadow-md shadow-cyan-100' : 'border-slate-200'
+      className={`relative w-[90px] rounded-xl border bg-white px-1.5 py-2 shadow-sm transition ${
+        isActive
+          ? 'border-cyan-500 shadow-lg shadow-cyan-200 ring-2 ring-cyan-400 ring-offset-1'
+          : selected
+          ? 'border-cyan-400 shadow-md shadow-cyan-100'
+          : 'border-slate-200'
       }`}
     >
+      {isActive && (
+        <span className="absolute -right-1 -top-1 flex h-3 w-3">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
+          <span className="relative inline-flex h-3 w-3 rounded-full bg-cyan-500" />
+        </span>
+      )}
       <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-2 !border-white !bg-cyan-500" />
       <div className={`mb-1 block truncate rounded px-1 py-0.5 text-[7px] font-bold uppercase tracking-wide ${tagStyle}`}>
         {data.domain || 'general'}
@@ -33,4 +44,4 @@ function FactoryNode({ data, selected }) {
   );
 }
 
-export default FactoryNode;
+export default FlowNode;

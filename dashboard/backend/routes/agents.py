@@ -7,9 +7,9 @@ import yaml
 from pathlib import Path
 
 from agents import registry, run_manager
-from agents.factory import get_factory
+from agents.agent_factory import get_factory
 from tools.registry import get_all_tools
-from models import AgentClone, AgentConnect, AgentCreateCustom, AgentMemoryUpdate, AgentToolsUpdate, AgentModelUpdate, YamlManifest
+from models import AgentClone, AgentConnect, AgentCreateCustom, AgentMemoryUpdate, AgentToolsUpdate, AgentModelUpdate, AgentReasoningUpdate, YamlManifest
 
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -33,13 +33,23 @@ async def list_agents(workspace: Optional[str] = None):
         if fa["id"] not in reg_ids:
             all_agents.append(fa)
 
-    # Filter by workspace's allowed_agents if workspace is specified
-    if workspace:
+    # Filter by workspace
+    if workspace and workspace != "default":
         from common.workspace import get_workspace_metadata
         metadata = get_workspace_metadata(workspace)
         allowed = metadata.get("allowed_agents")
         if allowed is not None:
             all_agents = [a for a in all_agents if a["id"] in allowed]
+        # Always hide default-workspace-only agents from non-default workspaces
+        all_agents = [a for a in all_agents if not a.get("default_workspace_only", False)]
+
+    # Annotate each agent with whether it has a running node in the requested workspace
+    from agents.node_manager import get_running_nodes_for_agent
+    for agent in all_agents:
+        running_nodes = get_running_nodes_for_agent(agent["id"])
+        if workspace and workspace != "default":
+            running_nodes = [n for n in running_nodes if n.get("workspace") == workspace]
+        agent["has_running_node"] = len(running_nodes) > 0
 
     return all_agents
 
@@ -99,8 +109,7 @@ async def get_agent_definition(agent_id: str):
             raise HTTPException(status_code=500, detail=f"Failed to read YAML definition: {e}")
 
     if not system_prompt:
-        dp = spec.default_params if isinstance(spec.default_params, dict) else {}
-        system_prompt = dp.get("system_prompt")
+        system_prompt = spec.system_prompt or None
 
     if not yaml_text:
         generated = {
@@ -116,7 +125,6 @@ async def get_agent_definition(agent_id: str):
                 "isRemote": spec.is_remote,
                 "agentUrl": spec.agent_url,
                 "tools": spec.tools,
-                "defaultParams": spec.default_params,
                 "memoryType": spec.memory_type,
                 "memoryData": spec.memory_data,
             },
@@ -132,13 +140,64 @@ async def get_agent_definition(agent_id: str):
     }
 
 
+@router.get("/{agent_id}/workspace-capacities")
+async def get_agent_workspace_capacities(agent_id: str):
+    """Return workspace-specific capacity overrides for this agent (excludes 'default')."""
+    from common.workspace import list_workspace_folders, get_workspace_metadata
+    result = {}
+    for ws_path in list_workspace_folders():
+        ws_name = ws_path.name
+        if ws_name == "default":
+            continue
+        meta = get_workspace_metadata(ws_name)
+        overrides = meta.get("agent_capacity_overrides", {})
+        if agent_id in overrides:
+            result[ws_name] = overrides[agent_id]
+    return result
+
+
 @router.get("/{agent_id}/history")
 async def get_agent_history(agent_id: str):
-    runs = run_manager._load_runs()
+    runs = run_manager.load_runs()
     agent_runs = [r for r in runs if r.get("agent_id") == agent_id]
     # Sort by started_at desc
-    agent_runs.sort(key=lambda r: r.get("started_at", ""), reverse=True)
+    agent_runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return agent_runs
+
+
+@router.get("/{agent_id}/logs")
+async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: int = 100):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    from agents import node_manager
+
+    runs = run_manager.load_runs()
+    agent_runs = [r for r in runs if r.get("agent_id") == agent_id]
+    if node_id:
+        agent_runs = [r for r in agent_runs if str(r.get("node_id") or "") == str(node_id)]
+    agent_runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    if limit > 0:
+        agent_runs = agent_runs[: max(1, min(int(limit), 500))]
+
+    for r in agent_runs:
+        lp = r.get("log_file")
+        r["log_exists"] = bool(lp and Path(lp).exists())
+
+    nodes = [n for n in node_manager.list_nodes() if n.get("agent_id") == agent_id]
+    if node_id:
+        nodes = [n for n in nodes if str(n.get("node_id") or "") == str(node_id)]
+    nodes.sort(key=lambda n: n.get("started_at") or "", reverse=True)
+    for n in nodes:
+        lp = n.get("log_file")
+        n["log_exists"] = bool(lp and Path(lp).exists())
+
+    return {
+        "agent_id": agent_id,
+        "runs": agent_runs,
+        "nodes": nodes,
+    }
 
 
 @router.post("/clone")
@@ -152,12 +211,25 @@ async def clone_agent(clone: AgentClone):
         name=clone.new_name,
         type=original.type,
         entrypoint=original.entrypoint,
-        default_params=original.default_params,
+        description=original.description,
+        domain=original.domain,
         tools=original.tools,
         capacity=original.capacity,
         is_remote=original.is_remote,
         agent_url=original.agent_url,
-        original_id=original.id
+        original_id=original.id,
+        memory_type=original.memory_type,
+        memory_data=original.memory_data,
+        default_workspace_only=original.default_workspace_only,
+        provider=original.provider,
+        model=original.model,
+        base_url=original.base_url,
+        system_prompt=original.system_prompt,
+        temperature=original.temperature,
+        max_tokens=original.max_tokens,
+        api_key=original.api_key,
+        verbose=original.verbose,
+        streaming=original.streaming,
     )
     try:
         registry.add_agent(new_spec)
@@ -206,14 +278,26 @@ async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
         name=spec.name,
         type=spec.type,
         entrypoint=spec.entrypoint,
-        default_params=spec.default_params,
+        description=spec.description,
+        domain=spec.domain,
         tools=spec.tools,
+        commands=spec.commands,
         capacity=spec.capacity,
         is_remote=spec.is_remote,
         agent_url=spec.agent_url,
         original_id=spec.original_id,
         memory_type=data.memory_type,
-        memory_data=data.memory_data
+        memory_data=data.memory_data,
+        default_workspace_only=spec.default_workspace_only,
+        provider=spec.provider,
+        model=spec.model,
+        base_url=spec.base_url,
+        system_prompt=spec.system_prompt,
+        temperature=spec.temperature,
+        max_tokens=spec.max_tokens,
+        api_key=spec.api_key,
+        verbose=spec.verbose,
+        streaming=spec.streaming,
     )
     registry.add_agent(new_spec)
     return new_spec.to_dict()
@@ -230,14 +314,26 @@ async def erase_agent_memory(agent_id: str):
         name=spec.name,
         type=spec.type,
         entrypoint=spec.entrypoint,
-        default_params=spec.default_params,
+        description=spec.description,
+        domain=spec.domain,
         tools=spec.tools,
+        commands=spec.commands,
         capacity=spec.capacity,
         is_remote=spec.is_remote,
         agent_url=spec.agent_url,
         original_id=spec.original_id,
         memory_type="none",
-        memory_data=None
+        memory_data=None,
+        default_workspace_only=spec.default_workspace_only,
+        provider=spec.provider,
+        model=spec.model,
+        base_url=spec.base_url,
+        system_prompt=spec.system_prompt,
+        temperature=spec.temperature,
+        max_tokens=spec.max_tokens,
+        api_key=spec.api_key,
+        verbose=spec.verbose,
+        streaming=spec.streaming,
     )
     registry.add_agent(new_spec)
     return new_spec.to_dict()
@@ -249,28 +345,94 @@ async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    default_params = dict(spec.default_params or {})
-    if data.tools:
-        default_params["tools"] = list(data.tools)
-    else:
-        default_params.pop("tools", None)
-
     new_spec = registry.AgentSpec(
         id=spec.id,
         name=spec.name,
         type=spec.type,
         entrypoint=spec.entrypoint,
-        default_params=default_params,
+        description=spec.description,
+        domain=spec.domain,
         tools=list(data.tools),
+        commands=spec.commands,
         capacity=spec.capacity,
         is_remote=spec.is_remote,
         agent_url=spec.agent_url,
         original_id=spec.original_id,
         memory_type=spec.memory_type,
         memory_data=spec.memory_data,
+        default_workspace_only=spec.default_workspace_only,
+        provider=spec.provider,
+        model=spec.model,
+        base_url=spec.base_url,
+        system_prompt=spec.system_prompt,
+        temperature=spec.temperature,
+        max_tokens=spec.max_tokens,
+        api_key=spec.api_key,
+        verbose=spec.verbose,
+        streaming=spec.streaming,
+        reasoning=spec.reasoning,
     )
     registry.add_agent(new_spec)
     return new_spec.to_dict()
+
+
+@router.get("/{agent_id}/reasoning")
+async def get_agent_reasoning(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    r = spec.reasoning or {}
+    return {
+        "think_mode": r.get("think_mode", "standard"),
+        "plan_format": r.get("plan_format", "structured"),
+    }
+
+
+@router.post("/{agent_id}/reasoning")
+async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    current = dict(spec.reasoning or {})
+    if data.think_mode is not None:
+        current["think_mode"] = data.think_mode
+    if data.plan_format is not None:
+        current["plan_format"] = data.plan_format
+
+    new_spec = registry.AgentSpec(
+        id=spec.id,
+        name=spec.name,
+        type=spec.type,
+        entrypoint=spec.entrypoint,
+        description=spec.description,
+        domain=spec.domain,
+        tools=spec.tools,
+        commands=spec.commands,
+        capacity=spec.capacity,
+        is_remote=spec.is_remote,
+        agent_url=spec.agent_url,
+        original_id=spec.original_id,
+        memory_type=spec.memory_type,
+        memory_data=spec.memory_data,
+        default_workspace_only=spec.default_workspace_only,
+        provider=spec.provider,
+        model=spec.model,
+        base_url=spec.base_url,
+        system_prompt=spec.system_prompt,
+        temperature=spec.temperature,
+        max_tokens=spec.max_tokens,
+        api_key=spec.api_key,
+        verbose=spec.verbose,
+        streaming=spec.streaming,
+        is_default_chat_agent=spec.is_default_chat_agent,
+        reasoning=current,
+    )
+    registry.add_agent(new_spec)
+    return {
+        "think_mode": current.get("think_mode", "standard"),
+        "plan_format": current.get("plan_format", "structured"),
+    }
 
 
 @router.get("/{agent_id}/model")
@@ -278,14 +440,13 @@ async def get_agent_model(agent_id: str):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    dp = dict(spec.default_params or {})
     return {
-        "provider":    dp.get("provider", "inherit"),
-        "model":       dp.get("model", ""),
-        "base_url":    dp.get("base_url", ""),
-        "temperature": dp.get("temperature"),   # None means "inherit global"
-        "max_tokens":  dp.get("max_tokens"),    # None means "inherit global"
-        "has_api_key": bool(dp.get("api_key")), # never expose the key value
+        "provider":    spec.provider or "inherit",
+        "model":       spec.model or "",
+        "base_url":    spec.base_url or "",
+        "temperature": spec.temperature,   # None means "inherit global"
+        "max_tokens":  spec.max_tokens,    # None means "inherit global"
+        "has_api_key": bool(spec.api_key), # never expose the key value
     }
 
 
@@ -295,46 +456,46 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    dp = dict(spec.default_params or {})
-
-    # Provider
+    # Provider → top-level field
+    new_provider = spec.provider
     if data.provider is not None:
-        if data.provider == "inherit":
-            dp.pop("provider", None)
-        else:
-            dp["provider"] = data.provider
+        new_provider = None if data.provider == "inherit" else data.provider
 
-    # Model name
-    if data.model is not None:
-        if data.model.strip():
-            dp["model"] = data.model.strip()
-        else:
-            dp.pop("model", None)
+    # When switching to global/inherit, clear model and base_url too
+    if new_provider is None:
+        new_model = None
+        new_base_url = None
+    else:
+        # Model name → top-level field
+        new_model = spec.model
+        if data.model is not None:
+            new_model = data.model.strip() or None
 
-    # API key override (only store if non-empty; clear_api_key removes it)
+        # Base URL → top-level field
+        new_base_url = spec.base_url
+        if data.base_url is not None:
+            new_base_url = data.base_url.strip() or None
+
+    # API key override — stored as flat field (sensitive; not exposed in to_dict)
+    new_api_key = spec.api_key
     if data.clear_api_key:
-        dp.pop("api_key", None)
+        new_api_key = None
     elif data.api_key is not None and data.api_key.strip():
-        dp["api_key"] = data.api_key.strip()
+        new_api_key = data.api_key.strip()
 
-    # Base URL override
-    if data.base_url is not None:
-        if data.base_url.strip():
-            dp["base_url"] = data.base_url.strip()
-        else:
-            dp.pop("base_url", None)
-
-    # Temperature override
+    # Temperature override — stored as flat field
+    new_temperature = spec.temperature
     if data.clear_temperature:
-        dp.pop("temperature", None)
+        new_temperature = None
     elif data.temperature is not None:
-        dp["temperature"] = data.temperature
+        new_temperature = data.temperature
 
-    # Max tokens override
+    # Max tokens override — stored as flat field
+    new_max_tokens = spec.max_tokens
     if data.clear_max_tokens:
-        dp.pop("max_tokens", None)
+        new_max_tokens = None
     elif data.max_tokens is not None:
-        dp["max_tokens"] = data.max_tokens
+        new_max_tokens = data.max_tokens
 
     new_spec = registry.AgentSpec(
         id=spec.id,
@@ -343,23 +504,33 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
         entrypoint=spec.entrypoint,
         description=spec.description,
         domain=spec.domain,
-        default_params=dp,
         tools=spec.tools,
+        commands=spec.commands,
         capacity=spec.capacity,
         is_remote=spec.is_remote,
         agent_url=spec.agent_url,
         original_id=spec.original_id,
         memory_type=spec.memory_type,
         memory_data=spec.memory_data,
+        default_workspace_only=spec.default_workspace_only,
+        provider=new_provider,
+        model=new_model,
+        base_url=new_base_url,
+        system_prompt=spec.system_prompt,
+        temperature=new_temperature,
+        max_tokens=new_max_tokens,
+        api_key=new_api_key,
+        verbose=spec.verbose,
+        streaming=spec.streaming,
     )
     registry.add_agent(new_spec)
     return {
-        "provider":    dp.get("provider", "inherit"),
-        "model":       dp.get("model", ""),
-        "base_url":    dp.get("base_url", ""),
-        "temperature": dp.get("temperature"),
-        "max_tokens":  dp.get("max_tokens"),
-        "has_api_key": bool(dp.get("api_key")),
+        "provider":    new_provider or "inherit",
+        "model":       new_model or "",
+        "base_url":    new_base_url or "",
+        "temperature": new_temperature,
+        "max_tokens":  new_max_tokens,
+        "has_api_key": bool(new_api_key),
     }
 
 
@@ -373,6 +544,29 @@ async def health_agent(agent_id: str):
 
     from agents.remote_runner import check_health
     return check_health(spec.agent_url)
+
+
+@router.post("/{agent_id}/set-default-chat")
+async def set_default_chat_agent(agent_id: str):
+    """Set this agent as the default pre-selected agent in the Chat page."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        registry.set_default_chat_agent(agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"default_chat_agent": agent_id}
+
+
+@router.delete("/{agent_id}/set-default-chat")
+async def clear_default_chat_agent(agent_id: str):
+    """Remove the default chat agent flag from this agent."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    registry.clear_default_chat_agent()
+    return {"default_chat_agent": None}
 
 
 @router.post("/apply")
@@ -403,8 +597,8 @@ async def apply_agent_manifest(data: YamlManifest):
         capacity=spec_data.get("capacity", 1),
         is_remote=spec_data.get("isRemote", False),
         agent_url=spec_data.get("agentUrl"),
-        tools=spec_data.get("tools", spec_data.get("capabilities", [])),
-        default_params=spec_data.get("defaultParams", {})
+        tools=spec_data.get("tools", []),
+        system_prompt=spec_data.get("systemPrompt", ""),
     )
 
     try:
@@ -432,9 +626,9 @@ async def create_custom_agent(data: AgentCreateCustom):
         domain=data.domain,
         type="langchain",
         entrypoint=entrypoint,
-        default_params={"system_prompt": data.system_prompt, "tools": data.tools},
+        system_prompt=data.system_prompt,
         tools=data.tools,
-        capacity=data.capacity
+        capacity=data.capacity,
     )
     try:
         registry.add_agent(spec)

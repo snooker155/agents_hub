@@ -5,9 +5,9 @@ Each call receives the full conversation history so the agent has context.
 The agent is created fresh per message using the factory (YAML-based agents only).
 Remote agents are not supported for chat.
 
-Requires at least one running node for the selected agent — enforced server-side.
-Each message exchange is recorded as a run in agent_runs.json so it appears
-in the Sessions list, complete with a log file containing the full exchange.
+No running node is required — each message runs the agent on-request inside the
+server process.  Each message exchange is recorded as a run in agent_runs.json
+so it appears in the Sessions list, complete with a log file.
 """
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -22,35 +22,45 @@ import time
 
 from langchain_core.callbacks import BaseCallbackHandler
 
-from agents.factory import create_agent
+from agents.agent_factory import create_agent
 from agents import registry
-from agents.node_manager import get_running_nodes_for_agent
-from agents.run_manager import _upsert_run, _update_run, STATE_DIR, _load_runs
+from agents.run_manager import (
+    CHAT_LOGS_DIR,
+    new_unique_run_id,
+    open_run as register_run,
+    update_run,
+    get_run_by_id as get_run,
+)
 from models import ChatRequest
+from common.session_service import get_or_create_chat_session
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 def _agent_overrides(agent_id: str) -> dict:
-    """Read per-agent model overrides from registry default_params."""
+    """Read per-agent model overrides from the registry AgentSpec fields."""
     try:
         spec = registry.get_agent(agent_id)
         if not spec:
             return {}
-        dp = dict(spec.default_params or {})
         overrides = {}
-        provider = dp.get("provider")
-        if provider and provider != "inherit":
-            overrides["provider"] = provider
-        for key in ("model", "base_url", "api_key", "temperature", "max_tokens"):
-            if dp.get(key) is not None:
-                overrides[key] = dp[key]
+        # spec.provider / model / base_url are set via the Agent > Model tab in the UI.
+        # default_params is always {} — the real overrides live as top-level spec fields.
+        if spec.provider and spec.provider != "inherit":
+            overrides["provider"] = spec.provider
+        if spec.model:
+            overrides["model"] = spec.model
+        if spec.base_url:
+            overrides["base_url"] = spec.base_url
+        if spec.api_key:
+            overrides["api_key"] = spec.api_key
+        if spec.temperature is not None:
+            overrides["temperature"] = spec.temperature
+        if spec.max_tokens is not None:
+            overrides["max_tokens"] = spec.max_tokens
         return overrides
     except Exception:
         return {}
-
-CHAT_LOGS_DIR = STATE_DIR / "chat_logs"
-CHAT_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _utc_iso() -> str:
@@ -69,6 +79,36 @@ def _append_log(log_lines: list[str], line: str, log_file: Path) -> None:
     _write_log(log_file, log_lines)
 
 
+def _to_json_safe(value, *, depth: int = 0, max_depth: int = 5):
+    """Best-effort conversion of callback payloads to JSON-safe structures."""
+    if depth >= max_depth:
+        return str(value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        out = {}
+        for k, v in list(value.items())[:200]:
+            out[str(k)] = _to_json_safe(v, depth=depth + 1, max_depth=max_depth)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_to_json_safe(v, depth=depth + 1, max_depth=max_depth) for v in list(value)[:200]]
+    # Pydantic models and similar objects
+    for meth in ("model_dump", "dict"):
+        fn = getattr(value, meth, None)
+        if callable(fn):
+            try:
+                return _to_json_safe(fn(), depth=depth + 1, max_depth=max_depth)
+            except Exception:
+                pass
+    # Generic object fallback
+    if hasattr(value, "__dict__"):
+        try:
+            return _to_json_safe(vars(value), depth=depth + 1, max_depth=max_depth)
+        except Exception:
+            pass
+    return str(value)
+
+
 def _validate_chat_request(request: ChatRequest):
     spec = registry.get_agent(request.agent_id)
     if not spec:
@@ -77,12 +117,6 @@ def _validate_chat_request(request: ChatRequest):
     if getattr(spec, "is_remote", False):
         raise HTTPException(status_code=400, detail="Remote agents do not support direct chat")
 
-    running_nodes = get_running_nodes_for_agent(request.agent_id)
-    if not running_nodes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"No running nodes for agent '{request.agent_id}'. Start a node first.",
-        )
     return spec
 
 
@@ -96,14 +130,30 @@ def _build_chat_context(request: ChatRequest) -> tuple[str, str | None]:
         except Exception:
             workspace_abs = None
 
+    # Include bounded conversation history, then latest user message.
+    history_lines: list[str] = []
+    budget = 60_000
+    for msg in reversed(request.history[-40:]):
+        role = "User" if str(msg.role) == "user" else "Assistant"
+        content = str(msg.content or "")
+        if len(content) > 4000:
+            content = content[:4000] + "\n...[truncated]"
+        line = f"{role}: {content}"
+        if budget - len(line) < 0:
+            break
+        budget -= len(line)
+        history_lines.insert(0, line)
+
     lines = []
-    if request.history:
-        lines.append("=== Conversation so far ===")
-        for msg in request.history[-20:]:
-            role = "User" if msg.role == "user" else "Assistant"
-            lines.append(f"{role}: {msg.content}")
-        lines.append("")
-        lines.append("=== New message ===")
+    if history_lines:
+        lines.extend([
+            "Use the conversation history for context when answering the latest user message.",
+            "",
+            "Conversation history:",
+            *history_lines,
+            "",
+            "Latest user message:",
+        ])
     lines.append(request.message)
     if request.attachments:
         lines.extend(["", "=== Attached files ==="])
@@ -123,48 +173,38 @@ def _build_chat_context(request: ChatRequest) -> tuple[str, str | None]:
     return full_prompt, workspace_abs
 
 
-def _find_existing_chat_run(conversation_id: str):
-    """Find latest chat run for a conversation id."""
-    runs = _load_runs()
-    candidates = [
-        r for r in runs
-        if r.get("session_type") == "chat" and str(r.get("task_id")) == str(conversation_id)
-    ]
-    if not candidates:
-        return None
-    candidates.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-    return candidates[0]
-
-
 def _create_chat_run(request: ChatRequest):
+    """Create a new run record for each chat message exchange."""
     conv_id = request.conversation_id or str(uuid4())
-    existing = _find_existing_chat_run(conv_id)
-    run_id = existing.get("run_id") if existing else str(uuid4())
-    title = request.conversation_title or (
-        request.message[:60] + ("…" if len(request.message) > 60 else "")
-    )
-    existing_log = existing.get("log_file") if existing else None
-    log_file = Path(existing_log) if existing_log else (CHAT_LOGS_DIR / f"chat_{run_id}.log")
+    run_id = new_unique_run_id()
+    run_title = request.message[:60] + ("…" if len(request.message) > 60 else "")
+    session_title = request.conversation_title or run_title
+    log_file = CHAT_LOGS_DIR / f"chat_{run_id}.log"
     started = _utc_iso()
 
-    if log_file.exists():
-        try:
-            log_lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-        except Exception:
-            log_lines = []
-    else:
-        log_lines = [
-            f"=== Chat session  run_id={run_id} ===",
-            f"Started   : {started}",
-            f"Agent     : {request.agent_id}",
-            f"Workspace : {request.workspace or '—'}",
-            f"Conv ID   : {conv_id}",
-            f"Title     : {title}",
-            "",
-        ]
+    # Ensure/create a session context for this conversation
+    try:
+        session_id = get_or_create_chat_session(
+            conversation_id=conv_id,
+            title=session_title,
+            workspace=request.workspace,
+            agent_id=request.agent_id,
+        )
+    except Exception:
+        session_id = None
 
     msg_id = str(uuid4())[:8]
-    log_lines.extend([f"=== Message at {started} id={msg_id} ==="])
+    log_lines = [
+        f"=== Chat message  run_id={run_id} ===",
+        f"Started   : {started}",
+        f"Agent     : {request.agent_id}",
+        f"Workspace : {request.workspace or '—'}",
+        f"Conv ID   : {conv_id}",
+        f"Session ID: {session_id or '—'}",
+        f"Title     : {run_title}",
+        "",
+        f"=== Message at {started} id={msg_id} ===",
+    ]
     if request.history:
         log_lines.append("--- Conversation history ---")
         for msg in request.history[-20:]:
@@ -189,33 +229,40 @@ def _create_chat_run(request: ChatRequest):
     ])
     _write_log(log_file, log_lines)
 
-    run_rec = {
-        "run_id": run_id,
-        "task_id": conv_id,
-        "agent_id": request.agent_id,
-        "title": title,
-        "session_type": "chat",
-        "workspace": request.workspace,
-        "pid": None,
-        "status": "running",
-        "started_at": existing.get("started_at") if existing else started,
-        "finished_at": None,
-        "exit_code": None,
-        "error": None,
-        "log_file": str(log_file),
-    }
-    _upsert_run(run_rec)
-    return run_id, msg_id, log_file, log_lines
+    register_run(
+        run_id,
+        request.agent_id,
+        task_id=conv_id,
+        session_id=session_id,
+        session_type="chat",
+        message_origin="chat",
+        workspace=request.workspace,
+        title=run_title,
+        log_file=str(log_file),
+    )
+
+    return run_id, msg_id, log_file, log_lines, session_id
 
 
 class ChatStreamCallback(BaseCallbackHandler):
     """Callback handler that forwards LLM/tool execution events to an asyncio queue."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue, log_lines: list[str], log_file: Path):
+    # Tell LangChain to propagate exceptions raised in callbacks instead of swallowing them.
+    raise_error: bool = True
+
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        queue: asyncio.Queue,
+        log_lines: list[str],
+        log_file: Path,
+        session_id: str | None = None,
+    ):
         self.loop = loop
         self.queue = queue
         self.log_lines = log_lines
         self.log_file = log_file
+        self.session_id = session_id
         self._step = 0
         self.prompt_tokens = 0
         self.completion_tokens = 0
@@ -223,9 +270,24 @@ class ChatStreamCallback(BaseCallbackHandler):
         self.tool_calls = 0
         self._last_prompt_text = ""
         self._output_text_parts: list[str] = []
+        # Full process graph data collected during the run
+        self.tool_history: list[dict] = []
+        self.thinking_history: list[str] = []
+        self.llm_invoke_responses: list[dict] = []
+        self._pending_tool: dict | None = None
+        self.cancelled: bool = False  # set True to interrupt LLM streaming mid-generation
 
     def _emit(self, payload: dict):
+        # Forward to the local SSE queue for the active HTTP response.
         self.loop.call_soon_threadsafe(self.queue.put_nowait, payload)
+        # Also publish to the session broker so /api/sessions/{id}/stream
+        # subscribers (e.g. continuation SSE connections) receive the same events.
+        if self.session_id:
+            try:
+                from common.session_broker import broker
+                broker.publish_threadsafe(self.session_id, payload)
+            except Exception:
+                pass
 
     def on_llm_start(self, serialized, prompts, **kwargs):
         model_name = None
@@ -240,9 +302,12 @@ class ChatStreamCallback(BaseCallbackHandler):
             self._last_prompt_text = ""
         line = f"[llm_start] model={model_name or 'unknown'}"
         _append_log(self.log_lines, line, self.log_file)
+        self.thinking_history.append(line)
         self._emit({"type": "thinking", "message": line})
 
     def on_llm_new_token(self, token, **kwargs):
+        if self.cancelled:
+            return
         if token:
             self._output_text_parts.append(str(token))
             self._emit({"type": "token", "token": token})
@@ -255,6 +320,16 @@ class ChatStreamCallback(BaseCallbackHandler):
         return max(1, int(math.ceil(len(text) / 4)))
 
     def on_llm_end(self, response, **kwargs):
+        try:
+            raw_payload = {
+                "response_type": response.__class__.__name__,
+                "llm_output": _to_json_safe(getattr(response, "llm_output", None)),
+                "generations": _to_json_safe(getattr(response, "generations", None)),
+            }
+            self.llm_invoke_responses.append(raw_payload)
+        except Exception:
+            pass
+
         usage = {}
         try:
             usage = (getattr(response, "llm_output", None) or {}).get("token_usage", {}) or {}
@@ -327,20 +402,51 @@ class ChatStreamCallback(BaseCallbackHandler):
         self._step += 1
         self.tool_calls += 1
         name = serialized.get("name") if isinstance(serialized, dict) else "tool"
-        preview = str(input_str)
+        input_full = str(input_str)
+        preview = input_full
         if len(preview) > 240:
             preview = preview[:240] + "..."
         line = f"[tool_start] step={self._step} tool={name} input={preview}"
         _append_log(self.log_lines, line, self.log_file)
-        self._emit({"type": "tool_start", "step": self._step, "tool": name, "input": str(input_str)})
+        self._pending_tool = {"step": self._step, "tool": name, "input": input_full}
+        self._emit({"type": "tool_start", "step": self._step, "tool": name, "input": input_full})
 
     def on_tool_end(self, output, **kwargs):
-        preview = str(output)
+        if self.cancelled:
+            return
+        output_full = str(output)
+        preview = output_full
         if len(preview) > 240:
             preview = preview[:240] + "..."
         line = f"[tool_end] output={preview}"
         _append_log(self.log_lines, line, self.log_file)
-        self._emit({"type": "tool_end", "output": str(output)})
+        if self._pending_tool is not None:
+            entry = dict(self._pending_tool)
+            entry["output"] = output_full
+            self.tool_history.append(entry)
+            self._pending_tool = None
+        self._emit({"type": "tool_end", "output": output_full})
+
+    def on_llm_error(self, error, **kwargs):
+        line = f"[llm_error] {type(error).__name__}: {error}"
+        _append_log(self.log_lines, line, self.log_file)
+        self._emit({"type": "error", "source": "llm", "error": str(error)})
+
+    def on_tool_error(self, error, **kwargs):
+        tool_name = (self._pending_tool or {}).get("tool", "unknown")
+        line = f"[tool_error] tool={tool_name} {type(error).__name__}: {error}"
+        _append_log(self.log_lines, line, self.log_file)
+        if self._pending_tool is not None:
+            entry = dict(self._pending_tool)
+            entry["output"] = f"ERROR: {error}"
+            self.tool_history.append(entry)
+            self._pending_tool = None
+        self._emit({"type": "tool_error", "tool": tool_name, "error": str(error)})
+
+    def on_chain_error(self, error, **kwargs):
+        line = f"[chain_error] {type(error).__name__}: {error}"
+        _append_log(self.log_lines, line, self.log_file)
+        self._emit({"type": "error", "source": "chain", "error": str(error)})
 
 
 def _safe_attachment_filename(filename: str, idx: int) -> str:
@@ -404,12 +510,12 @@ async def send_message(request: ChatRequest):
     _validate_chat_request(request)
     _materialize_attachments(request)
     full_prompt, workspace_abs = _build_chat_context(request)
-    run_id, _, log_file, log_lines = _create_chat_run(request)
+    run_id, _, log_file, log_lines, __ = _create_chat_run(request)
 
     def _run_agent():
         overrides = _agent_overrides(request.agent_id)
         agent = create_agent(request.agent_id, workspace=workspace_abs, **overrides)
-        return agent.run(full_prompt)
+        return agent.run(full_prompt, run_id)
 
     try:
         result = await asyncio.wait_for(
@@ -419,13 +525,13 @@ async def send_message(request: ChatRequest):
     except asyncio.TimeoutError:
         finished = _utc_iso()
         _write_log(log_file, log_lines + ["(timed out after 5 minutes)", "", f"Finished: {finished}"])
-        _update_run(run_id, {"status": "failed", "finished_at": finished,
+        update_run(run_id, {"status": "failed", "finished_at": finished,
                              "exit_code": 1, "error": "timed out"})
         raise HTTPException(status_code=504, detail="Agent timed out after 5 minutes")
     except FileNotFoundError:
         finished = _utc_iso()
         _write_log(log_file, log_lines + ["(no YAML definition)", "", f"Finished: {finished}"])
-        _update_run(run_id, {"status": "failed", "finished_at": finished,
+        update_run(run_id, {"status": "failed", "finished_at": finished,
                              "exit_code": 1, "error": "no YAML definition"})
         raise HTTPException(
             status_code=400,
@@ -434,21 +540,27 @@ async def send_message(request: ChatRequest):
     except Exception as e:
         finished = _utc_iso()
         _write_log(log_file, log_lines + [f"(error: {e})", "", f"Finished: {finished}"])
-        _update_run(run_id, {"status": "failed", "finished_at": finished,
+        update_run(run_id, {"status": "failed", "finished_at": finished,
                              "exit_code": 1, "error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
     finished = _utc_iso()
 
+    current = get_run(run_id) or {}
+    if current.get("status") == "stop":
+        _write_log(log_file, log_lines + ["(stopped by user)", "", f"Finished: {finished}", "Status  : stopped"])
+        update_run(run_id, {"status": "stopped", "finished_at": finished, "exit_code": 1, "error": "stopped by user"})
+        return {"response": "Stopped by user", "ok": False, "run_id": run_id}
+
     if result.ok:
         response_text = str(result.agent_output)
         _write_log(log_file, log_lines + [response_text, "", f"Finished: {finished}", "Status  : completed"])
-        _update_run(run_id, {"status": "completed", "finished_at": finished, "exit_code": 0})
+        update_run(run_id, {"status": "completed", "finished_at": finished, "exit_code": 0})
         return {"response": response_text, "ok": True, "run_id": run_id}
 
     error_text = result.error or "Agent returned no output"
     _write_log(log_file, log_lines + [f"(error: {error_text})", "", f"Finished: {finished}", "Status  : failed"])
-    _update_run(run_id, {"status": "failed", "finished_at": finished,
+    update_run(run_id, {"status": "failed", "finished_at": finished,
                          "exit_code": 1, "error": error_text})
     return {"response": f"Error: {error_text}", "ok": False, "run_id": run_id}
 
@@ -459,12 +571,12 @@ async def stream_message(request: ChatRequest):
     _validate_chat_request(request)
     _materialize_attachments(request)
     full_prompt, workspace_abs = _build_chat_context(request)
-    run_id, msg_id, log_file, log_lines = _create_chat_run(request)
+    run_id, msg_id, log_file, log_lines, session_id = _create_chat_run(request)
 
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
-        callback = ChatStreamCallback(loop, queue, log_lines, log_file)
+        callback = ChatStreamCallback(loop, queue, log_lines, log_file, session_id=session_id)
         message_started = time.perf_counter()
 
         token_parts: list[str] = []
@@ -472,16 +584,16 @@ async def stream_message(request: ChatRequest):
         final_ok: bool = False
         final_error: str | None = None
 
-        def _run_agent():
+        async def _run_agent_async():
             overrides = _agent_overrides(request.agent_id)
             agent = create_agent(request.agent_id, workspace=workspace_abs, streaming=True, **overrides)
-            return agent.run(full_prompt, callbacks=[callback])
+            return await agent.arun(full_prompt, callbacks=[callback])
 
-        task = asyncio.create_task(asyncio.to_thread(_run_agent))
+        task = asyncio.create_task(_run_agent_async())
 
         try:
-            yield f"data: {json.dumps({'type': 'meta', 'run_id': run_id})}\n\n"
-
+            meta_event = {"type": "meta", "run_id": run_id, "session_id": session_id}
+            yield f"data: {json.dumps(meta_event)}\n\n"
             while not task.done():
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=0.2)
@@ -490,9 +602,16 @@ async def stream_message(request: ChatRequest):
                         token_parts.append(tok)
                     yield f"data: {json.dumps(event)}\n\n"
                 except asyncio.TimeoutError:
+                    current_status = (get_run(run_id) or {}).get("status")
+                    if current_status in ("stop", "stopped"):
+                        # Cancel the asyncio task — CancelledError is injected at the next
+                        # await inside ainvoke(), interrupting the live LLM HTTP request.
+                        callback.cancelled = True
+                        task.cancel()
+                        break
                     continue
 
-            # Flush any queued events
+            # Flush any queued events emitted before cancellation
             while not queue.empty():
                 event = await queue.get()
                 if event.get("type") == "token":
@@ -501,12 +620,14 @@ async def stream_message(request: ChatRequest):
                 yield f"data: {json.dumps(event)}\n\n"
 
             try:
-                result = await asyncio.wait_for(task, timeout=1)
+                result = await task
                 if result.ok:
                     final_response = str(result.agent_output)
                     final_ok = True
                 else:
                     final_error = result.error or "Agent returned no output"
+            except asyncio.CancelledError:
+                pass  # task was cancelled by stop signal — handled below
             except Exception as e:
                 final_error = str(e)
 
@@ -517,6 +638,47 @@ async def stream_message(request: ChatRequest):
 
             finished = _utc_iso()
             duration_ms = int((time.perf_counter() - message_started) * 1000)
+            current = get_run(run_id) or {}
+            if current.get("status") in ("stop", "stopped") or callback.cancelled:
+                _write_log(log_file, log_lines + ["(stopped by user)", "", f"Finished: {finished}", "Status  : stopped"])
+                update_run(run_id, {
+                    "status": "stopped",
+                    "finished_at": finished,
+                    "exit_code": 1,
+                    "error": "stopped by user",
+                    "process": {
+                        "llm_input_context": callback._last_prompt_text or full_prompt,
+                        "tool_calls": callback.tool_history,
+                        "thinking": callback.thinking_history,
+                        "llm_invoke_responses": callback.llm_invoke_responses,
+                        "token_usage": {
+                            "inbound_tokens": callback.prompt_tokens,
+                            "outbound_tokens": callback.completion_tokens,
+                            "total_tokens": callback.total_tokens,
+                        },
+                        "duration_ms": duration_ms,
+                    },
+                })
+                yield (
+                    "data: "
+                    + json.dumps({
+                        "type": "done",
+                        "ok": False,
+                        "response": "Stopped by user",
+                        "error": "stopped by user",
+                        "run_id": run_id,
+                        "session_id": session_id,
+                        "usage": {
+                            "inbound_tokens": callback.prompt_tokens,
+                            "outbound_tokens": callback.completion_tokens,
+                            "total_tokens": callback.total_tokens,
+                        },
+                        "tool_calls": callback.tool_calls,
+                        "duration_ms": duration_ms,
+                    })
+                    + "\n\n"
+                )
+                return
             if final_ok:
                 _append_log(log_lines, final_response, log_file)
                 _append_log(
@@ -532,7 +694,23 @@ async def stream_message(request: ChatRequest):
                     log_file,
                 )
                 _write_log(log_file, log_lines + ["", f"Finished: {finished}", "Status  : completed"])
-                _update_run(run_id, {"status": "completed", "finished_at": finished, "exit_code": 0})
+                update_run(run_id, {
+                    "status": "completed",
+                    "finished_at": finished,
+                    "exit_code": 0,
+                    "process": {
+                        "llm_input_context": callback._last_prompt_text or full_prompt,
+                        "tool_calls": callback.tool_history,
+                        "thinking": callback.thinking_history,
+                        "llm_invoke_responses": callback.llm_invoke_responses,
+                        "token_usage": {
+                            "inbound_tokens": callback.prompt_tokens,
+                            "outbound_tokens": callback.completion_tokens,
+                            "total_tokens": callback.total_tokens,
+                        },
+                        "duration_ms": duration_ms,
+                    },
+                })
                 yield (
                     "data: "
                     + json.dumps({
@@ -540,6 +718,7 @@ async def stream_message(request: ChatRequest):
                         "ok": True,
                         "response": final_response,
                         "run_id": run_id,
+                        "session_id": session_id,
                         "usage": {
                             "inbound_tokens": callback.prompt_tokens,
                             "outbound_tokens": callback.completion_tokens,
@@ -566,7 +745,24 @@ async def stream_message(request: ChatRequest):
                     log_file,
                 )
                 _write_log(log_file, log_lines + ["", f"Finished: {finished}", "Status  : failed"])
-                _update_run(run_id, {"status": "failed", "finished_at": finished, "exit_code": 1, "error": err})
+                update_run(run_id, {
+                    "status": "failed",
+                    "finished_at": finished,
+                    "exit_code": 1,
+                    "error": err,
+                    "process": {
+                        "llm_input_context": callback._last_prompt_text or full_prompt,
+                        "tool_calls": callback.tool_history,
+                        "thinking": callback.thinking_history,
+                        "llm_invoke_responses": callback.llm_invoke_responses,
+                        "token_usage": {
+                            "inbound_tokens": callback.prompt_tokens,
+                            "outbound_tokens": callback.completion_tokens,
+                            "total_tokens": callback.total_tokens,
+                        },
+                        "duration_ms": duration_ms,
+                    },
+                })
                 yield (
                     "data: "
                     + json.dumps({
@@ -575,6 +771,7 @@ async def stream_message(request: ChatRequest):
                         "response": f"Error: {err}",
                         "error": err,
                         "run_id": run_id,
+                        "session_id": session_id,
                         "usage": {
                             "inbound_tokens": callback.prompt_tokens,
                             "outbound_tokens": callback.completion_tokens,
@@ -586,14 +783,15 @@ async def stream_message(request: ChatRequest):
                     + "\n\n"
                 )
         except asyncio.CancelledError:
+            callback.cancelled = True  # stop the LLM thread if still running
             finished = _utc_iso()
             _write_log(log_file, log_lines + ["(cancelled)", "", f"Finished: {finished}", "Status  : stopped"])
-            _update_run(run_id, {"status": "stopped", "finished_at": finished, "exit_code": 1, "error": "cancelled"})
+            update_run(run_id, {"status": "stopped", "finished_at": finished, "exit_code": 1, "error": "cancelled"})
             raise
         except Exception as e:
             finished = _utc_iso()
             _write_log(log_file, log_lines + [f"(stream error: {e})", "", f"Finished: {finished}", "Status  : failed"])
-            _update_run(run_id, {"status": "failed", "finished_at": finished, "exit_code": 1, "error": str(e)})
+            update_run(run_id, {"status": "failed", "finished_at": finished, "exit_code": 1, "error": str(e)})
             yield f"data: {json.dumps({'type': 'done', 'ok': False, 'response': f'Error: {e}', 'error': str(e), 'run_id': run_id})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
