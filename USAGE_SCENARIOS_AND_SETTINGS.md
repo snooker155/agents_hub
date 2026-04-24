@@ -280,7 +280,6 @@ Important workspace-level controls include:
 | Key | Location | Purpose |
 |---|---|---|
 | `allowed_agents` | `.workspace.json` | Restricts which agents are available in the workspace |
-| `env_vars` | `.workspace.json` | Stores workspace-scoped environment variables |
 | `settings.default_model` | `.workspace.json` | Defines the workspace default provider/model pair |
 | `settings.default_provider` | `.workspace.json` | Selects workspace provider when a specific pair is not set |
 | `model_override` | `.workspace.json` | Explicit UI-selected override for active execution |
