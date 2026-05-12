@@ -21,7 +21,6 @@ shared_memory.json
 .DS_Store
 tasks.json
 .claude
-*/agents.json
 /chroma_db/
 projects.json
 */activity_logs/

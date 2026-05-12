@@ -1,0 +1,115 @@
+{
+  "agents": [
+    {
+      "id": "orchestrator",
+      "name": "Orchestrator Agent",
+      "type": "langchain",
+      "entrypoint": "agents.agent_factory:build_agent_executor",
+      "description": "Manages the task lifecycle and coordinates specialized agents. Selects the right agent for each task, tracks execution progress, updates task statuses, and handles failures — without performing implementation work itself.",
+      "domain": "general",
+      "tools": [
+        "get_task",
+        "list_tasks",
+        "update_task",
+        "get_task_result",
+        "list_agents_tool",
+        "get_agent_status_tool",
+        "wait_for_agent_tool",
+        "stop_agent_tool",
+        "start_agent_tool",
+        "calculator",
+        "get_agent_tool",
+        "assign_agent_tool"
+      ],
+      "commands": [],
+      "capacity": 1,
+      "memory_type": "none",
+      "memory_data": null,
+      "default_workspace_only": false,
+      "temperature": 0.0,
+      "max_tokens": 15000,
+      "verbose": false
+    },
+    {
+      "id": "agent_flows",
+      "name": "Agent Creator",
+      "type": "langchain",
+      "entrypoint": "agents.agent_factory:build_agent_executor",
+      "description": "Creates, inspects, and manages agents in the system. Available only in the default workspace.",
+      "domain": "orchestration",
+      "tools": [
+        "list_agents_tool",
+        "create_agent_tool",
+        "get_agent_tool",
+        "delete_agent_tool"
+      ],
+      "commands": [
+        {
+          "name": "/create-agent",
+          "description": "Create a new agent",
+          "template": "/create-agent name= description= domain= tools="
+        },
+        {
+          "name": "/list-agents",
+          "description": "List all registered agents",
+          "template": "/list-agents"
+        },
+        {
+          "name": "/inspect-agent",
+          "description": "Inspect an agent by ID",
+          "template": "/inspect-agent "
+        },
+        {
+          "name": "/delete-agent",
+          "description": "Delete an agent by ID",
+          "template": "/delete-agent "
+        }
+      ],
+      "capacity": 1,
+      "memory_type": "none",
+      "memory_data": null,
+      "default_workspace_only": true
+    },
+    {
+      "id": "decomposer",
+      "name": "Decomposer Agent",
+      "type": "langchain",
+      "entrypoint": "agents.agent_factory:build_agent_executor",
+      "description": "Specialized agent for breaking down complex tasks into actionable subtasks.",
+      "domain": "orchestration",
+      "tools": [
+        "get_task",
+        "list_tasks",
+        "add_subtask",
+        "create_sequence"
+      ],
+      "commands": [
+        {
+          "name": "/decompose",
+          "description": "Break down a task into subtasks",
+          "template": "/decompose task_id="
+        },
+        {
+          "name": "/add-subtask",
+          "description": "Add a subtask to a parent task",
+          "template": "/add-subtask parent_id= description="
+        },
+        {
+          "name": "/create-sequence",
+          "description": "Create a sequence of ordered subtasks",
+          "template": "/create-sequence task_id= steps="
+        },
+        {
+          "name": "/list-subtasks",
+          "description": "List subtasks of a task",
+          "template": "/list-subtasks task_id="
+        }
+      ],
+      "memory_type": "none",
+      "memory_data": null,
+      "temperature": 0.2,
+      "max_tokens": 15000,
+      "verbose": false
+    }
+  ]
+}
