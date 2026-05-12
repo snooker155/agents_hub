@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Loader, RefreshCw, MessageSquare, Wrench, Bot, FileText, Copy, Check, Workflow, Square, Globe } from 'lucide-react';
+import { ChevronLeft, Loader, RefreshCw, MessageSquare, Wrench, Bot, FileText, Copy, Check, Workflow, Square, Globe, Zap } from 'lucide-react';
+
+const SKILL_TOOL = 'get_skill';
 import { getMessage, getMessageLogs, getMessageInsights, stopMessage } from '../api';
 
 function fmtDate(iso) {
@@ -416,13 +418,29 @@ export default function MessageDetails() {
                 <p className="text-xs text-gray-500 italic">No tools captured.</p>
               ) : (
                 <div className="space-y-2 max-h-80 overflow-auto">
-                  {toolsForRun.map((t, idx) => (
-                    <div key={idx} className="text-xs rounded border border-gray-100 bg-gray-50 p-2">
-                      <div className="font-medium text-gray-800">Step {t.step || idx + 1}: {t.tool || 'tool'}</div>
-                      {t.input && <div className="text-[11px] text-gray-600 mt-1">{shortText(t.input, 300)}</div>}
-                      {t.output && <div className="text-[11px] text-emerald-700 mt-1">{shortText(t.output, 300)}</div>}
-                    </div>
-                  ))}
+                  {toolsForRun.map((t, idx) => {
+                    if (t.tool === SKILL_TOOL) {
+                      return (
+                        <div key={idx} className="text-xs rounded-lg border border-violet-300 bg-violet-50 p-2">
+                          <div className="flex items-center gap-1 font-semibold text-violet-800 mb-1">
+                            <Zap className="w-3 h-3 text-violet-500 shrink-0" />
+                            Skill Retrieved
+                          </div>
+                          {t.input && <div className="text-[11px] text-violet-600">{shortText(t.input, 300)}</div>}
+                          {t.output && <div className="text-[11px] text-violet-900 mt-1">{shortText(t.output, 300)}</div>}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={idx} className="text-xs rounded border border-gray-100 bg-gray-50 p-2">
+                        <div className="font-medium text-gray-800">
+                          Step {t.step || idx + 1}: {t.tool || 'tool'}
+                        </div>
+                        {t.input && <div className="text-[11px] text-gray-600 mt-1">{shortText(t.input, 300)}</div>}
+                        {t.output && <div className="text-[11px] text-emerald-700 mt-1">{shortText(t.output, 300)}</div>}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

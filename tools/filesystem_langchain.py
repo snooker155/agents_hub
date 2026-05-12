@@ -92,7 +92,6 @@ class CreateFileOutput(BaseModel):
     path: str
 
 
-from memory.tool import ReadMemoryInput, read_memory_tool, WriteMemoryInput, write_memory_tool, search_memory_tool  # noqa: F401
 
 # -------------------- Tool factory --------------------
 
@@ -206,7 +205,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
         args_schema=CreateFileInput,
     )
 
-    return [read_tool, write_tool, list_tool, search_tool, apply_tool, create_tool, read_memory_tool, write_memory_tool, search_memory_tool]
+    return [read_tool, write_tool, list_tool, search_tool, apply_tool, create_tool]
 
 
 __all__ = ["create_filesystem_tools"]

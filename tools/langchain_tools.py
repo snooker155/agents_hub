@@ -621,12 +621,22 @@ def create_agent_tool(
     tools: Optional[List[str]] = None,
     capacity: int = 1,
 ) -> str:
-    """Create a new agent in the system registry."""
+    """Create a new agent in the system registry.
+
+    The system prompt is written to ``agents/definitions/<agent_id>/instructions.md``
+    rather than stored in agents.json. Structured fields (id, name, tools, capacity)
+    are persisted in the registry.
+    """
     try:
         if tools is None:
             tools = ["read_file", "write_file", "list_files"]
         if reg_get_agent(agent_id):
             return _json_err(f"Agent with id '{agent_id}' already exists", code="conflict")
+        if not system_prompt or not system_prompt.strip():
+            return _json_err("system_prompt is required", code="invalid")
+
+        from agents import prompt_assembly
+        prompt_assembly.write_instructions(agent_id, system_prompt)
 
         spec = AgentSpec(
             id=agent_id,
@@ -635,7 +645,6 @@ def create_agent_tool(
             domain=domain,
             type="langchain",
             entrypoint="agents.agent_factory:build_agent_executor",
-            system_prompt=system_prompt,
             tools=tools,
             capacity=capacity,
             default_params={},
@@ -668,7 +677,10 @@ class DeleteAgentInput(BaseModel):
 
 @tool("delete_agent_tool", args_schema=DeleteAgentInput)
 def delete_agent_tool(agent_id: str) -> str:
-    """Delete an agent from the system registry by ID."""
+    """Delete an agent from the system registry by ID.
+
+    Removes both the agents.json entry and the markdown definition folder.
+    """
     try:
         protected = {"orchestrator", "decomposer", "agent_flows"}
         if agent_id in protected:
@@ -676,6 +688,8 @@ def delete_agent_tool(agent_id: str) -> str:
         removed = reg_remove_agent(agent_id)
         if not removed:
             return _json_err(f"Agent '{agent_id}' not found", code="not_found")
+        from agents import prompt_assembly
+        prompt_assembly.delete_definition(agent_id)
         return _json_ok({"message": f"Agent '{agent_id}' deleted successfully", "agent_id": agent_id})
     except Exception as e:
         return _json_err(f"Failed to delete agent: {e}")

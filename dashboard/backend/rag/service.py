@@ -4,7 +4,8 @@ Both steps are optional — if the provider is "none" the function
 returns success with vectorized=False so callers degrade gracefully.
 """
 from __future__ import annotations
-from typing import Callable, List, Tuple
+from pathlib import Path
+from typing import Callable, List, Optional, Tuple
 
 from .config import rag_config
 from .embeddings import (
@@ -193,3 +194,71 @@ def process_rag(
         "vector_db_collection": cfg.vector_db_collection,
         **store_meta,
     }
+
+
+# ---------------------------------------------------------------------------
+# File ingestion — read a file from disk, chunk it, index into a pool
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_EXTENSIONS = {".txt", ".md", ".rst", ".csv", ".json", ".yaml", ".yml", ".py", ".js", ".ts", ".html", ".xml"}
+_CHUNK_SIZE = 800   # characters
+_CHUNK_OVERLAP = 100
+
+
+def _read_file_text(path: Path) -> Optional[str]:
+    """Read plain text from a file. Returns None for unsupported/binary files."""
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        try:
+            import pypdf  # type: ignore
+            reader = pypdf.PdfReader(str(path))
+            return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        except ImportError:
+            try:
+                import PyPDF2  # type: ignore
+                reader = PyPDF2.PdfReader(str(path))
+                return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+            except ImportError:
+                return None
+    if suffix in _SUPPORTED_EXTENSIONS or suffix == "":
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return None
+    return None
+
+
+def _chunk_text(text: str, chunk_size: int = _CHUNK_SIZE, overlap: int = _CHUNK_OVERLAP) -> List[str]:
+    """Split text into overlapping character-level chunks."""
+    chunks: List[str] = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end].strip())
+        start += chunk_size - overlap
+    return [c for c in chunks if c]
+
+
+def ingest_file(file_path: Path, pool_id: str) -> Tuple[bool, str, int]:
+    """Read *file_path*, chunk it, and index into the vector store under *pool_id*.
+
+    file_id in the vector store is ``{pool_id}::{filename}`` so queries can
+    filter by pool.
+
+    Returns:
+        (success, error_message, chunk_count)
+    """
+    text = _read_file_text(file_path)
+    if text is None:
+        return False, f"Unsupported or unreadable file: {file_path.name}", 0
+
+    text = text.strip()
+    if not text:
+        return False, "File is empty", 0
+
+    chunks = _chunk_text(text)
+    file_id = f"{pool_id}::{file_path.name}"
+    ok, err, _ = process_rag(chunks, file_id)
+    if not ok:
+        return False, err, 0
+    return True, "", len(chunks)

@@ -497,7 +497,7 @@ const Orchestrator = () => {
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-indigo-700">Healthy Nodes</span>
                   <span className="font-bold text-indigo-900">
-                    {agents.filter(a => !a.is_remote || a.status !== 'offline').length}
+                    {agents.filter(a => a.status !== 'offline').length}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-sm">

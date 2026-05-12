@@ -1,17 +1,36 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useWorkspace } from '../components/WorkspaceContext';
 import {
   Database, Plus, Trash2, FileText, Save, X, Upload, Cpu, Users,
   Files, ChevronRight, RefreshCw, CheckCircle, AlertCircle, Clock,
-  Zap, Search, Eye, Edit3, Link2, BarChart2, FileSearch, StickyNote, KeyRound,
+  Zap, Search, Edit3, Link2, BarChart2, FileSearch, StickyNote, Layers,
+  Activity, BookOpen, Share2, Sparkles,
 } from 'lucide-react';
 import {
   getSharedMemories, createSharedMemory, deleteSharedMemory,
   getSharedMemory, uploadMemoryFile, deleteMemoryFile,
-  processMemoryFile, getRagFiles, getRagConfig, getAgents, updateAgentMemory,
+  indexMemoryFile, deindexMemoryFile, listMemoryFiles,
+  getRagConfig, getAgents, updateAgentMemory,
   addMemoryNote, updateMemoryNote, deleteMemoryNote,
-  addMemoryKV, updateMemoryKV, deleteMemoryKV,
+  upsertMemoryStructuredSlot, deleteMemoryStructuredSlot,
+  listMemoryEpisodes, getMemoryEpisodesStats, deleteMemoryEpisode,
+  getMemoryGraph, getMemoryGraphStats, linkMemoryGraph,
+  deleteMemoryGraphNode, deleteMemoryGraphEdge, extractMemoryGraph,
 } from '../api';
+
+const EPISODE_KIND_COLOR = {
+  interaction: 'bg-blue-100 text-blue-700',
+  task:        'bg-indigo-100 text-indigo-700',
+  decision:    'bg-purple-100 text-purple-700',
+  error:       'bg-red-100 text-red-700',
+  observation: 'bg-gray-100 text-gray-700',
+};
+const EPISODE_OUTCOME_COLOR = {
+  success: 'bg-green-100 text-green-700',
+  failure: 'bg-red-100 text-red-700',
+  partial: 'bg-yellow-100 text-yellow-700',
+  'n/a':   'bg-gray-100 text-gray-500',
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -22,18 +41,11 @@ const fmt = (iso) => {
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-const fmtBytes = (b) => {
-  if (!b) return '0 B';
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
-};
-
 const STATUS_CONFIG = {
-  raw:        { label: 'Raw',        color: 'bg-gray-100 text-gray-600',   icon: FileText },
+  raw:        { label: 'Raw',        color: 'bg-gray-100 text-gray-600',    icon: FileText },
   processing: { label: 'Processing', color: 'bg-yellow-100 text-yellow-700', icon: Clock },
-  indexed:    { label: 'Indexed',    color: 'bg-green-100 text-green-700',  icon: CheckCircle },
-  failed:     { label: 'Failed',     color: 'bg-red-100 text-red-700',     icon: AlertCircle },
+  indexed:    { label: 'Indexed',    color: 'bg-green-100 text-green-700',   icon: CheckCircle },
+  failed:     { label: 'Failed',     color: 'bg-red-100 text-red-700',      icon: AlertCircle },
 };
 
 function StatusBadge({ status }) {
@@ -51,16 +63,7 @@ function StatusBadge({ status }) {
 // ---------------------------------------------------------------------------
 function PoolsTab({ memories, onRefresh, workspaceFilter }) {
   const [selected, setSelected] = useState(null);
-  const [contentTab, setContentTab] = useState('files'); // 'files' | 'notes' | 'kv'
-
-  // Files state
-  const [viewingFile, setViewingFile] = useState(null);
-  const [editingFile, setEditingFile] = useState(null);
-  const [fileContent, setFileContent] = useState('');
-  const [processing, setProcessing] = useState(null);
-  const [chunkSize, setChunkSize] = useState(500);
-  const [showProcessConfig, setShowProcessConfig] = useState(null);
-  const fileInputRef = useRef(null);
+  const [contentTab, setContentTab] = useState('structured'); // 'structured' | 'notes'
 
   // Notes state
   const [viewingNote, setViewingNote] = useState(null);
@@ -69,25 +72,27 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
 
-  // KV state
-  const [editingKV, setEditingKV] = useState(null); // {key, value, description}
-  const [showAddKV, setShowAddKV] = useState(false);
-  const [kvKey, setKvKey] = useState('');
-  const [kvValue, setKvValue] = useState('');
-  const [kvDesc, setKvDesc] = useState('');
-
   // Pool create state
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
 
+  // Structured slot state
+  const [editingSlot, setEditingSlot] = useState(null);
+  const [showAddSlot, setShowAddSlot] = useState(false);
+  const [slotName, setSlotName] = useState('');
+  const [slotMode, setSlotMode] = useState('structured'); // 'simple' | 'structured' | 'json'
+  const [slotSimpleValue, setSlotSimpleValue] = useState('');
+  const [slotFields, setSlotFields] = useState([{ key: '', value: '' }]);
+  const [slotDataRaw, setSlotDataRaw] = useState('{}');
+  const [slotDataError, setSlotDataError] = useState('');
+
   const selectPool = useCallback(async (id) => {
     try {
       const resp = await getSharedMemory(id);
       setSelected(resp.data);
-      setViewingFile(null); setEditingFile(null);
       setViewingNote(null); setShowAddNote(false); setEditingNote(null);
-      setShowAddKV(false); setEditingKV(null);
+      setShowAddSlot(false); setEditingSlot(null);
     } catch {}
   }, []);
 
@@ -104,43 +109,6 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
     if (selected?.id === id) setSelected(null);
     onRefresh();
   };
-
-  // ---- Files ----
-  const handleSaveEdit = async (e) => {
-    e.preventDefault();
-    const { updateMemoryFile } = await import('../api');
-    await updateMemoryFile(selected.id, editingFile.name, { content: fileContent });
-    setEditingFile(null); setFileContent('');
-    await selectPool(selected.id);
-  };
-
-  const handleDeleteFile = async (name) => {
-    if (!window.confirm(`Delete "${name}"?`)) return;
-    await deleteMemoryFile(selected.id, name);
-    if (viewingFile?.name === name) setViewingFile(null);
-    await selectPool(selected.id);
-  };
-
-  const handleUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const fd = new FormData();
-    fd.append('file', file);
-    await uploadMemoryFile(selected.id, fd);
-    await selectPool(selected.id);
-    e.target.value = '';
-  };
-
-  const handleProcess = async (file) => {
-    setProcessing(file.name);
-    setShowProcessConfig(null);
-    try {
-      await processMemoryFile(selected.id, file.name, { chunk_size: chunkSize, overlap: 50 });
-      await selectPool(selected.id);
-    } finally { setProcessing(null); }
-  };
-
-  const startEditFile = (f) => { setEditingFile(f); setFileContent(f.content); setViewingFile(null); };
 
   // ---- Notes ----
   const handleAddNote = async (e) => {
@@ -164,39 +132,168 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
     await selectPool(selected.id);
   };
 
-  const startEditNote = (n) => { setEditingNote(n); setNoteTitle(n.title); setNoteContent(n.content); setViewingNote(null); setShowAddNote(false); };
+  const startEditNote = (n) => {
+    setEditingNote(n); setNoteTitle(n.title); setNoteContent(n.content);
+    setViewingNote(null); setShowAddNote(false);
+  };
 
-  // ---- KV ----
-  const handleAddKV = async (e) => {
+  // ---- Structured slots ----
+  const isSimpleSlot = (data) => data && Object.keys(data).length === 1 && 'value' in data;
+
+  const resetSlotForm = () => {
+    setSlotName('');
+    setSlotMode('structured');
+    setSlotSimpleValue('');
+    setSlotFields([{ key: '', value: '' }]);
+    setSlotDataRaw('{}');
+    setSlotDataError('');
+  };
+
+  const openAddSlot = () => {
+    setShowAddSlot(true); setEditingSlot(null);
+    resetSlotForm();
+  };
+
+  const startEditSlot = (slot, data) => {
+    setEditingSlot({ slot });
+    setSlotName(slot);
+    setSlotDataError(''); setShowAddSlot(false);
+    if (isSimpleSlot(data)) {
+      setSlotMode('simple');
+      setSlotSimpleValue(String(data.value ?? ''));
+      setSlotFields([{ key: '', value: '' }]);
+      setSlotDataRaw(JSON.stringify(data, null, 2));
+    } else {
+      setSlotMode('structured');
+      const entries = Object.entries(data || {});
+      setSlotFields(entries.length ? entries.map(([k, v]) => ({
+        key: k,
+        value: typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
+      })) : [{ key: '', value: '' }]);
+      setSlotSimpleValue('');
+      setSlotDataRaw(JSON.stringify(data || {}, null, 2));
+    }
+  };
+
+  const coerceFieldValue = (raw) => {
+    const trimmed = (raw ?? '').trim();
+    if (trimmed === '') return '';
+    if (trimmed === 'true') return true;
+    if (trimmed === 'false') return false;
+    if (trimmed === 'null') return null;
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try { return JSON.parse(trimmed); } catch { /* fall through to string */ }
+    }
+    return raw;
+  };
+
+  const handleSaveSlot = async (e) => {
     e.preventDefault();
-    await addMemoryKV(selected.id, { key: kvKey, value: kvValue, description: kvDesc });
-    setKvKey(''); setKvValue(''); setKvDesc(''); setShowAddKV(false);
+    let data;
+    if (slotMode === 'simple') {
+      data = { value: slotSimpleValue };
+    } else if (slotMode === 'json') {
+      try { data = JSON.parse(slotDataRaw); }
+      catch { setSlotDataError('Invalid JSON'); return; }
+      if (typeof data !== 'object' || Array.isArray(data) || data === null) {
+        setSlotDataError('Top-level value must be a JSON object'); return;
+      }
+    } else {
+      data = {};
+      for (const { key, value } of slotFields) {
+        const k = key.trim();
+        if (!k) continue;
+        if (k in data) { setSlotDataError(`Duplicate key: ${k}`); return; }
+        data[k] = coerceFieldValue(value);
+      }
+      if (Object.keys(data).length === 0) {
+        setSlotDataError('Add at least one field'); return;
+      }
+    }
+    setSlotDataError('');
+    await upsertMemoryStructuredSlot(selected.id, slotName, { data });
+    setShowAddSlot(false); setEditingSlot(null);
+    resetSlotForm();
     await selectPool(selected.id);
   };
 
-  const handleSaveKV = async (e) => {
-    e.preventDefault();
-    await updateMemoryKV(selected.id, editingKV.key, { value: kvValue, description: kvDesc });
-    setEditingKV(null); setKvValue(''); setKvDesc('');
+  const updateSlotField = (idx, patch) => {
+    setSlotFields(prev => prev.map((f, i) => i === idx ? { ...f, ...patch } : f));
+  };
+  const addSlotField = () => setSlotFields(prev => [...prev, { key: '', value: '' }]);
+  const removeSlotField = (idx) => {
+    setSlotFields(prev => prev.length === 1 ? [{ key: '', value: '' }] : prev.filter((_, i) => i !== idx));
+  };
+
+  const switchSlotMode = (next) => {
+    if (next === slotMode) return;
+    if (next === 'json') {
+      // Serialize current draft into the JSON textarea
+      let preview = {};
+      if (slotMode === 'simple') {
+        preview = { value: slotSimpleValue };
+      } else {
+        for (const { key, value } of slotFields) {
+          const k = key.trim();
+          if (!k) continue;
+          preview[k] = coerceFieldValue(value);
+        }
+      }
+      setSlotDataRaw(JSON.stringify(preview, null, 2));
+    } else if (next === 'structured' && slotMode === 'json') {
+      try {
+        const parsed = JSON.parse(slotDataRaw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const entries = Object.entries(parsed);
+          setSlotFields(entries.length ? entries.map(([k, v]) => ({
+            key: k,
+            value: typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
+          })) : [{ key: '', value: '' }]);
+        }
+      } catch { /* keep existing fields */ }
+    } else if (next === 'simple' && slotMode === 'structured') {
+      // Take the first field's value as the simple value, if any
+      const first = slotFields.find(f => f.key.trim());
+      setSlotSimpleValue(first ? first.value : '');
+    }
+    setSlotDataError('');
+    setSlotMode(next);
+  };
+
+  const handleDeleteSlot = async (slot) => {
+    if (!window.confirm(`Delete slot "${slot}"?`)) return;
+    await deleteMemoryStructuredSlot(selected.id, slot);
     await selectPool(selected.id);
   };
 
-  const handleDeleteKV = async (key) => {
-    if (!window.confirm(`Delete key "${key}"?`)) return;
-    await deleteMemoryKV(selected.id, key);
-    await selectPool(selected.id);
-  };
+  const allNotes = selected?.notes || [];
+  const isJournalNote = (n) => n.title?.startsWith('journal:');
+  const notes = allNotes.filter(n => !isJournalNote(n));
+  const journals = allNotes.filter(isJournalNote);
+  const structuredSlots = Object.entries(selected?.structured_data || {});
+  const [episodeStats, setEpisodeStats] = useState(null);
+  const [graphStats, setGraphStats] = useState(null);
 
-  const startEditKV = (kv) => { setEditingKV(kv); setKvValue(kv.value); setKvDesc(kv.description || ''); setShowAddKV(false); };
-
-  const files = selected?.files || [];
-  const notes = selected?.notes || [];
-  const kvPairs = selected?.kv_pairs || [];
+  useEffect(() => {
+    if (!selected?.id) { setEpisodeStats(null); setGraphStats(null); return; }
+    let cancelled = false;
+    getMemoryEpisodesStats(selected.id)
+      .then(r => { if (!cancelled) setEpisodeStats(r.data); })
+      .catch(() => { if (!cancelled) setEpisodeStats(null); });
+    getMemoryGraphStats(selected.id)
+      .then(r => { if (!cancelled) setGraphStats(r.data); })
+      .catch(() => { if (!cancelled) setGraphStats(null); });
+    return () => { cancelled = true; };
+  }, [selected?.id, contentTab]);
 
   const CONTENT_TABS = [
-    { id: 'files', label: 'Files', icon: FileText, count: files.length },
-    { id: 'notes', label: 'Notes', icon: StickyNote, count: notes.length },
-    { id: 'kv',    label: 'Key-Value', icon: KeyRound, count: kvPairs.length },
+    { id: 'structured', label: 'Structured',  icon: Layers,     count: structuredSlots.length },
+    { id: 'notes',      label: 'Notes',       icon: StickyNote, count: notes.length },
+    { id: 'journals',   label: 'Journals',    icon: BookOpen,   count: journals.length },
+    { id: 'episodes',   label: 'Episodes',    icon: Activity,   count: episodeStats?.total ?? 0 },
+    { id: 'graph',      label: 'Graph',       icon: Share2,     count: graphStats?.node_count ?? 0 },
   ];
 
   return (
@@ -224,11 +321,18 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-gray-900 text-sm truncate">{m.name}</p>
                 <p className="text-xs text-gray-500 truncate">{m.description || 'No description'}</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {(m.files || []).length} file{(m.files || []).length !== 1 ? 's' : ''}
-                  {' · '}{(m.notes || []).length} note{(m.notes || []).length !== 1 ? 's' : ''}
-                  {' · '}{(m.kv_pairs || []).length} kv
-                </p>
+                {(() => {
+                  const all = m.notes || [];
+                  const journalCount = all.filter(n => n.title?.startsWith('journal:')).length;
+                  const noteCount = all.length - journalCount;
+                  return (
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {noteCount} note{noteCount !== 1 ? 's' : ''}
+                      {' · '}{journalCount} journal{journalCount !== 1 ? 's' : ''}
+                      {' · '}{Object.keys(m.structured_data || {}).length} slots
+                    </p>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-1 ml-2 shrink-0">
                 <button onClick={(e) => { e.stopPropagation(); handleDelete(m.id); }} className="text-gray-300 hover:text-red-500 p-1" title="Delete pool">
@@ -253,22 +357,14 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                 {selected.description && <p className="text-sm text-gray-600 mt-1">{selected.description}</p>}
               </div>
               <div className="flex gap-2">
-                {contentTab === 'files' && (
-                  <>
-                    <input ref={fileInputRef} type="file" className="hidden" accept=".txt,.md,.json,.yaml,.yml,.csv,.xml" onChange={handleUpload} />
-                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 text-sm border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50">
-                      <Upload className="w-3.5 h-3.5" /> Upload
-                    </button>
-                  </>
-                )}
                 {contentTab === 'notes' && (
                   <button onClick={() => { setShowAddNote(true); setEditingNote(null); setViewingNote(null); }} className="flex items-center gap-1 text-sm border border-indigo-200 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
                     <Plus className="w-3.5 h-3.5" /> Add Note
                   </button>
                 )}
-                {contentTab === 'kv' && (
-                  <button onClick={() => { setShowAddKV(true); setEditingKV(null); }} className="flex items-center gap-1 text-sm border border-indigo-200 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
-                    <Plus className="w-3.5 h-3.5" /> Add Pair
+                {contentTab === 'structured' && (
+                  <button onClick={openAddSlot} className="flex items-center gap-1 text-sm border border-indigo-200 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
+                    <Plus className="w-3.5 h-3.5" /> Add Slot
                   </button>
                 )}
               </div>
@@ -281,7 +377,10 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                 return (
                   <button
                     key={t.id}
-                    onClick={() => setContentTab(t.id)}
+                    onClick={() => {
+                      setContentTab(t.id);
+                      setViewingNote(null); setShowAddNote(false); setEditingNote(null);
+                    }}
                     className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
                       contentTab === t.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
                     }`}
@@ -292,91 +391,6 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                 );
               })}
             </div>
-
-            {/* Files tab */}
-            {contentTab === 'files' && (
-              <div className="flex flex-1 overflow-hidden">
-                <div className="w-64 shrink-0 border-r border-gray-100 overflow-y-auto">
-                  {files.length === 0 ? (
-                    <p className="p-4 text-xs text-gray-400 italic text-center">No files yet.</p>
-                  ) : files.map((f, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => { setViewingFile(f); setShowAddFile(false); setEditingFile(null); }}
-                      className={`p-3 cursor-pointer border-b border-gray-50 hover:bg-gray-50 ${viewingFile?.name === f.name ? 'bg-indigo-50' : ''}`}
-                    >
-                      <div className="flex items-start justify-between gap-1">
-                        <div className="min-w-0 flex-1">
-                          <p className={`text-sm truncate font-medium ${viewingFile?.name === f.name ? 'text-indigo-700' : 'text-gray-700'}`}>{f.name}</p>
-                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            <StatusBadge status={f.rag_status || 'raw'} />
-                            {f.rag_chunks > 0 && <span className="text-xs text-gray-400">{f.rag_chunks} chunks</span>}
-                          </div>
-                          <p className="text-xs text-gray-400 mt-0.5">{fmtBytes(f.size_bytes)}</p>
-                        </div>
-                        <div className="flex flex-col gap-0.5 ml-1 shrink-0">
-                          <button onClick={(e) => { e.stopPropagation(); startEditFile(f); }} className="text-gray-300 hover:text-indigo-500 p-0.5"><Edit3 className="w-3 h-3" /></button>
-                          <button onClick={(e) => { e.stopPropagation(); handleDeleteFile(f.name); }} className="text-gray-300 hover:text-red-500 p-0.5"><Trash2 className="w-3 h-3" /></button>
-                        </div>
-                      </div>
-                      {(f.rag_status === 'raw' || !f.rag_status) && (
-                        <div className="mt-2">
-                          {showProcessConfig === f.name ? (
-                            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                              <input type="number" value={chunkSize} onChange={e => setChunkSize(Number(e.target.value))} className="w-16 border border-gray-200 rounded px-1 py-0.5 text-xs" min={100} max={2000} title="Chunk size" />
-                              <button onClick={() => handleProcess(f)} disabled={processing === f.name} className="flex items-center gap-0.5 text-xs bg-indigo-600 text-white px-1.5 py-0.5 rounded hover:bg-indigo-700 disabled:opacity-50">
-                                {processing === f.name ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />} Go
-                              </button>
-                              <button onClick={() => setShowProcessConfig(null)} className="text-gray-400 hover:text-gray-600"><X className="w-3 h-3" /></button>
-                            </div>
-                          ) : (
-                            <button onClick={(e) => { e.stopPropagation(); setShowProcessConfig(f.name); }} className="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-0.5">
-                              <Zap className="w-3 h-3" /> Index for RAG
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="flex-1 overflow-y-auto bg-gray-50">
-                  {editingFile ? (
-                    <div className="p-5 bg-white h-full">
-                      <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-semibold text-gray-900 flex items-center gap-2"><Edit3 className="w-4 h-4 text-indigo-500" /> Edit: {editingFile.name}</h3>
-                        <button onClick={() => setEditingFile(null)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
-                      </div>
-                      <form onSubmit={handleSaveEdit} className="space-y-4">
-                        <textarea value={fileContent} onChange={e => setFileContent(e.target.value)} rows={14} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-                        <button type="submit" className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2"><Save className="w-4 h-4" /> Save Changes</button>
-                      </form>
-                    </div>
-                  ) : viewingFile ? (
-                    <div className="p-5">
-                      <div className="flex justify-between items-center mb-4">
-                        <div>
-                          <h3 className="font-semibold text-gray-900 flex items-center gap-2"><FileText className="w-4 h-4 text-indigo-500" /> {viewingFile.name}</h3>
-                          <div className="flex items-center gap-3 mt-1">
-                            <StatusBadge status={viewingFile.rag_status || 'raw'} />
-                            {viewingFile.rag_chunks > 0 && <span className="text-xs text-gray-500">{viewingFile.rag_chunks} chunks · size {viewingFile.rag_chunk_size}</span>}
-                            <span className="text-xs text-gray-400">{fmtBytes(viewingFile.size_bytes)}</span>
-                            {viewingFile.added_at && <span className="text-xs text-gray-400">Added {fmt(viewingFile.added_at)}</span>}
-                          </div>
-                          {viewingFile.rag_processed_at && <p className="text-xs text-gray-400 mt-0.5">Processed {fmt(viewingFile.rag_processed_at)}</p>}
-                        </div>
-                        <button onClick={() => startEditFile(viewingFile)} className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50"><Edit3 className="w-3.5 h-3.5" /> Edit</button>
-                      </div>
-                      <div className="bg-white border border-gray-200 rounded-lg p-4 text-xs whitespace-pre-wrap overflow-x-auto shadow-inner min-h-[300px]">{viewingFile.content}</div>
-                    </div>
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8 text-center">
-                      <Eye className="w-10 h-10 mb-3 opacity-20" />
-                      <p className="text-sm">Select a file to view its content,<br />or upload one above.</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
 
             {/* Notes tab */}
             {contentTab === 'notes' && (
@@ -423,11 +437,13 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                         <button type="submit" className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2"><Save className="w-4 h-4" /> {editingNote ? 'Save Changes' : 'Save'}</button>
                       </form>
                     </div>
-                  ) : viewingNote ? (
+                  ) : viewingNote && !isJournalNote(viewingNote) ? (
                     <div className="p-5">
                       <div className="flex justify-between items-center mb-4">
                         <div>
-                          <h3 className="font-semibold text-gray-900 flex items-center gap-2"><StickyNote className="w-4 h-4 text-indigo-500" /> {viewingNote.title}</h3>
+                          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                            <StickyNote className="w-4 h-4 text-indigo-500" /> {viewingNote.title}
+                          </h3>
                           <p className="text-xs text-gray-400 mt-0.5">{fmt(viewingNote.created_at)}</p>
                         </div>
                         <button onClick={() => startEditNote(viewingNote)} className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50"><Edit3 className="w-3.5 h-3.5" /> Edit</button>
@@ -444,65 +460,218 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
               </div>
             )}
 
-            {/* Key-Value tab */}
-            {contentTab === 'kv' && (
-              <div className="flex-1 overflow-y-auto p-5">
-                {(showAddKV || editingKV) && (
-                  <form onSubmit={editingKV ? handleSaveKV : handleAddKV} className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mb-4 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <h4 className="text-sm font-semibold text-indigo-800">{editingKV ? `Edit "${editingKV.key}"` : 'New Key-Value Pair'}</h4>
-                      <button type="button" onClick={() => { setShowAddKV(false); setEditingKV(null); }} className="text-indigo-400 hover:text-indigo-600"><X className="w-4 h-4" /></button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      {!editingKV && (
-                        <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Key</label>
-                          <input required value={kvKey} onChange={e => setKvKey(e.target.value)} placeholder="MY_KEY" className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono" />
-                        </div>
-                      )}
-                      <div className={editingKV ? 'col-span-2' : ''}>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Value</label>
-                        <input required value={kvValue} onChange={e => setKvValue(e.target.value)} placeholder="value" className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono" />
+            {/* Journals tab — read-only entries written by agents */}
+            {contentTab === 'journals' && (
+              <div className="flex flex-1 overflow-hidden">
+                <div className="w-64 shrink-0 border-r border-gray-100 overflow-y-auto">
+                  {journals.length === 0 ? (
+                    <p className="p-4 text-xs text-gray-400 italic text-center">No journal entries yet.</p>
+                  ) : journals.map((n) => (
+                    <div
+                      key={n.id}
+                      onClick={() => { setViewingNote(n); setShowAddNote(false); setEditingNote(null); }}
+                      className={`p-3 cursor-pointer border-b border-gray-50 hover:bg-gray-50 ${viewingNote?.id === n.id ? 'bg-amber-50' : ''}`}
+                    >
+                      <div className="min-w-0">
+                        <p className={`text-sm truncate font-medium ${viewingNote?.id === n.id ? 'text-amber-700' : 'text-gray-700'}`}>{n.title.replace(/^journal:\s*/, '')}</p>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">{n.content?.slice(0, 60)}{n.content?.length > 60 ? '…' : ''}</p>
+                        <p className="text-xs text-gray-300 mt-0.5">{fmt(n.created_at)}</p>
                       </div>
                     </div>
-                    <button type="submit" className="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2"><Save className="w-3.5 h-3.5" /> {editingKV ? 'Update' : 'Add'}</button>
+                  ))}
+                </div>
+                <div className="flex-1 overflow-y-auto bg-gray-50">
+                  {viewingNote && isJournalNote(viewingNote) ? (
+                    <div className="p-5">
+                      <div className="flex justify-between items-center mb-4">
+                        <div>
+                          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                            <BookOpen className="w-4 h-4 text-amber-500" /> {viewingNote.title.replace(/^journal:\s*/, '')}
+                            <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">read-only</span>
+                          </h3>
+                          <p className="text-xs text-gray-400 mt-0.5">{fmt(viewingNote.created_at)}</p>
+                        </div>
+                      </div>
+                      <div className="bg-white border border-gray-200 rounded-lg p-4 text-sm whitespace-pre-wrap overflow-x-auto shadow-inner min-h-[300px]">{viewingNote.content}</div>
+                    </div>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8 text-center">
+                      <BookOpen className="w-10 h-10 mb-3 opacity-20" />
+                      <p className="text-sm">Select a journal entry to read it.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Structured tab — covers both simple kv slots and complex JSON slots */}
+            {contentTab === 'structured' && (
+              <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                {(showAddSlot || editingSlot) && (
+                  <form onSubmit={handleSaveSlot} className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-sm font-semibold text-indigo-800">
+                        {editingSlot ? `Edit "${editingSlot.slot}"` : 'New Slot'}
+                      </h4>
+                      <button type="button" onClick={() => { setShowAddSlot(false); setEditingSlot(null); resetSlotForm(); }} className="text-indigo-400 hover:text-indigo-600"><X className="w-4 h-4" /></button>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Name</label>
+                      <input required value={slotName} onChange={e => setSlotName(e.target.value)} disabled={!!editingSlot} placeholder="api_version"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono disabled:bg-gray-100 disabled:text-gray-400" />
+                    </div>
+
+                    {/* Mode selector */}
+                    <div className="flex gap-1 bg-white border border-gray-200 rounded-lg p-0.5 w-fit">
+                      {[
+                        { id: 'structured', label: 'Structured' },
+                        { id: 'simple',     label: 'Simple value' },
+                        { id: 'json',       label: 'Raw JSON' },
+                      ].map(({ id: mid, label }) => (
+                        <button
+                          key={mid}
+                          type="button"
+                          onClick={() => switchSlotMode(mid)}
+                          className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                            slotMode === mid ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {slotMode === 'simple' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Value</label>
+                        <input
+                          value={slotSimpleValue}
+                          onChange={e => setSlotSimpleValue(e.target.value)}
+                          placeholder="A single value"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono"
+                        />
+                        <p className="text-[11px] text-gray-500 mt-1">Stored as <code className="bg-white px-1 rounded">{`{ "value": ... }`}</code>.</p>
+                      </div>
+                    )}
+
+                    {slotMode === 'structured' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Fields</label>
+                        <div className="space-y-2">
+                          {slotFields.map((f, i) => (
+                            <div key={i} className="flex gap-2 items-start">
+                              <input
+                                value={f.key}
+                                onChange={e => updateSlotField(i, { key: e.target.value })}
+                                placeholder="key"
+                                className="w-1/3 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                              />
+                              <input
+                                value={f.value}
+                                onChange={e => updateSlotField(i, { value: e.target.value })}
+                                placeholder="value"
+                                className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeSlotField(i)}
+                                disabled={slotFields.length === 1 && !f.key && !f.value}
+                                className="text-gray-300 hover:text-red-500 p-1.5 disabled:opacity-30"
+                                title="Remove field"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={addSlotField}
+                          className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add field
+                        </button>
+                        <p className="text-[11px] text-gray-500 mt-2">Numbers, booleans, <code>null</code>, and JSON arrays/objects are auto-detected. Everything else is stored as a string.</p>
+                      </div>
+                    )}
+
+                    {slotMode === 'json' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Data (JSON object)</label>
+                        <textarea
+                          rows={6}
+                          value={slotDataRaw}
+                          onChange={e => { setSlotDataRaw(e.target.value); setSlotDataError(''); }}
+                          className={`w-full border rounded-lg px-3 py-2 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none ${slotDataError ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}
+                        />
+                      </div>
+                    )}
+
+                    {slotDataError && <p className="text-xs text-red-500">{slotDataError}</p>}
+
+                    <button type="submit" className="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2">
+                      <Save className="w-3.5 h-3.5" /> {editingSlot ? 'Update' : 'Save'}
+                    </button>
                   </form>
                 )}
-                {kvPairs.length === 0 && !showAddKV ? (
+                {structuredSlots.length === 0 && !showAddSlot ? (
                   <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-center">
-                    <KeyRound className="w-10 h-10 mb-3 opacity-20" />
-                    <p className="text-sm">No key-value pairs yet.<br />Add one to store structured config.</p>
+                    <Layers className="w-10 h-10 mb-3 opacity-20" />
+                    <p className="text-sm">No data stored yet.<br />Add a value for simple facts or a slot for structured records.</p>
                   </div>
-                ) : (
-                  <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-gray-50 border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wider">
-                          <th className="px-4 py-2 text-left w-1/4">Key</th>
-                          <th className="px-4 py-2 text-left w-1/3">Value</th>
-                          <th className="px-4 py-2 text-left">Description</th>
-                          <th className="px-4 py-2 w-16" />
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {kvPairs.map((kv) => (
-                          <tr key={kv.key} className={`hover:bg-gray-50 ${editingKV?.key === kv.key ? 'bg-indigo-50' : ''}`}>
-                            <td className="px-4 py-2.5 font-mono text-indigo-700 font-medium">{kv.key}</td>
-                            <td className="px-4 py-2.5 font-mono text-gray-700 truncate max-w-[160px]">{kv.value}</td>
-                            <td className="px-4 py-2.5 text-gray-400 text-xs truncate">{kv.description || '—'}</td>
-                            <td className="px-4 py-2.5">
-                              <div className="flex items-center gap-1 justify-end">
-                                <button onClick={() => startEditKV(kv)} className="text-gray-300 hover:text-indigo-500 p-0.5"><Edit3 className="w-3.5 h-3.5" /></button>
-                                <button onClick={() => handleDeleteKV(kv.key)} className="text-gray-300 hover:text-red-500 p-0.5"><Trash2 className="w-3.5 h-3.5" /></button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                ) : structuredSlots.map(([slot, data]) => {
+                  const simple = isSimpleSlot(data);
+                  if (simple) return (
+                    <div key={slot} className={`bg-white border rounded-xl flex items-center justify-between px-4 py-2.5 ${editingSlot?.slot === slot ? 'border-indigo-300' : 'border-gray-200'}`}>
+                      <div className="flex items-center gap-4 min-w-0">
+                        <span className="font-mono text-sm font-semibold text-indigo-700 shrink-0">{slot}</span>
+                        <span className="font-mono text-sm text-gray-800 truncate">{data?.value ?? '—'}</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        <button onClick={() => startEditSlot(slot, data)} className="text-gray-300 hover:text-indigo-500 p-1"><Edit3 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => handleDeleteSlot(slot)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                  );
+                  return (
+                    <div key={slot} className={`bg-white border rounded-xl overflow-hidden ${editingSlot?.slot === slot ? 'border-indigo-300' : 'border-gray-200'}`}>
+                      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+                        <span className="font-mono text-sm font-semibold text-indigo-700">{slot}</span>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => startEditSlot(slot, data)} className="text-gray-300 hover:text-indigo-500 p-1"><Edit3 className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => handleDeleteSlot(slot)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </div>
+                      <div className="px-4 py-3">
+                        <table className="w-full text-xs">
+                          <tbody className="divide-y divide-gray-50">
+                            {Object.entries(data || {}).map(([k, v]) => (
+                              <tr key={k}>
+                                <td className="py-1.5 pr-4 font-mono text-gray-500 w-1/3 align-top">{k}</td>
+                                <td className="py-1.5 font-mono text-gray-800 break-all">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
+            )}
+
+            {/* Episodes tab */}
+            {contentTab === 'episodes' && (
+              <EpisodesPanel poolId={selected.id} stats={episodeStats} onChange={() => {
+                getMemoryEpisodesStats(selected.id).then(r => setEpisodeStats(r.data)).catch(() => {});
+              }} />
+            )}
+
+            {/* Graph tab */}
+            {contentTab === 'graph' && (
+              <GraphPanel poolId={selected.id} stats={graphStats} onChange={() => {
+                getMemoryGraphStats(selected.id).then(r => setGraphStats(r.data)).catch(() => {});
+              }} />
             )}
           </>
         ) : (
@@ -525,7 +694,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
             <form onSubmit={handleCreate} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input required value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Project Docs, API Reference"
+                <input required value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Project Notes, API Config"
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div>
@@ -546,12 +715,511 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
 }
 
 // ---------------------------------------------------------------------------
+// Episodes panel — discrete event log scoped to a pool
+// ---------------------------------------------------------------------------
+function EpisodesPanel({ poolId, stats, onChange }) {
+  const [episodes, setEpisodes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [kindFilter, setKindFilter] = useState('');
+  const [outcomeFilter, setOutcomeFilter] = useState('');
+  const [query, setQuery] = useState('');
+
+  const load = useCallback(async () => {
+    if (!poolId) return;
+    setLoading(true);
+    try {
+      const params = { limit: 100 };
+      if (kindFilter) params.kind = kindFilter;
+      if (outcomeFilter) params.outcome = outcomeFilter;
+      if (query.trim()) params.query = query.trim();
+      const r = await listMemoryEpisodes(poolId, params);
+      setEpisodes(r.data?.episodes || []);
+    } catch {
+      setEpisodes([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [poolId, kindFilter, outcomeFilter, query]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleDelete = async (epId) => {
+    if (!window.confirm('Delete this episode?')) return;
+    try {
+      await deleteMemoryEpisode(poolId, epId);
+      await load();
+      onChange?.();
+    } catch { /* ignore */ }
+  };
+
+  const cap = stats?.cap;
+  const total = stats?.total ?? 0;
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-xs text-gray-500">
+          {total} episode{total === 1 ? '' : 's'} stored{cap ? ` · cap ${cap}` : ''}
+          {stats?.by_kind && Object.keys(stats.by_kind).length > 0 && (
+            <span className="ml-2">
+              ({Object.entries(stats.by_kind).map(([k, v]) => `${k}: ${v}`).join(', ')})
+            </span>
+          )}
+        </div>
+        <button onClick={load} className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <select value={kindFilter} onChange={e => setKindFilter(e.target.value)}
+          className="text-xs border border-gray-200 rounded px-2 py-1 bg-white">
+          <option value="">All kinds</option>
+          <option value="interaction">Interaction</option>
+          <option value="task">Task</option>
+          <option value="decision">Decision</option>
+          <option value="error">Error</option>
+          <option value="observation">Observation</option>
+        </select>
+        <select value={outcomeFilter} onChange={e => setOutcomeFilter(e.target.value)}
+          className="text-xs border border-gray-200 rounded px-2 py-1 bg-white">
+          <option value="">All outcomes</option>
+          <option value="success">Success</option>
+          <option value="failure">Failure</option>
+          <option value="partial">Partial</option>
+          <option value="n/a">N/A</option>
+        </select>
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="keyword search…"
+          className="text-xs border border-gray-200 rounded px-2 py-1 bg-white flex-1 min-w-[140px]"
+        />
+      </div>
+
+      {episodes.length === 0 ? (
+        <p className="p-6 text-center text-gray-400 text-sm italic">
+          {loading ? 'Loading…' : 'No episodes match the current filter.'}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {episodes.map((e) => {
+            const kindCls = EPISODE_KIND_COLOR[e.kind] || 'bg-gray-100 text-gray-700';
+            const outcomeCls = e.outcome ? (EPISODE_OUTCOME_COLOR[e.outcome] || 'bg-gray-100 text-gray-500') : null;
+            return (
+              <div key={e.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded ${kindCls}`}>{e.kind}</span>
+                    {outcomeCls && (
+                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${outcomeCls}`}>{e.outcome}</span>
+                    )}
+                    {e.actor && <span className="text-xs text-gray-500">actor: <span className="font-mono">{e.actor}</span></span>}
+                    {e.subject && <span className="text-xs text-gray-500">subject: <span className="font-mono">{e.subject}</span></span>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[11px] text-gray-400">{fmt(e.occurred_at)}</span>
+                    <button onClick={() => handleDelete(e.id)} className="text-gray-300 hover:text-red-500 p-1">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-800 mt-2 whitespace-pre-wrap break-words">{e.summary}</p>
+                {e.tags && e.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {e.tags.map(t => (
+                      <span key={t} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{t}</span>
+                    ))}
+                  </div>
+                )}
+                {e.details && Object.keys(e.details).length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-[11px] text-gray-400 cursor-pointer hover:text-gray-600">details</summary>
+                    <pre className="text-[11px] bg-gray-50 rounded p-2 mt-1 overflow-x-auto">{JSON.stringify(e.details, null, 2)}</pre>
+                  </details>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Graph panel — knowledge graph scoped to a pool
+// ---------------------------------------------------------------------------
+
+const GRAPH_TYPE_PALETTE = [
+  ['#6366f1', '#eef2ff'], ['#10b981', '#ecfdf5'], ['#f59e0b', '#fffbeb'],
+  ['#ef4444', '#fef2f2'], ['#3b82f6', '#eff6ff'], ['#a855f7', '#faf5ff'],
+  ['#14b8a6', '#f0fdfa'], ['#ec4899', '#fdf2f8'],
+];
+function colorForType(type, allTypes) {
+  const idx = allTypes.indexOf(type);
+  return GRAPH_TYPE_PALETTE[(idx >= 0 ? idx : 0) % GRAPH_TYPE_PALETTE.length];
+}
+
+function GraphPanel({ poolId, stats, onChange }) {
+  const [nodes, setNodes] = useState([]);
+  const [edges, setEdges] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [view, setView] = useState('list'); // 'list' | 'visual'
+  const [showAdd, setShowAdd] = useState(false);
+  const [showExtract, setShowExtract] = useState(false);
+  const [extractText, setExtractText] = useState('');
+  const [extractRunning, setExtractRunning] = useState(false);
+  const [extractResult, setExtractResult] = useState(null);
+
+  // Add-edge form state
+  const [srcType, setSrcType] = useState('');
+  const [srcName, setSrcName] = useState('');
+  const [tgtType, setTgtType] = useState('');
+  const [tgtName, setTgtName] = useState('');
+  const [relation, setRelation] = useState('');
+
+  const load = useCallback(async () => {
+    if (!poolId) return;
+    setLoading(true);
+    try {
+      const r = await getMemoryGraph(poolId);
+      setNodes(r.data?.nodes || []);
+      setEdges(r.data?.edges || []);
+    } catch {
+      setNodes([]); setEdges([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [poolId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAddEdge = async (e) => {
+    e.preventDefault();
+    try {
+      await linkMemoryGraph(poolId, {
+        source: { type: srcType.trim(), name: srcName.trim() },
+        target: { type: tgtType.trim(), name: tgtName.trim() },
+        relation: relation.trim(),
+      });
+      setSrcType(''); setSrcName(''); setTgtType(''); setTgtName(''); setRelation('');
+      setShowAdd(false);
+      await load();
+      onChange?.();
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Failed to add edge');
+    }
+  };
+
+  const handleDeleteNode = async (nodeId) => {
+    if (!window.confirm('Delete this node and any edges attached to it?')) return;
+    try {
+      await deleteMemoryGraphNode(poolId, nodeId);
+      await load();
+      onChange?.();
+    } catch { /* ignore */ }
+  };
+
+  const handleDeleteEdge = async (edgeId) => {
+    if (!window.confirm('Delete this edge?')) return;
+    try {
+      await deleteMemoryGraphEdge(poolId, edgeId);
+      await load();
+      onChange?.();
+    } catch { /* ignore */ }
+  };
+
+  const handleExtract = async (e) => {
+    e.preventDefault();
+    if (!extractText.trim()) return;
+    setExtractRunning(true);
+    setExtractResult(null);
+    try {
+      const r = await extractMemoryGraph(poolId, extractText.trim());
+      setExtractResult(r.data);
+      await load();
+      onChange?.();
+    } catch (err) {
+      setExtractResult({ ok: false, errors: [err?.response?.data?.detail || 'Extraction failed'] });
+    } finally {
+      setExtractRunning(false);
+    }
+  };
+
+  const allTypes = Array.from(new Set(nodes.map(n => n.type)));
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-xs text-gray-500">
+          {nodes.length} node{nodes.length === 1 ? '' : 's'}, {edges.length} edge{edges.length === 1 ? '' : 's'}
+          {stats?.node_cap && ` · cap ${stats.node_cap}/${stats.edge_cap}`}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex border border-gray-200 rounded overflow-hidden">
+            <button onClick={() => setView('list')}
+              className={`text-xs px-2 py-1 ${view === 'list' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+              List
+            </button>
+            <button onClick={() => setView('visual')}
+              className={`text-xs px-2 py-1 ${view === 'visual' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+              Visualize
+            </button>
+          </div>
+          <button onClick={() => setShowExtract(s => !s)}
+            className="text-xs flex items-center gap-1 border border-purple-200 text-purple-700 px-2 py-1 rounded hover:bg-purple-50">
+            <Sparkles className="w-3 h-3" /> Extract
+          </button>
+          <button onClick={() => setShowAdd(s => !s)}
+            className="text-xs flex items-center gap-1 border border-indigo-200 text-indigo-600 px-2 py-1 rounded hover:bg-indigo-50">
+            <Plus className="w-3 h-3" /> Edge
+          </button>
+          <button onClick={load} className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Add-edge form */}
+      {showAdd && (
+        <form onSubmit={handleAddEdge} className="border border-indigo-100 rounded-lg p-3 bg-indigo-50/30 space-y-2">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+            <input value={srcType} onChange={e => setSrcType(e.target.value)} placeholder="source type" required
+              className="text-xs border border-gray-200 rounded px-2 py-1" />
+            <input value={srcName} onChange={e => setSrcName(e.target.value)} placeholder="source name" required
+              className="text-xs border border-gray-200 rounded px-2 py-1" />
+            <input value={relation} onChange={e => setRelation(e.target.value)} placeholder="relation" required
+              className="text-xs border border-gray-200 rounded px-2 py-1" />
+            <input value={tgtType} onChange={e => setTgtType(e.target.value)} placeholder="target type" required
+              className="text-xs border border-gray-200 rounded px-2 py-1" />
+            <input value={tgtName} onChange={e => setTgtName(e.target.value)} placeholder="target name" required
+              className="text-xs border border-gray-200 rounded px-2 py-1" />
+          </div>
+          <div className="flex gap-2">
+            <button type="submit" className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">Add</button>
+            <button type="button" onClick={() => setShowAdd(false)} className="text-xs border border-gray-200 px-3 py-1 rounded">Cancel</button>
+          </div>
+        </form>
+      )}
+
+      {/* Auto-extract form */}
+      {showExtract && (
+        <form onSubmit={handleExtract} className="border border-purple-100 rounded-lg p-3 bg-purple-50/30 space-y-2">
+          <p className="text-xs text-purple-800">
+            Paste prose and the LLM will extract entities + relations and add them to the graph.
+          </p>
+          <textarea value={extractText} onChange={e => setExtractText(e.target.value)} rows={4}
+            placeholder="e.g. Alice owns the auth-rewrite project. The mobile-app depends on auth-rewrite. Bob blocks ship-v2…"
+            className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 font-mono" />
+          <div className="flex items-center gap-2">
+            <button type="submit" disabled={extractRunning || !extractText.trim()}
+              className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1">
+              <Sparkles className="w-3 h-3" /> {extractRunning ? 'Extracting…' : 'Run extraction'}
+            </button>
+            <button type="button" onClick={() => { setShowExtract(false); setExtractResult(null); }}
+              className="text-xs border border-gray-200 px-3 py-1 rounded">Close</button>
+          </div>
+          {extractResult && (
+            <div className="text-xs text-gray-700 bg-white border border-gray-200 rounded p-2">
+              {extractResult.ok === false
+                ? <span className="text-red-600">Failed: {(extractResult.errors || []).join('; ') || 'unknown error'}</span>
+                : <span>Found {extractResult.triples_found || 0}, persisted {extractResult.triples_persisted || 0} triples.</span>}
+            </div>
+          )}
+        </form>
+      )}
+
+      {nodes.length === 0 && edges.length === 0 ? (
+        <p className="p-6 text-center text-gray-400 text-sm italic">
+          {loading ? 'Loading…' : 'Graph is empty. Add an edge or run extraction to seed it.'}
+        </p>
+      ) : view === 'visual' ? (
+        <GraphVisual nodes={nodes} edges={edges} allTypes={allTypes} />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-700">
+              Nodes ({nodes.length})
+            </div>
+            <div className="divide-y divide-gray-50 max-h-96 overflow-y-auto">
+              {nodes.map(n => {
+                const [fg, bg] = colorForType(n.type, allTypes);
+                return (
+                  <div key={n.id} className="flex items-start justify-between gap-2 px-3 py-2 text-xs">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-1.5 py-0.5 rounded font-medium" style={{ color: fg, background: bg }}>{n.type}</span>
+                        <span className="font-mono text-gray-800 truncate">{n.name}</span>
+                      </div>
+                      {n.properties && Object.keys(n.properties).length > 0 && (
+                        <details className="mt-1">
+                          <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-gray-600">properties</summary>
+                          <pre className="text-[10px] bg-gray-50 rounded p-1 mt-1 overflow-x-auto">{JSON.stringify(n.properties, null, 2)}</pre>
+                        </details>
+                      )}
+                    </div>
+                    <button onClick={() => handleDeleteNode(n.id)} className="text-gray-300 hover:text-red-500 p-0.5 shrink-0">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-700">
+              Edges ({edges.length})
+            </div>
+            <div className="divide-y divide-gray-50 max-h-96 overflow-y-auto">
+              {edges.map(e => {
+                const src = nodes.find(n => n.id === e.source_id);
+                const tgt = nodes.find(n => n.id === e.target_id);
+                if (!src || !tgt) return null;
+                return (
+                  <div key={e.id} className="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+                    <span className="font-mono text-gray-700 truncate flex-1">
+                      <span className="text-gray-500">{src.type}:</span>{src.name}
+                      <span className="mx-1 text-indigo-500">─[{e.relation}]→</span>
+                      <span className="text-gray-500">{tgt.type}:</span>{tgt.name}
+                    </span>
+                    <button onClick={() => handleDeleteEdge(e.id)} className="text-gray-300 hover:text-red-500 p-0.5 shrink-0">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dependency-free force-directed SVG layout. Tiny iterative spring sim that
+// converges in ~120 ticks for graphs under ~150 nodes — good enough for this UI.
+// ---------------------------------------------------------------------------
+function GraphVisual({ nodes, edges, allTypes }) {
+  const W = 720, H = 480;
+  const positions = useMemo(() => {
+    if (nodes.length === 0) return new Map();
+    const pos = new Map();
+    nodes.forEach((n, i) => {
+      const angle = (i / nodes.length) * Math.PI * 2;
+      pos.set(n.id, {
+        x: W / 2 + Math.cos(angle) * (Math.min(W, H) / 3),
+        y: H / 2 + Math.sin(angle) * (Math.min(W, H) / 3),
+        vx: 0, vy: 0,
+      });
+    });
+    const k = Math.sqrt((W * H) / Math.max(nodes.length, 1)) * 0.6;
+    const iterations = 140;
+    // Deterministic jitter so re-renders produce the same layout.
+    const jitter = (i, j) => (Math.sin(i * 12.9898 + j * 78.233) * 43758.5453) % 1;
+    for (let it = 0; it < iterations; it++) {
+      const t = 1 - it / iterations;
+      // Repulsion (every pair).
+      for (let i = 0; i < nodes.length; i++) {
+        const a = pos.get(nodes[i].id);
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = pos.get(nodes[j].id);
+          let dx = a.x - b.x, dy = a.y - b.y;
+          let d2 = dx * dx + dy * dy;
+          if (d2 < 0.01) { dx = jitter(i, j) * 0.1; dy = jitter(j, i) * 0.1; d2 = 0.02; }
+          const force = (k * k) / d2;
+          const d = Math.sqrt(d2);
+          const fx = (dx / d) * force, fy = (dy / d) * force;
+          a.vx += fx; a.vy += fy;
+          b.vx -= fx; b.vy -= fy;
+        }
+      }
+      // Attraction along edges.
+      for (const e of edges) {
+        const a = pos.get(e.source_id), b = pos.get(e.target_id);
+        if (!a || !b) continue;
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const force = (d * d) / k;
+        const fx = (dx / d) * force, fy = (dy / d) * force;
+        a.vx -= fx; a.vy -= fy;
+        b.vx += fx; b.vy += fy;
+      }
+      // Apply with cooling damping.
+      for (const n of nodes) {
+        const p = pos.get(n.id);
+        const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy) || 0.001;
+        const cap = Math.min(speed, 30 * t);
+        p.x += (p.vx / speed) * cap;
+        p.y += (p.vy / speed) * cap;
+        p.vx *= 0.85; p.vy *= 0.85;
+        // Keep inside the viewport with margin.
+        p.x = Math.max(40, Math.min(W - 40, p.x));
+        p.y = Math.max(30, Math.min(H - 30, p.y));
+      }
+    }
+    return pos;
+  }, [nodes, edges]);
+
+  return (
+    <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minHeight: 360 }}>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+          </marker>
+        </defs>
+        {edges.map(e => {
+          const a = positions.get(e.source_id), b = positions.get(e.target_id);
+          if (!a || !b) return null;
+          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          return (
+            <g key={e.id}>
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#cbd5e1" strokeWidth="1" markerEnd="url(#arrow)" />
+              <text x={mx} y={my - 3} fontSize="9" fill="#64748b" textAnchor="middle" pointerEvents="none">{e.relation}</text>
+            </g>
+          );
+        })}
+        {nodes.map(n => {
+          const p = positions.get(n.id);
+          if (!p) return null;
+          const [fg, bg] = colorForType(n.type, allTypes);
+          return (
+            <g key={n.id}>
+              <circle cx={p.x} cy={p.y} r="14" fill={bg} stroke={fg} strokeWidth="1.5" />
+              <text x={p.x} y={p.y + 4} fontSize="9" fill={fg} textAnchor="middle" fontWeight="600" pointerEvents="none">
+                {n.name.length > 14 ? n.name.slice(0, 13) + '…' : n.name}
+              </text>
+              <title>{n.type}: {n.name}</title>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="px-3 py-2 border-t border-gray-100 bg-gray-50 flex flex-wrap gap-2">
+        {allTypes.map(t => {
+          const [fg, bg] = colorForType(t, allTypes);
+          return (
+            <span key={t} className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{ color: fg, background: bg }}>
+              {t}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 // Tab: Agent Connections
 // ---------------------------------------------------------------------------
 function AgentsTab({ memories, workspaceFilter }) {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [assigning, setAssigning] = useState(null); // { agentId, agentName }
+  const [assigning, setAssigning] = useState(null);
   const [selectedPoolId, setSelectedPoolId] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -623,7 +1291,7 @@ function AgentsTab({ memories, workspaceFilter }) {
               <div key={m.id} className="px-5 py-3 flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-800">{m.name}</p>
-                  <p className="text-xs text-gray-400">{(m.files || []).length} files · {(m.files || []).filter(f => f.rag_status === 'indexed').length} indexed</p>
+                  <p className="text-xs text-gray-400">{(m.notes || []).length} notes · {Object.keys(m.structured_data || {}).length} slots</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-500">{poolUsage[m.id] || 0} agent{(poolUsage[m.id] || 0) !== 1 ? 's' : ''}</span>
@@ -665,10 +1333,7 @@ function AgentsTab({ memories, workspaceFilter }) {
                     </td>
                     <td className="px-5 py-3">
                       {pool ? (
-                        <div>
-                          <p className="font-medium text-indigo-700">{pool.name}</p>
-                          <p className="text-xs text-gray-400">{(pool.files || []).length} files</p>
-                        </div>
+                        <p className="font-medium text-indigo-700">{pool.name}</p>
                       ) : (
                         <span className="text-gray-400 text-xs italic">None</span>
                       )}
@@ -778,156 +1443,47 @@ function VectorDbStatusCard({ ragCfg }) {
   );
 }
 
-function FileMetaChips({ f }) {
-  if (!f.rag_chunks) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5 mt-1.5">
-      <span className="inline-flex items-center gap-1 text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
-        {f.rag_chunks} chunks
-      </span>
-      {f.vectorized && (
-        <span className="inline-flex items-center gap-1 text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full">
-          <CheckCircle className="w-3 h-3" /> vectorized
-        </span>
-      )}
-      {f.embedding_dims > 0 && (
-        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{f.embedding_dims}d</span>
-      )}
-      {f.embedding_model && (
-        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-mono">{f.embedding_model}</span>
-      )}
-      {f.vector_db && f.vector_db !== 'none' && (
-        <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">{DB_LABELS[f.vector_db] || f.vector_db}</span>
-      )}
-    </div>
-  );
-}
-
-function ProcessingPanel({ state, fileName }) {
-  const logRef = useRef(null);
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [state?.log]);
-
-  if (!state) return null;
-  const pct = state.total > 0 ? Math.round((state.progress / state.total) * 100) : (state.active ? 5 : 100);
-  const isError = !!state.error;
-
-  return (
-    <div className={`rounded-xl border p-4 space-y-3 ${isError ? 'bg-red-50 border-red-200' : state.done ? 'bg-green-50 border-green-200' : 'bg-indigo-50 border-indigo-200'}`}>
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-          {state.active && <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />}
-          {state.done && !isError && <CheckCircle className="w-4 h-4 text-green-600" />}
-          {isError && <AlertCircle className="w-4 h-4 text-red-500" />}
-          {fileName}
-        </p>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-          isError ? 'bg-red-100 text-red-700' : state.done ? 'bg-green-100 text-green-700' : 'bg-indigo-100 text-indigo-700'
-        }`}>
-          {isError ? 'Failed' : state.done ? 'Done' : 'Processing…'}
-        </span>
-      </div>
-
-      {/* Progress bar */}
-      {(state.active || state.done) && (
-        <div className="space-y-1">
-          <div className="flex justify-between text-xs text-gray-500">
-            <span>Embedding progress</span>
-            <span>{state.progress}/{state.total > 0 ? state.total : '?'} chunks</span>
-          </div>
-          <div className="w-full bg-white rounded-full h-2 border border-gray-200 overflow-hidden">
-            <div
-              className={`h-2 rounded-full transition-all duration-300 ${isError ? 'bg-red-400' : 'bg-indigo-500'}`}
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Log */}
-      {state.log?.length > 0 && (
-        <div
-          ref={logRef}
-          className="bg-white rounded-lg border border-gray-200 p-3 text-xs font-mono space-y-1 max-h-36 overflow-y-auto"
-        >
-          {state.log.map((line, i) => (
-            <p key={i} className={
-              line.startsWith('❌') ? 'text-red-600' :
-              line.startsWith('✅') ? 'text-green-700' :
-              'text-gray-700'
-            }>{line}</p>
-          ))}
-        </div>
-      )}
-
-      {/* Post-vectorization metadata */}
-      {state.done && state.metadata && (
-        <div className="bg-white rounded-lg border border-gray-200 p-3 grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-          <span><span className="text-gray-400">Chunks:</span> <strong>{state.metadata.chunks ?? '—'}</strong></span>
-          <span><span className="text-gray-400">Vectorized:</span> <strong>{state.metadata.vectorized ? 'Yes' : 'No (text only)'}</strong></span>
-          {state.metadata.embedding_provider && (
-            <span><span className="text-gray-400">Provider:</span> <strong>{PROVIDER_LABELS[state.metadata.embedding_provider] || state.metadata.embedding_provider}</strong></span>
-          )}
-          {state.metadata.embedding_model && (
-            <span><span className="text-gray-400">Model:</span> <code className="bg-gray-100 rounded px-1">{state.metadata.embedding_model}</code></span>
-          )}
-          {state.metadata.embedding_dims > 0 && (
-            <span><span className="text-gray-400">Dimensions:</span> <strong>{state.metadata.embedding_dims}</strong></span>
-          )}
-          {state.metadata.vector_db && state.metadata.vector_db !== 'none' && (
-            <span><span className="text-gray-400">Vector DB:</span> <strong>{DB_LABELS[state.metadata.vector_db] || state.metadata.vector_db}</strong></span>
-          )}
-          {state.metadata.vector_db_collection && (
-            <span><span className="text-gray-400">Collection:</span> <strong>{state.metadata.vector_db_collection}</strong></span>
-          )}
-          {state.metadata.upserted > 0 && (
-            <span><span className="text-gray-400">Upserted:</span> <strong>{state.metadata.upserted} vectors</strong></span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RagPipelineTab({ memories, onRefresh }) {
+function RagPipelineTab({ memories, workspaceFilter }) {
   const [poolId, setPoolId] = useState(memories[0]?.id || '');
-  const [pool, setPool] = useState(null);
-  const [chunkSize, setChunkSize] = useState(500);
-  const [overlap, setOverlap] = useState(50);
-  const [procState, setProcState] = useState({});
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [indexing, setIndexing] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [ragCfg, setRagCfg] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef(null);
-
-  const loadPool = useCallback(async (id) => {
-    if (!id) return;
-    try {
-      const resp = await getSharedMemory(id);
-      setPool(resp.data);
-    } catch {}
-  }, []);
 
   useEffect(() => {
     getRagConfig().then(r => setRagCfg(r.data)).catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (poolId) loadPool(poolId);
-  }, [poolId, loadPool]);
-
-  useEffect(() => {
     if (!poolId && memories.length > 0) setPoolId(memories[0].id);
   }, [memories, poolId]);
 
-  const handleUploadFiles = async (files) => {
-    if (!poolId) return;
-    for (const file of files) {
-      const fd = new FormData();
-      fd.append('file', file);
-      try { await uploadMemoryFile(poolId, fd); } catch {}
-    }
-    await loadPool(poolId);
+  const loadFiles = useCallback(async (id, workspace) => {
+    if (!id || !workspace) return;
+    setLoading(true);
+    try {
+      const resp = await listMemoryFiles(id, workspace);
+      setFiles(resp.data.files || []);
+    } catch { setFiles([]); } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (poolId && workspaceFilter) loadFiles(poolId, workspaceFilter);
+    else setFiles([]);
+  }, [poolId, workspaceFilter, loadFiles]);
+
+  const handleUploadFiles = async (fileList) => {
+    if (!poolId || !workspaceFilter) return;
+    setUploading(true);
+    try {
+      for (const file of fileList) {
+        await uploadMemoryFile(poolId, workspaceFilter, file);
+      }
+      await loadFiles(poolId, workspaceFilter);
+    } catch {} finally { setUploading(false); }
   };
 
   const handleDrop = async (e) => {
@@ -936,85 +1492,46 @@ function RagPipelineTab({ memories, onRefresh }) {
     await handleUploadFiles([...e.dataTransfer.files]);
   };
 
-  const _applyEvent = (fileName, event) => {
-    setProcState(s => {
-      const curr = s[fileName] || { active: true, log: [], progress: 0, total: 0, done: false, error: null, metadata: null };
-      const log = [...(curr.log || [])];
-      switch (event.type) {
-        case 'chunked':
-          log.push(`📄 Split into ${event.chunks} chunks`);
-          return { ...s, [fileName]: { ...curr, log, total: event.chunks } };
-        case 'embedding_start':
-          log.push(`🧠 Embedding with ${PROVIDER_LABELS[event.provider] || event.provider} — model: ${event.model} (${event.total} chunks)`);
-          return { ...s, [fileName]: { ...curr, log } };
-        case 'embedding_progress':
-          return { ...s, [fileName]: { ...curr, progress: event.done, total: event.total } };
-        case 'storing':
-          log.push(`💾 Storing in ${DB_LABELS[event.db] || event.db} › collection "${event.collection}"`);
-          return { ...s, [fileName]: { ...curr, log } };
-        case 'done': {
-          const meta = { ...event };
-          delete meta.type;
-          if (event.vectorized)
-            log.push(`✅ Done — ${event.upserted ?? meta.chunks} vectors stored (${event.embedding_dims}d)`);
-          else
-            log.push(`✅ Done — indexed as plain text (no vector DB configured)`);
-          return { ...s, [fileName]: { ...curr, log, active: false, done: true, progress: curr.total || 0, metadata: { ...meta, chunks: curr.total } } };
-        }
-        case 'error':
-          log.push(`❌ ${event.message}`);
-          return { ...s, [fileName]: { ...curr, log, active: false, error: event.message } };
-        default:
-          return s;
-      }
-    });
-  };
-
-  const handleProcess = async (fileName) => {
-    setProcState(s => ({ ...s, [fileName]: { active: true, log: [], progress: 0, total: 0, done: false, error: null, metadata: null } }));
-    const url = `http://localhost:8000/api/shared-memory/${poolId}/files/${encodeURIComponent(fileName)}/process-stream?chunk_size=${chunkSize}&overlap=${overlap}`;
+  const handleIndex = async (filename) => {
+    setIndexing(filename);
     try {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try { _applyEvent(fileName, JSON.parse(line.slice(6))); } catch {}
-          }
-        }
-      }
-    } catch (err) {
-      setProcState(s => ({ ...s, [fileName]: { ...(s[fileName] || {}), active: false, error: err.message, log: [...(s[fileName]?.log || []), `❌ ${err.message}`] } }));
-    }
-    await loadPool(poolId);
+      await indexMemoryFile(poolId, filename, workspaceFilter);
+      await loadFiles(poolId, workspaceFilter);
+    } catch {} finally { setIndexing(null); }
   };
 
-  const handleProcessAll = async () => {
-    const rawFiles = (pool?.files || []).filter(f => !f.rag_status || f.rag_status === 'raw');
-    for (const f of rawFiles) await handleProcess(f.name);
+  const handleDeindex = async (filename) => {
+    setIndexing(filename);
+    try {
+      await deindexMemoryFile(poolId, filename);
+      await loadFiles(poolId, workspaceFilter);
+    } catch {} finally { setIndexing(null); }
   };
 
-  const files = pool?.files || [];
-  const rawCount = files.filter(f => !f.rag_status || f.rag_status === 'raw').length;
-  const indexedCount = files.filter(f => f.rag_status === 'indexed').length;
-  const vectorizedCount = files.filter(f => f.vectorized).length;
+  const handleDelete = async (filename) => {
+    if (!window.confirm(`Delete "${filename}"?`)) return;
+    try {
+      await deleteMemoryFile(poolId, filename, workspaceFilter);
+      await loadFiles(poolId, workspaceFilter);
+    } catch {}
+  };
+
+  const handleIndexAll = async () => {
+    const pending = files.filter(f => f.status !== 'indexed');
+    for (const f of pending) await handleIndex(f.filename);
+  };
+
+  const indexedCount = files.filter(f => f.status === 'indexed').length;
+  const pendingCount = files.length - indexedCount;
+  const totalChunks = files.reduce((s, f) => s + (f.chunks || 0), 0);
   const showVectorCols = ragCfg?.is_configured;
-  const activeProcessing = Object.entries(procState).filter(([, s]) => s.active || s.done || s.error);
 
   return (
     <div className="space-y-5">
       {/* Vector DB status */}
       <VectorDbStatusCard ragCfg={ragCfg} />
 
-      {/* Pool selector + config */}
+      {/* Pool selector */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex-1 min-w-48">
@@ -1028,35 +1545,27 @@ function RagPipelineTab({ memories, onRefresh }) {
               )}
             </select>
           </div>
-          <div className="w-36">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Chunk Size (chars)</label>
-            <input type="number" value={chunkSize} onChange={e => setChunkSize(Number(e.target.value))}
-              min={100} max={4000} step={50}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-          </div>
-          <div className="w-32">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Overlap</label>
-            <input type="number" value={overlap} onChange={e => setOverlap(Number(e.target.value))}
-              min={0} max={200} step={10}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
-          </div>
-          {rawCount > 0 && (
-            <button onClick={handleProcessAll}
+          {pendingCount > 0 && (
+            <button onClick={handleIndexAll}
               className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium">
-              <Zap className="w-4 h-4" /> Process All Raw ({rawCount})
+              <Zap className="w-4 h-4" /> Index All Pending ({pendingCount})
             </button>
           )}
+          <button onClick={() => loadFiles(poolId, workspaceFilter)} disabled={loading}
+            className="flex items-center gap-1 border border-gray-200 text-gray-500 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
+          </button>
         </div>
       </div>
 
       {/* Stats bar */}
-      {pool && (
+      {files.length > 0 && (
         <div className={`grid gap-4 ${showVectorCols ? 'grid-cols-4' : 'grid-cols-3'}`}>
           {[
             { label: 'Total Files', value: files.length, color: 'bg-gray-50 text-gray-600' },
-            { label: 'Raw / Pending', value: rawCount, color: 'bg-yellow-50 text-yellow-700' },
+            { label: 'Pending', value: pendingCount, color: 'bg-yellow-50 text-yellow-700' },
             { label: 'Indexed', value: indexedCount, color: 'bg-green-50 text-green-700' },
-            ...(showVectorCols ? [{ label: 'Vectorized', value: vectorizedCount, color: 'bg-indigo-50 text-indigo-700' }] : []),
+            ...(showVectorCols ? [{ label: 'Total Chunks', value: totalChunks, color: 'bg-indigo-50 text-indigo-700' }] : []),
           ].map(({ label, value, color }) => (
             <div key={label} className={`rounded-xl border border-gray-200 p-4 text-center ${color}`}>
               <p className="text-2xl font-bold">{value}</p>
@@ -1067,53 +1576,39 @@ function RagPipelineTab({ memories, onRefresh }) {
       )}
 
       {/* Upload zone */}
-      <div
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={handleDrop}
-        className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer ${
-          dragging ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-gray-50'
-        }`}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        <input ref={fileInputRef} type="file" multiple className="hidden"
-          accept=".txt,.md,.json,.yaml,.yml,.csv,.xml,.rst,.log"
-          onChange={e => handleUploadFiles([...e.target.files]).then(() => e.target.value = '')} />
-        <Upload className={`w-10 h-10 mx-auto mb-3 ${dragging ? 'text-indigo-500' : 'text-gray-300'}`} />
-        <p className="text-gray-600 font-medium">Drop files here or click to upload</p>
-        <p className="text-xs text-gray-400 mt-1">Supports .txt, .md, .json, .yaml, .csv, .xml and other text formats</p>
-      </div>
-
-      {/* Active / completed processing panels */}
-      {activeProcessing.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-              <Zap className="w-4 h-4 text-indigo-500" /> Processing Log
-            </h3>
-            <button
-              onClick={() => setProcState(s => {
-                const next = { ...s };
-                Object.keys(next).forEach(k => { if (!next[k].active) delete next[k]; });
-                return next;
-              })}
-              className="text-xs text-gray-400 hover:text-gray-600"
-            >
-              Clear done
-            </button>
-          </div>
-          {activeProcessing.map(([name, state]) => (
-            <ProcessingPanel key={name} fileName={name} state={state} />
-          ))}
+      {workspaceFilter ? (
+        <div
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer ${
+            dragging ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-gray-50'
+          }`}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <input ref={fileInputRef} type="file" multiple className="hidden"
+            accept=".txt,.md,.json,.yaml,.yml,.csv,.xml,.rst,.log"
+            onChange={e => { handleUploadFiles([...e.target.files]); e.target.value = ''; }} />
+          {uploading
+            ? <RefreshCw className="w-10 h-10 mx-auto mb-3 animate-spin text-indigo-400" />
+            : <Upload className={`w-10 h-10 mx-auto mb-3 ${dragging ? 'text-indigo-500' : 'text-gray-300'}`} />
+          }
+          <p className="text-gray-600 font-medium">{uploading ? 'Uploading…' : 'Drop files here or click to upload'}</p>
+          <p className="text-xs text-gray-400 mt-1">Supports .txt, .md, .json, .yaml, .csv, .xml and other text formats</p>
+        </div>
+      ) : (
+        <div className="border-2 border-dashed rounded-xl p-10 text-center border-gray-200 bg-gray-50">
+          <AlertCircle className="w-10 h-10 mx-auto mb-3 text-gray-300" />
+          <p className="text-gray-400 text-sm">Select a workspace to upload files.</p>
         </div>
       )}
 
-      {/* File processing list */}
-      {pool && files.length > 0 && (
+      {/* File list */}
+      {poolId && files.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
             <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2">
-              <Files className="w-4 h-4 text-indigo-500" /> Files in "{pool.name}"
+              <Files className="w-4 h-4 text-indigo-500" /> Files in "{memories.find(m => m.id === poolId)?.name || poolId}"
             </h3>
           </div>
           <div className="overflow-x-auto">
@@ -1122,47 +1617,47 @@ function RagPipelineTab({ memories, onRefresh }) {
                 <tr className="border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wider">
                   <th className="px-5 py-2 text-left">File</th>
                   <th className="px-5 py-2 text-left">Status</th>
-                  <th className="px-5 py-2 text-left">Size</th>
-                  <th className="px-5 py-2 text-left">Processed</th>
+                  <th className="px-5 py-2 text-left">Chunks</th>
+                  <th className="px-5 py-2 text-left">Indexed at</th>
                   <th className="px-5 py-2 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {files.map((f, i) => {
-                  const ps = procState[f.name];
-                  const isActive = ps?.active;
+                {files.map((f) => {
+                  const isIndexed = f.status === 'indexed';
+                  const isBusy = indexing === f.filename;
                   return (
-                    <tr key={i} className={`hover:bg-gray-50 ${isActive ? 'bg-indigo-50/40' : ''}`}>
+                    <tr key={f.filename} className={`hover:bg-gray-50 ${isBusy ? 'bg-indigo-50/40' : ''}`}>
                       <td className="px-5 py-3">
-                        <p className="font-medium text-gray-800">{f.name}</p>
-                        <FileMetaChips f={f} />
+                        <p className="font-medium text-gray-800">{f.filename}</p>
                       </td>
                       <td className="px-5 py-3">
-                        <div className="flex items-center gap-1.5">
-                          {isActive
-                            ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium animate-pulse"><RefreshCw className="w-3 h-3 animate-spin" /> Indexing</span>
-                            : <StatusBadge status={f.rag_status || 'raw'} />
-                          }
-                          {f.rag_error && !isActive && (
-                            <span title={f.rag_error} className="text-red-400 cursor-help"><AlertCircle className="w-3.5 h-3.5" /></span>
-                          )}
-                        </div>
+                        {isBusy
+                          ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium animate-pulse"><RefreshCw className="w-3 h-3 animate-spin" /> Working</span>
+                          : <StatusBadge status={isIndexed ? 'indexed' : 'raw'} />
+                        }
                       </td>
-                      <td className="px-5 py-3 text-gray-500 text-xs">{fmtBytes(f.size_bytes)}</td>
-                      <td className="px-5 py-3 text-gray-400 text-xs">{fmt(f.rag_processed_at)}</td>
+                      <td className="px-5 py-3 text-gray-500 text-xs">{isIndexed ? (f.chunks || '—') : '—'}</td>
+                      <td className="px-5 py-3 text-gray-400 text-xs">{fmt(f.indexed_at)}</td>
                       <td className="px-5 py-3 text-right">
-                        <button
-                          onClick={() => handleProcess(f.name)}
-                          disabled={isActive}
-                          className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg disabled:opacity-50 ml-auto ${
-                            !f.rag_status || f.rag_status === 'raw'
-                              ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                              : 'border border-gray-200 text-gray-500 hover:bg-gray-50'
-                          }`}
-                        >
-                          {isActive ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-                          {isActive ? 'Indexing…' : (!f.rag_status || f.rag_status === 'raw' ? 'Process' : 'Re-index')}
-                        </button>
+                        <div className="flex items-center gap-1 justify-end">
+                          {isBusy ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                          ) : isIndexed ? (
+                            <button onClick={() => handleDeindex(f.filename)}
+                              className="flex items-center gap-1 text-xs border border-gray-200 text-gray-500 px-2 py-1 rounded-lg hover:bg-gray-50">
+                              De-index
+                            </button>
+                          ) : (
+                            <button onClick={() => handleIndex(f.filename)}
+                              className="flex items-center gap-1 text-xs bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700">
+                              <Zap className="w-3 h-3" /> Index
+                            </button>
+                          )}
+                          <button onClick={() => handleDelete(f.filename)} className="text-gray-300 hover:text-red-500 p-0.5 ml-1">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1179,37 +1674,25 @@ function RagPipelineTab({ memories, onRefresh }) {
 // ---------------------------------------------------------------------------
 // Tab: Indexed Files
 // ---------------------------------------------------------------------------
-function IndexedFilesTab() {
-  const [ragFiles, setRagFiles] = useState([]);
-  const [loading, setLoading] = useState(true);
+function IndexedFilesTab({ memories }) {
   const [search, setSearch] = useState('');
   const [filterPool, setFilterPool] = useState('');
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const resp = await getRagFiles();
-        setRagFiles(resp.data);
-      } catch {} finally { setLoading(false); }
-    };
-    load();
-  }, []);
+  // Flatten rag_files from all pools
+  const ragFiles = memories.flatMap(m =>
+    (m.rag_files || [])
+      .filter(f => f.status === 'indexed')
+      .map(f => ({ ...f, memory_name: m.name, memory_id: m.id }))
+  );
 
   const pools = [...new Set(ragFiles.map(f => f.memory_name))];
   const filtered = ragFiles.filter(f => {
-    const matchSearch = !search || f.name.toLowerCase().includes(search.toLowerCase()) || f.memory_name.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = !search || f.filename.toLowerCase().includes(search.toLowerCase()) || f.memory_name.toLowerCase().includes(search.toLowerCase());
     const matchPool = !filterPool || f.memory_name === filterPool;
     return matchSearch && matchPool;
   });
 
-  const totalChunks = filtered.reduce((sum, f) => sum + (f.rag_chunks || 0), 0);
-  const vectorizedCount = filtered.filter(f => f.vectorized).length;
-
-  if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
-    </div>
-  );
+  const totalChunks = filtered.reduce((sum, f) => sum + (f.chunks || 0), 0);
 
   return (
     <div className="space-y-5">
@@ -1218,7 +1701,7 @@ function IndexedFilesTab() {
         {[
           { label: 'Indexed Files', value: ragFiles.length, icon: FileSearch, color: 'text-indigo-600 bg-indigo-50' },
           { label: 'Total Chunks', value: totalChunks, icon: BarChart2, color: 'text-green-600 bg-green-50' },
-          { label: 'Vectorized', value: vectorizedCount, icon: CheckCircle, color: 'text-teal-600 bg-teal-50' },
+          { label: 'Showing', value: filtered.length, icon: CheckCircle, color: 'text-teal-600 bg-teal-50' },
           { label: 'Memory Pools', value: pools.length, icon: Database, color: 'text-purple-600 bg-purple-50' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4">
@@ -1262,11 +1745,7 @@ function IndexedFilesTab() {
                 <th className="px-5 py-3 text-left">Pool</th>
                 <th className="px-5 py-3 text-left">Status</th>
                 <th className="px-5 py-3 text-left">Chunks</th>
-                <th className="px-5 py-3 text-left">Vectorized</th>
-                <th className="px-5 py-3 text-left">Embedding</th>
-                <th className="px-5 py-3 text-left">Dims</th>
-                <th className="px-5 py-3 text-left">Size</th>
-                <th className="px-5 py-3 text-left">Processed</th>
+                <th className="px-5 py-3 text-left">Indexed at</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -1275,25 +1754,15 @@ function IndexedFilesTab() {
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
                       <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
-                      <span className="font-medium text-gray-900">{f.name}</span>
+                      <span className="font-medium text-gray-900">{f.filename}</span>
                     </div>
                   </td>
                   <td className="px-5 py-3">
                     <span className="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded-full font-medium">{f.memory_name}</span>
                   </td>
-                  <td className="px-5 py-3"><StatusBadge status={f.rag_status} /></td>
-                  <td className="px-5 py-3 font-medium text-gray-800">{f.rag_chunks || '—'}</td>
-                  <td className="px-5 py-3">
-                    {f.vectorized
-                      ? <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-0.5 rounded-full font-medium"><CheckCircle className="w-3 h-3" /> Yes</span>
-                      : <span className="text-xs text-gray-400">Text only</span>}
-                  </td>
-                  <td className="px-5 py-3 text-gray-500 text-xs">
-                    {f.embedding_model ? <code className="bg-gray-100 rounded px-1 py-0.5">{f.embedding_model}</code> : '—'}
-                  </td>
-                  <td className="px-5 py-3 text-gray-500 text-xs">{f.embedding_dims || '—'}</td>
-                  <td className="px-5 py-3 text-gray-500 text-xs">{fmtBytes(f.size_bytes)}</td>
-                  <td className="px-5 py-3 text-gray-400 text-xs">{fmt(f.rag_processed_at)}</td>
+                  <td className="px-5 py-3"><StatusBadge status="indexed" /></td>
+                  <td className="px-5 py-3 font-medium text-gray-800">{f.chunks || '—'}</td>
+                  <td className="px-5 py-3 text-gray-400 text-xs">{fmt(f.indexed_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -1315,7 +1784,7 @@ const TABS = [
 ];
 
 export default function MemoryManager() {
-  const { selectedWorkspace, workspaceFilter } = useWorkspace();
+  const { workspaceFilter } = useWorkspace();
   const [activeTab, setActiveTab] = useState('pools');
   const [memories, setMemories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1365,8 +1834,8 @@ export default function MemoryManager() {
       {/* Tab content */}
       {activeTab === 'pools'   && <PoolsTab memories={memories} onRefresh={fetchMemories} workspaceFilter={workspaceFilter} />}
       {activeTab === 'agents'  && <AgentsTab memories={memories} workspaceFilter={workspaceFilter} />}
-      {activeTab === 'rag'     && <RagPipelineTab memories={memories} onRefresh={fetchMemories} />}
-      {activeTab === 'indexed' && <IndexedFilesTab />}
+      {activeTab === 'rag'     && <RagPipelineTab memories={memories} workspaceFilter={workspaceFilter} />}
+      {activeTab === 'indexed' && <IndexedFilesTab memories={memories} />}
     </div>
   );
 }

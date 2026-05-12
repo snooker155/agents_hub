@@ -220,8 +220,6 @@ def start_node(
     spec = get_agent(agent_id)
     if not spec:
         raise ValueError(f"Unknown agent: {agent_id}")
-    if getattr(spec, "is_remote", False):
-        raise ValueError("Cannot start a node for a remote agent")
 
     node_id = str(uuid4())
     log_file = NODE_LOGS_DIR / f"node_{node_id}.log"
@@ -480,8 +478,8 @@ def ensure_default_node() -> Optional[str]:
     Returns the new node_id, or None if already running / agent unavailable.
     """
     spec = get_agent("orchestrator")
-    if not spec or getattr(spec, "is_remote", False):
-        return None  # orchestrator not registered or is remote
+    if not spec:
+        return None  # orchestrator not registered
 
     running = get_running_nodes_for_agent("orchestrator")
     if running:

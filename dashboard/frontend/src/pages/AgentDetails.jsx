@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useWorkspace } from '../components/WorkspaceContext';
-import { ChevronLeft, Activity, History, Server, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare } from 'lucide-react';
-import { getAgent, getAgentHistory, getAgentHealth, getAgentLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, getAgentModel, updateAgentModel, getAgentReasoning, updateAgentReasoning, getNodes, getAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, getDockerfile, buildBaseImage, buildAgentImage, getContainerImages, getContainers, getContainerLogs, stopContainerByName, removeContainer, setDefaultChatAgent, clearDefaultChatAgent } from '../api';
+import { ChevronLeft, Activity, History, Server, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag } from 'lucide-react';
+import { getAgent, getAgentHistory, getAgentHealth, getAgentLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, getAgentModel, updateAgentModel, getAgentReasoning, updateAgentReasoning, getNodes, getAgentDefinition, updateAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, getDockerfile, buildBaseImage, buildAgentImage, getContainerImages, getContainers, getContainerLogs, stopContainerByName, removeContainer, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSkillsConfig, getAgentSkills, createAgentSkill, deleteAgentSkill } from '../api';
 
 const NODE_STATUS = {
   running: { dot: 'bg-green-500 animate-pulse', badge: 'bg-green-100 text-green-800', label: 'Running' },
@@ -278,7 +278,10 @@ const AgentDetails = () => {
   const [loading, setLoading] = useState(true);
   const [health, setHealth] = useState(null);
 
-  const [agentDefinition, setAgentDefinition] = useState({ system_prompt: '', yaml: '', source: '', yaml_path: '' });
+  const [agentDefinition, setAgentDefinition] = useState({ system_prompt: '', instructions: '', capabilities: '', usage: '', source: '', definition_dir: '' });
+  const [defDraft, setDefDraft] = useState({ instructions: '', capabilities: '', usage: '' });
+  const [defSaving, setDefSaving] = useState({ instructions: false, capabilities: false, usage: false });
+  const [defError, setDefError] = useState({ instructions: '', capabilities: '', usage: '' });
 
   const [memoryType, setMemoryType] = useState('none');
   const [memoryData, setMemoryData] = useState('');
@@ -353,6 +356,66 @@ const AgentDetails = () => {
   const [containerLogsText, setContainerLogsText] = useState('');
   const [containerLogsLoading, setContainerLogsLoading] = useState(false);
   const [dockerActionBusy, setDockerActionBusy] = useState({});
+
+  // ── Skills state ────────────────────────────────────────────────────────────
+  const [skills, setSkills] = useState([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsEnabled, setSkillsEnabled] = useState(false);
+  const [skillsConfigSaving, setSkillsConfigSaving] = useState(false);
+  const [showAddSkill, setShowAddSkill] = useState(false);
+  const [skillForm, setSkillForm] = useState({ name: '', description: '', steps: '', tags: '' });
+  const [skillSaving, setSkillSaving] = useState(false);
+  const [skillDeleteBusy, setSkillDeleteBusy] = useState({});
+  const [skillsMessage, setSkillsMessage] = useState('');
+
+  const fetchSkills = async (wsName) => {
+    if (!wsName) return;
+    setSkillsLoading(true);
+    try {
+      const resp = await getAgentSkills(id, wsName);
+      setSkills(resp.data || []);
+    } catch (_) {
+      setSkills([]);
+    }
+    setSkillsLoading(false);
+  };
+
+  const handleToggleSkillsEnabled = async (enabled) => {
+    setSkillsConfigSaving(true);
+    try {
+      await updateAgentSkillsConfig(id, { skills_enabled: enabled });
+      setSkillsEnabled(enabled);
+    } catch (_) {}
+    setSkillsConfigSaving(false);
+  };
+
+  const handleSaveSkill = async () => {
+    const wsName = selectedWorkspace;
+    if (!wsName || !skillForm.name || !skillForm.description || !skillForm.steps.trim()) return;
+    setSkillSaving(true);
+    try {
+      const steps = skillForm.steps.split('\n').map(s => s.trim()).filter(Boolean);
+      const tags = skillForm.tags ? skillForm.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+      await createAgentSkill(id, { workspace: wsName, name: skillForm.name, description: skillForm.description, steps, tags });
+      setSkillForm({ name: '', description: '', steps: '', tags: '' });
+      setShowAddSkill(false);
+      await fetchSkills(wsName);
+      setSkillsMessage('Skill saved.');
+      setTimeout(() => setSkillsMessage(''), 3000);
+    } catch (_) {}
+    setSkillSaving(false);
+  };
+
+  const handleDeleteSkill = async (skillId) => {
+    const wsName = selectedWorkspace;
+    if (!wsName) return;
+    setSkillDeleteBusy(b => ({ ...b, [skillId]: true }));
+    try {
+      await deleteAgentSkill(id, skillId, wsName);
+      setSkills(prev => prev.filter(s => s.id !== skillId));
+    } catch (_) {}
+    setSkillDeleteBusy(b => ({ ...b, [skillId]: false }));
+  };
 
   const fetchDockerData = async () => {
     setDockerLoading(true);
@@ -473,19 +536,19 @@ const AgentDetails = () => {
       }
       try {
         const definitionResp = await getAgentDefinition(id);
-        setAgentDefinition(definitionResp.data || { system_prompt: '', yaml: '', source: '', yaml_path: '' });
+        const def = definitionResp.data || { system_prompt: '', instructions: '', capabilities: '', usage: '', source: '', definition_dir: '' };
+        setAgentDefinition(def);
+        setDefDraft({
+          instructions: def.instructions || '',
+          capabilities: def.capabilities || '',
+          usage: def.usage || '',
+        });
+        setDefError({ instructions: '', capabilities: '', usage: '' });
       } catch {
-        setAgentDefinition({ system_prompt: '', yaml: '', source: '', yaml_path: '' });
+        setAgentDefinition({ system_prompt: '', instructions: '', capabilities: '', usage: '', source: '', definition_dir: '' });
+        setDefDraft({ instructions: '', capabilities: '', usage: '' });
       }
 
-      if (agentResp.data.is_remote) {
-        try {
-          const healthResp = await getAgentHealth(id);
-          setHealth(healthResp.data);
-        } catch {
-          setHealth({ status: 'offline' });
-        }
-      }
       setLoading(false);
     } catch (error) {
       console.error('Error fetching agent details:', error);
@@ -639,6 +702,17 @@ const AgentDetails = () => {
     fetchDockerfile();
   }, [activeTab]);
 
+  // Load skills when the skills tab opens
+  useEffect(() => {
+    if (activeTab !== 'skills') return;
+    fetchSkills(selectedWorkspace);
+  }, [activeTab, selectedWorkspace]);
+
+  // Sync skills_enabled from agent spec
+  useEffect(() => {
+    if (agent) setSkillsEnabled(!!agent.skills_enabled);
+  }, [agent]);
+
   // Load full pool details whenever the selected pool ID changes
   useEffect(() => {
     if (memoryType !== 'shared' || !memoryData) { setConnectedPool(null); return; }
@@ -653,7 +727,6 @@ const AgentDetails = () => {
 
 
   const handleStartNode = async () => {
-    if (agent?.is_remote) return;
     setStartingNode(true);
     try {
       await startNode({ agent_id: id, workspace: startWorkspace || null, label: startLabel || null });
@@ -739,6 +812,33 @@ const AgentDetails = () => {
     } finally {
       setToolsSaving(false);
     }
+  };
+
+  const handleSaveDefinitionField = async (field) => {
+    setDefSaving(prev => ({ ...prev, [field]: true }));
+    setDefError(prev => ({ ...prev, [field]: '' }));
+    try {
+      const payload = { [field]: defDraft[field] };
+      const { data } = await updateAgentDefinition(id, payload);
+      setAgentDefinition(data);
+      setDefDraft({
+        instructions: data.instructions || '',
+        capabilities: data.capabilities || '',
+        usage: data.usage || '',
+      });
+    } catch (error) {
+      setDefError(prev => ({
+        ...prev,
+        [field]: error.response?.data?.detail || error.message || 'Failed to save',
+      }));
+    } finally {
+      setDefSaving(prev => ({ ...prev, [field]: false }));
+    }
+  };
+
+  const handleResetDefinitionField = (field) => {
+    setDefDraft(prev => ({ ...prev, [field]: agentDefinition[field] || '' }));
+    setDefError(prev => ({ ...prev, [field]: '' }));
   };
 
   const handleFetchLocalModels = async () => {
@@ -888,6 +988,7 @@ const AgentDetails = () => {
             { id: 'commands', label: 'Commands', icon: Terminal },
             { id: 'nodes', label: 'Nodes', icon: Server },
             { id: 'tasks', label: 'Tasks', icon: Clock },
+            { id: 'skills', label: 'Skills', icon: BookOpen },
             { id: 'config', label: 'Config', icon: FileCode },
             { id: 'docker', label: 'Docker', icon: Layers },
           ].map((tab) => {
@@ -930,7 +1031,7 @@ const AgentDetails = () => {
               </div>
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Type</span>
-                <span className="font-medium capitalize">{agent.is_remote ? 'Remote' : 'Local'}{agent.type ? <> · <span className=" text-xs">{agent.type}</span></> : ''}</span>
+                <span className="font-medium capitalize">{agent.type || 'local'}</span>
               </div>
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Domain</span>
@@ -946,22 +1047,10 @@ const AgentDetails = () => {
                   <span className=" text-xs text-gray-700">{agentDefinition.source}</span>
                 </div>
               )}
-              {agentDefinition.yaml_path && (
+              {agentDefinition.definition_dir && (
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">YAML Path</span>
-                  <span className=" text-xs text-indigo-600 break-all">{agentDefinition.yaml_path}</span>
-                </div>
-              )}
-              {agent.is_remote && (
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">URL</span>
-                  <span className=" text-xs text-indigo-600 break-all">{agent.agent_url}</span>
-                </div>
-              )}
-              {agent.original_id && (
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Cloned From</span>
-                  <Link to={`/agents/${agent.original_id}`} className="text-indigo-600 hover:underline text-sm font-medium">{agent.original_id}</Link>
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Definition Folder</span>
+                  <span className=" text-xs text-indigo-600 break-all">{agentDefinition.definition_dir}</span>
                 </div>
               )}
               {selectedWorkspace && selectedWorkspace !== 'default' && (
@@ -1139,16 +1228,6 @@ const AgentDetails = () => {
             );
           })()}
 
-          {agent.is_remote && health && (
-            <div className={`p-4 rounded-lg shadow-sm border ${health.status === 'up' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-              <h3 className={`font-bold flex items-center ${health.status === 'up' ? 'text-green-800' : 'text-red-800'}`}>
-                <Activity className="w-4 h-4 mr-2" /> Health Status: {health.status.toUpperCase()}
-              </h3>
-              {health.details && <pre className="text-[10px] mt-2 overflow-auto max-h-20">{JSON.stringify(health.details, null, 2)}</pre>}
-              {health.error && <p className="text-xs text-red-600 mt-1">{health.error}</p>}
-            </div>
-          )}
-
           {activeTask && (
             <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
               <h3 className="text-indigo-800 font-bold flex items-center mb-2">
@@ -1162,7 +1241,7 @@ const AgentDetails = () => {
           )}
 
           {/* ── Chat Settings ── */}
-          {!agent.is_remote && (
+          {(
             <div className="bg-white p-6 shadow-md rounded-lg">
               <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-1">
                 <MessageSquare className="w-4 h-4 text-indigo-500" /> Chat Settings
@@ -1714,26 +1793,21 @@ const AgentDetails = () => {
               <Server className="w-5 h-5 mr-2 text-indigo-600" />
               Agent Nodes
             </h3>
-            {!agent.is_remote && (
-              <div className="flex items-center gap-2">
-                {nodesOverWsCap && (
-                  <span className="text-xs text-orange-600 font-medium">Node limit reached ({wsSessionCap})</span>
-                )}
-                <button
-                  type="button"
-                  disabled={nodesOverWsCap}
-                  onClick={() => { setStartWorkspace(selectedWorkspace && selectedWorkspace !== 'default' ? selectedWorkspace : ''); setShowStartNodeModal(true); }}
-                  className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <Play className="w-3.5 h-3.5 mr-1" />
-                  Start Node
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {nodesOverWsCap && (
+                <span className="text-xs text-orange-600 font-medium">Node limit reached ({wsSessionCap})</span>
+              )}
+              <button
+                type="button"
+                disabled={nodesOverWsCap}
+                onClick={() => { setStartWorkspace(selectedWorkspace && selectedWorkspace !== 'default' ? selectedWorkspace : ''); setShowStartNodeModal(true); }}
+                className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Play className="w-3.5 h-3.5 mr-1" />
+                Start Node
+              </button>
+            </div>
           </div>
-          {agent.is_remote && (
-            <p className="text-xs text-gray-500 mb-3">Remote agents do not support local node start/stop controls.</p>
-          )}
           {nodes.length === 0 ? (
             <p className="text-sm text-gray-500 italic">No nodes found for this agent.</p>
           ) : (
@@ -1937,33 +2011,84 @@ const AgentDetails = () => {
 
       {activeTab === 'config' && (
         <div className="space-y-6">
-          <div className="bg-white p-6 shadow-md rounded-lg">
-            <h3 className="text-lg font-bold mb-4 flex items-center">
-              <Terminal className="w-5 h-5 mr-2 text-indigo-600" />
-              System Prompt
-            </h3>
-            {agentDefinition.system_prompt ? (
-              <pre className="text-xs bg-gray-900 text-green-300 p-4 rounded-lg overflow-auto whitespace-pre-wrap">
+          {agentDefinition.definition_dir && (
+            <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-4 py-2 text-xs text-indigo-700 break-all">
+              Definition folder: <span className="font-mono">{agentDefinition.definition_dir}</span>
+            </div>
+          )}
+
+          {[
+            { key: 'instructions', label: 'instructions.md', desc: 'Main system prompt (required).', icon: Terminal, required: true },
+            { key: 'capabilities', label: 'capabilities.md', desc: 'What this agent can do. Optional — leave empty to delete.', icon: Zap, required: false },
+            { key: 'usage',        label: 'usage.md',        desc: 'When and how to invoke this agent. Optional — leave empty to delete.', icon: BookOpen, required: false },
+          ].map(({ key, label, desc, icon: Icon, required }) => {
+            const original = agentDefinition[key] || '';
+            const draft = defDraft[key] || '';
+            const dirty = draft !== original;
+            const saving = defSaving[key];
+            const error = defError[key];
+            const cannotDelete = required && !draft.trim();
+            return (
+              <div key={key} className="bg-white p-6 shadow-md rounded-lg">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <h3 className="text-lg font-bold flex items-center">
+                      <Icon className="w-5 h-5 mr-2 text-indigo-600" />
+                      {label}
+                      {required && <span className="ml-2 text-[10px] uppercase tracking-wide font-bold text-red-500">Required</span>}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1">{desc}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => handleResetDefinitionField(key)}
+                      disabled={!dirty || saving}
+                      className="px-3 py-1.5 text-xs font-semibold text-gray-600 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Reset
+                    </button>
+                    <button
+                      onClick={() => handleSaveDefinitionField(key)}
+                      disabled={!dirty || saving || cannotDelete}
+                      title={cannotDelete ? 'instructions.md cannot be empty' : undefined}
+                      className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {saving ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1" />}
+                      Save
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  value={draft}
+                  onChange={e => setDefDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                  spellCheck={false}
+                  className="w-full font-mono text-xs bg-gray-900 text-green-300 p-4 rounded-lg min-h-[200px] resize-y border border-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder={required ? 'Required — must contain the system prompt' : 'Optional — leave empty to delete this file'}
+                />
+                {error && (
+                  <p className="text-xs text-red-600 mt-2">{error}</p>
+                )}
+                {dirty && !error && (
+                  <p className="text-xs text-amber-600 mt-2">Unsaved changes</p>
+                )}
+              </div>
+            );
+          })}
+
+          {agentDefinition.system_prompt && (
+            <div className="bg-white p-6 shadow-md rounded-lg">
+              <h3 className="text-lg font-bold mb-2 flex items-center">
+                <FileCode className="w-5 h-5 mr-2 text-indigo-600" />
+                Assembled System Prompt (read-only)
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                What the agent actually receives at runtime: instructions.md plus capabilities.md and usage.md sections when present.
+              </p>
+              <pre className="text-xs bg-gray-900 text-green-300 p-4 rounded-lg overflow-auto whitespace-pre-wrap max-h-96">
                 {agentDefinition.system_prompt}
               </pre>
-            ) : (
-              <p className="text-sm text-gray-500 italic">No system prompt available for this agent.</p>
-            )}
-          </div>
-
-          <div className="bg-white p-6 shadow-md rounded-lg">
-            <h3 className="text-lg font-bold mb-4 flex items-center">
-              <FileCode className="w-5 h-5 mr-2 text-indigo-600" />
-              YAML Definition
-            </h3>
-            {agentDefinition.yaml ? (
-              <pre className="text-xs bg-gray-900 text-green-300 p-4 rounded-lg overflow-auto whitespace-pre-wrap">
-                {agentDefinition.yaml}
-              </pre>
-            ) : (
-              <p className="text-sm text-gray-500 italic">No YAML definition available.</p>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2323,6 +2448,186 @@ const AgentDetails = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'skills' && (
+        <div className="space-y-5">
+
+          {/* ── Configuration card ── */}
+          <div className="bg-white rounded-xl border border-t-4 border-t-purple-500 border-gray-200 p-6 shadow-sm">
+            <h3 className="text-base font-bold text-gray-900 mb-1 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-purple-500" /> Skills Configuration
+            </h3>
+            <p className="text-sm text-gray-500 mb-5">
+              When enabled, relevant skills are automatically matched to the task description and injected before the agent starts.
+              Agents can also discover and save new skills using the <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">save_skill</code> tool.
+            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Procedural Skills</p>
+                <p className="text-xs text-gray-400 mt-0.5">Scope: this agent · workspace-specific</p>
+              </div>
+              <button
+                onClick={() => handleToggleSkillsEnabled(!skillsEnabled)}
+                disabled={skillsConfigSaving}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${skillsEnabled ? 'bg-purple-600' : 'bg-gray-200'}`}
+              >
+                {skillsConfigSaving
+                  ? <Loader className="absolute w-3 h-3 animate-spin text-white left-1/2 -translate-x-1/2" />
+                  : <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${skillsEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                }
+              </button>
+            </div>
+          </div>
+
+          {/* ── Skills list ── */}
+          {!selectedWorkspace ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center shadow-sm">
+              <BookOpen className="w-8 h-8 text-gray-300 mx-auto mb-3" />
+              <p className="text-sm text-gray-500">Select a workspace to view and manage skills.</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-purple-500" /> Skills
+                    <span className="text-xs font-normal text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{selectedWorkspace}</span>
+                  </h3>
+                  {skillsMessage && (
+                    <p className="text-xs text-green-600 mt-0.5 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" /> {skillsMessage}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowAddSkill(v => !v)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700"
+                >
+                  {showAddSkill ? <ChevronUp className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                  {showAddSkill ? 'Cancel' : 'Add Skill'}
+                </button>
+              </div>
+
+              {/* Add skill form */}
+              {showAddSkill && (
+                <div className="px-5 py-4 bg-purple-50 border-b border-purple-100 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Name</label>
+                      <input
+                        type="text"
+                        value={skillForm.name}
+                        onChange={e => setSkillForm(f => ({ ...f, name: e.target.value }))}
+                        placeholder="e.g. Fix Python Import Error"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Tags <span className="text-gray-400 font-normal">(comma-separated)</span></label>
+                      <input
+                        type="text"
+                        value={skillForm.tags}
+                        onChange={e => setSkillForm(f => ({ ...f, tags: e.target.value }))}
+                        placeholder="e.g. debugging, python, api"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">When to use this skill</label>
+                    <input
+                      type="text"
+                      value={skillForm.description}
+                      onChange={e => setSkillForm(f => ({ ...f, description: e.target.value }))}
+                      placeholder="e.g. When a Python module import fails with ModuleNotFoundError"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Steps <span className="text-gray-400 font-normal">(one per line)</span></label>
+                    <textarea
+                      value={skillForm.steps}
+                      onChange={e => setSkillForm(f => ({ ...f, steps: e.target.value }))}
+                      rows={5}
+                      placeholder={"Check if package is in requirements.txt\nActivate virtual environment\nRun pip install -r requirements.txt\nRetry the import"}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      onClick={handleSaveSkill}
+                      disabled={skillSaving || !skillForm.name || !skillForm.description || !skillForm.steps.trim()}
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-40"
+                    >
+                      {skillSaving ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                      {skillSaving ? 'Saving…' : 'Save Skill'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Skills table */}
+              {skillsLoading ? (
+                <div className="flex justify-center py-10">
+                  <Loader className="w-5 h-5 animate-spin text-purple-400" />
+                </div>
+              ) : skills.length === 0 ? (
+                <div className="py-12 text-center">
+                  <BookOpen className="w-8 h-8 text-gray-200 mx-auto mb-3" />
+                  <p className="text-sm text-gray-500">No skills yet for this agent in <strong>{selectedWorkspace}</strong>.</p>
+                  <p className="text-xs text-gray-400 mt-1">Add one above, or the agent will create skills automatically when <code className="bg-gray-100 px-1 rounded">save_skill</code> is called.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {skills.map(skill => (
+                    <div key={skill.id} className="px-5 py-4 hover:bg-gray-50 group">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="font-semibold text-sm text-gray-900">{skill.name}</span>
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${skill.source === 'user' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {skill.source}
+                            </span>
+                            {skill.use_count > 0 && (
+                              <span className="text-[10px] text-gray-400">{skill.use_count}× used</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-500 italic mb-2">{skill.description}</p>
+                          {skill.tags.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap mb-2">
+                              <Tag className="w-3 h-3 text-gray-300" />
+                              {skill.tags.map(t => (
+                                <span key={t} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{t}</span>
+                              ))}
+                            </div>
+                          )}
+                          <ol className="space-y-0.5 pl-4">
+                            {skill.steps.map((step, i) => (
+                              <li key={i} className="text-xs text-gray-600 list-decimal">{step}</li>
+                            ))}
+                          </ol>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteSkill(skill.id)}
+                          disabled={skillDeleteBusy[skill.id]}
+                          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 mt-0.5"
+                          title="Delete skill"
+                        >
+                          {skillDeleteBusy[skill.id]
+                            ? <Loader className="w-4 h-4 animate-spin" />
+                            : <Trash2 className="w-4 h-4" />
+                          }
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Iterable, List, Optional, TypeVar
 
 from workspace import get_workspace_metadata
 
 T = TypeVar("T")
+
+# Thread/async-safe workspace context — set by the chat route and node runner
+# before invoking an agent so tool calls see the correct workspace without
+# relying on a process-wide env var (which races under concurrent requests).
+_workspace_ctx: ContextVar[Optional[str]] = ContextVar("active_workspace", default=None)
 
 
 def normalize_workspace_name(value: Optional[str]) -> Optional[str]:
@@ -21,6 +27,7 @@ def normalize_workspace_name(value: Optional[str]) -> Optional[str]:
 def resolve_active_workspace(preferred: Optional[str] = None) -> Optional[str]:
     for candidate in (
         preferred,
+        _workspace_ctx.get(),
         os.getenv("AGENT_WORKSPACE"),
         os.getenv("WORKSPACE_NAME"),
     ):

@@ -19,11 +19,14 @@ export const getAgent = (id) => api.get(`/agents/${id}`);
 export const getAgentHistory = (id) => api.get(`/agents/${id}/history`);
 export const getAgentLogs = (id, params) => api.get(`/agents/${id}/logs`, { params });
 export const getAgentDefinition = (id) => api.get(`/agents/${id}/definition`);
-export const cloneAgent = (data) => api.post('/agents/clone', data);
-export const connectAgent = (data) => api.post('/agents/connect', data);
-export const disconnectAgent = (id) => api.post(`/agents/${id}/disconnect`);
+export const updateAgentDefinition = (id, data) => api.put(`/agents/${id}/definition`, data);
+export const disconnectAgent = (id) => api.delete(`/agents/${id}`);
 export const updateAgentMemory = (id, data) => api.post(`/agents/${id}/memory`, data);
 export const eraseAgentMemory = (id) => api.delete(`/agents/${id}/memory`);
+export const updateAgentSkillsConfig = (id, data) => api.post(`/agents/${id}/skills-config`, data);
+export const getAgentSkills = (id, workspace) => api.get(`/agents/${id}/skills`, { params: { workspace } });
+export const createAgentSkill = (id, data) => api.post(`/agents/${id}/skills`, data);
+export const deleteAgentSkill = (id, skillId, workspace) => api.delete(`/agents/${id}/skills/${skillId}`, { params: { workspace } });
 export const updateAgentTools = (id, data) => api.post(`/agents/${id}/tools`, data);
 export const getAgentReasoning = (id) => api.get(`/agents/${id}/reasoning`);
 export const updateAgentReasoning = (id, data) => api.post(`/agents/${id}/reasoning`, data);
@@ -82,25 +85,41 @@ export const updateWorkspaceSettingsOverrides = (name, overrides) => api.put(`/w
 export const getWorkspaceModel = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/model`);
 export const updateWorkspaceModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/model`, data);
 export const setWorkspaceAgentMode = (name, mode) => api.put(`/workspaces/${encodeURIComponent(name)}/agent-mode`, { agent_mode: mode });
+export const getWorkspaceInstructions = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/instructions`);
+export const updateWorkspaceInstructions = (name, instructions) => api.put(`/workspaces/${encodeURIComponent(name)}/instructions`, { instructions });
 
 // Shared Memory
 export const getSharedMemories = (workspace) => api.get('/shared-memory', { params: workspace ? { workspace } : {} });
 export const createSharedMemory = (data) => api.post('/shared-memory', data);
 export const getSharedMemory = (id) => api.get(`/shared-memory/${id}`);
 export const deleteSharedMemory = (id) => api.delete(`/shared-memory/${id}`);
-export const addMemoryFile = (id, data) => api.post(`/shared-memory/${id}/files`, data);
-export const uploadMemoryFile = (id, formData) => api.post(`/shared-memory/${id}/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-export const updateMemoryFile = (id, fileName, data) => api.put(`/shared-memory/${id}/files/${encodeURIComponent(fileName)}`, data);
-export const deleteMemoryFile = (id, fileName) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(fileName)}`);
-export const processMemoryFile = (id, fileName, data) => api.post(`/shared-memory/${id}/files/${encodeURIComponent(fileName)}/process`, data);
-export const getRagFiles = () => api.get('/shared-memory/rag-files');
 export const getRagConfig = () => api.get('/shared-memory/rag-config');
 export const addMemoryNote = (id, data) => api.post(`/shared-memory/${id}/notes`, data);
 export const updateMemoryNote = (id, noteId, data) => api.put(`/shared-memory/${id}/notes/${noteId}`, data);
 export const deleteMemoryNote = (id, noteId) => api.delete(`/shared-memory/${id}/notes/${noteId}`);
-export const addMemoryKV = (id, data) => api.post(`/shared-memory/${id}/kv`, data);
-export const updateMemoryKV = (id, key, data) => api.put(`/shared-memory/${id}/kv/${encodeURIComponent(key)}`, data);
-export const deleteMemoryKV = (id, key) => api.delete(`/shared-memory/${id}/kv/${encodeURIComponent(key)}`);
+export const upsertMemoryStructuredSlot = (id, slot, data) => api.put(`/shared-memory/${id}/structured/${encodeURIComponent(slot)}`, data);
+export const deleteMemoryStructuredSlot = (id, slot) => api.delete(`/shared-memory/${id}/structured/${encodeURIComponent(slot)}`);
+export const listMemoryFiles = (id, workspace) => api.get(`/shared-memory/${id}/files`, { params: { workspace } });
+export const uploadMemoryFile = (id, workspace, file) => {
+  const form = new FormData();
+  form.append('workspace', workspace);
+  form.append('file', file);
+  return api.post(`/shared-memory/${id}/files/upload`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+};
+export const indexMemoryFile = (id, filename, workspace) => api.post(`/shared-memory/${id}/files/${encodeURIComponent(filename)}/index`, null, { params: { workspace } });
+export const deindexMemoryFile = (id, filename) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(filename)}/index`);
+export const deleteMemoryFile = (id, filename, workspace) => api.delete(`/shared-memory/${id}/files/${encodeURIComponent(filename)}`, { params: { workspace } });
+export const listMemoryEpisodes = (id, params) => api.get(`/shared-memory/${id}/episodes`, { params });
+export const getMemoryEpisodesStats = (id) => api.get(`/shared-memory/${id}/episodes/stats`);
+export const deleteMemoryEpisode = (id, episodeId) => api.delete(`/shared-memory/${id}/episodes/${episodeId}`);
+
+// Graph memory
+export const getMemoryGraph = (id) => api.get(`/shared-memory/${id}/graph`);
+export const getMemoryGraphStats = (id) => api.get(`/shared-memory/${id}/graph/stats`);
+export const linkMemoryGraph = (id, data) => api.post(`/shared-memory/${id}/graph/link`, data);
+export const deleteMemoryGraphNode = (id, nodeId) => api.delete(`/shared-memory/${id}/graph/nodes/${nodeId}`);
+export const deleteMemoryGraphEdge = (id, edgeId) => api.delete(`/shared-memory/${id}/graph/edges/${edgeId}`);
+export const extractMemoryGraph = (id, text) => api.post(`/shared-memory/${id}/graph/extract`, { text });
 
 // Sessions API (process-level contexts)
 export const getSessions = (params) => api.get('/sessions', { params });

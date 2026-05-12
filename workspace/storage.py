@@ -242,6 +242,27 @@ def delete_workspace_folder(name: str) -> bool:
     return delete_project_folder(name)
 
 
+INSTRUCTIONS_FILENAME = "INSTRUCTIONS.md"
+
+
+def get_workspace_instructions(name: str) -> str:
+    """Return the workspace-level instructions markdown, or empty string if none."""
+    folder = get_workspace_folder(name)
+    if not folder:
+        return ""
+    instructions_path = folder / INSTRUCTIONS_FILENAME
+    if instructions_path.exists():
+        return instructions_path.read_text(encoding="utf-8")
+    return ""
+
+
+def set_workspace_instructions(name: str, content: str) -> None:
+    """Write workspace-level instructions markdown to INSTRUCTIONS.md."""
+    folder = create_workspace_folder(name)
+    instructions_path = folder / INSTRUCTIONS_FILENAME
+    instructions_path.write_text(content, encoding="utf-8")
+
+
 def resolve_var_references(value: str, env_vars: Dict[str, str]) -> str:
     """Resolve ${VAR_NAME} references in a string using workspace env_vars."""
     def _replace(m: re.Match) -> str:

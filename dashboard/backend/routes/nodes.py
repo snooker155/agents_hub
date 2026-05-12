@@ -61,8 +61,6 @@ async def start_node(data: NodeCreate):
     spec = registry.get_agent(data.agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail=f"Agent '{data.agent_id}' not found")
-    if getattr(spec, "is_remote", False):
-        raise HTTPException(status_code=400, detail="Cannot start a node for a remote agent")
     try:
         node_id = node_manager.start_node(
             data.agent_id,

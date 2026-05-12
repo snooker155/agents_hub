@@ -13,6 +13,8 @@ from workspace import (
     get_workspace_default_model_config,
     update_workspace_metadata,
     delete_workspace_folder,
+    get_workspace_instructions,
+    set_workspace_instructions,
 )
 from models import WorkspaceCreate, WorkspaceAgentAction
 
@@ -304,6 +306,23 @@ async def set_workspace_agent_capacity(name: str, agent_id: str, payload: dict):
         overrides[agent_id] = int(capacity)
     update_workspace_metadata(name, {"agent_capacity_overrides": overrides})
     return {"agent_id": agent_id, "capacity": capacity}
+
+
+@router.get("/{name}/instructions")
+async def get_workspace_instructions_route(name: str):
+    """Return the workspace-level instructions markdown."""
+    content = get_workspace_instructions(name)
+    return {"instructions": content}
+
+
+@router.put("/{name}/instructions")
+async def set_workspace_instructions_route(name: str, payload: dict):
+    """Save the workspace-level instructions markdown."""
+    content = payload.get("instructions", "")
+    if not isinstance(content, str):
+        raise HTTPException(status_code=400, detail="instructions must be a string")
+    set_workspace_instructions(name, content)
+    return {"instructions": content}
 
 
 @router.delete("/{name}/agents/{agent_id}/capacity")

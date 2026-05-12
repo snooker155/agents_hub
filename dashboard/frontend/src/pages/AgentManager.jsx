@@ -25,12 +25,9 @@ import {
   getAgentTools,
   getTasks,
   getNodes,
-  cloneAgent,
   assignAgent,
-  connectAgent,
   createCustomAgent,
   disconnectAgent,
-  getAgentHealth,
   startNode,
   getAgentWorkspaceCapacities,
   getAgentModel,
@@ -93,16 +90,8 @@ const AgentManager = () => {
       setNodes(nodesResp.data);
       setLoading(false);
 
-      // Fetch health for remote agents and workspace capacities for all agents
+      // Fetch workspace capacities for all agents
       agentsResp.data.forEach(async (a) => {
-          if (a.is_remote) {
-              try {
-                  const h = await getAgentHealth(a.id);
-                  setHealthData(prev => ({ ...prev, [a.id]: h.data }));
-              } catch {
-                setHealthData(prev => ({ ...prev, [a.id]: { status: 'error' } }));
-              }
-          }
           try {
             const cap = await getAgentWorkspaceCapacities(a.id);
             setWsCapacitiesPerAgent(prev => ({ ...prev, [a.id]: cap.data || {} }));
@@ -277,32 +266,16 @@ const AgentManager = () => {
         await handleCreatorSubmit();
         return;
       }
-      let newAgentId;
-      if (wizardType === 'custom') {
-        await createCustomAgent({
-          id: wizardData.id,
-          name: wizardData.name,
-          description: wizardData.description,
-          domain: wizardData.domain,
-          system_prompt: wizardData.system_prompt,
-          tools: wizardData.tools,
-          capacity: wizardData.capacity,
-        });
-        newAgentId = wizardData.id;
-      } else if (wizardType === 'remote') {
-        await connectAgent({
-          id: wizardData.id,
-          name: wizardData.name,
-          description: wizardData.description,
-          domain: wizardData.domain,
-          agent_url: wizardData.agent_url,
-          capacity: wizardData.capacity,
-        });
-        newAgentId = wizardData.id;
-      } else if (wizardType === 'clone') {
-        await cloneAgent({ original_id: wizardData.original_id, new_id: wizardData.id, new_name: wizardData.name });
-        newAgentId = wizardData.id;
-      }
+      await createCustomAgent({
+        id: wizardData.id,
+        name: wizardData.name,
+        description: wizardData.description,
+        domain: wizardData.domain,
+        system_prompt: wizardData.system_prompt,
+        tools: wizardData.tools,
+        capacity: wizardData.capacity,
+      });
+      const newAgentId = wizardData.id;
       if (newAgentId && workspaceFilter) {
         await addAgentToWorkspace(selectedWorkspace, newAgentId);
       }
@@ -322,17 +295,6 @@ const AgentManager = () => {
     }));
   };
 
-  const handleClone = async (e) => {
-    e.preventDefault();
-    try {
-      await cloneAgent(cloneData);
-      setShowCloneModal(false);
-      fetchData();
-    } catch (error) {
-      alert('Error cloning agent: ' + (error.response?.data?.detail || error.message));
-    }
-  };
-
   const handleAssign = async (e) => {
     e.preventDefault();
     try {
@@ -341,17 +303,6 @@ const AgentManager = () => {
       fetchData();
     } catch (error) {
       alert('Error assigning task: ' + (error.response?.data?.detail || error.message));
-    }
-  };
-
-  const handleConnect = async (e) => {
-    e.preventDefault();
-    try {
-      await connectAgent(connectData);
-      setShowConnectModal(false);
-      fetchData();
-    } catch (error) {
-      alert('Error connecting agent: ' + (error.response?.data?.detail || error.message));
     }
   };
 
@@ -419,20 +370,6 @@ const AgentManager = () => {
           <p className="text-gray-500 text-sm">Orchestrate your fleet of specialized AI nodes.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-            <Link
-              to="/manifest"
-              className="bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2 rounded-lg flex items-center hover:bg-gray-100 transition-colors shadow-sm text-sm font-semibold"
-            >
-              <FileCode className="w-4 h-4 mr-2 text-indigo-500" />
-              Apply YAML
-            </Link>
-            <button
-              onClick={() => setShowConnectModal(true)}
-              className="bg-gray-50 text-gray-700 border border-gray-200 px-4 py-2 rounded-lg flex items-center hover:bg-gray-100 transition-colors shadow-sm text-sm font-semibold"
-            >
-              <Server className="w-4 h-4 mr-2 text-emerald-500" />
-              Connect Remote
-            </button>
             <button
               onClick={openWizard}
               className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-indigo-700 transition-all shadow-md text-sm font-bold"
@@ -452,8 +389,7 @@ const AgentManager = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
           {(agentOrder.length > 0 ? agentOrder.map(id => agents.find(a => a.id === id)).filter(Boolean) : agents).map((agent, idx) => {
             const metrics = getAgentMetrics(agent);
-            const health = healthData[agent.id];
-            const isHealthy = !agent.is_remote || (health && health.status === 'up');
+            const isHealthy = true;
             const nodeCount = getRunningNodeCount(agent.id);
             const isDefaultWs = !selectedWorkspace || selectedWorkspace === 'default';
             const agentWsCaps = wsCapacitiesPerAgent[agent.id] || {};
@@ -492,18 +428,12 @@ const AgentManager = () => {
                     <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded uppercase font-semibold">
                       {agent.domain}
                     </span>
-                    {agent.is_remote ? (
-                      <span className={`text-[11px] font-semibold ${isHealthy ? 'text-green-700' : 'text-red-700'}`}>
-                        {isHealthy ? 'Online' : 'Offline'}
-                      </span>
-                    ) : (
-                      <Link to="/nodes" className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${
-                        nodeCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                      }`}>
-                        <Activity className={`w-3 h-3 ${nodeCount > 0 ? 'animate-pulse' : ''}`} />
-                        {nodeCount > 0 ? `${nodeCount} running` : 'No nodes'}
-                      </Link>
-                    )}
+                    <Link to="/nodes" className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${
+                      nodeCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                    }`}>
+                      <Activity className={`w-3 h-3 ${nodeCount > 0 ? 'animate-pulse' : ''}`} />
+                      {nodeCount > 0 ? `${nodeCount} running` : 'No nodes'}
+                    </Link>
                   </div>
                 </div>
 
@@ -575,28 +505,16 @@ const AgentManager = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {!agent.is_remote && (
-                    <button
-                      onClick={() => handleStartNode(agent.id)}
-                      disabled={startingNode === agent.id || nodesAtCap}
-                      title={nodesAtCap ? 'Node limit reached for this workspace' : undefined}
-                      className="flex-1 inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {startingNode === agent.id
-                        ? <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin" />
-                        : <Play className="w-3.5 h-3.5 mr-1" />}
-                      Start
-                    </button>
-                  )}
                   <button
-                    onClick={() => {
-                      setCloneData({ ...cloneData, original_id: agent.id, new_id: `${agent.id}-clone`, new_name: `${agent.name} (Clone)` });
-                      setShowCloneModal(true);
-                    }}
-                    className="p-1.5 border border-gray-200 text-gray-500 rounded hover:bg-gray-50 hover:text-indigo-600 transition-colors"
-                    title="Clone Node"
+                    onClick={() => handleStartNode(agent.id)}
+                    disabled={startingNode === agent.id || nodesAtCap}
+                    title={nodesAtCap ? 'Node limit reached for this workspace' : undefined}
+                    className="flex-1 inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Copy className="w-4 h-4" />
+                    {startingNode === agent.id
+                      ? <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin" />
+                      : <Play className="w-3.5 h-3.5 mr-1" />}
+                    Start
                   </button>
                   <button
                     onClick={() => handleDisconnect(agent.id)}
@@ -793,8 +711,6 @@ const AgentManager = () => {
                     {[
                       { value: 'creator', icon: Sparkles, label: 'Use Agent Creator', desc: 'Let the built-in Agent Creator AI guide you through designing and provisioning an agent via chat.' },
                       { value: 'custom', icon: Box, label: 'Custom Agent', desc: 'Manually define a system prompt and tools. Runs locally using the LangChain runtime.' },
-                      { value: 'remote', icon: Globe, label: 'Remote HTTP Agent', desc: 'Connect an external agent accessible via an HTTP endpoint.' },
-                      { value: 'clone', icon: GitBranch, label: 'Clone Existing', desc: 'Duplicate an existing agent as a starting point.' },
                     ].map(({ value, icon: Icon, label, desc }) => (
                       <button
                         key={value}

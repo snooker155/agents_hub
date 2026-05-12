@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from langchain_core.callbacks import BaseCallbackHandler
+
 from agents.stats_callback import RunStatsCallback
 from common.paths import PROJECTS_FILE
 

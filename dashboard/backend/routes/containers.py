@@ -206,8 +206,6 @@ async def agents_build_status():
     agents = list_agents()
     result = []
     for spec in agents:
-        if spec.is_remote:
-            continue
         per_agent_tag = f"agents-hub/{spec.id}:latest"
         result.append({
             "agent_id": spec.id,

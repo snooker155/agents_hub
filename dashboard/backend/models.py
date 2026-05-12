@@ -31,22 +31,6 @@ class TaskUpdate(BaseModel):
     project: Optional[str] = None
 
 
-class AgentClone(BaseModel):
-    original_id: str
-    new_id: str
-    new_name: str
-
-
-class AgentConnect(BaseModel):
-    id: str
-    name: str
-    description: str = ""
-    domain: str = "general"
-    agent_url: str
-    capacity: int = 1
-    tools: List[str] = ["remote"]
-
-
 class AgentCreateCustom(BaseModel):
     id: str
     name: str
@@ -60,6 +44,18 @@ class AgentCreateCustom(BaseModel):
 class AgentMemoryUpdate(BaseModel):
     memory_type: str
     memory_data: Any = None
+
+
+class AgentSkillsConfigUpdate(BaseModel):
+    skills_enabled: bool
+
+
+class AgentSkillCreate(BaseModel):
+    workspace: str
+    name: str
+    description: str
+    steps: List[str]
+    tags: List[str] = []
 
 
 class AgentToolsUpdate(BaseModel):
@@ -123,20 +119,6 @@ class MemoryCreate(BaseModel):
     workspace: Optional[str] = None
 
 
-class MemoryFileAdd(BaseModel):
-    name: str
-    content: str
-
-
-class MemoryFileUpdate(BaseModel):
-    content: str
-
-
-class MemoryFileProcess(BaseModel):
-    chunk_size: int = 500
-    overlap: int = 50
-
-
 class MemoryNoteAdd(BaseModel):
     title: str
     content: str
@@ -147,19 +129,8 @@ class MemoryNoteUpdate(BaseModel):
     content: Optional[str] = None
 
 
-class MemoryKVAdd(BaseModel):
-    key: str
-    value: str
-    description: str = ""
-
-
-class MemoryKVUpdate(BaseModel):
-    value: Optional[str] = None
-    description: Optional[str] = None
-
-
-class YamlManifest(BaseModel):
-    yaml: str
+class MemoryStructuredSlotUpsert(BaseModel):
+    data: Dict[str, Any]
 
 
 class OrchestratorSettings(BaseModel):

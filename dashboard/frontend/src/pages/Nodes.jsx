@@ -136,11 +136,10 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
 
   const isDefaultWs = !currentWorkspace || currentWorkspace === 'default';
 
-  // Filter agents: local only, and if workspace has allowed_agents, restrict to those
-  const localAgents = agents.filter(a => !a.is_remote);
+  // Filter agents: if workspace has allowed_agents, restrict to those
   const visibleAgents = currentWorkspace && wsAllowedAgents && wsAllowedAgents.length > 0
-    ? localAgents.filter(a => wsAllowedAgents.includes(a.id))
-    : localAgents;
+    ? agents.filter(a => wsAllowedAgents.includes(a.id))
+    : agents;
 
   const wsCapacity = !isDefaultWs && agentId ? (wsCapacityOverrides[agentId] ?? 1) : null;
   const runningForSelection = agentId && currentWorkspace

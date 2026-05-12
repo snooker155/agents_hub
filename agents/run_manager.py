@@ -43,8 +43,6 @@ import signal
 
 from filelock import FileLock
 
-from .remote_runner import get_remote_status, stop_remote_run
-
 # -------------------- Paths & constants --------------------
 HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent
@@ -272,6 +270,27 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                 outbound_tokens=int(token_usage.get("outbound_tokens") or 0),
                 total_tokens=int(token_usage.get("total_tokens") or 0),
             )
+        except Exception:
+            pass
+
+        # Record a 'task' episode for agents with shared memory (best-effort).
+        try:
+            agent_id_for_run = str((run or {}).get("agent_id") or "")
+            if agent_id_for_run:
+                from agents import registry as _registry
+                spec = _registry.get_agent(agent_id_for_run)
+                if spec and spec.memory_type == "shared" and spec.memory_data:
+                    from memory.tool import silent_task_episode
+                    silent_task_episode(
+                        str(spec.memory_data),
+                        agent_id_for_run,
+                        task_id=str(task_id_str),
+                        run_id=run_id,
+                        status=status,
+                        exit_code=exit_code,
+                        error=str((run or {}).get("error") or "") or None,
+                        workspace=str((run or {}).get("workspace") or "") or None,
+                    )
         except Exception:
             pass
 
@@ -539,7 +558,7 @@ def stop_run_by_id(run_id: str) -> bool:
 
 
 def _stop_run_record(rec: Dict[str, Any]) -> bool:
-    """Best-effort stop for local, docker, remote, and node-managed runs."""
+    """Best-effort stop for local, docker, and node-managed runs."""
     task_id = str(rec.get("task_id") or "")
     run_id = str(rec.get("run_id") or "")
 
@@ -553,13 +572,6 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
             tasks_service.stop_task(UUID(task_id))
         except Exception:
             pass
-
-    if rec.get("is_remote") and rec.get("agent_url"):
-        stopped = stop_remote_run(rec["agent_url"], rec["run_id"])
-        if stopped:
-            _update_run(rec["run_id"], {"status": "stop", "finished_at": _utc_now_iso()})
-            _mark_task_stopped()
-        return stopped
 
     if rec.get("execution_mode") == "docker" and rec.get("container_name"):
         from .container_manager import stop_container
@@ -651,23 +663,6 @@ def get_status(task_id: str, run_id: Optional[str] = None) -> Optional[Dict[str,
     """
     rec = get_run_by_id(run_id)
     if rec:
-        if rec.get("is_remote") and rec.get("agent_url"):
-            remote_stat = get_remote_status(rec["agent_url"], rec["run_id"])
-            if remote_stat.get("status") in {"completed", "done", "finished"}:
-                rec = _update_run(rec["run_id"], {
-                    "status": "completed",
-                    "finished_at": _utc_now_iso(),
-                    "exit_code": 0,
-                }) or rec
-            elif remote_stat.get("status") in {"failed", "error"}:
-                rec = _update_run(rec["run_id"], {
-                    "status": "failed",
-                    "finished_at": _utc_now_iso(),
-                    "exit_code": 1,
-                    "error": remote_stat.get("error", "remote error"),
-                }) or rec
-            return rec
-
         if rec.get("execution_mode") == "docker" and rec.get("container_name"):
             from .container_manager import container_running
             if not container_running(rec["container_name"]):

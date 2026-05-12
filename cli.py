@@ -193,7 +193,6 @@ def agent_list(
     table.add_column("Name")
     table.add_column("Domain")
     table.add_column("Type")
-    table.add_column("Remote", justify="center")
 
     for a in agents:
         table.add_row(
@@ -201,7 +200,6 @@ def agent_list(
             a.get("name", ""),
             a.get("domain", ""),
             a.get("type", ""),
-            "✓" if a.get("is_remote") else "",
         )
 
     console.print(table)
@@ -220,7 +218,6 @@ def agent_get(agent_id: str = typer.Argument(..., help="Agent ID.")):
             f"[bold]Domain:[/bold]      {a.get('domain', '-')}",
             f"[bold]Type:[/bold]        {a.get('type', '-')}",
             f"[bold]Description:[/bold] {a.get('description', '-')}",
-            f"[bold]Remote:[/bold]      {a.get('is_remote', False)}",
             f"[bold]Capacity:[/bold]    {a.get('capacity', '-')}",
             f"[bold]Memory:[/bold]      {a.get('memory_type', '-')}",
             f"[bold]Tools:[/bold]       {', '.join(a.get('tools') or []) or '-'}",

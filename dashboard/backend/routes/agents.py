@@ -3,13 +3,13 @@ Agent-related API routes.
 """
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
-import yaml
 from pathlib import Path
 
 from agents import registry, run_manager
 from agents.agent_factory import get_factory
+from agents import prompt_assembly
 from tools.registry import get_all_tools
-from models import AgentClone, AgentConnect, AgentCreateCustom, AgentMemoryUpdate, AgentToolsUpdate, AgentModelUpdate, AgentReasoningUpdate, YamlManifest
+from models import AgentCreateCustom, AgentMemoryUpdate, AgentToolsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentSkillCreate
 
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -88,56 +88,79 @@ async def get_agent_details(agent_id: str):
 
 @router.get("/{agent_id}/definition")
 async def get_agent_definition(agent_id: str):
+    """Return the agent's definition: structured fields + the markdown sources.
+
+    The system prompt no longer lives in JSON — it is sourced from
+    ``agents/definitions/<agent_id>/instructions.md`` (with optional
+    ``capabilities.md`` and ``usage.md``).
+    """
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     factory = get_factory()
-    yaml_path = Path(factory.definitions_dir) / f"{agent_id}.yaml"
-    yaml_text = None
-    source = "generated-from-registry"
-    system_prompt = None
+    defs_dir = factory.definitions_dir
+    folder = prompt_assembly.agent_dir(agent_id, definitions_dir=defs_dir)
 
-    if yaml_path.exists():
-        try:
-            yaml_text = yaml_path.read_text(encoding="utf-8")
-            parsed = yaml.safe_load(yaml_text) or {}
-            if isinstance(parsed, dict):
-                system_prompt = parsed.get("system_prompt")
-            source = "yaml-file"
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to read YAML definition: {e}")
+    instructions = prompt_assembly.read_instructions(agent_id, definitions_dir=defs_dir)
+    capabilities = prompt_assembly.read_capabilities(agent_id, definitions_dir=defs_dir)
+    usage = prompt_assembly.read_usage(agent_id, definitions_dir=defs_dir)
 
-    if not system_prompt:
-        system_prompt = spec.system_prompt or None
-
-    if not yaml_text:
-        generated = {
-            "kind": "Agent",
-            "metadata": {"name": spec.id},
-            "spec": {
-                "displayName": spec.name,
-                "description": spec.description,
-                "domain": spec.domain,
-                "type": spec.type,
-                "entrypoint": spec.entrypoint,
-                "capacity": spec.capacity,
-                "isRemote": spec.is_remote,
-                "agentUrl": spec.agent_url,
-                "tools": spec.tools,
-                "memoryType": spec.memory_type,
-                "memoryData": spec.memory_data,
-            },
-        }
-        yaml_text = yaml.safe_dump(generated, sort_keys=False, allow_unicode=True)
+    # Assembled prompt only when instructions exist
+    assembled = ""
+    if instructions:
+        assembled = prompt_assembly.assemble_prompt(agent_id, definitions_dir=defs_dir)
 
     return {
         "agent_id": spec.id,
-        "source": source,
-        "yaml_path": str(yaml_path) if yaml_path.exists() else None,
-        "system_prompt": system_prompt or "",
-        "yaml": yaml_text,
+        "source": "markdown" if instructions else "missing",
+        "definition_dir": str(folder),
+        "system_prompt": assembled,
+        "instructions": instructions,
+        "capabilities": capabilities,
+        "usage": usage,
     }
+
+
+class AgentInstructionsUpdate(__import__("pydantic").BaseModel):
+    instructions: Optional[str] = None
+    capabilities: Optional[str] = None
+    usage: Optional[str] = None
+
+
+@router.put("/{agent_id}/definition")
+async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
+    """Update the markdown sources for an agent's prompt.
+
+    Pass any subset of {instructions, capabilities, usage}. Values that are
+    None are left untouched; an empty string deletes that file.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    factory = get_factory()
+    defs_dir = factory.definitions_dir
+
+    if data.instructions is not None:
+        if data.instructions.strip():
+            prompt_assembly.write_instructions(agent_id, data.instructions, definitions_dir=defs_dir)
+        else:
+            raise HTTPException(status_code=400, detail="instructions.md cannot be empty")
+    if data.capabilities is not None:
+        path = prompt_assembly.agent_dir(agent_id, defs_dir) / prompt_assembly.CAPABILITIES_FILE
+        if data.capabilities.strip():
+            prompt_assembly.write_capabilities(agent_id, data.capabilities, definitions_dir=defs_dir)
+        elif path.exists():
+            path.unlink()
+    if data.usage is not None:
+        path = prompt_assembly.agent_dir(agent_id, defs_dir) / prompt_assembly.USAGE_FILE
+        if data.usage.strip():
+            prompt_assembly.write_usage(agent_id, data.usage, definitions_dir=defs_dir)
+        elif path.exists():
+            path.unlink()
+
+    return await get_agent_definition(agent_id)
 
 
 @router.get("/{agent_id}/workspace-capacities")
@@ -200,71 +223,15 @@ async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: in
     }
 
 
-@router.post("/clone")
-async def clone_agent(clone: AgentClone):
-    original = registry.get_agent(clone.original_id)
-    if not original:
-        raise HTTPException(status_code=404, detail="Original agent not found")
-
-    new_spec = registry.AgentSpec(
-        id=clone.new_id,
-        name=clone.new_name,
-        type=original.type,
-        entrypoint=original.entrypoint,
-        description=original.description,
-        domain=original.domain,
-        tools=original.tools,
-        capacity=original.capacity,
-        is_remote=original.is_remote,
-        agent_url=original.agent_url,
-        original_id=original.id,
-        memory_type=original.memory_type,
-        memory_data=original.memory_data,
-        default_workspace_only=original.default_workspace_only,
-        provider=original.provider,
-        model=original.model,
-        base_url=original.base_url,
-        system_prompt=original.system_prompt,
-        temperature=original.temperature,
-        max_tokens=original.max_tokens,
-        api_key=original.api_key,
-        verbose=original.verbose,
-        streaming=original.streaming,
-    )
-    try:
-        registry.add_agent(new_spec)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return new_spec.to_dict()
-
-
-@router.post("/connect")
-async def connect_agent(data: AgentConnect):
-    spec = registry.AgentSpec(
-        id=data.id,
-        name=data.name,
-        description=data.description,
-        domain=data.domain,
-        type="http",
-        entrypoint="remote", # dummy for remote
-        capacity=data.capacity,
-        is_remote=True,
-        agent_url=data.agent_url,
-        tools=data.tools
-    )
-    try:
-        registry.add_agent(spec)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return spec.to_dict()
-
-
-@router.post("/{agent_id}/disconnect")
-async def disconnect_agent(agent_id: str):
+@router.delete("/{agent_id}")
+async def delete_agent(agent_id: str):
+    """Delete an agent: remove the JSON entry and the markdown folder."""
     found = registry.remove_agent(agent_id)
     if not found:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return {"message": f"Agent {agent_id} disconnected"}
+    factory = get_factory()
+    prompt_assembly.delete_definition(agent_id, definitions_dir=factory.definitions_dir)
+    return {"message": f"Agent {agent_id} deleted"}
 
 
 @router.post("/{agent_id}/memory")
@@ -283,16 +250,12 @@ async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
         tools=spec.tools,
         commands=spec.commands,
         capacity=spec.capacity,
-        is_remote=spec.is_remote,
-        agent_url=spec.agent_url,
-        original_id=spec.original_id,
         memory_type=data.memory_type,
         memory_data=data.memory_data,
         default_workspace_only=spec.default_workspace_only,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
-        system_prompt=spec.system_prompt,
         temperature=spec.temperature,
         max_tokens=spec.max_tokens,
         api_key=spec.api_key,
@@ -319,16 +282,12 @@ async def erase_agent_memory(agent_id: str):
         tools=spec.tools,
         commands=spec.commands,
         capacity=spec.capacity,
-        is_remote=spec.is_remote,
-        agent_url=spec.agent_url,
-        original_id=spec.original_id,
         memory_type="none",
         memory_data=None,
         default_workspace_only=spec.default_workspace_only,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
-        system_prompt=spec.system_prompt,
         temperature=spec.temperature,
         max_tokens=spec.max_tokens,
         api_key=spec.api_key,
@@ -337,6 +296,112 @@ async def erase_agent_memory(agent_id: str):
     )
     registry.add_agent(new_spec)
     return new_spec.to_dict()
+
+
+@router.post("/{agent_id}/skills-config")
+async def update_agent_skills_config(agent_id: str, data: AgentSkillsConfigUpdate):
+    """Enable or disable procedural skills for this agent."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    new_spec = registry.AgentSpec(
+        id=spec.id,
+        name=spec.name,
+        type=spec.type,
+        entrypoint=spec.entrypoint,
+        description=spec.description,
+        domain=spec.domain,
+        tools=spec.tools,
+        commands=spec.commands,
+        capacity=spec.capacity,
+        memory_type=spec.memory_type,
+        memory_data=spec.memory_data,
+        skills_enabled=data.skills_enabled,
+        default_workspace_only=spec.default_workspace_only,
+        provider=spec.provider,
+        model=spec.model,
+        base_url=spec.base_url,
+        temperature=spec.temperature,
+        max_tokens=spec.max_tokens,
+        api_key=spec.api_key,
+        verbose=spec.verbose,
+        streaming=spec.streaming,
+    )
+    registry.add_agent(new_spec)
+    return new_spec.to_dict()
+
+
+@router.get("/{agent_id}/skills")
+async def list_agent_skills(agent_id: str, workspace: str):
+    """List all skills for this agent in the given workspace."""
+    from memory.procedural import ProcedureStore
+    store = ProcedureStore(workspace)
+    procedures = [p for p in store.load() if p.agent_id == agent_id]
+    return [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "description": p.description,
+            "steps": p.steps,
+            "tags": p.tags,
+            "source": p.source,
+            "success_rate": p.success_rate,
+            "use_count": p.use_count,
+            "created_at": p.created_at.isoformat(),
+            "updated_at": p.updated_at.isoformat(),
+        }
+        for p in procedures
+    ]
+
+
+@router.post("/{agent_id}/skills")
+async def create_agent_skill(agent_id: str, data: AgentSkillCreate):
+    """Create a new user-authored skill for this agent+workspace."""
+    from memory.procedural import Procedure, ProcedureStore
+    store = ProcedureStore(data.workspace)
+    target = data.name.strip().lower()
+    for p in store.load():
+        if p.agent_id == agent_id and p.name.strip().lower() == target:
+            raise HTTPException(
+                status_code=400,
+                detail=f"A skill named {data.name!r} already exists for this agent.",
+            )
+    procedure = Procedure(
+        name=data.name,
+        description=data.description,
+        steps=data.steps,
+        tags=data.tags,
+        source="user",
+        agent_id=agent_id,
+        workspace=data.workspace,
+    )
+    store.add(procedure)
+    return {
+        "id": str(procedure.id),
+        "name": procedure.name,
+        "description": procedure.description,
+        "steps": procedure.steps,
+        "tags": procedure.tags,
+        "source": procedure.source,
+        "use_count": procedure.use_count,
+        "created_at": procedure.created_at.isoformat(),
+        "updated_at": procedure.updated_at.isoformat(),
+    }
+
+
+@router.delete("/{agent_id}/skills/{skill_id}")
+async def delete_agent_skill(agent_id: str, skill_id: str, workspace: str):
+    """Delete a skill. Only the owning agent can delete it."""
+    from memory.procedural import ProcedureStore
+    store = ProcedureStore(workspace)
+    procedure = store.get(skill_id)
+    if not procedure:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    if procedure.agent_id != agent_id:
+        raise HTTPException(status_code=403, detail="Skill belongs to a different agent")
+    store.delete(skill_id)
+    return {"ok": True}
 
 
 @router.post("/{agent_id}/tools")
@@ -355,16 +420,12 @@ async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
         tools=list(data.tools),
         commands=spec.commands,
         capacity=spec.capacity,
-        is_remote=spec.is_remote,
-        agent_url=spec.agent_url,
-        original_id=spec.original_id,
         memory_type=spec.memory_type,
         memory_data=spec.memory_data,
         default_workspace_only=spec.default_workspace_only,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
-        system_prompt=spec.system_prompt,
         temperature=spec.temperature,
         max_tokens=spec.max_tokens,
         api_key=spec.api_key,
@@ -410,16 +471,12 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
         tools=spec.tools,
         commands=spec.commands,
         capacity=spec.capacity,
-        is_remote=spec.is_remote,
-        agent_url=spec.agent_url,
-        original_id=spec.original_id,
         memory_type=spec.memory_type,
         memory_data=spec.memory_data,
         default_workspace_only=spec.default_workspace_only,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
-        system_prompt=spec.system_prompt,
         temperature=spec.temperature,
         max_tokens=spec.max_tokens,
         api_key=spec.api_key,
@@ -507,16 +564,12 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
         tools=spec.tools,
         commands=spec.commands,
         capacity=spec.capacity,
-        is_remote=spec.is_remote,
-        agent_url=spec.agent_url,
-        original_id=spec.original_id,
         memory_type=spec.memory_type,
         memory_data=spec.memory_data,
         default_workspace_only=spec.default_workspace_only,
         provider=new_provider,
         model=new_model,
         base_url=new_base_url,
-        system_prompt=spec.system_prompt,
         temperature=new_temperature,
         max_tokens=new_max_tokens,
         api_key=new_api_key,
@@ -539,11 +592,7 @@ async def health_agent(agent_id: str):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    if not spec.is_remote or not spec.agent_url:
-        return {"status": "up", "type": "local"}
-
-    from agents.remote_runner import check_health
-    return check_health(spec.agent_url)
+    return {"status": "up", "type": "local"}
 
 
 @router.post("/{agent_id}/set-default-chat")
@@ -569,55 +618,19 @@ async def clear_default_chat_agent(agent_id: str):
     return {"default_chat_agent": None}
 
 
-@router.post("/apply")
-async def apply_agent_manifest(data: YamlManifest):
-    try:
-        manifest = yaml.safe_load(data.yaml)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
-
-    if not manifest or manifest.get("kind") != "Agent":
-        raise HTTPException(status_code=400, detail="Manifest must have 'kind: Agent'")
-
-    metadata = manifest.get("metadata", {})
-    spec_data = manifest.get("spec", {})
-
-    agent_id = metadata.get("name")
-    if not agent_id:
-        raise HTTPException(status_code=400, detail="Manifest must have metadata.name")
-
-    # Build AgentSpec
-    spec = registry.AgentSpec(
-        id=agent_id,
-        name=spec_data.get("displayName", agent_id),
-        description=spec_data.get("description", ""),
-        domain=spec_data.get("domain", "general"),
-        type=spec_data.get("type", "langchain"),
-        entrypoint=spec_data.get("entrypoint", "swe_agent.agent:build_agent"),
-        capacity=spec_data.get("capacity", 1),
-        is_remote=spec_data.get("isRemote", False),
-        agent_url=spec_data.get("agentUrl"),
-        tools=spec_data.get("tools", []),
-        system_prompt=spec_data.get("systemPrompt", ""),
-    )
-
-    try:
-        registry.add_agent(spec)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return spec.to_dict()
-
-
 @router.post("/create")
 async def create_custom_agent(data: AgentCreateCustom):
-    # Base it on swe-fs but with custom system prompt and tools
-    base = registry.get_agent("swe-fs")
-    if not base:
-        # Fallback if swe-fs is missing
-        entrypoint = "swe_agent.agent:build_agent"
-    else:
-        entrypoint = base.entrypoint
+    """Create a new agent: register structured fields and write instructions.md."""
+    if registry.get_agent(data.id) is not None:
+        raise HTTPException(status_code=400, detail=f"Agent '{data.id}' already exists")
+
+    if not data.system_prompt or not data.system_prompt.strip():
+        raise HTTPException(status_code=400, detail="system_prompt is required")
+
+    factory = get_factory()
+    prompt_assembly.write_instructions(
+        data.id, data.system_prompt, definitions_dir=factory.definitions_dir
+    )
 
     spec = registry.AgentSpec(
         id=data.id,
@@ -625,8 +638,7 @@ async def create_custom_agent(data: AgentCreateCustom):
         description=data.description,
         domain=data.domain,
         type="langchain",
-        entrypoint=entrypoint,
-        system_prompt=data.system_prompt,
+        entrypoint="agents.agent_factory:build_agent_executor",
         tools=data.tools,
         capacity=data.capacity,
     )

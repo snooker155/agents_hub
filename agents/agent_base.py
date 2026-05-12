@@ -79,8 +79,12 @@ class AgentBase(ABC):
             streaming=self.streaming,
         )
         
+        # The system prompt may contain literal `{` / `}` (e.g. JSON examples,
+        # slot names, note titles injected from memory). Escape them so
+        # ChatPromptTemplate doesn't try to interpret them as variables.
+        safe_system = (self.system_prompt or "").replace("{", "{{").replace("}", "}}")
         prompt = ChatPromptTemplate.from_messages([
-            ("system", self.system_prompt),
+            ("system", safe_system),
             ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])

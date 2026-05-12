@@ -33,8 +33,38 @@ from agents.run_manager import (
 )
 from models import ChatRequest
 from common.session_service import get_or_create_chat_session
+from common.orchestrator_context import _workspace_ctx
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+def _get_pool_id(agent_id: str) -> str | None:
+    """Return the shared memory pool id for agent_id, or None."""
+    try:
+        spec = registry.get_agent(agent_id)
+        if spec and spec.memory_type == "shared" and spec.memory_data:
+            return str(spec.memory_data)
+    except Exception:
+        pass
+    return None
+
+
+def _auto_journal(agent_id: str, pool_id: str | None, user_message: str, response: str, run_id: str) -> None:
+    """Fire-and-forget silent journal append + interaction episode for agents with shared memory."""
+    if not pool_id:
+        return
+    try:
+        from memory.tool import silent_journal_append, silent_interaction_episode
+        silent_journal_append(pool_id, agent_id, user_message, response, run_id=run_id)
+        silent_interaction_episode(pool_id, agent_id, user_message, response, run_id=run_id)
+    except Exception:
+        pass
+    # Auto-extraction is off by default; opt-in via GRAPH_AUTO_EXTRACT env flag.
+    try:
+        from memory.graph_extract import silent_graph_extract
+        silent_graph_extract(pool_id, user_message, response)
+    except Exception:
+        pass
 
 
 def _agent_overrides(agent_id: str) -> dict:
@@ -113,9 +143,6 @@ def _validate_chat_request(request: ChatRequest):
     spec = registry.get_agent(request.agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail=f"Agent '{request.agent_id}' not found")
-
-    if getattr(spec, "is_remote", False):
-        raise HTTPException(status_code=400, detail="Remote agents do not support direct chat")
 
     return spec
 
@@ -463,8 +490,8 @@ def _materialize_attachments(request: ChatRequest) -> None:
     if not request.attachments:
         return
 
-    max_file_bytes = 200_000
-    max_total_bytes = 700_000
+    max_file_bytes = 5 * 1024 * 1024   # 5 MB per file
+    max_total_bytes = 5 * 1024 * 1024  # 5 MB total
     total = 0
     workspace_root = None
 
@@ -474,13 +501,13 @@ def _materialize_attachments(request: ChatRequest) -> None:
         if content_bytes > max_file_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"Attachment '{att.filename}' is too large ({content_bytes} bytes). Limit is {max_file_bytes} bytes.",
+                detail=f"Attachment '{att.filename}' is too large ({content_bytes} bytes). Limit is 5 MB per file.",
             )
         total += content_bytes
         if total > max_total_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"Total attachment size exceeds limit ({max_total_bytes} bytes).",
+                detail=f"Total attachment size exceeds 5 MB.",
             )
 
         if att.store_to_workspace:
@@ -511,6 +538,11 @@ async def send_message(request: ChatRequest):
     _materialize_attachments(request)
     full_prompt, workspace_abs = _build_chat_context(request)
     run_id, _, log_file, log_lines, __ = _create_chat_run(request)
+
+    # Propagate workspace to agent tools (e.g. list_tasks) via a context var
+    # that is thread-safe and copied into asyncio.to_thread's execution context.
+    ws_name = request.workspace or (Path(workspace_abs).name if workspace_abs else None)
+    _workspace_ctx.set(ws_name)
 
     def _run_agent():
         overrides = _agent_overrides(request.agent_id)
@@ -556,6 +588,7 @@ async def send_message(request: ChatRequest):
         response_text = str(result.agent_output)
         _write_log(log_file, log_lines + [response_text, "", f"Finished: {finished}", "Status  : completed"])
         update_run(run_id, {"status": "completed", "finished_at": finished, "exit_code": 0})
+        _auto_journal(request.agent_id, _get_pool_id(request.agent_id), request.message, response_text, run_id)
         return {"response": response_text, "ok": True, "run_id": run_id}
 
     error_text = result.error or "Agent returned no output"
@@ -572,6 +605,9 @@ async def stream_message(request: ChatRequest):
     _materialize_attachments(request)
     full_prompt, workspace_abs = _build_chat_context(request)
     run_id, msg_id, log_file, log_lines, session_id = _create_chat_run(request)
+
+    ws_name = request.workspace or (Path(workspace_abs).name if workspace_abs else None)
+    _workspace_ctx.set(ws_name)
 
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
@@ -694,6 +730,7 @@ async def stream_message(request: ChatRequest):
                     log_file,
                 )
                 _write_log(log_file, log_lines + ["", f"Finished: {finished}", "Status  : completed"])
+                _auto_journal(request.agent_id, _get_pool_id(request.agent_id), request.message, final_response, run_id)
                 update_run(run_id, {
                     "status": "completed",
                     "finished_at": finished,

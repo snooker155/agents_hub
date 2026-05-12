@@ -1,6 +1,6 @@
 """
-TaskRunner: launches agent task runs as subprocesses, Docker containers, or
-remote HTTP calls, and records each run in the shared agent_runs.json state.
+TaskRunner: launches agent task runs as subprocesses or Docker containers,
+and records each run in the shared agent_runs.json state.
 
 This module owns everything related to *starting* a run. Lifecycle tracking
 (status polling, stop, failure propagation) lives in run_manager.py.
@@ -21,7 +21,6 @@ from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 from .registry import get_agent
-from .remote_runner import start_remote_run
 from .run_manager import (
     STATE_DIR,
     _upsert_run,

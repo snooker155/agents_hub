@@ -21,13 +21,16 @@ import {
   Paperclip,
   FolderGit2,
   Terminal,
+  Zap,
 } from 'lucide-react';
+
+const SKILL_TOOL = 'get_skill';
 
 // ---------------------------------------------------------------------------
 // Local storage persistence
 // ---------------------------------------------------------------------------
 const STORAGE_KEY = 'agent_hub_chats_v1';
-const MAX_ATTACHMENT_BYTES = 200000;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MB
 const MAX_ATTACHMENT_COUNT = 6;
 
 function loadConversations() {
@@ -184,25 +187,41 @@ function ProcessGraph({ messageRuns = [] }) {
                 )}
                 <span>{mr.output || '(no response yet)'}</span>
               </div>
-              <div className="flex items-center gap-1.5 mb-2 min-h-[18px]">
-                {toolCount > 0 ? (
-                  <>
-                    <span className="text-[10px] text-indigo-700 font-medium">tools:</span>
-                    {toolNames.slice(0, 3).map((name) => (
-                      <span
-                        key={name}
-                        className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-medium"
-                      >
-                        {name}
-                      </span>
-                    ))}
-                    {toolNames.length > 3 && (
-                      <span className="text-[10px] text-amber-700">+{toolNames.length - 3}</span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-[10px] text-gray-400">no tools</span>
-                )}
+              <div className="flex items-center gap-1.5 mb-2 min-h-[18px] flex-wrap">
+                {(() => {
+                  const skillNames = toolNames.filter((n) => n === SKILL_TOOL);
+                  const regularNames = toolNames.filter((n) => n !== SKILL_TOOL);
+                  return (
+                    <>
+                      {skillNames.length > 0 && (
+                        <>
+                          <span className="text-[10px] text-violet-600 font-medium">skill:</span>
+                          {skillNames.map((name) => (
+                            <span key={name} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 border border-violet-200">
+                              <Zap className="w-2.5 h-2.5" />{name}
+                            </span>
+                          ))}
+                          {regularNames.length > 0 && <span className="text-gray-200 text-[10px]">|</span>}
+                        </>
+                      )}
+                      {regularNames.length > 0 ? (
+                        <>
+                          <span className="text-[10px] text-indigo-700 font-medium">tools:</span>
+                          {regularNames.slice(0, 3).map((name) => (
+                            <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+                              {name}
+                            </span>
+                          ))}
+                          {regularNames.length > 3 && (
+                            <span className="text-[10px] text-amber-700">+{regularNames.length - 3}</span>
+                          )}
+                        </>
+                      ) : skillNames.length === 0 ? (
+                        <span className="text-[10px] text-gray-400">no tools</span>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </div>
               <div className="flex flex-wrap gap-1">
                 <TokenPill label="in" value={mr.inbound_tokens} />
@@ -220,23 +239,45 @@ function ProcessGraph({ messageRuns = [] }) {
                     {shortText(mr.input || '(empty)', 500)}
                   </div>
                 </div>
-                {(mr.tools || []).map((t, tIdx) => (
-                  <div key={tIdx} className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
-                    <div className="text-[11px] font-semibold text-gray-700 mb-1.5">
-                      Tool: {t.tool || 'tool'}
+                {(mr.tools || []).map((t, tIdx) => {
+                  if (t.tool === SKILL_TOOL) {
+                    return (
+                      <div key={tIdx} className="rounded-lg border border-violet-300 bg-violet-50 p-2.5">
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <Zap className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+                          <span className="text-[11px] font-bold text-violet-800 uppercase tracking-wide">Skill Retrieved</span>
+                        </div>
+                        {t.input && (
+                          <div className="text-[11px] text-violet-700 whitespace-pre-wrap break-all">
+                            <span className="text-violet-400">id:</span> {shortText(t.input, 320)}
+                          </div>
+                        )}
+                        {t.output && (
+                          <div className="text-[11px] text-violet-900 mt-1 whitespace-pre-wrap break-all">
+                            {shortText(t.output, 320)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={tIdx} className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+                      <div className="text-[11px] font-semibold text-gray-700 mb-1.5">
+                        Tool: {t.tool || 'tool'}
+                      </div>
+                      {t.input && (
+                        <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
+                          <span className="text-gray-500">in:</span> {shortText(t.input, 320)}
+                        </div>
+                      )}
+                      {t.output && (
+                        <div className="text-[11px] text-emerald-700 mt-1 whitespace-pre-wrap break-all">
+                          <span className="text-emerald-600">out:</span> {shortText(t.output, 320)}
+                        </div>
+                      )}
                     </div>
-                    {t.input && (
-                      <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
-                        <span className="text-gray-500">in:</span> {shortText(t.input, 320)}
-                      </div>
-                    )}
-                    {t.output && (
-                      <div className="text-[11px] text-emerald-700 mt-1 whitespace-pre-wrap break-all">
-                        <span className="text-emerald-600">out:</span> {shortText(t.output, 320)}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5">
                   <div className="text-[11px] font-semibold text-gray-700 mb-1.5">Output</div>
                   <div className="text-[11px] text-gray-700 whitespace-pre-wrap">
@@ -552,7 +593,7 @@ function AgentDropdown({ agents, value, onChange }) {
 
       {open && (
         <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-[220px] py-1 max-h-64 overflow-y-auto">
-          {agents.filter((a) => !a.is_remote).map((a) => (
+          {agents.map((a) => (
             <button
               key={a.id}
               onClick={() => { onChange(a.id); setOpen(false); }}
@@ -656,10 +697,9 @@ export default function Chat() {
   const agentProvider = _agentObj.provider || 'inherit';
   const agentModel = _agentObj.model || '';
   const selectableAgents = useMemo(() => {
-    const localAgents = agents.filter((a) => !a.is_remote);
-    if (!selectedWorkspace) return localAgents;
+    if (!selectedWorkspace) return agents;
     const allowedSet = new Set(workspaceAllowedAgentIds || []);
-    return localAgents.filter((a) => allowedSet.has(a.id));
+    return agents.filter((a) => allowedSet.has(a.id));
   }, [agents, selectedWorkspace, workspaceAllowedAgentIds]);
 
   const allCommands = useMemo(() => {
@@ -968,7 +1008,7 @@ export default function Chat() {
 
     for (const file of toRead) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
-        setAttachmentError(`"${file.name}" exceeds ${MAX_ATTACHMENT_BYTES} bytes.`);
+        setAttachmentError(`"${file.name}" exceeds 5 MB.`);
         continue;
       }
       try {

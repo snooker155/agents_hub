@@ -17,6 +17,8 @@ from .storage import (
     get_workspace_default_model_config,
     resolve_var_references,
     get_effective_settings,
+    get_workspace_instructions,
+    set_workspace_instructions,
 )
 
 __all__ = [
@@ -38,4 +40,6 @@ __all__ = [
     "get_workspace_default_model_config",
     "resolve_var_references",
     "get_effective_settings",
+    "get_workspace_instructions",
+    "set_workspace_instructions",
 ]

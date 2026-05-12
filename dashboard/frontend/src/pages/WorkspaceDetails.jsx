@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/WorkspaceContext';
-import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, createTask, deleteWorkspace, getProjects } from '../api';
-import { ChevronLeft, ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2 } from 'lucide-react';
+import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, createTask, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions } from '../api';
+import { ChevronLeft, ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check } from 'lucide-react';
 
 const buildFileTree = (paths) => {
   const root = { type: 'dir', children: {} };
@@ -89,15 +89,21 @@ const WorkspaceDetails = () => {
   const [selectedFileSize, setSelectedFileSize] = useState(0);
   const [fileContentLoading, setFileContentLoading] = useState(false);
   const [fileContentError, setFileContentError] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [instructionsDraft, setInstructionsDraft] = useState('');
+  const [instructionsSaving, setInstructionsSaving] = useState(false);
+  const [instructionsSaved, setInstructionsSaved] = useState(false);
+  const instructionsLoadedRef = React.useRef(false);
 
   const fetchData = async () => {
     try {
       // Fetch in parallel but handle partial failures so the page still opens
-      const [wsRes, filesRes, agentsRes, projectsRes] = await Promise.allSettled([
+      const [wsRes, filesRes, agentsRes, projectsRes, instrRes] = await Promise.allSettled([
         getWorkspace(name),
         getWorkspaceFilesByName(name),
         getAgents(),
         getProjects(name),
+        getWorkspaceInstructions(name),
       ]);
 
       if (wsRes.status === 'fulfilled') {
@@ -126,6 +132,15 @@ const WorkspaceDetails = () => {
         setWsProjects(projectsRes.value.data || []);
       } else {
         setWsProjects([]);
+      }
+
+      if (instrRes.status === 'fulfilled') {
+        const text = instrRes.value.data?.instructions || '';
+        setInstructions(text);
+        if (!instructionsLoadedRef.current) {
+          setInstructionsDraft(text);
+          instructionsLoadedRef.current = true;
+        }
       }
     } catch (e) {
       console.error('Unexpected error while loading workspace data', e);
@@ -215,12 +230,28 @@ const WorkspaceDetails = () => {
     });
   };
 
+  const handleSaveInstructions = async () => {
+    setInstructionsSaving(true);
+    setInstructionsSaved(false);
+    try {
+      await updateWorkspaceInstructions(name, instructionsDraft);
+      setInstructions(instructionsDraft);
+      setInstructionsSaved(true);
+      setTimeout(() => setInstructionsSaved(false), 2000);
+    } catch {
+      alert('Failed to save instructions');
+    } finally {
+      setInstructionsSaving(false);
+    }
+  };
+
   const tabs = [
     { id: 'tasks', label: 'Tasks', icon: CheckSquare },
     { id: 'projects', label: 'Projects', icon: FolderGit2 },
     { id: 'progress', label: 'Progress', icon: BarChart2 },
     { id: 'files', label: 'Files', icon: FileText },
     { id: 'agents', label: 'Agents', icon: Users },
+    { id: 'instructions', label: 'Instructions', icon: BookOpen },
   ];
   const marketAgents = allAgents.filter(a => !ws?.metadata?.allowed_agents?.includes(a.id));
   const normalizedQuery = agentSearch.trim().toLowerCase();
@@ -866,6 +897,50 @@ const WorkspaceDetails = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'instructions' && (
+        <div className="bg-white p-6 shadow-md rounded-lg">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-indigo-500" />
+                Workspace Instructions
+              </h3>
+              <p className="text-sm text-gray-500 mt-0.5">
+                These instructions are prepended to every agent's system prompt when running in this workspace.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveInstructions}
+              disabled={instructionsSaving || instructionsDraft === instructions}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                instructionsSaved
+                  ? 'bg-green-600 text-white'
+                  : instructionsDraft === instructions
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              }`}
+            >
+              {instructionsSaved ? (
+                <><Check className="w-4 h-4" /> Saved</>
+              ) : (
+                <><Save className="w-4 h-4" /> {instructionsSaving ? 'Saving…' : 'Save'}</>
+              )}
+            </button>
+          </div>
+          <textarea
+            value={instructionsDraft}
+            onChange={(e) => setInstructionsDraft(e.target.value)}
+            rows={20}
+            placeholder={`# ${name} Workspace Instructions\n\nWrite high-level instructions for all agents in this workspace.\nSupports Markdown formatting.\n\nExample:\n- Always respond in English\n- Keep output concise\n- Prefer editing existing files over creating new ones`}
+            className="w-full font-mono text-sm border border-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none resize-y leading-relaxed"
+          />
+          {instructions && instructionsDraft !== instructions && (
+            <p className="text-xs text-amber-600 mt-2">You have unsaved changes.</p>
+          )}
         </div>
       )}
 

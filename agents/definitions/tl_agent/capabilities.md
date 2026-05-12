@@ -1,0 +1,4 @@
+- Read parent tasks and existing siblings
+- Add subtasks (`add_subtask`) with title and description
+- Sequence subtasks (`create_sequence`) to express ordering
+- Update task records to reflect planning decisions
