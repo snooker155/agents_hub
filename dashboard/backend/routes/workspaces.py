@@ -6,10 +6,12 @@ from typing import Optional
 from pathlib import Path
 
 from common import tasks_service
+from common.bootstrap import ensure_initial_state
 from workspace import (
     create_workspace_folder,
     list_workspace_folders,
     get_workspace_metadata,
+    get_workspace_folder,
     get_workspace_default_model_config,
     update_workspace_metadata,
     delete_workspace_folder,
@@ -20,6 +22,23 @@ from models import WorkspaceCreate, WorkspaceAgentAction
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+def _ensure_writable_workspace(name: str) -> None:
+    """Verify the workspace exists before writes; auto-create 'default' on demand.
+
+    Re-runs bootstrap so a missing default workspace is seeded from `bootstrap/`.
+    For any other name, raises 404 instead of silently writing nowhere.
+    """
+    if get_workspace_folder(name):
+        return
+    if name == "default":
+        ensure_initial_state()
+        if get_workspace_folder(name):
+            return
+        create_workspace_folder(name)
+        return
+    raise HTTPException(status_code=404, detail=f"Workspace '{name}' does not exist")
 
 
 def task_to_dict(task):
@@ -221,6 +240,7 @@ async def set_workspace_model(name: str, payload: dict):
     provider='global' forces global DEFAULT_PROVIDER even if workspace has a default model.
     provider='' or 'workspace_default' clears the override (falls back to workspace settings then global).
     """
+    _ensure_writable_workspace(name)
     provider = payload.get("provider", "")
     model = payload.get("model", "")
     if not provider or provider == "workspace_default":
@@ -241,6 +261,7 @@ async def get_workspace_settings_overrides(name: str):
 @router.put("/{name}/settings-overrides")
 async def update_workspace_settings_overrides(name: str, payload: dict):
     """Replace workspace-scoped settings."""
+    _ensure_writable_workspace(name)
     overrides = payload.get("overrides", {})
     if not isinstance(overrides, dict):
         raise HTTPException(status_code=400, detail="overrides must be a key-value object")
@@ -260,6 +281,7 @@ async def get_workspace_env(name: str):
 @router.put("/{name}/env")
 async def update_workspace_env(name: str, payload: dict):
     """Replace workspace-scoped environment variables."""
+    _ensure_writable_workspace(name)
     env_vars = payload.get("env_vars", {})
     if not isinstance(env_vars, dict):
         raise HTTPException(status_code=400, detail="env_vars must be a key-value object")
@@ -269,6 +291,7 @@ async def update_workspace_env(name: str, payload: dict):
 
 @router.post("/{name}/agents")
 async def add_agent_to_workspace(name: str, action: WorkspaceAgentAction):
+    _ensure_writable_workspace(name)
     if name != "default":
         from agents.registry import get_agent as reg_get_agent
         spec = reg_get_agent(action.agent_id)
@@ -287,6 +310,7 @@ async def add_agent_to_workspace(name: str, action: WorkspaceAgentAction):
 
 @router.delete("/{name}/agents/{agent_id}")
 async def remove_agent_from_workspace(name: str, agent_id: str):
+    _ensure_writable_workspace(name)
     metadata = get_workspace_metadata(name)
     allowed = metadata.get("allowed_agents", [])
     if agent_id in allowed:
@@ -297,6 +321,7 @@ async def remove_agent_from_workspace(name: str, agent_id: str):
 
 @router.put("/{name}/agents/{agent_id}/capacity")
 async def set_workspace_agent_capacity(name: str, agent_id: str, payload: dict):
+    _ensure_writable_workspace(name)
     capacity = payload.get("capacity")
     metadata = get_workspace_metadata(name)
     overrides = dict(metadata.get("agent_capacity_overrides", {}))
@@ -327,6 +352,7 @@ async def set_workspace_instructions_route(name: str, payload: dict):
 
 @router.delete("/{name}/agents/{agent_id}/capacity")
 async def remove_workspace_agent_capacity(name: str, agent_id: str):
+    _ensure_writable_workspace(name)
     metadata = get_workspace_metadata(name)
     overrides = dict(metadata.get("agent_capacity_overrides", {}))
     overrides.pop(agent_id, None)
@@ -351,6 +377,7 @@ async def set_workspace_agent_mode(name: str, payload: dict):
 
     Pass agent_mode=null to clear the override and fall back to the global setting.
     """
+    _ensure_writable_workspace(name)
     mode = payload.get("agent_mode")
     if mode is not None and mode not in ("local", "docker"):
         raise HTTPException(status_code=400, detail="agent_mode must be 'local', 'docker', or null")

@@ -145,10 +145,15 @@ def get_workspace_metadata(name: str) -> Dict[str, Any]:
 
 
 def update_workspace_metadata(name: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-    """Update metadata for a workspace."""
+    """Update metadata for a workspace.
+
+    Raises FileNotFoundError when the workspace folder does not exist — callers
+    must create the workspace explicitly (e.g. via create_workspace_folder)
+    before updating its metadata.
+    """
     folder = get_workspace_folder(name)
     if not folder:
-        return {}
+        raise FileNotFoundError(f"Workspace '{name}' does not exist")
     meta_path = folder / ".workspace.json"
     meta = get_workspace_metadata(name)
     meta.update(updates)
