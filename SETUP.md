@@ -101,9 +101,6 @@ LMSTUDIO_MODEL=your-model-name
 ### Optional knobs
 
 ```env
-# Where workspace files are generated
-WORKSPACE_ROOT=./out
-
 # Switch to docker execution for agents (requires Docker)
 # AGENT_EXECUTION_MODE=docker
 # AGENT_DOCKER_IMAGE=agents-hub-agent:latest
