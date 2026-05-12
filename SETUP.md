@@ -98,6 +98,15 @@ LMSTUDIO_BASE_URL=http://localhost:1234
 LMSTUDIO_MODEL=your-model-name
 ```
 
+> **Running the backend in Docker?** `localhost` inside the container points to the container itself, not your host — so Ollama and LM Studio running on the host are unreachable. Use `host.docker.internal` instead:
+>
+> ```env
+> OLLAMA_BASE_URL=http://host.docker.internal:11434
+> LMSTUDIO_BASE_URL=http://host.docker.internal:1234
+> ```
+>
+> This applies to any local model server reached over HTTP (LM Studio, Ollama, vLLM, llama.cpp, etc.). On Linux, `host.docker.internal` works under Docker Desktop and Compose; for plain Docker on Linux, add `extra_hosts: ["host.docker.internal:host-gateway"]` to the backend service in `docker-compose.yml`.
+
 ### Optional knobs
 
 ```env
@@ -247,6 +256,7 @@ You can delete `.agents_hub/` to fully reset state — it will be regenerated on
 | Agent chat returns 401 / auth error              | `OPENAI_API_KEY` (or the chosen provider key) is set and the value matches the model         |
 | Agent run fails immediately with "model not found" | `OPENAI_MODEL` / `OLLAMA_MODEL` / `LMSTUDIO_MODEL` matches a model your provider exposes     |
 | Docker compose up but agent containers don't launch | Expected with the default compose — switch to Path A with `AGENT_EXECUTION_MODE=docker` for full Docker agent execution |
+| LM Studio / Ollama unreachable when backend runs in Docker | `localhost` inside the container = the container itself. Set `LMSTUDIO_BASE_URL` / `OLLAMA_BASE_URL` to `http://host.docker.internal:<port>`. On plain Linux Docker also add `extra_hosts: ["host.docker.internal:host-gateway"]` to the backend service in compose. |
 | `python cli.py` cannot reach the server          | Backend running on port 8000? Set `AGENTS_HUB_URL` if you changed the host/port              |
 
 ---
