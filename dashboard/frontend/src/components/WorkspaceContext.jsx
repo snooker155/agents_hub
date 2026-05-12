@@ -26,11 +26,6 @@ export const WorkspaceProvider = ({ children }) => {
     pushWorkspaceToBackend(selectedWorkspace || null);
   }, [selectedWorkspace]);
 
-  // Push the stored workspace on first load so backend is always up to date
-  useEffect(() => {
-    pushWorkspaceToBackend(selectedWorkspace || null);
-  }, []);
-
   const toggleLiveUpdates = () => {
     setLiveUpdates(prev => {
       const next = !prev;

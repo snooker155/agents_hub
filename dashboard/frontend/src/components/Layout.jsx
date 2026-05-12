@@ -72,7 +72,10 @@ const Layout = ({ children }) => {
       try {
         const resp = await getWorkspaces();
         setWorkspaces(resp.data);
-        if ((!selectedWorkspace || selectedWorkspace === '') && resp.data.length > 0) {
+        if (resp.data.length === 0) return;
+        const names = resp.data.map(w => w.name);
+        const stale = selectedWorkspace && !names.includes(selectedWorkspace);
+        if (!selectedWorkspace || stale) {
           setSelectedWorkspace(resp.data[0].name);
         }
       } catch (error) {
