@@ -1,0 +1,16 @@
+{
+  "name": "default",
+  "allowed_agents": [
+    "orchestrator",
+    "agent_flows",
+    "decomposer"
+  ],
+  "orchestrator": {
+    "enabled": false,
+    "assignment_mode": "manual",
+    "followup_mode": "single",
+    "wait_for_completion": false
+  },
+  "settings": {},
+  "env_vars": {}
+}

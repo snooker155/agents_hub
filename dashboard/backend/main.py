@@ -31,6 +31,12 @@ import os
 # own fields but does NOT populate os.environ).
 from dotenv import load_dotenv
 load_dotenv(project_root / ".env", override=False)
+
+# Seed first-run state (agents.json + default workspace) from bootstrap/ before
+# any route imports trigger the registry cache.
+from common.bootstrap import ensure_initial_state
+ensure_initial_state()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
