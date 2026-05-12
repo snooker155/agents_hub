@@ -17,6 +17,13 @@ project_root = PathlibPath(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+# Ensure the backend dir is on sys.path so bare imports like
+# `from routes import ...`, `from models import ...` work both when this
+# file is run as a script and when launched via `uvicorn dashboard.backend.main:app`.
+_backend_dir = PathlibPath(__file__).resolve().parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
 import os
 
 # Load .env into os.environ so RagConfig and other direct os.environ readers
