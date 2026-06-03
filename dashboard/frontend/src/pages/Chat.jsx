@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/WorkspaceContext';
-import { getAgents, getMessageInsights, getWorkspace, getProjects, getAgentDefinition, stopMessage } from '../api';
+import { getAgents, getMessageInsights, getWorkspace, getProjects, getAgentDefinition, stopMessage, getTelegramBindings, sendTelegramMessage, listFlows, getSessions, getSessionMessages } from '../api';
 import {
   PlusCircle,
   Send,
@@ -22,6 +22,10 @@ import {
   FolderGit2,
   Terminal,
   Zap,
+  Send as SendIcon,
+  Workflow,
+  BrainCircuit,
+  ListChecks,
 } from 'lucide-react';
 
 const SKILL_TOOL = 'get_skill';
@@ -446,6 +450,99 @@ function renderContent(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Reasoning steps — think / plan calls rendered inline in execution order
+// ---------------------------------------------------------------------------
+
+// The reasoning tools (think/plan) are pass-through scratchpads, but the agent
+// framework delivers their argument as a stringified payload — sometimes plain
+// text, sometimes a JSON object like {"thought": "..."} or {"plan": "..."}.
+// Extract the human-readable text so we never show raw JSON to the user.
+function parseReasoningContent(raw) {
+  if (raw == null) return '';
+  const text = typeof raw === 'string' ? raw : String(raw);
+  const trimmed = text.trim();
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return text;
+  try {
+    const obj = JSON.parse(trimmed);
+    if (typeof obj === 'string') return obj;
+    if (obj && typeof obj === 'object') {
+      // Prefer the known field names, then fall back to the first string value.
+      for (const key of ['thought', 'plan', 'content', 'text', 'input']) {
+        if (typeof obj[key] === 'string') return obj[key];
+      }
+      const firstStr = Object.values(obj).find((v) => typeof v === 'string');
+      if (firstStr != null) return firstStr;
+    }
+  } catch {
+    // Not valid JSON — fall through and show the original text.
+  }
+  return text;
+}
+
+// Full static class strings per accent — Tailwind cannot resolve interpolated
+// class names, so each variant must appear literally.
+const REASONING_META = {
+  think: {
+    label: 'Thought',
+    Icon: BrainCircuit,
+    box: 'bg-violet-50/50 border-violet-100',
+    icon: 'text-violet-600',
+    title: 'text-violet-700',
+  },
+  plan: {
+    label: 'Plan',
+    Icon: ListChecks,
+    box: 'bg-indigo-50/50 border-indigo-100',
+    icon: 'text-indigo-600',
+    title: 'text-indigo-700',
+  },
+};
+
+function ReasoningStep({ step, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const meta = REASONING_META[step.kind] || REASONING_META.think;
+  const { Icon, label } = meta;
+  const content = parseReasoningContent(step.content);
+  const preview = content.replace(/\s+/g, ' ').trim();
+  return (
+    <div className={`rounded-lg border ${meta.box}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-left"
+      >
+        <Icon className={`w-3.5 h-3.5 ${meta.icon} flex-shrink-0`} />
+        <span className={`text-xs font-semibold ${meta.title} flex-shrink-0`}>{label}</span>
+        {!open && (
+          <span className="text-xs text-gray-400 truncate flex-1">{preview}</span>
+        )}
+        {open ? (
+          <ChevronUp className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />
+        ) : (
+          <ChevronDown className="w-3 h-3 text-gray-400 flex-shrink-0" />
+        )}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 -mt-0.5 text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">
+          {content}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReasoningTrail({ steps }) {
+  if (!Array.isArray(steps) || steps.length === 0) return null;
+  return (
+    <div className="mb-2 space-y-1.5">
+      {steps.map((s, i) => (
+        <ReasoningStep key={`${s.kind}-${s.step ?? i}-${i}`} step={s} />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Message bubble
 // ---------------------------------------------------------------------------
 function MessageBubble({ msg, isStreaming = false, agentName }) {
@@ -478,6 +575,9 @@ function MessageBubble({ msg, isStreaming = false, agentName }) {
           }
           ${msg.error ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
       >
+        {/* Reasoning (think/plan) steps render inline, in execution order,
+            above the response that followed them. */}
+        {!isUser && <ReasoningTrail steps={msg.reasoning} />}
         {showTypingDots ? (
           activeRunningTool ? (
             <span className="flex items-center gap-2">
@@ -612,6 +712,53 @@ function AgentDropdown({ agents, value, onChange }) {
   );
 }
 
+function FlowDropdown({ flows, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const selected = flows.find((f) => f.id === value);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+      >
+        <Workflow className="w-4 h-4 text-emerald-500" />
+        <span className="font-medium">{selected?.name || 'Select flow'}</span>
+        <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-[260px] py-1 max-h-64 overflow-y-auto">
+          {flows.length === 0 && (
+            <div className="px-4 py-2 text-xs text-gray-400">No flows defined</div>
+          )}
+          {flows.map((f) => {
+            const nodeCount = (f.nodes || []).length;
+            return (
+              <button
+                key={f.id}
+                onClick={() => { onChange(f.id); setOpen(false); }}
+                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-50 transition-colors
+                  ${f.id === value ? 'bg-emerald-50 text-emerald-700 font-medium' : 'text-gray-700'}`}
+              >
+                <div className="font-medium truncate">{f.name}</div>
+                <div className="text-xs text-gray-400 mt-0.5">{nodeCount} node{nodeCount === 1 ? '' : 's'}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProcessPanelContent({ processInsights }) {
   const graphKey = (processInsights?.message_runs || [])
     .map((mr, idx) => `${mr?.run_id || mr?.message_id || idx}`)
@@ -629,6 +776,243 @@ function ProcessPanelContent({ processInsights }) {
 }
 
 // ---------------------------------------------------------------------------
+// Build view — unified diff renderer (no external deps)
+// ---------------------------------------------------------------------------
+function DiffView({ diff }) {
+  if (!diff) {
+    return <div className="px-3 py-2 text-[11px] text-gray-400 italic">No textual diff available.</div>;
+  }
+  const lines = diff.split('\n');
+  return (
+    <div className="font-mono text-[11px] leading-relaxed overflow-x-auto">
+      {lines.map((line, i) => {
+        let cls = 'text-gray-600';
+        let bg = '';
+        if (line.startsWith('+++') || line.startsWith('---')) {
+          cls = 'text-gray-400';
+        } else if (line.startsWith('@@')) {
+          cls = 'text-indigo-500';
+          bg = 'bg-indigo-50/60';
+        } else if (line.startsWith('+')) {
+          cls = 'text-emerald-700';
+          bg = 'bg-emerald-50';
+        } else if (line.startsWith('-')) {
+          cls = 'text-red-700';
+          bg = 'bg-red-50';
+        }
+        return (
+          <div key={i} className={`px-3 whitespace-pre ${bg} ${cls}`}>
+            {line || ' '}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const ARTIFACT_OP_META = {
+  add: { label: 'A', cls: 'bg-emerald-100 text-emerald-700' },
+  modify: { label: 'M', cls: 'bg-amber-100 text-amber-700' },
+  delete: { label: 'D', cls: 'bg-red-100 text-red-700' },
+};
+
+function ArtifactItem({ artifact, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const meta = ARTIFACT_OP_META[artifact.op] || ARTIFACT_OP_META.modify;
+  return (
+    <div data-artifact-path={artifact.path} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50"
+      >
+        <span className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${meta.cls}`}>
+          {meta.label}
+        </span>
+        <span className="flex-1 min-w-0 text-xs font-medium text-gray-700 truncate" title={artifact.path}>
+          {artifact.path}
+        </span>
+        <span className="flex items-center gap-1.5 flex-shrink-0 text-[10px] font-mono">
+          {artifact.additions > 0 && <span className="text-emerald-600">+{artifact.additions}</span>}
+          {artifact.deletions > 0 && <span className="text-red-600">−{artifact.deletions}</span>}
+        </span>
+        {open ? <ChevronUp className="w-3 h-3 text-gray-400" /> : <ChevronDown className="w-3 h-3 text-gray-400" />}
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 py-2 max-h-[400px] overflow-y-auto">
+          {artifact.binary ? (
+            <div className="px-3 py-2 text-[11px] text-gray-400 italic">
+              {artifact.truncated ? 'File too large to diff.' : 'Binary file (no text diff).'}
+            </div>
+          ) : (
+            <DiffView diff={artifact.diff} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ArtifactsPanel({ artifacts }) {
+  const items = useMemo(
+    () => Object.values(artifacts || {}).sort((a, b) => (a.path || '').localeCompare(b.path || '')),
+    [artifacts],
+  );
+  const totals = useMemo(() => {
+    let add = 0, del = 0;
+    for (const a of items) { add += a.additions || 0; del += a.deletions || 0; }
+    return { add, del };
+  }, [items]);
+
+  if (!items.length) {
+    return (
+      <div className="flex-1 overflow-y-auto p-4">
+        <p className="text-xs text-gray-500 italic">
+          No files changed yet. When the agent creates, edits, or deletes files, the diffs appear here.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-2">
+      <div className="flex items-center gap-2 pb-1 text-[11px] text-gray-500">
+        <span className="font-semibold text-gray-600">{items.length} file{items.length === 1 ? '' : 's'}</span>
+        <span className="font-mono text-emerald-600">+{totals.add}</span>
+        <span className="font-mono text-red-600">−{totals.del}</span>
+      </div>
+      {items.map((a) => (
+        <ArtifactItem key={a.path} artifact={a} defaultOpen={items.length <= 2} />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Build view — full inline transcript (messages + thinking/plan + tools + artifacts)
+// ---------------------------------------------------------------------------
+function TimelineToolCard({ entry }) {
+  const [open, setOpen] = useState(false);
+  const isSkill = entry.tool === SKILL_TOOL;
+  return (
+    <div className={`rounded-lg border ${isSkill ? 'border-violet-200 bg-violet-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-left"
+      >
+        {isSkill ? <Zap className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" /> : <Terminal className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />}
+        <span className={`text-xs font-semibold ${isSkill ? 'text-violet-700' : 'text-amber-700'}`}>{entry.tool || 'tool'}</span>
+        {entry.running && (
+          <span className="flex gap-1 ml-1">
+            {[0, 150, 300].map((d) => (
+              <span key={d} className="w-1 h-1 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+            ))}
+          </span>
+        )}
+        {!open && entry.input && (
+          <span className="text-[11px] text-gray-400 truncate flex-1">{shortText(entry.input, 80)}</span>
+        )}
+        {open ? <ChevronUp className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />}
+      </button>
+      {open && (
+        <div className="px-3 pb-2.5 space-y-1.5">
+          {entry.input && (
+            <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
+              <span className="text-gray-400">in:</span> {shortText(entry.input, 1000)}
+            </div>
+          )}
+          {entry.output != null && (
+            <div className="text-[11px] text-emerald-800 whitespace-pre-wrap break-all">
+              <span className="text-emerald-600">out:</span> {shortText(entry.output, 1000)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimelineArtifactChip({ entry, onJump }) {
+  const meta = ARTIFACT_OP_META[entry.op] || ARTIFACT_OP_META.modify;
+  return (
+    <button
+      type="button"
+      onClick={() => onJump?.(entry.path)}
+      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-left max-w-full"
+      title={`${entry.path} — jump to diff`}
+    >
+      <span className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold flex-shrink-0 ${meta.cls}`}>{meta.label}</span>
+      <FileText className="w-3 h-3 text-gray-400 flex-shrink-0" />
+      <span className="text-[11px] font-medium text-gray-700 truncate">{entry.path}</span>
+      <span className="text-[10px] font-mono flex-shrink-0">
+        {entry.additions > 0 && <span className="text-emerald-600">+{entry.additions}</span>}{' '}
+        {entry.deletions > 0 && <span className="text-red-600">−{entry.deletions}</span>}
+      </span>
+    </button>
+  );
+}
+
+function BuildMessage({ msg, agentName, onJumpArtifact }) {
+  const isUser = msg.role === 'user';
+  if (isUser) {
+    return (
+      <div className="flex gap-3 mb-5 mx-2 flex-row-reverse">
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white">
+          <User className="w-4 h-4" />
+        </div>
+        <div className="max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
+          {msg.content}
+        </div>
+      </div>
+    );
+  }
+
+  // Agent message: render the chronological timeline. Fall back to plain content
+  // for older messages that pre-date timeline capture (e.g. reloaded history).
+  const timeline = msg.timeline && msg.timeline.length ? msg.timeline : null;
+  return (
+    <div className="flex gap-3 mb-5 mx-2">
+      <div className="flex flex-col items-center gap-1 flex-shrink-0">
+        <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-white">
+          <Bot className="w-4 h-4" />
+        </div>
+        {agentName && (
+          <span className="text-[9px] text-gray-400 font-medium text-center leading-tight max-w-[56px] break-words">{agentName}</span>
+        )}
+      </div>
+      <div className={`flex-1 min-w-0 space-y-2 ${msg.error ? 'text-red-700' : ''}`}>
+        {timeline ? (
+          timeline.map((entry, i) => {
+            if (entry.type === 'text') {
+              if (!entry.text || !entry.text.trim()) return null;
+              return (
+                <div key={i} className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-sm text-gray-800 leading-relaxed">
+                  {renderContent(entry.text)}
+                </div>
+              );
+            }
+            if (entry.type === 'reasoning') {
+              return <ReasoningStep key={i} step={entry} />;
+            }
+            if (entry.type === 'tool') {
+              return <TimelineToolCard key={i} entry={entry} />;
+            }
+            if (entry.type === 'artifact') {
+              return <TimelineArtifactChip key={i} entry={entry} onJump={onJumpArtifact} />;
+            }
+            return null;
+          })
+        ) : (
+          <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-sm text-gray-800 leading-relaxed">
+            {msg.content ? renderContent(msg.content) : <span className="text-gray-400 text-xs italic">(no output)</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Chat page
 // ---------------------------------------------------------------------------
 export default function Chat() {
@@ -638,18 +1022,32 @@ export default function Chat() {
   const [agents, setAgents] = useState([]);
   const [workspaceAllowedAgentIds, setWorkspaceAllowedAgentIds] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState('');
+  // Flow chat support: when targetMode === 'flow', messages run through the selected flow
+  // (each user turn is processed by every node in the DAG in topological order).
+  const [flows, setFlows] = useState([]);
+  const [selectedFlow, setSelectedFlow] = useState('');
+  const [targetMode, setTargetMode] = useState('agent'); // 'agent' | 'flow'
 
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState('');
 
   const [conversations, setConversations] = useState(() => loadConversations());
   const [currentConvId, setCurrentConvId] = useState(urlConvId || null);
+  const [telegramBindings, setTelegramBindings] = useState([]);
+  const [telegramSending, setTelegramSending] = useState(false);
+  const [telegramError, setTelegramError] = useState('');
 
   const [input, setInput] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [attachmentError, setAttachmentError] = useState('');
   const [loading, setLoading] = useState(false);
   const [processOpen, setProcessOpen] = useState(false);
+  // 'chat' = clean message bubbles (default). 'build' = full inline transcript
+  // (messages + thinking + plan + tool calls) with an Artifacts (diffs) column.
+  const [viewMode, setViewMode] = useState('chat');
+  // Latest cumulative diff per file path for the current conversation.
+  // Shape: { [path]: { op, path, diff, additions, deletions, binary, truncated, run_id } }
+  const [artifacts, setArtifacts] = useState({});
   const [activeRunId, setActiveRunId] = useState(null);
   const [processLoading, setProcessLoading] = useState(false);
   const [processError, setProcessError] = useState('');
@@ -677,10 +1075,27 @@ export default function Chat() {
   const processInsightsRef = useRef(processInsights); // used inside loadProcessData to check if silent
 
   // ---- derived state ----
+  // Top (normal) chat list: never show telegram-origin convs here — they live
+  // in the dedicated Telegram panel below.
   const visibleConversations = useMemo(() => {
-    if (!selectedWorkspace || selectedWorkspace === 'default') return conversations;
-    return conversations.filter((c) => c.workspace === selectedWorkspace);
+    const noTelegram = conversations.filter((c) => c.origin !== 'telegram');
+    if (!selectedWorkspace || selectedWorkspace === 'default') return noTelegram;
+    return noTelegram.filter((c) => c.workspace === selectedWorkspace);
   }, [conversations, selectedWorkspace]);
+
+  // Strict workspace isolation: a Telegram binding is shown only when its
+  // workspace exactly matches the active workspace. The `default` selection
+  // matches only bindings that explicitly point at `default` (no fallback to
+  // "show everything"), so each workspace owns its slice of the Telegram thread.
+  const visibleTelegramBindings = useMemo(() => {
+    if (!selectedWorkspace) return [];
+    return telegramBindings.filter((b) => (b.workspace || null) === selectedWorkspace);
+  }, [telegramBindings, selectedWorkspace]);
+
+  const currentTelegramBinding = useMemo(() => {
+    if (!currentConvId) return null;
+    return telegramBindings.find((b) => b.conversation_id === currentConvId) || null;
+  }, [telegramBindings, currentConvId]);
 
   const currentConv = conversations.find((c) => c.id === currentConvId) || null;
   const messages = currentConv?.messages || [];
@@ -718,15 +1133,126 @@ export default function Chat() {
     setCurrentConvId(urlConvId || null);
   }, [urlConvId]);
 
+  // ---- close the active conversation when its workspace doesn't match ----
+  // Each workspace owns its own chat history; switching workspace should drop
+  // the current conv and land on the start page rather than show a chat that
+  // belongs to a different workspace.
+  useEffect(() => {
+    if (!currentConvId) return;
+    if (!selectedWorkspace) return;
+    // The Telegram binding takes priority — it carries the authoritative workspace
+    // for any conv promoted from a binding (the local conv may not exist yet).
+    const tgBinding = telegramBindings.find((b) => b.conversation_id === currentConvId);
+    if (tgBinding) {
+      if ((tgBinding.workspace || null) !== selectedWorkspace) {
+        navigate('/chat');
+      }
+      return;
+    }
+    const conv = conversations.find((c) => c.id === currentConvId);
+    if (!conv) return;
+    const convWs = conv.workspace || null;
+    // For non-Telegram conversations, the `default` selection means "no filter",
+    // matching the current visibleConversations behaviour.
+    if (selectedWorkspace === 'default') return;
+    if (convWs !== selectedWorkspace) {
+      navigate('/chat');
+    }
+  }, [selectedWorkspace, currentConvId, telegramBindings, conversations, navigate]);
+
   // ---- persist ----
   useEffect(() => { saveConversations(conversations); }, [conversations]);
 
   // ---- load agents ----
   useEffect(() => {
-    getAgents()
+    getAgents(selectedWorkspace || 'default')
       .then((r) => { setAgents(r.data || []); })
       .catch(() => {});
+  }, [selectedWorkspace]);
+
+  // ---- load flows (re-runs when workspace changes so we see workspace-bound flows) ----
+  useEffect(() => {
+    listFlows(selectedWorkspace || undefined)
+      .then((r) => setFlows(r.data || []))
+      .catch(() => setFlows([]));
+  }, [selectedWorkspace]);
+
+  // ---- load Telegram bindings (refresh on workspace switch + interval) ----
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const { data } = await getTelegramBindings();
+        if (!cancelled) setTelegramBindings(data || []);
+      } catch {
+        if (!cancelled) setTelegramBindings([]);
+      }
+    };
+    refresh();
+    const id = setInterval(refresh, 15000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  // ---- hydrate Telegram conversation: resolve session_id, load past messages ----
+  // Re-runs whenever the binding *or its workspace* changes. The Telegram thread
+  // is one conversation_id across workspaces, but each workspace shows only its
+  // own slice of runs — so when the workspace context flips, we re-fetch and
+  // replace the bubble list with the slice that belongs to the new workspace.
+  // Past bubbles are reconstructed from server-side run logs via getMessageInsights.
+  const bindingWorkspaceKey = currentTelegramBinding?.workspace || null;
+  useEffect(() => {
+    if (!currentTelegramBinding) return;
+    const convId = currentTelegramBinding.conversation_id;
+    if (!convId) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data: sessions } = await getSessions({ conversation_id: convId });
+        const sess = (sessions || [])[0];
+        if (!sess?.session_id || cancelled) return;
+        setSessionId(sess.session_id);
+
+        const { data: runs } = await getSessionMessages(sess.session_id);
+        // Filter runs to only those that executed against the binding's workspace.
+        const bindingWorkspace = currentTelegramBinding.workspace || null;
+        const scopedRuns = (runs || []).filter((r) => (r.workspace || null) === bindingWorkspace);
+        const insightsList = await Promise.all(
+          scopedRuns.map((r) =>
+            getMessageInsights(r.run_id).then((res) => ({ run: r, insights: res.data }))
+              .catch(() => null)
+          )
+        );
+        if (cancelled) return;
+
+        const bubbles = [];
+        for (const entry of insightsList) {
+          if (!entry) continue;
+          const runId = entry.run.run_id;
+          const agentId = entry.run.agent_id;
+          const msgs = entry.insights?.messages || [];
+          for (const m of msgs) {
+            bubbles.push({
+              id: genId(),
+              role: m.role === 'assistant' ? 'agent' : 'user',
+              content: m.content || '',
+              agent_id: m.role === 'assistant' ? agentId : undefined,
+              run_id: m.role === 'assistant' ? runId : undefined,
+              origin: 'telegram',
+            });
+          }
+        }
+
+        setConversations((prev) =>
+          prev.map((c) => (c.id !== convId ? c : { ...c, messages: bubbles }))
+        );
+      } catch {
+        // Best-effort hydration; failures are silent.
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [currentTelegramBinding, bindingWorkspaceKey]);
 
 
   // ---- load projects for selected workspace ----
@@ -855,18 +1381,40 @@ export default function Chat() {
         );
         if (event.run_id) setActiveRunId(event.run_id);
       } else if (event.type === 'token' && continuationMsgId) {
+        const tok = event.token || '';
         setConversations((prev) =>
           prev.map((c) =>
             c.id !== convId ? c : {
               ...c,
-              messages: c.messages.map((m) =>
-                m.id === continuationMsgId
-                  ? { ...m, content: `${m.content || ''}${event.token || ''}` }
-                  : m
-              ),
+              messages: c.messages.map((m) => {
+                if (m.id !== continuationMsgId) return m;
+                const tl = [...(m.timeline || [])];
+                const last = tl[tl.length - 1];
+                if (last && last.type === 'text') {
+                  tl[tl.length - 1] = { ...last, text: `${last.text || ''}${tok}` };
+                } else {
+                  tl.push({ type: 'text', text: tok });
+                }
+                return { ...m, content: `${m.content || ''}${tok}`, timeline: tl };
+              }),
             }
           )
         );
+      } else if (event.type === 'artifact') {
+        mergeArtifact(event);
+        if (continuationMsgId) {
+          const entry = { type: 'artifact', op: event.op, path: event.path, additions: event.additions, deletions: event.deletions };
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === continuationMsgId ? { ...m, timeline: [...(m.timeline || []), entry] } : m
+                ),
+              }
+            )
+          );
+        }
       } else if (event.type === 'done' && continuationMsgId) {
         setConversations((prev) =>
           prev.map((c) =>
@@ -927,6 +1475,20 @@ export default function Chat() {
           token_usage: { inbound_tokens: 0, outbound_tokens: 0, total_tokens: 0 },
         };
       const allowed = conversationRunIds;
+      // Rebuild the Artifacts panel from persisted diffs for runs in this conversation.
+      const rawArtifacts = (raw.artifacts || []).filter((a) => {
+        const rid = String(a?.run_id || '');
+        return rid ? allowed.has(rid) : true;
+      });
+      if (rawArtifacts.length) {
+        setArtifacts((prev) => {
+          const next = { ...prev };
+          for (const a of rawArtifacts) {
+            if (a?.path) next[a.path] = { ...a };
+          }
+          return next;
+        });
+      }
       const filteredRuns = (raw.message_runs || []).filter((mr) => {
         const rid = String(mr?.run_id || '');
         return rid ? allowed.has(rid) : false;
@@ -973,16 +1535,17 @@ export default function Chat() {
   }, [conversationRunIds]);
 
   // Load all unloaded conversation runs whenever the panel is open and conversationRunIds changes.
-  // Uses a ref to avoid re-fetching runs already loaded in this session.
+  // Build view also needs this data (for the Artifacts panel), even with the
+  // Process panel closed. Uses a ref to avoid re-fetching runs already loaded.
   useEffect(() => {
-    if (!processOpen || loading) return;
+    if ((!processOpen && viewMode !== 'build') || loading) return;
     const toLoad = Array.from(conversationRunIds).filter(rid => !loadedRunIdsRef.current.has(rid));
     if (!toLoad.length) return;
     toLoad.forEach(runId => {
       loadedRunIdsRef.current.add(runId);
       loadProcessData(runId);
     });
-  }, [processOpen, activeRunId, loading, loadProcessData, conversationRunIds]);
+  }, [processOpen, viewMode, activeRunId, loading, loadProcessData, conversationRunIds]);
 
   useEffect(() => {
     if (selectedWorkspace) return;
@@ -1053,6 +1616,7 @@ export default function Chat() {
     }
     setSessionId(null);
     loadedRunIdsRef.current = new Set();
+    setArtifacts({});
     setProcessInsights({
       messages: [],
       tools: [],
@@ -1062,13 +1626,21 @@ export default function Chat() {
     });
   }, [currentConvId]);
 
+  // Merge a streamed/persisted artifact into the per-path map (last write wins).
+  const mergeArtifact = useCallback((art) => {
+    if (!art || !art.path) return;
+    setArtifacts((prev) => ({ ...prev, [art.path]: { ...art } }));
+  }, []);
+
   // ---- new conversation ----
   const newConversation = useCallback(() => {
     const id = genId();
     const conv = {
       id,
       title: 'New conversation',
-      agent_id: selectedAgent,
+      agent_id: targetMode === 'agent' ? selectedAgent : null,
+      flow_id: targetMode === 'flow' ? selectedFlow : null,
+      target_mode: targetMode,
       workspace: selectedWorkspace,
       project_id: selectedProject || null,
       messages: [],
@@ -1077,7 +1649,7 @@ export default function Chat() {
     setConversations((prev) => [conv, ...prev]);
     navigate(`/chat/${id}`);
     setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [selectedAgent, selectedWorkspace, selectedProject, navigate]);
+  }, [selectedAgent, selectedFlow, targetMode, selectedWorkspace, selectedProject, navigate]);
 
   // ---- delete conversation ----
   const deleteConversation = useCallback((id, e) => {
@@ -1162,7 +1734,9 @@ export default function Chat() {
   const sendMessage = useCallback(async () => {
     const text = input.trim();
     const hasAttachments = pendingAttachments.length > 0;
-    if ((!text && !hasAttachments) || loading || !selectedAgent) return;
+    const isFlowMode = targetMode === 'flow';
+    if ((!text && !hasAttachments) || loading) return;
+    if (isFlowMode ? !selectedFlow : !selectedAgent) return;
 
     // Handle special client-side slash commands
     if (text === '/clear') { selectCommand({ name: '/clear' }); return; }
@@ -1185,7 +1759,9 @@ export default function Chat() {
       const newConv = {
         id: convId,
         title,
-        agent_id: selectedAgent,
+        agent_id: isFlowMode ? null : selectedAgent,
+        flow_id: isFlowMode ? selectedFlow : null,
+        target_mode: targetMode,
         workspace: selectedWorkspace,
         project_id: selectedProject || null,
         messages: [],
@@ -1241,39 +1817,47 @@ export default function Chat() {
       : convRecord.title;
 
     try {
-      const assistantId = genId();
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === convId
-            ? {
-                ...c,
-                messages: [
-                  ...c.messages,
-                  {
-                    id: assistantId,
-                    role: 'agent',
-                    agent_id: selectedAgent,
-                    content: '',
-                    error: false,
-                    run_id: null,
-                    inbound_tokens: null,
-                    outbound_tokens: null,
-                    total_tokens: null,
-                    tool_calls: null,
-                    duration_ms: null,
-                  },
-                ],
-              }
-            : c,
-        ),
-      );
+      // In agent mode we create one assistant bubble up front and stream into it.
+      // In flow mode we wait for node_start events and create one bubble per node.
+      const assistantId = isFlowMode ? null : genId();
+      // Maps node_id -> message bubble id for flow mode.
+      const nodeMsgIds = {};
+      let currentNodeId = null;
+      if (!isFlowMode) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  messages: [
+                    ...c.messages,
+                    {
+                      id: assistantId,
+                      role: 'agent',
+                      agent_id: selectedAgent,
+                      content: '',
+                      error: false,
+                      run_id: null,
+                      inbound_tokens: null,
+                      outbound_tokens: null,
+                      total_tokens: null,
+                      tool_calls: null,
+                      duration_ms: null,
+                    },
+                  ],
+                }
+              : c,
+          ),
+        );
+      }
 
       const response = await fetch('http://localhost:8000/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: ctrl.signal,
         body: JSON.stringify({
-          agent_id: selectedAgent,
+          agent_id: isFlowMode ? null : selectedAgent,
+          flow_id: isFlowMode ? selectedFlow : null,
           message: text,
           workspace: effectiveWorkspace || null,
           project_id: convRecord?.project_id || null,
@@ -1317,11 +1901,137 @@ export default function Chat() {
           try { event = JSON.parse(line.slice(6)); } catch { continue; }
           if (!event || !event.type) continue;
 
-          if (event.type === 'meta' && event.run_id) {
+          // Helper: returns the id of the assistant bubble that should receive
+          // streaming events for the current event. In flow mode this is the
+          // bubble for the active node; in agent mode it's the single assistantId.
+          const targetMsgId = () => {
+            if (isFlowMode) {
+              const nid = event.node_id || currentNodeId;
+              return nid ? nodeMsgIds[nid] : null;
+            }
+            return assistantId;
+          };
+
+          if (event.type === 'flow_meta') {
+            // Flow chat: capture session_id and flow agent_id mapping for bubbles.
+            if (event.session_id) setSessionId(event.session_id);
+          } else if (event.type === 'node_start') {
+            // Create a new assistant bubble for this node.
+            currentNodeId = event.node_id;
+            const msgId = genId();
+            nodeMsgIds[event.node_id] = msgId;
+            const nodeRunId = event.run_id || null;
+            if (nodeRunId) {
+              runId = nodeRunId;
+              setActiveRunId(nodeRunId);
+            }
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id !== convId ? c : {
+                  ...c,
+                  messages: [
+                    ...c.messages,
+                    {
+                      id: msgId,
+                      role: 'agent',
+                      agent_id: event.agent_id || event.agent_label || '',
+                      agent_label: event.agent_label || '',
+                      node_id: event.node_id,
+                      content: '',
+                      error: false,
+                      run_id: nodeRunId,
+                      inbound_tokens: null,
+                      outbound_tokens: null,
+                      total_tokens: null,
+                      tool_calls: null,
+                      duration_ms: null,
+                    },
+                  ],
+                },
+              ),
+            );
+            if (processOpen && nodeRunId) {
+              setProcessInsights((prev) => ({
+                ...prev,
+                message_runs: [
+                  ...(prev.message_runs || []),
+                  {
+                    message_id: nodeRunId,
+                    run_id: nodeRunId,
+                    timestamp: new Date().toISOString(),
+                    input: userMsgText,
+                    output: '',
+                    tools: [],
+                    thinking: [],
+                    inbound_tokens: 0,
+                    outbound_tokens: 0,
+                    total_tokens: 0,
+                    tool_calls: 0,
+                    duration_ms: 0,
+                    agent_id: event.agent_id || '',
+                  },
+                ],
+              }));
+            }
+          } else if (event.type === 'node_done') {
+            // Finalize one node's bubble; the surrounding loop continues into the next node.
+            const msgId = nodeMsgIds[event.node_id];
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id !== convId ? c : {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === msgId
+                      ? {
+                          ...m,
+                          content: (m.content || event.response || '').trim() || event.response || '',
+                          error: !event.ok,
+                          run_id: event.run_id || m.run_id,
+                          inbound_tokens: event.usage?.inbound_tokens ?? null,
+                          outbound_tokens: event.usage?.outbound_tokens ?? null,
+                          total_tokens: event.usage?.total_tokens ?? null,
+                          tool_calls: event.tool_calls ?? null,
+                          duration_ms: event.duration_ms ?? null,
+                        }
+                      : m
+                  ),
+                },
+              ),
+            );
+            if (processOpen) {
+              setProcessInsights((prev) => {
+                const inTok = event.usage?.inbound_tokens || 0;
+                const outTok = event.usage?.outbound_tokens || 0;
+                const totTok = event.usage?.total_tokens || (inTok + outTok);
+                return {
+                  ...prev,
+                  token_usage: {
+                    inbound_tokens: (prev.token_usage?.inbound_tokens || 0) + inTok,
+                    outbound_tokens: (prev.token_usage?.outbound_tokens || 0) + outTok,
+                    total_tokens: (prev.token_usage?.total_tokens || 0) + totTok,
+                  },
+                  message_runs: (prev.message_runs || []).map((mr) =>
+                    mr.run_id === event.run_id
+                      ? {
+                          ...mr,
+                          output: event.response || mr.output || '',
+                          inbound_tokens: inTok,
+                          outbound_tokens: outTok,
+                          total_tokens: totTok,
+                          tool_calls: event.tool_calls ?? mr.tool_calls ?? 0,
+                          duration_ms: event.duration_ms ?? mr.duration_ms ?? 0,
+                        }
+                      : mr
+                  ),
+                };
+              });
+            }
+          } else if (event.type === 'meta' && event.run_id) {
             runId = event.run_id;
             setActiveRunId(runId);
             if (event.session_id) setSessionId(event.session_id);
-            if (processOpen) {
+            if (processOpen && !isFlowMode) {
+              // In flow mode, node_start already created the process row.
               setProcessInsights((prev) => ({
                 ...prev,
                 message_runs: [
@@ -1343,22 +2053,78 @@ export default function Chat() {
                 ],
               }));
             }
-            setConversations((prev) =>
-              prev.map((c) =>
-                c.id !== convId ? c : {
-                  ...c,
-                  messages: c.messages.map((m) => (m.id === assistantId ? { ...m, run_id: runId } : m)),
-                },
-              ),
-            );
-          } else if (event.type === 'tool_start') {
-            // Update message bubble to show the running tool name
+            if (!isFlowMode) {
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id !== convId ? c : {
+                    ...c,
+                    messages: c.messages.map((m) => (m.id === assistantId ? { ...m, run_id: runId } : m)),
+                  },
+                ),
+              );
+            }
+          } else if (event.type === 'think' || event.type === 'plan') {
+            // Reasoning steps are appended in execution order so the UI can
+            // render each one inline, before the response that followed it.
+            // Also appended to `timeline` (the Build-view chronological feed).
+            const tgt = targetMsgId();
+            const step = { kind: event.type, step: event.step, content: event.content };
             setConversations((prev) =>
               prev.map((c) =>
                 c.id !== convId ? c : {
                   ...c,
                   messages: c.messages.map((m) =>
-                    m.id === assistantId ? { ...m, running_tool: event.tool } : m
+                    m.id === tgt
+                      ? {
+                          ...m,
+                          reasoning: [...(m.reasoning || []), step],
+                          timeline: [...(m.timeline || []), { type: 'reasoning', ...step }],
+                        }
+                      : m
+                  ),
+                },
+              ),
+            );
+          } else if (event.type === 'artifact') {
+            // File change — surface in the Artifacts panel and inline in the feed.
+            mergeArtifact(event);
+            const tgt = targetMsgId();
+            const entry = {
+              type: 'artifact',
+              op: event.op,
+              path: event.path,
+              additions: event.additions,
+              deletions: event.deletions,
+            };
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id !== convId ? c : {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === tgt ? { ...m, timeline: [...(m.timeline || []), entry] } : m
+                  ),
+                },
+              ),
+            );
+          } else if (event.type === 'tool_start') {
+            // Update message bubble to show the running tool name, and append a
+            // tool entry to the Build-view timeline (resolved on tool_end).
+            const tgt = targetMsgId();
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id !== convId ? c : {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === tgt
+                      ? {
+                          ...m,
+                          running_tool: event.tool,
+                          timeline: [
+                            ...(m.timeline || []),
+                            { type: 'tool', step: event.step, tool: event.tool, input: event.input, output: null, running: true },
+                          ],
+                        }
+                      : m
                   ),
                 },
               ),
@@ -1398,6 +2164,28 @@ export default function Chat() {
             }
           } else if (event.type === 'tool_end') {
             // Keep running_tool set so the name stays visible until the next token arrives.
+            // Resolve the last running tool entry in the Build-view timeline.
+            {
+              const tgt = targetMsgId();
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id !== convId ? c : {
+                    ...c,
+                    messages: c.messages.map((m) => {
+                      if (m.id !== tgt || !m.timeline) return m;
+                      const tl = [...m.timeline];
+                      for (let i = tl.length - 1; i >= 0; i -= 1) {
+                        if (tl[i].type === 'tool' && tl[i].running) {
+                          tl[i] = { ...tl[i], output: event.output, running: false };
+                          break;
+                        }
+                      }
+                      return { ...m, timeline: tl };
+                    }),
+                  },
+                ),
+              );
+            }
             if (processOpen) {
               setProcessInsights((prev) => {
                 const tools = [...(prev.tools || [])];
@@ -1422,15 +2210,30 @@ export default function Chat() {
               });
             }
           } else if (event.type === 'token') {
+            const tgt = targetMsgId();
+            const tok = event.token || '';
             setConversations((prev) =>
               prev.map((c) =>
                 c.id !== convId ? c : {
                   ...c,
-                  messages: c.messages.map((m) =>
-                    m.id === assistantId
-                      ? { ...m, content: `${m.content || ''}${event.token || ''}`, running_tool: null }
-                      : m
-                  ),
+                  messages: c.messages.map((m) => {
+                    if (m.id !== tgt) return m;
+                    // Coalesce contiguous tokens into the trailing text segment so
+                    // the Build-view feed shows continuous prose, not per-token noise.
+                    const tl = [...(m.timeline || [])];
+                    const last = tl[tl.length - 1];
+                    if (last && last.type === 'text') {
+                      tl[tl.length - 1] = { ...last, text: `${last.text || ''}${tok}` };
+                    } else {
+                      tl.push({ type: 'text', text: tok });
+                    }
+                    return {
+                      ...m,
+                      content: `${m.content || ''}${tok}`,
+                      running_tool: null,
+                      timeline: tl,
+                    };
+                  }),
                 },
               ),
             );
@@ -1448,29 +2251,33 @@ export default function Chat() {
             finalPayload = event;
             const resolvedRunId = runId || event.run_id || null;
             if (resolvedRunId) setActiveRunId(resolvedRunId);
-            setConversations((prev) =>
-              prev.map((c) =>
-                c.id !== convId ? c : {
-                  ...c,
-                  messages: c.messages.map((m) =>
-                    m.id === assistantId
-                      ? {
-                          ...m,
-                          content: (m.content || event.response || '').trim() || event.response || '',
-                          error: !event.ok,
-                          run_id: resolvedRunId,
-                          inbound_tokens: event.usage?.inbound_tokens ?? m.inbound_tokens ?? null,
-                          outbound_tokens: event.usage?.outbound_tokens ?? m.outbound_tokens ?? null,
-                          total_tokens: event.usage?.total_tokens ?? m.total_tokens ?? null,
-                          tool_calls: event.tool_calls ?? m.tool_calls ?? null,
-                          duration_ms: event.duration_ms ?? m.duration_ms ?? null,
-                        }
-                      : m
-                  ),
-                },
-              ),
-            );
-            if (processOpen) {
+            // In flow mode the per-node bubbles were already finalized via node_done,
+            // so the overall "done" event only carries flow-level metadata.
+            if (!isFlowMode) {
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id !== convId ? c : {
+                    ...c,
+                    messages: c.messages.map((m) =>
+                      m.id === assistantId
+                        ? {
+                            ...m,
+                            content: (m.content || event.response || '').trim() || event.response || '',
+                            error: !event.ok,
+                            run_id: resolvedRunId,
+                            inbound_tokens: event.usage?.inbound_tokens ?? m.inbound_tokens ?? null,
+                            outbound_tokens: event.usage?.outbound_tokens ?? m.outbound_tokens ?? null,
+                            total_tokens: event.usage?.total_tokens ?? m.total_tokens ?? null,
+                            tool_calls: event.tool_calls ?? m.tool_calls ?? null,
+                            duration_ms: event.duration_ms ?? m.duration_ms ?? null,
+                          }
+                        : m
+                    ),
+                  },
+                ),
+              );
+            }
+            if (processOpen && !isFlowMode) {
               setProcessInsights((prev) => {
                 const inTok = event.usage?.inbound_tokens || 0;
                 const outTok = event.usage?.outbound_tokens || 0;
@@ -1503,18 +2310,20 @@ export default function Chat() {
       }
 
       if (!finalPayload) {
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id !== convId ? c : {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.id === assistantId && !m.content
-                  ? { ...m, content: 'No streamed output received.', error: true }
-                  : m
-              ),
-            },
-          ),
-        );
+        if (!isFlowMode) {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === assistantId && !m.content
+                    ? { ...m, content: 'No streamed output received.', error: true }
+                    : m
+                ),
+              },
+            ),
+          );
+        }
       } else if ((runId || finalPayload.run_id) && processOpen) {
         loadProcessData(runId || finalPayload.run_id);
       }
@@ -1537,13 +2346,62 @@ export default function Chat() {
       setLoading(false);
       abortCtrlRef.current = null;
     }
-  }, [input, loading, selectedAgent, currentConvId, messages, selectedWorkspace, selectedProject, conversations, processOpen, loadProcessData, pendingAttachments]);
+  }, [input, loading, selectedAgent, selectedFlow, targetMode, currentConvId, messages, selectedWorkspace, selectedProject, conversations, processOpen, loadProcessData, pendingAttachments]);
+
+  // Build view: clicking a file chip in the transcript scrolls the always-open
+  // Artifacts panel to that file's diff.
+  const jumpToArtifact = useCallback((path) => {
+    setTimeout(() => {
+      const el = document.querySelector(`[data-artifact-path="${CSS.escape(path)}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
+  }, []);
 
   const stopGeneration = () => {
     abortCtrlRef.current?.abort();
     if (activeRunId) stopMessage(activeRunId).catch(() => {});
     setLoading(false);
   };
+
+  // True only when the conversation's binding workspace matches the active workspace.
+  // Reply-as-bot is forbidden across workspaces to keep the Telegram surface
+  // anchored to whichever workspace the operator is actually working in.
+  const telegramReplyAllowed = Boolean(
+    currentTelegramBinding
+    && selectedWorkspace
+    && (currentTelegramBinding.workspace || null) === selectedWorkspace
+  );
+
+  // Send the composer text back to a Telegram chat as the bot (debug surface).
+  const sendAsBot = useCallback(async () => {
+    if (!currentTelegramBinding) return;
+    if (!telegramReplyAllowed) return;
+    const text = input.trim();
+    if (!text) return;
+    setTelegramSending(true);
+    setTelegramError('');
+    try {
+      await sendTelegramMessage(currentTelegramBinding.chat_id, text);
+      const convId = currentTelegramBinding.conversation_id;
+      setConversations((prev) =>
+        prev.map((c) => c.id !== convId ? c : {
+          ...c,
+          messages: [...(c.messages || []), {
+            id: genId(),
+            role: 'user',
+            content: text,
+            origin: 'telegram-bot',
+            createdAt: new Date().toISOString(),
+          }],
+        })
+      );
+      setInput('');
+    } catch (e) {
+      setTelegramError(e.response?.data?.detail || e.message || 'Send failed');
+    } finally {
+      setTelegramSending(false);
+    }
+  }, [input, currentTelegramBinding, telegramReplyAllowed]);
 
   const handleKeyDown = (e) => {
     if (commandMenuOpen && commandSuggestions.length > 0) {
@@ -1570,7 +2428,11 @@ export default function Chat() {
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      if (currentTelegramBinding) {
+        sendAsBot();
+      } else {
+        sendMessage();
+      }
     }
   };
 
@@ -1578,8 +2440,8 @@ export default function Chat() {
   // Render
   // ---------------------------------------------------------------------------
   return (
-    // -m-8 negates the Layout's p-8; height fills viewport minus 4rem header
-    <div className="-m-8 flex overflow-hidden" style={{ height: 'calc(100vh - 4rem)' }}>
+    // -m-4 negates the Layout's p-4; height fills viewport minus 4rem header
+    <div className="-m-4 flex overflow-hidden" style={{ height: 'calc(100vh - 4rem)' }}>
 
       {/* ── Sidebar ── */}
       <div className="w-60 flex-shrink-0 bg-gray-50 border-l border-r border-gray-200 flex flex-col">
@@ -1593,7 +2455,12 @@ export default function Chat() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
+        {/* Top panel — normal chats */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
+            <MessageSquare className="w-3 h-3" /> Chats
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
           {visibleConversations.length === 0 && (
             <p className="text-xs text-gray-400 text-center py-10 px-3 leading-relaxed">
               No conversations yet.
@@ -1606,7 +2473,11 @@ export default function Chat() {
               key={conv.id}
               onClick={() => {
                 navigate(`/chat/${conv.id}`);
-                if (conv.agent_id && selectableAgents.some((a) => a.id === conv.agent_id)) {
+                if (conv.target_mode === 'flow' && conv.flow_id) {
+                  setTargetMode('flow');
+                  setSelectedFlow(conv.flow_id);
+                } else if (conv.agent_id && selectableAgents.some((a) => a.id === conv.agent_id)) {
+                  setTargetMode('agent');
                   setSelectedAgent(conv.agent_id);
                 }
               }}
@@ -1631,7 +2502,15 @@ export default function Chat() {
                       </span>
                     )
                   )}
-                  {conv.agent_id && (() => {
+                  {conv.target_mode === 'flow' && conv.flow_id ? (() => {
+                    const flow = flows.find((f) => f.id === conv.flow_id);
+                    return (
+                      <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium truncate max-w-full">
+                        <Workflow className="w-2.5 h-2.5 flex-shrink-0" />
+                        {flow ? flow.name : 'flow'}
+                      </span>
+                    );
+                  })() : conv.agent_id && (() => {
                     const agent = selectableAgents.find(a => a.id === conv.agent_id);
                     return (
                       <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-medium truncate max-w-full">
@@ -1639,6 +2518,12 @@ export default function Chat() {
                       </span>
                     );
                   })()}
+                  {conv.origin === 'telegram' && (
+                    <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">
+                      <SendIcon className="w-2.5 h-2.5 flex-shrink-0" />
+                      telegram
+                    </span>
+                  )}
                   {conv.project_id && (() => {
                     const proj = projects.find(p => p.id === conv.project_id);
                     return proj ? (
@@ -1659,7 +2544,71 @@ export default function Chat() {
               </button>
             </button>
           ))}
+          </div>
         </div>
+
+        {/* Bottom panel — Telegram chats. Collapsed entirely when there are none,
+            so the top panel claims the full column. When present, it takes
+            exactly the bottom half of the column (flex-1 + a matching flex-1 on
+            the top "Chats" panel makes them split 50/50). Overflow uses the
+            macOS-style overlay scrollbar via overflow-y-auto. */}
+        {visibleTelegramBindings.length > 0 && (
+          <div className="flex-1 min-h-0 flex flex-col border-t border-gray-200">
+            <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
+              <SendIcon className="w-3 h-3" /> Telegram chats
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
+              {visibleTelegramBindings.map((b) => {
+                const convId = b.conversation_id;
+                const isActive = currentConvId === convId;
+                const agent = selectableAgents.find((a) => a.id === b.agent_id);
+                return (
+                  <button
+                    key={`tg-${b.chat_id}`}
+                    onClick={() => {
+                      if (!convId) return;
+                      // Ensure a local conversation entry exists so the main pane renders.
+                      setConversations((prev) => {
+                        if (prev.some((c) => c.id === convId)) return prev;
+                        return [{
+                          id: convId,
+                          title: b.title || `Telegram ${b.chat_id}`,
+                          agent_id: b.agent_id,
+                          workspace: b.workspace || null,
+                          messages: [],
+                          origin: 'telegram',
+                          chat_id: b.chat_id,
+                          createdAt: b.created_at || new Date().toISOString(),
+                        }, ...prev];
+                      });
+                      if (b.agent_id && selectableAgents.some((a) => a.id === b.agent_id)) {
+                        setSelectedAgent(b.agent_id);
+                      }
+                      navigate(`/chat/${convId}`);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-start gap-2 transition-colors
+                      ${isActive ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-white hover:shadow-sm'}`}
+                  >
+                    <SendIcon className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-70" />
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate leading-5">{b.title || `Chat ${b.chat_id}`}</div>
+                      <div className="mt-0.5 flex flex-wrap gap-1">
+                        <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-medium truncate max-w-full">
+                          {agent ? agent.name : b.agent_id}
+                        </span>
+                        {b.workspace && (
+                          <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600 font-medium truncate max-w-full">
+                            {b.workspace}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Main area ── */}
@@ -1667,15 +2616,50 @@ export default function Chat() {
 
         {/* Top bar */}
         <div className="flex-shrink-0 bg-white border-b border-gray-200 px-5 h-[60px] flex items-center gap-4">
-          <AgentDropdown agents={selectableAgents} value={selectedAgent} onChange={(id) => {
-            setSelectedAgent(id);
-            // update current conv's agent
-            if (currentConvId) {
-              setConversations((prev) =>
-                prev.map((c) => c.id === currentConvId ? { ...c, agent_id: id } : c),
-              );
-            }
-          }} />
+          {/* Target-mode toggle: agent vs flow */}
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+            <button
+              onClick={() => setTargetMode('agent')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                targetMode === 'agent' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+              title="Chat with a single agent"
+            >
+              <Bot className="w-3.5 h-3.5" />
+              Agent
+            </button>
+            <button
+              onClick={() => setTargetMode('flow')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
+                targetMode === 'flow' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+              title="Chat with a flow (each message runs through every node)"
+            >
+              <Workflow className="w-3.5 h-3.5" />
+              Flow
+            </button>
+          </div>
+
+          {targetMode === 'agent' ? (
+            <AgentDropdown agents={selectableAgents} value={selectedAgent} onChange={(id) => {
+              setSelectedAgent(id);
+              // update current conv's agent
+              if (currentConvId) {
+                setConversations((prev) =>
+                  prev.map((c) => c.id === currentConvId ? { ...c, agent_id: id } : c),
+                );
+              }
+            }} />
+          ) : (
+            <FlowDropdown flows={flows} value={selectedFlow} onChange={(id) => {
+              setSelectedFlow(id);
+              if (currentConvId) {
+                setConversations((prev) =>
+                  prev.map((c) => c.id === currentConvId ? { ...c, flow_id: id, target_mode: 'flow' } : c),
+                );
+              }
+            }} />
+          )}
 
           {(currentConv?.workspace || selectedWorkspace) && (
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
@@ -1723,50 +2707,121 @@ export default function Chat() {
           )}
 
 
-          <button
-            onClick={() => setProcessOpen((v) => !v)}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
-          >
-            {processOpen ? (
-              <>
-                <X className="w-3.5 h-3.5" />
-                Hide process
-              </>
-            ) : (
-              <>
-                <FileText className="w-3.5 h-3.5" />
-                Show process
-              </>
-            )}
-          </button>
+          {/* View-mode toggle: clean Chat vs full Build transcript + artifacts */}
+          <div className="ml-auto inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+            <button
+              onClick={() => setViewMode('chat')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                viewMode === 'chat' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+              title="Clean chat — messages only"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              Chat
+            </button>
+            <button
+              onClick={() => setViewMode('build')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
+                viewMode === 'build' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+              title="Build — full transcript (tools, thinking, plan) + file diffs"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              Build
+            </button>
+          </div>
+
+          {viewMode !== 'build' && (
+            <button
+              onClick={() => setProcessOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+            >
+              {processOpen ? (
+                <>
+                  <X className="w-3.5 h-3.5" />
+                  Hide process
+                </>
+              ) : (
+                <>
+                  <FileText className="w-3.5 h-3.5" />
+                  Show process
+                </>
+              )}
+            </button>
+          )}
 
           <div className="text-xs text-gray-400">
             {messages.length > 0 && `${messages.length} message${messages.length !== 1 ? 's' : ''}`}
           </div>
         </div>
 
+        {/* Fixed Telegram debug-mirror banner — sits above the scrolling messages area */}
+        {currentTelegramBinding && (
+          <div className="flex-shrink-0 px-4 py-2 border-b border-sky-200 bg-sky-50 text-xs text-sky-800 flex items-center gap-2">
+            <SendIcon className="w-3.5 h-3.5 shrink-0" />
+            <div className="flex-1 min-w-0 truncate">
+              <strong>Telegram</strong> · {currentTelegramBinding.title || `chat ${currentTelegramBinding.chat_id}`}
+              {' '}· bound to <strong>{currentTelegramBinding.agent_name || currentTelegramBinding.agent_id}</strong>
+              {currentTelegramBinding.workspace ? <> · {currentTelegramBinding.workspace}</> : null}
+            </div>
+            {!telegramReplyAllowed && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium" title={`Switch to "${currentTelegramBinding.workspace || 'default'}" to reply.`}>
+                read-only
+              </span>
+            )}
+            <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">debug mirror</span>
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-full mx-auto px-6 py-8">
             {messages.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center">
-                <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mb-5 shadow-sm">
-                  <Bot className="w-8 h-8 text-indigo-600" />
-                </div>
-                <h2 className="text-xl font-semibold text-gray-800 mb-2">
-                  {agentName}
-                </h2>
-                <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
-                  Send a message to start a conversation.
-                  {selectedWorkspace && <> The agent will work in the <strong className="text-gray-700">{selectedWorkspace}</strong> workspace.</>}
-                </p>
+                {targetMode === 'flow' ? (
+                  <>
+                    <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mb-5 shadow-sm">
+                      <Workflow className="w-8 h-8 text-emerald-600" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-gray-800 mb-2">
+                      {flows.find((f) => f.id === selectedFlow)?.name || 'Select a flow'}
+                    </h2>
+                    <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
+                      Send a message to run it through every node in this flow, in DAG order.
+                      Each node produces its own reply and feeds the next.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mb-5 shadow-sm">
+                      <Bot className="w-8 h-8 text-indigo-600" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-gray-800 mb-2">
+                      {agentName}
+                    </h2>
+                    <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
+                      Send a message to start a conversation.
+                      {selectedWorkspace && <> The agent will work in the <strong className="text-gray-700">{selectedWorkspace}</strong> workspace.</>}
+                    </p>
+                  </>
+                )}
               </div>
             )}
 
             {messages.map((msg, idx) => {
               const msgAgentName = msg.role !== 'user'
-                ? (agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
+                ? (msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
                 : undefined;
+              if (viewMode === 'build') {
+                return (
+                  <BuildMessage
+                    key={msg.id}
+                    msg={msg}
+                    agentName={msgAgentName}
+                    onJumpArtifact={jumpToArtifact}
+                  />
+                );
+              }
               return (
                 <MessageBubble
                   key={msg.id}
@@ -1864,7 +2919,7 @@ export default function Chat() {
                 onClick={() => fileInputRef.current?.click()}
                 className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40"
                 title="Attach files"
-                disabled={loading || !selectedAgent}
+                disabled={loading || (targetMode === 'flow' ? !selectedFlow : !selectedAgent)}
               >
                 <Paperclip className="w-4 h-4" />
               </button>
@@ -1872,12 +2927,12 @@ export default function Chat() {
               <textarea
                 ref={textareaRef}
                 className="flex-1 resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
-                placeholder={!selectedAgent
-                  ? 'No authorized agent available in this workspace…'
-                  : `Message ${agentName}…`}
+                placeholder={targetMode === 'flow'
+                  ? (!selectedFlow ? 'Select a flow to chat with…' : `Message flow: ${flows.find((f) => f.id === selectedFlow)?.name || ''}…`)
+                  : (!selectedAgent ? 'No authorized agent available in this workspace…' : `Message ${agentName}…`)}
                 rows={1}
                 value={input}
-                disabled={loading || !selectedAgent}
+                disabled={loading || (targetMode === 'flow' ? !selectedFlow : !selectedAgent)}
                 onChange={(e) => {
                   const val = e.target.value;
                   setInput(val);
@@ -1896,10 +2951,24 @@ export default function Chat() {
                 >
                   <StopCircle className="w-4 h-4" />
                 </button>
+              ) : currentTelegramBinding ? (
+                <button
+                  onClick={sendAsBot}
+                  disabled={!input.trim() || telegramSending || !telegramReplyAllowed}
+                  title={!telegramReplyAllowed
+                    ? `This chat is bound to "${currentTelegramBinding.workspace || 'default'}" — switch workspace to reply.`
+                    : 'Send as bot to Telegram chat'}
+                  className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
+                    bg-sky-600 text-white hover:bg-sky-700 text-xs font-semibold
+                    disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <SendIcon className="w-3.5 h-3.5" />
+                  {telegramSending ? 'Sending…' : 'Send as bot'}
+                </button>
               ) : (
                 <button
                   onClick={sendMessage}
-                  disabled={(!input.trim() && pendingAttachments.length === 0) || !selectedAgent}
+                  disabled={(!input.trim() && pendingAttachments.length === 0) || (targetMode === 'flow' ? !selectedFlow : !selectedAgent)}
                   title="Send (Enter)"
                   className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
                     bg-indigo-600 text-white hover:bg-indigo-700
@@ -1909,6 +2978,9 @@ export default function Chat() {
                 </button>
               )}
             </div>
+            {telegramError && (
+              <p className="text-xs text-red-600 mt-2">{telegramError}</p>
+            )}
             {attachmentError && (
               <p className="text-xs text-red-600 mt-2">{attachmentError}</p>
             )}
@@ -1919,64 +2991,81 @@ export default function Chat() {
         </div>
       </div>
 
-      {/* ── Process side panel ── */}
-      {processOpen && (
-        <div className="w-[420px] flex-shrink-0 bg-white border-l border-gray-200 flex flex-col">
-          <div className="px-4 h-[60px] border-b border-gray-200 flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-800">Agent Process</h3>
-              <p className="text-[11px] text-gray-500 mt-0.5">
-                {processInsights?.session_id && (
-                  <p className="text-[10px] text-gray-500 -mb-0.5">
-                    Session:{' '}
-                    <a
-                      href={`/sessions/${processInsights.session_id}`}
-                      className="text-indigo-600 hover:text-indigo-700 hover:underline"
-                    >
-                      {processInsights.session_id}
-                    </a>
-                  </p>
-                )}
-              </p>
-            </div>
-            <div className="flex items-center gap-1">
-              {activeRunId && (
-                <button
-                  onClick={() => loadProcessData(activeRunId)}
-                  className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"
-                  title="Refresh process"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                </button>
+      {/* ── Side panel ──
+          Build view: Artifacts only, always open (file diffs live here; steps and
+          tool calls are shown inline in the transcript, so there is no Process tab).
+          Chat view: the legacy Agent Process panel, toggled by "Show process". */}
+      {(() => {
+        const isBuild = viewMode === 'build';
+        const panelVisible = isBuild || processOpen;
+        if (!panelVisible) return null;
+        return (
+          <div className={`${isBuild ? 'w-[560px]' : 'w-[420px]'} flex-shrink-0 bg-white border-l border-gray-200 flex flex-col`}>
+            <div className="px-4 h-[60px] border-b border-gray-200 flex items-center justify-between">
+              {isBuild ? (
+                <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-indigo-500" />
+                  Artifacts
+                </h3>
+              ) : (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Agent Process</h3>
+                  {processInsights?.session_id && (
+                    <p className="text-[10px] text-gray-500 -mb-0.5">
+                      Session:{' '}
+                      <a
+                        href={`/sessions/${processInsights.session_id}`}
+                        className="text-indigo-600 hover:text-indigo-700 hover:underline"
+                      >
+                        {processInsights.session_id}
+                      </a>
+                    </p>
+                  )}
+                </div>
               )}
-              <button
-                onClick={() => setProcessOpen(false)}
-                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
-                title="Close panel"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              {!isBuild && (
+                <div className="flex items-center gap-1">
+                  {activeRunId && (
+                    <button
+                      onClick={() => loadProcessData(activeRunId)}
+                      className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"
+                      title="Refresh process"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setProcessOpen(false)}
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                    title="Close panel"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
 
-          {!activeRunId ? (
-            <div className="p-4 text-sm text-gray-500">
-              Send a message, then open process for that agent call.
-            </div>
-          ) : processLoading ? (
-            <div className="flex items-center gap-2 text-sm text-gray-500 p-4">
-              <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
-              Loading process details...
-            </div>
-          ) : processError ? (
-            <div className="p-4 text-sm text-red-600">{processError}</div>
-          ) : (
-            <ProcessPanelContent
-              processInsights={processInsights}
-            />
-          )}
-        </div>
-      )}
+            {isBuild ? (
+              <ArtifactsPanel artifacts={artifacts} />
+            ) : !activeRunId ? (
+              <div className="p-4 text-sm text-gray-500">
+                Send a message, then open process for that agent call.
+              </div>
+            ) : processLoading ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500 p-4">
+                <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
+                Loading process details...
+              </div>
+            ) : processError ? (
+              <div className="p-4 text-sm text-red-600">{processError}</div>
+            ) : (
+              <ProcessPanelContent
+                processInsights={processInsights}
+              />
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

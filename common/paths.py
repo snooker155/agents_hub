@@ -9,6 +9,7 @@ AGENTS_HUB_ROOT = PROJECT_ROOT / ".agents_hub"
 WORKSPACES_ROOT = AGENTS_HUB_ROOT / "workspaces"
 TASKS_FILE = AGENTS_HUB_ROOT / "tasks.json"
 PROJECTS_FILE = AGENTS_HUB_ROOT / "projects.json"
+PROCEDURES_FILE = AGENTS_HUB_ROOT / "procedures.json"
 SHARED_MEMORY_FILE = AGENTS_HUB_ROOT / "shared_memory.json"
 EPISODES_DIR = AGENTS_HUB_ROOT / "episodes"
 GRAPHS_DIR = AGENTS_HUB_ROOT / "graphs"
@@ -23,11 +24,6 @@ def pool_episodes_file(pool_id: str) -> Path:
 def pool_graph_file(pool_id: str) -> Path:
     """Return the graph.json path for a specific shared-memory pool."""
     return GRAPHS_DIR / f"{pool_id}.json"
-
-
-def workspace_procedures_file(workspace: str) -> Path:
-    """Return the procedures.json path for a specific workspace."""
-    return WORKSPACES_ROOT / workspace / "procedures.json"
 
 
 def workspace_knowledge_dir(workspace: str) -> Path:

@@ -4,7 +4,7 @@ First-run state bootstrap.
 When the runtime state directory (`.agents_hub/`) is empty or missing key
 pieces, seed it from the repo-shipped `bootstrap/` folder so the system starts
 with the predefined default workspace and core agents (orchestrator,
-agent_flows, decomposer).
+agent_creator, decomposer).
 
 Existing state is never overwritten — bootstrap is per-entity additive:
 - `.agents_hub/agents.json` is copied from `bootstrap/agents.json` only when

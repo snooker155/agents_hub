@@ -11,7 +11,7 @@ from filelock import FileLock
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 
-from common.paths import WORKSPACES_ROOT
+from common.paths import AGENTS_HUB_ROOT, WORKSPACES_ROOT, ensure_agents_hub_root
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -48,26 +48,104 @@ def _json_default(o: Any) -> Any:
     raise TypeError(f"Object of type {type(o)!r} is not JSON serializable")
 
 
-def _workspace_procedures_path(workspace: str) -> Path:
-    return WORKSPACES_ROOT / workspace / "procedures.json"
+# Canonical single-file location, parallel to tasks.json / projects.json.
+_PROCEDURES_FILE = AGENTS_HUB_ROOT / "procedures.json"
+_PROCEDURES_LOCK = AGENTS_HUB_ROOT / "procedures.json.lock"
+
+_LEGACY_MIGRATED = False
+
+
+def _migrate_legacy_files() -> None:
+    """One-shot: merge any per-workspace procedures.json files into the new single file.
+
+    Each old file lives at .agents_hub/workspaces/<ws>/procedures.json and is a
+    list of Procedure records. We append unique-by-id records to the new file,
+    then rename each legacy file to procedures.json.migrated.bak so a second
+    boot doesn't re-import them.
+    """
+    global _LEGACY_MIGRATED
+    if _LEGACY_MIGRATED:
+        return
+    _LEGACY_MIGRATED = True
+
+    if not WORKSPACES_ROOT.exists():
+        return
+
+    ensure_agents_hub_root()
+
+    legacy_files = list(WORKSPACES_ROOT.glob("*/procedures.json"))
+    if not legacy_files:
+        return
+
+    with FileLock(str(_PROCEDURES_LOCK), timeout=10.0):
+        existing: list[dict] = []
+        if _PROCEDURES_FILE.exists():
+            try:
+                text = _PROCEDURES_FILE.read_text(encoding="utf-8")
+                if text.strip():
+                    existing = json.loads(text) or []
+            except Exception:
+                existing = []
+        seen_ids = {str(r.get("id")) for r in existing if r.get("id")}
+
+        merged_any = False
+        for legacy in legacy_files:
+            try:
+                text = legacy.read_text(encoding="utf-8")
+                records = json.loads(text) if text.strip() else []
+            except Exception:
+                records = []
+            if not isinstance(records, list):
+                continue
+            workspace_name = legacy.parent.name
+            for rec in records:
+                if not isinstance(rec, dict):
+                    continue
+                # Old records may not carry `workspace` — backfill from folder name.
+                rec.setdefault("workspace", workspace_name)
+                rid = str(rec.get("id") or "")
+                if rid and rid in seen_ids:
+                    continue
+                if rid:
+                    seen_ids.add(rid)
+                existing.append(rec)
+                merged_any = True
+
+            try:
+                legacy.rename(legacy.with_suffix(legacy.suffix + ".migrated.bak"))
+            except Exception:
+                pass
+
+        if merged_any or not _PROCEDURES_FILE.exists():
+            tmp = _PROCEDURES_FILE.with_suffix(_PROCEDURES_FILE.suffix + ".tmp")
+            tmp.write_text(
+                json.dumps(existing, ensure_ascii=False, indent=2, default=_json_default) + "\n",
+                encoding="utf-8",
+            )
+            tmp.replace(_PROCEDURES_FILE)
 
 
 class ProcedureStore:
-    """File-based store for Procedure objects, scoped to a workspace."""
+    """File-based store for Procedure objects.
+
+    All procedures live in a single file at .agents_hub/procedures.json. The
+    `workspace` argument is retained on the constructor so call sites stay
+    unchanged — internally it's used to filter records on read and to stamp
+    the `workspace` field on writes.
+    """
 
     def __init__(self, workspace: str):
         self.workspace = workspace
-        self.path = _workspace_procedures_path(workspace)
-        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = _PROCEDURES_FILE
+        self.lock_path = _PROCEDURES_LOCK
+        ensure_agents_hub_root()
+        _migrate_legacy_files()
         if not self.path.exists():
-            self._atomic_write([])
+            self._atomic_write_all([])
 
-    def load(self, timeout: float = 10.0) -> List[Procedure]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            return self._load_unlocked()
+    # ── unfiltered I/O (operates on the whole file) ─────────────────────────
 
-    def _load_unlocked(self) -> List[Procedure]:
+    def _load_all_unlocked(self) -> List[Procedure]:
         try:
             text = self.path.read_text(encoding="utf-8")
             if not text.strip():
@@ -76,9 +154,30 @@ class ProcedureStore:
         except Exception:
             return []
 
-    def save(self, procedures: Sequence[Procedure], timeout: float = 10.0) -> None:
+    def _atomic_write_all(self, payload: Iterable[dict]) -> None:
+        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
+        text = json.dumps(list(payload), ensure_ascii=False, indent=2, default=_json_default)
+        tmp_path.write_text(text + "\n", encoding="utf-8")
+        tmp_path.replace(self.path)
+
+    # ── workspace-scoped API ────────────────────────────────────────────────
+
+    def load(self, timeout: float = 10.0) -> List[Procedure]:
+        """Return procedures belonging to this workspace."""
         with FileLock(str(self.lock_path), timeout=timeout):
-            self._atomic_write([p.model_dump() for p in procedures])
+            return [p for p in self._load_all_unlocked() if p.workspace == self.workspace]
+
+    def save(self, procedures: Sequence[Procedure], timeout: float = 10.0) -> None:
+        """Replace this workspace's procedures with the given list (other workspaces untouched)."""
+        with FileLock(str(self.lock_path), timeout=timeout):
+            others = [p for p in self._load_all_unlocked() if p.workspace != self.workspace]
+            # Make sure incoming records are stamped with the right workspace.
+            stamped = []
+            for p in procedures:
+                if p.workspace != self.workspace:
+                    p = p.model_copy(update={"workspace": self.workspace})
+                stamped.append(p)
+            self._atomic_write_all([p.model_dump() for p in (others + stamped)])
 
     def get(self, procedure_id: UUID | str, timeout: float = 10.0) -> Optional[Procedure]:
         pid = str(procedure_id)
@@ -88,38 +187,39 @@ class ProcedureStore:
         return None
 
     def add(self, procedure: Procedure, timeout: float = 10.0) -> Procedure:
+        if procedure.workspace != self.workspace:
+            procedure = procedure.model_copy(update={"workspace": self.workspace})
         with FileLock(str(self.lock_path), timeout=timeout):
-            procedures = self._load_unlocked()
-            procedures.append(procedure)
-            self._atomic_write([p.model_dump() for p in procedures])
+            all_procs = self._load_all_unlocked()
+            all_procs.append(procedure)
+            self._atomic_write_all([p.model_dump() for p in all_procs])
         return procedure
 
     def update(self, procedure: Procedure, timeout: float = 10.0) -> bool:
         pid = str(procedure.id)
+        if procedure.workspace != self.workspace:
+            procedure = procedure.model_copy(update={"workspace": self.workspace})
         with FileLock(str(self.lock_path), timeout=timeout):
-            procedures = self._load_unlocked()
-            for i, p in enumerate(procedures):
-                if str(p.id) == pid:
-                    procedures[i] = procedure
-                    self._atomic_write([p.model_dump() for p in procedures])
+            all_procs = self._load_all_unlocked()
+            for i, p in enumerate(all_procs):
+                if str(p.id) == pid and p.workspace == self.workspace:
+                    all_procs[i] = procedure
+                    self._atomic_write_all([pp.model_dump() for pp in all_procs])
                     return True
         return False
 
     def delete(self, procedure_id: UUID | str, timeout: float = 10.0) -> bool:
         pid = str(procedure_id)
         with FileLock(str(self.lock_path), timeout=timeout):
-            procedures = self._load_unlocked()
-            new_list = [p for p in procedures if str(p.id) != pid]
-            if len(new_list) == len(procedures):
+            all_procs = self._load_all_unlocked()
+            new_list = [
+                p for p in all_procs
+                if not (str(p.id) == pid and p.workspace == self.workspace)
+            ]
+            if len(new_list) == len(all_procs):
                 return False
-            self._atomic_write([p.model_dump() for p in new_list])
+            self._atomic_write_all([p.model_dump() for p in new_list])
             return True
-
-    def _atomic_write(self, payload: Iterable[dict]) -> None:
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        text = json.dumps(list(payload), ensure_ascii=False, indent=2, default=_json_default)
-        tmp_path.write_text(text + "\n", encoding="utf-8")
-        tmp_path.replace(self.path)
 
 
 # ── Relevance matching ────────────────────────────────────────────────────────
@@ -280,10 +380,25 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
     # get_skill ────────────────────────────────────────────────────────────────
 
     class GetSkillInput(BaseModel):
-        name: str = Field(..., description="Name of the skill to retrieve (as listed in your system prompt)")
+        # Tolerant on purpose: some models call get_skill with a missing/empty
+        # argument. Accepting an optional value lets us return a helpful JSON
+        # error from the function body instead of raising a Pydantic
+        # ValidationError that bubbles up and aborts the run.
+        name: Optional[str] = Field(
+            None, description="Name of the skill to retrieve (as listed in your system prompt)"
+        )
 
-    def _get_skill(name: str) -> str:
+    def _get_skill(name: Optional[str] = None) -> str:
         try:
+            if not name or not str(name).strip():
+                available = [
+                    p.name for p in ProcedureStore(workspace).load() if p.agent_id == agent_id
+                ]
+                return json.dumps({
+                    "ok": False,
+                    "error": "get_skill requires a non-empty 'name' argument.",
+                    "available": available,
+                })
             store = ProcedureStore(workspace)
             agent_procedures = [p for p in store.load() if p.agent_id == agent_id]
             target = name.strip().lower()

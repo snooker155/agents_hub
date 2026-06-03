@@ -638,6 +638,18 @@ def create_agent_tool(
         from agents import prompt_assembly
         prompt_assembly.write_instructions(agent_id, system_prompt)
 
+        # Resolve the active workspace so the new agent is owned by — and only
+        # visible in — the workspace it was created from (unless later shared).
+        active_ws: Optional[str] = None
+        try:
+            from common.orchestrator_context import resolve_active_workspace
+            from workspace import get_workspace_folder
+            ws = resolve_active_workspace()
+            if ws and ws != "default" and get_workspace_folder(ws):
+                active_ws = ws
+        except Exception:
+            active_ws = None
+
         spec = AgentSpec(
             id=agent_id,
             name=name,
@@ -648,15 +660,71 @@ def create_agent_tool(
             tools=tools,
             capacity=capacity,
             default_params={},
+            owner_workspace=active_ws,
         )
         reg_add_agent(spec)
-        return _json_ok({"agent": spec.to_dict(), "message": f"Agent '{name}' created successfully"})
+
+        # Auto-register the new agent in the owning workspace's allowed_agents
+        # so it shows up immediately in the workspace UI. Falls back silently
+        # when no workspace context is set (e.g. CLI invocation).
+        added_to_workspace: Optional[str] = None
+        try:
+            from workspace import (
+                get_workspace_metadata,
+                update_workspace_metadata,
+            )
+            if active_ws:
+                meta = get_workspace_metadata(active_ws)
+                allowed = list(meta.get("allowed_agents") or [])
+                if agent_id not in allowed:
+                    allowed.append(agent_id)
+                    update_workspace_metadata(active_ws, {"allowed_agents": allowed})
+                added_to_workspace = active_ws
+        except Exception:
+            # Workspace association is best-effort; the agent itself is created.
+            pass
+
+        payload = {"agent": spec.to_dict(), "message": f"Agent '{name}' created successfully"}
+        if added_to_workspace:
+            payload["workspace"] = added_to_workspace
+            payload["message"] = (
+                f"Agent '{name}' created and added to workspace '{added_to_workspace}'"
+            )
+        return _json_ok(payload)
     except Exception as e:
         return _json_err(f"Failed to create agent: {e}")
 
 
 class GetAgentInput(BaseModel):
     agent_id: str = Field(..., min_length=1, description="ID of the agent to retrieve")
+
+
+class ModifyAgentInput(BaseModel):
+    agent_id: str = Field(..., min_length=1, description="ID of the existing agent to modify")
+    name: Optional[str] = Field(None, description="New human-readable display name")
+    description: Optional[str] = Field(None, description="New agent description")
+    domain: Optional[str] = Field(None, description="New domain")
+    system_prompt: Optional[str] = Field(
+        None,
+        description="Behavior changes to merge into instructions.md. Existing instructions are preserved unless replace_system_prompt is true.",
+    )
+    replace_system_prompt: bool = Field(False, description="When true, system_prompt replaces instructions.md instead of appending a behavior update")
+    capabilities: Optional[str] = Field(None, description="Replacement capabilities.md content; empty string deletes the file")
+    usage: Optional[str] = Field(None, description="Replacement usage.md content; empty string deletes the file")
+    tools: Optional[List[str]] = Field(None, description="Replacement list of tool IDs")
+    capacity: Optional[int] = Field(None, ge=1, description="New max concurrent sessions")
+    memory_type: Optional[str] = Field(None, description="Memory type: none, local, or shared")
+    memory_data: Optional[Any] = Field(None, description="Memory payload, such as a shared memory pool id")
+    skills_enabled: Optional[bool] = Field(None, description="Enable or disable procedural skills for this agent")
+    provider: Optional[str] = Field(None, description="Model provider override; empty string clears")
+    model: Optional[str] = Field(None, description="Model override; empty string clears")
+    base_url: Optional[str] = Field(None, description="Provider base URL override; empty string clears")
+    temperature: Optional[float] = Field(None, description="Temperature override")
+    max_tokens: Optional[int] = Field(None, ge=1, description="Max tokens override")
+    reasoning: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Reasoning settings, e.g. {'think_enabled': true, 'think_mode': 'deep', 'plan_enabled': true, 'plan_format': 'bullet'}",
+    )
 
 
 @tool("get_agent_tool", args_schema=GetAgentInput)
@@ -666,9 +734,152 @@ def get_agent_tool(agent_id: str) -> str:
         spec = reg_get_agent(agent_id)
         if not spec:
             return _json_err(f"Agent '{agent_id}' not found", code="not_found")
-        return _json_ok({"agent": spec.to_dict()})
+        from agents import prompt_assembly
+        definition = {
+            "instructions": prompt_assembly.read_instructions(agent_id),
+            "capabilities": prompt_assembly.read_capabilities(agent_id),
+            "usage": prompt_assembly.read_usage(agent_id),
+        }
+        return _json_ok({"agent": spec.to_dict(), "definition": definition})
     except Exception as e:
         return _json_err(f"Failed to get agent: {e}")
+
+
+@tool("modify_agent_tool", args_schema=ModifyAgentInput)
+def modify_agent_tool(
+    agent_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    domain: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    replace_system_prompt: bool = False,
+    capabilities: Optional[str] = None,
+    usage: Optional[str] = None,
+    tools: Optional[List[str]] = None,
+    capacity: Optional[int] = None,
+    memory_type: Optional[str] = None,
+    memory_data: Optional[Any] = None,
+    skills_enabled: Optional[bool] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    reasoning: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Modify an existing agent's behavior and configuration.
+
+    Updates only fields that are provided. The main behavior prompt lives in
+    ``instructions.md``. By default, ``system_prompt`` is appended as a behavior
+    update so existing suitable instructions remain intact; set
+    ``replace_system_prompt`` to true for a full rewrite.
+    """
+    try:
+        spec = reg_get_agent(agent_id)
+        if not spec:
+            return _json_err(f"Agent '{agent_id}' not found", code="not_found")
+
+        changed: List[str] = []
+
+        from agents import prompt_assembly
+        folder = prompt_assembly.agent_dir(agent_id)
+
+        if system_prompt is not None:
+            update_text = system_prompt.strip()
+            if not update_text:
+                return _json_err("system_prompt cannot be empty", code="invalid")
+            current_instructions = prompt_assembly.read_instructions(agent_id)
+            if replace_system_prompt or not current_instructions.strip():
+                next_instructions = update_text
+            else:
+                marker = "## Behavior Updates"
+                if marker in current_instructions:
+                    next_instructions = current_instructions.rstrip() + "\n\n" + update_text
+                else:
+                    next_instructions = (
+                        current_instructions.rstrip()
+                        + "\n\n"
+                        + marker
+                        + "\n\n"
+                        + update_text
+                    )
+            prompt_assembly.write_instructions(agent_id, next_instructions)
+            changed.append("instructions")
+
+        if capabilities is not None:
+            path = folder / prompt_assembly.CAPABILITIES_FILE
+            if capabilities.strip():
+                prompt_assembly.write_capabilities(agent_id, capabilities)
+                changed.append("capabilities")
+            elif path.exists():
+                path.unlink()
+                changed.append("capabilities")
+
+        if usage is not None:
+            path = folder / prompt_assembly.USAGE_FILE
+            if usage.strip():
+                prompt_assembly.write_usage(agent_id, usage)
+                changed.append("usage")
+            elif path.exists():
+                path.unlink()
+                changed.append("usage")
+
+        def _blank_to_none(value: Optional[str]) -> Optional[str]:
+            if value is None:
+                return None
+            stripped = value.strip()
+            return stripped or None
+
+        new_spec = AgentSpec(
+            id=spec.id,
+            name=name.strip() if name is not None and name.strip() else spec.name,
+            type=spec.type,
+            entrypoint=spec.entrypoint,
+            description=description if description is not None else spec.description,
+            domain=domain.strip() if domain is not None and domain.strip() else spec.domain,
+            default_params=dict(spec.default_params or {}),
+            tools=list(tools) if tools is not None else list(spec.tools or []),
+            commands=list(spec.commands or []),
+            capacity=int(capacity) if capacity is not None else spec.capacity,
+            memory_type=memory_type if memory_type is not None else spec.memory_type,
+            memory_data=memory_data if memory_data is not None else spec.memory_data,
+            default_workspace_only=spec.default_workspace_only,
+            owner_workspace=spec.owner_workspace,
+            shared=spec.shared,
+            provider=_blank_to_none(provider) if provider is not None else spec.provider,
+            model=_blank_to_none(model) if model is not None else spec.model,
+            base_url=_blank_to_none(base_url) if base_url is not None else spec.base_url,
+            temperature=temperature if temperature is not None else spec.temperature,
+            max_tokens=int(max_tokens) if max_tokens is not None else spec.max_tokens,
+            api_key=spec.api_key,
+            verbose=spec.verbose,
+            streaming=spec.streaming,
+            http_expose=spec.http_expose,
+            http_port=spec.http_port,
+            http_host_port=spec.http_host_port,
+            node_type=spec.node_type,
+            is_default_chat_agent=spec.is_default_chat_agent,
+            skills_enabled=bool(skills_enabled) if skills_enabled is not None else spec.skills_enabled,
+            reasoning=dict(reasoning) if reasoning is not None else dict(spec.reasoning or {}),
+        )
+
+        before = spec.to_dict()
+        reg_add_agent(new_spec)
+        after = new_spec.to_dict()
+        for key in ("name", "description", "domain", "tools", "capacity", "memory_type", "memory_data", "skills_enabled", "provider", "model", "base_url", "temperature", "max_tokens", "reasoning"):
+            if before.get(key) != after.get(key):
+                changed.append(key)
+
+        if not changed:
+            return _json_ok({"agent": after, "message": f"Agent '{agent_id}' unchanged"})
+
+        return _json_ok({
+            "agent": after,
+            "changed": sorted(set(changed)),
+            "message": f"Agent '{agent_id}' modified successfully",
+        })
+    except Exception as e:
+        return _json_err(f"Failed to modify agent: {e}")
 
 
 class DeleteAgentInput(BaseModel):
@@ -682,7 +893,7 @@ def delete_agent_tool(agent_id: str) -> str:
     Removes both the agents.json entry and the markdown definition folder.
     """
     try:
-        protected = {"orchestrator", "decomposer", "agent_flows"}
+        protected = {"orchestrator", "decomposer", "agent_creator"}
         if agent_id in protected:
             return _json_err(f"Agent '{agent_id}' is a system agent and cannot be deleted", code="forbidden")
         removed = reg_remove_agent(agent_id)
@@ -713,5 +924,6 @@ __all__ = [
     "wait_for_agent_tool",
     "create_agent_tool",
     "get_agent_tool",
+    "modify_agent_tool",
     "delete_agent_tool",
 ]

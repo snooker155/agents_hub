@@ -9,10 +9,48 @@ from agents import registry, run_manager
 from agents.agent_factory import get_factory
 from agents import prompt_assembly
 from tools.registry import get_all_tools
-from models import AgentCreateCustom, AgentMemoryUpdate, AgentToolsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentSkillCreate
+from models import AgentCreateCustom, AgentMemoryUpdate, AgentToolsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentSkillCreate, AgentSharingUpdate
+from workspace import SYSTEM_AGENT_IDS, get_workspace_metadata, update_workspace_metadata, create_workspace_folder
 
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+
+def _workspace_for_chat_default(workspace: Optional[str]) -> str:
+    return (workspace or "default").strip() or "default"
+
+
+def _get_workspace_default_chat_agent(workspace: Optional[str]) -> Optional[str]:
+    metadata = get_workspace_metadata(_workspace_for_chat_default(workspace))
+    value = metadata.get("default_chat_agent")
+    return str(value).strip() if value else None
+
+
+def _set_workspace_default_chat_agent(workspace: Optional[str], agent_id: Optional[str]) -> None:
+    ws_name = _workspace_for_chat_default(workspace)
+    create_workspace_folder(ws_name)
+    update_workspace_metadata(ws_name, {"default_chat_agent": agent_id or None})
+
+
+def _agent_visible_in_workspace(agent: dict, workspace: Optional[str]) -> bool:
+    """Return True if the agent should be visible in the given workspace.
+
+    Rules:
+    - System agents are visible everywhere.
+    - Shared agents (exposed across workspaces) are visible everywhere.
+    - An agent owned by a workspace is visible only in that workspace, unless
+      it is shared.
+    - Agents with no owner_workspace (legacy / globally available) are visible
+      everywhere.
+    """
+    if agent.get("system") or agent.get("id") in SYSTEM_AGENT_IDS:
+        return True
+    if agent.get("shared"):
+        return True
+    owner = agent.get("owner_workspace")
+    if not owner:
+        return True
+    return owner == (workspace or "default")
 
 
 @router.get("")
@@ -34,22 +72,40 @@ async def list_agents(workspace: Optional[str] = None):
             all_agents.append(fa)
 
     # Filter by workspace
+    from workspace import SYSTEM_AGENT_IDS as _SYS_IDS
+
+    # Workspace-ownership visibility: a workspace-owned agent that is not shared
+    # only appears in its owning workspace. Applies to every workspace,
+    # including 'default'. System agents are always visible.
+    all_agents = [a for a in all_agents if _agent_visible_in_workspace(a, workspace)]
+
     if workspace and workspace != "default":
         from workspace import get_workspace_metadata
         metadata = get_workspace_metadata(workspace)
         allowed = metadata.get("allowed_agents")
         if allowed is not None:
-            all_agents = [a for a in all_agents if a["id"] in allowed]
+            all_agents = [
+                a for a in all_agents
+                if a["id"] in allowed
+                or a["id"] in _SYS_IDS
+                # An agent owned by this workspace is always available here even
+                # if it was never explicitly added to allowed_agents.
+                or a.get("owner_workspace") == workspace
+            ]
         # Always hide default-workspace-only agents from non-default workspaces
+        # (system agents are never default_workspace_only).
         all_agents = [a for a in all_agents if not a.get("default_workspace_only", False)]
 
     # Annotate each agent with whether it has a running node in the requested workspace
+    # and flag system agents that cannot be removed.
     from agents.node_manager import get_running_nodes_for_agent
     for agent in all_agents:
         running_nodes = get_running_nodes_for_agent(agent["id"])
         if workspace and workspace != "default":
             running_nodes = [n for n in running_nodes if n.get("workspace") == workspace]
         agent["has_running_node"] = len(running_nodes) > 0
+        agent["system"] = agent["id"] in _SYS_IDS
+        agent["is_default_chat_agent"] = agent["id"] == _get_workspace_default_chat_agent(workspace)
 
     return all_agents
 
@@ -79,11 +135,15 @@ async def list_tools():
 
 
 @router.get("/{agent_id}")
-async def get_agent_details(agent_id: str):
+async def get_agent_details(agent_id: str, workspace: Optional[str] = None):
+    from workspace import is_system_agent
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return spec.to_dict()
+    data = spec.to_dict()
+    data["system"] = is_system_agent(agent_id)
+    data["is_default_chat_agent"] = agent_id == _get_workspace_default_chat_agent(workspace)
+    return data
 
 
 @router.get("/{agent_id}/definition")
@@ -226,6 +286,12 @@ async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: in
 @router.delete("/{agent_id}")
 async def delete_agent(agent_id: str):
     """Delete an agent: remove the JSON entry and the markdown folder."""
+    from workspace import is_system_agent
+    if is_system_agent(agent_id):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Agent '{agent_id}' is a system agent and cannot be deleted.",
+        )
     found = registry.remove_agent(agent_id)
     if not found:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -253,6 +319,8 @@ async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
         memory_type=data.memory_type,
         memory_data=data.memory_data,
         default_workspace_only=spec.default_workspace_only,
+        owner_workspace=spec.owner_workspace,
+        shared=spec.shared,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
@@ -285,6 +353,8 @@ async def erase_agent_memory(agent_id: str):
         memory_type="none",
         memory_data=None,
         default_workspace_only=spec.default_workspace_only,
+        owner_workspace=spec.owner_workspace,
+        shared=spec.shared,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
@@ -319,6 +389,8 @@ async def update_agent_skills_config(agent_id: str, data: AgentSkillsConfigUpdat
         memory_data=spec.memory_data,
         skills_enabled=data.skills_enabled,
         default_workspace_only=spec.default_workspace_only,
+        owner_workspace=spec.owner_workspace,
+        shared=spec.shared,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
@@ -423,6 +495,8 @@ async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
         memory_type=spec.memory_type,
         memory_data=spec.memory_data,
         default_workspace_only=spec.default_workspace_only,
+        owner_workspace=spec.owner_workspace,
+        shared=spec.shared,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
@@ -443,8 +517,11 @@ async def get_agent_reasoning(agent_id: str):
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
     r = spec.reasoning or {}
+    tools = set(spec.tools or [])
     return {
+        "think_enabled": bool(r.get("think_enabled", "think" in tools)),
         "think_mode": r.get("think_mode", "standard"),
+        "plan_enabled": bool(r.get("plan_enabled", "plan" in tools)),
         "plan_format": r.get("plan_format", "structured"),
     }
 
@@ -456,8 +533,12 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
         raise HTTPException(status_code=404, detail="Agent not found")
 
     current = dict(spec.reasoning or {})
+    if data.think_enabled is not None:
+        current["think_enabled"] = data.think_enabled
     if data.think_mode is not None:
         current["think_mode"] = data.think_mode
+    if data.plan_enabled is not None:
+        current["plan_enabled"] = data.plan_enabled
     if data.plan_format is not None:
         current["plan_format"] = data.plan_format
 
@@ -474,6 +555,8 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
         memory_type=spec.memory_type,
         memory_data=spec.memory_data,
         default_workspace_only=spec.default_workspace_only,
+        owner_workspace=spec.owner_workspace,
+        shared=spec.shared,
         provider=spec.provider,
         model=spec.model,
         base_url=spec.base_url,
@@ -482,12 +565,20 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
         api_key=spec.api_key,
         verbose=spec.verbose,
         streaming=spec.streaming,
+        http_expose=spec.http_expose,
+        http_port=spec.http_port,
+        http_host_port=spec.http_host_port,
+        node_type=spec.node_type,
         is_default_chat_agent=spec.is_default_chat_agent,
+        skills_enabled=spec.skills_enabled,
         reasoning=current,
     )
     registry.add_agent(new_spec)
+    _tools = set(spec.tools or [])
     return {
+        "think_enabled": bool(current.get("think_enabled", "think" in _tools)),
         "think_mode": current.get("think_mode", "standard"),
+        "plan_enabled": bool(current.get("plan_enabled", "plan" in _tools)),
         "plan_format": current.get("plan_format", "structured"),
     }
 
@@ -567,6 +658,8 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
         memory_type=spec.memory_type,
         memory_data=spec.memory_data,
         default_workspace_only=spec.default_workspace_only,
+        owner_workspace=spec.owner_workspace,
+        shared=spec.shared,
         provider=new_provider,
         model=new_model,
         base_url=new_base_url,
@@ -596,26 +689,36 @@ async def health_agent(agent_id: str):
 
 
 @router.post("/{agent_id}/set-default-chat")
-async def set_default_chat_agent(agent_id: str):
-    """Set this agent as the default pre-selected agent in the Chat page."""
+async def set_default_chat_agent(agent_id: str, workspace: Optional[str] = None):
+    """Set this agent as the workspace default pre-selected agent in the Chat page."""
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    try:
-        registry.set_default_chat_agent(agent_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"default_chat_agent": agent_id}
+
+    ws_name = _workspace_for_chat_default(workspace)
+    metadata = get_workspace_metadata(ws_name)
+    allowed = metadata.get("allowed_agents")
+    if allowed is not None and agent_id not in allowed and agent_id not in SYSTEM_AGENT_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Agent '{agent_id}' is not available in workspace '{ws_name}'",
+        )
+
+    _set_workspace_default_chat_agent(ws_name, agent_id)
+    return {"workspace": ws_name, "default_chat_agent": agent_id}
 
 
 @router.delete("/{agent_id}/set-default-chat")
-async def clear_default_chat_agent(agent_id: str):
-    """Remove the default chat agent flag from this agent."""
+async def clear_default_chat_agent(agent_id: str, workspace: Optional[str] = None):
+    """Clear this workspace's default chat agent when it matches this agent."""
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    registry.clear_default_chat_agent()
-    return {"default_chat_agent": None}
+
+    ws_name = _workspace_for_chat_default(workspace)
+    if _get_workspace_default_chat_agent(ws_name) == agent_id:
+        _set_workspace_default_chat_agent(ws_name, None)
+    return {"workspace": ws_name, "default_chat_agent": _get_workspace_default_chat_agent(ws_name)}
 
 
 @router.post("/create")
@@ -632,6 +735,12 @@ async def create_custom_agent(data: AgentCreateCustom):
         data.id, data.system_prompt, definitions_dir=factory.definitions_dir
     )
 
+    # Agents created inside a (non-default) workspace are owned by — and only
+    # visible in — that workspace until they are explicitly shared.
+    owner_workspace = (data.workspace or "").strip() or None
+    if owner_workspace == "default":
+        owner_workspace = None
+
     spec = registry.AgentSpec(
         id=data.id,
         name=data.name,
@@ -641,9 +750,72 @@ async def create_custom_agent(data: AgentCreateCustom):
         entrypoint="agents.agent_factory:build_agent_executor",
         tools=data.tools,
         capacity=data.capacity,
+        owner_workspace=owner_workspace,
     )
     try:
         registry.add_agent(spec)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Register the new agent in its owning workspace's allowed_agents so it shows
+    # up immediately in that workspace's UI.
+    if owner_workspace:
+        try:
+            create_workspace_folder(owner_workspace)
+            metadata = get_workspace_metadata(owner_workspace)
+            allowed = list(metadata.get("allowed_agents") or [])
+            if data.id not in allowed:
+                allowed.append(data.id)
+                update_workspace_metadata(owner_workspace, {"allowed_agents": allowed})
+        except Exception:
+            # Best-effort; the agent itself is created and owner_workspace is set.
+            pass
+
     return spec.to_dict()
+
+
+@router.post("/{agent_id}/sharing")
+async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
+    """Expose or un-expose an agent across workspaces.
+
+    When ``shared`` is True the agent becomes visible in (and addable to) every
+    workspace. When False it reverts to being visible only in its owning
+    workspace (``owner_workspace``).
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    new_spec = registry.AgentSpec(
+        id=spec.id,
+        name=spec.name,
+        type=spec.type,
+        entrypoint=spec.entrypoint,
+        description=spec.description,
+        domain=spec.domain,
+        tools=spec.tools,
+        commands=spec.commands,
+        capacity=spec.capacity,
+        memory_type=spec.memory_type,
+        memory_data=spec.memory_data,
+        default_workspace_only=spec.default_workspace_only,
+        owner_workspace=spec.owner_workspace,
+        shared=data.shared,
+        provider=spec.provider,
+        model=spec.model,
+        base_url=spec.base_url,
+        temperature=spec.temperature,
+        max_tokens=spec.max_tokens,
+        api_key=spec.api_key,
+        verbose=spec.verbose,
+        streaming=spec.streaming,
+        http_expose=spec.http_expose,
+        http_port=spec.http_port,
+        http_host_port=spec.http_host_port,
+        node_type=spec.node_type,
+        is_default_chat_agent=spec.is_default_chat_agent,
+        skills_enabled=spec.skills_enabled,
+        reasoning=spec.reasoning,
+    )
+    registry.add_agent(new_spec)
+    return new_spec.to_dict()

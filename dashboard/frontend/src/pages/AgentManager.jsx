@@ -19,6 +19,7 @@ import {
   GitBranch,
   Sparkles,
   GripVertical,
+  Lock,
 } from 'lucide-react';
 import {
   getAgents,
@@ -169,7 +170,7 @@ const AgentManager = () => {
     setCreatorDone(false);
     setCreatorError('');
     setCreatorModelInfo(null);
-    getAgentModel('agent_flows')
+    getAgentModel('agent_creator')
       .then(r => setCreatorModelInfo(r.data))
       .catch(() => {});
     setShowWizard(true);
@@ -191,31 +192,13 @@ const AgentManager = () => {
     setCreatorDone(false);
 
     try {
-      // Ensure agent_flows node is running
-      const nodesResp = await getNodes();
-      const running = (nodesResp.data || []).filter(
-        n => n.agent_id === 'agent_flows' && (n.status === 'running' || n.status === 'starting'),
-      );
-      if (running.length === 0) {
-        await startNode({ agent_id: 'agent_flows', workspace: null });
-        // Poll until node is running (max ~6 s)
-        for (let i = 0; i < 6; i++) {
-          await new Promise(r => setTimeout(r, 1000));
-          const poll = await getNodes();
-          const up = (poll.data || []).some(
-            n => n.agent_id === 'agent_flows' && (n.status === 'running' || n.status === 'starting'),
-          );
-          if (up) break;
-        }
-      }
-
       const response = await fetch('http://localhost:8000/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          agent_id: 'agent_flows',
+          agent_id: 'agent_creator',
           message: creatorInput.trim(),
-          workspace: null,
+          workspace: selectedWorkspace || null,
           history: [],
           conversation_id: null,
           conversation_title: null,
@@ -274,8 +257,12 @@ const AgentManager = () => {
         system_prompt: wizardData.system_prompt,
         tools: wizardData.tools,
         capacity: wizardData.capacity,
+        workspace: selectedWorkspace || null,
       });
       const newAgentId = wizardData.id;
+      // The backend already registers the agent in its owning workspace's
+      // allowed_agents when a non-default workspace is passed above; this call
+      // is a no-op safety net for the default workspace.
       if (newAgentId && workspaceFilter) {
         await addAgentToWorkspace(selectedWorkspace, newAgentId);
       }
@@ -516,13 +503,22 @@ const AgentManager = () => {
                       : <Play className="w-3.5 h-3.5 mr-1" />}
                     Start
                   </button>
-                  <button
-                    onClick={() => handleDisconnect(agent.id)}
-                    className="p-1.5 border border-gray-200 text-gray-500 rounded hover:bg-red-50 hover:text-red-600 transition-colors"
-                    title={!selectedWorkspace || selectedWorkspace === 'default' ? 'Delete Agent' : 'Remove from Workspace'}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {agent.system ? (
+                    <span
+                      className="p-1.5 border border-gray-100 text-gray-300 rounded cursor-not-allowed bg-gray-50"
+                      title="System agent — required in every workspace"
+                    >
+                      <Lock className="w-4 h-4" />
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => handleDisconnect(agent.id)}
+                      className="p-1.5 border border-gray-200 text-gray-500 rounded hover:bg-red-50 hover:text-red-600 transition-colors"
+                      title={!selectedWorkspace || selectedWorkspace === 'default' ? 'Delete Agent' : 'Remove from Workspace'}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -803,7 +799,11 @@ const AgentManager = () => {
                       </div>
                     )}
 
-                    <p className="text-xs text-gray-400">Agent Creator runs in the default workspace.</p>
+                    <p className="text-xs text-gray-400">
+                      Agent Creator runs in {selectedWorkspace && selectedWorkspace !== 'default'
+                        ? <span className="font-semibold text-gray-500">{selectedWorkspace}</span>
+                        : 'the default workspace'}.
+                    </p>
                   </div>
                 )}
 

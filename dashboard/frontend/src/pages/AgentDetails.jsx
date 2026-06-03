@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useWorkspace } from '../components/WorkspaceContext';
-import { ChevronLeft, Activity, History, Server, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag } from 'lucide-react';
-import { getAgent, getAgentHistory, getAgentHealth, getAgentLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, getAgentModel, updateAgentModel, getAgentReasoning, updateAgentReasoning, getNodes, getAgentDefinition, updateAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, getDockerfile, buildBaseImage, buildAgentImage, getContainerImages, getContainers, getContainerLogs, stopContainerByName, removeContainer, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSkillsConfig, getAgentSkills, createAgentSkill, deleteAgentSkill } from '../api';
+import { ChevronLeft, Activity, History, Server, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock } from 'lucide-react';
+import { getAgent, getAgentHistory, getAgentHealth, getAgentLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, getAgentModel, updateAgentModel, getAgentReasoning, updateAgentReasoning, getNodes, getAgentDefinition, updateAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, getDockerfile, buildBaseImage, buildAgentImage, getContainerImages, getContainers, getContainerLogs, stopContainerByName, removeContainer, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSkillsConfig, getAgentSkills, createAgentSkill, deleteAgentSkill, updateAgentSharing } from '../api';
 
 const NODE_STATUS = {
   running: { dot: 'bg-green-500 animate-pulse', badge: 'bg-green-100 text-green-800', label: 'Running' },
@@ -280,6 +280,7 @@ const AgentDetails = () => {
 
   const [agentDefinition, setAgentDefinition] = useState({ system_prompt: '', instructions: '', capabilities: '', usage: '', source: '', definition_dir: '' });
   const [defDraft, setDefDraft] = useState({ instructions: '', capabilities: '', usage: '' });
+  const defDraftDirty = useRef({ instructions: false, capabilities: false, usage: false });
   const [defSaving, setDefSaving] = useState({ instructions: false, capabilities: false, usage: false });
   const [defError, setDefError] = useState({ instructions: '', capabilities: '', usage: '' });
 
@@ -319,13 +320,18 @@ const AgentDetails = () => {
     { value: 'numbered', label: 'Numbered Steps', desc: 'Ordered numbered checklist' },
     { value: 'freeform', label: 'Free-form', desc: 'Unstructured narrative plan' },
   ];
-  const defaultReasoningSettings = { thinkMode: 'standard', planFormat: 'structured' };
+  const defaultReasoningSettings = { thinkEnabled: false, thinkMode: 'standard', planEnabled: false, planFormat: 'structured' };
   const [reasoningSettings, setReasoningSettings] = useState(defaultReasoningSettings);
 
   // Default chat agent state
   const [isDefaultChat, setIsDefaultChat] = useState(false);
   const [defaultChatSaving, setDefaultChatSaving] = useState(false);
   const [defaultChatMessage, setDefaultChatMessage] = useState('');
+
+  // Workspace sharing (exposure) state
+  const [shared, setShared] = useState(false);
+  const [sharingSaving, setSharingSaving] = useState(false);
+  const [sharingMessage, setSharingMessage] = useState('');
 
   // Workspace capacity overrides state
   const [wsCapacities, setWsCapacities] = useState({});
@@ -505,8 +511,9 @@ const AgentDetails = () => {
 
   const fetchData = async () => {
     try {
+      const defaultChatWorkspace = selectedWorkspace || 'default';
       const [agentResp, historyResp, tasksResp, workspacesResp, wsCapResp, logsResp] = await Promise.all([
-        getAgent(id),
+        getAgent(id, defaultChatWorkspace),
         getAgentHistory(id),
         getTasks(workspaceFilter),
         getWorkspaces(),
@@ -538,15 +545,23 @@ const AgentDetails = () => {
         const definitionResp = await getAgentDefinition(id);
         const def = definitionResp.data || { system_prompt: '', instructions: '', capabilities: '', usage: '', source: '', definition_dir: '' };
         setAgentDefinition(def);
-        setDefDraft({
-          instructions: def.instructions || '',
-          capabilities: def.capabilities || '',
-          usage: def.usage || '',
-        });
-        setDefError({ instructions: '', capabilities: '', usage: '' });
+        setDefDraft(prev => ({
+          instructions: defDraftDirty.current.instructions ? prev.instructions : (def.instructions || ''),
+          capabilities: defDraftDirty.current.capabilities ? prev.capabilities : (def.capabilities || ''),
+          usage: defDraftDirty.current.usage ? prev.usage : (def.usage || ''),
+        }));
+        setDefError(prev => ({
+          instructions: defDraftDirty.current.instructions ? prev.instructions : '',
+          capabilities: defDraftDirty.current.capabilities ? prev.capabilities : '',
+          usage: defDraftDirty.current.usage ? prev.usage : '',
+        }));
       } catch {
         setAgentDefinition({ system_prompt: '', instructions: '', capabilities: '', usage: '', source: '', definition_dir: '' });
-        setDefDraft({ instructions: '', capabilities: '', usage: '' });
+        setDefDraft(prev => ({
+          instructions: defDraftDirty.current.instructions ? prev.instructions : '',
+          capabilities: defDraftDirty.current.capabilities ? prev.capabilities : '',
+          usage: defDraftDirty.current.usage ? prev.usage : '',
+        }));
       }
 
       setLoading(false);
@@ -561,12 +576,14 @@ const AgentDetails = () => {
     if (!liveUpdates) return;
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
-  }, [id, liveUpdates, workspaceFilter]);
+  }, [id, liveUpdates, workspaceFilter, selectedWorkspace]);
 
   useEffect(() => {
     toolsDraftDirty.current = false;
     setToolsMessage('');
     memoryDraftDirty.current = false;
+    defDraftDirty.current = { instructions: false, capabilities: false, usage: false };
+    setDefError({ instructions: '', capabilities: '', usage: '' });
     setModelForm(EMPTY_MODEL);
     setModelMessage('');
     setReasoningSettings(defaultReasoningSettings);
@@ -575,7 +592,12 @@ const AgentDetails = () => {
   // Load reasoning settings from server whenever agent changes
   useEffect(() => {
     getAgentReasoning(id)
-      .then(r => setReasoningSettings({ thinkMode: r.data.think_mode || 'standard', planFormat: r.data.plan_format || 'structured' }))
+      .then(r => setReasoningSettings({
+        thinkEnabled: !!r.data.think_enabled,
+        thinkMode: r.data.think_mode || 'standard',
+        planEnabled: !!r.data.plan_enabled,
+        planFormat: r.data.plan_format || 'structured',
+      }))
       .catch(() => setReasoningSettings(defaultReasoningSettings));
   }, [id]);
 
@@ -672,12 +694,13 @@ const AgentDetails = () => {
     setDefaultChatSaving(true);
     setDefaultChatMessage('');
     try {
+      const defaultChatWorkspace = selectedWorkspace || 'default';
       if (checked) {
-        await setDefaultChatAgent(id);
+        await setDefaultChatAgent(id, defaultChatWorkspace);
         setIsDefaultChat(true);
-        setDefaultChatMessage('Set as default chat agent.');
+        setDefaultChatMessage(`Set as default chat agent for ${defaultChatWorkspace}.`);
       } else {
-        await clearDefaultChatAgent(id);
+        await clearDefaultChatAgent(id, defaultChatWorkspace);
         setIsDefaultChat(false);
         setDefaultChatMessage('Default cleared.');
       }
@@ -686,6 +709,24 @@ const AgentDetails = () => {
       setDefaultChatMessage('Failed to update default chat agent.');
     } finally {
       setDefaultChatSaving(false);
+    }
+  };
+
+  const handleToggleShared = async (checked) => {
+    setSharingSaving(true);
+    setSharingMessage('');
+    try {
+      const resp = await updateAgentSharing(id, checked);
+      setShared(!!resp.data?.shared);
+      setAgent(prev => (prev ? { ...prev, shared: !!resp.data?.shared } : prev));
+      setSharingMessage(checked
+        ? 'Agent is now shared across all workspaces.'
+        : 'Agent is now private to its workspace.');
+      setTimeout(() => setSharingMessage(''), 3000);
+    } catch (e) {
+      setSharingMessage(e.response?.data?.detail || 'Failed to update sharing.');
+    } finally {
+      setSharingSaving(false);
     }
   };
 
@@ -711,6 +752,11 @@ const AgentDetails = () => {
   // Sync skills_enabled from agent spec
   useEffect(() => {
     if (agent) setSkillsEnabled(!!agent.skills_enabled);
+  }, [agent]);
+
+  // Sync shared (workspace exposure) from agent spec
+  useEffect(() => {
+    if (agent) setShared(!!agent.shared);
   }, [agent]);
 
   // Load full pool details whenever the selected pool ID changes
@@ -821,11 +867,12 @@ const AgentDetails = () => {
       const payload = { [field]: defDraft[field] };
       const { data } = await updateAgentDefinition(id, payload);
       setAgentDefinition(data);
-      setDefDraft({
-        instructions: data.instructions || '',
-        capabilities: data.capabilities || '',
-        usage: data.usage || '',
-      });
+      defDraftDirty.current = { ...defDraftDirty.current, [field]: false };
+      setDefDraft(prev => ({
+        instructions: field === 'instructions' ? (data.instructions || '') : prev.instructions,
+        capabilities: field === 'capabilities' ? (data.capabilities || '') : prev.capabilities,
+        usage: field === 'usage' ? (data.usage || '') : prev.usage,
+      }));
     } catch (error) {
       setDefError(prev => ({
         ...prev,
@@ -837,7 +884,14 @@ const AgentDetails = () => {
   };
 
   const handleResetDefinitionField = (field) => {
+    defDraftDirty.current = { ...defDraftDirty.current, [field]: false };
     setDefDraft(prev => ({ ...prev, [field]: agentDefinition[field] || '' }));
+    setDefError(prev => ({ ...prev, [field]: '' }));
+  };
+
+  const handleDefinitionDraftChange = (field, value) => {
+    defDraftDirty.current = { ...defDraftDirty.current, [field]: value !== (agentDefinition[field] || '') };
+    setDefDraft(prev => ({ ...prev, [field]: value }));
     setDefError(prev => ({ ...prev, [field]: '' }));
   };
 
@@ -1087,6 +1141,50 @@ const AgentDetails = () => {
             </div>
           </div>
 
+          {/* ── Workspace Visibility ── */}
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-4">
+              {shared ? <Globe className="w-4 h-4 text-indigo-500" /> : <Lock className="w-4 h-4 text-indigo-500" />}
+              Workspace Visibility
+            </h3>
+            {agent.system ? (
+              <p className="text-sm text-gray-500 flex items-center gap-2">
+                <Globe className="w-4 h-4 text-gray-400" />
+                System agents are available in every workspace and cannot be restricted.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-800">
+                      {shared ? 'Shared across all workspaces' : 'Private to its workspace'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                      {shared
+                        ? 'This agent is exposed and can be added to any workspace.'
+                        : agent.owner_workspace
+                          ? <>This agent is only visible in workspace <span className="font-semibold text-gray-700">{agent.owner_workspace}</span> and cannot be added to others. Enable sharing to expose it everywhere.</>
+                          : 'This agent is not bound to a workspace. Enable sharing to mark it as exposed across all workspaces.'}
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer flex-shrink-0 mt-0.5">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={shared}
+                      disabled={sharingSaving}
+                      onChange={(e) => handleToggleShared(e.target.checked)}
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600" />
+                  </label>
+                </div>
+                {sharingMessage && (
+                  <p className="text-xs text-indigo-600">{sharingMessage}</p>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* ── Tools & Memory stats ── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Tools */}
@@ -1261,7 +1359,7 @@ const AgentDetails = () => {
                 </div>
                 <div>
                   <div className="text-sm font-medium text-gray-800">Default chat agent</div>
-                  <div className="text-xs text-gray-500">Pre-select this agent when opening the Chat page or starting a new conversation.</div>
+                  <div className="text-xs text-gray-500">Pre-select this agent for the current workspace when opening Chat or starting a new conversation.</div>
                 </div>
               </label>
               {defaultChatMessage && (
@@ -1624,7 +1722,7 @@ const AgentDetails = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Think card */}
               {(() => {
-                const enabled = selectedTools.includes('think');
+                const enabled = reasoningSettings.thinkEnabled;
                 return (
                   <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50'}`}>
                     <div className="flex items-start justify-between gap-3 mb-3">
@@ -1639,7 +1737,11 @@ const AgentDetails = () => {
                       </div>
                       <button
                         type="button"
-                        onClick={() => toggleTool('think')}
+                        onClick={() => {
+                          const next = { ...reasoningSettings, thinkEnabled: !enabled };
+                          setReasoningSettings(next);
+                          updateAgentReasoning(id, { think_enabled: next.thinkEnabled }).catch(() => {});
+                        }}
                         className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 ${
                           enabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
@@ -1674,7 +1776,7 @@ const AgentDetails = () => {
 
               {/* Plan card */}
               {(() => {
-                const enabled = selectedTools.includes('plan');
+                const enabled = reasoningSettings.planEnabled;
                 return (
                   <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
                     <div className="flex items-start justify-between gap-3 mb-3">
@@ -1689,7 +1791,11 @@ const AgentDetails = () => {
                       </div>
                       <button
                         type="button"
-                        onClick={() => toggleTool('plan')}
+                        onClick={() => {
+                          const next = { ...reasoningSettings, planEnabled: !enabled };
+                          setReasoningSettings(next);
+                          updateAgentReasoning(id, { plan_enabled: next.planEnabled }).catch(() => {});
+                        }}
                         className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 ${
                           enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
@@ -1722,12 +1828,6 @@ const AgentDetails = () => {
                 );
               })()}
             </div>
-
-            {toolsMessage && REASONING_TOOLS.some(t => selectedTools.includes(t)) && (
-              <div className={`text-xs mt-3 ${toolsMessage === 'Tools updated' ? 'text-green-600' : 'text-red-600'}`}>
-                {toolsMessage}
-              </div>
-            )}
           </div>
 
           {/* ── Regular Tools ── */}
@@ -2060,7 +2160,7 @@ const AgentDetails = () => {
                 </div>
                 <textarea
                   value={draft}
-                  onChange={e => setDefDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                  onChange={e => handleDefinitionDraftChange(key, e.target.value)}
                   spellCheck={false}
                   className="w-full font-mono text-xs bg-gray-900 text-green-300 p-4 rounded-lg min-h-[200px] resize-y border border-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder={required ? 'Required — must contain the system prompt' : 'Optional — leave empty to delete this file'}

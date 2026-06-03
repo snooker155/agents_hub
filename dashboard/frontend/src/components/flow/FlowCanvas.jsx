@@ -18,6 +18,47 @@ const nodeTypes = {
   flowNode: FlowNode,
 };
 
+// Draggable agent palette — rendered inside the Graph tab of the right panel.
+// Dragging an entry onto the canvas drops a new node (see FlowCanvas handleDrop).
+export function AgentPalette({ availableAgents = [] }) {
+  const handleDragStart = (event, agent) => {
+    event.dataTransfer.setData('application/agent-flow', JSON.stringify(agent));
+    event.dataTransfer.effectAllowed = 'move';
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3">
+        <div>
+          <div className="text-sm font-bold text-slate-900">Agents</div>
+          <div className="text-[11px] text-slate-400">Drag onto the canvas to add a node</div>
+        </div>
+        <WandSparkles className="h-4 w-4 shrink-0 text-cyan-600" />
+      </div>
+      <div className="space-y-1.5">
+        {availableAgents.length === 0 ? (
+          <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No agents available in this workspace.
+          </div>
+        ) : (
+          availableAgents.map((agent) => (
+            <button
+              key={agent.id}
+              draggable
+              onDragStart={(event) => handleDragStart(event, agent)}
+              type="button"
+              className="block w-full cursor-grab rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-left transition hover:border-cyan-300 hover:bg-cyan-50 active:cursor-grabbing"
+            >
+              <div className="truncate text-sm font-semibold text-slate-900">{agent.name}</div>
+              <div className="truncate text-[11px] text-slate-400">{agent.domain}</div>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FlowCanvasInner({
   availableAgents,
   nodes,
@@ -52,11 +93,6 @@ function FlowCanvasInner({
         current
       )
     );
-  };
-
-  const handleDragStart = (event, agent) => {
-    event.dataTransfer.setData('application/agent-flow', JSON.stringify(agent));
-    event.dataTransfer.effectAllowed = 'move';
   };
 
   const handleDrop = (event) => {
@@ -94,33 +130,6 @@ function FlowCanvasInner({
 
   return (
     <div className="relative h-full">
-      {/* Floating agent palette */}
-      <aside className="absolute left-4 top-4 z-40 flex max-h-[calc(100%-2rem)] w-48 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-lg backdrop-blur">
-        <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
-          <div>
-            <div className="text-xs font-bold text-slate-900">Agents</div>
-            <div className="text-[10px] text-slate-400">Drag onto canvas</div>
-          </div>
-          <WandSparkles className="h-3.5 w-3.5 shrink-0 text-cyan-600" />
-        </div>
-        <div className="overflow-y-auto p-2">
-          <div className="space-y-1">
-            {availableAgents.map((agent) => (
-              <button
-                key={agent.id}
-                draggable
-                onDragStart={(event) => handleDragStart(event, agent)}
-                type="button"
-                className="block w-full rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-cyan-300 hover:bg-cyan-50"
-              >
-                <div className="truncate text-[11px] font-semibold text-slate-900">{agent.name}</div>
-                <div className="truncate text-[10px] text-slate-400">{agent.domain}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-      </aside>
-
       {/* Canvas */}
       <div
         ref={wrapperRef}
@@ -130,8 +139,8 @@ function FlowCanvasInner({
           setIsOver(true);
         }}
         onDragLeave={() => setIsOver(false)}
-        className={`flow-canvas h-full overflow-hidden rounded-[28px] border ${
-          isOver ? 'border-cyan-400 bg-cyan-50/50' : 'border-slate-200 bg-white'
+        className={`flow-canvas h-full overflow-hidden ${
+          isOver ? 'bg-cyan-50/50' : 'bg-white'
         }`}
       >
         {nodes.length === 0 ? (
@@ -139,7 +148,7 @@ function FlowCanvasInner({
             <Link2 className="h-7 w-7 text-slate-300" />
             <div className="space-y-1">
               <div className="text-sm font-semibold text-slate-900">Drop agents to start</div>
-              <div className="text-sm text-slate-500">Pick agents from the palette on the left.</div>
+              <div className="text-sm text-slate-500">Drag agents from the Graph tab onto the canvas.</div>
             </div>
           </div>
         ) : null}

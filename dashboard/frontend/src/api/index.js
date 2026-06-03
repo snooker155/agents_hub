@@ -15,7 +15,7 @@ export const setTaskWorkspace = (id, payload) => api.post(`/tasks/${id}/workspac
 export const getWorkspaceFiles = (id) => api.get(`/tasks/${id}/workspace-files`);
 
 export const getAgents = (workspace) => api.get('/agents', { params: workspace ? { workspace } : {} });
-export const getAgent = (id) => api.get(`/agents/${id}`);
+export const getAgent = (id, workspace) => api.get(`/agents/${id}`, { params: workspace ? { workspace } : {} });
 export const getAgentHistory = (id) => api.get(`/agents/${id}/history`);
 export const getAgentLogs = (id, params) => api.get(`/agents/${id}/logs`, { params });
 export const getAgentDefinition = (id) => api.get(`/agents/${id}/definition`);
@@ -24,6 +24,7 @@ export const disconnectAgent = (id) => api.delete(`/agents/${id}`);
 export const updateAgentMemory = (id, data) => api.post(`/agents/${id}/memory`, data);
 export const eraseAgentMemory = (id) => api.delete(`/agents/${id}/memory`);
 export const updateAgentSkillsConfig = (id, data) => api.post(`/agents/${id}/skills-config`, data);
+export const updateAgentSharing = (id, shared) => api.post(`/agents/${id}/sharing`, { shared });
 export const getAgentSkills = (id, workspace) => api.get(`/agents/${id}/skills`, { params: { workspace } });
 export const createAgentSkill = (id, data) => api.post(`/agents/${id}/skills`, data);
 export const deleteAgentSkill = (id, skillId, workspace) => api.delete(`/agents/${id}/skills/${skillId}`, { params: { workspace } });
@@ -43,8 +44,10 @@ export const rejectAssignment = (taskId) => api.post(`/tasks/${taskId}/reject-as
 export const stopAgent = (taskId) => api.post(`/tasks/${taskId}/stop-agent`);
 export const getAgentStatus = (taskId) => api.get(`/tasks/${taskId}/agent-status`);
 export const getAgentWorkspaceCapacities = (agentId) => api.get(`/agents/${encodeURIComponent(agentId)}/workspace-capacities`);
-export const setDefaultChatAgent = (agentId) => api.post(`/agents/${encodeURIComponent(agentId)}/set-default-chat`);
-export const clearDefaultChatAgent = (agentId) => api.delete(`/agents/${encodeURIComponent(agentId)}/set-default-chat`);
+export const setDefaultChatAgent = (agentId, workspace) =>
+  api.post(`/agents/${encodeURIComponent(agentId)}/set-default-chat`, null, { params: workspace ? { workspace } : {} });
+export const clearDefaultChatAgent = (agentId, workspace) =>
+  api.delete(`/agents/${encodeURIComponent(agentId)}/set-default-chat`, { params: workspace ? { workspace } : {} });
 export const getTaskExecutionLog = (taskId) => api.get(`/tasks/${taskId}/execution-log`);
 export const getTaskActivityLog = (taskId) => api.get(`/tasks/${taskId}/activity-log`);
 export const getTaskResult = (taskId) => api.get(`/tasks/${taskId}/result`);
@@ -75,6 +78,16 @@ export const getWorkspace = (name) => api.get(`/workspaces/${encodeURIComponent(
 export const getWorkspaceFilesByName = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/files`);
 export const getWorkspaceFileContent = (name, path) =>
   api.get(`/workspaces/${encodeURIComponent(name)}/file-content`, { params: { path } });
+export const getWorkspaceFileRawUrl = (name, path) =>
+  `${api.defaults.baseURL}/workspaces/${encodeURIComponent(name)}/file-raw?path=${encodeURIComponent(path)}`;
+export const deleteWorkspaceFile = (name, path) =>
+  api.delete(`/workspaces/${encodeURIComponent(name)}/files`, { params: { path } });
+export const uploadWorkspaceFile = (name, file, path = '') => {
+  const form = new FormData();
+  form.append('file', file);
+  if (path) form.append('path', path);
+  return api.post(`/workspaces/${encodeURIComponent(name)}/files/upload`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+};
 export const addAgentToWorkspace = (name, agentId) => api.post(`/workspaces/${encodeURIComponent(name)}/agents`, { agent_id: agentId });
 export const removeAgentFromWorkspace = (name, agentId) => api.delete(`/workspaces/${encodeURIComponent(name)}/agents/${encodeURIComponent(agentId)}`);
 export const deleteWorkspace = (name) => api.delete(`/workspaces/${encodeURIComponent(name)}`);
@@ -179,6 +192,8 @@ export const stopFlow = (flowId) => api.post(`/flows/${encodeURIComponent(flowId
 export const runFlowNode = (flowId, data) => api.post(`/flows/${encodeURIComponent(flowId)}/run-node`, data);
 export const getFlowLogs = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/logs`, { params: { workspace } });
+export const getFlowRuns = (flowId, workspace) =>
+  api.get(`/flows/${encodeURIComponent(flowId)}/runs`, { params: { workspace } });
 
 // Projects API
 export const getProjects = (workspace) => api.get('/projects', { params: workspace ? { workspace } : {} });
@@ -207,5 +222,14 @@ export const stopContainerByName = (name) => api.post(`/containers/${encodeURICo
 export const removeContainer = (name) => api.delete(`/containers/${encodeURIComponent(name)}`);
 export const ensureDockerNetwork = () => api.post('/containers/network/ensure');
 export const getAgentsBuildStatus = () => api.get('/containers/agents-status');
+
+// Telegram API
+export const getTelegramConfig = () => api.get('/telegram/config');
+export const updateTelegramConfig = (data) => api.put('/telegram/config', data);
+export const testTelegramToken = () => api.post('/telegram/test');
+export const getTelegramStatus = () => api.get('/telegram/status');
+export const getTelegramBindings = () => api.get('/telegram/bindings');
+export const deleteTelegramBinding = (chatId) => api.delete(`/telegram/bindings/${chatId}`);
+export const sendTelegramMessage = (chatId, text) => api.post('/telegram/send', { chat_id: chatId, text });
 
 export default api;

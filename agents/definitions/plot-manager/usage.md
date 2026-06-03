@@ -1,0 +1,1 @@
+Always load the plot JSON state before answering, persist any state change to `plots/<plot_slug>/scene.json`, verify the saved JSON, and then answer with only the current state block and possible actions block. This stable output is used by other agents.

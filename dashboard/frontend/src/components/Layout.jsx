@@ -28,7 +28,11 @@ import {
   FolderGit2,
   Box,
   WifiOff,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
+
+const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 
 const PROVIDER_CONFIG = {
   openai:    { label: 'OpenAI',    color: 'text-green-700 bg-green-50 border-green-200' },
@@ -65,7 +69,24 @@ const Layout = ({ children }) => {
   const [providerStatuses, setProviderStatuses] = useState({});
   const [providersTesting, setProvidersTesting] = useState({});
   const [backendOnline, setBackendOnline] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const modelPickerRef = useRef(null);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+      } catch {}
+      return next;
+    });
+  };
 
   useEffect(() => {
     const fetchWorkspaces = async () => {
@@ -127,6 +148,41 @@ const Layout = ({ children }) => {
     if (showModelPicker) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showModelPicker]);
+
+  const SERVICE_NAME = 'Agents Hub';
+  const ROUTE_TITLES = [
+    { match: /^\/$/, title: 'Chat' },
+    { match: /^\/chat(\/.*)?$/, title: 'Chat' },
+    { match: /^\/dashboard$/, title: 'Dashboard' },
+    { match: /^\/orchestrator$/, title: 'Orchestrator' },
+    { match: /^\/tasks$/, title: 'Tasks' },
+    { match: /^\/tasks\/.+$/, title: 'Task Details' },
+    { match: /^\/agents$/, title: 'Agents' },
+    { match: /^\/agents\/.+$/, title: 'Agent Details' },
+    { match: /^\/manifest$/, title: 'Apply YAML' },
+    { match: /^\/tools$/, title: 'Toolbox' },
+    { match: /^\/workspaces$/, title: 'Workspaces' },
+    { match: /^\/workspaces\/.+$/, title: 'Workspace Details' },
+    { match: /^\/memory$/, title: 'Shared Memory' },
+    { match: /^\/flows$/, title: 'Agent Flows' },
+    { match: /^\/flows\/.+$/, title: 'Flow Editor' },
+    { match: /^\/sessions$/, title: 'Sessions' },
+    { match: /^\/sessions\/.+$/, title: 'Session Details' },
+    { match: /^\/messages$/, title: 'Messages' },
+    { match: /^\/messages\/.+$/, title: 'Message Details' },
+    { match: /^\/nodes$/, title: 'Nodes' },
+    { match: /^\/nodes\/.+$/, title: 'Node Details' },
+    { match: /^\/containers$/, title: 'Containers' },
+    { match: /^\/projects$/, title: 'Projects' },
+    { match: /^\/projects\/.+$/, title: 'Project Details' },
+    { match: /^\/settings$/, title: 'Settings' },
+  ];
+
+  useEffect(() => {
+    const entry = ROUTE_TITLES.find(r => r.match.test(location.pathname));
+    const pageTitle = entry ? entry.title : '';
+    document.title = pageTitle ? `${SERVICE_NAME} - ${pageTitle}` : SERVICE_NAME;
+  }, [location.pathname]);
 
   // Resolve effective display model using three-tier priority:
   // 1. explicit override (set via picker), 2. workspace default model from settings, 3. global DEFAULT_PROVIDER
@@ -267,22 +323,37 @@ const Layout = ({ children }) => {
   return (
     <div className="flex h-screen bg-gray-100 overflow-hidden">
       {/* Sidebar */}
-      <div className="w-64 bg-white shadow-md border-r border-gray-200 h-screen overflow-y-auto flex flex-col">
-        <div className="p-6">
-          <h1 className="text-2xl font-bold text-indigo-600">Agents Hub</h1>
+      <div
+        className={`${
+          sidebarCollapsed ? 'w-16' : 'w-64'
+        } bg-white shadow-md border-r border-gray-200 h-screen overflow-y-auto overflow-x-hidden flex flex-col transition-[width] duration-200`}
+      >
+        <div className={`flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-6'} py-6`}>
+          {!sidebarCollapsed && <h1 className="text-2xl font-bold text-indigo-600 truncate">Agents Hub</h1>}
+          <button
+            onClick={toggleSidebar}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors shrink-0"
+          >
+            {sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
+          </button>
         </div>
         <nav className="mt-2 flex-1">
           {menuGroups.map((group, gi) => (
             <div key={group.label}>
               {gi > 0 && <div className="mx-4 my-1 border-t border-gray-100" />}
-              <p className="px-6 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400 flex items-center gap-1.5">
-                {group.label}
-                {group.disabled && (
-                  <span className="text-[9px] font-semibold bg-gray-100 text-gray-400 border border-gray-200 rounded px-1 py-0.5 leading-none normal-case tracking-normal">
-                    coming soon
-                  </span>
-                )}
-              </p>
+              {!sidebarCollapsed && (
+                <p className="px-6 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400 flex items-center gap-1.5">
+                  {group.label}
+                  {group.disabled && (
+                    <span className="text-[9px] font-semibold bg-gray-100 text-gray-400 border border-gray-200 rounded px-1 py-0.5 leading-none normal-case tracking-normal">
+                      coming soon
+                    </span>
+                  )}
+                </p>
+              )}
+              {sidebarCollapsed && gi === 0 && <div className="pt-3" />}
               {group.items.map((item) => {
                 const Icon = item.icon;
                 const isActive = !group.disabled && (
@@ -294,11 +365,13 @@ const Layout = ({ children }) => {
                   return (
                     <div
                       key={item.name}
-                      className="flex items-center px-6 py-2.5 text-gray-300 cursor-not-allowed select-none"
-                      title="Coming soon"
+                      className={`flex items-center py-2.5 text-gray-300 cursor-not-allowed select-none ${
+                        sidebarCollapsed ? 'justify-center px-2' : 'px-6'
+                      }`}
+                      title={sidebarCollapsed ? `${item.name} — coming soon` : 'Coming soon'}
                     >
-                      <Icon className="w-5 h-5 mr-3" />
-                      <span className="font-medium text-sm">{item.name}</span>
+                      <Icon className={`w-5 h-5 ${sidebarCollapsed ? '' : 'mr-3'}`} />
+                      {!sidebarCollapsed && <span className="font-medium text-sm">{item.name}</span>}
                     </div>
                   );
                 }
@@ -306,12 +379,13 @@ const Layout = ({ children }) => {
                   <Link
                     key={item.name}
                     to={item.path}
-                    className={`flex items-center px-6 py-2.5 text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors ${
-                      isActive ? 'bg-indigo-50 text-indigo-600 border-r-4 border-indigo-600' : ''
-                    }`}
+                    title={sidebarCollapsed ? item.name : undefined}
+                    className={`flex items-center py-2.5 text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors ${
+                      sidebarCollapsed ? 'justify-center px-2' : 'px-6'
+                    } ${isActive ? 'bg-indigo-50 text-indigo-600 ' + (sidebarCollapsed ? 'border-l-4 border-indigo-600' : 'border-r-4 border-indigo-600') : ''}`}
                   >
-                    <Icon className="w-5 h-5 mr-3" />
-                    <span className="font-medium text-sm">{item.name}</span>
+                    <Icon className={`w-5 h-5 ${sidebarCollapsed ? '' : 'mr-3'}`} />
+                    {!sidebarCollapsed && <span className="font-medium text-sm">{item.name}</span>}
                   </Link>
                 );
               })}
@@ -467,7 +541,7 @@ const Layout = ({ children }) => {
             </div>
           </div>
         </header>
-        <main className="p-8 flex-1 min-h-0 overflow-y-auto">{children}</main>
+        <main className="p-4 flex-1 min-h-0 overflow-y-auto">{children}</main>
       </div>
     </div>
   );

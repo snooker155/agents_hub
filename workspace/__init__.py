@@ -1,5 +1,7 @@
 from .storage import (
     WORKSPACES_ROOT,
+    SYSTEM_AGENT_IDS,
+    is_system_agent,
     ensure_workspaces_dir,
     create_project_folder,
     create_workspace_folder,
@@ -23,6 +25,8 @@ from .storage import (
 
 __all__ = [
     "WORKSPACES_ROOT",
+    "SYSTEM_AGENT_IDS",
+    "is_system_agent",
     "ensure_workspaces_dir",
     "create_project_folder",
     "create_workspace_folder",

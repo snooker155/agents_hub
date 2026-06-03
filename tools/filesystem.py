@@ -64,8 +64,54 @@ def _is_binary(sample: bytes) -> bool:
         return True
 
 
+def _is_pdf(abs_path: Path, sample: bytes) -> bool:
+    """Detect a PDF by extension or the %PDF magic header."""
+    return abs_path.suffix.lower() == ".pdf" or sample[:5] == b"%PDF-"
+
+
+def _extract_pdf_text(content_bytes: bytes, rel: str) -> str:
+    """Extract text from a PDF's bytes into a plain-text string.
+
+    Raises ValueError with an actionable message if pypdf is unavailable or
+    the file cannot be parsed.
+    """
+    try:
+        from pypdf import PdfReader
+    except Exception as e:  # pragma: no cover - import guard
+        raise ValueError(
+            f"Cannot read PDF '{rel}': the 'pypdf' package is not available in this "
+            f"runtime. If agents run in Docker, rebuild the agent image "
+            f"(docker build -t agents-hub/base:latest -f Dockerfile.agents .) so the "
+            f"updated requirements-agents.txt is installed."
+        ) from e
+
+    try:
+        reader = PdfReader(io.BytesIO(content_bytes))
+    except Exception as e:
+        raise ValueError(f"Failed to parse PDF: {rel} ({e})") from e
+
+    pages = []
+    has_text = False
+    for i, page in enumerate(reader.pages):
+        try:
+            text = (page.extract_text() or "").strip()
+        except Exception:
+            text = ""
+        if text:
+            has_text = True
+        pages.append(f"--- Page {i + 1} ---\n{text}")
+
+    if not has_text:
+        return f"[PDF {rel} contains no extractable text (it may be scanned/image-only).]"
+    return "\n\n".join(pages).strip()
+
+
 def read_file(path: str, workspace: Optional[Path] = None, config: Optional[Any] = None) -> str:
-    """Read UTF-8 text file from the workspace respecting config limits."""
+    """Read a text file from the workspace respecting config limits.
+
+    PDF files are detected and their text content is extracted instead of
+    being rejected as binary.
+    """
     cfg = config or get_swe_config()
     abs_path = _resolve_within_workspace(path, workspace=workspace)
     if not abs_path.is_file():
@@ -79,8 +125,13 @@ def read_file(path: str, workspace: Optional[Path] = None, config: Optional[Any]
         raise ValueError(f"File too large to read (>{cfg.max_read_bytes} bytes): {_rel(abs_path, workspace=workspace)}")
 
     content_bytes = abs_path.read_bytes()
+    rel = _rel(abs_path, workspace=workspace)
+
+    if _is_pdf(abs_path, content_bytes[:5]):
+        return _extract_pdf_text(content_bytes, rel)
+
     if _is_binary(content_bytes[: int(cfg.binary_threshold)]):
-        raise ValueError(f"Binary or non-UTF8 file: {_rel(abs_path, workspace=workspace)}")
+        raise ValueError(f"Binary or non-UTF8 file: {rel}")
 
     return content_bytes.decode("utf-8")
 
@@ -111,6 +162,29 @@ def write_file(path: str, content: str, create_dirs: bool = True, workspace: Opt
             except Exception:
                 pass
     return _rel(abs_path, workspace=workspace)
+
+
+def delete_file(path: str, workspace: Optional[Path] = None, config: Optional[Any] = None) -> str:
+    """Delete a file from the workspace.
+
+    Only regular files are deleted. Directories must be removed through a
+    more explicit workflow, and deletion can be disabled via config.
+
+    Returns workspace-relative path to the deleted file.
+    """
+    cfg = config or get_swe_config()
+    if not bool(getattr(cfg, "allow_delete", False)):
+        raise PermissionError("Deletion operations are disabled by configuration (allow_delete=False)")
+
+    abs_path = _resolve_within_workspace(path, workspace=workspace)
+    rel = _rel(abs_path, workspace=workspace)
+    if not abs_path.exists():
+        raise FileNotFoundError(f"File not found: {rel}")
+    if not abs_path.is_file():
+        raise ValueError(f"Path is not a file: {rel}")
+
+    abs_path.unlink()
+    return rel
 
 
 def _is_ignored(rel_posix: str, ignore: Iterable[str]) -> bool:
@@ -197,6 +271,7 @@ def search_text(pattern: str, file_glob: str, workspace: Optional[Path] = None, 
 __all__ = [
     "read_file",
     "write_file",
+    "delete_file",
     "list_files",
     "search_text",
 ]

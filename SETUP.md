@@ -236,10 +236,11 @@ After the first run, the repo root will contain a runtime directory:
 ├── agents.json                 # AgentSpec registry
 ├── projects.json
 ├── tasks.json
+├── procedures.json             # procedural memory (skills) — single file, records carry agent_id + workspace
 ├── shared_memory.json          # notes, structured slots, RAG file metadata
 ├── episodes/<pool_id>.json     # episodic events
 ├── graphs/<pool_id>.json       # knowledge graph nodes + edges
-└── workspaces/<ws>/            # per-workspace files (incl. skills/<agent>.json)
+└── workspaces/<ws>/            # per-workspace files
 ```
 
 You can delete `.agents_hub/` to fully reset state — it will be regenerated on the next backend start. Back it up if you want to preserve memory or task history.

@@ -2,7 +2,7 @@
   "name": "default",
   "allowed_agents": [
     "orchestrator",
-    "agent_flows",
+    "agent_creator",
     "decomposer"
   ],
   "orchestrator": {

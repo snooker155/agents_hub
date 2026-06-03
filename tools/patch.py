@@ -53,6 +53,7 @@ class FilePatch:
 
 
 _diff_header_re = re.compile(r"^@@ -(?P<ol>\d+)(,(?P<oc>\d+))? \+(?P<nl>\d+)(,(?P<nc>\d+))? @@")
+_bare_diff_header_re = re.compile(r"^@@(?:\s.*)?$")
 
 
 def _parse_unified_diff(text: str) -> List[FilePatch]:
@@ -95,24 +96,42 @@ def _parse_unified_diff(text: str) -> List[FilePatch]:
         # Parse hunks until next file header or end
         while i < len(lines):
             m = _diff_header_re.match(lines[i])
+            bare_hunk = False
             if not m:
-                if lines[i].startswith("--- "):
+                if _bare_diff_header_re.match(lines[i]):
+                    bare_hunk = True
+                elif lines[i].startswith("*** Begin Patch") or lines[i].startswith("*** End Patch") or lines[i].startswith("```"):
+                    i += 1
+                    continue
+                elif lines[i].startswith("--- "):
                     # Next file begins
                     break
                 else:
                     i += 1
                     continue
+            if not (m or bare_hunk):
+                continue
             # Hunk header
-            old_start = int(m.group("ol"))
-            old_len = int(m.group("oc") or "1")
-            new_start = int(m.group("nl"))
-            new_len = int(m.group("nc") or "1")
+            if bare_hunk:
+                old_start = 0
+                old_len = 0
+                new_start = 0
+                new_len = 0
+            else:
+                old_start = int(m.group("ol"))
+                old_len = int(m.group("oc") or "1")
+                new_start = int(m.group("nl"))
+                new_len = int(m.group("nc") or "1")
             i += 1
             hunk_lines: List[Tuple[str, str]] = []
             while i < len(lines):
-                if i < len(lines) and (lines[i].startswith("@@ ") or lines[i].startswith("--- ")):
-                    break
-                if i >= len(lines):
+                if i < len(lines) and (
+                    lines[i].startswith("@@ ")
+                    or _bare_diff_header_re.match(lines[i])
+                    or lines[i].startswith("--- ")
+                    or lines[i].startswith("*** End Patch")
+                    or lines[i].startswith("```")
+                ):
                     break
                 ln = lines[i]
                 if not ln:
@@ -134,6 +153,7 @@ def _parse_unified_diff(text: str) -> List[FilePatch]:
                 hunk_lines.append((tag, content))
                 i += 1
             fp.hunks.append(Hunk(old_start, old_len, new_start, new_len, hunk_lines))
+            continue
         # Normalize paths (strip a/ and b/ prefixes)
         if fp.old_path and fp.old_path != "/dev/null":
             fp.old_path = _strip_prefix(fp.old_path)
@@ -150,6 +170,32 @@ def _apply_hunks_to_text(original: str, hunks: List[Hunk]) -> Tuple[bool, str]:
     cursor = 0  # 1-based line number in original; but we'll use 0-based index for Python lists
 
     for h in hunks:
+        if h.old_start <= 0:
+            match_lines = [content for tag, content in h.lines if tag != '+']
+            if not match_lines:
+                insert_at = cursor
+                match_len = 0
+            else:
+                insert_at = -1
+                for idx in range(cursor, len(orig_lines) - len(match_lines) + 1):
+                    if orig_lines[idx: idx + len(match_lines)] == match_lines:
+                        insert_at = idx
+                        break
+                if insert_at < 0:
+                    return False, original
+                match_len = len(match_lines)
+
+            while cursor < insert_at:
+                new_lines.append(orig_lines[cursor])
+                cursor += 1
+
+            for tag, content in h.lines:
+                if tag in (' ', '+'):
+                    new_lines.append(content)
+
+            cursor = insert_at + match_len
+            continue
+
         # Translate hunk.old_start (1-based) to index
         target_index = h.old_start - 1
         # Append unchanged lines from current cursor to hunk start
@@ -209,6 +255,8 @@ def apply_unified_diff(diff_text: str, workspace: Optional[str] = None, config: 
     ws_path = Path(workspace).resolve() if workspace else None
     root = _workspace_root(ws_path)
     patches = _parse_unified_diff(diff_text)
+    if not patches:
+        raise ValueError("No file patches found in diff")
 
     plan: Dict[Path, Optional[str]] = {}
     file_ops: List[Dict[str, str]] = []
@@ -222,6 +270,8 @@ def apply_unified_diff(diff_text: str, workspace: Optional[str] = None, config: 
             target_rel = fp.new_path if fp.new_path and fp.new_path != "/dev/null" else fp.old_path
             if not target_rel:
                 raise ValueError("Invalid add patch without target path")
+            if not fp.hunks:
+                raise ValueError(f"Add patch contains no hunks: {target_rel}")
             target = _resolve_within_workspace(target_rel, workspace=ws_path)
             old_content = ""
             ok, new_text = _apply_hunks_to_text(old_content, fp.hunks)
@@ -263,6 +313,8 @@ def apply_unified_diff(diff_text: str, workspace: Optional[str] = None, config: 
         else:  # modify
             if not fp.old_path and not fp.new_path:
                 raise ValueError("Invalid modify patch without paths")
+            if not fp.hunks:
+                raise ValueError(f"Modify patch contains no hunks: {fp.new_path or fp.old_path}")
             # Prefer new_path for target, fallback to old_path
             target_rel = fp.new_path if (fp.new_path and fp.new_path != "/dev/null") else fp.old_path
             target = _resolve_within_workspace(target_rel, workspace=ws_path)

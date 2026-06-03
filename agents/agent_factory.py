@@ -23,8 +23,11 @@ from common.agent_utils import (
 from tools.filesystem_langchain import create_filesystem_tools
 from tools.calculator import calculator
 from tools.shell import run_shell
-from tools.think import think
-from tools.plan import plan
+from tools.reasoning import (
+    resolve_reasoning,
+    build_reasoning_tools,
+    build_reasoning_prompt,
+)
 from tools.task_management import (
     create_task,
     add_subtask,
@@ -318,6 +321,7 @@ class AgentFactory:
             wait_for_agent_tool,
             create_agent_tool,
             get_agent_tool,
+            modify_agent_tool,
             delete_agent_tool,
         )
         coordination_tools = [
@@ -332,6 +336,7 @@ class AgentFactory:
         agent_flow_tools = [
             create_agent_tool,
             get_agent_tool,
+            modify_agent_tool,
             delete_agent_tool,
         ]
 
@@ -377,7 +382,10 @@ class AgentFactory:
                 *skills_tools,
             ]
 
-        available = [calculator, think, plan, *fs_tools, *task_tools, *coordination_tools, *agent_flow_tools, *memory_tools]
+        # NB: think/plan are intentionally NOT auto-included here. They are
+        # added by create_agent() based on the agent's reasoning config, which
+        # is the source of truth for the reasoning capabilities.
+        available = [calculator, *fs_tools, *task_tools, *coordination_tools, *agent_flow_tools, *memory_tools]
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         selected_names: List[str] = []
@@ -462,6 +470,22 @@ class AgentFactory:
         # Create tools
         tool_list = config.get("tools", [])
         tools = self._create_tools(tool_list, workspace=workspace, agent_id=agent_id)
+
+        # Reasoning capabilities (think / plan). The agent's reasoning config is
+        # the source of truth: it decides whether the scratchpad tools are added
+        # and injects guidance into the system prompt on how to use them.
+        reasoning = resolve_reasoning(
+            _spec.reasoning if _spec else None,
+            tool_list,
+        )
+        tools = [*tools, *build_reasoning_tools(reasoning)]
+        reasoning_prompt = build_reasoning_prompt(reasoning)
+        if reasoning_prompt:
+            config["system_prompt"] = (
+                config.get("system_prompt", "")
+                + "\n\n---\n\n"
+                + reasoning_prompt
+            )
 
         # Create agent
         agent = StandardAgent(

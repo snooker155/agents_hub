@@ -66,7 +66,7 @@ agents_hub/
 │   │   ├── researcher_agent/
 │   │   ├── code_reviewer/
 │   │   ├── memory_agent/
-│   │   ├── agent_flows/
+│   │   ├── agent_creator/
 │   │   └── ...
 │   ├── prompt_assembly.py   # Builds the runtime system prompt from the three markdown layers
 │   ├── registry.py          # AgentSpec loader (reads .agents_hub/agents.json)
@@ -398,7 +398,7 @@ Examples:
 - `.agents_hub/shared_memory.json` — shared memory pools (notes, structured slots, RAG file metadata)
 - `.agents_hub/episodes/<pool_id>.json` — episodic events per pool
 - `.agents_hub/graphs/<pool_id>.json` — knowledge graph nodes/edges per pool
-- `.agents_hub/workspaces/<ws>/skills/<agent_id>.json` — procedural memory per agent + workspace
+- `.agents_hub/procedures.json` — procedural memory (records carry agent_id + workspace)
 - `agents/definitions/<agent_id>/{instructions,capabilities,usage}.md` — layered agent prompts
 
 Generated runtime artifacts may include:

@@ -1,18 +1,23 @@
 """
 Workspace-related API routes.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from typing import Optional
 from pathlib import Path
+import mimetypes
+import shutil
 
 from common import tasks_service
 from common.bootstrap import ensure_initial_state
 from workspace import (
+    SYSTEM_AGENT_IDS,
     create_workspace_folder,
     list_workspace_folders,
     get_workspace_metadata,
     get_workspace_folder,
     get_workspace_default_model_config,
+    is_system_agent,
     update_workspace_metadata,
     delete_workspace_folder,
     get_workspace_instructions,
@@ -135,16 +140,24 @@ async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
     root = create_workspace_folder(name)
     pattern = glob or "**/*"
     files = []
+    directories = []
     try:
         for p in root.rglob("*"):
-            if p.is_file():
-                try:
-                    files.append(p.relative_to(root).as_posix())
-                except Exception:
-                    pass
+            try:
+                rel = p.relative_to(root).as_posix()
+                if p.is_dir():
+                    directories.append(rel)
+                elif p.is_file():
+                    files.append(rel)
+            except Exception:
+                pass
+        if pattern and pattern not in {"**/*", "*"}:
+            import fnmatch
+            files = [p for p in files if fnmatch.fnmatch(p, pattern)]
+            directories = [p for p in directories if fnmatch.fnmatch(p, pattern)]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return {"files": files}
+    return {"files": sorted(files), "directories": sorted(directories)}
 
 
 @router.get("/{name}/file-content")
@@ -163,7 +176,10 @@ async def get_workspace_file_content(name: str, path: str):
     if not candidate.exists() or not candidate.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
-    max_bytes = 256_000
+    is_pdf = candidate.suffix.lower() == ".pdf"
+    # PDFs are binary and typically larger than text files, so allow a bigger
+    # cap before extracting their text content for preview.
+    max_bytes = 5_000_000 if is_pdf else 256_000
     try:
         size = candidate.stat().st_size
         if size > max_bytes:
@@ -171,16 +187,148 @@ async def get_workspace_file_content(name: str, path: str):
                 status_code=413,
                 detail=f"File is too large to preview ({size} bytes). Limit is {max_bytes} bytes.",
             )
-        content = candidate.read_text(encoding="utf-8", errors="replace")
+        if is_pdf:
+            content = _extract_pdf_preview(candidate)
+        else:
+            content = candidate.read_text(encoding="utf-8", errors="replace")
         return {
             "path": rel_path,
             "size": size,
             "content": content,
+            "is_pdf": is_pdf,
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _extract_pdf_preview(candidate: Path) -> str:
+    """Extract text from a PDF for dashboard preview."""
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        raise HTTPException(
+            status_code=415,
+            detail="PDF preview is unavailable (pypdf not installed on the server).",
+        )
+    try:
+        reader = PdfReader(str(candidate))
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {e}")
+
+    pages = []
+    has_text = False
+    for i, page in enumerate(reader.pages):
+        try:
+            text = (page.extract_text() or "").strip()
+        except Exception:
+            text = ""
+        if text:
+            has_text = True
+        pages.append(f"--- Page {i + 1} ---\n{text}")
+    if not has_text:
+        return "[This PDF contains no extractable text (it may be scanned/image-only).]"
+    return "\n\n".join(pages).strip()
+
+
+@router.get("/{name}/file-raw")
+async def get_workspace_file_raw(name: str, path: str):
+    """Serve a workspace file's raw bytes (e.g. for in-browser PDF rendering)."""
+    root = create_workspace_folder(name).resolve()
+    rel_path = (path or "").strip()
+    if not rel_path:
+        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+
+    candidate = (root / rel_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+    # inline so browsers render (PDF/image) instead of forcing a download
+    return FileResponse(
+        str(candidate),
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{candidate.name}"'},
+    )
+
+
+@router.delete("/{name}/files")
+async def delete_workspace_file(name: str, path: str):
+    """Delete one file or directory from a workspace."""
+    _ensure_writable_workspace(name)
+    root = create_workspace_folder(name).resolve()
+    rel_path = (path or "").strip().strip("/")
+    if not rel_path:
+        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
+
+    candidate = (root / rel_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    try:
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+            deleted_type = "directory"
+        elif candidate.is_file():
+            candidate.unlink()
+            deleted_type = "file"
+        else:
+            raise HTTPException(status_code=400, detail="Path is neither a file nor a directory")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"deleted": True, "path": rel_path, "type": deleted_type}
+
+
+@router.post("/{name}/files/upload")
+async def upload_workspace_file(
+    name: str,
+    file: UploadFile = File(...),
+    path: Optional[str] = Form(""),
+):
+    """Upload a file into the workspace, optionally under a subdirectory.
+
+    `path` is an optional relative directory (e.g. "docs/notes"); the file is
+    written as `<workspace>/<path>/<filename>`. Path traversal is rejected.
+    """
+    _ensure_writable_workspace(name)
+    root = create_workspace_folder(name).resolve()
+
+    filename = Path(file.filename or "").name
+    if not filename:
+        raise HTTPException(status_code=400, detail="A valid filename is required")
+
+    rel_dir = (path or "").strip().strip("/")
+    dest = (root / rel_dir / filename).resolve()
+    try:
+        dest.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        content = await file.read()
+        dest.write_bytes(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "path": dest.relative_to(root).as_posix(),
+        "size": len(content),
+    }
 
 
 @router.get("/{name}/model")
@@ -292,14 +440,32 @@ async def update_workspace_env(name: str, payload: dict):
 @router.post("/{name}/agents")
 async def add_agent_to_workspace(name: str, action: WorkspaceAgentAction):
     _ensure_writable_workspace(name)
+    from agents.registry import get_agent as reg_get_agent
+    spec = reg_get_agent(action.agent_id)
     if name != "default":
-        from agents.registry import get_agent as reg_get_agent
-        spec = reg_get_agent(action.agent_id)
         if spec and spec.default_workspace_only:
             raise HTTPException(
                 status_code=403,
                 detail=f"Agent '{action.agent_id}' is restricted to the default workspace and cannot be added to other workspaces.",
             )
+    # A workspace-owned agent that is not shared cannot be added to any other
+    # workspace. Expose it from the agent's detail page to make it available
+    # everywhere.
+    if (
+        spec
+        and spec.owner_workspace
+        and not spec.shared
+        and spec.owner_workspace != name
+        and not is_system_agent(action.agent_id)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Agent '{action.agent_id}' belongs to workspace "
+                f"'{spec.owner_workspace}' and is not shared. Expose it from the "
+                f"agent's details page to add it to other workspaces."
+            ),
+        )
     metadata = get_workspace_metadata(name)
     allowed = metadata.get("allowed_agents", [])
     if action.agent_id not in allowed:
@@ -311,6 +477,11 @@ async def add_agent_to_workspace(name: str, action: WorkspaceAgentAction):
 @router.delete("/{name}/agents/{agent_id}")
 async def remove_agent_from_workspace(name: str, agent_id: str):
     _ensure_writable_workspace(name)
+    if is_system_agent(agent_id):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Agent '{agent_id}' is a system agent and cannot be removed from a workspace.",
+        )
     metadata = get_workspace_metadata(name)
     allowed = metadata.get("allowed_agents", [])
     if agent_id in allowed:

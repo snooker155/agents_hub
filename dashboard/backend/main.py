@@ -41,7 +41,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import route modules organized by domain
-from routes import agents, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages
+from routes import agents, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram
 from routes import settings as settings_router
 
 # Import settings for API key validation
@@ -84,6 +84,30 @@ async def startup_event():
             print("✓ Orchestrator node already running")
     except Exception as e:
         print(f"⚠ Could not start default orchestrator node: {e}")
+
+    # Auto-start the Telegram poller if it's been configured + enabled.
+    try:
+        from agents.telegram_runner import service as _tg_service
+        from common import telegram_store
+        if telegram_store.is_enabled() and telegram_store.has_token():
+            await _tg_service.start()
+            if _tg_service.is_running():
+                uname = _tg_service.status.get("bot_username") or "?"
+                print(f"✓ Telegram poller started  (@{uname})")
+            else:
+                err = _tg_service.status.get("last_error") or "unknown"
+                print(f"⚠ Telegram poller did not start: {err}")
+    except Exception as e:
+        print(f"⚠ Could not start Telegram poller: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    try:
+        from agents.telegram_runner import service as _tg_service
+        await _tg_service.stop()
+    except Exception:
+        pass
 
 # Helper to locate orchestrator settings (moved under agents/state)
 def get_orchestrator_settings_path() -> PathlibPath:
@@ -205,6 +229,9 @@ app.include_router(containers.router)
 
 # Settings domain: LLM and application settings
 app.include_router(settings_router.router)
+
+# Telegram domain: bot config, bindings, and outbound message proxy
+app.include_router(telegram.router)
 
 # ============================================================================
 # Entry Point

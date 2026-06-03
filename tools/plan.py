@@ -40,3 +40,30 @@ def plan(plan: str) -> str:
     Pair with the think tool for per-step reasoning as you execute the plan.
     """
     return plan
+
+
+# Per-format guidance appended to the tool description so the configured
+# planning format shapes *how* the agent writes its plan.
+_PLAN_FORMAT_HINTS = {
+    "structured": (
+        "Format the plan with section headers and sub-steps under each section."
+    ),
+    "bullet": "Format the plan as a flat bullet list of action items.",
+    "numbered": (
+        "Format the plan as an ordered, numbered checklist of steps you can "
+        "tick off as you execute each one."
+    ),
+    "freeform": "Write the plan as an unstructured narrative paragraph.",
+}
+
+
+def make_plan(fmt: str = "structured"):
+    """Return a ``plan`` tool whose description is tailored to *fmt*."""
+    hint = _PLAN_FORMAT_HINTS.get(fmt, _PLAN_FORMAT_HINTS["structured"])
+    description = (plan.description or "").strip() + "\n\n" + hint
+
+    @tool("plan", args_schema=PlanInput, description=description)
+    def _plan(plan: str) -> str:
+        return plan
+
+    return _plan

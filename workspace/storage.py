@@ -19,6 +19,15 @@ from common.paths import WORKSPACES_ROOT as DEFAULT_WORKSPACES_ROOT, ensure_work
 # Default workspaces root under the shared .agents_hub state directory
 WORKSPACES_ROOT = DEFAULT_WORKSPACES_ROOT
 
+# System agents that every workspace must include. They power core flows
+# (orchestration, agent creation, task decomposition) and cannot be removed.
+SYSTEM_AGENT_IDS: tuple[str, ...] = ("orchestrator", "agent_creator", "decomposer")
+
+
+def is_system_agent(agent_id: str) -> bool:
+    """Return True if the agent is pinned in every workspace."""
+    return agent_id in SYSTEM_AGENT_IDS
+
 
 def ensure_workspaces_dir() -> Path:
     """Ensure the workspaces root directory exists."""
@@ -50,7 +59,7 @@ def create_project_folder(project_name: Optional[str] = None) -> Path:
         default_meta = {
             "name": project_name,
             "created_at": str(uuid.uuid4()),  # Placeholder for actual time if needed
-            "allowed_agents": ["swe_agent", "orchestrator"],
+            "allowed_agents": list(SYSTEM_AGENT_IDS),
             "env_vars": {},
             "settings": {},
         }
@@ -87,6 +96,19 @@ def _normalize_workspace_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
         settings["default_provider"] = legacy_default_provider
 
     normalized["settings"] = settings
+
+    # Backfill pinned system agents: every workspace must include them so core
+    # flows (orchestration, agent creation, task decomposition) keep working.
+    # Copy the list so the persisted-vs-loaded comparison in get_workspace_metadata
+    # can detect the change and write it back.
+    allowed = normalized.get("allowed_agents")
+    if isinstance(allowed, list):
+        allowed = list(allowed)
+        for sys_id in SYSTEM_AGENT_IDS:
+            if sys_id not in allowed:
+                allowed.append(sys_id)
+        normalized["allowed_agents"] = allowed
+
     return normalized
 
 

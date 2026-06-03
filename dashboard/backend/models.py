@@ -39,6 +39,13 @@ class AgentCreateCustom(BaseModel):
     system_prompt: str
     tools: List[str] = ["read_file", "write_file", "list_files"]
     capacity: int = 1
+    # Workspace the agent is created in. When set (and not 'default'), the agent
+    # is owned by that workspace and only visible there until it is shared.
+    workspace: Optional[str] = None
+
+
+class AgentSharingUpdate(BaseModel):
+    shared: bool
 
 
 class AgentMemoryUpdate(BaseModel):
@@ -63,8 +70,10 @@ class AgentToolsUpdate(BaseModel):
 
 
 class AgentReasoningUpdate(BaseModel):
-    think_mode: Optional[str] = None    # standard | deep | analytical
-    plan_format: Optional[str] = None   # structured | bullet | numbered | freeform
+    think_enabled: Optional[bool] = None  # add the think tool
+    think_mode: Optional[str] = None      # standard | deep | analytical
+    plan_enabled: Optional[bool] = None   # add the plan tool
+    plan_format: Optional[str] = None     # structured | bullet | numbered | freeform
 
 
 class AgentModelUpdate(BaseModel):
@@ -174,13 +183,19 @@ class ChatHistoryMessage(BaseModel):
 
 class ChatAttachment(BaseModel):
     filename: str
-    content: str
+    content: str = ""
+    # Optional base64-encoded binary payload. When set, the materializer writes
+    # bytes to disk instead of UTF-8 text — used for Telegram photo/document
+    # uploads and any future binary web uploads.
+    content_b64: Optional[str] = None
+    mime_type: Optional[str] = None
     store_to_workspace: bool = False
     stored_workspace_path: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
-    agent_id: str
+    agent_id: Optional[str] = None
+    flow_id: Optional[str] = None
     message: str
     workspace: Optional[str] = None
     project_id: Optional[str] = None
@@ -188,6 +203,12 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     conversation_title: Optional[str] = None
     attachments: List[ChatAttachment] = []
+
+    @model_validator(mode="after")
+    def _require_target(self):
+        if not self.agent_id and not self.flow_id:
+            raise ValueError("Either agent_id or flow_id must be provided")
+        return self
 
 
 class ToolSourceUpdate(BaseModel):

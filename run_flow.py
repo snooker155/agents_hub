@@ -127,17 +127,22 @@ def _build_agent_input(
     pred_ids = predecessors.get(node_id, [])
     pred_outputs = [(pid, node_outputs[pid]) for pid in pred_ids if pid in node_outputs]
 
-    parts = [shared_prompt]
+    parts: List[str] = []
     if pred_outputs:
+        # Downstream nodes work only from the previous agents' output. The
+        # initial user input (shared_prompt) is intentionally not forwarded —
+        # each node receives just what its predecessors produced.
         parts += [
-            "",
             "=" * 60,
-            "CONTEXT FROM PREVIOUS AGENTS IN THIS FLOW",
+            "OUTPUT FROM PREVIOUS AGENTS IN THIS FLOW",
             "=" * 60,
         ]
         for pred_id, pred_out in pred_outputs:
             parts.append(f"\n[{pred_id}]:\n{pred_out}\n")
-        parts += ["=" * 60, "\nContinue the work based on the above context."]
+        parts += ["=" * 60, "\nContinue the work based on the above output."]
+    else:
+        # Root node(s) with no predecessors receive the initial user input.
+        parts.append(shared_prompt)
 
     if node_task:
         parts += ["", "## Your specific task for this step:", node_task]
@@ -239,6 +244,14 @@ def main() -> None:
 
     flow_log_path = STATE_DIR / "flow_logs" / f"{args.flow_id}.json"
 
+    # Every event from this run is tagged with a stable run_group (the meta run id)
+    # and kind="task" so the dashboard History tab can split the flat log stream
+    # into one record per flow run.
+    def log_flow(payload: Dict[str, Any]) -> None:
+        payload.setdefault("run_group", args.run_id)
+        payload.setdefault("kind", "task")
+        _log_event(flow_log_path, payload)
+
     # Activate the meta run record (pre-created by flow_runner with status=pending)
     open_run(
         args.run_id,
@@ -289,11 +302,14 @@ def main() -> None:
 
     print(f"[flow_start] flow_id={args.flow_id} nodes={len(nodes)} edges={len(edges)}")
     print(f"Running flow with context: {shared_context}")
-    _log_event(flow_log_path, {
+    log_flow({
         "timestamp": _utc_now_iso(),
         "type": "flow_start",
         "content": f"Starting flow: {flow.get('name', args.flow_id)}",
         "status": "running",
+        "title": task_title or f"Flow: {flow.get('name', args.flow_id)}",
+        "task_id": args.task_id,
+        "session_id": args.session_id,
     })
 
     agent_overrides: Dict[str, Any] = {}
@@ -314,7 +330,7 @@ def main() -> None:
         raw_agent_id = _resolve_agent_id(node)
         if not raw_agent_id:
             print(f"[node_skip] node={node_id} reason=no_agent_id")
-            _log_event(flow_log_path, {
+            log_flow({
                 "timestamp": _utc_now_iso(),
                 "type": "node_skip",
                 "node_id": node_id,
@@ -359,7 +375,7 @@ def main() -> None:
             pass
 
         print(f"[node_start] node={node_id} agent={yaml_agent_id} label={agent_label}")
-        _log_event(flow_log_path, {
+        log_flow({
             "timestamp": _utc_now_iso(),
             "type": "agent_start",
             "node_id": node_id,
@@ -425,7 +441,7 @@ def main() -> None:
                 except Exception:
                     pass
                 print(f"[node_done] node={node_id} agent={yaml_agent_id} duration_ms={duration_ms}")
-                _log_event(flow_log_path, {
+                log_flow({
                     "timestamp": finished_at,
                     "type": "agent_finish",
                     "node_id": node_id,
@@ -454,7 +470,7 @@ def main() -> None:
                 except Exception:
                     pass
                 print(f"[node_error] node={node_id} agent={yaml_agent_id} error={error_msg}")
-                _log_event(flow_log_path, {
+                log_flow({
                     "timestamp": finished_at,
                     "type": "agent_error",
                     "node_id": node_id,
@@ -484,7 +500,7 @@ def main() -> None:
             except Exception:
                 pass
             print(f"[node_exception] node={node_id} agent={yaml_agent_id} error={error_msg}")
-            _log_event(flow_log_path, {
+            log_flow({
                 "timestamp": finished_at,
                 "type": "agent_error",
                 "node_id": node_id,
@@ -502,7 +518,7 @@ def main() -> None:
         f"### [{nid}]\n{out}" for nid, out in node_outputs.items() if out
     )
 
-    _log_event(flow_log_path, {
+    log_flow({
         "timestamp": _utc_now_iso(),
         "type": "flow_finish",
         "content": f"Flow '{flow.get('name', args.flow_id)}' finished"

@@ -1,0 +1,1 @@
+Use Narrator to turn a scene description into rich artistic narration. Pass a scene description as input; Narrator checks it, adapts it where it is thin or inconsistent, and generates its own supporting detail to produce immersive prose. Narrator does not read or modify workspace files and does not depend on the input for atmosphere — it creates that itself.

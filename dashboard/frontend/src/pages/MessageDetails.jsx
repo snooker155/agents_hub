@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Loader, RefreshCw, MessageSquare, Wrench, Bot, FileText, Copy, Check, Workflow, Square, Globe, Zap } from 'lucide-react';
+import { ChevronLeft, Loader, RefreshCw, MessageSquare, Wrench, Bot, FileText, Copy, Check, Workflow, Square, Globe, Zap, ChevronRight, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
 
 const SKILL_TOOL = 'get_skill';
 import { getMessage, getMessageLogs, getMessageInsights, stopMessage } from '../api';
@@ -28,11 +28,6 @@ function TokenPill({ label, value }) {
   );
 }
 
-function shortText(v, max = 180) {
-  const s = String(v || '');
-  return s.length > max ? `${s.slice(0, max)}...` : s;
-}
-
 function CopyButton({ text }) {
   const [copied, setCopied] = React.useState(false);
   const copy = () => {
@@ -49,6 +44,158 @@ function CopyButton({ text }) {
     >
       {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
     </button>
+  );
+}
+
+// Attempt to coerce a tool input/output value into a parsed JSON object/array.
+// Tool payloads can arrive as already-parsed objects, as JSON strings, or as
+// plain text. Returns { json, raw } where `json` is non-null only when the
+// value is valid JSON worth pretty-printing — anything else stays raw text.
+function parseMaybeJson(value) {
+  if (value === null || value === undefined) return { json: null, raw: '' };
+  if (typeof value === 'object') {
+    return { json: value, raw: '' };
+  }
+  const raw = String(value);
+  const trimmed = raw.trim();
+  const structural =
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'));
+  if (structural) {
+    try {
+      return { json: JSON.parse(trimmed), raw };
+    } catch {
+      // Not valid JSON (e.g. a Python repr) — show as raw text.
+    }
+  }
+  return { json: null, raw };
+}
+
+const MAX_STRING_LEN = 300;
+
+// Recursively shorten any string value longer than MAX_STRING_LEN, appending an
+// ellipsis with the original length. Returns { data, truncated } so callers can
+// offer an expand toggle. Non-string values pass through untouched.
+function truncateLongStrings(value) {
+  let truncated = false;
+  const walk = (v) => {
+    if (typeof v === 'string') {
+      if (v.length > MAX_STRING_LEN) {
+        truncated = true;
+        return `${v.slice(0, MAX_STRING_LEN)}… (+${v.length - MAX_STRING_LEN} chars)`;
+      }
+      return v;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') {
+      const out = {};
+      for (const [k, val] of Object.entries(v)) out[k] = walk(val);
+      return out;
+    }
+    return v;
+  };
+  return { data: walk(value), truncated };
+}
+
+// Pretty-printed, syntax-highlighted JSON block with copy support. Long string
+// values are visually shortened by default, with a toggle to reveal them.
+function JsonBlock({ data }) {
+  const [expanded, setExpanded] = useState(false);
+  const fullText = JSON.stringify(data, null, 2);
+  const { data: shortData, truncated } = truncateLongStrings(data);
+  const shownText = expanded || !truncated ? fullText : JSON.stringify(shortData, null, 2);
+  return (
+    <div className="relative">
+      <CopyButton text={fullText} />
+      <pre className="bg-gray-900 text-gray-100 text-[11px] leading-5 p-3 pr-8 rounded-lg overflow-x-auto whitespace-pre">
+        {shownText}
+      </pre>
+      {truncated && (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-1 text-[10px] font-medium text-indigo-500 hover:text-indigo-600"
+        >
+          {expanded ? 'Show less' : 'Show full values'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Plain-text payload, visually shortened past MAX_STRING_LEN with an expander.
+function RawText({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > MAX_STRING_LEN;
+  const shown = expanded || !long ? text : `${text.slice(0, MAX_STRING_LEN)}…`;
+  return (
+    <div className="relative">
+      <CopyButton text={text} />
+      <pre className="bg-gray-50 border border-gray-100 text-gray-700 text-[11px] leading-5 p-2 pr-8 rounded-lg overflow-x-auto whitespace-pre-wrap break-words max-h-64">
+        {shown}
+      </pre>
+      {long && (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-1 text-[10px] font-medium text-indigo-500 hover:text-indigo-600"
+        >
+          {expanded ? 'Show less' : `Show full (${text.length} chars)`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Renders a single tool input/output section: parses JSON when possible,
+// otherwise shows wrapped plain text. Falls back gracefully on empty values.
+function ToolPayload({ label, value, icon: Icon, accent }) {
+  const { json, raw } = parseMaybeJson(value);
+  if (json === null && !raw) return null;
+  return (
+    <div className="mt-2">
+      <div className={`flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mb-1 ${accent}`}>
+        {Icon && <Icon className="w-3 h-3" />}
+        {label}
+      </div>
+      {json !== null ? <JsonBlock data={json} /> : <RawText text={raw} />}
+    </div>
+  );
+}
+
+// Collapsible card for one tool invocation, showing parsed input & output.
+function ToolActivityItem({ tool, index }) {
+  const [open, setOpen] = useState(false);
+  const isSkill = tool.tool === SKILL_TOOL;
+  const name = isSkill ? 'Skill Retrieved' : (tool.tool || 'tool');
+  const cardClass = isSkill
+    ? 'border-violet-200 bg-violet-50/40'
+    : 'border-gray-200 bg-white';
+  const HeaderIcon = isSkill ? Zap : Wrench;
+  return (
+    <div className={`text-xs rounded-lg border ${cardClass}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left"
+      >
+        <ChevronRight className={`w-3.5 h-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+        <HeaderIcon className={`w-3.5 h-3.5 shrink-0 ${isSkill ? 'text-violet-500' : 'text-indigo-500'}`} />
+        <span className="font-semibold text-gray-800 truncate">
+          {!isSkill && <span className="text-gray-400 font-normal mr-1">Step {tool.step || index + 1}</span>}
+          {name}
+        </span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 border-t border-gray-100 pt-1">
+          <ToolPayload label="Input" value={tool.input} icon={ArrowDownToLine} accent="text-gray-500" />
+          <ToolPayload label="Output" value={tool.output} icon={ArrowUpFromLine} accent="text-emerald-600" />
+          {!tool.input && !tool.output && (
+            <p className="text-[11px] text-gray-400 italic mt-2">No input/output captured.</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -417,30 +564,10 @@ export default function MessageDetails() {
               {toolsForRun.length === 0 ? (
                 <p className="text-xs text-gray-500 italic">No tools captured.</p>
               ) : (
-                <div className="space-y-2 max-h-80 overflow-auto">
-                  {toolsForRun.map((t, idx) => {
-                    if (t.tool === SKILL_TOOL) {
-                      return (
-                        <div key={idx} className="text-xs rounded-lg border border-violet-300 bg-violet-50 p-2">
-                          <div className="flex items-center gap-1 font-semibold text-violet-800 mb-1">
-                            <Zap className="w-3 h-3 text-violet-500 shrink-0" />
-                            Skill Retrieved
-                          </div>
-                          {t.input && <div className="text-[11px] text-violet-600">{shortText(t.input, 300)}</div>}
-                          {t.output && <div className="text-[11px] text-violet-900 mt-1">{shortText(t.output, 300)}</div>}
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={idx} className="text-xs rounded border border-gray-100 bg-gray-50 p-2">
-                        <div className="font-medium text-gray-800">
-                          Step {t.step || idx + 1}: {t.tool || 'tool'}
-                        </div>
-                        {t.input && <div className="text-[11px] text-gray-600 mt-1">{shortText(t.input, 300)}</div>}
-                        {t.output && <div className="text-[11px] text-emerald-700 mt-1">{shortText(t.output, 300)}</div>}
-                      </div>
-                    );
-                  })}
+                <div className="space-y-2 max-h-[28rem] overflow-auto pr-1">
+                  {toolsForRun.map((t, idx) => (
+                    <ToolActivityItem key={idx} tool={t} index={idx} />
+                  ))}
                 </div>
               )}
             </div>

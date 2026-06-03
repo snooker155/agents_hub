@@ -90,6 +90,37 @@ def _to_json_safe(value, *, depth: int = 0, max_depth: int = 5):
     return str(value)
 
 
+def _tool_payload_oneline(value) -> str:
+    """Render a tool input/output as a compact, single-line readable string.
+
+    Tool args arrive as dicts (or their str() repr) and outputs as JSON-ish
+    strings. Normalize structured payloads into compact valid JSON so the line
+    is readable, but keep it on ONE line — the session log is later re-parsed
+    line-by-line by single-line regexes, so newlines would break extraction.
+    """
+    import ast
+
+    def _compact(obj) -> str:
+        return json.dumps(_to_json_safe(obj), ensure_ascii=False, separators=(", ", ": "))
+
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return _compact(value)
+        except Exception:
+            return str(value)
+    text = str(value)
+    stripped = text.strip()
+    if (stripped.startswith("{") and stripped.endswith("}")) or (
+        stripped.startswith("[") and stripped.endswith("]")
+    ):
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                return _compact(parser(stripped))
+            except Exception:
+                continue
+    return text
+
+
 def _estimate_tokens(text: str) -> int:
     if not text:
         return 0
@@ -200,11 +231,13 @@ class _SessionChatCallback(BaseCallbackHandler):
             "input": str(input_str),
         }
         self._pending_tool = entry
-        self.thinking_history.append(f"[tool_start] step={entry['step']} tool={entry['tool']} input={entry['input'][:240]}")
+        input_log = _tool_payload_oneline(input_str)[:240]
+        self.thinking_history.append(f"[tool_start] step={entry['step']} tool={entry['tool']} input={input_log}")
 
     def on_tool_end(self, output, **kwargs):
         out = str(output)
-        self.thinking_history.append(f"[tool_end] output={out[:240]}")
+        output_log = _tool_payload_oneline(output)[:240]
+        self.thinking_history.append(f"[tool_end] output={output_log}")
         if self._pending_tool is not None:
             entry = dict(self._pending_tool)
             entry["output"] = out
@@ -409,6 +442,7 @@ async def list_sessions(
     is_flow: Optional[bool] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
+    conversation_id: Optional[str] = None,
 ):
     """List all session contexts."""
     contexts = _load_contexts()
@@ -427,6 +461,8 @@ async def list_sessions(
         enriched = [c for c in enriched if (c.get("created_at") or "") >= from_date]
     if to_date:
         enriched = [c for c in enriched if (c.get("created_at") or "") <= to_date]
+    if conversation_id:
+        enriched = [c for c in enriched if c.get("conversation_id") == conversation_id]
 
     enriched.sort(key=lambda c: c.get("created_at") or "", reverse=True)
     return enriched

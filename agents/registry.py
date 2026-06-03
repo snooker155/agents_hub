@@ -45,6 +45,15 @@ class AgentSpec:
     memory_type: str = "none"
     memory_data: Any = None
     default_workspace_only: bool = False
+    # Workspace ownership / visibility:
+    # - owner_workspace: the workspace the agent was created in. When set and the
+    #   agent is not shared, the agent is only visible in (and addable to) that
+    #   workspace. None means the agent is not bound to any workspace (legacy /
+    #   system / globally available agents).
+    # - shared: when True, the agent is exposed across all workspaces regardless
+    #   of owner_workspace (it can be added to any workspace).
+    owner_workspace: Optional[str] = None
+    shared: bool = False
     # Model configuration — explicit per-agent overrides; None means inherit from workspace/global
     provider: Optional[str] = None
     model: Optional[str] = None
@@ -86,7 +95,12 @@ class AgentSpec:
             "memory_type": self.memory_type,
             "memory_data": self.memory_data,
             "default_workspace_only": self.default_workspace_only,
+            "shared": self.shared,
         }
+        # Only write owner_workspace when set to keep JSON clean and to treat
+        # legacy agents (no owner) as globally available.
+        if self.owner_workspace:
+            d["owner_workspace"] = self.owner_workspace
         # Only write model/provider fields when explicitly set to keep JSON clean
         if self.provider is not None:
             d["provider"] = self.provider
@@ -111,8 +125,6 @@ class AgentSpec:
                 d["http_host_port"] = self.http_host_port
         if self.node_type != "worker":
             d["node_type"] = self.node_type
-        if self.is_default_chat_agent:
-            d["is_default_chat_agent"] = True
         d["skills_enabled"] = self.skills_enabled
         if self.reasoning:
             d["reasoning"] = dict(self.reasoning)
@@ -207,6 +219,8 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     memory_type = ad.get("memory_type", "none")
     memory_data = ad.get("memory_data")
     default_workspace_only = bool(ad.get("default_workspace_only", False))
+    owner_workspace = ad.get("owner_workspace") or None
+    shared = bool(ad.get("shared", False))
     provider = ad.get("provider") or None
     model = ad.get("model") or None
     base_url = ad.get("base_url") or None
@@ -253,6 +267,8 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         memory_type=memory_type,
         memory_data=memory_data,
         default_workspace_only=default_workspace_only,
+        owner_workspace=owner_workspace,
+        shared=shared,
         provider=provider,
         model=model,
         base_url=base_url,
@@ -400,48 +416,10 @@ def remove_agent(agent_id: str) -> bool:
 
 
 def set_default_chat_agent(agent_id: str) -> None:
-    """Mark agent_id as the default chat agent, clearing the flag from all others."""
-    path = _config_path()
-    try:
-        data = _load_file_raw(path)
-    except FileNotFoundError:
-        raise ValueError("agents.json not found")
-
-    if not isinstance(data, dict) or "agents" not in data:
-        raise ValueError("Invalid agents.json")
-
-    found = False
-    for a in data["agents"]:
-        if a.get("id") == agent_id:
-            a["is_default_chat_agent"] = True
-            found = True
-        else:
-            a.pop("is_default_chat_agent", None)
-
-    if not found:
-        raise ValueError(f"Agent '{agent_id}' not found")
-
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    _REGISTRY_CACHE["mtime"] = None
+    """Deprecated: default chat agent is stored per workspace metadata."""
+    raise ValueError("Default chat agent is stored in workspace .workspace.json, not agents.json")
 
 
 def clear_default_chat_agent() -> None:
-    """Clear the default chat agent flag from all agents."""
-    path = _config_path()
-    try:
-        data = _load_file_raw(path)
-    except FileNotFoundError:
-        return
-
-    if not isinstance(data, dict) or "agents" not in data:
-        return
-
-    for a in data["agents"]:
-        a.pop("is_default_chat_agent", None)
-
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    _REGISTRY_CACHE["mtime"] = None
+    """Deprecated: default chat agent is stored per workspace metadata."""
+    raise ValueError("Default chat agent is stored in workspace .workspace.json, not agents.json")

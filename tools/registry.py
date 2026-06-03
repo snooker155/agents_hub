@@ -37,7 +37,7 @@ TOOL_CATALOG: List[ToolSpec] = [
         id="read_file",
         name="Read File",
         category="filesystem",
-        description="Read UTF-8 text file from workspace",
+        description="Read a text file from the workspace, or extract text from a PDF",
         parameters=[{"name": "path", "type": "string", "required": True}],
         requires_workspace=True,
     ),
@@ -51,6 +51,14 @@ TOOL_CATALOG: List[ToolSpec] = [
             {"name": "content", "type": "string", "required": True},
             {"name": "create_dirs", "type": "boolean", "required": False},
         ],
+        requires_workspace=True,
+    ),
+    ToolSpec(
+        id="delete_file",
+        name="Delete File",
+        category="filesystem",
+        description="Delete a regular file from the workspace",
+        parameters=[{"name": "path", "type": "string", "required": True}],
         requires_workspace=True,
     ),
     ToolSpec(

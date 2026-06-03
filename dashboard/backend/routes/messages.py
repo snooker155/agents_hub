@@ -130,12 +130,19 @@ async def get_message_insights(run_id: str):
     tools = []
     thinking = []
     message_runs = []
+    artifacts = []
     inbound_total = 0
     outbound_total = 0
     llm_invoke_responses = []
     input_contexts = []
 
     rr_process = run.get("process") or {}
+
+    # File-change artifacts (diffs) captured during chat/flow runs, tagged with
+    # the run_id so the UI can rebuild the Artifacts panel on conversation reload.
+    for art in (rr_process.get("artifacts") or []):
+        if isinstance(art, dict):
+            artifacts.append({**art, "run_id": run.get("run_id"), "agent_id": run.get("agent_id")})
     rr_llm = rr_process.get("llm_invoke_responses") or []
     rr_input_context = rr_process.get("llm_input_context")
     if rr_input_context:
@@ -285,6 +292,7 @@ async def get_message_insights(run_id: str):
         "tools": tools,
         "thinking": thinking,
         "message_runs": message_runs,
+        "artifacts": artifacts,
         "aggregated_logs": log_text,
         "llm_invoke_responses": llm_invoke_responses,
         "input_contexts": input_contexts,

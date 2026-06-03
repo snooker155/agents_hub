@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronDown, ChevronUp, ClipboardList, FileText, Loader2, Play, Save, Square, SquareTerminal } from 'lucide-react';
-import { createTask, getAgents, getFlow, getFlowLogs, getTasks, runFlow, stopFlow, runFlowNode, updateFlow } from '../api';
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, Circle, ClipboardList, FileText, History, Loader2, MessageSquare, Play, Save, Square, SquareTerminal, Workflow, XCircle } from 'lucide-react';
+import { createTask, getAgents, getFlow, getFlowLogs, getFlowRuns, getTasks, runFlow, stopFlow, runFlowNode, updateFlow } from '../api';
 import { useWorkspace } from '../components/WorkspaceContext';
 import { useTheme } from '../components/ThemeContext';
-import FlowCanvas, { applyEdgeChanges, applyNodeChanges } from '../components/flow/FlowCanvas';
+import FlowCanvas, { AgentPalette, applyEdgeChanges, applyNodeChanges } from '../components/flow/FlowCanvas';
+import FlowChat from '../components/flow/FlowChat';
 
 const DOMAIN_COLORS = {
   management: '#22d3ee',
@@ -76,9 +77,36 @@ function FlowEditor() {
   const [availableAgents, setAvailableAgents] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [runs, setRuns] = useState([]);
+  const [selectedRunGroup, setSelectedRunGroup] = useState(null); // History record being viewed
   const [dirty, setDirty] = useState(false);
-  const [activeTab, setActiveTab] = useState('graph');
+  const [rightTab, setRightTab] = useState('graph'); // graph | logs
+  const [leftTab, setLeftTab] = useState('tasks'); // tasks | history
+  const [centerTab, setCenterTab] = useState('canvas'); // canvas | chat
+  const [chatNonce, setChatNonce] = useState(0); // bumped to start a fresh chat thread
+  // A resumed chat History record: sticky so continuing it keeps appending to
+  // the same conversation even after the History selection is cleared (e.g. when
+  // the new turn starts executing). { conversationId, messages, key } or null.
+  const [resumedChat, setResumedChat] = useState(null);
   const [quickTask, setQuickTask] = useState({ title: '', description: '' });
+
+  // The conversation id FlowChat uses for the active chat. It is also the
+  // run_group the backend stamps on this chat's flow-log events, so we can
+  // scope the live Logs view to just the current chat. A resumed record keeps
+  // its own id so continued turns grow that same record.
+  const activeConversationId = resumedChat
+    ? resumedChat.conversationId
+    : chatNonce
+    ? `flow-chat-${flowId}-${chatNonce}`
+    : `flow-chat-${flowId}`;
+
+  const handleNewChat = () => {
+    setChatNonce((n) => n + 1);
+    setCenterTab('chat');
+    setResumedChat(null); // leave any resumed record; show the new (empty) chat
+    setSelectedRunGroup(null);
+    setSelectedNodeId(null);
+  };
 
   const patchNodeHandlers = (items) => items.map((node) => normalizeNode(node, handleRunNode));
 
@@ -95,7 +123,7 @@ function FlowEditor() {
         animated: false,
         style: { stroke: '#0891b2', strokeWidth: 2 },
       })));
-      const EXCLUDED_AGENT_IDS = new Set(['orchestrator', 'agent_flows', 'flow-graph', 'flow-custom-graph', 'test-agent', 'research-remote', 'example-agent']);
+      const EXCLUDED_AGENT_IDS = new Set(['orchestrator', 'agent_creator', 'flow-graph', 'flow-custom-graph', 'test-agent', 'research-remote', 'example-agent']);
       setAvailableAgents(
         (agentsResponse.data || []).filter((agent) => !EXCLUDED_AGENT_IDS.has(agent.id))
       );
@@ -127,6 +155,15 @@ function FlowEditor() {
     }
   };
 
+  const loadRuns = async (workspaceName) => {
+    try {
+      const response = await getFlowRuns(flowId, workspaceName || undefined);
+      setRuns(response.data || []);
+    } catch (error) {
+      console.error('Failed to load runs', error);
+    }
+  };
+
   useEffect(() => {
     loadFlow();
   }, [flowId, selectedWorkspace]);
@@ -136,9 +173,11 @@ function FlowEditor() {
     if (!workspaceName) return;
     loadWorkspaceTasks(workspaceName);
     loadLogs(workspaceName);
+    loadRuns(workspaceName);
     if (!liveUpdates) return;
     const interval = setInterval(async () => {
       loadLogs(workspaceName);
+      loadRuns(workspaceName);
       if (flow?.running) {
         try {
           const res = await getFlow(flowId);
@@ -151,7 +190,7 @@ function FlowEditor() {
 
   useEffect(() => {
     if (selectedNodeId) {
-      setActiveTab('graph');
+      setRightTab('graph');
     }
   }, [selectedNodeId]);
 
@@ -160,26 +199,128 @@ function FlowEditor() {
     [nodes, selectedNodeId]
   );
 
+  const agentLabels = useMemo(() => {
+    const map = {};
+    for (const agent of availableAgents) map[agent.id] = agent.name;
+    for (const node of nodes) {
+      if (node.data?.agent_id) map[node.data.agent_id] = node.data.label || map[node.data.agent_id];
+    }
+    return map;
+  }, [availableAgents, nodes]);
+
+  const chatWorkspace = flow?.workspace || selectedWorkspace;
+
   const assignedTask = useMemo(
     () => tasks.find((task) => String(task.id) === String(flow?.task_id)) || null,
     [tasks, flow?.task_id]
   );
 
   const activeNodeId = useMemo(() => {
-    if (!flow?.running) return null;
+    // Derive the running node from the log stream rather than flow.running, so
+    // this works for both runFlow() runs and chat-driven runs (which don't flip
+    // the flow's running flag). If the flow has ended, nothing is active.
+    if (logs.length) {
+      const lastFlowEvent = [...logs].reverse().find(
+        (l) => l.type === 'flow_finish' || l.type === 'flow_stopped'
+      );
+      const lastStart = [...logs].reverse().find((l) => l.type === 'flow_start');
+      const ended = lastFlowEvent && (!lastStart || logs.indexOf(lastFlowEvent) > logs.indexOf(lastStart));
+      if (ended) return null;
+    }
     const lastType = {};
     for (const log of logs) {
       if (log.node_id) lastType[log.node_id] = log.type;
     }
     return Object.entries(lastType).find(([, t]) => t === 'agent_start')?.[0] ?? null;
-  }, [logs, flow?.running]);
+  }, [logs]);
+
+  // True while a run is in progress — covers runFlow() (flow.running) and
+  // chat-driven runs (latest flow-level log event is flow_start, not yet
+  // finished/stopped). Used to drive the Logs auto-scroll.
+  const isExecuting = useMemo(() => {
+    if (running || flow?.running) return true;
+    if (!logs.length) return false;
+    for (let i = logs.length - 1; i >= 0; i -= 1) {
+      const t = logs[i].type;
+      if (t === 'flow_finish' || t === 'flow_stopped') return false;
+      if (t === 'flow_start') return true;
+    }
+    return false;
+  }, [running, flow?.running, logs]);
+
+  // When a run starts (rising edge of isExecuting), open the Logs tab so the
+  // user sees execution progress. Only fires on the transition, so it won't
+  // fight the user if they switch back to Graph mid-run.
+  const wasExecutingRef = useRef(false);
+  useEffect(() => {
+    if (isExecuting && !wasExecutingRef.current) {
+      // A fresh run started — drop any historical selection so the live stream shows.
+      setSelectedRunGroup(null);
+      setRightTab('logs');
+    }
+    wasExecutingRef.current = isExecuting;
+  }, [isExecuting]);
+
+  const selectedRun = useMemo(
+    () => runs.find((r) => r.run_group === selectedRunGroup) || null,
+    [runs, selectedRunGroup]
+  );
+
+  // The log stream the right column renders:
+  //  - a selected History record → that record's own events
+  //  - a run actively executing → the live events of that run, scoped to its
+  //    run_group (the current chat, or the task run currently streaming)
+  //  - otherwise (idle, no record selected) → empty, so agents read as pending
+  const baseLogs = useMemo(() => {
+    if (selectedRun) return selectedRun.events || [];
+    if (!isExecuting) return [];
+    // Prefer the active chat's events; if a task run is streaming instead, scope
+    // to the run_group of the most recent live event (falling back to the full
+    // tail for legacy/untagged events).
+    const scoped = logs.filter((l) => l.run_group === activeConversationId);
+    if (scoped.length) return scoped;
+    const last = logs[logs.length - 1];
+    const liveGroup = last?.run_group;
+    if (liveGroup) return logs.filter((l) => l.run_group === liveGroup);
+    return logs;
+  }, [selectedRun, isExecuting, logs, activeConversationId]);
+
+  // Reconstruct the conversation bubbles for a selected History record from its
+  // flow-log events (see reconstructRunMessages).
+  const runMessages = useMemo(() => {
+    if (!selectedRun) return [];
+    return reconstructRunMessages(selectedRun);
+  }, [selectedRun]);
 
   const visibleLogs = useMemo(() => {
-    if (!selectedNode) return logs;
-    return logs.filter(
+    if (!selectedNode) return baseLogs;
+    return baseLogs.filter(
       (log) => log.node_id === selectedNode.id || log.agent_id === selectedNode.data.agent_id
     );
-  }, [logs, selectedNode]);
+  }, [baseLogs, selectedNode]);
+
+  // Per-node execution status derived from the latest log line for each node:
+  //  - done:    finished, skipped, errored, or stopped
+  //  - running: agent_start is the most recent event
+  //  - pending: no terminal/start event seen yet
+  const nodeStatuses = useMemo(() => {
+    const lastType = {};
+    for (const log of baseLogs) {
+      if (log.node_id) lastType[log.node_id] = log.type;
+    }
+    const DONE = new Set(['agent_finish', 'node_skip', 'agent_error', 'agent_stopped']);
+    return nodes.map((node) => {
+      const t = lastType[node.id];
+      let status = 'pending';
+      if (t === 'agent_start') status = 'running';
+      else if (DONE.has(t)) status = t === 'agent_error' ? 'error' : 'done';
+      return {
+        id: node.id,
+        label: node.data?.label || node.data?.agent_id || 'Agent',
+        status,
+      };
+    });
+  }, [logs, nodes]);
 
   const persistFlow = async (override = {}) => {
     if (!flow) return null;
@@ -242,7 +383,7 @@ function FlowEditor() {
       });
       setFlow((prev) => ({ ...prev, running: true }));
       await loadLogs(workspaceName);
-      setActiveTab('logs');
+      setRightTab('logs');
     } catch (error) {
       alert(`Failed to start flow: ${error.response?.data?.detail || error.message}`);
     } finally {
@@ -282,7 +423,7 @@ function FlowEditor() {
         description: flow.description || '',
       });
       await loadLogs(workspaceName);
-      setActiveTab('logs');
+      setRightTab('logs');
     } catch (error) {
       alert(`Failed to run node: ${error.response?.data?.detail || error.message}`);
     } finally {
@@ -316,7 +457,6 @@ function FlowEditor() {
       setQuickTask({ title: '', description: '' });
       await loadWorkspaceTasks(workspaceName);
       setDirty(true);
-      setActiveTab('tasks');
     } catch (error) {
       alert(`Failed to create task: ${error.response?.data?.detail || error.message}`);
     }
@@ -331,8 +471,8 @@ function FlowEditor() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-6">
-      <div className="flex shrink-0 flex-col gap-4 rounded-xl border border-gray-100 bg-white p-6 shadow-sm md:flex-row md:items-center">
+    <div className="flex h-full flex-col gap-4">
+      <div className="flex shrink-0 flex-col gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-sm md:flex-row md:items-center">
         <div className="flex-1">
           <Link
             to="/flows"
@@ -366,71 +506,183 @@ function FlowEditor() {
               {stopping ? 'Stopping…' : 'Stop'}
             </button>
           )}
-          <button
-            onClick={handleRunFlow}
-            disabled={running || !!flow?.running}
-            className="flex items-center rounded-lg bg-cyan-600 px-4 py-2 text-sm font-bold text-white shadow-md transition-all hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-400"
-          >
-            {(running || flow?.running)
-              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              : <Play className="mr-2 h-4 w-4" />}
-            {(running || flow?.running) ? 'Running…' : 'Run flow'}
-          </button>
         </div>
       </div>
 
-      <section className="relative min-h-0 flex-1">
-        <FlowCanvas
-          availableAgents={availableAgents}
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={(changes) => {
-            setNodes((current) => applyNodeChanges(changes, current).map((node) => ({
-              ...node,
-              style: { width: 90, ...(node.style || {}) },
-              data: { ...node.data, onRunNode: handleRunNode },
-            })));
-            setDirty(true);
-          }}
-          onEdgesChange={(changes) => {
-            setEdges((current) => applyEdgeChanges(changes, current));
-            setDirty(true);
-          }}
-          activeNodeId={activeNodeId}
-          onRunNode={handleRunNode}
-          setEdges={(value) => {
-            setEdges((current) => {
-              const next = typeof value === 'function' ? value(current) : value;
-              setDirty(true);
-              return next;
-            });
-          }}
-          setNodes={(value) => {
-            setNodes((current) => {
-              const next = typeof value === 'function' ? value(current) : value;
-              setDirty(true);
-              return patchNodeHandlers(next);
-            });
-          }}
-          setSelectedNodeId={setSelectedNodeId}
-        />
+      <section className="flex min-h-0 flex-1 overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+        {/* Left column — tasks */}
+        <div className="hidden w-[340px] shrink-0 flex-col overflow-hidden border-r border-slate-200 lg:flex">
+          <div className="flex gap-2 border-b border-slate-200 px-3 pt-3">
+            {[
+              { id: 'tasks', label: 'Tasks', icon: ClipboardList },
+              { id: 'history', label: 'History', icon: History },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = leftTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setLeftTab(tab.id)}
+                  className={`inline-flex flex-1 items-center justify-center gap-2 rounded-t-2xl px-4 py-2.5 text-sm font-semibold transition ${
+                    isActive
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className={`min-h-0 flex-1 overflow-y-auto p-3 ${leftTab === 'tasks' ? '' : 'hidden'}`}>
+            <div className="space-y-5">
+              <button
+                type="button"
+                onClick={handleNewChat}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
+              >
+                <MessageSquare className="h-4 w-4" />
+                New chat
+              </button>
 
-        <div className="absolute bottom-0 right-0 top-0 z-50 flex w-[340px] flex-col overflow-hidden rounded-r-[28px] border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-4 pt-4">
+              {assignedTask ? (
+                <div className="rounded-[20px] border border-cyan-100 bg-cyan-50/70 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Current task</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFlow((current) => ({ ...current, task_id: null }));
+                        setDirty(true);
+                      }}
+                      className="text-xs font-medium text-slate-400 transition hover:text-rose-500"
+                    >
+                      Detach
+                    </button>
+                  </div>
+                  <div className="mt-2 text-sm font-bold text-slate-900">{assignedTask.title}</div>
+                  <div className="mt-1 text-sm leading-6 text-slate-600">{assignedTask.description || 'No task description.'}</div>
+                </div>
+              ) : (
+                <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                  No task is currently attached to this flow.
+                </div>
+              )}
+
+              <button
+                onClick={handleRunFlow}
+                disabled={running || !!flow?.running}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-400"
+              >
+                {(running || flow?.running)
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Play className="h-4 w-4" />}
+                {(running || flow?.running) ? 'Running…' : assignedTask ? 'Run flow with task' : 'Run flow'}
+              </button>
+
+              {tasks.filter((t) => String(t.id) !== String(flow?.task_id)).length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-sm font-bold text-slate-900">Select existing task</div>
+                  <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                    {tasks
+                      .filter((t) => String(t.id) !== String(flow?.task_id))
+                      .map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            const nextDescription = flow?.description?.trim() ? flow.description : t.description?.trim() || '';
+                            setFlow((current) => ({
+                              ...current,
+                              task_id: String(t.id),
+                              description: nextDescription,
+                            }));
+                            setDirty(true);
+                          }}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-cyan-300 hover:bg-cyan-50"
+                        >
+                          <div className="text-sm font-semibold text-slate-800">{t.title}</div>
+                          {t.description && (
+                            <div className="mt-0.5 truncate text-xs text-slate-400">{t.description}</div>
+                          )}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={handleCreateTask} className="space-y-3">
+                <div className="text-sm font-bold text-slate-900">Create task</div>
+                <input
+                  value={quickTask.title}
+                  onChange={(event) => setQuickTask((current) => ({ ...current, title: event.target.value }))}
+                  placeholder="Task title"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                />
+                <textarea
+                  value={quickTask.description}
+                  onChange={(event) => setQuickTask((current) => ({ ...current, description: event.target.value }))}
+                  rows={4}
+                  placeholder="Task description"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-700"
+                >
+                  Create and attach task
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <div className={`min-h-0 flex-1 overflow-y-auto p-3 ${leftTab === 'history' ? '' : 'hidden'}`}>
+            <FlowHistory
+              runs={runs}
+              selectedRunGroup={selectedRunGroup}
+              onSelect={(run) => {
+                const group = run.run_group;
+                const isReselect = selectedRunGroup === group;
+                setSelectedRunGroup(isReselect ? null : group);
+                setSelectedNodeId(null);
+                setRightTab('logs');
+                setCenterTab('chat');
+                if (run.kind === 'chat' && !isReselect) {
+                  // Resume this conversation in the live chat so it can continue.
+                  setResumedChat({
+                    conversationId: run.conversation_id || run.run_group,
+                    messages: reconstructRunMessages(run),
+                    key: run.run_group,
+                  });
+                } else {
+                  // Deselecting, or opening a read-only task-run record: clear the
+                  // resumed conversation so the chat returns to an empty new chat.
+                  setResumedChat(null);
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Center column — switch between canvas and chat */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {/* Header — canvas / chat switch */}
+          <div className="border-b border-slate-200 px-4 pt-3">
             <div className="flex gap-2">
               {[
-                { id: 'graph', label: selectedNode ? 'Node' : 'Graph', icon: SquareTerminal },
-                { id: 'tasks', label: 'Tasks', icon: ClipboardList },
-                { id: 'logs', label: 'Logs', icon: FileText },
+                { id: 'canvas', label: 'Canvas', icon: Workflow },
+                { id: 'chat', label: 'Chat', icon: MessageSquare },
               ].map((tab) => {
                 const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
+                const isActive = centerTab === tab.id;
                 return (
                   <button
                     key={tab.id}
                     type="button"
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`inline-flex w-[90px] items-center justify-center gap-2 rounded-t-2xl px-4 py-3 text-sm font-semibold transition ${
+                    onClick={() => setCenterTab(tab.id)}
+                    className={`inline-flex items-center justify-center gap-2 rounded-t-2xl px-5 py-2.5 text-sm font-semibold transition ${
                       isActive
                         ? 'bg-slate-900 text-white'
                         : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-900'
@@ -444,8 +696,112 @@ function FlowEditor() {
             </div>
           </div>
 
-          <div className={`flex-1 min-h-0 ${activeTab === 'logs' ? 'overflow-hidden' : 'overflow-y-auto p-5'}`}>
-            {activeTab === 'graph' ? (
+          {/* Canvas — kept mounted so ReactFlow viewport/state survives tab switches.
+              Visible only on the Canvas tab; on the Chat tab the chat takes the full pane. */}
+          <div className={`relative min-h-0 min-w-0 flex-1 basis-1/2 ${centerTab === 'canvas' ? 'block' : 'hidden'}`}>
+            <FlowCanvas
+              availableAgents={availableAgents}
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={(changes) => {
+                setNodes((current) => applyNodeChanges(changes, current).map((node) => ({
+                  ...node,
+                  style: { width: 90, ...(node.style || {}) },
+                  data: { ...node.data, onRunNode: handleRunNode },
+                })));
+                setDirty(true);
+              }}
+              onEdgesChange={(changes) => {
+                setEdges((current) => applyEdgeChanges(changes, current));
+                setDirty(true);
+              }}
+              activeNodeId={activeNodeId}
+              onRunNode={handleRunNode}
+              setEdges={(value) => {
+                setEdges((current) => {
+                  const next = typeof value === 'function' ? value(current) : value;
+                  setDirty(true);
+                  return next;
+                });
+              }}
+              setNodes={(value) => {
+                setNodes((current) => {
+                  const next = typeof value === 'function' ? value(current) : value;
+                  setDirty(true);
+                  return patchNodeHandlers(next);
+                });
+              }}
+              setSelectedNodeId={setSelectedNodeId}
+            />
+          </div>
+
+          {/* Chat — always mounted (thread survives tab switches). On the Canvas tab it's a
+              fixed bottom strip; on the Chat tab it grows to fill the whole pane.
+              When a chat History record is selected it is resumed in the live chat
+              (turns append to the same conversation); a task-run record shows a
+              read-only transcript instead. */}
+          <div
+            className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${
+              centerTab === 'chat' ? 'flex-1' : 'flex-1 basis-1/2 border-t border-slate-200'
+            }`}
+          >
+            {selectedRun && selectedRun.kind !== 'chat' ? (
+              <FlowRunMessages
+                run={selectedRun}
+                messages={runMessages}
+                onClose={() => setSelectedRunGroup(null)}
+              />
+            ) : (
+              <FlowChat
+                flow={flow}
+                flowId={flowId}
+                workspace={chatWorkspace}
+                agentLabels={agentLabels}
+                chatNonce={chatNonce}
+                resumeConversationId={resumedChat?.conversationId || null}
+                resumeMessages={resumedChat?.messages || null}
+                resumeKey={resumedChat?.key || null}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Right column — graph (nodes / palette) and execution log */}
+        <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+          <div className="border-b border-slate-200 px-4 pt-4">
+            <div className="flex gap-2">
+              {[
+                { id: 'graph', label: selectedNode ? 'Node' : 'Graph', icon: SquareTerminal },
+                { id: 'logs', label: 'Logs', icon: FileText },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const isActive = rightTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => {
+                      setRightTab(tab.id);
+                      // Opening the Graph/Node tab brings the canvas into view so
+                      // the selected node and its edits are visible together.
+                      if (tab.id === 'graph') setCenterTab('canvas');
+                    }}
+                    className={`inline-flex flex-1 items-center justify-center gap-2 rounded-t-2xl px-4 py-3 text-sm font-semibold transition ${
+                      isActive
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className={`flex-1 min-h-0 ${rightTab === 'logs' ? 'overflow-hidden' : 'overflow-y-auto p-3'}`}>
+            {rightTab === 'graph' ? (
               selectedNode ? (
                 <div className="space-y-4">
                   <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4">
@@ -488,6 +844,7 @@ function FlowEditor() {
                       {nodes.length} nodes, {edges.length} connections
                     </div>
                   </div>
+                  <AgentPalette availableAgents={availableAgents} />
                   <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
                     Select a node on the canvas to edit its description, node-specific task, and run only that agent.
                   </div>
@@ -495,91 +852,13 @@ function FlowEditor() {
               )
             ) : null}
 
-            {activeTab === 'tasks' ? (
-              <div className="space-y-5">
-                {assignedTask ? (
-                  <div className="rounded-[20px] border border-cyan-100 bg-cyan-50/70 p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">Current task</div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFlow((current) => ({ ...current, task_id: null }));
-                          setDirty(true);
-                        }}
-                        className="text-xs font-medium text-slate-400 transition hover:text-rose-500"
-                      >
-                        Detach
-                      </button>
-                    </div>
-                    <div className="mt-2 text-sm font-bold text-slate-900">{assignedTask.title}</div>
-                    <div className="mt-1 text-sm leading-6 text-slate-600">{assignedTask.description || 'No task description.'}</div>
-                  </div>
-                ) : (
-                  <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    No task is currently attached to this flow.
-                  </div>
-                )}
-
-                {tasks.filter((t) => String(t.id) !== String(flow?.task_id)).length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-sm font-bold text-slate-900">Select existing task</div>
-                    <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
-                      {tasks
-                        .filter((t) => String(t.id) !== String(flow?.task_id))
-                        .map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            onClick={() => {
-                              const nextDescription = flow?.description?.trim() ? flow.description : t.description?.trim() || '';
-                              setFlow((current) => ({
-                                ...current,
-                                task_id: String(t.id),
-                                description: nextDescription,
-                              }));
-                              setDirty(true);
-                              setActiveTab('tasks');
-                            }}
-                            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-cyan-300 hover:bg-cyan-50"
-                          >
-                            <div className="text-sm font-semibold text-slate-800">{t.title}</div>
-                            {t.description && (
-                              <div className="mt-0.5 truncate text-xs text-slate-400">{t.description}</div>
-                            )}
-                          </button>
-                        ))}
-                    </div>
-                  </div>
-                )}
-
-                <form onSubmit={handleCreateTask} className="space-y-3">
-                  <div className="text-sm font-bold text-slate-900">Create task</div>
-                  <input
-                    value={quickTask.title}
-                    onChange={(event) => setQuickTask((current) => ({ ...current, title: event.target.value }))}
-                    placeholder="Task title"
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
-                  />
-                  <textarea
-                    value={quickTask.description}
-                    onChange={(event) => setQuickTask((current) => ({ ...current, description: event.target.value }))}
-                    rows={4}
-                    placeholder="Task description"
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
-                  />
-                  <button
-                    type="submit"
-                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-700"
-                  >
-                    Create and attach task
-                  </button>
-                </form>
-              </div>
-            ) : null}
-
-            {activeTab === 'logs' ? (
-              <FlowLog logs={visibleLogs} filterLabel={selectedNode?.data.label} />
+            {rightTab === 'logs' ? (
+              <FlowLog
+                logs={visibleLogs}
+                filterLabel={selectedRun ? (selectedRun.title || 'Selected run') : selectedNode?.data.label}
+                running={isExecuting && !selectedRun}
+                nodeStatuses={nodeStatuses}
+              />
             ) : null}
           </div>
         </div>
@@ -592,6 +871,181 @@ function fmtTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString([], {
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
+
+const RUN_STATUS_STYLES = {
+  completed: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Completed' },
+  stopped: { dot: 'bg-rose-500', text: 'text-rose-600', label: 'Stopped' },
+  running: { dot: 'bg-amber-500 animate-pulse', text: 'text-amber-600', label: 'Running' },
+};
+
+// Reconstruct conversation bubbles from a History record's flow-log events.
+// Each flow_start begins a turn; the first node's input holds the user message,
+// and every node's terminal event (finish/error/stopped) becomes an agent bubble
+// carrying that node's output. Bubble shape matches FlowChat's message objects so
+// a chat record can be resumed there.
+function reconstructRunMessages(run) {
+  const events = run?.events || [];
+  const bubbles = [];
+  let turnHasUser = false;
+  const extractUserMessage = (input) => {
+    const text = String(input || '');
+    const marker = 'Latest user message:';
+    const idx = text.lastIndexOf(marker);
+    const tail = idx >= 0 ? text.slice(idx + marker.length) : text;
+    return tail.split('\n=== Attached files ===')[0].trim();
+  };
+  for (const ev of events) {
+    if (ev.type === 'flow_start') {
+      turnHasUser = false;
+    } else if (ev.type === 'agent_start') {
+      if (!turnHasUser) {
+        const userText = extractUserMessage(ev.input);
+        if (userText) {
+          bubbles.push({ id: `${ev.timestamp}-u`, role: 'user', content: userText });
+        }
+        turnHasUser = true;
+      }
+    } else if (ev.type === 'agent_finish' || ev.type === 'agent_error' || ev.type === 'agent_stopped') {
+      bubbles.push({
+        id: `${ev.timestamp}-${ev.node_id || 'a'}`,
+        role: 'agent',
+        agent_label: ev.agent_name || ev.agent_id || 'Agent',
+        content: ev.output || ev.content || '',
+        error: ev.type !== 'agent_finish',
+      });
+    }
+  }
+  return bubbles;
+}
+
+function FlowRunMessages({ run, messages = [], onClose }) {
+  const isChat = run?.kind === 'chat';
+  return (
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-slate-50">
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100">
+          {isChat ? <MessageSquare className="h-4 w-4 text-indigo-600" /> : <Workflow className="h-4 w-4 text-emerald-600" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-bold text-slate-900">
+            {run?.title || (isChat ? 'Flow chat' : 'Flow run')}
+          </div>
+          <div className="truncate text-[11px] text-slate-400">
+            {isChat ? 'Chat' : 'Task run'} · {fmtDateTime(run?.started_at)} · read-only history
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        {messages.length === 0 ? (
+          <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center text-sm text-slate-500">
+            This run produced no messages.
+          </div>
+        ) : (
+          messages.map((msg) => {
+            const isUser = msg.role === 'user';
+            return (
+              <div key={msg.id} className={`mb-4 flex gap-2.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div className="flex shrink-0 flex-col items-center gap-1">
+                  <div
+                    className={`flex h-7 w-7 items-center justify-center rounded-full text-white ${
+                      isUser ? 'bg-indigo-600' : 'bg-gray-800'
+                    }`}
+                  >
+                    {isUser ? <SquareTerminal className="h-3.5 w-3.5" /> : <Workflow className="h-3.5 w-3.5" />}
+                  </div>
+                  {!isUser && msg.agent_label && (
+                    <span className="max-w-[52px] break-words text-center text-[9px] font-medium leading-tight text-gray-400">
+                      {msg.agent_label}
+                    </span>
+                  )}
+                </div>
+                <div
+                  className={`max-w-[78%] whitespace-pre-wrap text-sm leading-relaxed ${
+                    isUser
+                      ? 'rounded-2xl rounded-tr-sm bg-indigo-600 px-3.5 py-2.5 text-white'
+                      : 'rounded-2xl rounded-tl-sm border border-gray-200 bg-white px-3.5 py-2.5 text-gray-800 shadow-sm'
+                  } ${msg.error ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
+                >
+                  {msg.content || (msg.error ? '(no output)' : '')}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FlowHistory({ runs = [], selectedRunGroup, onSelect }) {
+  if (!runs.length) {
+    return (
+      <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+        No previous runs yet. Run the flow or chat with it to build up history.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {runs.map((run) => {
+        const isActive = run.run_group === selectedRunGroup;
+        const isChat = run.kind === 'chat';
+        const status = RUN_STATUS_STYLES[run.status] || RUN_STATUS_STYLES.running;
+        const nodeCount = (run.events || []).filter((e) => e.type === 'agent_start').length;
+        return (
+          <button
+            key={run.run_group}
+            type="button"
+            onClick={() => onSelect(run)}
+            className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+              isActive
+                ? 'border-cyan-300 bg-cyan-50'
+                : 'border-slate-200 bg-slate-50 hover:border-cyan-300 hover:bg-cyan-50'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                  isChat ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'
+                }`}
+              >
+                {isChat ? <MessageSquare className="h-3 w-3" /> : <Workflow className="h-3 w-3" />}
+                {isChat ? 'Chat' : 'Task run'}
+              </span>
+              <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${status.text}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
+                {status.label}
+              </span>
+            </div>
+            <div className="mt-1.5 truncate text-sm font-semibold text-slate-900">
+              {run.title || (isChat ? 'Flow chat' : 'Flow run')}
+            </div>
+            <div className="mt-0.5 text-[11px] text-slate-400">
+              {fmtDateTime(run.started_at)} · {nodeCount} step{nodeCount === 1 ? '' : 's'}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function logMeta(log) {
@@ -671,17 +1125,81 @@ function LogLine({ log, isLast, isDark }) {
   );
 }
 
-function FlowLog({ logs, filterLabel }) {
+function FlowAgentStatusBar({ nodeStatuses = [] }) {
+  if (!nodeStatuses.length) return null;
+  const STYLES = {
+    done: {
+      Icon: CheckCircle2, iconClass: 'text-emerald-500',
+      row: 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-900/20',
+      label: 'text-slate-800 dark:text-slate-100', badge: 'text-emerald-600 dark:text-emerald-400', word: 'Done',
+    },
+    running: {
+      Icon: Loader2, iconClass: 'text-amber-500 animate-spin',
+      row: 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/30',
+      label: 'text-amber-900 dark:text-amber-100', badge: 'text-amber-600 dark:text-amber-400', word: 'Processing',
+    },
+    error: {
+      Icon: XCircle, iconClass: 'text-rose-500',
+      row: 'border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-900/20',
+      label: 'text-rose-800 dark:text-rose-200', badge: 'text-rose-600 dark:text-rose-400', word: 'Error',
+    },
+    pending: {
+      Icon: Circle, iconClass: 'text-slate-300 dark:text-slate-600',
+      row: 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/60',
+      label: 'text-slate-400 dark:text-slate-500', badge: 'text-slate-400 dark:text-slate-500', word: 'Pending',
+    },
+  };
+  return (
+    <div className="max-h-[45%] shrink-0 overflow-y-auto border-b border-slate-200 p-2 dark:border-slate-700">
+      <div className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+        Agents
+      </div>
+      <div className="space-y-1">
+        {nodeStatuses.map((node, i) => {
+          const s = STYLES[node.status] || STYLES.pending;
+          const Icon = s.Icon;
+          return (
+            <div
+              key={node.id}
+              className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 ${s.row}`}
+            >
+              <span className="w-4 shrink-0 text-center text-[11px] font-mono text-slate-400 dark:text-slate-500">{i + 1}</span>
+              <Icon className={`h-4 w-4 shrink-0 ${s.iconClass}`} />
+              <span className={`min-w-0 flex-1 truncate text-sm font-semibold ${s.label}`}>{node.label}</span>
+              <span className={`shrink-0 text-[11px] font-medium ${s.badge}`}>{s.word}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FlowLog({ logs, filterLabel, running, nodeStatuses }) {
   const bottomRef = useRef(null);
+  const didInitialScrollRef = useRef(false);
   const { theme } = useTheme();
   const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
+  // On mount (or when logs first appear), jump straight to the end with no animation.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (didInitialScrollRef.current) return;
+    if (logs.length === 0) return;
+    bottomRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
+    didInitialScrollRef.current = true;
   }, [logs.length]);
+
+  // While the flow is executing, follow new log lines smoothly. When it's not
+  // running we leave the scroll position alone so users can read past output.
+  useEffect(() => {
+    if (!running) return;
+    if (!didInitialScrollRef.current) return;
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [logs.length, running]);
 
   return (
     <div className="flex h-full flex-col bg-slate-50 dark:bg-slate-900">
+      <FlowAgentStatusBar nodeStatuses={nodeStatuses} />
       {filterLabel && (
         <div className="border-b border-slate-200 px-3 py-1.5 font-mono text-[10px] text-slate-400 dark:border-slate-700 dark:text-slate-500">
           # filtered · {filterLabel}

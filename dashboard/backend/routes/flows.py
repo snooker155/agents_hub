@@ -272,6 +272,12 @@ async def stop_flow(flow_id: str):
         and r.get("status") in {"running", "pending"}
     ]
 
+    # The meta run id groups all events of a task run into one History record.
+    meta_run_id = next(
+        (r.get("run_id") for r in active_runs if r.get("is_flow")),
+        next((r.get("flow_run_id") for r in active_runs if r.get("flow_run_id")), None),
+    )
+
     stopped = False
     for r in active_runs:
         run_id = r.get("run_id")
@@ -288,6 +294,8 @@ async def stop_flow(flow_id: str):
                     "type": "flow_stopped",
                     "content": "Flow stopped by user",
                     "status": "stopped",
+                    "run_group": meta_run_id,
+                    "kind": "task",
                 })
             else:
                 _append_flow_log(flow_id, {
@@ -297,6 +305,8 @@ async def stop_flow(flow_id: str):
                     "agent_name": label,
                     "content": f"{label} stopped by user",
                     "status": "stopped",
+                    "run_group": meta_run_id,
+                    "kind": "task",
                 })
 
     _set_flow_running(flow_id, False)
@@ -313,6 +323,82 @@ async def get_flow_logs(flow_id: str, workspace: Optional[str] = None):
         except Exception:
             pass
     return []
+
+
+def _read_flow_log(flow_id: str) -> List[Dict]:
+    from agents.run_manager import STATE_DIR
+    log_path = STATE_DIR / "flow_logs" / f"{flow_id}.json"
+    if log_path.exists():
+        try:
+            return json.loads(log_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+@router.get("/{flow_id}/runs")
+async def get_flow_runs(flow_id: str, workspace: Optional[str] = None):
+    """
+    Return the flow's execution history grouped into one record per run.
+
+    Each record is either a task run (one flow_start→flow_finish from run_flow.py)
+    or a chat conversation (all turns of one flow chat collapse into a single
+    record). Records carry their own slice of log events so the dashboard can
+    render per-run logs. Legacy events without a run_group are grouped by
+    flow_start boundaries so old logs still surface.
+    """
+    events = _read_flow_log(flow_id)
+
+    groups: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    legacy_seq = 0
+
+    for ev in events:
+        key = ev.get("run_group")
+        if not key:
+            # Legacy events: start a new synthetic group on each flow_start.
+            if ev.get("type") == "flow_start" or not order:
+                legacy_seq += 1
+            key = f"legacy-{legacy_seq}"
+        if key not in groups:
+            groups[key] = {
+                "run_group": key,
+                "kind": ev.get("kind") or "task",
+                "title": None,
+                "started_at": None,
+                "finished_at": None,
+                "status": "running",
+                "events": [],
+            }
+            order.append(key)
+        g = groups[key]
+        g["events"].append(ev)
+
+        if ev.get("kind"):
+            g["kind"] = ev["kind"]
+        ts = ev.get("timestamp")
+        etype = ev.get("type")
+        if etype == "flow_start":
+            if g["started_at"] is None:
+                g["started_at"] = ts
+            if ev.get("title"):
+                g["title"] = ev["title"]
+            if ev.get("session_id"):
+                g["session_id"] = ev["session_id"]
+            if ev.get("conversation_id"):
+                g["conversation_id"] = ev["conversation_id"]
+            if ev.get("task_id"):
+                g["task_id"] = ev["task_id"]
+        elif etype in ("flow_finish", "flow_stopped"):
+            g["finished_at"] = ts
+            g["status"] = "stopped" if etype == "flow_stopped" else "completed"
+        if g["started_at"] is None and ts:
+            g["started_at"] = ts
+
+    # Most recent first.
+    records = [groups[k] for k in order]
+    records.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    return records
 
 
 # ── AI flow generation ─────────────────────────────────────────────────────────

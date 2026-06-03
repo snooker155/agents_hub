@@ -31,16 +31,17 @@
       "verbose": false
     },
     {
-      "id": "agent_flows",
+      "id": "agent_creator",
       "name": "Agent Creator",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Creates, inspects, and manages agents in the system. Available only in the default workspace.",
+      "description": "Creates, inspects, and manages agents in the system.",
       "domain": "orchestration",
       "tools": [
         "list_agents_tool",
         "create_agent_tool",
         "get_agent_tool",
+        "modify_agent_tool",
         "delete_agent_tool"
       ],
       "commands": [
@@ -68,7 +69,7 @@
       "capacity": 1,
       "memory_type": "none",
       "memory_data": null,
-      "default_workspace_only": true
+      "default_workspace_only": false
     },
     {
       "id": "decomposer",
