@@ -60,7 +60,7 @@ Without any install at all, `python -m cli` from the checkout is the same
 program, and the two servers start directly:
 
 ```bash
-python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
 cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 ```
 

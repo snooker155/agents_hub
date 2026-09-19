@@ -118,10 +118,16 @@ def _build_openai_compatible(
     # of an agent-stack dependency at load time.
     from agents.agent_utils import ReasoningChatOpenAI, needs_responses_api
     from common.config import settings
+    from common.hostnet import host_service_url
 
     base_url = (backend.get("base_url") or "").strip().rstrip("/")
     if not base_url:
         raise ValueError(f"Custom backend '{backend.get('id')}' has no base URL.")
+    # A registry entry is written from the host's point of view, so a backend on
+    # this machine is spelled localhost there. Inside a container that address
+    # is the container itself, which is why it goes through the same rewrite
+    # the built-in local providers get.
+    base_url = host_service_url(base_url)
     temp = temperature if temperature is not None else settings.temperature
     tok = max_tokens if max_tokens is not None else settings.max_tokens
     effort = _LEVEL_EFFORT.get((thinking_level or "").lower())

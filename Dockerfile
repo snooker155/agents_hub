@@ -57,7 +57,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
     CMD curl -fsS http://localhost:8000/ || exit 1
 
-CMD ["python", "-m", "uvicorn", "dashboard.backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# No --reload: the reloader restarts the process on any write under /app,
+# and the image ships the source rather than mounting it, so there is
+# nothing to watch. Restart the container to pick up new code.
+CMD ["python", "-m", "uvicorn", "dashboard.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # The dashboard frontend has its own image: dashboard/frontend/Dockerfile
 # (Vite dev server, or nginx serving the production bundle). It shares nothing

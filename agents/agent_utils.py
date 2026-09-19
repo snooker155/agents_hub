@@ -8,6 +8,7 @@ import os
 from langchain_openai import ChatOpenAI
 
 from common.config import settings
+from common.hostnet import host_service_url
 
 
 class ReasoningChatOpenAI(ChatOpenAI):
@@ -166,7 +167,8 @@ def build_chat_model(
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama
-        url = base_url or os.environ.get("OLLAMA_BASE_URL") or settings.ollama_base_url
+        url = host_service_url(
+            base_url or os.environ.get("OLLAMA_BASE_URL") or settings.ollama_base_url)
         mdl = model or os.environ.get("OLLAMA_MODEL") or settings.ollama_model
         if not mdl:
             raise ValueError("Ollama model is not configured. Set OLLAMA_MODEL in Settings.")
@@ -183,7 +185,8 @@ def build_chat_model(
         )
 
     if provider == "lmstudio":
-        url = (base_url or os.environ.get("LMSTUDIO_BASE_URL") or settings.lmstudio_base_url).rstrip("/")
+        url = host_service_url(
+            base_url or os.environ.get("LMSTUDIO_BASE_URL") or settings.lmstudio_base_url).rstrip("/")
         mdl = model or os.environ.get("LMSTUDIO_MODEL") or settings.lmstudio_model
         if not mdl:
             raise ValueError("LM Studio model is not configured. Set LMSTUDIO_MODEL in Settings.")

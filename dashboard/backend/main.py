@@ -9,8 +9,11 @@ Organized by domains:
 - memory: Shared memory management
 - workspaces: Workspace management
 """
+import argparse
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path as PathlibPath
+from typing import Any, Dict, List, Optional
 
 # Ensure project root is on sys.path when running this file as a script
 project_root = PathlibPath(__file__).resolve().parents[2]
@@ -46,20 +49,18 @@ from routes import agent_import, agents, context_refs, entity_chats, page_chat, 
 from routes import settings as settings_router
 from routes import models as models_router
 
-# Import settings for API key validation
+# Settings, for the optional bearer token below
 from common.config import settings
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Agents Hub",
-    description="Multi-domain agent orchestration and task management",
-    version="1.0.0"
-)
 
-# Startup event to validate OpenAI API key
-@app.on_event("startup")
-async def startup_event():
-    """Validate API key and wire up background services (broker, telegram, scheduler).
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Background services live exactly as long as the app does.
+
+    Startup wires up the broker, the Telegram poller, the plan scheduler, the
+    external-state publisher and the run watchdog; everything after the yield
+    stops them again. Each is started inside its own try: a connector that
+    will not come up must not take the API down with it.
 
     The orchestrator node is intentionally NOT started here: orchestration runs
     only when the user starts an orchestrator node (Nodes UI / POST /api/nodes).
@@ -74,18 +75,6 @@ async def startup_event():
     # UI has selected, which is where the Settings page writes it.
     from common.logging_config import configure_logging_for_active_workspace
     print(f"✓ Log level: {configure_logging_for_active_workspace()}")
-    if not settings.openai_api_key:
-        print("\n" + "="*70)
-        print("WARNING: OPENAI_API_KEY is not set!")
-        print("="*70)
-        print("To use AI agents, set the OpenAI API key in one of these ways:")
-        print("  1. Environment variable: export OPENAI_API_KEY='your-key-here'")
-        print("  2. Create a .env file in the project root with: OPENAI_API_KEY='your-key-here'")
-        print("  3. Set it directly before running this script")
-        print("\nWithout the API key, agent tasks will fail.")
-        print("="*70 + "\n")
-    else:
-        print("✓ OpenAI API key is configured")
 
     # The orchestrator node is started on demand by the user, not at startup.
 
@@ -130,9 +119,8 @@ async def startup_event():
     except Exception as e:
         print(f"⚠ Could not start run watchdog: {e}")
 
+    yield
 
-@app.on_event("shutdown")
-async def shutdown_event():
     task = getattr(app.state, "external_publisher", None)
     if task:
         task.cancel()
@@ -151,6 +139,16 @@ async def shutdown_event():
         await _tg_service.stop()
     except Exception:
         pass
+
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Agents Hub",
+    description="Multi-domain agent orchestration and task management",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
 
 # Helper to locate orchestrator settings (stored under .agents_hub)
 def get_orchestrator_settings_path() -> PathlibPath:
@@ -378,21 +376,37 @@ app.include_router(views.router)
 # ============================================================================
 # Entry Point
 # ============================================================================
+# The source trees a reloader has to watch. The backend imports from all of
+# them, so watching only its own directory would miss most edits.
+RELOAD_DIRS = [
+    str(_backend_dir),
+    *(str(project_root / name) for name in
+      ("agents", "common", "tools", "tasks", "chat", "flow")),
+]
+
+
+def uvicorn_options(argv: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Options for running this module directly: `python main.py [--reload]`.
+
+    The reloader is opt-in. It restarts the process on any write under the
+    watched trees, which is what you want while editing and never what you want
+    anywhere else: the backend owns singletons (the plan scheduler, the run
+    watchdog, the Telegram poller) that a restart interrupts mid-flight.
+    """
+    parser = argparse.ArgumentParser(description="Run the Agents Hub API.")
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind to.")
+    parser.add_argument("--port", type=int, default=8000, help="Port to listen on.")
+    parser.add_argument("--reload", action="store_true",
+                        help="Restart on source changes (development only).")
+    args = parser.parse_args(argv)
+
+    options: Dict[str, Any] = {"host": args.host, "port": args.port, "reload": args.reload}
+    if args.reload:
+        options["reload_dirs"] = RELOAD_DIRS
+    return options
+
+
 if __name__ == "__main__":
     import uvicorn
-    from pathlib import Path as _Path
-    _root = _Path(__file__).resolve().parents[2]
-    uvicorn.run(
-        "main:app",
-        port=8000,
-        reload=True,
-        reload_dirs=[
-            str(_Path(__file__).parent),   # dashboard/backend
-            str(_root / "agents"),
-            str(_root / "common"),
-            str(_root / "tools"),
-            str(_root / "tasks"),
-            str(_root / "chat"),
-            str(_root / "flow"),
-        ],
-    )
+
+    uvicorn.run("main:app", **uvicorn_options())

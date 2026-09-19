@@ -77,6 +77,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
+from common.hostnet import to_host_gateway
 from common.paths import AGENTS_HUB_ROOT
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,27 @@ def _host_path(path: str | Path) -> str:
         return str(resolved)
     # PurePosixPath: the daemon we talk to runs Linux even when we do not.
     return str(PurePosixPath(host_root) / relative) if str(relative) != "." else host_root
+
+
+# What a local model server is called on the host, before the container sees it.
+_LOCAL_MODEL_URLS = {
+    "OLLAMA_BASE_URL": "http://localhost:11434",
+    "LMSTUDIO_BASE_URL": "http://localhost:1234",
+}
+
+
+def _point_local_models_at_the_host(env: Dict[str, str]) -> Dict[str, str]:
+    """Rewrite the local-model URLs an agent container will inherit.
+
+    Unconditional, and set even when the variable is absent: the compiled-in
+    default is `localhost`, which inside the container means the container. The
+    counterpart on the receiving side is the `--add-host` above, which is what
+    makes the alias resolve on Linux.
+    """
+    out = dict(env)
+    for key, default in _LOCAL_MODEL_URLS.items():
+        out[key] = to_host_gateway(out.get(key) or default)
+    return out
 
 
 def _run(cmd: List[str], timeout: int = 300, capture: bool = True) -> subprocess.CompletedProcess:
@@ -471,21 +493,7 @@ def start_container(
     # Forward env vars; force local execution mode inside container
     merged_env = dict(os.environ if env is None else env)
     merged_env["AGENT_EXECUTION_MODE"] = "local"
-    # Ensure local-model base URLs always point to the host machine, not the
-    # container's own localhost.  We set them unconditionally so that even when
-    # the user relies on the compiled-in default (localhost:11434 / localhost:1234)
-    # the container can still reach the host service.
-    _LOCAL_URL_DEFAULTS = {
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "LMSTUDIO_BASE_URL": "http://localhost:1234",
-    }
-    for key, default in _LOCAL_URL_DEFAULTS.items():
-        url = merged_env.get(key) or default
-        merged_env[key] = url.replace(
-            "://localhost", "://host.docker.internal"
-        ).replace(
-            "://127.0.0.1", "://host.docker.internal"
-        )
+    merged_env = _point_local_models_at_the_host(merged_env)
     docker_cmd.extend(_env_flags(merged_env))
 
     # Extra user-configured docker flags, same live resolution as the image
@@ -596,11 +604,15 @@ def get_logs(container_name: str, tail: int = 200) -> str:
 
 def list_containers() -> List[Dict[str, Any]]:
     """Return all agents-hub containers (running and stopped)."""
+    # A short timeout, not the five-minute default: this is a read-only listing
+    # that callers treat as cheap. An installed CLI with no daemon behind it
+    # blocks until the timeout rather than failing, so the default would stall
+    # a diagnostic, and the suite, for minutes.
     result = _run([
         "docker", "ps", "-a",
         "--filter", f"label={LABEL_MANAGED}",
         "--format", "{{json .}}",
-    ])
+    ], timeout=15)
     containers: List[Dict[str, Any]] = []
     for line in (result.stdout or "").splitlines():
         line = line.strip()

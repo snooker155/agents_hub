@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from common.config import agent_execution_mode, live_setting, settings as _cfg
+from common.hostnet import host_service_url
 from providers import (
     is_custom_backend,
     get_backend,
@@ -317,7 +318,9 @@ class TestLocalModelRequest(BaseModel):
 @router.post("/test-local-model")
 async def test_local_model(data: TestLocalModelRequest):
     """Probe a local model server and return its available models."""
-    base = data.base_url.rstrip("/")
+    # The URL is written from the host's point of view; inside a container its
+    # loopback has to become the gateway alias or we would probe ourselves.
+    base = host_service_url(data.base_url).rstrip("/")
     if data.provider == "ollama":
         probe_url = f"{base}/api/tags"
     elif data.provider == "lmstudio":
@@ -423,7 +426,7 @@ async def test_provider(data: TestProviderRequest):
             elif is_custom_backend(data.provider):
                 backend = get_backend(data.provider) or {}
                 adapter = get_adapter(backend.get("adapter") or "openai")
-                base = (data.base_url or backend.get("base_url") or "").rstrip("/")
+                base = host_service_url(data.base_url or backend.get("base_url") or "").rstrip("/")
                 if not base:
                     return {"ok": False, "error": "No base URL configured for this backend"}
                 if not adapter or not adapter.openai_compatible:
@@ -454,7 +457,7 @@ async def test_provider(data: TestProviderRequest):
             elif data.provider in ("ollama", "lmstudio"):
                 default_base = "http://localhost:11434" if data.provider == "ollama" else "http://localhost:1234"
                 env_key = "OLLAMA_BASE_URL" if data.provider == "ollama" else "LMSTUDIO_BASE_URL"
-                base = (data.base_url or env.get(env_key) or default_base).rstrip("/")
+                base = host_service_url(data.base_url or env.get(env_key) or default_base).rstrip("/")
                 probe_url = f"{base}/api/tags" if data.provider == "ollama" else f"{base}/v1/models"
                 resp = await client.get(probe_url)
                 resp.raise_for_status()

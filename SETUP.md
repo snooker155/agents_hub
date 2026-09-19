@@ -106,14 +106,14 @@ LMSTUDIO_BASE_URL=http://localhost:1234
 LMSTUDIO_MODEL=your-model-name
 ```
 
-> **Running the backend in Docker?** `localhost` inside the container points to the container itself, not your host — so Ollama and LM Studio running on the host are unreachable. Use `host.docker.internal` instead:
+> **Running the backend in Docker?** Leave the URLs as `localhost` and they keep working. `localhost` inside a container is that container, so the backend rewrites any loopback address to `host.docker.internal` whenever it detects it is containerized — for Ollama, LM Studio and custom OpenAI-compatible backends from the Models page alike. Agent containers get the same treatment from the launcher. Write `host.docker.internal` yourself if you prefer; it passes through untouched.
 >
-> ```env
-> OLLAMA_BASE_URL=http://host.docker.internal:11434
-> LMSTUDIO_BASE_URL=http://host.docker.internal:1234
-> ```
+> Two things the rewrite cannot do for you:
 >
-> This applies to any local model server reached over HTTP (LM Studio, Ollama, vLLM, llama.cpp, etc.). On Linux, `host.docker.internal` works under Docker Desktop and Compose; for plain Docker on Linux, add `extra_hosts: ["host.docker.internal:host-gateway"]` to the backend service in `docker-compose.yml`.
+> - **The server has to listen beyond loopback.** Ollama binds `127.0.0.1` by default and is unreachable from a container however you address it: set `OLLAMA_HOST=0.0.0.0`. LM Studio has a serve-on-local-network switch.
+> - **The alias has to resolve.** Docker Desktop provides it; plain Docker on Linux needs `extra_hosts: ["host.docker.internal:host-gateway"]`, which `docker-compose.yml` already sets for the backend and the launcher passes as `--add-host` for agent containers.
+>
+> Detection can be forced either way with `AGENTS_HUB_IN_CONTAINER=1` / `=0`.
 
 ### Optional knobs
 
@@ -172,7 +172,7 @@ cd ../..
 In one terminal (with the venv activated):
 
 ```bash
-python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 Backend will be available at `http://localhost:8000`. On first start it creates the runtime state directory `.agents_hub/` and seeds default agents, projects, and workspace storage.
@@ -290,7 +290,7 @@ docker compose logs -f backend    # tail backend logs
 
 ### Notes / limitations
 
-- Compose mounts the repo at `/app` for the backend and `dashboard/frontend` for the dev frontend, so source edits trigger backend reload and frontend HMR.
+- Compose mounts the repo at `/app` for the backend and `dashboard/frontend` for the dev frontend, so frontend edits arrive over HMR. The backend runs without a reloader: `docker compose restart backend` after a source change.
 - The `frontend_node_modules` named volume keeps `node_modules` inside the container — if you want a clean install, run `docker compose down -v`.
 - Both frontend services wait for the backend to report healthy (`GET /`) before they start.
 - Docker-managed **agent containers** work from compose: the backend service
@@ -369,7 +369,7 @@ You can delete `.agents_hub/` to fully reset state — it will be regenerated on
 | Agent chat returns 401 / auth error              | `OPENAI_API_KEY` (or the chosen provider key) is set and the value matches the model         |
 | Agent run fails immediately with "model not found" | `OPENAI_MODEL` / `OLLAMA_MODEL` / `LMSTUDIO_MODEL` matches a model your provider exposes     |
 | Docker compose up but agent containers don't launch | `AGENT_EXECUTION_MODE=docker` set? Agent base image built? Is `/var/run/docker.sock` still mounted in `docker-compose.yml`? |
-| LM Studio / Ollama unreachable when backend runs in Docker | `localhost` inside the container = the container itself. Set `LMSTUDIO_BASE_URL` / `OLLAMA_BASE_URL` to `http://host.docker.internal:<port>`. On plain Linux Docker also add `extra_hosts: ["host.docker.internal:host-gateway"]` to the backend service in compose. |
+| LM Studio / Ollama unreachable when backend runs in Docker | The loopback rewrite is automatic, so the address is rarely the problem: check that the server listens beyond loopback (`OLLAMA_HOST=0.0.0.0`, LM Studio's local-network switch), and on plain Linux Docker that `extra_hosts: ["host.docker.internal:host-gateway"]` is on the backend service in compose. Force the detection with `AGENTS_HUB_IN_CONTAINER=1` if it guessed wrong. |
 | `ah` cannot reach the server                     | Backend running on port 8000? Set `AGENTS_HUB_URL` if you changed the host/port              |
 | `ah: command not found`                          | The venv is not on PATH and the shell hook is not installed: `ah shell-init --install`       |
 

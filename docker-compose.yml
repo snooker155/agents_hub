@@ -4,6 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
       target: backend
+    # No --reload. The repository is bind-mounted below, so a reloader would
+    # watch the whole tree, state directories included, and restart the backend
+    # on writes it makes itself. `docker compose restart backend` picks up code.
     command:
       - python
       - -m
@@ -13,7 +16,6 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
-      - --reload
     env_file:
       # Optional so a fresh clone comes up without one; copy .env.example to
       # .env to supply provider keys.

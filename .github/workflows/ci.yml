@@ -25,6 +25,9 @@ jobs:
           # Backend + agent deps carry the store/runtime libraries the tests import.
           pip install -r dashboard/backend/requirements.txt
           pip install -r requirements-agents.txt
+          # The CLI's own deps: tests/test_cli_*.py import typer's CliRunner and
+          # go through cli.main, which reaches for rich and requests as well.
+          pip install -r requirements-cli.txt
           pip install pytest
 
       - name: Run tests
