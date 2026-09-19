@@ -71,6 +71,10 @@ does all of it from a terminal.
 
 ## Documentation
 
+The same corpus is published as a website: **https://snooker155.github.io/agents_hub/**
+(landing page, search, and every document below). It is built from `docs/` by
+[site/](./site/), so it is never out of step with what the app serves.
+
 **Start here**
 
 | | |

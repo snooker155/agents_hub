@@ -1,0 +1,18 @@
+{
+  "name": "agents-hub-site",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Public landing page and documentation site, published to GitHub Pages.",
+  "scripts": {
+    "sync": "node scripts/sync-docs.mjs",
+    "predev": "npm run sync",
+    "dev": "vitepress dev",
+    "prebuild": "npm run sync",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}

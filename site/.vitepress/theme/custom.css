@@ -1,0 +1,74 @@
+/*
+ * Brand skin for the default VitePress theme.
+ *
+ * The ramp is the same deep navy the dashboard uses (see
+ * dashboard/frontend/scripts/gen-theme.mjs), so the public site and the app a
+ * reader installs afterwards look like one product. No purple anywhere.
+ */
+
+:root {
+  --brand-50: #eef3ff;
+  --brand-100: #dbe6ff;
+  --brand-200: #bdd0fb;
+  --brand-300: #93b0f5;
+  --brand-400: #6389ea;
+  --brand-500: #3f66d8;
+  --brand-600: #2a4fbd;
+  --brand-700: #21409c;
+  --brand-800: #1d3680;
+  --brand-900: #1a2c63;
+  --brand-950: #101c40;
+
+  --vp-c-brand-1: var(--brand-600);
+  --vp-c-brand-2: var(--brand-700);
+  --vp-c-brand-3: var(--brand-500);
+  --vp-c-brand-soft: rgba(63, 102, 216, 0.14);
+
+  --vp-button-brand-bg: var(--brand-600);
+  --vp-button-brand-hover-bg: var(--brand-500);
+  --vp-button-brand-active-bg: var(--brand-700);
+  --vp-button-brand-border: transparent;
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, var(--brand-500), var(--brand-800));
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    rgba(63, 102, 216, 0.28),
+    rgba(29, 54, 128, 0.20)
+  );
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+.dark {
+  --vp-c-brand-1: #a8c4ff;
+  --vp-c-brand-2: #8cb0ff;
+  --vp-c-brand-3: #3f66d8;
+  --vp-c-brand-soft: rgba(63, 102, 216, 0.24);
+
+  --vp-button-brand-bg: var(--brand-600);
+  --vp-button-brand-hover-bg: var(--brand-500);
+  --vp-button-brand-active-bg: var(--brand-700);
+
+  --vp-home-hero-name-background: linear-gradient(120deg, #8fb2ff, #3f66d8);
+}
+
+/* The hero mark is a line drawing, not a photo: keep it small and centered. */
+.VPHero .VPImage {
+  max-width: 220px;
+  max-height: 220px;
+}
+
+/* Feature cards read as a grid of equals; a flat border beats a drop shadow. */
+.VPFeature {
+  border-color: var(--vp-c-divider);
+  transition: border-color 0.25s, background-color 0.25s;
+}
+
+.VPFeature:hover {
+  border-color: var(--vp-c-brand-1);
+}
+
+/* The ASCII trees in the corpus are load-bearing: never let them wrap. */
+.vp-doc div[class*='language-'] pre {
+  overflow-x: auto;
+}
