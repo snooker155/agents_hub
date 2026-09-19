@@ -2,9 +2,7 @@ tasks.json
 *.lock
 .env
 .agents_hub/
-tests/
 orchestrator/state/
-agents/state/
 __pycache__/
 *.egg-info/
 *.egg
@@ -26,3 +24,11 @@ projects.json
 */activity_logs/
 */execution_logs/
 */results/
+coverage/
+
+# Development-only documents: internal planning and design notes, not part of
+# what is needed to run the service. The shipped docs are README.md, SETUP.md,
+# USAGE_SCENARIOS_AND_SETTINGS.md and docs/.
+FEATURE_BACKLOG.md
+SYSTEM_AGENTS_PLAN.md
+VIEWS_ARCHITECTURE.md

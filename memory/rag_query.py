@@ -212,20 +212,24 @@ def search_rag(query: str, memory_id: str, top_k: int = 5) -> list[dict]:
     return []
 
 
-def inject_rag_context(agent_id: str, instruction: str) -> str:
+def inject_rag_context(agent_id: str, instruction: str, workspace: str | None = None) -> str:
     """
     Return a context block to prepend to *instruction*, or "" when nothing
-    relevant is found or RAG is not configured for this agent.
+    relevant is found or RAG is not configured for this agent (the pool
+    assignment is resolved per workspace).
     """
     if not is_rag_configured():
         return ""
     try:
         from agents.registry import get_agent as _get_agent
+        from memory.binding import effective_memory_pools
         spec = _get_agent(agent_id)
-        if not (spec and spec.memory_type == "shared" and spec.memory_data):
+        pools = effective_memory_pools(spec, workspace) if spec else []
+        if not pools:
             return ""
-        pool_id = str(spec.memory_data)
-        results = search_rag(instruction, pool_id, top_k=5)
+        results = []
+        for pool_id in pools:
+            results.extend(search_rag(instruction, pool_id, top_k=5))
         if not results:
             return ""
         chunks = [r["text"] for r in results if r.get("text", "").strip()]

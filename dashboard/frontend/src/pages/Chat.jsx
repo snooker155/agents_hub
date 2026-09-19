@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useWorkspace } from '../components/WorkspaceContext';
-import { getAgents, getMessageInsights, getWorkspace, getProjects, getAgentDefinition, stopMessage, getTelegramBindings, sendTelegramMessage, listFlows, getSessions, getSessionMessages } from '../api';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import { useWorkspace } from '../components/workspace';
+import { useChannel } from '../components/stream';
+import ViewCard from '../views/ViewCard';
+import { getAgents, getMessageInsights, getWorkspace, getProjects, getAgentDefinition, stopMessage, getTelegramBindings, sendTelegramMessage, listFlows, getTeams, getSessions, getSessionMessages, streamChat, getContextKinds } from '../api';
+import ContextMeter from '../components/ContextMeter';
+import { trimBubbleText } from '../lib/chatText';
 import {
   PlusCircle,
   Send,
@@ -26,16 +30,34 @@ import {
   Workflow,
   BrainCircuit,
   ListChecks,
+  Database,
+  Repeat,
+  UsersRound,
+  Link2,
+  ArrowUpRight,
+  Upload,
 } from 'lucide-react';
-
-const SKILL_TOOL = 'get_skill';
+import ContextEntityPicker from '../components/ContextEntityPicker';
+import ProcessGraph, { TokenPill } from '../components/ProcessGraph';
+import { SKILL_TOOL, shortText, fmtDurationMs } from '../components/processUtils';
+import { SlotData } from '../components/SlotValue';
+import { useI18n, translate, LANGUAGES } from '../i18n';
 
 // ---------------------------------------------------------------------------
 // Local storage persistence
 // ---------------------------------------------------------------------------
 const STORAGE_KEY = 'agent_hub_chats_v1';
+// Whether the agent-process panel is open. Persisted so navigating away from the
+// Chat page and back (which unmounts/remounts this component) keeps it open.
+const PROCESS_OPEN_KEY = 'agent_hub_chat_process_open';
+// 'chat' vs 'build' view mode, persisted across navigation for the same reason.
+const VIEW_MODE_KEY = 'agent_hub_chat_view_mode';
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MB
 const MAX_ATTACHMENT_COUNT = 6;
+// Attached hub entities are resolved server-side and can each render into
+// thousands of characters, so the composer caps them the way it caps files.
+// Mirrors chat/references.py's MAX_REFERENCES.
+const MAX_REFERENCE_COUNT = 10;
 
 function loadConversations() {
   try {
@@ -45,270 +67,105 @@ function loadConversations() {
   }
 }
 
+// Per-message fields that are large and only needed for the live in-session view
+// (the Build-view timeline + the running-tool indicator). They accumulate every
+// streamed token, reasoning step, and tool input/output, so persisting them blows
+// the localStorage quota — once setItem throws, the newest conversation silently
+// fails to save and vanishes on reload. They are reconstructable from server-side
+// run logs (the Build view falls back to plain `content` for reloaded messages),
+// so strip them before persisting.
+const TRANSIENT_MSG_FIELDS = ['timeline', 'running_tool', 'thinking_live'];
+
+// Live reasoning is a ticker showing only the tail, so the buffer never needs to
+// grow past a few screens' worth; capping it keeps a long chain-of-thought from
+// piling megabytes of dead text into React state.
+const MAX_LIVE_THOUGHT_CHARS = 4000;
+
+function appendLiveThought(prev, delta) {
+  const text = `${prev || ''}${delta || ''}`;
+  return text.length > MAX_LIVE_THOUGHT_CHARS ? text.slice(-MAX_LIVE_THOUGHT_CHARS) : text;
+}
+
+// Merge one streamed `artifact` event into a message's file list. Metadata only
+// (the diff body lives in the session-scoped `artifacts` map, which is far too
+// large to persist per message). Last write per path wins, but a file keeps the
+// position it was first touched at, so the list reads in execution order.
+function mergeMessageFile(files, event) {
+  const list = files || [];
+  const idx = list.findIndex((f) => f.path === event.path);
+  const entry = {
+    op: event.op,
+    path: event.path,
+    additions: event.additions || 0,
+    deletions: event.deletions || 0,
+  };
+  if (idx === -1) return [...list, entry];
+  const next = [...list];
+  // A file the agent created and then edited again is still an "add" overall.
+  if (next[idx].op === 'add' && entry.op === 'modify') entry.op = 'add';
+  next[idx] = entry;
+  return next;
+}
+
+function stripForStorage(convs) {
+  return convs.map((c) => ({
+    ...c,
+    messages: (c.messages || []).map((m) => {
+      const copy = { ...m };
+      for (const f of TRANSIENT_MSG_FIELDS) delete copy[f];
+      return copy;
+    }),
+  }));
+}
+
 function saveConversations(convs) {
+  const slim = stripForStorage(convs);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(convs));
-  } catch {}
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+    return;
+  } catch {
+    // Quota still exceeded after stripping transient data: drop the oldest
+    // conversations (the list is newest-first) until it fits, so recent chats
+    // persist instead of the whole write being lost.
+    const trimmed = [...slim];
+    while (trimmed.length > 1) {
+      trimmed.pop();
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+        return;
+      } catch { /* storage unavailable */ }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Slash commands
 // ---------------------------------------------------------------------------
+// Descriptions resolve through i18n at render time — the command names
+// themselves are typed by the user and stay as they are.
 const GLOBAL_COMMANDS = [
-  { name: '/help', description: 'Show available commands', template: '/help' },
-  { name: '/clear', description: 'Clear the current conversation', template: '/clear' },
-  { name: '/new', description: 'Start a new conversation', template: '/new' },
-  { name: '/config', description: 'Show configuration for the current agent', template: '/config' },
+  { name: '/help', descriptionKey: 'chat.commands.help', template: '/help' },
+  { name: '/clear', descriptionKey: 'chat.commands.clear', template: '/clear' },
+  { name: '/new', descriptionKey: 'chat.commands.new', template: '/new' },
+  { name: '/config', descriptionKey: 'chat.commands.config', template: '/config' },
 ];
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
-function shortText(v, max = 180) {
-  const s = String(v || '');
-  return s.length > max ? `${s.slice(0, max)}...` : s;
-}
-
-function fmtDurationMs(ms) {
-  const n = Number(ms || 0);
-  if (!n) return '0ms';
-  if (n < 1000) return `${n}ms`;
-  return `${(n / 1000).toFixed(2)}s`;
-}
-
-function TokenPill({ label, value }) {
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] font-medium">
-      {label}: {value ?? 0}
-    </span>
-  );
-}
-
-function ProcessGraph({ messageRuns = [] }) {
-  const [expandedNodes, setExpandedNodes] = useState(() => new Set(messageRuns.map((_, idx) => idx)));
-  const lastNodeRef = useRef(null);
-  const prevLengthRef = useRef(null);
-
-  const toggleNode = useCallback((idx) => {
-    setExpandedNodes((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
-  }, []);
-
-  const expandAll = useCallback(() => {
-    setExpandedNodes(new Set(messageRuns.map((_, idx) => idx)));
-  }, [messageRuns]);
-
-  const collapseAll = useCallback(() => {
-    setExpandedNodes(new Set());
-  }, []);
-
-  useEffect(() => {
-    if (!messageRuns.length) return;
-    const isFirst = prevLengthRef.current === null;
-    prevLengthRef.current = messageRuns.length;
-    lastNodeRef.current?.scrollIntoView({ behavior: isFirst ? 'instant' : 'smooth', block: 'nearest' });
-  }, [messageRuns.length]);
-
-  if (!messageRuns.length) {
-    return <p className="text-xs text-gray-500 italic">No process message data yet.</p>;
-  }
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 pb-1">
-        <button
-          onClick={expandAll}
-          className="text-[10px] text-indigo-600 hover:underline"
-        >
-          Expand all
-        </button>
-        <span className="text-gray-300 text-[10px]">·</span>
-        <button
-          onClick={collapseAll}
-          className="text-[10px] text-gray-400 hover:underline"
-        >
-          Collapse all
-        </button>
-      </div>
-      {messageRuns.map((mr, idx) => {
-        const key = mr.message_id || idx;
-        const isExpanded = expandedNodes.has(idx);
-        const hasNext = idx < messageRuns.length - 1;
-        const tools = mr.tools || [];
-        const toolCount = Number(mr.tool_calls || tools.length || 0);
-        const toolNames = Array.from(
-          new Set(
-            tools
-              .map((t) => String(t?.tool || '').trim())
-              .filter(Boolean)
-          )
-        );
-        return (
-          <div
-            key={key}
-            ref={idx === messageRuns.length - 1 ? lastNodeRef : null}
-            className="relative pl-4"
-          >
-            {hasNext && <div className="absolute left-[7px] top-4 bottom-[-16px] w-px bg-gray-200" />}
-            <div className="absolute left-0 top-2 w-3 h-3 rounded-full bg-indigo-500" />
-            <button
-              onClick={() => toggleNode(idx)}
-              className="w-full text-left rounded-lg border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors p-3"
-            >
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <div className="text-xs font-semibold text-indigo-800 shrink-0">#{idx + 1}</div>
-                  <div className="font-medium text-sm text-indigo-900 truncate">
-                    {shortText(mr.input || 'Message', 100)}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-[10px] text-indigo-600">{mr.timestamp || ''}</span>
-                  {isExpanded ? (
-                    <ChevronUp className="w-3.5 h-3.5 text-indigo-500" />
-                  ) : (
-                    <ChevronDown className="w-3.5 h-3.5 text-indigo-500" />
-                  )}
-                </div>
-              </div>
-              <div
-                className="text-xs text-indigo-800 mb-2"
-                style={{
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                }}
-              >
-                {mr.agent_id && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-medium mr-1">
-                    {mr.agent_id}
-                  </span>
-                )}
-                <span>{mr.output || '(no response yet)'}</span>
-              </div>
-              <div className="flex items-center gap-1.5 mb-2 min-h-[18px] flex-wrap">
-                {(() => {
-                  const skillNames = toolNames.filter((n) => n === SKILL_TOOL);
-                  const regularNames = toolNames.filter((n) => n !== SKILL_TOOL);
-                  return (
-                    <>
-                      {skillNames.length > 0 && (
-                        <>
-                          <span className="text-[10px] text-violet-600 font-medium">skill:</span>
-                          {skillNames.map((name) => (
-                            <span key={name} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 border border-violet-200">
-                              <Zap className="w-2.5 h-2.5" />{name}
-                            </span>
-                          ))}
-                          {regularNames.length > 0 && <span className="text-gray-200 text-[10px]">|</span>}
-                        </>
-                      )}
-                      {regularNames.length > 0 ? (
-                        <>
-                          <span className="text-[10px] text-indigo-700 font-medium">tools:</span>
-                          {regularNames.slice(0, 3).map((name) => (
-                            <span key={name} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
-                              {name}
-                            </span>
-                          ))}
-                          {regularNames.length > 3 && (
-                            <span className="text-[10px] text-amber-700">+{regularNames.length - 3}</span>
-                          )}
-                        </>
-                      ) : skillNames.length === 0 ? (
-                        <span className="text-[10px] text-gray-400">no tools</span>
-                      ) : null}
-                    </>
-                  );
-                })()}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                <TokenPill label="in" value={mr.inbound_tokens} />
-                <TokenPill label="out" value={mr.outbound_tokens} />
-                <TokenPill label="total" value={mr.total_tokens} />
-                <TokenPill label="tools" value={toolCount} />
-                <TokenPill label="duration" value={fmtDurationMs(mr.duration_ms)} />
-              </div>
-            </button>
-            {isExpanded && (
-              <div className="ml-5 mt-2 space-y-2">
-                <div className="rounded-lg border border-gray-200 bg-white p-2.5">
-                  <div className="text-[11px] font-semibold text-gray-700 mb-1.5">Input</div>
-                  <div className="text-[11px] text-gray-700 whitespace-pre-wrap">
-                    {shortText(mr.input || '(empty)', 500)}
-                  </div>
-                </div>
-                {(mr.tools || []).map((t, tIdx) => {
-                  if (t.tool === SKILL_TOOL) {
-                    return (
-                      <div key={tIdx} className="rounded-lg border border-violet-300 bg-violet-50 p-2.5">
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          <Zap className="w-3.5 h-3.5 text-violet-500 shrink-0" />
-                          <span className="text-[11px] font-bold text-violet-800 uppercase tracking-wide">Skill Retrieved</span>
-                        </div>
-                        {t.input && (
-                          <div className="text-[11px] text-violet-700 whitespace-pre-wrap break-all">
-                            <span className="text-violet-400">id:</span> {shortText(t.input, 320)}
-                          </div>
-                        )}
-                        {t.output && (
-                          <div className="text-[11px] text-violet-900 mt-1 whitespace-pre-wrap break-all">
-                            {shortText(t.output, 320)}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={tIdx} className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
-                      <div className="text-[11px] font-semibold text-gray-700 mb-1.5">
-                        Tool: {t.tool || 'tool'}
-                      </div>
-                      {t.input && (
-                        <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
-                          <span className="text-gray-500">in:</span> {shortText(t.input, 320)}
-                        </div>
-                      )}
-                      {t.output && (
-                        <div className="text-[11px] text-emerald-700 mt-1 whitespace-pre-wrap break-all">
-                          <span className="text-emerald-600">out:</span> {shortText(t.output, 320)}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5">
-                  <div className="text-[11px] font-semibold text-gray-700 mb-1.5">Output</div>
-                  <div className="text-[11px] text-gray-700 whitespace-pre-wrap">
-                    {shortText(mr.output || '(empty)', 600)}
-                  </div>
-                </div>
-                {mr.run_id && (
-                  <a
-                    href={`/messages/${mr.run_id}`}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50"
-                  >
-                    View Full Details
-                  </a>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
+// A structured-response block (<<<ui>>>{json}<<<end>>>). The backend strips it
+// from the final response, but during streaming the raw tokens still carry it;
+// strip it from any fallback content so the markers never show in the bubble.
+const UI_BLOCK_RE = /<<<\s*ui\s*>>>[\s\S]*?<<<\s*\/?\s*end\s*>>>/gi;
+const stripUiBlock = (s) => (s || '').replace(UI_BLOCK_RE, '').trim();
+
 // Markdown-ish renderer (no external deps)
 // ---------------------------------------------------------------------------
 function CopyButton({ text }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard.writeText(text).then(() => {
@@ -320,7 +177,7 @@ function CopyButton({ text }) {
     <button
       onClick={copy}
       className="absolute top-2 right-2 p-1 rounded text-gray-400 hover:text-gray-200 transition-colors"
-      title="Copy"
+      title={t('chat.copy')}
     >
       {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
     </button>
@@ -420,8 +277,11 @@ function renderTableAwareText(text, keyPrefix = '') {
 }
 
 function renderContent(text) {
-  // Split on fenced code blocks first
-  const parts = text.split(/(```[\s\S]*?```)/g);
+  // Model output almost always ends with a newline; the plain-text branch below
+  // turns it into a <br /> and the bubble grows an empty row under the last
+  // sentence. Drop it here, at the point of display, so the stored transcript
+  // keeps what the model actually produced.
+  const parts = trimBubbleText(text).split(/(```[\s\S]*?```)/g);
   return parts.map((part, i) => {
     if (part.startsWith('```')) {
       const inner = part.slice(3, -3);
@@ -531,24 +391,190 @@ function ReasoningStep({ step, defaultOpen = false }) {
   );
 }
 
-function ReasoningTrail({ steps }) {
-  if (!Array.isArray(steps) || steps.length === 0) return null;
+// ---------------------------------------------------------------------------
+// Message bubble
+// ---------------------------------------------------------------------------
+// Interactive buttons from a structured AgentResponse (kind "buttons" or the
+// Telegram-native "telegram"). Clicking a button either opens its url or sends
+// its value back as the user's next message via onAction. Unknown kinds render
+// nothing here — the bubble's fallback_text/content already covers them.
+function ResponseButtons({ response, onAction, disabled }) {
+  if (!response) return null;
+  const { kind } = response;
+
+  let rows = [];
+  if (kind === 'buttons') {
+    const cols = Math.max(1, response.columns || 1);
+    const items = response.buttons || [];
+    for (let i = 0; i < items.length; i += cols) rows.push(items.slice(i, i + cols));
+  } else if (kind === 'telegram') {
+    rows = response.inline_keyboard || [];
+  } else {
+    return null;
+  }
+  if (!rows.length) return null;
+
+  const onClick = (b) => {
+    if (disabled) return;
+    if (b.url) { window.open(b.url, '_blank', 'noopener,noreferrer'); return; }
+    const value = b.value != null ? b.value : (b.label || b.text || '');
+    if (value && onAction) onAction(String(value));
+  };
+
   return (
-    <div className="mb-2 space-y-1.5">
-      {steps.map((s, i) => (
-        <ReasoningStep key={`${s.kind}-${s.step ?? i}-${i}`} step={s} />
+    <div className="mt-2 flex flex-col gap-1.5">
+      {rows.map((row, ri) => (
+        <div key={ri} className="flex flex-wrap gap-1.5">
+          {(row || []).map((b, bi) => (
+            <button
+              key={bi}
+              type="button"
+              disabled={disabled}
+              onClick={() => onClick(b)}
+              className="px-3 py-1.5 text-sm rounded-lg border border-indigo-200 bg-indigo-50
+                text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed
+                transition-colors"
+            >
+              {b.label || b.text || (b.url ? 'Open' : '')}
+            </button>
+          ))}
+        </div>
       ))}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Message bubble
-// ---------------------------------------------------------------------------
-function MessageBubble({ msg, isStreaming = false, agentName }) {
+// The model's reasoning as it is being written — a three-line ticker under the
+// "working" indicator, always showing the tail of the thought. Native reasoning
+// only becomes a `think` step once it is complete (the `</think>` closes, or the
+// answer starts), which on a long thought leaves the bubble blank for many
+// seconds; the `think_delta` stream fills that gap. When the thought completes,
+// the caller clears `thinking_live` and the collapsible ReasoningStep takes over.
+//
+// The tail is shown without JS scrolling: a fixed-height clipped box whose flex
+// content is bottom-aligned overflows past its own top edge, so the newest lines
+// stay in view.
+function LiveThoughts({ text }) {
+  if (!text || !text.trim()) return null;
+  return (
+    <div className="mt-2 flex items-start gap-1.5">
+      <BrainCircuit className="w-3.5 h-3.5 text-violet-500 flex-shrink-0 mt-0.5 animate-pulse" />
+      <div className="flex-1 min-w-0 h-[3.75rem] overflow-hidden flex flex-col justify-end">
+        <div className="text-[11px] leading-5 text-gray-400 whitespace-pre-wrap break-words">
+          {text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Files the agent created, edited or deleted during this turn, listed inside the
+// reply itself. The Artifacts column only exists in Build view, so without this
+// a chat-view user never sees that the agent touched the filesystem. Diffs are
+// not persisted with the message (localStorage quota), so a reloaded
+// conversation shows the file list and its +/- counts; the diff body is filled
+// in from `artifactsByPath` while the session that produced it is still open.
+function MessageFiles({ files, artifactsByPath }) {
+  const items = files || [];
+  // null = follow the default (expanded for a small change set). The list starts
+  // empty and fills in as `artifact` events stream, so the default has to be
+  // re-evaluated on every render, not captured as the initial state.
+  const [userOpen, setUserOpen] = useState(null);
+  const open = userOpen === null ? items.length <= 3 : userOpen;
+  const totals = useMemo(() => {
+    let add = 0, del = 0;
+    for (const f of (files || [])) { add += f.additions || 0; del += f.deletions || 0; }
+    return { add, del };
+  }, [files]);
+  if (!items.length) return null;
+  return (
+    <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50/70 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setUserOpen(!open)}
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-left hover:bg-gray-100/70"
+      >
+        <FileText className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+        <span className="text-xs font-semibold text-gray-700 flex-shrink-0">
+          {items.length} file{items.length === 1 ? '' : 's'} changed
+        </span>
+        <span className="flex items-center gap-1.5 text-[10px] font-mono flex-shrink-0">
+          {totals.add > 0 && <span className="text-emerald-600">+{totals.add}</span>}
+          {totals.del > 0 && <span className="text-red-600">−{totals.del}</span>}
+        </span>
+        {open
+          ? <ChevronUp className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />
+          : <ChevronDown className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />}
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 p-2 space-y-1.5">
+          {items.map((f) => (
+            <ArtifactItem
+              key={f.path}
+              artifact={{ ...f, ...(artifactsByPath?.[f.path] || {}) }}
+              defaultOpen={false}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Service entities the agent touched during this turn — a task it created, a
+// view it edited, a file it wrote, a job it scheduled. Each one has a page in
+// the dashboard that the reply text alone gives no way to reach, so the backend
+// resolves them into link payloads (see common/entity_links.py) and they are
+// rendered here as chips under the reply.
+function MessageEntities({ entities }) {
+  const { t } = useI18n();
+  const items = entities || [];
+  if (!items.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-gray-400">
+        <Link2 className="w-3 h-3" />
+        {t('chat.entitiesTouched')}
+      </span>
+      {items.map((e) => {
+        // The payload carries English noun/action for text-only surfaces
+        // (Telegram); the UI prefers localized wording and falls back to those.
+        const noun = t(`chat.entityKind.${e.kind}`, { defaultValue: e.noun || e.kind });
+        const action = t(`chat.entityAction.${e.action}`, { defaultValue: e.action });
+        const external = /^https?:\/\//i.test(e.url || '');
+        const inner = (
+          <>
+            <span aria-hidden="true">{e.icon}</span>
+            <span className="truncate max-w-[14rem] font-medium">{e.title}</span>
+            <span className="text-gray-400 flex-shrink-0">{action}</span>
+            <ArrowUpRight className="w-3 h-3 flex-shrink-0 text-gray-400" />
+          </>
+        );
+        const cls = 'inline-flex items-center gap-1 max-w-full rounded-full border border-gray-200 '
+          + 'bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600 transition-colors '
+          + 'hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700';
+        return external ? (
+          <a key={`${e.kind}:${e.id}`} href={e.url} title={noun} target="_blank" rel="noreferrer noopener" className={cls}>
+            {inner}
+          </a>
+        ) : (
+          <Link key={`${e.kind}:${e.id}`} to={e.url} title={noun} className={cls}>
+            {inner}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifactsByPath }) {
+  const { t } = useI18n();
   const isUser = msg.role === 'user';
+  // A tool is currently executing (set on tool_start, cleared on the first
+  // response token). Surfaced as a labelled indicator so the user sees that
+  // memory tools (recall / remember / forget / …) are processing.
+  const runningTool = !isUser && isStreaming ? msg.running_tool : null;
   const showTypingDots = !isUser && isStreaming && !msg.content;
-  const activeRunningTool = !isUser && isStreaming && msg.running_tool;
   return (
     <div className={`flex gap-3 mb-6 mx-2 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
       {/* Avatar */}
@@ -568,71 +594,72 @@ function MessageBubble({ msg, isStreaming = false, agentName }) {
 
       {/* Bubble */}
       <div
-        className={`max-w-[72%] text-sm leading-relaxed
+        className={`max-w-[72%] text-base leading-relaxed
           ${isUser
             ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3'
             : 'bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm'
           }
           ${msg.error ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
       >
-        {/* Reasoning (think/plan) steps render inline, in execution order,
-            above the response that followed them. */}
-        {!isUser && <ReasoningTrail steps={msg.reasoning} />}
+        {/* Thoughts, memory tool cards and delegated sub-agent runs, inline in
+            the order they happened, above the response that followed them. */}
+        {!isUser && <ChatTrail msg={msg} />}
         {showTypingDots ? (
-          activeRunningTool ? (
-            <span className="flex items-center gap-2">
-              <Terminal className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-              <span className="text-xs text-indigo-500 font-mono truncate max-w-[260px]">{msg.running_tool}</span>
-              <span className="flex gap-1 flex-shrink-0">
-                {[0, 150, 300].map((delay) => (
-                  <span
-                    key={delay}
-                    className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"
-                    style={{ animationDelay: `${delay}ms` }}
-                  />
-                ))}
-              </span>
-            </span>
-          ) : (
-            <span className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">thinking</span>
-              <span className="flex gap-1">
-                {[0, 150, 300].map((delay) => (
-                  <span
-                    key={delay}
-                    className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
-                    style={{ animationDelay: `${delay}ms` }}
-                  />
-                ))}
-              </span>
-            </span>
-          )
-        ) : isUser
-          ? <span className="whitespace-pre-wrap">{msg.content}</span>
-          : <div>{renderContent(msg.content)}</div>
-        }
-        {/* Tool indicator shown below streamed content when a tool is running mid-response */}
-        {!isUser && activeRunningTool && msg.content && (
-          <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2">
-            <Terminal className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-            <span className="text-xs text-indigo-500 font-mono truncate max-w-[260px]">{msg.running_tool}</span>
-            <span className="flex gap-1 flex-shrink-0">
+          <span className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">{runningTool ? t('chat.runningTool', { tool: runningTool }) : t('chat.workingLabel')}</span>
+            <span className="flex gap-1">
               {[0, 150, 300].map((delay) => (
                 <span
                   key={delay}
-                  className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"
+                  className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
                   style={{ animationDelay: `${delay}ms` }}
                 />
               ))}
             </span>
-          </div>
+          </span>
+        ) : isUser
+          ? <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
+          : <div>{renderContent(msg.content)}</div>
+        }
+        {/* The thought currently being written, tailing three lines. Cleared as
+            soon as the completed thought arrives as a ReasoningStep above.
+            Gated on the buffer rather than `isStreaming` so agent-initiated
+            continuation runs (session SSE, no page-level loading flag) show it. */}
+        {!isUser && <LiveThoughts text={msg.thinking_live} />}
+        {/* Files the agent created / edited / deleted during this turn. */}
+        {!isUser && <MessageFiles files={msg.files} artifactsByPath={artifactsByPath} />}
+        {/* Links to the tasks / views / flows / files this turn touched. */}
+        {!isUser && !showTypingDots && <MessageEntities entities={msg.entities} />}
+        {/* Structured response UI (buttons / Telegram keyboard) under the text. */}
+        {!isUser && !showTypingDots && (
+          <ResponseButtons response={msg.response_obj} onAction={onAction} disabled={isStreaming} />
         )}
+        {/* A rich view (chart / table / diagram / …) referenced by the reply. */}
+        {!isUser && !showTypingDots && msg.response_obj?.kind === 'view_ref' && (
+          <ViewCard viewRef={msg.response_obj} />
+        )}
+        {/* A tool started after some text already streamed (content present, so the
+            typing-dots block above is hidden) — show a compact running indicator. */}
+        {!isUser && runningTool && msg.content ? (
+          <span className="mt-1 flex items-center gap-2 text-xs text-gray-400">
+            <span>{t('chat.runningTool', { tool: runningTool })}</span>
+            <span className="flex gap-1">
+              {[0, 150, 300].map((delay) => (
+                <span
+                  key={delay}
+                  className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+                  style={{ animationDelay: `${delay}ms` }}
+                />
+              ))}
+            </span>
+          </span>
+        ) : null}
         {!isUser && msg.run_id && (
           <div className="mt-2 pt-2 border-t border-gray-100">
             <div className="flex items-center gap-1.5 mb-2">
-              {typeof msg.inbound_tokens === 'number' && <TokenPill label="in" value={msg.inbound_tokens} />}
-              {typeof msg.outbound_tokens === 'number' && <TokenPill label="out" value={msg.outbound_tokens} />}
-              {typeof msg.duration_ms === 'number' && <TokenPill label="duration" value={fmtDurationMs(msg.duration_ms)} />}
+              {typeof msg.inbound_tokens === 'number' && <TokenPill label={t('chat.in')} value={msg.inbound_tokens} />}
+              {typeof msg.outbound_tokens === 'number' && <TokenPill label={t('chat.out')} value={msg.outbound_tokens} />}
+              {typeof msg.duration_ms === 'number' && <TokenPill label={t('chat.duration')} value={fmtDurationMs(msg.duration_ms)} />}
             </div>
           </div>
         )}
@@ -645,13 +672,14 @@ function MessageBubble({ msg, isStreaming = false, agentName }) {
 // Typing indicator
 // ---------------------------------------------------------------------------
 function TypingIndicator({ agentName }) {
+  const { t } = useI18n();
   return (
     <div className="flex gap-3 mb-6">
       <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center">
         <Bot className="w-4 h-4 text-white" />
       </div>
       <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm shadow-sm px-4 py-3 flex items-center gap-2">
-        <span className="text-xs text-gray-400">{agentName} is thinking</span>
+        <span className="text-xs text-gray-400">{t('chat.agentIsWorking', { agent: agentName })}</span>
         <span className="flex gap-1">
           {[0, 150, 300].map((delay) => (
             <span
@@ -670,6 +698,7 @@ function TypingIndicator({ agentName }) {
 // Agent selector dropdown
 // ---------------------------------------------------------------------------
 function AgentDropdown({ agents, value, onChange }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const selected = agents.find((a) => a.id === value);
@@ -687,7 +716,7 @@ function AgentDropdown({ agents, value, onChange }) {
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 transition-colors"
       >
         <Bot className="w-4 h-4 text-indigo-500" />
-        <span className="font-medium">{selected?.name || 'Select agent'}</span>
+        <span className="font-medium">{selected?.name || t('chat.selectAgent')}</span>
         <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
       </button>
 
@@ -712,7 +741,62 @@ function AgentDropdown({ agents, value, onChange }) {
   );
 }
 
+/** The selected target id for a mode — the single answer to "can we send?". */
+function targetId(mode, { selectedAgent, selectedFlow, selectedTeam }) {
+  if (mode === 'flow') return selectedFlow;
+  if (mode === 'team') return selectedTeam;
+  return selectedAgent;
+}
+
+function TeamDropdown({ teams, value, onChange }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const selected = teams.find((t) => t.team_id === value);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+      >
+        <UsersRound className="w-4 h-4 text-amber-500" />
+        <span className="font-medium">{selected?.name || t('chat.selectTeam')}</span>
+        <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-[280px] py-1 max-h-64 overflow-y-auto">
+          {teams.length === 0 && (
+            <div className="px-4 py-2 text-xs text-gray-400">{t('chat.noTeamsDefined')}</div>
+          )}
+          {teams.map((t) => (
+            <button
+              key={t.team_id}
+              onClick={() => { onChange(t.team_id); setOpen(false); }}
+              className={`w-full text-left px-4 py-2.5 text-sm hover:bg-amber-50 transition-colors
+                ${t.team_id === value ? 'bg-amber-50 text-amber-700 font-medium' : 'text-gray-700'}`}
+            >
+              <div className="font-medium truncate">{t.name}</div>
+              <div className="text-xs text-gray-400 mt-0.5">
+                {t.mode} · {(t.members || []).length} member{(t.members || []).length === 1 ? '' : 's'}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FlowDropdown({ flows, value, onChange }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const selected = flows.find((f) => f.id === value);
@@ -730,14 +814,14 @@ function FlowDropdown({ flows, value, onChange }) {
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50 transition-colors"
       >
         <Workflow className="w-4 h-4 text-emerald-500" />
-        <span className="font-medium">{selected?.name || 'Select flow'}</span>
+        <span className="font-medium">{selected?.name || t('chat.selectFlow')}</span>
         <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
       </button>
 
       {open && (
         <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-[260px] py-1 max-h-64 overflow-y-auto">
           {flows.length === 0 && (
-            <div className="px-4 py-2 text-xs text-gray-400">No flows defined</div>
+            <div className="px-4 py-2 text-xs text-gray-400">{t('chat.noFlowsDefined')}</div>
           )}
           {flows.map((f) => {
             const nodeCount = (f.nodes || []).length;
@@ -749,7 +833,7 @@ function FlowDropdown({ flows, value, onChange }) {
                   ${f.id === value ? 'bg-emerald-50 text-emerald-700 font-medium' : 'text-gray-700'}`}
               >
                 <div className="font-medium truncate">{f.name}</div>
-                <div className="text-xs text-gray-400 mt-0.5">{nodeCount} node{nodeCount === 1 ? '' : 's'}</div>
+                <div className="text-xs text-gray-400 mt-0.5">{t('chat.nodeCount', { count: nodeCount })}</div>
               </button>
             );
           })}
@@ -760,15 +844,30 @@ function FlowDropdown({ flows, value, onChange }) {
 }
 
 function ProcessPanelContent({ processInsights }) {
+  const { t } = useI18n();
   const graphKey = (processInsights?.message_runs || [])
     .map((mr, idx) => `${mr?.run_id || mr?.message_id || idx}`)
     .join('|');
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-3">
       <div className="flex flex-wrap gap-1">
-        <TokenPill label="session in" value={processInsights?.token_usage?.inbound_tokens || 0} />
-        <TokenPill label="session out" value={processInsights?.token_usage?.outbound_tokens || 0} />
-        <TokenPill label="session total" value={processInsights?.token_usage?.total_tokens || 0} />
+        <TokenPill label={t('chat.sessionIn')} value={processInsights?.token_usage?.inbound_tokens || 0} />
+        <TokenPill label={t('chat.sessionOut')} value={processInsights?.token_usage?.outbound_tokens || 0} />
+        <TokenPill label={t('chat.sessionTotal')} value={processInsights?.token_usage?.total_tokens || 0} />
+        {/* The bill above sums every LLM call of every turn — an agent loop
+            resends the conversation each step. This is the largest single
+            prompt the session sent, the same figure the context meter tracks. */}
+        {(processInsights?.context_peak || 0) > 0 && (
+          <TokenPill
+            label={t('chat.sessionPeak')}
+            value={
+              processInsights.context_window_tokens > 0
+                ? `${processInsights.context_peak} / ${processInsights.context_window_tokens}`
+                : processInsights.context_peak
+            }
+            title={t('chat.sessionPeakTooltip')}
+          />
+        )}
       </div>
       <ProcessGraph key={graphKey} messageRuns={processInsights.message_runs || []} />
     </div>
@@ -779,8 +878,9 @@ function ProcessPanelContent({ processInsights }) {
 // Build view — unified diff renderer (no external deps)
 // ---------------------------------------------------------------------------
 function DiffView({ diff }) {
+  const { t } = useI18n();
   if (!diff) {
-    return <div className="px-3 py-2 text-[11px] text-gray-400 italic">No textual diff available.</div>;
+    return <div className="px-3 py-2 text-[11px] text-gray-400 italic">{t('chat.noTextualDiffAvailable')}</div>;
   }
   const lines = diff.split('\n');
   return (
@@ -817,6 +917,7 @@ const ARTIFACT_OP_META = {
 };
 
 function ArtifactItem({ artifact, defaultOpen = false }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(defaultOpen);
   const meta = ARTIFACT_OP_META[artifact.op] || ARTIFACT_OP_META.modify;
   return (
@@ -842,7 +943,7 @@ function ArtifactItem({ artifact, defaultOpen = false }) {
         <div className="border-t border-gray-100 py-2 max-h-[400px] overflow-y-auto">
           {artifact.binary ? (
             <div className="px-3 py-2 text-[11px] text-gray-400 italic">
-              {artifact.truncated ? 'File too large to diff.' : 'Binary file (no text diff).'}
+              {artifact.truncated ? t('chat.fileTooLarge') : t('chat.binaryFile')}
             </div>
           ) : (
             <DiffView diff={artifact.diff} />
@@ -854,6 +955,7 @@ function ArtifactItem({ artifact, defaultOpen = false }) {
 }
 
 function ArtifactsPanel({ artifacts }) {
+  const { t } = useI18n();
   const items = useMemo(
     () => Object.values(artifacts || {}).sort((a, b) => (a.path || '').localeCompare(b.path || '')),
     [artifacts],
@@ -868,7 +970,7 @@ function ArtifactsPanel({ artifacts }) {
     return (
       <div className="flex-1 overflow-y-auto p-4">
         <p className="text-xs text-gray-500 italic">
-          No files changed yet. When the agent creates, edits, or deletes files, the diffs appear here.
+          {t('chat.noFilesChangedYetWhen')}
         </p>
       </div>
     );
@@ -876,7 +978,7 @@ function ArtifactsPanel({ artifacts }) {
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-2">
       <div className="flex items-center gap-2 pb-1 text-[11px] text-gray-500">
-        <span className="font-semibold text-gray-600">{items.length} file{items.length === 1 ? '' : 's'}</span>
+        <span className="font-semibold text-gray-600">{t('chat.fileCount', { count: items.length })}</span>
         <span className="font-mono text-emerald-600">+{totals.add}</span>
         <span className="font-mono text-red-600">−{totals.del}</span>
       </div>
@@ -891,6 +993,7 @@ function ArtifactsPanel({ artifacts }) {
 // Build view — full inline transcript (messages + thinking/plan + tools + artifacts)
 // ---------------------------------------------------------------------------
 function TimelineToolCard({ entry }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const isSkill = entry.tool === SKILL_TOOL;
   return (
@@ -918,16 +1021,532 @@ function TimelineToolCard({ entry }) {
         <div className="px-3 pb-2.5 space-y-1.5">
           {entry.input && (
             <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
-              <span className="text-gray-400">in:</span> {shortText(entry.input, 1000)}
+              <span className="text-gray-400">{t('chat.in2')}</span> {shortText(entry.input, 1000)}
             </div>
           )}
           {entry.output != null && (
             <div className="text-[11px] text-emerald-800 whitespace-pre-wrap break-all">
-              <span className="text-emerald-600">out:</span> {shortText(entry.output, 1000)}
+              <span className="text-emerald-600">{t('chat.out2')}</span> {shortText(entry.output, 1000)}
             </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Delegation (run_agent_tool) live-nesting
+// ---------------------------------------------------------------------------
+// A delegated child run streams its tool/thought events tagged with the child
+// run_id + nesting depth. The event handler folds them into a `delegation`
+// timeline entry: { type:'delegation', run_id, agent_id, agent_name, input,
+// running, ok, timeline:[ ...nested entries... ] }. Nested entries use the same
+// shapes as top-level ones (reasoning / tool / delegation), so a delegation can
+// itself contain deeper delegations — rendered recursively by DelegationCard.
+
+// Apply `fn` to the delegation entry whose run_id matches, searching nested
+// delegation timelines. Returns a new timeline array (immutable), or the same
+// reference when nothing matched (so React can skip untouched branches).
+function mapDelegation(timeline, runId, fn) {
+  if (!Array.isArray(timeline)) return timeline;
+  let changed = false;
+  const next = timeline.map((e) => {
+    if (e && e.type === 'delegation') {
+      if (e.run_id === runId) { changed = true; return fn(e); }
+      const inner = mapDelegation(e.timeline || [], runId, fn);
+      if (inner !== (e.timeline || [])) { changed = true; return { ...e, timeline: inner }; }
+    }
+    return e;
+  });
+  return changed ? next : timeline;
+}
+
+// Append `entry` to the delegation(parentRunId)'s nested timeline, or to the
+// top-level timeline when parentRunId is absent or is the message's own run.
+function appendUnderDelegation(timeline, parentRunId, messageRunId, entry) {
+  if (!parentRunId || parentRunId === messageRunId) {
+    return [...(timeline || []), entry];
+  }
+  return mapDelegation(timeline, parentRunId, (d) => ({
+    ...d, timeline: [...(d.timeline || []), entry],
+  }));
+}
+
+// Append an inner entry (reasoning / tool) into delegation(runId)'s own timeline.
+function appendIntoDelegation(timeline, runId, entry) {
+  return mapDelegation(timeline, runId, (d) => ({
+    ...d, timeline: [...(d.timeline || []), entry],
+  }));
+}
+
+// Resolve the last still-running tool inside delegation(runId) with `patch`.
+function resolveDelegationTool(timeline, runId, patch) {
+  return mapDelegation(timeline, runId, (d) => {
+    const tl = [...(d.timeline || [])];
+    for (let i = tl.length - 1; i >= 0; i -= 1) {
+      if (tl[i].type === 'tool' && tl[i].running) { tl[i] = { ...tl[i], ...patch, running: false }; break; }
+    }
+    return { ...d, timeline: tl };
+  });
+}
+
+// A live, collapsible block for one delegated agent run: header (agent + status)
+// over its nested thoughts and tool calls, the same cards the parent uses.
+// Recursive: a nested `delegation` entry renders another DelegationCard.
+function DelegationCard({ entry }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(true);
+  const nested = entry.timeline || [];
+  const running = entry.running;
+  const failed = entry.ok === false && !running;
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50/40">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-left"
+      >
+        <Repeat className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+        <span className="text-xs font-semibold text-indigo-700 flex-shrink-0">
+          Delegated → {entry.agent_name || entry.agent_id}
+        </span>
+        {running ? (
+          <span className="flex gap-1 ml-1">
+            {[0, 150, 300].map((d) => (
+              <span key={d} className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+            ))}
+          </span>
+        ) : (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ml-1 ${failed ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+            {failed ? 'failed' : 'done'}
+          </span>
+        )}
+        {!open && entry.input && (
+          <span className="text-[11px] text-gray-400 truncate flex-1">{shortText(entry.input, 60)}</span>
+        )}
+        {open ? <ChevronUp className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />}
+      </button>
+      {open && (
+        <div className="px-3 pb-2.5 pt-0.5 ml-2 border-l-2 border-indigo-100 space-y-1.5">
+          {nested.length === 0 ? (
+            <div className="text-[11px] text-gray-400 italic">{t('chat.working')}</div>
+          ) : (
+            nested.map((e, i) => {
+              if (e.type === 'reasoning') return <ReasoningStep key={i} step={e} />;
+              if (e.type === 'delegation') return <DelegationCard key={i} entry={e} />;
+              if (e.type === 'tool') {
+                if (EXTRACTION_TOOLS.includes(e.tool)) return <ExtractionToolCard key={i} entry={e} />;
+                if (e.tool === 'recall') return <RecallToolCard key={i} entry={e} />;
+                return <TimelineToolCard key={i} entry={e} />;
+              }
+              if (e.type === 'text') {
+                return e.text && e.text.trim()
+                  ? <div key={i} className="text-[11px] text-gray-700 whitespace-pre-wrap break-words">{e.text}</div>
+                  : null;
+              }
+              return null;
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Extraction tool cards — rich rendering for extract_from_text / save_extraction
+// ---------------------------------------------------------------------------
+const EXTRACTION_TOOLS = ['extract_from_text', 'save_extraction'];
+
+const EPISODE_KIND_CLS = {
+  decision: 'bg-blue-100 text-blue-700',
+  error: 'bg-red-100 text-red-700',
+  task: 'bg-emerald-100 text-emerald-700',
+  observation: 'bg-gray-100 text-gray-600',
+  interaction: 'bg-gray-100 text-gray-600',
+};
+
+function parseJsonSafe(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+function ExtractionRationale({ item }) {
+  if (!item.reason && !item.evidence) return null;
+  return (
+    <div className="mt-1 space-y-0.5">
+      {item.reason && <div className="text-[11px] text-gray-500 italic">{item.reason}</div>}
+      {item.evidence && (
+        <div className="text-[11px] text-gray-600 border-l-2 border-violet-300 pl-2">
+          “{item.evidence}”
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExtractionSection({ icon: Icon, title, children }) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1">
+        <Icon className="w-3 h-3 text-violet-500" />
+        <span className="text-[11px] font-semibold text-violet-700 uppercase tracking-wide">{title}</span>
+      </div>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  );
+}
+
+function ModeBadge({ mode }) {
+  const { t } = useI18n();
+  if (!mode) return null;
+  const isNew = mode === 'create';
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isNew ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}`}>
+      {isNew ? t('chat.modeNew') : mode === 'extend' ? t('chat.modeExtend') : t('chat.modeMerge')}
+    </span>
+  );
+}
+
+function ExtractionProposalBody({ result }) {
+  const { t } = useI18n();
+  const p = result.proposal || {};
+  const slots = p.slots || [];
+  const notes = p.notes || [];
+  const episodes = p.episodes || [];
+  const triples = p.triples || [];
+  const hasAny = slots.length || notes.length || episodes.length || triples.length;
+
+  if (!hasAny) {
+    return <div className="text-[11px] text-gray-500">{result.note || t('chat.nothingExtractable')}</div>;
+  }
+  return (
+    <>
+      {slots.length > 0 && (
+        <ExtractionSection icon={Database} title={t('chat.structuredSlots')}>
+          {slots.map((s, i) => (
+            <div key={i} className="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-mono font-semibold text-gray-800">{s.slot}</span>
+                <ModeBadge mode={s.mode} />
+              </div>
+              <div className="text-[11px]"><SlotData data={s.data} /></div>
+              <ExtractionRationale item={s} />
+            </div>
+          ))}
+        </ExtractionSection>
+      )}
+      {notes.length > 0 && (
+        <ExtractionSection icon={FileText} title={t('chat.notes')}>
+          {notes.map((n, i) => (
+            <div key={i} className="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold text-gray-800">{n.title}</span>
+                <ModeBadge mode={n.mode} />
+              </div>
+              <div className="text-[11px] text-gray-600 mt-0.5">{shortText(n.content, 220)}</div>
+              <ExtractionRationale item={n} />
+            </div>
+          ))}
+        </ExtractionSection>
+      )}
+      {episodes.length > 0 && (
+        <ExtractionSection icon={ListChecks} title={t('chat.episodes')}>
+          {episodes.map((e, i) => (
+            <div key={i} className="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-mono text-gray-400">#{i}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${EPISODE_KIND_CLS[e.kind] || 'bg-gray-100 text-gray-600'}`}>{e.kind}</span>
+                {e.outcome && <span className="text-[10px] text-gray-500">{e.outcome}</span>}
+              </div>
+              <div className="text-[11px] text-gray-700 mt-0.5">{e.summary}</div>
+              <ExtractionRationale item={e} />
+            </div>
+          ))}
+        </ExtractionSection>
+      )}
+      {triples.length > 0 && (
+        <ExtractionSection icon={Workflow} title={t('chat.relationships')}>
+          {triples.map((t, i) => (
+            <div key={i} className="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+                <span className="text-[10px] font-mono text-gray-400">#{i}</span>
+                <span className="font-mono text-gray-800">{t.source?.name}</span>
+                <span className="text-gray-400">({t.source?.type})</span>
+                <span className="text-violet-600 font-medium">—{t.relation}→</span>
+                <span className="font-mono text-gray-800">{t.target?.name}</span>
+                <span className="text-gray-400">({t.target?.type})</span>
+              </div>
+              <ExtractionRationale item={t} />
+            </div>
+          ))}
+        </ExtractionSection>
+      )}
+    </>
+  );
+}
+
+function SaveResultBody({ result }) {
+  const { t } = useI18n();
+  const persisted = result.persisted || {};
+  const lines = [];
+  if ((persisted.slots_created || []).length) lines.push([t('chat.save.slotsCreated'), persisted.slots_created.join(', ')]);
+  if ((persisted.slots_merged || []).length) lines.push([t('chat.save.slotsMerged'), persisted.slots_merged.join(', ')]);
+  if ((persisted.notes_created || []).length) lines.push([t('chat.save.notesCreated'), persisted.notes_created.join(', ')]);
+  if ((persisted.notes_extended || []).length) lines.push([t('chat.save.notesExtended'), persisted.notes_extended.join(', ')]);
+  if ((persisted.notes_skipped || []).length) lines.push([t('chat.save.notesSkipped'), persisted.notes_skipped.join(', ')]);
+  if (persisted.episodes_recorded) lines.push([t('chat.save.episodesRecorded'), String(persisted.episodes_recorded)]);
+  if (persisted.edges_added) lines.push([t('chat.save.edgesAdded'), String(persisted.edges_added)]);
+  if ((result.dropped || []).length) lines.push([t('chat.save.dropped'), result.dropped.join(', ')]);
+  return (
+    <>
+      {lines.length === 0 && <div className="text-[11px] text-gray-500">{result.note || t('chat.nothingSaved')}</div>}
+      {lines.map(([label, value]) => (
+        <div key={label} className="flex gap-2 text-[11px]">
+          <span className="text-gray-500 flex-shrink-0">{label}:</span>
+          <span className="text-gray-800 font-medium break-all">{value}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function ExtractionToolCard({ entry }) {
+  const { t } = useI18n();
+  const [showRaw, setShowRaw] = useState(false);
+  const isSave = entry.tool === 'save_extraction';
+
+  if (entry.running || entry.output == null) {
+    return (
+      <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 flex items-center gap-2">
+        <BrainCircuit className="w-3.5 h-3.5 text-violet-500" />
+        <span className="text-xs font-semibold text-violet-700">
+          {isSave ? t('chat.savingExtraction') : t('chat.extractingKnowledge')}
+        </span>
+        <span className="flex gap-1 ml-1">
+          {[0, 150, 300].map((d) => (
+            <span key={d} className="w-1 h-1 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+          ))}
+        </span>
+      </div>
+    );
+  }
+
+  const result = parseJsonSafe(entry.output);
+  if (!result) return <TimelineToolCard entry={entry} />;
+
+  const failed = result.ok === false;
+  const theme = failed
+    ? 'border-red-200 bg-red-50/40'
+    : isSave ? 'border-emerald-200 bg-emerald-50/40' : 'border-violet-200 bg-violet-50/40';
+  const headerColor = failed ? 'text-red-700' : isSave ? 'text-emerald-700' : 'text-violet-700';
+  const title = failed
+    ? (isSave ? t('chat.saveFailed') : t('chat.extractionFailed'))
+    : isSave ? t('chat.savedToMemory') : t('chat.extractionProposal');
+
+  return (
+    <div className={`rounded-lg border ${theme}`}>
+      <div className="flex items-center gap-2 px-3 py-2">
+        {isSave && !failed
+          ? <Check className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+          : <BrainCircuit className={`w-3.5 h-3.5 flex-shrink-0 ${failed ? 'text-red-500' : 'text-violet-500'}`} />}
+        <span className={`text-xs font-semibold ${headerColor}`}>{title}</span>
+        {result.extraction_id && (
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/80 border border-gray-200 text-gray-600">
+            id: {result.extraction_id}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowRaw((v) => !v)}
+          className="ml-auto text-[10px] text-gray-400 hover:text-gray-600"
+        >
+          {showRaw ? 'formatted' : 'raw'}
+        </button>
+      </div>
+      <div className="px-3 pb-2.5 space-y-2.5">
+        {showRaw ? (
+          <pre className="text-[10px] text-gray-600 whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-lg p-2 max-h-72 overflow-y-auto">
+            {JSON.stringify(result, null, 2)}
+          </pre>
+        ) : isSave ? (
+          <SaveResultBody result={result} />
+        ) : (
+          <ExtractionProposalBody result={result} />
+        )}
+        {(result.errors || []).length > 0 && (
+          <div className="text-[11px] text-red-600 space-y-0.5">
+            {result.errors.map((err, i) => <div key={i}>⚠ {err}</div>)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Recall tool card — shows the memory-layer cascade and per-result provenance
+// ---------------------------------------------------------------------------
+const RECALL_LAYER_LABEL = {
+  structured_slots: 'Slots',
+  notes: 'Notes',
+  graph: 'Graph',
+  rag: 'RAG',
+};
+const RECALL_SOURCE_BADGE = {
+  structured: ['slot', 'bg-indigo-100 text-indigo-700'],
+  note: ['note', 'bg-amber-100 text-amber-700'],
+  graph: ['graph', 'bg-emerald-100 text-emerald-700'],
+  rag: ['rag', 'bg-purple-100 text-purple-700'],
+};
+
+function RecallResultRow({ res }) {
+  const { t } = useI18n();
+  const [badge, badgeCls] = RECALL_SOURCE_BADGE[res.source] || [res.source, 'bg-gray-100 text-gray-600'];
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${badgeCls}`}>{badge}</span>
+        {res.source === 'structured' && <span className="text-xs font-mono font-semibold text-gray-800">{res.slot}</span>}
+        {res.source === 'note' && <span className="text-xs font-semibold text-gray-800">{res.title}</span>}
+        {res.source === 'graph' && (
+          <span className="text-xs font-mono text-gray-800">
+            {res.node?.name} <span className="text-gray-400 font-sans">({res.node?.type})</span>
+          </span>
+        )}
+        {res.source === 'rag' && (
+          <span className="text-xs font-mono text-gray-700">
+            {res.file_id || 'document'}
+            {res.score != null && <span className="text-gray-400 font-sans"> · {t('chat.score')} {res.score}</span>}
+          </span>
+        )}
+      </div>
+      {res.source === 'structured' && res.data && (
+        <div className="text-[11px]"><SlotData data={res.data} /></div>
+      )}
+      {(res.source === 'note' || res.source === 'rag') && (
+        <div className="text-[11px] text-gray-600 mt-0.5">{shortText(res.content || res.text || '', 200)}</div>
+      )}
+      {(res.relations || []).length > 0 && (
+        <div className="mt-1 space-y-0.5">
+          {res.relations.slice(0, 5).map((rel, i) => (
+            <div key={i} className="text-[11px] font-mono text-emerald-700">{rel}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecallToolCard({ entry }) {
+  const { t } = useI18n();
+  const [showRaw, setShowRaw] = useState(false);
+
+  if (entry.running || entry.output == null) {
+    return (
+      <div className="rounded-lg border border-sky-200 bg-sky-50/50 px-3 py-2 flex items-center gap-2">
+        <Database className="w-3.5 h-3.5 text-sky-500" />
+        <span className="text-xs font-semibold text-sky-700">{t('chat.recallingFromMemory')}</span>
+        <span className="flex gap-1 ml-1">
+          {[0, 150, 300].map((d) => (
+            <span key={d} className="w-1 h-1 bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+          ))}
+        </span>
+      </div>
+    );
+  }
+
+  const result = parseJsonSafe(entry.output);
+  // Render the rich card whenever the output is a recall result; the trace
+  // row is optional so outputs from older backends still get the card.
+  if (!result || result.ok === false || !Array.isArray(result.results)) {
+    return <TimelineToolCard entry={entry} />;
+  }
+
+  return (
+    <div className="rounded-lg border border-sky-200 bg-sky-50/40">
+      <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
+        <Database className="w-3.5 h-3.5 text-sky-500 flex-shrink-0" />
+        <span className="text-xs font-semibold text-sky-700">{t('chat.memoryRecall')}</span>
+        {result.query && (
+          <span className="text-[11px] text-gray-600 truncate">“{shortText(result.query, 60)}”</span>
+        )}
+        {result.pool && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/80 border border-gray-200 text-gray-500">
+            pool: {result.pool}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowRaw((v) => !v)}
+          className="ml-auto text-[10px] text-gray-400 hover:text-gray-600"
+        >
+          {showRaw ? 'formatted' : 'raw'}
+        </button>
+      </div>
+      <div className="px-3 pb-2.5 space-y-2">
+        {/* Search cascade: layer → layer with hit counts */}
+        {Array.isArray(result.trace) && result.trace.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap">
+          {result.trace.map((t, i) => (
+            <React.Fragment key={t.layer}>
+              {i > 0 && <span className="text-gray-300 text-[10px]">→</span>}
+              <span
+                title={t.skipped ? `skipped: ${t.skipped}` : (t.searched != null ? `${t.searched} searched` : undefined)}
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                  t.hits > 0
+                    ? 'bg-sky-100 text-sky-700'
+                    : t.skipped
+                      ? 'bg-gray-100 text-gray-400 line-through'
+                      : 'bg-gray-100 text-gray-500'
+                }`}
+              >
+                {RECALL_LAYER_LABEL[t.layer] || t.layer} {t.skipped ? '' : `· ${t.hits}`}
+              </span>
+            </React.Fragment>
+          ))}
+        </div>
+        )}
+        {showRaw ? (
+          <pre className="text-[10px] text-gray-600 whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-lg p-2 max-h-72 overflow-y-auto">
+            {JSON.stringify(result, null, 2)}
+          </pre>
+        ) : result.found ? (
+          (result.results || []).map((res, i) => <RecallResultRow key={i} res={res} />)
+        ) : (
+          <div className="text-[11px] text-gray-500">{result.note || t('chat.nothingFoundInMemory')}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The chat bubble's process trail: thoughts, the rich memory cards (recall /
+// extraction) and delegated sub-agent runs. `timeline` is the chronological
+// feed the Build view and the Process graph use, so walking it keeps every card
+// in execution order instead of grouping all thoughts above all tools. Other
+// tool calls stay Build-view only. `timeline` is transient (stripped before
+// persisting), so a reloaded conversation falls back to the thoughts alone,
+// which do persist on `reasoning`.
+function ChatTrail({ msg }) {
+  const timeline = msg.timeline || [];
+  const entries = timeline.length
+    ? timeline.filter((e) => (
+        e.type === 'reasoning'
+        || e.type === 'delegation'
+        || (e.type === 'tool' && (EXTRACTION_TOOLS.includes(e.tool) || e.tool === 'recall'))
+      ))
+    : (msg.reasoning || []).map((s) => ({ type: 'reasoning', ...s }));
+  if (!entries.length) return null;
+  return (
+    <div className="space-y-2 mb-2">
+      {entries.map((e, i) => {
+        if (e.type === 'reasoning') return <ReasoningStep key={i} step={e} />;
+        if (e.type === 'delegation') return <DelegationCard key={e.run_id || i} entry={e} />;
+        return e.tool === 'recall'
+          ? <RecallToolCard key={i} entry={e} />
+          : <ExtractionToolCard key={i} entry={e} />;
+      })}
     </div>
   );
 }
@@ -953,6 +1572,7 @@ function TimelineArtifactChip({ entry, onJump }) {
 }
 
 function BuildMessage({ msg, agentName, onJumpArtifact }) {
+  const { t } = useI18n();
   const isUser = msg.role === 'user';
   if (isUser) {
     return (
@@ -960,8 +1580,8 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white">
           <User className="w-4 h-4" />
         </div>
-        <div className="max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm whitespace-pre-wrap">
-          {msg.content}
+        <div className="max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-base whitespace-pre-wrap">
+          {trimBubbleText(msg.content)}
         </div>
       </div>
     );
@@ -986,7 +1606,7 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
             if (entry.type === 'text') {
               if (!entry.text || !entry.text.trim()) return null;
               return (
-                <div key={i} className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-sm text-gray-800 leading-relaxed">
+                <div key={i} className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-base text-gray-800 leading-relaxed">
                   {renderContent(entry.text)}
                 </div>
               );
@@ -994,7 +1614,16 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
             if (entry.type === 'reasoning') {
               return <ReasoningStep key={i} step={entry} />;
             }
+            if (entry.type === 'delegation') {
+              return <DelegationCard key={i} entry={entry} />;
+            }
             if (entry.type === 'tool') {
+              if (EXTRACTION_TOOLS.includes(entry.tool)) {
+                return <ExtractionToolCard key={i} entry={entry} />;
+              }
+              if (entry.tool === 'recall') {
+                return <RecallToolCard key={i} entry={entry} />;
+              }
               return <TimelineToolCard key={i} entry={entry} />;
             }
             if (entry.type === 'artifact') {
@@ -1003,8 +1632,8 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
             return null;
           })
         ) : (
-          <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-sm text-gray-800 leading-relaxed">
-            {msg.content ? renderContent(msg.content) : <span className="text-gray-400 text-xs italic">(no output)</span>}
+          <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-base text-gray-800 leading-relaxed">
+            {msg.content ? renderContent(msg.content) : <span className="text-gray-400 text-xs italic">{t('chat.noOutput')}</span>}
           </div>
         )}
       </div>
@@ -1016,6 +1645,7 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
 // Main Chat page
 // ---------------------------------------------------------------------------
 export default function Chat() {
+  const { t } = useI18n();
   const { convId: urlConvId } = useParams();
   const navigate = useNavigate();
   const { selectedWorkspace } = useWorkspace();
@@ -1026,7 +1656,11 @@ export default function Chat() {
   // (each user turn is processed by every node in the DAG in topological order).
   const [flows, setFlows] = useState([]);
   const [selectedFlow, setSelectedFlow] = useState('');
-  const [targetMode, setTargetMode] = useState('agent'); // 'agent' | 'flow'
+  // Team chat support: when targetMode === 'team', the message is handed to a
+  // roster of agents that talk to each other; each board entry becomes a bubble.
+  const [teams, setTeams] = useState([]);
+  const [selectedTeam, setSelectedTeam] = useState('');
+  const [targetMode, setTargetMode] = useState('agent'); // 'agent' | 'flow' | 'team'
 
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState('');
@@ -1040,11 +1674,24 @@ export default function Chat() {
   const [input, setInput] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [attachmentError, setAttachmentError] = useState('');
+  // Hub records attached to the next message — {kind, id, label, icon, url}.
+  // Separate from pendingAttachments: a reference is a pointer the server
+  // resolves at send time, not a payload the browser carries.
+  const [pendingReferences, setPendingReferences] = useState([]);
+  // The paperclip's menu (a file, or one of the entity kinds) and the kind the
+  // picker modal is open on (null = closed).
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [pickerKind, setPickerKind] = useState(null);
+  const [contextKinds, setContextKinds] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [processOpen, setProcessOpen] = useState(false);
+  const [processOpen, setProcessOpen] = useState(() => {
+    try { return localStorage.getItem(PROCESS_OPEN_KEY) === '1'; } catch { return false; }
+  });
   // 'chat' = clean message bubbles (default). 'build' = full inline transcript
   // (messages + thinking + plan + tool calls) with an Artifacts (diffs) column.
-  const [viewMode, setViewMode] = useState('chat');
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem(VIEW_MODE_KEY) === 'build' ? 'build' : 'chat'; } catch { return 'chat'; }
+  });
   // Latest cumulative diff per file path for the current conversation.
   // Shape: { [path]: { op, path, diff, additions, deletions, binary, truncated, run_id } }
   const [artifacts, setArtifacts] = useState({});
@@ -1057,7 +1704,19 @@ export default function Chat() {
     thinking: [],
     message_runs: [],
     token_usage: { inbound_tokens: 0, outbound_tokens: 0, total_tokens: 0 },
+    context_peak: 0,
+    context_window_tokens: 0,
   });
+
+  // Persist the process-panel open state so it survives leaving and returning to
+  // the Chat page (the component unmounts on navigation, resetting React state).
+  useEffect(() => {
+    try { localStorage.setItem(PROCESS_OPEN_KEY, processOpen ? '1' : '0'); } catch { /* storage unavailable */ }
+  }, [processOpen]);
+
+  useEffect(() => {
+    try { localStorage.setItem(VIEW_MODE_KEY, viewMode); } catch { /* storage unavailable */ }
+  }, [viewMode]);
 
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [commandMenuIndex, setCommandMenuIndex] = useState(0);
@@ -1066,7 +1725,7 @@ export default function Chat() {
   const [sessionId, setSessionId] = useState(null);
 
   const abortCtrlRef = useRef(null);
-  const sessionSseRef = useRef(null);   // EventSource for session continuation stream
+  const continuationMsgIdRef = useRef(null);   // active continuation bubble on the session channel
   const messagesEndRef = useRef(null);
   const prevConvIdRef = useRef(undefined);
   const textareaRef = useRef(null);
@@ -1098,7 +1757,27 @@ export default function Chat() {
   }, [telegramBindings, currentConvId]);
 
   const currentConv = conversations.find((c) => c.id === currentConvId) || null;
-  const messages = currentConv?.messages || [];
+  // Memoised: the `|| []` fallback would otherwise be a new array on every
+  // render, re-running every effect that watches the transcript.
+  const messages = useMemo(() => currentConv?.messages || [], [currentConv]);
+  // Context fill for the open conversation: whatever the most recent turn that
+  // reported it left behind. Read off the transcript rather than tracked live,
+  // so it is still right after a reload or a switch between conversations, and
+  // empties by itself when /clear empties the messages.
+  const contextUsage = useMemo(() => {
+    const msgs = currentConv?.messages || [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m?.context_window || m?.context_overflow) {
+        return {
+          used: m.context_used || 0,
+          window: m.context_window || 0,
+          overflow: Boolean(m.context_overflow),
+        };
+      }
+    }
+    return { used: 0, window: 0, overflow: false };
+  }, [currentConv]);
   const conversationRunIds = useMemo(() => {
     const ids = new Set();
     for (const m of (currentConv?.messages || [])) {
@@ -1106,7 +1785,49 @@ export default function Chat() {
     }
     return ids;
   }, [currentConv]);
+  // Build-view timelines for reloaded messages. The live `msg.timeline` (tool
+  // calls + thoughts) is stripped before persisting (TRANSIENT_MSG_FIELDS), so a
+  // conversation reopened from storage has none. Reconstruct it per run_id from
+  // the server-fetched process insights — same reasoning+tools merge the Process
+  // graph uses — so the Build view shows tools and thoughts again, not just the
+  // final text. Keyed by run_id; consumed only in build view.
+  const runTimelineByRunId = useMemo(() => {
+    const map = {};
+    for (const mr of (processInsights.message_runs || [])) {
+      const rid = String(mr?.run_id || '');
+      if (!rid) continue;
+      const merged = [
+        ...((mr.reasoning || []).map((r) => ({ step: r.step, entry: { type: 'reasoning', kind: r.kind || 'think', step: r.step, content: r.content } }))),
+        ...((mr.tools || []).map((t) => ({ step: t.step, entry: { type: 'tool', step: t.step, tool: t.tool, input: t.input, output: t.output } }))),
+      ].sort((a, b) => (a.step ?? Infinity) - (b.step ?? Infinity));
+      const timeline = merged.map((m) => m.entry);
+      // The final response text follows the tool/thought steps.
+      if ((mr.output || '').trim()) timeline.push({ type: 'text', text: mr.output });
+      map[rid] = timeline;
+    }
+    return map;
+  }, [processInsights]);
+
   const agentName = agents.find((a) => a.id === selectedAgent)?.name || selectedAgent || 'Agent';
+  // Whether the composer has something to send to, and what it says while it
+  // waits. Derived once for all three target modes so a new mode cannot be
+  // added to one control and forgotten in the next.
+  const hasTarget = Boolean(targetId(targetMode, { selectedAgent, selectedFlow, selectedTeam }));
+  const composerPlaceholder = (() => {
+    if (targetMode === 'flow') {
+      return selectedFlow
+        ? t('chat.placeholders.flow', { name: flows.find((f) => f.id === selectedFlow)?.name || '' })
+        : t('chat.placeholders.pickFlow');
+    }
+    if (targetMode === 'team') {
+      return selectedTeam
+        ? t('chat.placeholders.team', { name: teams.find((tm) => tm.team_id === selectedTeam)?.name || '' })
+        : t('chat.placeholders.pickTeam');
+    }
+    return selectedAgent
+      ? t('chat.placeholders.agent', { name: agents.find((a) => a.id === selectedAgent)?.name || selectedAgent })
+      : t('chat.placeholders.noAgent');
+  })();
   const _agentObj = agents.find((a) => a.id === selectedAgent) || {};
   // provider/model are top-level fields on AgentSpec
   const agentProvider = _agentObj.provider || 'inherit';
@@ -1177,6 +1898,13 @@ export default function Chat() {
       .catch(() => setFlows([]));
   }, [selectedWorkspace]);
 
+  // ---- load teams (workspace-scoped, same as flows) ----
+  useEffect(() => {
+    getTeams(selectedWorkspace || undefined)
+      .then((r) => setTeams(r.data?.teams || []))
+      .catch(() => setTeams([]));
+  }, [selectedWorkspace]);
+
   // ---- load Telegram bindings (refresh on workspace switch + interval) ----
   useEffect(() => {
     let cancelled = false;
@@ -1189,8 +1917,7 @@ export default function Chat() {
       }
     };
     refresh();
-    const id = setInterval(refresh, 15000);
-    return () => { cancelled = true; clearInterval(id); };
+    return () => { cancelled = true; };
   }, []);
 
   // ---- hydrate Telegram conversation: resolve session_id, load past messages ----
@@ -1208,8 +1935,8 @@ export default function Chat() {
 
     (async () => {
       try {
-        const { data: sessions } = await getSessions({ conversation_id: convId });
-        const sess = (sessions || [])[0];
+        const { data: sessions } = await getSessions({ conversation_id: convId, limit: 1 });
+        const sess = (sessions?.items || [])[0];
         if (!sess?.session_id || cancelled) return;
         setSessionId(sess.session_id);
 
@@ -1324,136 +2051,157 @@ export default function Chat() {
   }, [currentConvId, currentConv]);
 
   // ---- session SSE subscription for continuation runs ----
-  // When we have a session_id, open a persistent SSE connection so continuation
-  // runs (spawned as subprocesses after the original HTTP response closed) can
-  // stream their output into this chat in real time.
-  useEffect(() => {
-    if (!sessionId || !currentConvId) return;
+  // Subscribe to this session's channel on the shared multiplexed stream so
+  // continuation runs (spawned as subprocesses after the original HTTP response
+  // closed) stream their output into this chat in real time. No dedicated
+  // connection — interest is added/removed on the single app-wide EventSource.
+  useEffect(() => { continuationMsgIdRef.current = null; }, [sessionId, currentConvId]);
 
-    // Close any previous connection for a different session
-    if (sessionSseRef.current) {
-      sessionSseRef.current.close();
-      sessionSseRef.current = null;
-    }
+  useChannel(sessionId && currentConvId ? sessionId : null, (event) => {
+    if (!event || !event.type) return;
+
+    // Ignore heartbeats and events from the primary run (handled by the fetch stream)
+    if (event.type === 'heartbeat') return;
+    if (event.type === 'meta' && !event.continuation) return;
 
     const convId = currentConvId;
-    let continuationMsgId = null;
 
-    const es = new EventSource(`http://localhost:8000/api/sessions/${sessionId}/stream`);
-    sessionSseRef.current = es;
-
-    es.onmessage = (e) => {
-      let event;
-      try { event = JSON.parse(e.data); } catch { return; }
-      if (!event || !event.type) return;
-
-      // Ignore heartbeats
-      if (event.type === 'heartbeat') return;
-
-      // Ignore events from the primary run (already handled by the fetch stream)
-      if (event.type === 'meta' && !event.continuation) return;
-
-      if (event.type === 'meta' && event.continuation) {
-        // A new continuation run is starting — create a new assistant message bubble
-        continuationMsgId = genId();
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id !== convId ? c : {
-              ...c,
-              messages: [
-                ...c.messages,
-                {
-                  id: continuationMsgId,
-                  role: 'agent',
-                  agent_id: event.agent_id || '',
-                  content: '',
-                  error: false,
-                  run_id: event.run_id || null,
-                  inbound_tokens: null,
-                  outbound_tokens: null,
-                  total_tokens: null,
-                  tool_calls: null,
-                  duration_ms: null,
-                },
-              ],
-            }
-          )
-        );
-        if (event.run_id) setActiveRunId(event.run_id);
-      } else if (event.type === 'token' && continuationMsgId) {
-        const tok = event.token || '';
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id !== convId ? c : {
-              ...c,
-              messages: c.messages.map((m) => {
-                if (m.id !== continuationMsgId) return m;
-                const tl = [...(m.timeline || [])];
-                const last = tl[tl.length - 1];
-                if (last && last.type === 'text') {
-                  tl[tl.length - 1] = { ...last, text: `${last.text || ''}${tok}` };
-                } else {
-                  tl.push({ type: 'text', text: tok });
-                }
-                return { ...m, content: `${m.content || ''}${tok}`, timeline: tl };
-              }),
-            }
-          )
-        );
-      } else if (event.type === 'artifact') {
-        mergeArtifact(event);
-        if (continuationMsgId) {
-          const entry = { type: 'artifact', op: event.op, path: event.path, additions: event.additions, deletions: event.deletions };
-          setConversations((prev) =>
-            prev.map((c) =>
-              c.id !== convId ? c : {
-                ...c,
-                messages: c.messages.map((m) =>
-                  m.id === continuationMsgId ? { ...m, timeline: [...(m.timeline || []), entry] } : m
-                ),
+    if (event.type === 'meta' && event.continuation) {
+      // A new continuation run is starting — create a new assistant message bubble
+      const continuationMsgId = genId();
+      continuationMsgIdRef.current = continuationMsgId;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id !== convId ? c : {
+            ...c,
+            messages: [
+              ...c.messages,
+              {
+                id: continuationMsgId,
+                role: 'agent',
+                agent_id: event.agent_id || '',
+                content: '',
+                error: false,
+                run_id: event.run_id || null,
+                inbound_tokens: null,
+                outbound_tokens: null,
+                total_tokens: null,
+                tool_calls: null,
+                duration_ms: null,
+              },
+            ],
+          }
+        )
+      );
+      if (event.run_id) setActiveRunId(event.run_id);
+    } else if (event.type === 'token' && continuationMsgIdRef.current) {
+      const continuationMsgId = continuationMsgIdRef.current;
+      const tok = event.token || '';
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id !== convId ? c : {
+            ...c,
+            messages: c.messages.map((m) => {
+              if (m.id !== continuationMsgId) return m;
+              const tl = [...(m.timeline || [])];
+              const last = tl[tl.length - 1];
+              if (last && last.type === 'text') {
+                tl[tl.length - 1] = { ...last, text: `${last.text || ''}${tok}` };
+              } else {
+                tl.push({ type: 'text', text: tok });
               }
-            )
-          );
-        }
-      } else if (event.type === 'done' && continuationMsgId) {
+              return { ...m, content: `${m.content || ''}${tok}`, timeline: tl };
+            }),
+          }
+        )
+      );
+    } else if (event.type === 'artifact') {
+      mergeArtifact(event);
+      const continuationMsgId = continuationMsgIdRef.current;
+      if (continuationMsgId) {
+        const entry = { type: 'artifact', op: event.op, path: event.path, additions: event.additions, deletions: event.deletions };
         setConversations((prev) =>
           prev.map((c) =>
             c.id !== convId ? c : {
               ...c,
               messages: c.messages.map((m) =>
                 m.id === continuationMsgId
-                  ? {
-                      ...m,
-                      content: (m.content || event.response || '').trim() || event.response || '',
-                      error: !event.ok,
-                      run_id: event.run_id || m.run_id,
-                      inbound_tokens: event.usage?.inbound_tokens ?? null,
-                      outbound_tokens: event.usage?.outbound_tokens ?? null,
-                      total_tokens: event.usage?.total_tokens ?? null,
-                      tool_calls: event.tool_calls ?? null,
-                      duration_ms: event.duration_ms ?? null,
-                    }
+                  ? { ...m, timeline: [...(m.timeline || []), entry], files: mergeMessageFile(m.files, event) }
                   : m
               ),
             }
           )
         );
-        continuationMsgId = null;
-      } else if (event.type === 'session_done') {
-        es.close();
-        sessionSseRef.current = null;
       }
-    };
-
-    es.onerror = () => {
-      // EventSource auto-reconnects on error — nothing to do here
-    };
-
-    return () => {
-      es.close();
-      sessionSseRef.current = null;
-    };
-  }, [sessionId, currentConvId]);
+    } else if ((event.type === 'think' || event.type === 'plan') && continuationMsgIdRef.current) {
+      // Completed thought: it becomes a ReasoningStep in the bubble and ends the
+      // live ticker that was showing the same text as it was written.
+      const continuationMsgId = continuationMsgIdRef.current;
+      const step = { kind: event.type, step: event.step, content: event.content };
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id !== convId ? c : {
+            ...c,
+            messages: c.messages.map((m) =>
+              m.id === continuationMsgId
+                ? {
+                    ...m,
+                    reasoning: [...(m.reasoning || []), step],
+                    timeline: [...(m.timeline || []), { type: 'reasoning', ...step }],
+                    thinking_live: '',
+                  }
+                : m
+            ),
+          }
+        )
+      );
+    } else if (event.type === 'think_delta' && continuationMsgIdRef.current) {
+      const continuationMsgId = continuationMsgIdRef.current;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id !== convId ? c : {
+            ...c,
+            messages: c.messages.map((m) =>
+              m.id === continuationMsgId
+                ? { ...m, thinking_live: appendLiveThought(m.thinking_live, event.delta) }
+                : m
+            ),
+          }
+        )
+      );
+    } else if (event.type === 'done' && continuationMsgIdRef.current) {
+      const continuationMsgId = continuationMsgIdRef.current;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id !== convId ? c : {
+            ...c,
+            messages: c.messages.map((m) =>
+              m.id === continuationMsgId
+                ? {
+                    ...m,
+                    content: (m.content || event.response || '').trim() || event.response || '',
+                    thinking_live: '',
+                    error: !event.ok,
+                    run_id: event.run_id || m.run_id,
+                    inbound_tokens: event.usage?.inbound_tokens ?? null,
+                    outbound_tokens: event.usage?.outbound_tokens ?? null,
+                    total_tokens: event.usage?.total_tokens ?? null,
+                    tool_calls: event.tool_calls ?? null,
+                    duration_ms: event.duration_ms ?? null,
+                    context_used: event.usage?.context_used ?? null,
+                    context_window: event.usage?.context_window ?? null,
+                    context_overflow: event.error_code === 'context_overflow',
+                  }
+                : m
+            ),
+          }
+        )
+      );
+      continuationMsgIdRef.current = null;
+    } else if (event.type === 'session_done') {
+      continuationMsgIdRef.current = null;
+    }
+  });
 
   // Keep ref in sync so loadProcessData can check for existing data without a dep cycle
   useEffect(() => { processInsightsRef.current = processInsights; }, [processInsights]);
@@ -1525,14 +2273,17 @@ export default function Chat() {
           message_runs: mergedRuns,
           tools: [...preservedTools, ...filteredTools],
           token_usage: { inbound_tokens: inTok, outbound_tokens: outTok, total_tokens: totalTok },
+          // Runs load one at a time, so the session's peak is the running max.
+          context_peak: Math.max(prev.context_peak || 0, raw.context_window?.input_tokens_used || 0),
+          context_window_tokens: raw.context_window?.context_window_tokens || prev.context_window_tokens || 0,
         };
       });
     } catch (err) {
-      if (!silent) setProcessError(err.response?.data?.detail || 'Failed to load process details.');
+      if (!silent) setProcessError(err.response?.data?.detail || t('chat.failedToLoadProcess'));
     } finally {
       if (!silent) setProcessLoading(false);
     }
-  }, [conversationRunIds]);
+  }, [conversationRunIds, t]);
 
   // Load all unloaded conversation runs whenever the panel is open and conversationRunIds changes.
   // Build view also needs this data (for the Artifacts panel), even with the
@@ -1608,12 +2359,43 @@ export default function Chat() {
     );
   }, []);
 
-  // Close session SSE and reset process panel when switching conversations
+  // ---- context references (hub entities attached to the next message) ----
+  // The kind catalog is fetched once, lazily: it only matters when the user
+  // actually opens the attach menu.
   useEffect(() => {
-    if (sessionSseRef.current) {
-      sessionSseRef.current.close();
-      sessionSseRef.current = null;
-    }
+    if (!attachMenuOpen || contextKinds.length) return;
+    getContextKinds()
+      .then((r) => setContextKinds(r.data || []))
+      .catch(() => setContextKinds([]));
+  }, [attachMenuOpen, contextKinds.length]);
+
+  const addReferences = useCallback((items) => {
+    setAttachmentError('');
+    setPendingReferences((prev) => {
+      const seen = new Set(prev.map((r) => `${r.kind}:${r.id}`));
+      const next = [...prev];
+      for (const item of items || []) {
+        const key = `${item.kind}:${item.id}`;
+        if (seen.has(key)) continue;
+        if (next.length >= MAX_REFERENCE_COUNT) {
+          setAttachmentError(`Only ${MAX_REFERENCE_COUNT} attached entities are allowed per message.`);
+          break;
+        }
+        seen.add(key);
+        next.push(item);
+      }
+      return next;
+    });
+  }, []);
+
+  const removeReference = useCallback((kind, id) => {
+    setPendingReferences((prev) => prev.filter((r) => !(r.kind === kind && r.id === id)));
+  }, []);
+
+  // Reset process panel when switching conversations. Clearing sessionId
+  // releases the session channel on the shared stream automatically.
+  useEffect(() => {
+    continuationMsgIdRef.current = null;
     setSessionId(null);
     loadedRunIdsRef.current = new Set();
     setArtifacts({});
@@ -1623,6 +2405,8 @@ export default function Chat() {
       thinking: [],
       message_runs: [],
       token_usage: { inbound_tokens: 0, outbound_tokens: 0, total_tokens: 0 },
+      context_peak: 0,
+      context_window_tokens: 0,
     });
   }, [currentConvId]);
 
@@ -1633,33 +2417,25 @@ export default function Chat() {
   }, []);
 
   // ---- new conversation ----
+  // Don't create a conversation record yet — just land on the empty start page.
+  // sendMessage lazily creates the conversation when the first message is sent,
+  // so repeated "New chat" clicks never pile up empty conversations in the list.
   const newConversation = useCallback(() => {
-    const id = genId();
-    const conv = {
-      id,
-      title: 'New conversation',
-      agent_id: targetMode === 'agent' ? selectedAgent : null,
-      flow_id: targetMode === 'flow' ? selectedFlow : null,
-      target_mode: targetMode,
-      workspace: selectedWorkspace,
-      project_id: selectedProject || null,
-      messages: [],
-      created_at: new Date().toISOString(),
-    };
-    setConversations((prev) => [conv, ...prev]);
-    navigate(`/chat/${id}`);
+    setCurrentConvId(null);
+    setInput('');
+    navigate('/chat');
     setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [selectedAgent, selectedFlow, targetMode, selectedWorkspace, selectedProject, navigate]);
+  }, [navigate]);
 
   // ---- delete conversation ----
   const deleteConversation = useCallback((id, e) => {
     e.stopPropagation();
     const conv = conversations.find((c) => c.id === id);
-    const label = conv?.title || 'this conversation';
-    if (!window.confirm(`Delete "${label}"?`)) return;
+    const label = conv?.title || t('chat.thisConversation');
+    if (!window.confirm(t('chat.confirmDeleteConversation', { label }))) return;
     setConversations((prev) => prev.filter((c) => c.id !== id));
     if (currentConvId === id) navigate('/chat');
-  }, [conversations, currentConvId, navigate]);
+  }, [conversations, currentConvId, navigate, t]);
 
   // ---- slash command selection ----
   const selectCommand = useCallback(async (cmd) => {
@@ -1679,8 +2455,10 @@ export default function Chat() {
       return;
     }
     if (cmd.name === '/help') {
-      const lines = allCommands.map((c) => `**${c.name}** — ${c.description}`).join('\n');
-      const helpMsg = { id: genId(), role: 'agent', content: `Available commands:\n\n${lines}`, error: false };
+      const lines = allCommands
+        .map((c) => `**${c.name}** — ${c.descriptionKey ? t(c.descriptionKey) : c.description}`)
+        .join('\n');
+      const helpMsg = { id: genId(), role: 'agent', content: `${t('chat.availableCommands')}\n\n${lines}`, error: false };
       if (currentConvId) {
         setConversations((prev) => prev.map((c) => c.id === currentConvId ? { ...c, messages: [...c.messages, helpMsg] } : c));
       }
@@ -1689,36 +2467,37 @@ export default function Chat() {
     }
     if (cmd.name === '/config') {
       const agentObj = agents.find((a) => a.id === selectedAgent) || {};
-      const provider = agentObj.provider || 'inherit (global)';
-      const model = agentObj.model || 'inherit (global)';
+      const inherit = t('chat.inheritGlobal');
+      const provider = agentObj.provider || inherit;
+      const model = agentObj.model || inherit;
       const baseUrl = agentObj.base_url || '—';
-      const temperature = agentObj.temperature != null ? agentObj.temperature : 'inherit (global)';
-      const maxTokens = agentObj.max_tokens != null ? agentObj.max_tokens : 'inherit (global)';
+      const temperature = agentObj.temperature != null ? agentObj.temperature : inherit;
+      const maxTokens = agentObj.max_tokens != null ? agentObj.max_tokens : inherit;
       const tools = (agentObj.tools || []).length > 0 ? (agentObj.tools || []).join(', ') : '—';
-      const streaming = agentObj.streaming ? 'yes' : 'no';
-      const verbose = agentObj.verbose ? 'yes' : 'no';
+      const streaming = agentObj.streaming ? t('common.yes') : t('common.no');
+      const verbose = agentObj.verbose ? t('common.yes') : t('common.no');
       setInput('');
       let systemPrompt = agentObj.system_prompt || '';
       try {
         const defResp = await getAgentDefinition(selectedAgent);
         systemPrompt = defResp.data?.system_prompt || systemPrompt;
-      } catch {}
+      } catch { /* keep the default system prompt */ }
       const lines = [
-        `**Agent:** ${agentObj.name || selectedAgent} (\`${agentObj.id || selectedAgent}\`)`,
-        `**Description:** ${agentObj.description || '—'}`,
-        `**Domain:** ${agentObj.domain || '—'}`,
+        `**${t('chat.config.agent')}:** ${agentObj.name || selectedAgent} (\`${agentObj.id || selectedAgent}\`)`,
+        `**${t('chat.config.description')}:** ${agentObj.description || '—'}`,
+        `**${t('chat.config.domain')}:** ${agentObj.domain || '—'}`,
         ``,
-        `**Provider:** ${provider}`,
-        `**Model:** ${model}`,
-        `**Base URL:** ${baseUrl}`,
-        `**Temperature:** ${temperature}`,
-        `**Max tokens:** ${maxTokens}`,
-        `**Streaming:** ${streaming}`,
-        `**Verbose:** ${verbose}`,
+        `**${t('chat.config.provider')}:** ${provider}`,
+        `**${t('chat.config.model')}:** ${model}`,
+        `**${t('chat.config.baseUrl')}:** ${baseUrl}`,
+        `**${t('chat.config.temperature')}:** ${temperature}`,
+        `**${t('chat.config.maxTokens')}:** ${maxTokens}`,
+        `**${t('chat.config.streaming')}:** ${streaming}`,
+        `**${t('chat.config.verbose')}:** ${verbose}`,
         ``,
-        `**Tools:** ${tools}`,
+        `**${t('chat.config.tools')}:** ${tools}`,
         ``,
-        `**System prompt:**\n${systemPrompt || '—'}`,
+        `**${t('chat.config.systemPrompt')}:**\n${systemPrompt || '—'}`,
       ].join('\n');
       const configMsg = { id: genId(), role: 'agent', content: lines, error: false };
       if (currentConvId) {
@@ -1728,15 +2507,22 @@ export default function Chat() {
     }
     setInput(cmd.template);
     setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [allCommands, currentConvId]);
+  }, [agents, allCommands, currentConvId, selectedAgent, t]);
 
   // ---- send message ----
-  const sendMessage = useCallback(async () => {
-    const text = input.trim();
+  const sendMessage = useCallback(async (overrideText) => {
+    // Button clicks call this with their value; the onClick handler passes a
+    // SyntheticEvent, so only honour an explicit string override.
+    const text = (typeof overrideText === 'string' ? overrideText : input).trim();
     const hasAttachments = pendingAttachments.length > 0;
+    const hasReferences = pendingReferences.length > 0;
     const isFlowMode = targetMode === 'flow';
-    if ((!text && !hasAttachments) || loading) return;
-    if (isFlowMode ? !selectedFlow : !selectedAgent) return;
+    const isTeamMode = targetMode === 'team';
+    // Flows and teams both answer with several bubbles rather than one streamed
+    // reply, so the single-assistant-bubble path is skipped for both.
+    const isMultiAgent = isFlowMode || isTeamMode;
+    if ((!text && !hasAttachments && !hasReferences) || loading) return;
+    if (!targetId(targetMode, { selectedAgent, selectedFlow, selectedTeam })) return;
 
     // Handle special client-side slash commands
     if (text === '/clear') { selectCommand({ name: '/clear' }); return; }
@@ -1744,9 +2530,15 @@ export default function Chat() {
     if (text === '/help') { selectCommand({ name: '/help' }); return; }
     if (text === '/config') { selectCommand({ name: '/config' }); return; }
 
-    const attachmentLine = hasAttachments
-      ? `Attached files: ${pendingAttachments.map((a) => a.filename).join(', ')}`
+    const referenceLine = hasReferences
+      ? t('chat.attachedEntities', { entities: pendingReferences.map((r) => r.label || r.id).join(', ') })
       : '';
+    const attachmentLine = [
+      hasReferences ? referenceLine : '',
+      hasAttachments
+        ? t('chat.attachedFiles', { files: pendingAttachments.map((a) => a.filename).join(', ') })
+        : '',
+    ].filter(Boolean).join('\n');
     const userMsgText = [text, attachmentLine].filter(Boolean).join('\n');
     const userMsg = { id: genId(), role: 'user', content: userMsgText };
 
@@ -1754,13 +2546,14 @@ export default function Chat() {
     let convId = currentConvId;
     if (!convId) {
       convId = genId();
-      const basis = text || attachmentLine || 'New chat';
+      const basis = text || attachmentLine || t('chat.newChat');
       const title = basis.length > 50 ? basis.slice(0, 50) + '…' : basis;
       const newConv = {
         id: convId,
         title,
-        agent_id: isFlowMode ? null : selectedAgent,
+        agent_id: targetMode === 'agent' ? selectedAgent : null,
         flow_id: isFlowMode ? selectedFlow : null,
+        team_id: isTeamMode ? selectedTeam : null,
         target_mode: targetMode,
         workspace: selectedWorkspace,
         project_id: selectedProject || null,
@@ -1789,6 +2582,7 @@ export default function Chat() {
 
     setInput('');
     setPendingAttachments([]);
+    setPendingReferences([]);
     setAttachmentError('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setLoading(true);
@@ -1810,8 +2604,13 @@ export default function Chat() {
     const autoTitleBasis = (text || attachmentLine || '').trim();
     const autoTitle = autoTitleBasis
       ? (autoTitleBasis.length > 50 ? autoTitleBasis.slice(0, 50) + '…' : autoTitleBasis)
-      : 'New conversation';
-    const isPlaceholderTitle = !convRecord?.title || convRecord.title.trim().toLowerCase() === 'new conversation';
+      : t('chat.newConversation');
+    // The placeholder check compares against every locale's wording so a title
+    // written in one language is still recognised after switching.
+    const placeholderTitles = new Set(
+      LANGUAGES.map((l) => translate(l.code, 'chat.newConversation').trim().toLowerCase())
+    );
+    const isPlaceholderTitle = !convRecord?.title || placeholderTitles.has(convRecord.title.trim().toLowerCase());
     const convTitle = (!convRecord || (convRecord.messages || []).length === 0 || isPlaceholderTitle)
       ? autoTitle
       : convRecord.title;
@@ -1819,11 +2618,11 @@ export default function Chat() {
     try {
       // In agent mode we create one assistant bubble up front and stream into it.
       // In flow mode we wait for node_start events and create one bubble per node.
-      const assistantId = isFlowMode ? null : genId();
+      const assistantId = isMultiAgent ? null : genId();
       // Maps node_id -> message bubble id for flow mode.
       const nodeMsgIds = {};
       let currentNodeId = null;
-      if (!isFlowMode) {
+      if (!isMultiAgent) {
         setConversations((prev) =>
           prev.map((c) =>
             c.id === convId
@@ -1851,13 +2650,16 @@ export default function Chat() {
         );
       }
 
-      const response = await fetch('http://localhost:8000/api/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      // Mutated from inside the onEvent closure; read after the stream resolves.
+      let finalPayload = null;
+      let runId = null;
+
+      await streamChat({
         signal: ctrl.signal,
-        body: JSON.stringify({
-          agent_id: isFlowMode ? null : selectedAgent,
+        body: {
+          agent_id: targetMode === 'agent' ? selectedAgent : null,
           flow_id: isFlowMode ? selectedFlow : null,
+          team_id: isTeamMode ? selectedTeam : null,
           message: text,
           workspace: effectiveWorkspace || null,
           project_id: convRecord?.project_id || null,
@@ -1869,38 +2671,11 @@ export default function Chat() {
             content: a.content,
             store_to_workspace: Boolean(a.store_to_workspace && selectedWorkspace),
           })),
-        }),
-      });
-      if (!response.ok || !response.body) {
-        const detail = await response.text();
-        throw new Error(detail || 'Failed to open chat stream');
-      }
-
-      const decoder = new TextDecoder();
-      const reader = response.body.getReader();
-      let buffer = '';
-      let finalPayload = null;
-      let runId = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split('\n\n');
-        buffer = chunks.pop() || '';
-
-        for (const chunk of chunks) {
-          const line = chunk
-            .split('\n')
-            .map((l) => l.trim())
-            .find((l) => l.startsWith('data: '));
-          if (!line) continue;
-
-          let event = null;
-          try { event = JSON.parse(line.slice(6)); } catch { continue; }
-          if (!event || !event.type) continue;
-
+          // Pointers only — the server renders each entity into the prompt at
+          // request time (chat/references.py), so nothing stale is sent.
+          references: pendingReferences.map((r) => ({ kind: r.kind, id: r.id, label: r.label || '' })),
+        },
+        onEvent: (event) => {
           // Helper: returns the id of the assistant bubble that should receive
           // streaming events for the current event. In flow mode this is the
           // bubble for the active node; in agent mode it's the single assistantId.
@@ -1911,6 +2686,103 @@ export default function Chat() {
             }
             return assistantId;
           };
+
+          // A team answers as a conversation: every board entry becomes its own
+          // bubble, labelled with who said it and who it was for. There are no
+          // token events to stream — the members' turns are whole replies.
+          if (event.type === 'team_message') {
+            if (event.run_id) { runId = event.run_id; setActiveRunId(event.run_id); }
+            const recipients = (event.recipients || []).filter((r) => r !== '*');
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id !== convId ? c : {
+                  ...c,
+                  messages: [
+                    ...c.messages,
+                    {
+                      id: genId(),
+                      role: 'agent',
+                      agent_id: event.sender,
+                      agent_label: recipients.length
+                        ? `${event.sender} → ${recipients.join(', ')}`
+                        : event.sender,
+                      content: event.content || '',
+                      error: event.kind === 'error',
+                      run_id: event.run_id || null,
+                      inbound_tokens: null,
+                      outbound_tokens: null,
+                      total_tokens: event.tokens || null,
+                      tool_calls: null,
+                      duration_ms: null,
+                    },
+                  ],
+                },
+              ),
+            );
+            return;
+          }
+          if (event.type === 'team_meta') {
+            if (event.session_id) setSessionId(event.session_id);
+            return;
+          }
+
+          // Delegated child runs (run_agent_tool) stream their inner events
+          // tagged with `delegation` + the child run_id. Fold them into a nested
+          // `delegation` timeline entry instead of the top-level timeline, so the
+          // UI renders a live nested block. Handled first, then return, so the
+          // tagged tool_start/tool_end/think below don't also hit the top level.
+          if (event.type === 'delegation_start' || event.type === 'delegation_end' || event.delegation) {
+            const tgt = targetMsgId();
+            if (tgt) {
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id !== convId ? c : {
+                    ...c,
+                    messages: c.messages.map((m) => {
+                      if (m.id !== tgt) return m;
+                      const messageRunId = m.run_id || null;
+                      let tl = m.timeline || [];
+                      if (event.type === 'delegation_start') {
+                        tl = appendUnderDelegation(tl, event.parent_run_id, messageRunId, {
+                          type: 'delegation',
+                          run_id: event.run_id,
+                          agent_id: event.agent_id,
+                          agent_name: event.agent_name || event.agent_id,
+                          depth: event.depth || 1,
+                          input: event.input || '',
+                          running: true,
+                          ok: null,
+                          timeline: [],
+                        });
+                      } else if (event.type === 'delegation_end') {
+                        tl = mapDelegation(tl, event.run_id, (d) => ({
+                          ...d,
+                          running: false,
+                          ok: event.ok,
+                          error: event.error || '',
+                          duration_ms: event.duration_ms,
+                        }));
+                      } else if (event.type === 'think' || event.type === 'plan') {
+                        tl = appendIntoDelegation(tl, event.run_id, {
+                          type: 'reasoning', kind: event.type, step: event.step, content: event.content,
+                        });
+                      } else if (event.type === 'tool_start') {
+                        tl = appendIntoDelegation(tl, event.run_id, {
+                          type: 'tool', step: event.step, tool: event.tool, input: event.input, output: null, running: true,
+                        });
+                      } else if (event.type === 'tool_end') {
+                        tl = resolveDelegationTool(tl, event.run_id, { output: event.output });
+                      } else if (event.type === 'tool_error') {
+                        tl = resolveDelegationTool(tl, event.run_id, { output: `ERROR: ${event.error}`, error: true });
+                      }
+                      return { ...m, timeline: tl };
+                    }),
+                  },
+                ),
+              );
+            }
+            return;
+          }
 
           if (event.type === 'flow_meta') {
             // Flow chat: capture session_id and flow agent_id mapping for bubbles.
@@ -1984,7 +2856,12 @@ export default function Chat() {
                     m.id === msgId
                       ? {
                           ...m,
-                          content: (m.content || event.response || '').trim() || event.response || '',
+                          // Prefer the node's final response over accumulated stream
+                          // tokens (see the agent-mode `done` handler) to avoid repeating
+                          // the answer when the model re-states it across LLM turns.
+                          content: (event.response || '').trim() || (event.response_obj ? '' : stripUiBlock(m.content)) || '',
+                          entities: event.entities || m.entities || null,
+                          thinking_live: '',
                           error: !event.ok,
                           run_id: event.run_id || m.run_id,
                           inbound_tokens: event.usage?.inbound_tokens ?? null,
@@ -2010,6 +2887,8 @@ export default function Chat() {
                     outbound_tokens: (prev.token_usage?.outbound_tokens || 0) + outTok,
                     total_tokens: (prev.token_usage?.total_tokens || 0) + totTok,
                   },
+                  context_peak: Math.max(prev.context_peak || 0, event.usage?.context_used || 0),
+                  context_window_tokens: event.usage?.context_window || prev.context_window_tokens || 0,
                   message_runs: (prev.message_runs || []).map((mr) =>
                     mr.run_id === event.run_id
                       ? {
@@ -2030,7 +2909,7 @@ export default function Chat() {
             runId = event.run_id;
             setActiveRunId(runId);
             if (event.session_id) setSessionId(event.session_id);
-            if (processOpen && !isFlowMode) {
+            if (processOpen && !isMultiAgent) {
               // In flow mode, node_start already created the process row.
               setProcessInsights((prev) => ({
                 ...prev,
@@ -2053,7 +2932,7 @@ export default function Chat() {
                 ],
               }));
             }
-            if (!isFlowMode) {
+            if (!isMultiAgent) {
               setConversations((prev) =>
                 prev.map((c) =>
                   c.id !== convId ? c : {
@@ -2063,6 +2942,23 @@ export default function Chat() {
                 ),
               );
             }
+          } else if (event.type === 'think_delta') {
+            // A slice of reasoning the model is still writing. Shown as a
+            // three-line ticker under the "working" indicator until the matching
+            // `think` event arrives with the completed thought.
+            const tgt = targetMsgId();
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id !== convId ? c : {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === tgt
+                      ? { ...m, thinking_live: appendLiveThought(m.thinking_live, event.delta) }
+                      : m
+                  ),
+                },
+              ),
+            );
           } else if (event.type === 'think' || event.type === 'plan') {
             // Reasoning steps are appended in execution order so the UI can
             // render each one inline, before the response that followed it.
@@ -2079,12 +2975,30 @@ export default function Chat() {
                           ...m,
                           reasoning: [...(m.reasoning || []), step],
                           timeline: [...(m.timeline || []), { type: 'reasoning', ...step }],
+                          // The thought is complete and now renders as a collapsible
+                          // ReasoningStep, so the live ticker of the same text goes away.
+                          thinking_live: '',
+                          // The think/plan content arrives complete in this event
+                          // (it's the tool-call input), so the ChatTrail box is
+                          // the marker. Don't also set running_tool — that renders a
+                          // stale "running" spinner *below* an already-finished thought.
                         }
                       : m
                   ),
                 },
               ),
             );
+            // Native model thoughts also feed the Process column live.
+            if (processOpen && event.native) {
+              setProcessInsights((prev) => ({
+                ...prev,
+                message_runs: (prev.message_runs || []).map((mr, idx) =>
+                  idx === (prev.message_runs || []).length - 1
+                    ? { ...mr, reasoning: [...(mr.reasoning || []), { step: event.step, content: event.content, native: true }] }
+                    : mr
+                ),
+              }));
+            }
           } else if (event.type === 'artifact') {
             // File change — surface in the Artifacts panel and inline in the feed.
             mergeArtifact(event);
@@ -2101,7 +3015,15 @@ export default function Chat() {
                 c.id !== convId ? c : {
                   ...c,
                   messages: c.messages.map((m) =>
-                    m.id === tgt ? { ...m, timeline: [...(m.timeline || []), entry] } : m
+                    m.id === tgt
+                      ? {
+                          ...m,
+                          timeline: [...(m.timeline || []), entry],
+                          // Persisted alongside the reply so the chat bubble lists
+                          // what the agent changed, not just the Artifacts column.
+                          files: mergeMessageFile(m.files, event),
+                        }
+                      : m
                   ),
                 },
               ),
@@ -2251,9 +3173,10 @@ export default function Chat() {
             finalPayload = event;
             const resolvedRunId = runId || event.run_id || null;
             if (resolvedRunId) setActiveRunId(resolvedRunId);
-            // In flow mode the per-node bubbles were already finalized via node_done,
-            // so the overall "done" event only carries flow-level metadata.
-            if (!isFlowMode) {
+            // In flow mode the per-node bubbles were already finalized via
+            // node_done, and in team mode every reply is already on the board,
+            // so the overall "done" event only carries run-level metadata.
+            if (!isMultiAgent) {
               setConversations((prev) =>
                 prev.map((c) =>
                   c.id !== convId ? c : {
@@ -2262,7 +3185,19 @@ export default function Chat() {
                       m.id === assistantId
                         ? {
                             ...m,
-                            content: (m.content || event.response || '').trim() || event.response || '',
+                            // Prefer the backend's final response (the de-duplicated
+                            // AgentFinish output). Streamed tokens accumulate text from
+                            // every LLM turn — including forced-review re-statements — so
+                            // using them as-is can repeat the answer. Fall back to the
+                            // streamed content only when no final response was sent.
+                            content: (event.response || '').trim() || (event.response_obj ? '' : stripUiBlock(m.content)) || '',
+                            // Structured response (buttons / Telegram keyboard / …); rendered
+                            // as interactive UI under the bubble. null for plain replies.
+                            response_obj: event.response_obj || null,
+                            // Service entities this turn touched, rendered as links
+                            // under the reply (see EntityLinks).
+                            entities: event.entities || m.entities || null,
+                            thinking_live: '',
                             error: !event.ok,
                             run_id: resolvedRunId,
                             inbound_tokens: event.usage?.inbound_tokens ?? m.inbound_tokens ?? null,
@@ -2270,6 +3205,14 @@ export default function Chat() {
                             total_tokens: event.usage?.total_tokens ?? m.total_tokens ?? null,
                             tool_calls: event.tool_calls ?? m.tool_calls ?? null,
                             duration_ms: event.duration_ms ?? m.duration_ms ?? null,
+                            // How full the model's window was at this turn's
+                            // biggest call, kept on the message so the meter
+                            // survives switching conversations and reloading —
+                            // the transcript is the context, and it is what
+                            // localStorage holds.
+                            context_used: event.usage?.context_used ?? m.context_used ?? null,
+                            context_window: event.usage?.context_window ?? m.context_window ?? null,
+                            context_overflow: event.error_code === 'context_overflow',
                           }
                         : m
                     ),
@@ -2277,7 +3220,7 @@ export default function Chat() {
                 ),
               );
             }
-            if (processOpen && !isFlowMode) {
+            if (processOpen && !isMultiAgent) {
               setProcessInsights((prev) => {
                 const inTok = event.usage?.inbound_tokens || 0;
                 const outTok = event.usage?.outbound_tokens || 0;
@@ -2289,6 +3232,8 @@ export default function Chat() {
                     outbound_tokens: (prev.token_usage?.outbound_tokens || 0) + outTok,
                     total_tokens: (prev.token_usage?.total_tokens || 0) + totTok,
                   },
+                  context_peak: Math.max(prev.context_peak || 0, event.usage?.context_used || 0),
+                  context_window_tokens: event.usage?.context_window || prev.context_window_tokens || 0,
                   message_runs: (prev.message_runs || []).map((mr, idx) =>
                     idx === (prev.message_runs || []).length - 1
                       ? {
@@ -2306,18 +3251,18 @@ export default function Chat() {
               });
             }
           }
-        }
-      }
+        },
+      });
 
       if (!finalPayload) {
-        if (!isFlowMode) {
+        if (!isMultiAgent) {
           setConversations((prev) =>
             prev.map((c) =>
               c.id !== convId ? c : {
                 ...c,
                 messages: c.messages.map((m) =>
                   m.id === assistantId && !m.content
-                    ? { ...m, content: 'No streamed output received.', error: true }
+                    ? { ...m, content: t('chat.noStreamedOutput'), error: true }
                     : m
                 ),
               },
@@ -2333,7 +3278,7 @@ export default function Chat() {
       const errMsg = {
         id: genId(),
         role: 'agent',
-        content: err.response?.data?.detail || err.message || 'Failed to get a response.',
+        content: err.response?.data?.detail || err.message || t('chat.failedToGetResponse'),
         error: true,
         run_id: null,
       };
@@ -2345,8 +3290,18 @@ export default function Chat() {
     } finally {
       setLoading(false);
       abortCtrlRef.current = null;
+      // The turn is over however it ended (done, abort, network error): drop any
+      // half-written thought so no bubble is left with a stale live ticker.
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id !== convId ? c : {
+            ...c,
+            messages: c.messages.map((m) => (m.thinking_live ? { ...m, thinking_live: '' } : m)),
+          },
+        ),
+      );
     }
-  }, [input, loading, selectedAgent, selectedFlow, targetMode, currentConvId, messages, selectedWorkspace, selectedProject, conversations, processOpen, loadProcessData, pendingAttachments]);
+  }, [input, pendingAttachments, pendingReferences, targetMode, loading, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, conversations, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData]);
 
   // Build view: clicking a file chip in the transcript scrolls the always-open
   // Artifacts panel to that file's diff.
@@ -2397,11 +3352,11 @@ export default function Chat() {
       );
       setInput('');
     } catch (e) {
-      setTelegramError(e.response?.data?.detail || e.message || 'Send failed');
+      setTelegramError(e.response?.data?.detail || e.message || t('chat.sendFailed'));
     } finally {
       setTelegramSending(false);
     }
-  }, [input, currentTelegramBinding, telegramReplyAllowed]);
+  }, [currentTelegramBinding, telegramReplyAllowed, input, t]);
 
   const handleKeyDown = (e) => {
     if (commandMenuOpen && commandSuggestions.length > 0) {
@@ -2440,46 +3395,62 @@ export default function Chat() {
   // Render
   // ---------------------------------------------------------------------------
   return (
-    // -m-4 negates the Layout's p-4; height fills viewport minus 4rem header
-    <div className="-m-4 flex overflow-hidden" style={{ height: 'calc(100vh - 4rem)' }}>
+    <div className="h-full flex overflow-hidden">
 
       {/* ── Sidebar ── */}
-      <div className="w-60 flex-shrink-0 bg-gray-50 border-l border-r border-gray-200 flex flex-col">
+      <div className="w-60 flex-shrink-0 border-r border-gray-200 flex flex-col">
         <div className="p-3">
           <button
             onClick={newConversation}
             className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
           >
             <PlusCircle className="w-4 h-4" />
-            New chat
+            {t('chat.newChat')}
           </button>
         </div>
 
         {/* Top panel — normal chats */}
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
-            <MessageSquare className="w-3 h-3" /> Chats
+            <MessageSquare className="w-3 h-3" /> {t('chat.chats')}
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
           {visibleConversations.length === 0 && (
             <p className="text-xs text-gray-400 text-center py-10 px-3 leading-relaxed">
               No conversations yet.
               <br />
-              Click <strong>New chat</strong> to start.
+              Click <strong>{t('chat.newChat')}</strong> to start.
             </p>
           )}
           {visibleConversations.map((conv) => (
-            <button
+            // Rendered as a div, not a button: it contains the delete button and
+            // nesting a button inside a button is invalid HTML. role/tabIndex/
+            // onKeyDown restore the keyboard and a11y behaviour of a button.
+            <div
               key={conv.id}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.currentTarget.click();
+                }
+              }}
               onClick={() => {
                 navigate(`/chat/${conv.id}`);
                 if (conv.target_mode === 'flow' && conv.flow_id) {
                   setTargetMode('flow');
                   setSelectedFlow(conv.flow_id);
+                } else if (conv.target_mode === 'team' && conv.team_id) {
+                  setTargetMode('team');
+                  setSelectedTeam(conv.team_id);
                 } else if (conv.agent_id && selectableAgents.some((a) => a.id === conv.agent_id)) {
                   setTargetMode('agent');
                   setSelectedAgent(conv.agent_id);
                 }
+                // Restore the conversation's project so the selector reflects the
+                // scope it was created with (empty = no project).
+                setSelectedProject(conv.project_id || '');
               }}
               className={`w-full text-left px-3 py-2 rounded-lg text-xs group flex items-start gap-2 transition-colors
                 ${currentConvId === conv.id
@@ -2494,7 +3465,7 @@ export default function Chat() {
                   {(!selectedWorkspace || selectedWorkspace === 'default') && (
                     (!conv.workspace || conv.workspace === 'default') ? (
                       <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-500 font-medium">
-                        default
+                        {t('chat.default')}
                       </span>
                     ) : (
                       <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600 font-medium truncate max-w-full">
@@ -2502,7 +3473,15 @@ export default function Chat() {
                       </span>
                     )
                   )}
-                  {conv.target_mode === 'flow' && conv.flow_id ? (() => {
+                  {conv.target_mode === 'team' && conv.team_id ? (() => {
+                    const team = teams.find((t) => t.team_id === conv.team_id);
+                    return (
+                      <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium truncate max-w-full">
+                        <UsersRound className="w-2.5 h-2.5 flex-shrink-0" />
+                        {team ? team.name : 'team'}
+                      </span>
+                    );
+                  })() : conv.target_mode === 'flow' && conv.flow_id ? (() => {
                     const flow = flows.find((f) => f.id === conv.flow_id);
                     return (
                       <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium truncate max-w-full">
@@ -2521,7 +3500,7 @@ export default function Chat() {
                   {conv.origin === 'telegram' && (
                     <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">
                       <SendIcon className="w-2.5 h-2.5 flex-shrink-0" />
-                      telegram
+                      {t('chat.telegram2')}
                     </span>
                   )}
                   {conv.project_id && (() => {
@@ -2538,11 +3517,11 @@ export default function Chat() {
               <button
                 onClick={(e) => deleteConversation(conv.id, e)}
                 className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-400 hover:text-red-500 flex-shrink-0 transition-opacity"
-                title="Delete"
+                title={t('chat.delete')}
               >
                 <Trash2 className="w-3 h-3" />
               </button>
-            </button>
+            </div>
           ))}
           </div>
         </div>
@@ -2555,7 +3534,7 @@ export default function Chat() {
         {visibleTelegramBindings.length > 0 && (
           <div className="flex-1 min-h-0 flex flex-col border-t border-gray-200">
             <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
-              <SendIcon className="w-3 h-3" /> Telegram chats
+              <SendIcon className="w-3 h-3" /> {t('chat.telegramChats')}
             </div>
             <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
               {visibleTelegramBindings.map((b) => {
@@ -2591,7 +3570,7 @@ export default function Chat() {
                   >
                     <SendIcon className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-70" />
                     <div className="flex-1 min-w-0">
-                      <div className="truncate leading-5">{b.title || `Chat ${b.chat_id}`}</div>
+                      <div className="truncate leading-5">{b.title || t('chat.telegramChat', { id: b.chat_id })}</div>
                       <div className="mt-0.5 flex flex-wrap gap-1">
                         <span className="inline-block text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-medium truncate max-w-full">
                           {agent ? agent.name : b.agent_id}
@@ -2612,7 +3591,7 @@ export default function Chat() {
       </div>
 
       {/* ── Main area ── */}
-      <div className="flex-1 flex flex-col min-w-0 bg-gray-50">
+      <div className="flex-1 flex flex-col min-w-0">
 
         {/* Top bar */}
         <div className="flex-shrink-0 bg-white border-b border-gray-200 px-5 h-[60px] flex items-center gap-4">
@@ -2623,20 +3602,30 @@ export default function Chat() {
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
                 targetMode === 'agent' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
               }`}
-              title="Chat with a single agent"
+              title={t('chat.chatWithASingleAgent')}
             >
               <Bot className="w-3.5 h-3.5" />
-              Agent
+              {t('chat.agent')}
             </button>
             <button
               onClick={() => setTargetMode('flow')}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
                 targetMode === 'flow' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-500 hover:bg-gray-50'
               }`}
-              title="Chat with a flow (each message runs through every node)"
+              title={t('chat.chatWithAFlowEach')}
             >
               <Workflow className="w-3.5 h-3.5" />
-              Flow
+              {t('chat.flow')}
+            </button>
+            <button
+              onClick={() => setTargetMode('team')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
+                targetMode === 'team' ? 'bg-amber-50 text-amber-700' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+              title={t('chat.handTheMessageToA')}
+            >
+              <UsersRound className="w-3.5 h-3.5" />
+              {t('chat.team')}
             </button>
           </div>
 
@@ -2650,7 +3639,7 @@ export default function Chat() {
                 );
               }
             }} />
-          ) : (
+          ) : targetMode === 'flow' ? (
             <FlowDropdown flows={flows} value={selectedFlow} onChange={(id) => {
               setSelectedFlow(id);
               if (currentConvId) {
@@ -2659,11 +3648,22 @@ export default function Chat() {
                 );
               }
             }} />
+          ) : (
+            <TeamDropdown teams={teams} value={selectedTeam} onChange={(id) => {
+              setSelectedTeam(id);
+              if (currentConvId) {
+                setConversations((prev) =>
+                  prev.map((c) => c.id === currentConvId ? { ...c, team_id: id, target_mode: 'team' } : c),
+                );
+              }
+            }} />
           )}
 
-          {(currentConv?.workspace || selectedWorkspace) && (
+          {/* The active chat's workspace is redundant when a specific workspace is
+              selected in the header — only surface it in the default (all) view. */}
+          {(!selectedWorkspace || selectedWorkspace === 'default') && (currentConv?.workspace || selectedWorkspace) && (
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">WS</span>
+              <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.ws')}</span>
               <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
                 {currentConv?.workspace || selectedWorkspace}
               </span>
@@ -2678,7 +3678,7 @@ export default function Chat() {
                 onChange={(e) => setSelectedProject(e.target.value)}
                 className="text-xs border border-gray-200 rounded px-2 py-0.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-emerald-400 max-w-[140px]"
               >
-                <option value="">No project</option>
+                <option value="">{t('chat.noProject')}</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
@@ -2688,9 +3688,9 @@ export default function Chat() {
 
           {selectedAgent && (
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">MODEL</span>
+              <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.model')}</span>
               {agentProvider === 'inherit' ? (
-                <span className="font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded italic">Global</span>
+                <span className="font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded italic">{t('chat.global')}</span>
               ) : (
                 <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
                   {agentProvider}{agentModel ? ` · ${agentModel}` : ''}
@@ -2702,7 +3702,7 @@ export default function Chat() {
           {selectedWorkspace && selectableAgents.length === 0 && (
             <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-1.5 text-xs font-medium">
               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-              No authorized agents in this workspace.
+              {t('chat.noAuthorizedAgentsInThis')}
             </div>
           )}
 
@@ -2714,20 +3714,20 @@ export default function Chat() {
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
                 viewMode === 'chat' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
               }`}
-              title="Clean chat — messages only"
+              title={t('chat.cleanChatMessagesOnly')}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              Chat
+              {t('chat.chat')}
             </button>
             <button
               onClick={() => setViewMode('build')}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
                 viewMode === 'build' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
               }`}
-              title="Build — full transcript (tools, thinking, plan) + file diffs"
+              title={t('chat.buildFullTranscriptToolsThinking')}
             >
               <Terminal className="w-3.5 h-3.5" />
-              Build
+              {t('chat.build')}
             </button>
           </div>
 
@@ -2739,12 +3739,12 @@ export default function Chat() {
               {processOpen ? (
                 <>
                   <X className="w-3.5 h-3.5" />
-                  Hide process
+                  {t('chat.hideProcess')}
                 </>
               ) : (
                 <>
                   <FileText className="w-3.5 h-3.5" />
-                  Show process
+                  {t('chat.showProcess')}
                 </>
               )}
             </button>
@@ -2760,16 +3760,16 @@ export default function Chat() {
           <div className="flex-shrink-0 px-4 py-2 border-b border-sky-200 bg-sky-50 text-xs text-sky-800 flex items-center gap-2">
             <SendIcon className="w-3.5 h-3.5 shrink-0" />
             <div className="flex-1 min-w-0 truncate">
-              <strong>Telegram</strong> · {currentTelegramBinding.title || `chat ${currentTelegramBinding.chat_id}`}
-              {' '}· bound to <strong>{currentTelegramBinding.agent_name || currentTelegramBinding.agent_id}</strong>
+              <strong>{t('chat.telegram')}</strong> · {currentTelegramBinding.title || t('chat.telegramChat', { id: currentTelegramBinding.chat_id })}
+              {' '}· {t('chat.boundTo')} <strong>{currentTelegramBinding.agent_name || currentTelegramBinding.agent_id}</strong>
               {currentTelegramBinding.workspace ? <> · {currentTelegramBinding.workspace}</> : null}
             </div>
             {!telegramReplyAllowed && (
               <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium" title={`Switch to "${currentTelegramBinding.workspace || 'default'}" to reply.`}>
-                read-only
+                {t('chat.readOnly')}
               </span>
             )}
-            <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">debug mirror</span>
+            <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">{t('chat.debugMirror')}</span>
           </div>
         )}
 
@@ -2778,17 +3778,28 @@ export default function Chat() {
           <div className="max-w-full mx-auto px-6 py-8">
             {messages.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center">
-                {targetMode === 'flow' ? (
+                {targetMode === 'team' ? (
+                  <>
+                    <div className="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mb-5 shadow-sm">
+                      <UsersRound className="w-8 h-8 text-amber-600" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-gray-800 mb-2">
+                      {teams.find((tm) => tm.team_id === selectedTeam)?.name || t('chat.selectATeam')}
+                    </h2>
+                    <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
+                      {t('chat.emptyTeam')}
+                    </p>
+                  </>
+                ) : targetMode === 'flow' ? (
                   <>
                     <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mb-5 shadow-sm">
                       <Workflow className="w-8 h-8 text-emerald-600" />
                     </div>
                     <h2 className="text-xl font-semibold text-gray-800 mb-2">
-                      {flows.find((f) => f.id === selectedFlow)?.name || 'Select a flow'}
+                      {flows.find((f) => f.id === selectedFlow)?.name || t('chat.selectAFlow')}
                     </h2>
                     <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
-                      Send a message to run it through every node in this flow, in DAG order.
-                      Each node produces its own reply and feeds the next.
+                      {t('chat.emptyFlow')}
                     </p>
                   </>
                 ) : (
@@ -2800,8 +3811,8 @@ export default function Chat() {
                       {agentName}
                     </h2>
                     <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
-                      Send a message to start a conversation.
-                      {selectedWorkspace && <> The agent will work in the <strong className="text-gray-700">{selectedWorkspace}</strong> workspace.</>}
+                      {t('chat.emptyAgent')}
+                      {selectedWorkspace && <> {t('chat.agentWorksIn')} <strong className="text-gray-700">{selectedWorkspace}</strong> {t('chat.workspace')}</>}
                     </p>
                   </>
                 )}
@@ -2813,10 +3824,18 @@ export default function Chat() {
                 ? (msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
                 : undefined;
               if (viewMode === 'build') {
+                // Reloaded messages lost their live timeline; fall back to the
+                // server-reconstructed one (tools + thoughts) keyed by run_id.
+                const reconstructed = (!msg.timeline || !msg.timeline.length) && msg.run_id
+                  ? runTimelineByRunId[String(msg.run_id)]
+                  : null;
+                const buildMsg = reconstructed && reconstructed.length
+                  ? { ...msg, timeline: reconstructed }
+                  : msg;
                 return (
                   <BuildMessage
                     key={msg.id}
-                    msg={msg}
+                    msg={buildMsg}
                     agentName={msgAgentName}
                     onJumpArtifact={jumpToArtifact}
                   />
@@ -2828,6 +3847,8 @@ export default function Chat() {
                   msg={msg}
                   isStreaming={loading && idx === messages.length - 1 && msg.role === 'agent'}
                   agentName={msgAgentName}
+                  artifactsByPath={artifacts}
+                  onAction={sendMessage}
                 />
               );
             })}
@@ -2841,7 +3862,7 @@ export default function Chat() {
         </div>
 
         {/* Input area */}
-        <div className="flex-shrink-0 bg-white border-t border-gray-200 px-4 py-4">
+        <div className="flex-shrink-0 border-t border-gray-200 px-4 py-4">
           <div className="max-w-3xl mx-auto">
             <input
               ref={fileInputRef}
@@ -2850,13 +3871,44 @@ export default function Chat() {
               className="hidden"
               onChange={onPickFiles}
             />
+            {pendingReferences.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                {pendingReferences.map((ref) => (
+                  <span
+                    key={`${ref.kind}:${ref.id}`}
+                    className="inline-flex items-center gap-1.5 max-w-full rounded-full border border-indigo-200
+                      bg-indigo-50 px-2 py-1 text-[11px] text-indigo-700"
+                    title={t(`chat.entityKind.${ref.kind}`, { defaultValue: ref.kind })}
+                  >
+                    <span aria-hidden="true">{ref.icon}</span>
+                    {ref.url ? (
+                      <Link to={ref.url} className="truncate max-w-[14rem] font-medium hover:underline">
+                        {ref.label || ref.id}
+                      </Link>
+                    ) : (
+                      <span className="truncate max-w-[14rem] font-medium">{ref.label || ref.id}</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeReference(ref.kind, ref.id)}
+                      className="text-indigo-400 hover:text-red-600 flex-shrink-0"
+                      title={t('chat.removeAttachment')}
+                      disabled={loading}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
             {pendingAttachments.length > 0 && (
               <div className="mb-2 space-y-2">
                 {pendingAttachments.map((att) => (
                   <div key={att.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50">
                     <div className="min-w-0">
                       <div className="text-xs text-gray-700 font-medium truncate">{att.filename}</div>
-                      <div className="text-[11px] text-gray-500">{att.size} bytes</div>
+                      <div className="text-[11px] text-gray-500">{t('chat.bytes', { count: att.size })}</div>
                     </div>
                     <div className="flex items-center gap-3">
                       <label className={`flex items-center gap-1.5 text-xs ${selectedWorkspace ? 'text-gray-600' : 'text-gray-400'}`}>
@@ -2866,13 +3918,13 @@ export default function Chat() {
                           onChange={(e) => toggleAttachmentStore(att.id, e.target.checked)}
                           disabled={!selectedWorkspace || loading}
                         />
-                        Store in workspace
+                        {t('chat.storeInWorkspace')}
                       </label>
                       <button
                         type="button"
                         onClick={() => removeAttachment(att.id)}
                         className="text-gray-400 hover:text-red-600"
-                        title="Remove attachment"
+                        title={t('chat.removeAttachment')}
                         disabled={loading}
                       >
                         <X className="w-4 h-4" />
@@ -2881,7 +3933,7 @@ export default function Chat() {
                   </div>
                 ))}
                 {!selectedWorkspace && (
-                  <p className="text-[11px] text-amber-600">Select a workspace if you want to store attachments there.</p>
+                  <p className="text-[11px] text-amber-600">{t('chat.selectAWorkspaceIfYou')}</p>
                 )}
               </div>
             )}
@@ -2891,7 +3943,7 @@ export default function Chat() {
               <div className="mb-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
                 <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-100 flex items-center gap-1.5">
                   <Terminal className="w-3 h-3 text-indigo-500" />
-                  <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Commands</span>
+                  <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('chat.commandsLabel')}</span>
                 </div>
                 {commandSuggestions.map((cmd, idx) => (
                   <button
@@ -2903,36 +3955,83 @@ export default function Chat() {
                     }`}
                   >
                     <span className=" text-sm font-semibold text-indigo-600 shrink-0">{cmd.name}</span>
-                    <span className="text-xs text-gray-500 mt-0.5">{cmd.description}</span>
+                    <span className="text-xs text-gray-500 mt-0.5">{cmd.descriptionKey ? t(cmd.descriptionKey) : cmd.description}</span>
                   </button>
                 ))}
               </div>
             )}
 
+            {/* What is left of the model's window, read where the next message
+                is typed. Clearing is offered once the context is tight; /clear
+                is the same action from the keyboard. */}
+            <ContextMeter
+              usage={contextUsage}
+              onClear={loading ? null : () => selectCommand({ name: '/clear' })}
+              className="mb-2 px-1"
+            />
+
             <div
-              className="flex items-center gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-3
+              className="flex items-center gap-3 border border-gray-300 rounded-2xl px-4 py-3
                 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
                 shadow-sm transition-all"
             >
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40"
-                title="Attach files"
-                disabled={loading || (targetMode === 'flow' ? !selectedFlow : !selectedAgent)}
-              >
-                <Paperclip className="w-4 h-4" />
-              </button>
+              {/* Attach: a file from the computer, or a record the hub already
+                  holds (task / view / project / scenario / loop / …). An entity
+                  picked here is folded into the prompt whether or not the agent
+                  owns a tool that could have fetched it. */}
+              <div className="relative flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setAttachMenuOpen((open) => !open)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40"
+                  title={t('chat.attachMenuTitle')}
+                  disabled={loading || !hasTarget}
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
+
+                {attachMenuOpen && (
+                  <>
+                    {/* Click-away layer: a menu anchored above the composer has
+                        no other way to close without stealing focus. */}
+                    <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
+                    <div className="absolute bottom-10 left-0 z-50 w-60 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg py-1">
+                      <button
+                        type="button"
+                        onClick={() => { setAttachMenuOpen(false); fileInputRef.current?.click(); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <Upload className="w-4 h-4 text-gray-400" />
+                        {t('chat.attachFiles')}
+                      </button>
+                      {contextKinds.length > 0 && (
+                        <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-gray-400 border-t border-gray-100 mt-1">
+                          {t('chat.attachFromHub')}
+                        </div>
+                      )}
+                      {contextKinds.map((k) => (
+                        <button
+                          key={k.kind}
+                          type="button"
+                          onClick={() => { setAttachMenuOpen(false); setPickerKind(k.kind); }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          <span aria-hidden="true">{k.icon}</span>
+                          {t(`chat.entityKind.${k.kind}`, { defaultValue: k.noun })}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
 
               <textarea
                 ref={textareaRef}
-                className="flex-1 resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
-                placeholder={targetMode === 'flow'
-                  ? (!selectedFlow ? 'Select a flow to chat with…' : `Message flow: ${flows.find((f) => f.id === selectedFlow)?.name || ''}…`)
-                  : (!selectedAgent ? 'No authorized agent available in this workspace…' : `Message ${agentName}…`)}
+                className="flex-1 resize-none text-base text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
+                placeholder={composerPlaceholder}
                 rows={1}
                 value={input}
-                disabled={loading || (targetMode === 'flow' ? !selectedFlow : !selectedAgent)}
+                disabled={loading || !hasTarget}
                 onChange={(e) => {
                   const val = e.target.value;
                   setInput(val);
@@ -2946,7 +4045,7 @@ export default function Chat() {
               {loading ? (
                 <button
                   onClick={stopGeneration}
-                  title="Stop"
+                  title={t('chat.stop')}
                   className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
                 >
                   <StopCircle className="w-4 h-4" />
@@ -2956,20 +4055,20 @@ export default function Chat() {
                   onClick={sendAsBot}
                   disabled={!input.trim() || telegramSending || !telegramReplyAllowed}
                   title={!telegramReplyAllowed
-                    ? `This chat is bound to "${currentTelegramBinding.workspace || 'default'}" — switch workspace to reply.`
-                    : 'Send as bot to Telegram chat'}
+                    ? t('chat.telegramBoundElsewhere', { workspace: currentTelegramBinding.workspace || 'default' })
+                    : t('chat.sendAsBotToChat')}
                   className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
                     bg-sky-600 text-white hover:bg-sky-700 text-xs font-semibold
                     disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <SendIcon className="w-3.5 h-3.5" />
-                  {telegramSending ? 'Sending…' : 'Send as bot'}
+                  {telegramSending ? t('chat.sending') : t('chat.sendAsBot')}
                 </button>
               ) : (
                 <button
                   onClick={sendMessage}
-                  disabled={(!input.trim() && pendingAttachments.length === 0) || (targetMode === 'flow' ? !selectedFlow : !selectedAgent)}
-                  title="Send (Enter)"
+                  disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget}
+                  title={t('chat.sendEnter')}
                   className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
                     bg-indigo-600 text-white hover:bg-indigo-700
                     disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -2984,8 +4083,19 @@ export default function Chat() {
             {attachmentError && (
               <p className="text-xs text-red-600 mt-2">{attachmentError}</p>
             )}
+
+            {pickerKind && (
+              <ContextEntityPicker
+                initialKind={pickerKind}
+                workspace={selectedWorkspace}
+                projectId={selectedProject}
+                selected={pendingReferences}
+                onAdd={addReferences}
+                onClose={() => setPickerKind(null)}
+              />
+            )}
             <p className="text-center text-xs text-gray-400 mt-2">
-              Enter to send · Shift+Enter for new line · Type <span className="">/</span> for commands
+              {t('chat.composerHint')} <span className="">/</span> {t('chat.forCommands')}
             </p>
           </div>
         </div>
@@ -3005,11 +4115,11 @@ export default function Chat() {
               {isBuild ? (
                 <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
                   <FileText className="w-4 h-4 text-indigo-500" />
-                  Artifacts
+                  {t('chat.artifacts')}
                 </h3>
               ) : (
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-800">Agent Process</h3>
+                  <h3 className="text-sm font-semibold text-gray-800">{t('chat.agentProcess')}</h3>
                   {processInsights?.session_id && (
                     <p className="text-[10px] text-gray-500 -mb-0.5">
                       Session:{' '}
@@ -3029,7 +4139,7 @@ export default function Chat() {
                     <button
                       onClick={() => loadProcessData(activeRunId)}
                       className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"
-                      title="Refresh process"
+                      title={t('chat.refreshProcess')}
                     >
                       <RefreshCw className="w-4 h-4" />
                     </button>
@@ -3037,7 +4147,7 @@ export default function Chat() {
                   <button
                     onClick={() => setProcessOpen(false)}
                     className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
-                    title="Close panel"
+                    title={t('chat.closePanel')}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -3049,12 +4159,12 @@ export default function Chat() {
               <ArtifactsPanel artifacts={artifacts} />
             ) : !activeRunId ? (
               <div className="p-4 text-sm text-gray-500">
-                Send a message, then open process for that agent call.
+                {t('chat.sendAMessageThenOpen')}
               </div>
             ) : processLoading ? (
               <div className="flex items-center gap-2 text-sm text-gray-500 p-4">
                 <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
-                Loading process details...
+                {t('chat.loadingProcessDetails')}
               </div>
             ) : processError ? (
               <div className="p-4 text-sm text-red-600">{processError}</div>

@@ -1,0 +1,16 @@
+export default {
+  importedAgent: 'Importierter Agent',
+  ready: 'Bereit',
+  needsSetup: 'Einrichtung nötig',
+  runsOutsideHub: 'Dieser Agent läuft außerhalb des Hubs. Prompts gehen an seinen eigenen HTTP-Dienst, sodass Code, Modellzugriff und Werkzeuge in seinem Repository bleiben.',
+  streams: 'Er streamt, seine Ausgabe erscheint also live im Chat; Token-Zahlen werden nur erfasst, wenn er sie meldet.',
+  doesNotStream: 'Er streamt nicht: Ein Lauf liefert eine einzige Antwort, ein Token-Verbrauch wird nicht erfasst.',
+  repository: 'Repository',
+  commit: 'Commit',
+  runEndpoint: 'Ausführungs-Endpunkt',
+  healthEndpoint: 'Health-Endpunkt',
+  streaming: 'Streaming',
+  notSet: '<nicht gesetzt>',
+  notDeclared: 'nicht deklariert — Läufe liefern eine einzige Antwort',
+  serviceUrl: 'Dienst-URL',
+};

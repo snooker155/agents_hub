@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { checkWaiting, provideInput } from '../../api';
+import { useStream } from '../stream';
+import { useI18n } from '../../i18n';
 
 function InteractionForm({ workspace }) {
+  const { t } = useI18n();
   const [waiting, setWaiting] = useState({ questions: [] });
   const [answers, setAnswers] = useState({});
+  const { on } = useStream();
 
   useEffect(() => {
     if (!workspace) return;
@@ -12,15 +16,14 @@ function InteractionForm({ workspace }) {
       try {
         const res = await checkWaiting(workspace);
         setWaiting(res.data);
-      } catch (e) {
+      } catch {
         // console.error("Failed to fetch waiting status", e);
       }
     };
 
     fetchWaiting();
-    const interval = setInterval(fetchWaiting, 5000);
-    return () => clearInterval(interval);
-  }, [workspace]);
+    return on('app', (ev) => { if (ev.type === 'flow_runs.changed') fetchWaiting(); });
+  }, [workspace, on]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,9 +31,9 @@ function InteractionForm({ workspace }) {
       await provideInput({ answers, workspace });
       setAnswers({});
       setWaiting({ questions: [] });
-      alert("Answers sent!");
-    } catch (e) {
-      alert("Failed to send answers");
+      alert(t('flowInteractionForm.answersSent'));
+    } catch {
+      alert(t('flowInteractionForm.sendFailed'));
     }
   };
 
@@ -38,7 +41,7 @@ function InteractionForm({ workspace }) {
 
   return (
     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 space-y-4">
-      <h3 className="text-lg font-medium text-yellow-800">User Input Required</h3>
+      <h3 className="text-lg font-medium text-yellow-800">{t('flowInteractionForm.userInputRequired')}</h3>
       <form onSubmit={handleSubmit} className="space-y-4">
         {waiting.questions.map((q, i) => (
           <div key={i} className="space-y-1">
@@ -55,7 +58,7 @@ function InteractionForm({ workspace }) {
           type="submit"
           className="bg-yellow-600 text-white px-4 py-2 rounded-md hover:bg-yellow-700 transition-colors font-medium shadow-sm"
         >
-          Submit Answers
+          {t('flowInteractionForm.submitAnswers')}
         </button>
       </form>
     </div>

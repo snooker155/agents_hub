@@ -1,9 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useWorkspace } from '../components/WorkspaceContext';
-import { ChevronLeft, Activity, History, Server, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock } from 'lucide-react';
-import { getAgent, getAgentHistory, getAgentHealth, getAgentLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, getAgentModel, updateAgentModel, getAgentReasoning, updateAgentReasoning, getNodes, getAgentDefinition, updateAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, getDockerfile, buildBaseImage, buildAgentImage, getContainerImages, getContainers, getContainerLogs, stopContainerByName, removeContainer, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSkillsConfig, getAgentSkills, createAgentSkill, deleteAgentSkill, updateAgentSharing } from '../api';
+import InstanceList from '../components/InstanceList';
+import { useWorkspace } from '../components/workspace';
+import { useLiveRefetch } from '../components/stream';
+import { Activity, Radio, History, Server, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users } from 'lucide-react';
+import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
+import ImportedAgentPanel from '../components/ImportedAgentPanel';
+import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentEpisodicConfig, updateAgentEpisodicConfig, getAgentHistory, getAgentLogs, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentModel, updateAgentModel, getAgentReasoning, updateAgentReasoning, updateAgentResponseFormat, updateAgentClarifyGate, updateAgentSelfDelegation, getCustomBackends, getNodes, getAgentDefinition, updateAgentDefinition, getTasks, getTools, startNode, stopNode, deleteNode, getWorkspaces, getNodeLogs, getSharedMemories, getSharedMemory, testLocalModel, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, getDockerfile, buildBaseImage, buildAgentImage, getContainerImages, getContainers, getContainerLogs, stopContainerByName, removeContainer, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSkillsConfig, getAgentSkills, createAgentSkill, deleteAgentSkill, updateAgentSharing, getAgentDefinitionChat, clearAgentDefinitionChat, stopAgentDefinitionChat, agentDefinitionChatUrl } from '../api';
+import EntityChat from '../components/EntityChat';
+import { usePageChat } from '../components/pageChat/pageChat';
+import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
+import { useToast, errorDetail } from '../components/toast';
 const NODE_STATUS = {
   running: { dot: 'bg-green-500 animate-pulse', badge: 'bg-green-100 text-green-800', label: 'Running' },
   starting: { dot: 'bg-yellow-400 animate-pulse', badge: 'bg-yellow-100 text-yellow-800', label: 'Starting' },
@@ -52,22 +62,24 @@ const fmtBytes = (b) => {
 };
 
 const RAG_STATUS = {
-  raw:     { label: 'Raw text',  color: 'bg-gray-100 text-gray-600',    dot: 'bg-gray-400' },
-  indexed: { label: 'Indexed',   color: 'bg-green-100 text-green-700',  dot: 'bg-green-500' },
-  failed:  { label: 'Failed',    color: 'bg-red-100 text-red-700',      dot: 'bg-red-500' },
+  raw:     { labelKey: 'agentDetails.rag.raw',     color: 'bg-gray-100 text-gray-600',    dot: 'bg-gray-400' },
+  indexed: { labelKey: 'agentDetails.rag.indexed', color: 'bg-green-100 text-green-700',  dot: 'bg-green-500' },
+  failed:  { labelKey: 'agentDetails.rag.failed',  color: 'bg-red-100 text-red-700',      dot: 'bg-red-500' },
 };
 
 function RagBadge({ status, vectorized }) {
+  const { t } = useI18n();
   const cfg = RAG_STATUS[status] || RAG_STATUS.raw;
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.color}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-      {vectorized ? 'Vectorized' : cfg.label}
+      {vectorized ? t('agentDetails.rag.vectorized') : t(cfg.labelKey)}
     </span>
   );
 }
 
 function MemoryFileCard({ file, poolId }) {
+  const { t } = useI18n();
   const [showPreview, setShowPreview] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -96,7 +108,7 @@ function MemoryFileCard({ file, poolId }) {
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
             {file.size_bytes > 0 && <span>{fmtBytes(file.size_bytes)}</span>}
-            {file.rag_chunks > 0 && <span>{file.rag_chunks} chunks</span>}
+            {file.rag_chunks > 0 && <span>{t('agentDetails.chunkCount', { count: file.rag_chunks })}</span>}
             {file.embedding_dims > 0 && <span>{file.embedding_dims}d</span>}
           </div>
         </div>
@@ -110,12 +122,12 @@ function MemoryFileCard({ file, poolId }) {
         {/* read_memory tool call */}
         <div>
           <p className="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
-            <Hash className="w-3 h-3" /> Retrieval — <code className="text-indigo-600">read_memory</code> tool
+            <Hash className="w-3 h-3" /> {t('agentDetails.retrieval')} <code className="text-indigo-600">{t('agentDetails.readMemory')}</code> tool
           </p>
           <div className="bg-gray-900 rounded-lg px-3 py-2 flex items-start justify-between gap-2">
             <pre className="text-xs text-green-300 overflow-x-auto flex-1">{toolArgs}</pre>
             <button onClick={copyTool}
-              className="text-gray-400 hover:text-white shrink-0 mt-0.5 transition-colors" title="Copy">
+              className="text-gray-400 hover:text-white shrink-0 mt-0.5 transition-colors" title={t('agentDetails.copy')}>
               {copied ? <CheckCircle className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
           </div>
@@ -126,13 +138,13 @@ function MemoryFileCard({ file, poolId }) {
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs bg-indigo-50 rounded-lg px-3 py-2.5">
             <div className="flex items-center gap-1.5 col-span-2">
               <Zap className="w-3 h-3 text-indigo-500" />
-              <span className="font-medium text-indigo-800">Vector Search Available</span>
+              <span className="font-medium text-indigo-800">{t('agentDetails.vectorSearchAvailable')}</span>
             </div>
-            {file.vector_db && <div><span className="text-gray-500">Vector DB:</span> <span className="font-medium text-gray-800">{file.vector_db}</span></div>}
-            {file.vector_db_collection && <div><span className="text-gray-500">Collection:</span> <span className="font-medium text-gray-800">{file.vector_db_collection}</span></div>}
-            {file.embedding_model && <div><span className="text-gray-500">Model:</span> <span className="font-medium text-gray-800">{file.embedding_model}</span></div>}
-            {file.embedding_dims > 0 && <div><span className="text-gray-500">Dims:</span> <span className="font-medium text-gray-800">{file.embedding_dims}</span></div>}
-            {file.rag_chunk_size && <div><span className="text-gray-500">Chunk size:</span> <span className="font-medium text-gray-800">{file.rag_chunk_size} chars</span></div>}
+            {file.vector_db && <div><span className="text-gray-500">{t('agentDetails.vectorDb')}</span> <span className="font-medium text-gray-800">{file.vector_db}</span></div>}
+            {file.vector_db_collection && <div><span className="text-gray-500">{t('agentDetails.collection')}</span> <span className="font-medium text-gray-800">{file.vector_db_collection}</span></div>}
+            {file.embedding_model && <div><span className="text-gray-500">{t('agentDetails.model')}</span> <span className="font-medium text-gray-800">{file.embedding_model}</span></div>}
+            {file.embedding_dims > 0 && <div><span className="text-gray-500">{t('agentDetails.dims')}</span> <span className="font-medium text-gray-800">{file.embedding_dims}</span></div>}
+            {file.rag_chunk_size && <div><span className="text-gray-500">{t('agentDetails.chunkSize')}</span> <span className="font-medium text-gray-800">{t('agentDetails.charCount', { count: file.rag_chunk_size })}</span></div>}
           </div>
         )}
 
@@ -140,19 +152,19 @@ function MemoryFileCard({ file, poolId }) {
         {file.rag_status === 'indexed' && !file.vectorized && (
           <div className="text-xs bg-green-50 rounded-lg px-3 py-2 text-green-700 flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5" />
-            Text chunked into {file.rag_chunks} chunks ({file.rag_chunk_size} chars each).
-            Configure a vector DB in <strong>Settings → RAG & Vectors</strong> to enable semantic search.
+            {t('agentDetails.textChunkedInto', { chunks: file.rag_chunks, size: file.rag_chunk_size })}{' '}
+            {t('agentDetails.configureVectorDbIn')} <strong>{t('agentDetails.settingsRagVectors')}</strong> {t('agentDetails.toEnableSemanticSearch')}
           </div>
         )}
 
         {/* Content preview */}
         {showPreview && (
           <div>
-            <p className="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1"><Eye className="w-3 h-3" /> Content preview</p>
+            <p className="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1"><Eye className="w-3 h-3" /> {t('agentDetails.contentPreview')}</p>
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 whitespace-pre-wrap max-h-48 overflow-y-auto">
               {file.content
                 ? (file.content.length > 800 ? file.content.slice(0, 800) + '\n…' : file.content)
-                : <span className="italic text-gray-400">No content</span>}
+                : <span className="italic text-gray-400">{t('agentDetails.noContent')}</span>}
             </div>
           </div>
         )}
@@ -162,6 +174,7 @@ function MemoryFileCard({ file, poolId }) {
 }
 
 function MemoryPoolDetails({ pool }) {
+  const { t } = useI18n();
   const files = pool.files || [];
   const rawFiles      = files.filter(f => !f.rag_status || f.rag_status === 'raw');
   const indexedFiles  = files.filter(f => f.rag_status === 'indexed');
@@ -185,24 +198,24 @@ function MemoryPoolDetails({ pool }) {
               <Link2 className="w-4 h-4 text-indigo-500 shrink-0" />
               <h3 className="font-bold text-gray-900">{pool.name}</h3>
               <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
-                <CheckCircle className="w-3 h-3" /> Connected
+                <CheckCircle className="w-3 h-3" /> {t('agentDetails.connected')}
               </span>
             </div>
             {pool.description && <p className="text-sm text-gray-500 mt-1 ml-6">{pool.description}</p>}
             <p className="text-xs text-gray-400 mt-1 ml-6">{pool.id}</p>
           </div>
           <a href="/memory" className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50 whitespace-nowrap flex items-center gap-1">
-            <ExternalLink className="w-3 h-3" /> Manage
+            <ExternalLink className="w-3 h-3" /> {t('agentDetails.manage')}
           </a>
         </div>
 
         {/* Stats */}
         <div className="grid grid-cols-4 gap-3 mt-4">
           {[
-            { label: 'Total Files', value: files.length, icon: FileText, color: 'text-gray-600 bg-gray-50' },
-            { label: 'Raw Text',    value: rawFiles.length, icon: FileSearch, color: 'text-gray-500 bg-gray-50' },
-            { label: 'Indexed',     value: indexedFiles.length, icon: Layers, color: 'text-green-700 bg-green-50' },
-            { label: 'Vectorized',  value: vectorized.length, icon: Zap, color: 'text-indigo-700 bg-indigo-50' },
+            { label: t('agentDetails.stats.totalFiles'), value: files.length, icon: FileText, color: 'text-gray-600 bg-gray-50' },
+            { label: t('agentDetails.stats.rawText'),    value: rawFiles.length, icon: FileSearch, color: 'text-gray-500 bg-gray-50' },
+            { label: t('agentDetails.stats.indexed'),    value: indexedFiles.length, icon: Layers, color: 'text-green-700 bg-green-50' },
+            { label: t('agentDetails.stats.vectorized'), value: vectorized.length, icon: Zap, color: 'text-indigo-700 bg-indigo-50' },
           ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className={`rounded-lg px-3 py-2.5 flex items-center gap-2.5 ${color}`}>
               <Icon className="w-4 h-4 shrink-0" />
@@ -225,13 +238,13 @@ function MemoryPoolDetails({ pool }) {
       {files.length === 0 ? (
         <div className="bg-white rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-400">
           <FileText className="w-10 h-10 mx-auto mb-3 opacity-20" />
-          <p className="text-sm">No files in this pool yet. Add files in the <strong>Shared Memory</strong> page.</p>
+          <p className="text-sm">{t('agentDetails.noFilesInThisPool')} <strong>{t('agentDetails.sharedMemory')}</strong> {t('agentDetails.page')}</p>
         </div>
       ) : (
         <div className="space-y-3">
           {/* Filter bar */}
           <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold text-gray-700">Data Sources</p>
+            <p className="text-sm font-semibold text-gray-700">{t('agentDetails.dataSources')}</p>
             <div className="flex gap-1 ml-auto">
               {[
                 { id: 'all',        label: `All (${files.length})` },
@@ -250,7 +263,7 @@ function MemoryPoolDetails({ pool }) {
           </div>
 
           {visible.length === 0 ? (
-            <p className="text-center text-sm text-gray-400 py-6">No files in this category.</p>
+            <p className="text-center text-sm text-gray-400 py-6">{t('agentDetails.noFilesInThisCategory')}</p>
           ) : (
             <div className="space-y-3">
               {visible.map((f, i) => (
@@ -266,9 +279,83 @@ function MemoryPoolDetails({ pool }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Tool ids the planning toggle owns; static data, kept out of the component so
+// the loaders that read it stay stable.
+const PLANNING_TOOLS = ['save_plan', 'get_plan', 'list_plans', 'update_plan_status', 'delete_plan'];
+
+const defaultReasoningSettings = { thinkEnabled: false, thinkMode: 'standard', thinkingLevel: 'off', planEnabled: false, planFormat: 'structured' };
+
+/**
+ * Shown on the tabs that change what a system agent *is* — its tools and its
+ * instructions — rather than merely how it runs. Those two are what the rest of
+ * the product is built against, and editing either also detaches the agent from
+ * the shipped seed, so it stops receiving updates with new versions.
+ */
+function SystemAgentWarning({ scope }) {
+  const { t } = useI18n();
+  return (
+    <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+      <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-amber-900">{t('agentDetails.systemAgentWarningTitle')}</p>
+        <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+          {scope === 'config'
+            ? t('agentDetails.systemAgentWarningConfig')
+            : t('agentDetails.systemAgentWarningTools')}
+        </p>
+        <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+          {t('agentDetails.systemAgentWarningStopsTracking')}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The agent's own definition chat, pinned to this agent: the Agent Creator
+ * edits instructions.md, capabilities.md, usage.md and the tool list in place,
+ * and the editors below pick up the result.
+ *
+ * The callbacks are memoised on the agent id because EntityChat loads its
+ * transcript in an effect keyed on them — fresh closures each render would
+ * refetch the conversation continuously.
+ */
+function useDefinitionChatDescriptor(agentId, workspace, onChanged) {
+  const { t } = useI18n();
+
+  const loadChat = useCallback(() => getAgentDefinitionChat(agentId), [agentId]);
+  const clearChat = useCallback(() => clearAgentDefinitionChat(agentId), [agentId]);
+  const stopChat = useCallback(() => stopAgentDefinitionChat(agentId), [agentId]);
+
+  const onEvent = useCallback((ev) => {
+    if (ev.type === 'agentdef') onChanged();
+  }, [onChanged]);
+
+  return useMemo(() => (agentId ? {
+    scope: `agent:${agentId}`,
+    path: agentDefinitionChatUrl(agentId, workspace),
+    loadChat, clearChat, stopChat, onEvent,
+    title: t('agentDetails.definitionChat'),
+    emptyHint: t('agentDetails.definitionChatHint'),
+    suggestions: [
+      t('agentDetails.chatSuggestSharpen'),
+      t('agentDetails.chatSuggestCapabilities'),
+      t('agentDetails.chatSuggestTools'),
+      t('agentDetails.chatSuggestUsage'),
+    ],
+  } : null), [agentId, workspace, loadChat, clearChat, stopChat, onEvent, t]);
+}
+
 const AgentDetails = () => {
+  const { t } = useI18n();
+  const toast = useToast();
   const { id } = useParams();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
+  // The definition chat sits beside the Config tab, folded away by default:
+  // most visits to this page are to read, not to rewrite.
+  const defChat = useChatColumn(false);
+  // Only the Config tab has a chat beside it, so only that tab turns the page
+  // into a bounded flex column — the other twelve keep scrolling normally.
   const [agent, setAgent] = useState(null);
   const [history, setHistory] = useState([]);
   const [agentLogsData, setAgentLogsData] = useState({ runs: [], nodes: [] });
@@ -276,7 +363,6 @@ const AgentDetails = () => {
   const [nodes, setNodes] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [health, setHealth] = useState(null);
 
   const [agentDefinition, setAgentDefinition] = useState({ system_prompt: '', instructions: '', capabilities: '', usage: '', source: '', definition_dir: '' });
   const [defDraft, setDefDraft] = useState({ instructions: '', capabilities: '', usage: '' });
@@ -286,12 +372,15 @@ const AgentDetails = () => {
 
   const [memoryType, setMemoryType] = useState('none');
   const [memoryData, setMemoryData] = useState('');
+  // Shared memory pools attached to the agent; index 0 is the primary (write) pool.
+  const [memoryPools, setMemoryPools] = useState([]);
   const memoryDraftDirty = useRef(false);
   const [isUpdatingMemory, setIsUpdatingMemory] = useState(false);
   const [sharedMemories, setSharedMemories] = useState([]);
   const [connectedPool, setConnectedPool] = useState(null);
   const [loadingPool, setLoadingPool] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
+
   const [showStartNodeModal, setShowStartNodeModal] = useState(false);
   const [startWorkspace, setStartWorkspace] = useState('');
   const [startLabel, setStartLabel] = useState('');
@@ -301,27 +390,65 @@ const AgentDetails = () => {
   const [logsNodeText, setLogsNodeText] = useState('');
   const [logsNodeLoading, setLogsNodeLoading] = useState(false);
   const [availableTools, setAvailableTools] = useState([]);
+  const [toolsMeta, setToolsMeta] = useState({}); // id -> { label, category, description }
   const [selectedTools, setSelectedTools] = useState([]);
   const toolsDraftDirty = useRef(false);
   const [toolsSaving, setToolsSaving] = useState(false);
   const [toolsMessage, setToolsMessage] = useState('');
 
+  // Delegation allowlist — which agents this agent may hand work to via
+  // run_agent_tool. Empty = no restriction (any workspace agent).
+  const [allAgents, setAllAgents] = useState([]);
+  const [delegates, setDelegates] = useState([]);
+  const delegatesDirty = useRef(false);
+  const [delegatesSaving, setDelegatesSaving] = useState(false);
+  const [delegatesMessage, setDelegatesMessage] = useState('');
+
+  // Episodic write tool (record_episode) — tri-state: 'auto' | 'on' | 'off'.
+  const [episodicMode, setEpisodicMode] = useState('auto');
+  const [episodicEffective, setEpisodicEffective] = useState(true);
+  const [episodicSaving, setEpisodicSaving] = useState(false);
+
   // Reasoning capability settings (think / plan) — persisted to localStorage per agent
   const REASONING_TOOLS = ['think', 'plan'];
+  // The persistent plan-store tools are auto-injected by the backend whenever the
+  // Plan capability is on. They are never selectable on their own, so they must be
+  // hidden from the Tools tab even if an older agent config still carries them.
   const MEMORY_TOOLS = ['read_memory', 'write_memory'];
-  const THINK_MODES = [
-    { value: 'standard', label: 'Standard', desc: 'Reason before and after key actions' },
-    { value: 'deep', label: 'Deep', desc: 'Reason extensively at every step' },
-    { value: 'analytical', label: 'Analytical', desc: 'Focus on error diagnosis and logic checking' },
-  ];
-  const PLAN_FORMATS = [
-    { value: 'structured', label: 'Structured', desc: 'Sections with headers and sub-steps' },
-    { value: 'bullet', label: 'Bullet List', desc: 'Flat list of action items' },
-    { value: 'numbered', label: 'Numbered Steps', desc: 'Ordered numbered checklist' },
-    { value: 'freeform', label: 'Free-form', desc: 'Unstructured narrative plan' },
-  ];
-  const defaultReasoningSettings = { thinkEnabled: false, thinkMode: 'standard', planEnabled: false, planFormat: 'structured' };
+  const THINK_MODES = ['standard', 'deep', 'analytical'].map((value) => ({
+    value, label: t(`agentDetails.thinkModes.${value}.label`), desc: t(`agentDetails.thinkModes.${value}.desc`),
+  }));
+  // Native model reasoning level — a model parameter, separate from the think tool.
+  const THINKING_LEVELS = ['off', 'low', 'medium', 'high'].map((value) => ({
+    value, label: t(`agentDetails.thinkingLevels.${value}.label`), desc: t(`agentDetails.thinkingLevels.${value}.desc`),
+  }));
+  const PLAN_FORMATS = ['structured', 'bullet', 'numbered', 'freeform'].map((value) => ({
+    value, label: t(`agentDetails.planFormats.${value}.label`), desc: t(`agentDetails.planFormats.${value}.desc`),
+  }));
   const [reasoningSettings, setReasoningSettings] = useState(defaultReasoningSettings);
+
+  // Structured response format (none | buttons | telegram) — seeded from the
+  // loaded agent record, persisted via updateAgentResponseFormat.
+  const [responseFormat, setResponseFormat] = useState('none');
+  const [responseFormatSaving, setResponseFormatSaving] = useState(false);
+
+  // Chat clarification gate — seeded from the loaded agent record, persisted via
+  // updateAgentClarifyGate. When on, the agent asks for missing requirements
+  // before executing instead of proceeding on assumptions.
+  const [clarifyGate, setClarifyGate] = useState(false);
+  const [clarifyGateSaving, setClarifyGateSaving] = useState(false);
+
+  // Self-delegation — when on, the agent may target itself in run_agent_tool /
+  // assign_agent_tool (a self-run recurses the same agent). Off by default.
+  const [selfDelegation, setSelfDelegation] = useState(false);
+  const [selfDelegationSaving, setSelfDelegationSaving] = useState(false);
+
+  // User-defined custom model backends — shown as extra provider options in the
+  // per-agent model override picker.
+  const [customBackends, setCustomBackends] = useState([]);
+  useEffect(() => {
+    getCustomBackends().then(({ data }) => setCustomBackends(data.backends || [])).catch(() => {});
+  }, []);
 
   // Default chat agent state
   const [isDefaultChat, setIsDefaultChat] = useState(false);
@@ -329,6 +456,10 @@ const AgentDetails = () => {
   const [defaultChatMessage, setDefaultChatMessage] = useState('');
 
   // Workspace sharing (exposure) state
+  // Agent description editing (Overview → Agent Identity)
+  const [descDraft, setDescDraft] = useState(null); // null = not editing
+  const [descSaving, setDescSaving] = useState(false);
+
   const [shared, setShared] = useState(false);
   const [sharingSaving, setSharingSaving] = useState(false);
   const [sharingMessage, setSharingMessage] = useState('');
@@ -374,24 +505,26 @@ const AgentDetails = () => {
   const [skillDeleteBusy, setSkillDeleteBusy] = useState({});
   const [skillsMessage, setSkillsMessage] = useState('');
 
-  const fetchSkills = async (wsName) => {
+  const fetchSkills = useCallback(async (wsName) => {
     if (!wsName) return;
     setSkillsLoading(true);
     try {
       const resp = await getAgentSkills(id, wsName);
       setSkills(resp.data || []);
-    } catch (_) {
+    } catch {
       setSkills([]);
     }
     setSkillsLoading(false);
-  };
+  }, [id]);
 
   const handleToggleSkillsEnabled = async (enabled) => {
     setSkillsConfigSaving(true);
     try {
       await updateAgentSkillsConfig(id, { skills_enabled: enabled });
       setSkillsEnabled(enabled);
-    } catch (_) {}
+    } catch (e) {
+      toast.error(t('agentDetails.errors.skillsConfig'), errorDetail(e));
+    }
     setSkillsConfigSaving(false);
   };
 
@@ -406,9 +539,11 @@ const AgentDetails = () => {
       setSkillForm({ name: '', description: '', steps: '', tags: '' });
       setShowAddSkill(false);
       await fetchSkills(wsName);
-      setSkillsMessage('Skill saved.');
+      setSkillsMessage(t('agentDetails.skillSaved'));
       setTimeout(() => setSkillsMessage(''), 3000);
-    } catch (_) {}
+    } catch (e) {
+      toast.error(t('agentDetails.errors.saveSkill'), errorDetail(e));
+    }
     setSkillSaving(false);
   };
 
@@ -419,11 +554,13 @@ const AgentDetails = () => {
     try {
       await deleteAgentSkill(id, skillId, wsName);
       setSkills(prev => prev.filter(s => s.id !== skillId));
-    } catch (_) {}
+    } catch (e) {
+      toast.error(t('agentDetails.errors.deleteSkill'), errorDetail(e));
+    }
     setSkillDeleteBusy(b => ({ ...b, [skillId]: false }));
   };
 
-  const fetchDockerData = async () => {
+  const fetchDockerData = useCallback(async () => {
     setDockerLoading(true);
     try {
       const [imagesResp, containersResp] = await Promise.all([
@@ -433,20 +570,22 @@ const AgentDetails = () => {
       setDockerImages(imagesResp.data?.images || []);
       const allContainers = containersResp.data?.containers || [];
       setDockerContainers(allContainers.filter(c => c.agent_id === id || c.name?.includes(id)));
-    } catch (_) {}
+    } catch (e) {
+      toast.error(t('agentDetails.errors.dockerData'), errorDetail(e));
+    }
     setDockerLoading(false);
-  };
+  }, [id, t, toast]);
 
-  const fetchDockerfile = async () => {
+  const fetchDockerfile = useCallback(async () => {
     setDockerfileLoading(true);
     try {
       const resp = await getDockerfile(id);
       setDockerfileContent(typeof resp.data === 'string' ? resp.data : resp.data);
-    } catch (_) {
+    } catch {
       setDockerfileContent('');
     }
     setDockerfileLoading(false);
-  };
+  }, [id]);
 
   const handleBuildBase = async () => {
     setBuildingBase(true);
@@ -454,9 +593,9 @@ const AgentDetails = () => {
     setBuildError('');
     try {
       const resp = await buildBaseImage({ no_cache: false });
-      setBuildLog(resp.data?.log || 'Build complete.');
+      setBuildLog(resp.data?.log || t('agentDetails.buildComplete'));
     } catch (e) {
-      setBuildError(e.response?.data?.detail || e.message || 'Build failed');
+      setBuildError(e.response?.data?.detail || e.message || t('agentDetails.buildFailed'));
     } finally {
       setBuildingBase(false);
       fetchDockerData();
@@ -469,9 +608,9 @@ const AgentDetails = () => {
     setBuildError('');
     try {
       const resp = await buildAgentImage(id, { no_cache: false });
-      setBuildLog(resp.data?.log || 'Build complete.');
+      setBuildLog(resp.data?.log || t('agentDetails.buildComplete'));
     } catch (e) {
-      setBuildError(e.response?.data?.detail || e.message || 'Build failed');
+      setBuildError(e.response?.data?.detail || e.message || t('agentDetails.buildFailed'));
     } finally {
       setBuildingAgent(false);
       fetchDockerData();
@@ -496,7 +635,9 @@ const AgentDetails = () => {
     try {
       await stopContainerByName(name);
       fetchDockerData();
-    } catch (_) {}
+    } catch (e) {
+      toast.error(t('agentDetails.errors.stopContainer'), errorDetail(e));
+    }
     setDockerActionBusy(b => ({ ...b, [name]: false }));
   };
 
@@ -505,23 +646,28 @@ const AgentDetails = () => {
     try {
       await removeContainer(name);
       fetchDockerData();
-    } catch (_) {}
+    } catch (e) {
+      toast.error(t('agentDetails.errors.removeContainer'), errorDetail(e));
+    }
     setDockerActionBusy(b => ({ ...b, [name]: false }));
   };
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const defaultChatWorkspace = selectedWorkspace || 'default';
       const [agentResp, historyResp, tasksResp, workspacesResp, wsCapResp, logsResp] = await Promise.all([
         getAgent(id, defaultChatWorkspace),
-        getAgentHistory(id),
+        getAgentHistory(id, workspaceFilter),
         getTasks(workspaceFilter),
         getWorkspaces(),
         getAgentWorkspaceCapacities(id).catch(() => ({ data: {} })),
-        getAgentLogs(id).catch(() => ({ data: { runs: [], nodes: [] } })),
+        getAgentLogs(id, workspaceFilter ? { workspace: workspaceFilter } : undefined).catch(() => ({ data: { runs: [], nodes: [] } })),
       ]);
       setAgent(agentResp.data);
       setIsDefaultChat(!!agentResp.data?.is_default_chat_agent);
+      setResponseFormat(agentResp.data?.response_format || 'none');
+      setClarifyGate(!!agentResp.data?.clarify_gate);
+      setSelfDelegation(!!agentResp.data?.allow_self_delegation);
       setHistory(historyResp.data);
       setAgentLogsData(logsResp.data || { runs: [], nodes: [] });
       setTasks(tasksResp.data || []);
@@ -529,11 +675,21 @@ const AgentDetails = () => {
       setWsCapacities(wsCapResp.data || {});
       const savedTools = Array.isArray(agentResp.data?.tools) ? agentResp.data.tools : [];
       if (!toolsDraftDirty.current) {
-        setSelectedTools([...new Set([...savedTools])]);
+        // Drop any plan-store ids a legacy config may still carry — they are
+        // driven by the Plan capability now, not stored in the tools list.
+        setSelectedTools([...new Set(savedTools.filter(t => !PLANNING_TOOLS.includes(t)))]);
       }
       if (!memoryDraftDirty.current) {
-        setMemoryType(agentResp.data.memory_type || 'none');
-        setMemoryData(typeof agentResp.data.memory_data === 'string' ? agentResp.data.memory_data : JSON.stringify(agentResp.data.memory_data || '', null, 2));
+        const mt = agentResp.data.memory_type || 'none';
+        const md = agentResp.data.memory_data;
+        setMemoryType(mt);
+        if (mt === 'shared') {
+          setMemoryPools(Array.isArray(md) ? md.map(String) : (md ? [String(md)] : []));
+          setMemoryData('');
+        } else {
+          setMemoryPools([]);
+          setMemoryData(typeof md === 'string' ? md : JSON.stringify(md || '', null, 2));
+        }
       }
       try {
         const nodesResp = await getNodes(workspaceFilter);
@@ -569,14 +725,17 @@ const AgentDetails = () => {
       console.error('Error fetching agent details:', error);
       setLoading(false);
     }
-  };
+  }, [id, selectedWorkspace, workspaceFilter]);
+
+  // The definition chat: the column beside the Config tab and the floating page
+  // chat are two frames around this one conversation.
+  const definitionChat = useDefinitionChatDescriptor(agent?.id, selectedWorkspace, fetchData);
+  usePageChat(definitionChat);
 
   useEffect(() => {
     fetchData();
-    if (!liveUpdates) return;
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, [id, liveUpdates, workspaceFilter, selectedWorkspace]);
+  }, [id, liveUpdates, workspaceFilter, selectedWorkspace, fetchData]);
+  useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   useEffect(() => {
     toolsDraftDirty.current = false;
@@ -595,6 +754,7 @@ const AgentDetails = () => {
       .then(r => setReasoningSettings({
         thinkEnabled: !!r.data.think_enabled,
         thinkMode: r.data.think_mode || 'standard',
+        thinkingLevel: r.data.thinking_level || 'off',
         planEnabled: !!r.data.plan_enabled,
         planFormat: r.data.plan_format || 'structured',
       }))
@@ -622,27 +782,73 @@ const AgentDetails = () => {
     const fetchTools = async () => {
       try {
         const resp = await getTools();
-        const ids = (resp.data?.all || [])
-          .map((t) => t.id || t.name)
-          .filter(Boolean);
+        const list = resp.data?.all || [];
+        const meta = {};
+        const ids = [];
+        list.forEach((t) => {
+          const tid = t.id || t.name;
+          if (!tid) return;
+          ids.push(tid);
+          meta[tid] = {
+            label: t.label || t.display_name || tid,
+            category: t.category || 'other',
+            description: t.description || '',
+            capabilities: t.capabilities || [],
+          };
+        });
+        setToolsMeta(meta);
         setAvailableTools([...new Set(ids)].sort());
       } catch {
+        setToolsMeta({});
         setAvailableTools([]);
       }
     };
     fetchTools();
   }, []);
 
+  // Load the delegation allowlist and the set of agents available to delegate to.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [delResp, agentsResp, epiResp] = await Promise.all([
+          getAgentDelegates(id),
+          getAgents(selectedWorkspace || undefined),
+          getAgentEpisodicConfig(id),
+        ]);
+        if (cancelled) return;
+        setDelegates(delResp.data?.delegates || []);
+        const list = agentsResp.data?.agents || agentsResp.data || [];
+        setAllAgents(list.filter((a) => (a.id || a) !== id));
+        const epiVal = epiResp.data?.episodic_write_enabled;
+        setEpisodicMode(epiVal === true ? 'on' : epiVal === false ? 'off' : 'auto');
+        setEpisodicEffective(epiResp.data?.effective !== false);
+        delegatesDirty.current = false;
+        setDelegatesMessage('');
+      } catch {
+        if (!cancelled) { setDelegates([]); setAllAgents([]); }
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [id, selectedWorkspace]);
+
   const handleUpdateMemory = async () => {
     setIsUpdatingMemory(true);
     try {
-      let data = memoryData;
-      try {
-        data = JSON.parse(memoryData);
-      } catch {
-        // keep as string
+      let data;
+      if (memoryType === 'shared') {
+        // Primary pool first; a single pool is sent as a plain id string.
+        data = memoryPools.length === 1 ? memoryPools[0] : memoryPools;
+      } else {
+        data = memoryData;
+        try {
+          data = JSON.parse(memoryData);
+        } catch {
+          // keep as string
+        }
       }
-      await updateAgentMemory(id, { memory_type: memoryType, memory_data: data });
+      await updateAgentMemory(id, { memory_type: memoryType, memory_data: data, workspace: selectedWorkspace || 'default' });
       memoryDraftDirty.current = false;
       fetchData();
     } catch (error) {
@@ -652,11 +858,28 @@ const AgentDetails = () => {
     }
   };
 
+  // Pool list editing — index 0 is the primary (write) pool.
+  const setPrimaryPool = (pid) => {
+    memoryDraftDirty.current = true;
+    setMemoryPools(prev => (pid ? [pid, ...prev.filter(p => p && p !== pid)] : prev.slice(1)));
+  };
+
+  const addExtraPool = (pid) => {
+    if (!pid) return;
+    memoryDraftDirty.current = true;
+    setMemoryPools(prev => (prev.includes(pid) ? prev : [...prev, pid]));
+  };
+
+  const removePool = (pid) => {
+    memoryDraftDirty.current = true;
+    setMemoryPools(prev => prev.filter(p => p !== pid));
+  };
+
   const handleEraseMemory = async () => {
-    if (!window.confirm('Are you sure you want to erase agent memory?')) return;
+    if (!window.confirm(t('agentDetails.confirmEraseMemory'))) return;
     setIsUpdatingMemory(true);
     try {
-      await eraseAgentMemory(id);
+      await eraseAgentMemory(id, selectedWorkspace || 'default');
       memoryDraftDirty.current = false;
       fetchData();
     } catch (error) {
@@ -684,9 +907,22 @@ const AgentDetails = () => {
       });
       setWsCapacityEdits(prev => { const n = { ...prev }; delete n[wsName]; return n; });
     } catch {
-      alert('Failed to save capacity');
+      alert(t('agentDetails.errors.saveCapacity'));
     } finally {
       setWsCapacitySaving(null);
+    }
+  };
+
+  const handleSaveDescription = async () => {
+    setDescSaving(true);
+    try {
+      const { data } = await updateAgentDescription(id, descDraft);
+      setAgent(prev => ({ ...prev, description: data.description }));
+      setDescDraft(null);
+    } catch {
+      alert(t('agentDetails.errors.saveDescription'));
+    } finally {
+      setDescSaving(false);
     }
   };
 
@@ -702,11 +938,11 @@ const AgentDetails = () => {
       } else {
         await clearDefaultChatAgent(id, defaultChatWorkspace);
         setIsDefaultChat(false);
-        setDefaultChatMessage('Default cleared.');
+        setDefaultChatMessage(t('agentDetails.defaultCleared'));
       }
       setTimeout(() => setDefaultChatMessage(''), 3000);
     } catch {
-      setDefaultChatMessage('Failed to update default chat agent.');
+      setDefaultChatMessage(t('agentDetails.errors.defaultChatAgent'));
     } finally {
       setDefaultChatSaving(false);
     }
@@ -720,11 +956,11 @@ const AgentDetails = () => {
       setShared(!!resp.data?.shared);
       setAgent(prev => (prev ? { ...prev, shared: !!resp.data?.shared } : prev));
       setSharingMessage(checked
-        ? 'Agent is now shared across all workspaces.'
-        : 'Agent is now private to its workspace.');
+        ? t('agentDetails.nowPublished')
+        : t('agentDetails.nowPrivate'));
       setTimeout(() => setSharingMessage(''), 3000);
     } catch (e) {
-      setSharingMessage(e.response?.data?.detail || 'Failed to update sharing.');
+      setSharingMessage(e.response?.data?.detail || t('agentDetails.errors.sharing'));
     } finally {
       setSharingSaving(false);
     }
@@ -741,13 +977,13 @@ const AgentDetails = () => {
     if (activeTab !== 'docker') return;
     fetchDockerData();
     fetchDockerfile();
-  }, [activeTab]);
+  }, [activeTab, fetchDockerData, fetchDockerfile]);
 
   // Load skills when the skills tab opens
   useEffect(() => {
     if (activeTab !== 'skills') return;
     fetchSkills(selectedWorkspace);
-  }, [activeTab, selectedWorkspace]);
+  }, [activeTab, fetchSkills, selectedWorkspace]);
 
   // Sync skills_enabled from agent spec
   useEffect(() => {
@@ -759,17 +995,16 @@ const AgentDetails = () => {
     if (agent) setShared(!!agent.shared);
   }, [agent]);
 
-  // Load full pool details whenever the selected pool ID changes
+  // Load full pool details whenever the primary pool changes
   useEffect(() => {
-    if (memoryType !== 'shared' || !memoryData) { setConnectedPool(null); return; }
-    const poolId = memoryData.trim();
+    const poolId = memoryType === 'shared' ? (memoryPools[0] || '').trim() : '';
     if (!poolId) { setConnectedPool(null); return; }
     setLoadingPool(true);
     getSharedMemory(poolId)
       .then(r => setConnectedPool(r.data))
       .catch(() => setConnectedPool(null))
       .finally(() => setLoadingPool(false));
-  }, [memoryType, memoryData]);
+  }, [memoryType, memoryPools]);
 
 
   const handleStartNode = async () => {
@@ -781,7 +1016,7 @@ const AgentDetails = () => {
       setStartLabel('');
       fetchData();
     } catch (error) {
-      alert(error.response?.data?.detail || error.message || 'Failed to start node');
+      alert(error.response?.data?.detail || error.message || t('agentDetails.errors.startNode'));
     } finally {
       setStartingNode(false);
     }
@@ -793,7 +1028,7 @@ const AgentDetails = () => {
       await stopNode(nodeId);
       fetchData();
     } catch (error) {
-      alert(error.response?.data?.detail || error.message || 'Failed to stop node');
+      alert(error.response?.data?.detail || error.message || t('agentDetails.errors.stopNode'));
     } finally {
       setNodeBusy((prev) => {
         const next = { ...prev };
@@ -804,13 +1039,13 @@ const AgentDetails = () => {
   };
 
   const handleDeleteNode = async (nodeId) => {
-    if (!window.confirm('Remove this stopped/failed node record?')) return;
+    if (!window.confirm(t('agentDetails.confirmRemoveNode'))) return;
     setNodeBusy((prev) => ({ ...prev, [nodeId]: 'deleting' }));
     try {
       await deleteNode(nodeId);
       fetchData();
     } catch (error) {
-      alert(error.response?.data?.detail || error.message || 'Failed to remove node');
+      alert(error.response?.data?.detail || error.message || t('agentDetails.errors.removeNode'));
     } finally {
       setNodeBusy((prev) => {
         const next = { ...prev };
@@ -829,7 +1064,7 @@ const AgentDetails = () => {
       const resp = await getNodeLogs(nodeId);
       setLogsNodeText(resp.data?.logs || '(empty)');
     } catch (error) {
-      setLogsNodeText(error.response?.data?.detail || 'Failed to load node logs.');
+      setLogsNodeText(error.response?.data?.detail || t('agentDetails.errors.nodeLogs'));
     } finally {
       setLogsNodeLoading(false);
     }
@@ -845,18 +1080,64 @@ const AgentDetails = () => {
     setToolsMessage('');
   };
 
+  // Turn every tool in a category on (enable=true) or off (enable=false).
+  const setCategoryTools = (toolIds, enable) => {
+    setSelectedTools((prev) => {
+      const next = new Set(prev);
+      toolIds.forEach((t) => (enable ? next.add(t) : next.delete(t)));
+      return [...next];
+    });
+    toolsDraftDirty.current = true;
+    setToolsMessage('');
+  };
+
   const handleSaveTools = async () => {
     setToolsSaving(true);
     setToolsMessage('');
     try {
       await updateAgentTools(id, { tools: selectedTools });
-      setToolsMessage('Tools updated');
+      setToolsMessage(t('agentDetails.toolsUpdated'));
       toolsDraftDirty.current = false;
       await fetchData();
     } catch (error) {
-      setToolsMessage(error.response?.data?.detail || 'Failed to update tools');
+      // A capability violation comes back as a 409 whose detail is the
+      // structured violation, not a string — render its message rather than
+      // "[object Object]".
+      const detail = error.response?.data?.detail;
+      setToolsMessage(
+        typeof detail === 'string'
+          ? detail
+          : detail?.message || t('agentDetails.errors.updateTools')
+      );
     } finally {
       setToolsSaving(false);
+    }
+  };
+
+  const toggleDelegate = (agentId) => {
+    setDelegates((prev) => (
+      prev.includes(agentId) ? prev.filter((a) => a !== agentId) : [...prev, agentId]
+    ));
+    delegatesDirty.current = true;
+    setDelegatesMessage('');
+  };
+
+  const handleSaveDelegates = async () => {
+    setDelegatesSaving(true);
+    setDelegatesMessage('');
+    try {
+      const { data } = await updateAgentDelegates(id, delegates);
+      setDelegates(data?.delegates || []);
+      delegatesDirty.current = false;
+      setDelegatesMessage(
+        (data?.delegates || []).length
+          ? t('agentDetails.delegationRestricted')
+          : t('agentDetails.delegationUnrestricted')
+      );
+    } catch (error) {
+      setDelegatesMessage(error.response?.data?.detail || t('agentDetails.errors.updateDelegation'));
+    } finally {
+      setDelegatesSaving(false);
     }
   };
 
@@ -876,7 +1157,7 @@ const AgentDetails = () => {
     } catch (error) {
       setDefError(prev => ({
         ...prev,
-        [field]: error.response?.data?.detail || error.message || 'Failed to save',
+        [field]: error.response?.data?.detail || error.message || t('agentDetails.errors.save'),
       }));
     } finally {
       setDefSaving(prev => ({ ...prev, [field]: false }));
@@ -906,9 +1187,9 @@ const AgentDetails = () => {
       const { data } = await testLocalModel(provider, baseUrl);
       if (data.ok) {
         setLocalModels(data.models || []);
-        if (!data.models?.length) setLocalModelsError('Connected but no models found.');
+        if (!data.models?.length) setLocalModelsError(t('agentDetails.connectedNoModels'));
       } else {
-        setLocalModelsError(data.error || 'Connection failed.');
+        setLocalModelsError(data.error || t('agentDetails.connectionFailed'));
       }
     } catch (e) {
       setLocalModelsError(e.message);
@@ -944,23 +1225,42 @@ const AgentDetails = () => {
       const resp = await updateAgentModel(id, payload);
       setModelHasApiKey(!!resp.data.has_api_key);
       setModelForm(f => ({ ...f, api_key: '' }));
-      setModelMessage('Model settings saved');
+      setModelMessage(t('agentDetails.modelSettingsSaved'));
       setTimeout(() => setModelMessage(''), 3000);
     } catch (error) {
-      setModelMessage(error.response?.data?.detail || 'Failed to save');
+      setModelMessage(error.response?.data?.detail || t('agentDetails.errors.save'));
     } finally {
       setModelSaving(false);
     }
   };
 
-  if (loading) return <div className="text-center py-10">Loading agent details...</div>;
-  if (!agent) return <div className="text-center py-10">Agent not found</div>;
+  if (loading) return <div className="text-center py-10">{t('agentDetails.loadingAgentDetails')}</div>;
+  if (!agent) return <div className="text-center py-10">{t('agentDetails.agentNotFound')}</div>;
 
   const activeTask = history.find(r => r.status === 'running');
   const agentTools = Array.isArray(agent?.tools) ? agent.tools : [];
   const mergedTools = [...new Set([...agentTools])];
   const visibleToolIds = [...new Set([...availableTools, ...mergedTools, ...selectedTools])];
   const toolsDirty = toolsDraftDirty.current || ([...selectedTools].sort().join('|') !== [...mergedTools].sort().join('|'));
+  // Blocked capability combination formed by the current selection, evaluated
+  // client-side so it appears while toggling. The server refuses the save
+  // regardless (409) unless the agent carries capability_override.
+  const capabilityViolation = checkCombination(selectedTools, toolsMeta);
+  const capabilityOverridden = Boolean(agent?.capability_override);
+
+  // Group regular (non-reasoning, non-memory) tools by category for the Tools tab.
+  const regularToolIds = visibleToolIds.filter(t => !REASONING_TOOLS.includes(t) && !PLANNING_TOOLS.includes(t) && !MEMORY_TOOLS.includes(t));
+  const toolCategories = (() => {
+    const groups = {};
+    regularToolIds.forEach((tid) => {
+      const cat = toolsMeta[tid]?.category || 'other';
+      (groups[cat] = groups[cat] || []).push(tid);
+    });
+    return Object.entries(groups)
+      .map(([category, ids]) => ({ category, ids: ids.sort() }))
+      .sort((a, b) => a.category.localeCompare(b.category));
+  })();
+  const formatCategory = (c) => c.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
   const runningNodesCount = nodes.filter((n) => n.status === 'running' || n.status === 'starting').length;
   const agentTasks = (tasks || []).filter((t) => t.assigned_agent_type === id);
   const runningTasks = agentTasks.filter((t) => t.agent_state === 'running');
@@ -978,31 +1278,33 @@ const AgentDetails = () => {
     : (maxSessions === Infinity && runningTasks.length > 0 ? Math.min(100, Math.round((runningTasks.length / (runningTasks.length + 1)) * 100)) : 0);
 
   return (
-    <div>
-      <Link to="/agents" className="flex items-center text-indigo-600 hover:text-indigo-900 mb-6">
-        <ChevronLeft className="w-4 h-4 mr-1" /> Back to Agents
-      </Link>
+    <PageContainer>
+      <PageHeader
+        icon={Users}
+        title={agent.name}
+        description={agent.id}
+        backTo="/agents"
+        backLabel={t('agentDetails.agents')}
+      />
 
       <div className="bg-white p-6 shadow-md rounded-lg border-t-4 border-indigo-600 mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">{agent.name}</h2>
-        <p className="text-sm text-gray-500 mb-4">{agent.id}</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {/* Nodes card */}
           <div className={`border rounded-lg px-3 py-2 ${nodesOverWsCap ? 'bg-orange-50 border-orange-300' : 'bg-indigo-50 border-indigo-100'}`}>
-            <div className={`text-[10px] uppercase tracking-wider font-semibold ${nodesOverWsCap ? 'text-orange-500' : 'text-indigo-500'}`}>Nodes</div>
+            <div className={`text-[10px] uppercase tracking-wider font-semibold ${nodesOverWsCap ? 'text-orange-500' : 'text-indigo-500'}`}>{t('agentDetails.nodes')}</div>
             <div className={`text-sm font-semibold ${nodesOverWsCap ? 'text-orange-900' : 'text-indigo-900'}`}>
               {runningNodesCount} / {isDefaultWorkspace ? '∞' : wsSessionCap} running
             </div>
             {nodesOverWsCap && (
-              <div className="text-[10px] text-orange-600 mt-0.5 font-medium">Exceeds workspace cap</div>
+              <div className="text-[10px] text-orange-600 mt-0.5 font-medium">{t('agentDetails.exceedsWorkspaceCap')}</div>
             )}
           </div>
 
           {/* Sessions card */}
           <div className={`border rounded-lg px-3 py-2 ${atCapacity ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-100'}`}>
-            <div className={`text-[10px] uppercase tracking-wider font-semibold ${atCapacity ? 'text-red-500' : 'text-green-500'}`}>Sessions</div>
+            <div className={`text-[10px] uppercase tracking-wider font-semibold ${atCapacity ? 'text-red-500' : 'text-green-500'}`}>{t('agentDetails.sessions')}</div>
             {noNodes ? (
-              <div className="text-xs text-amber-700 font-medium mt-0.5">No nodes running — start a node to accept tasks</div>
+              <div className="text-xs text-amber-700 font-medium mt-0.5">{t('agentDetails.noNodesRunningStartA')}</div>
             ) : (
               <>
                 <div className={`text-sm font-semibold mb-1 ${atCapacity ? 'text-red-900' : 'text-green-900'}`}>
@@ -1015,7 +1317,7 @@ const AgentDetails = () => {
                   />
                 </div>
                 <div className={`text-[10px] mt-0.5 ${atCapacity ? 'text-red-600 font-semibold' : 'text-green-700'}`}>
-                  {atCapacity ? 'At capacity — no slots available' : `Load ${maxSessions === Infinity ? '—' : sessionLoadFactor + '%'}`}
+                  {atCapacity ? t('agentDetails.atCapacityNoSlots') : t('agentDetails.load', { pct: maxSessions === Infinity ? '—' : `${sessionLoadFactor}%` })}
                 </div>
               </>
             )}
@@ -1023,28 +1325,31 @@ const AgentDetails = () => {
 
           {/* Running tasks card */}
           <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-            <div className="text-[10px] uppercase tracking-wider text-amber-500 font-semibold">Running Tasks</div>
+            <div className="text-[10px] uppercase tracking-wider text-amber-500 font-semibold">{t('agentDetails.runningTasks')}</div>
             <div className="text-sm font-semibold text-amber-900">{runningTasks.length}</div>
-            <div className="text-[10px] text-amber-600 mt-0.5">{agentTasks.length} total assigned</div>
+            <div className="text-[10px] text-amber-600 mt-0.5">{t('agentDetails.totalAssigned', { count: agentTasks.length })}</div>
           </div>
         </div>
       </div>
 
-      <div className="mb-6 border-b border-gray-200">
+      <div className="border-b border-gray-200 flex items-end justify-between gap-4">
         <nav className="flex flex-wrap gap-2 -mb-px">
           {[
-            { id: 'overview', label: 'Overview', icon: Activity },
-            { id: 'history', label: 'Sessions', icon: History },
-            { id: 'logs', label: 'Runs', icon: FileText },
-            { id: 'model', label: 'Model', icon: BrainCircuit },
-            { id: 'memory', label: 'Memory', icon: Database },
-            { id: 'tools', label: 'Tools', icon: Wrench },
-            { id: 'commands', label: 'Commands', icon: Terminal },
-            { id: 'nodes', label: 'Nodes', icon: Server },
-            { id: 'tasks', label: 'Tasks', icon: Clock },
-            { id: 'skills', label: 'Skills', icon: BookOpen },
-            { id: 'config', label: 'Config', icon: FileCode },
-            { id: 'docker', label: 'Docker', icon: Layers },
+            { id: 'overview', label: t('agentDetails.tabs.overview'), icon: Activity },
+            // The live copies of *this* agent. The History tab below is their
+            // journal; this one is what is running right now.
+            { id: 'instances', label: t('agentDetails.tabs.instances'), icon: Radio },
+            { id: 'history', label: t('agentDetails.tabs.history'), icon: History },
+            { id: 'logs', label: t('agentDetails.tabs.logs'), icon: FileText },
+            { id: 'model', label: t('agentDetails.tabs.model'), icon: BrainCircuit },
+            { id: 'memory', label: t('agentDetails.tabs.memory'), icon: Database },
+            { id: 'tools', label: t('agentDetails.tabs.tools'), icon: Wrench },
+            { id: 'commands', label: t('agentDetails.tabs.commands'), icon: Terminal },
+            { id: 'nodes', label: t('agentDetails.tabs.nodes'), icon: Server },
+            { id: 'tasks', label: t('agentDetails.tabs.tasks'), icon: Clock },
+            { id: 'skills', label: t('agentDetails.tabs.skills'), icon: BookOpen },
+            { id: 'config', label: t('agentDetails.tabs.config'), icon: FileCode },
+            { id: 'docker', label: t('agentDetails.tabs.docker'), icon: Layers },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -1053,7 +1358,7 @@ const AgentDetails = () => {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex items-center px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+                className={`inline-flex items-center px-4 py-2 first:pl-0 text-sm font-semibold border-b-2 transition-colors ${
                   isActive
                     ? 'border-indigo-600 text-indigo-700'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -1065,51 +1370,74 @@ const AgentDetails = () => {
             );
           })}
         </nav>
+        {/* The definition chat belongs to the Config tab only, so its toggle
+            rides beside the tabs and disappears with them. */}
+        {activeTab === 'config' && (
+          <div className="pb-2 shrink-0">
+            <ChatToggle open={defChat.open} onToggle={defChat.toggle}
+                        label={t('agentDetails.definitionChat')} />
+          </div>
+        )}
       </div>
 
       {activeTab === 'overview' && (
         <div className="space-y-6">
 
+          {/* Imported agents lead with their readiness: for one that is not yet
+              runnable, this panel is the whole remaining setup. */}
+          <ImportedAgentPanel
+            agent={agent}
+            workspace={selectedWorkspace}
+            onUpdated={fetchData}
+          />
+
           {/* ── Agent Identity ── */}
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-4">
-              <Activity className="w-4 h-4 text-indigo-500" /> Agent Identity
+              <Activity className="w-4 h-4 text-indigo-500" /> {t('agentDetails.agentIdentity')}
             </h3>
-            {agent.description && (
-              <p className="text-base text-gray-600 mb-5 leading-relaxed">{agent.description}</p>
-            )}
+            <div className="mb-5">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentDetails.description')}</span>
+                {descDraft === null && (
+                  <button onClick={() => setDescDraft(agent.description || '')}
+                    className="text-xs text-indigo-600 hover:text-indigo-800">{t('agentDetails.edit')}</button>
+                )}
+              </div>
+              {descDraft === null ? (
+                agent.description
+                  ? <p className="text-base text-gray-600 leading-relaxed">{agent.description}</p>
+                  : <p className="text-sm text-gray-400 italic">{t('agentDetails.noDescriptionYet')}</p>
+              ) : (
+                <div className="space-y-2">
+                  <textarea value={descDraft} rows={3}
+                    onChange={e => setDescDraft(e.target.value)}
+                    placeholder={t('agentDetails.whatDoesThisAgentDo')}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleSaveDescription} disabled={descSaving}
+                      className="text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-1 rounded disabled:opacity-50">
+                      {descSaving ? '...' : 'Save'}
+                    </button>
+                    <button onClick={() => setDescDraft(null)} disabled={descSaving}
+                      className="text-xs text-gray-500 hover:text-gray-700">{t('agentDetails.cancel')}</button>
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm">
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">ID</span>
                 <span className=" text-gray-700 text-xs break-all">{agent.id}</span>
               </div>
               <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Type</span>
-                <span className="font-medium capitalize">{agent.type || 'local'}</span>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Domain</span>
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentDetails.domain')}</span>
                 <span className=" text-gray-700 text-xs">{agent.domain || 'general'}</span>
               </div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Entrypoint</span>
-                <span className=" text-xs text-gray-700 break-all">{agent.entrypoint || '—'}</span>
-              </div>
-              {agentDefinition.source && (
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Definition Source</span>
-                  <span className=" text-xs text-gray-700">{agentDefinition.source}</span>
-                </div>
-              )}
-              {agentDefinition.definition_dir && (
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Definition Folder</span>
-                  <span className=" text-xs text-indigo-600 break-all">{agentDefinition.definition_dir}</span>
-                </div>
-              )}
               {selectedWorkspace && selectedWorkspace !== 'default' && (
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Workspace Capacity</span>
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentDetails.workspaceCapacity')}</span>
                   {(() => {
                     const effectiveCapacity = wsCapacities[selectedWorkspace] ?? 1;
                     const editVal = wsCapacityEdits[selectedWorkspace];
@@ -1126,13 +1454,13 @@ const AgentDetails = () => {
                           {isSaving ? '...' : 'Save'}
                         </button>
                         <button onClick={() => setWsCapacityEdits(prev => { const n = { ...prev }; delete n[selectedWorkspace]; return n; })}
-                          className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                          className="text-xs text-gray-500 hover:text-gray-700">{t('agentDetails.cancel')}</button>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{effectiveCapacity} concurrent runs</span>
+                        <span className="text-sm font-medium">{t('agentDetails.concurrentRuns', { count: effectiveCapacity })}</span>
                         <button onClick={() => setWsCapacityEdits(prev => ({ ...prev, [selectedWorkspace]: String(effectiveCapacity) }))}
-                          className="text-xs text-indigo-600 hover:text-indigo-800">Edit</button>
+                          className="text-xs text-indigo-600 hover:text-indigo-800">{t('agentDetails.edit')}</button>
                       </div>
                     );
                   })()}
@@ -1141,30 +1469,30 @@ const AgentDetails = () => {
             </div>
           </div>
 
-          {/* ── Workspace Visibility ── */}
+          {/* ── Marketplace publishing ── */}
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-4">
               {shared ? <Globe className="w-4 h-4 text-indigo-500" /> : <Lock className="w-4 h-4 text-indigo-500" />}
-              Workspace Visibility
+              Marketplace
             </h3>
             {agent.system ? (
               <p className="text-sm text-gray-500 flex items-center gap-2">
                 <Globe className="w-4 h-4 text-gray-400" />
-                System agents are available in every workspace and cannot be restricted.
+                {t('agentDetails.systemAgentsAreAvailableIn')}
               </p>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-800">
-                      {shared ? 'Shared across all workspaces' : 'Private to its workspace'}
+                      {shared ? t('agentDetails.publishedToMarketplace') : t('agentDetails.privateToWorkspace')}
                     </p>
                     <p className="text-xs text-gray-500 mt-1 leading-relaxed">
                       {shared
-                        ? 'This agent is exposed and can be added to any workspace.'
+                        ? <>{t('agentDetails.visibleToEveryone')} <Link to="/marketplace" className="text-indigo-600 hover:text-indigo-800 font-semibold">{t('agentDetails.marketplace')}</Link> {t('agentDetails.andCanBeAddedTo')}</>
                         : agent.owner_workspace
-                          ? <>This agent is only visible in workspace <span className="font-semibold text-gray-700">{agent.owner_workspace}</span> and cannot be added to others. Enable sharing to expose it everywhere.</>
-                          : 'This agent is not bound to a workspace. Enable sharing to mark it as exposed across all workspaces.'}
+                          ? <>{t('agentDetails.onlyVisibleIn')} <span className="font-semibold text-gray-700">{agent.owner_workspace}</span> {t('agentDetails.andCannotBeAddedTo')}</>
+                          : t('agentDetails.notBoundToWorkspace')}
                     </p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer flex-shrink-0 mt-0.5">
@@ -1191,21 +1519,21 @@ const AgentDetails = () => {
             <div className="bg-white p-5 shadow-md rounded-lg">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
-                  <Wrench className="w-4 h-4 text-indigo-500" /> Tools
+                  <Wrench className="w-4 h-4 text-indigo-500" /> {t('agentDetails.tools')}
                 </h3>
                 <button type="button" onClick={() => setActiveTab('tools')}
                   className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50">
-                  Manage
+                  {t('agentDetails.manage')}
                 </button>
               </div>
               <div className="flex items-center gap-6 mb-4">
                 <div className="text-center">
                   <p className="text-3xl font-bold text-indigo-700">{selectedTools.length}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Enabled</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{t('agentDetails.enabled')}</p>
                 </div>
                 <div className="text-center">
                   <p className="text-3xl font-bold text-gray-300">{availableTools.length}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Available</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{t('agentDetails.available')}</p>
                 </div>
               </div>
               {selectedTools.length > 0 ? (
@@ -1221,7 +1549,7 @@ const AgentDetails = () => {
                   )}
                 </div>
               ) : (
-                <p className="text-xs text-gray-400 italic">No tools enabled. Click Manage to configure.</p>
+                <p className="text-xs text-gray-400 italic">{t('agentDetails.noToolsEnabledClickManage')}</p>
               )}
             </div>
 
@@ -1229,11 +1557,11 @@ const AgentDetails = () => {
             <div className="bg-white p-5 shadow-md rounded-lg">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
-                  <Database className="w-4 h-4 text-amber-500" /> Memory
+                  <Database className="w-4 h-4 text-amber-500" /> {t('agentDetails.memory')}
                 </h3>
                 <button type="button" onClick={() => setActiveTab('memory')}
                   className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50">
-                  Configure
+                  {t('agentDetails.configure')}
                 </button>
               </div>
               <div className="space-y-3">
@@ -1246,94 +1574,33 @@ const AgentDetails = () => {
                     memoryType === 'none'  ? 'bg-gray-400' :
                     memoryType === 'local' ? 'bg-blue-500' : 'bg-amber-500 animate-pulse'
                   }`} />
-                  {memoryType === 'none' ? 'No memory' : memoryType === 'local' ? 'Local (agent-specific)' : 'Shared pool'}
+                  {memoryType === 'none' ? t('agentDetails.noMemory') : memoryType === 'local' ? t('agentDetails.localAgentSpecific') : t('agentDetails.sharedPool')}
                 </span>
-                {memoryType === 'shared' && memoryData && (
-                  <div className="text-xs text-gray-500 truncate">Pool: {memoryData}</div>
+                {memoryType === 'shared' && memoryPools.length > 0 && (
+                  <div className="text-xs text-gray-500 truncate">
+                    {memoryPools.length === 1
+                      ? t('agentDetails.poolSingle', { pool: memoryPools[0] })
+                      : t('agentDetails.poolMulti', { count: memoryPools.length, pool: memoryPools[0] })}
+                  </div>
                 )}
                 {memoryType === 'local' && memoryData && (
                   <div className="text-xs text-gray-500 italic line-clamp-2">{memoryData.slice(0, 120)}{memoryData.length > 120 ? '…' : ''}</div>
                 )}
                 {memoryType === 'none' && (
-                  <p className="text-xs text-gray-400">No memory persistence between sessions.</p>
+                  <p className="text-xs text-gray-400">{t('agentDetails.noMemoryPersistenceBetweenSessions')}</p>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Model & Parameters card */}
-          {(() => {
-            // All model fields are top-level on the agent object
-            const provider = agent.provider && agent.provider !== 'inherit' ? agent.provider : null;
-            const agentModel = agent.model || null;
-            const agentBaseUrl = agent.base_url || null;
-            const hasModelConfig = provider || agentModel || agentBaseUrl || agent.temperature != null || agent.max_tokens != null;
-            if (!hasModelConfig) return null;
-            const providerColors = {
-              openai:    'bg-green-100 text-green-700',
-              anthropic: 'bg-orange-100 text-orange-700',
-              google:    'bg-blue-100 text-blue-700',
-              ollama:    'bg-purple-100 text-purple-700',
-              lmstudio:  'bg-pink-100 text-pink-700',
-            };
-            return (
-              <div className="bg-white p-6 shadow-md rounded-lg">
-                <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-4">
-                  <BrainCircuit className="w-4 h-4 text-indigo-500" /> Model Configuration
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('model')}
-                    className="ml-auto text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50"
-                  >
-                    Edit
-                  </button>
-                </h3>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                  {provider && (
-                    <div className="col-span-2 flex items-center gap-2">
-                      <span className="text-gray-500 w-28 shrink-0">Provider</span>
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${providerColors[provider] || 'bg-gray-100 text-gray-700'}`}>
-                        {provider}
-                      </span>
-                    </div>
-                  )}
-                  {agentModel && (
-                    <div className="col-span-2 flex items-center gap-2">
-                      <span className="text-gray-500 w-28 shrink-0">Model</span>
-                      <span className=" text-xs bg-gray-100 px-2 py-0.5 rounded">{agentModel}</span>
-                    </div>
-                  )}
-                  {agentBaseUrl && (
-                    <div className="col-span-2 flex items-center gap-2 min-w-0">
-                      <span className="text-gray-500 w-28 shrink-0">Base URL</span>
-                      <span className=" text-xs text-indigo-600 truncate">{agentBaseUrl}</span>
-                    </div>
-                  )}
-                  {agent.temperature != null && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-500">Temperature</span>
-                      <span className=" text-xs bg-gray-100 px-2 py-0.5 rounded">{agent.temperature}</span>
-                    </div>
-                  )}
-                  {agent.max_tokens != null && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-500">Max Tokens</span>
-                      <span className=" text-xs bg-gray-100 px-2 py-0.5 rounded">{agent.max_tokens.toLocaleString()}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-
           {activeTask && (
             <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
               <h3 className="text-indigo-800 font-bold flex items-center mb-2">
-                <Clock className="w-4 h-4 mr-2" /> Currently Active
+                <Clock className="w-4 h-4 mr-2" /> {t('agentDetails.currentlyActive')}
               </h3>
-              <p className="text-sm text-indigo-900 font-medium truncate mb-2">Task ID: {activeTask.task_id}</p>
+              <p className="text-sm text-indigo-900 font-medium truncate mb-2">{t('agentDetails.taskId')}: {activeTask.task_id}</p>
               <Link to={`/tasks/${activeTask.task_id}`} className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 inline-block">
-                View Task Details
+                {t('agentDetails.viewTaskDetails')}
               </Link>
             </div>
           )}
@@ -1342,9 +1609,9 @@ const AgentDetails = () => {
           {(
             <div className="bg-white p-6 shadow-md rounded-lg">
               <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-1">
-                <MessageSquare className="w-4 h-4 text-indigo-500" /> Chat Settings
+                <MessageSquare className="w-4 h-4 text-indigo-500" /> {t('agentDetails.chatSettings')}
               </h3>
-              <p className="text-xs text-gray-500 mb-4">Configure how this agent appears in the Chat interface.</p>
+              <p className="text-xs text-gray-500 mb-4">{t('agentDetails.configureHowThisAgentAppears')}</p>
               <label className="flex items-center gap-3 cursor-pointer select-none">
                 <div className="relative">
                   <input
@@ -1358,8 +1625,8 @@ const AgentDetails = () => {
                   <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${isDefaultChat ? 'translate-x-4' : 'translate-x-0'}`} />
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-gray-800">Default chat agent</div>
-                  <div className="text-xs text-gray-500">Pre-select this agent for the current workspace when opening Chat or starting a new conversation.</div>
+                  <div className="text-sm font-medium text-gray-800">{t('agentDetails.defaultChatAgent')}</div>
+                  <div className="text-xs text-gray-500">{t('agentDetails.preSelectThisAgentFor')}</div>
                 </div>
               </label>
               {defaultChatMessage && (
@@ -1370,27 +1637,36 @@ const AgentDetails = () => {
         </div>
       )}
 
+      {activeTab === 'instances' && (
+        <InstanceList
+          agentId={id}
+          workspace={workspaceFilter}
+          liveUpdates={liveUpdates}
+          showAgentColumn={false}
+        />
+      )}
+
       {activeTab === 'history' && (
         <div className="space-y-6">
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-lg font-bold mb-4 flex items-center">
-              <History className="w-5 h-5 mr-2" /> Execution History
+              <History className="w-5 h-5 mr-2" /> {t('agentDetails.executionHistory')}
             </h3>
 
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Task ID</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Started At</th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('agentDetails.status')}</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('agentDetails.taskId')}</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('agentDetails.startedAt')}</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">{t('agentDetails.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {history.length === 0 ? (
                     <tr>
-                      <td colSpan="4" className="px-4 py-8 text-center text-gray-500 italic">No execution history found for this agent.</td>
+                      <td colSpan="4" className="px-4 py-8 text-center text-gray-500 italic">{t('agentDetails.noExecutionHistoryFoundFor')}</td>
                     </tr>
                   ) : (
                     history.map((run) => (
@@ -1417,7 +1693,7 @@ const AgentDetails = () => {
                           <div className="flex items-center justify-end gap-3">
                             {run.session_id && (
                               <Link to={`/sessions/${run.session_id}`} className="text-indigo-600 hover:text-indigo-900 text-xs font-medium flex items-center gap-1">
-                                <History className="w-3 h-3" /> Session
+                                <History className="w-3 h-3" /> {t('agentDetails.session')}
                               </Link>
                             )}
                           </div>
@@ -1436,31 +1712,31 @@ const AgentDetails = () => {
       {activeTab === 'logs' && (
         <div className="space-y-6">
           <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4">
-            <div className="text-sm font-semibold text-indigo-900 mb-1">Node-scoped logs</div>
+            <div className="text-sm font-semibold text-indigo-900 mb-1">{t('agentDetails.nodeScopedLogs')}</div>
             <div className="text-xs text-indigo-700">
-              Agent run/chat logs are written to node folders under <code>agents/state/node_runs/&lt;node_id&gt;/</code>.
+              {t('agentDetails.nodeScopedLogsHint')} <code>agents/state/node_runs/&lt;node_id&gt;/</code>.
             </div>
           </div>
 
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-lg font-bold mb-4 flex items-center">
-              <FileText className="w-5 h-5 mr-2 text-indigo-600" /> Run Logs
+              <FileText className="w-5 h-5 mr-2 text-indigo-600" /> {t('agentDetails.runLogs')}
             </h3>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Node</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Task</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Log File</th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('agentDetails.status')}</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('agentDetails.node')}</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('agentDetails.task')}</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{t('agentDetails.logFile')}</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">{t('agentDetails.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {(agentLogsData.runs || []).length === 0 ? (
                     <tr>
-                      <td colSpan="5" className="px-4 py-8 text-center text-gray-500 italic">No run logs found for this agent.</td>
+                      <td colSpan="5" className="px-4 py-8 text-center text-gray-500 italic">{t('agentDetails.noRunLogsFoundFor')}</td>
                     </tr>
                   ) : (
                     (agentLogsData.runs || []).map((run) => (
@@ -1484,7 +1760,7 @@ const AgentDetails = () => {
                         <td className="px-4 py-2 whitespace-nowrap text-right">
                           <div className="flex items-center justify-end gap-3">
                             <Link to={`/messages/${run.run_id}`} className="text-indigo-600 hover:text-indigo-900 text-xs font-medium flex items-center gap-1">
-                              <MessageSquare className="w-3 h-3" /> Message
+                              <MessageSquare className="w-3 h-3" /> {t('agentDetails.message')}
                             </Link>
                           </div>
                         </td>
@@ -1498,23 +1774,23 @@ const AgentDetails = () => {
 
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-lg font-bold mb-4 flex items-center">
-              <Server className="w-5 h-5 mr-2 text-indigo-600" /> Node Process Logs
+              <Server className="w-5 h-5 mr-2 text-indigo-600" /> {t('agentDetails.nodeProcessLogs')}
             </h3>
             <div className="overflow-x-auto border border-gray-100 rounded-lg">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Node</th>
-                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
-                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Workspace</th>
-                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Log File</th>
-                    <th className="text-right px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">Actions</th>
+                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.node')}</th>
+                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.status')}</th>
+                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.workspace')}</th>
+                    <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.logFile')}</th>
+                    <th className="text-right px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {(agentLogsData.nodes || []).length === 0 ? (
                     <tr>
-                      <td colSpan="5" className="px-4 py-8 text-center text-gray-500 italic">No node logs found for this agent.</td>
+                      <td colSpan="5" className="px-4 py-8 text-center text-gray-500 italic">{t('agentDetails.noNodeLogsFoundFor')}</td>
                     </tr>
                   ) : (
                     (agentLogsData.nodes || []).map((node) => {
@@ -1534,7 +1810,7 @@ const AgentDetails = () => {
                               onClick={() => openNodeLogs(node)}
                               className="text-indigo-600 hover:text-indigo-900 text-xs font-medium inline-flex items-center justify-end"
                             >
-                              <Terminal className="w-3 h-3 mr-1" /> Open
+                              <Terminal className="w-3 h-3 mr-1" /> {t('agentDetails.open')}
                             </button>
                           </td>
                         </tr>
@@ -1552,61 +1828,111 @@ const AgentDetails = () => {
         <div className="space-y-5">
           {/* ── Configuration card ── */}
           <div className="bg-white rounded-xl border border-t-4 border-t-amber-500 border-gray-200 p-6 shadow-sm">
-            <h3 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <Database className="w-5 h-5 text-amber-500" /> Memory Configuration
+            <h3 className="text-base font-bold text-gray-900 mb-1 flex items-center gap-2">
+              <Database className="w-5 h-5 text-amber-500" /> {t('agentDetails.memoryConfiguration')}
             </h3>
+            <p className="text-xs text-gray-400 mb-4">
+              Memory is assigned per workspace — this configuration applies in <span className="font-semibold text-gray-500">{selectedWorkspace || 'default'}</span> {t('agentDetails.only')}
+            </p>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Memory Type</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.memoryType')}</label>
                 <select
                   value={memoryType}
                   onChange={(e) => { setMemoryType(e.target.value); memoryDraftDirty.current = true; if (e.target.value !== 'shared') setConnectedPool(null); }}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <option value="none">None</option>
-                  <option value="local">Local (Agent-specific)</option>
-                  <option value="shared">Shared Memory Pool</option>
+                  <option value="none">{t('agentDetails.none')}</option>
+                  <option value="local">{t('agentDetails.localAgentSpecificOption')}</option>
+                  <option value="shared">{t('agentDetails.sharedMemoryPool')}</option>
                 </select>
               </div>
 
-              {memoryType === 'shared' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Connected Pool</label>
-                  {sharedMemories.length > 0 ? (
-                    <select
-                      value={memoryData}
-                      onChange={(e) => { setMemoryData(e.target.value); memoryDraftDirty.current = true; }}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="">— Select a memory pool —</option>
-                      {sharedMemories.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}  ({(m.files || []).length} files)
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={memoryData}
-                      onChange={(e) => { setMemoryData(e.target.value); memoryDraftDirty.current = true; }}
-                      placeholder="Shared Memory Pool ID (UUID)"
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  )}
-                  {memoryData && (
-                    <p className="text-xs text-gray-400 mt-1 truncate">ID: {memoryData}</p>
-                  )}
-                </div>
-              )}
+              {memoryType === 'shared' && (() => {
+                const poolNameById = Object.fromEntries(sharedMemories.map(m => [m.id, m.name]));
+                const primary = memoryPools[0] || '';
+                const extras = memoryPools.slice(1);
+                const unattached = sharedMemories.filter(m => !memoryPools.includes(m.id));
+                return (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.primaryPool')}</label>
+                      <p className="text-xs text-gray-400 mb-1.5">{t('agentDetails.primaryPoolHint')}</p>
+                      {sharedMemories.length > 0 ? (
+                        <select
+                          value={primary}
+                          onChange={(e) => setPrimaryPool(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="">{t('agentDetails.selectAMemoryPool')}</option>
+                          {sharedMemories.map(m => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}  ({t('agentDetails.fileCount', { count: (m.files || []).length })})
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={primary}
+                          onChange={(e) => setPrimaryPool(e.target.value.trim())}
+                          placeholder={t('agentDetails.sharedMemoryPoolIdUuid')}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
+                      {primary && (
+                        <p className="text-xs text-gray-400 mt-1 truncate">ID: {primary}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.additionalPools')}</label>
+                      <p className="text-xs text-gray-400 mb-1.5">{t('agentDetails.additionalPoolsHint')}</p>
+                      {extras.length > 0 && (
+                        <div className="space-y-1.5 mb-2">
+                          {extras.map(pid => (
+                            <div key={pid} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">
+                              <span className="text-sm text-gray-700 truncate flex-1" title={pid}>
+                                {poolNameById[pid] || pid}
+                              </span>
+                              <button type="button" onClick={() => setPrimaryPool(pid)}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 shrink-0">
+                                {t('agentDetails.makePrimary')}
+                              </button>
+                              <button type="button" onClick={() => removePool(pid)}
+                                className="text-gray-400 hover:text-red-500 shrink-0" title={t('agentDetails.detachPool')}>
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {unattached.length > 0 ? (
+                        <select
+                          value=""
+                          onChange={(e) => addExtraPool(e.target.value)}
+                          className="w-full border border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="">{t('agentDetails.attachAnotherPool')}</option>
+                          {unattached.map(m => (
+                            <option key={m.id} value={m.id}>{m.name}</option>
+                          ))}
+                        </select>
+                      ) : extras.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic">{t('agentDetails.noOtherPoolsAvailableTo')}</p>
+                      ) : null}
+                    </div>
+                  </>
+                );
+              })()}
 
               {memoryType === 'local' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Memory Content</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.memoryContent')}</label>
                   <textarea
                     value={memoryData}
                     onChange={(e) => { setMemoryData(e.target.value); memoryDraftDirty.current = true; }}
-                    placeholder="Enter memory content or configuration"
+                    placeholder={t('agentDetails.enterMemoryContentOrConfiguration')}
                     rows={5}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
@@ -1616,7 +1942,7 @@ const AgentDetails = () => {
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={handleUpdateMemory}
-                  disabled={isUpdatingMemory}
+                  disabled={isUpdatingMemory || (memoryType === 'shared' && memoryPools.length === 0)}
                   className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {isUpdatingMemory ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -1627,27 +1953,27 @@ const AgentDetails = () => {
                   disabled={isUpdatingMemory || agent.memory_type === 'none'}
                   className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-100 flex items-center justify-center gap-2 disabled:opacity-50 border border-red-200"
                 >
-                  <Trash2 className="w-4 h-4" /> Erase
+                  <Trash2 className="w-4 h-4" /> {t('agentDetails.erase')}
                 </button>
               </div>
             </div>
           </div>
 
           {/* ── Memory Tools ── */}
-          {memoryType === 'shared' && memoryData && (
+          {memoryType === 'shared' && memoryPools.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
               <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                <Wrench className="w-4 h-4 text-indigo-500" /> Memory Tools
+                <Wrench className="w-4 h-4 text-indigo-500" /> {t('agentDetails.memoryTools')}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {/* read_memory — always on */}
                 <div className="p-3 border-2 border-green-200 bg-green-50 rounded-xl flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-gray-900">Read Memory</div>
-                    <div className="text-xs text-gray-500 mt-0.5">Read files, notes, and key-value pairs from the pool</div>
+                    <div className="text-sm font-semibold text-gray-900">{t('agentDetails.readMemory2')}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{t('agentDetails.readFilesNotesAndKey')}</div>
                   </div>
                   <span className="px-2.5 py-1 rounded-full text-xs font-semibold border bg-green-600 text-white border-green-600 shrink-0">
-                    Always On
+                    {t('agentDetails.alwaysOn')}
                   </span>
                 </div>
                 {/* write_memory — toggleable */}
@@ -1656,8 +1982,8 @@ const AgentDetails = () => {
                   return (
                     <div className={`p-3 border-2 rounded-xl flex items-center justify-between gap-3 transition-colors ${enabled ? 'border-indigo-200 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
                       <div>
-                        <div className="text-sm font-semibold text-gray-900">Write Memory</div>
-                        <div className="text-xs text-gray-500 mt-0.5">Create or update files, notes, and key-value pairs</div>
+                        <div className="text-sm font-semibold text-gray-900">{t('agentDetails.writeMemory')}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">{t('agentDetails.createOrUpdateFilesNotes')}</div>
                       </div>
                       <button
                         type="button"
@@ -1667,7 +1993,7 @@ const AgentDetails = () => {
                             : [...selectedTools, 'write_memory'];
                           setSelectedTools(next);
                           setToolsSaving(true);
-                          try { await updateAgentTools(id, { tools: next }); await fetchData(); } catch {} finally { setToolsSaving(false); }
+                          try { await updateAgentTools(id, { tools: next }); await fetchData(); } catch (e) { toast.error(t('agentDetails.errors.updateTools'), errorDetail(e)); } finally { setToolsSaving(false); }
                         }}
                         className={`px-2.5 py-1 rounded-full text-xs font-semibold border shrink-0 ${
                           enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-500 border-gray-300'
@@ -1678,6 +2004,46 @@ const AgentDetails = () => {
                     </div>
                   );
                 })()}
+                {/* record_episode — episodic write tool, tri-state selector */}
+                <div className={`p-3 border-2 rounded-xl flex items-center justify-between gap-3 transition-colors ${episodicEffective ? 'border-indigo-200 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-gray-900">{t('agentDetails.episodicWrite')}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {t('agentDetails.episodicHintBefore')}
+                      {' '}<span className="font-medium">{t('agentDetails.auto')}</span> {t('agentDetails.episodicHintAuto')}
+                      {' '}{t('agentDetails.currently')} <span className="font-semibold">{episodicEffective ? t('agentDetails.active') : t('agentDetails.inactive')}</span>.
+                    </div>
+                  </div>
+                  <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden shrink-0">
+                    {['auto', 'on', 'off'].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        disabled={episodicSaving}
+                        onClick={async () => {
+                          if (m === episodicMode) return;
+                          const prev = episodicMode;
+                          setEpisodicMode(m);
+                          setEpisodicSaving(true);
+                          try {
+                            const val = m === 'on' ? true : m === 'off' ? false : null;
+                            const { data } = await updateAgentEpisodicConfig(id, val);
+                            const ev = data?.episodic_write_enabled;
+                            setEpisodicMode(ev === true ? 'on' : ev === false ? 'off' : 'auto');
+                            setEpisodicEffective(data?.effective !== false);
+                            await fetchData();
+                          } catch { setEpisodicMode(prev); }
+                          finally { setEpisodicSaving(false); }
+                        }}
+                        className={`px-2.5 py-1 text-xs font-semibold capitalize ${
+                          episodicMode === m ? 'bg-indigo-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {t(`agentDetails.episodicModes.${m}`)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1687,19 +2053,24 @@ const AgentDetails = () => {
             loadingPool ? (
               <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-200">
                 <Loader className="w-5 h-5 animate-spin text-indigo-400 mr-2" />
-                <span className="text-sm text-gray-500">Loading pool…</span>
+                <span className="text-sm text-gray-500">{t('agentDetails.loadingPool')}</span>
               </div>
             ) : connectedPool ? (
-              <MemoryPoolDetails pool={connectedPool} />
-            ) : memoryData ? (
+              <div>
+                {memoryPools.length > 1 && (
+                  <p className="text-xs text-gray-400 mb-2">{t('agentDetails.showingThePrimaryPoolAdditional')} <Link to="/memory" className="text-indigo-600 hover:text-indigo-800">{t('agentDetails.sharedMemory')}</Link> {t('agentDetails.page')}</p>
+                )}
+                <MemoryPoolDetails pool={connectedPool} />
+              </div>
+            ) : memoryPools[0] ? (
               <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                Pool not found. Check the ID or create a pool in <strong>Shared Memory</strong>.
+                Pool not found. Check the ID or create a pool in <strong>{t('agentDetails.sharedMemory')}</strong>.
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center bg-white rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-400">
                 <Database className="w-10 h-10 mb-3 opacity-20" />
-                <p className="text-sm">Select a shared memory pool above to browse its data sources.</p>
+                <p className="text-sm">{t('agentDetails.selectASharedMemoryPool')}</p>
               </div>
             )
           )}
@@ -1708,66 +2079,117 @@ const AgentDetails = () => {
 
       {activeTab === 'tools' && (
         <div className="space-y-6">
+          {agent.system && <SystemAgentWarning scope="tools" />}
 
-          {/* ── Reasoning Capabilities ── */}
+          {/* ── Agent Behavior ── */}
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-lg font-bold flex items-center mb-1">
               <BrainCircuit className="w-5 h-5 mr-2 text-violet-600" />
-              Reasoning Capabilities
+              {t('agentDetails.agentBehavior')}
             </h3>
             <p className="text-xs text-gray-500 mb-4">
-              Enable structured reasoning and planning for this agent. These capabilities are configured separately from regular tools.
+              {t('agentDetails.configureHowThisAgentThinks')}
             </p>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Think card */}
               {(() => {
-                const enabled = reasoningSettings.thinkEnabled;
+                const thinkToolOn = reasoningSettings.thinkEnabled;
+                const nativeOn = (reasoningSettings.thinkingLevel || 'off') !== 'off';
+                // Enable/disable applies to the whole Think block (native + tool).
+                const blockEnabled = nativeOn || thinkToolOn;
+
+                // Persist a partial reasoning change (state + server) in one place.
+                const patchReasoning = (patch) => {
+                  setReasoningSettings({ ...reasoningSettings, ...patch });
+                  const payload = {};
+                  if ('thinkingLevel' in patch) payload.thinking_level = patch.thinkingLevel;
+                  if ('thinkEnabled' in patch) payload.think_enabled = patch.thinkEnabled;
+                  if ('thinkMode' in patch) payload.think_mode = patch.thinkMode;
+                  updateAgentReasoning(id, payload).catch(() => {});
+                };
+
+                // Tool segmented switcher: an "Off" segment plus the depth modes.
+                const toolSegments = [{ value: 'off', label: t('agentDetails.off'), desc: t('agentDetails.noScratchpadTool') }, ...THINK_MODES];
+
+                const segBtn = (selected, onClick, label, desc) => (
+                  <button
+                    key={label}
+                    type="button"
+                    title={desc}
+                    onClick={onClick}
+                    className={`flex-1 px-2 py-1.5 text-xs font-semibold border-l first:border-l-0 border-gray-200 transition-colors ${
+                      selected ? 'bg-violet-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+
                 return (
-                  <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className={`rounded-xl border-2 p-4 transition-colors ${blockEnabled ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50'}`}>
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="flex items-center gap-2">
-                        <div className={`p-2 rounded-lg ${enabled ? 'bg-violet-100' : 'bg-gray-200'}`}>
-                          <BrainCircuit className={`w-4 h-4 ${enabled ? 'text-violet-600' : 'text-gray-400'}`} />
+                        <div className={`p-2 rounded-lg ${blockEnabled ? 'bg-violet-100' : 'bg-gray-200'}`}>
+                          <BrainCircuit className={`w-4 h-4 ${blockEnabled ? 'text-violet-600' : 'text-gray-400'}`} />
                         </div>
                         <div>
-                          <div className="font-semibold text-gray-900 text-sm">Think</div>
-                          <div className="text-xs text-gray-500">Step-by-step reasoning</div>
+                          <div className="font-semibold text-gray-900 text-sm">{t('agentDetails.think')}</div>
+                          <div className="text-xs text-gray-500">{t('agentDetails.thinkBlockHint')}</div>
                         </div>
                       </div>
+                      {/* Enable/disable the whole block: turns both native
+                          thinking and the scratchpad tool off. */}
                       <button
                         type="button"
-                        onClick={() => {
-                          const next = { ...reasoningSettings, thinkEnabled: !enabled };
-                          setReasoningSettings(next);
-                          updateAgentReasoning(id, { think_enabled: next.thinkEnabled }).catch(() => {});
-                        }}
+                        onClick={() => blockEnabled
+                          ? patchReasoning({ thinkingLevel: 'off', thinkEnabled: false })
+                          : patchReasoning({ thinkingLevel: 'medium' })}
                         className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 ${
-                          enabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
+                          blockEnabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {enabled ? 'Enabled' : 'Disabled'}
+                        {blockEnabled ? 'Enabled' : 'Disabled'}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
-                      Gives the agent a scratchpad to reason before and after actions — diagnose errors, check logic, and analyse results.
+                      <span className="font-medium">{t('agentDetails.nativeThinking')}</span> is a model parameter — how much the model reasons on its
+                      own. The <span className="font-medium">{t('agentDetails.thinkTool')}</span> is a separate scratchpad the agent can call; pick its
+                      depth or turn it off.
                     </p>
-                    {enabled && (
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Reasoning Depth</label>
-                        <select
-                          value={reasoningSettings.thinkMode}
-                          onChange={e => {
-                            const next = { ...reasoningSettings, thinkMode: e.target.value };
-                            setReasoningSettings(next);
-                            updateAgentReasoning(id, { think_mode: e.target.value }).catch(() => {});
-                          }}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-500 bg-white"
-                        >
-                          {THINK_MODES.map(m => (
-                            <option key={m.value} value={m.value}>{m.label} — {m.desc}</option>
-                          ))}
-                        </select>
+
+                    {blockEnabled && (
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Native thinking column */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.nativeThinking')}</label>
+                          <div className="flex rounded-lg border border-gray-300 overflow-hidden bg-white">
+                            {THINKING_LEVELS.filter(m => m.value !== 'off').map(m =>
+                              segBtn(
+                                reasoningSettings.thinkingLevel === m.value,
+                                () => patchReasoning({ thinkingLevel: m.value }),
+                                m.label,
+                                m.desc,
+                              )
+                            )}
+                          </div>
+                        </div>
+                        {/* Think tool column */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.thinkTool2')}</label>
+                          <div className="flex rounded-lg border border-gray-300 overflow-hidden bg-white">
+                            {toolSegments.map(m =>
+                              m.value === 'off'
+                                ? segBtn(!thinkToolOn, () => patchReasoning({ thinkEnabled: false }), m.label, m.desc)
+                                : segBtn(
+                                    thinkToolOn && reasoningSettings.thinkMode === m.value,
+                                    () => patchReasoning({ thinkEnabled: true, thinkMode: m.value }),
+                                    m.label,
+                                    m.desc,
+                                  )
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1785,8 +2207,8 @@ const AgentDetails = () => {
                           <Layers className={`w-4 h-4 ${enabled ? 'text-indigo-600' : 'text-gray-400'}`} />
                         </div>
                         <div>
-                          <div className="font-semibold text-gray-900 text-sm">Plan</div>
-                          <div className="text-xs text-gray-500">Upfront structured planning</div>
+                          <div className="font-semibold text-gray-900 text-sm">{t('agentDetails.plan')}</div>
+                          <div className="text-xs text-gray-500">{t('agentDetails.upfrontStructuredPlanning')}</div>
                         </div>
                       </div>
                       <button
@@ -1794,6 +2216,10 @@ const AgentDetails = () => {
                         onClick={() => {
                           const next = { ...reasoningSettings, planEnabled: !enabled };
                           setReasoningSettings(next);
+                          // The plan / save_plan / get_plan / list_plans / update_plan_status /
+                          // delete_plan tools are auto-injected by the backend whenever this
+                          // capability is on, so toggling the flag is all that's needed — they
+                          // are not stored in the agent's regular tools list.
                           updateAgentReasoning(id, { plan_enabled: next.planEnabled }).catch(() => {});
                         }}
                         className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 ${
@@ -1804,11 +2230,11 @@ const AgentDetails = () => {
                       </button>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
-                      Lets the agent produce a full execution plan before starting work — outlining steps, dependencies, and risks upfront.
+                      {t('agentDetails.letsTheAgentProduceA')}
                     </p>
                     {enabled && (
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Planning Format</label>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.planningFormat')}</label>
                         <select
                           value={reasoningSettings.planFormat}
                           onChange={e => {
@@ -1827,6 +2253,140 @@ const AgentDetails = () => {
                   </div>
                 );
               })()}
+
+              {/* Clarify card */}
+              {(() => {
+                const enabled = clarifyGate;
+                return (
+                  <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className={`p-2 rounded-lg ${enabled ? 'bg-amber-100' : 'bg-gray-200'}`}>
+                          <HelpCircle className={`w-4 h-4 ${enabled ? 'text-amber-600' : 'text-gray-400'}`} />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-gray-900 text-sm">{t('agentDetails.clarify')}</div>
+                          <div className="text-xs text-gray-500">{t('agentDetails.askBeforeActingOnGaps')}</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={clarifyGateSaving}
+                        onClick={() => {
+                          const next = !enabled;
+                          const prev = enabled;
+                          setClarifyGate(next);
+                          setClarifyGateSaving(true);
+                          updateAgentClarifyGate(id, next)
+                            .then((r) => setClarifyGate(!!r.data?.clarify_gate))
+                            .catch(() => setClarifyGate(prev))
+                            .finally(() => setClarifyGateSaving(false));
+                        }}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 disabled:opacity-50 ${
+                          enabled ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-300'
+                        }`}
+                      >
+                        {enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-600">
+                      When the agent lacks key information, it asks a few clarifying questions and waits instead of guessing. In a task it pauses (awaiting input) until you answer; in chat it asks and continues once you reply.
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {/* Self-delegation card */}
+              {(() => {
+                const enabled = selfDelegation;
+                return (
+                  <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className={`p-2 rounded-lg ${enabled ? 'bg-indigo-100' : 'bg-gray-200'}`}>
+                          <Repeat className={`w-4 h-4 ${enabled ? 'text-indigo-600' : 'text-gray-400'}`} />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-gray-900 text-sm">{t('agentDetails.selfDelegation')}</div>
+                          <div className="text-xs text-gray-500">{t('agentDetails.letThisAgentCallItself')}</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={selfDelegationSaving}
+                        onClick={() => {
+                          const next = !enabled;
+                          const prev = enabled;
+                          setSelfDelegation(next);
+                          setSelfDelegationSaving(true);
+                          updateAgentSelfDelegation(id, next)
+                            .then((r) => setSelfDelegation(!!r.data?.allow_self_delegation))
+                            .catch(() => setSelfDelegation(prev))
+                            .finally(() => setSelfDelegationSaving(false));
+                        }}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 disabled:opacity-50 ${
+                          enabled ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-500 border-gray-300'
+                        }`}
+                      >
+                        {enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-600">
+                      Allows the agent to target its own id in <code>{t('agentDetails.runAgentTool')}</code> / <code>{t('agentDetails.assignAgentTool')}</code>. Off by default because a self-run recurses the same agent. Enable only for agents meant to hand a sub-goal back to themselves, and keep an eye on runaway loops.
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* ── Response Format ── */}
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <h3 className="text-lg font-bold flex items-center mb-1">
+              <MessageSquare className="w-5 h-5 mr-2 text-teal-600" />
+              {t('agentDetails.responseFormat')}
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Let this agent reply with interactive UI (buttons / a Telegram inline keyboard)
+              instead of plain text. When enabled, the agent is taught a structured-reply
+              convention; surfaces that understand it (web chat, Telegram) render the buttons,
+              others fall back to text.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                ...['none', 'buttons', 'telegram', 'views'].map((value) => ({
+                  value,
+                  label: t(`agentDetails.responseFormats.${value}.label`),
+                  desc: t(`agentDetails.responseFormats.${value}.desc`),
+                })),
+              ].map((opt) => {
+                const active = responseFormat === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    disabled={responseFormatSaving}
+                    onClick={() => {
+                      if (active) return;
+                      const prev = responseFormat;
+                      setResponseFormat(opt.value);
+                      setResponseFormatSaving(true);
+                      updateAgentResponseFormat(id, opt.value)
+                        .then((r) => setResponseFormat(r.data?.response_format || opt.value))
+                        .catch(() => setResponseFormat(prev))
+                        .finally(() => setResponseFormatSaving(false));
+                    }}
+                    className={`text-left rounded-xl border-2 p-4 transition-colors disabled:opacity-50 ${
+                      active ? 'border-teal-300 bg-teal-50' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className={`font-semibold text-sm ${active ? 'text-teal-700' : 'text-gray-900'}`}>
+                      {opt.label}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">{opt.desc}</div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -1836,52 +2396,203 @@ const AgentDetails = () => {
               <h3 className="text-lg font-bold flex items-center">
                 <Wrench className="w-5 h-5 mr-2 text-indigo-600" />
                 Tools
+                <span className="ml-2 px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold">
+                  {regularToolIds.filter(t => selectedTools.includes(t)).length}/{regularToolIds.length}
+                </span>
               </h3>
               <button
                 type="button"
                 onClick={handleSaveTools}
-                disabled={toolsSaving || !toolsDirty}
+                disabled={toolsSaving || !toolsDirty || (Boolean(capabilityViolation?.blocking) && !capabilityOverridden)}
                 className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
               >
                 {toolsSaving ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1" />}
                 Save Tools
               </button>
             </div>
+            {capabilityViolation && (
+              <div className={`mb-4 rounded-lg border p-3 ${(!capabilityViolation.blocking || capabilityOverridden) ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
+                <div className={`text-sm font-bold flex items-center gap-2 ${(!capabilityViolation.blocking || capabilityOverridden) ? 'text-amber-800' : 'text-red-800'}`}>
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  {capabilityViolation.title}
+                  {capabilityOverridden && capabilityViolation.blocking && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 text-[10px] font-semibold uppercase tracking-wide">
+                      {t('agentDetails.overrideActive')}
+                    </span>
+                  )}
+                </div>
+                <div className={`text-xs mt-1.5 ${(!capabilityViolation.blocking || capabilityOverridden) ? 'text-amber-800' : 'text-red-700'}`}>
+                  {capabilityViolation.explanation}
+                </div>
+                {/* Name the offending capabilities and exactly which tools granted
+                    each, so the fix is obvious instead of a guessing game. */}
+                <ul className="mt-2 space-y-1">
+                  {capabilityViolation.capabilities.map((cap) => (
+                    <li key={cap} className={`text-xs ${(!capabilityViolation.blocking || capabilityOverridden) ? 'text-amber-900' : 'text-red-800'}`}>
+                      <span className="font-semibold">{CAPABILITY_LABELS[cap]}</span>
+                      {' — '}
+                      {(capabilityViolation.sources[cap] || []).join(', ') || '?'}
+                    </li>
+                  ))}
+                </ul>
+                <div className={`text-xs mt-2 ${(!capabilityViolation.blocking || capabilityOverridden) ? 'text-amber-700' : 'text-red-600'}`}>
+                  {!capabilityViolation.blocking
+                    ? t('agentDetails.capabilityAllowed')
+                    : capabilityOverridden
+                      ? t('agentDetails.capabilityOverridden')
+                      : t('agentDetails.capabilityBlocked')}
+                </div>
+              </div>
+            )}
             {toolsMessage && (
-              <div className={`text-xs mb-3 ${toolsMessage === 'Tools updated' ? 'text-green-600' : 'text-red-600'}`}>
+              <div className={`text-xs mb-3 ${toolsMessage === t('agentDetails.toolsUpdated') ? 'text-green-600' : 'text-red-600'}`}>
                 {toolsMessage}
               </div>
             )}
-            {visibleToolIds.filter(t => !REASONING_TOOLS.includes(t) && !MEMORY_TOOLS.includes(t)).length ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {visibleToolIds.filter(t => !REASONING_TOOLS.includes(t) && !MEMORY_TOOLS.includes(t)).map((tool) => {
-                  const enabled = selectedTools.includes(tool);
+            {toolCategories.length ? (
+              <div className="space-y-5">
+                {toolCategories.map(({ category, ids }) => {
+                  const enabledCount = ids.filter(t => selectedTools.includes(t)).length;
+                  const allOn = enabledCount === ids.length;
+                  const noneOn = enabledCount === 0;
                   return (
-                    <div key={tool} className="p-3 border border-gray-100 rounded-lg bg-gray-50 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-gray-800">{tool}</div>
-                        <div className="text-xs text-gray-500 mt-1">source: tools</div>
+                    <div key={category} className="border border-gray-100 rounded-lg overflow-hidden">
+                      {/* Category header with master switch */}
+                      <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-gray-800">{formatCategory(category)}</span>
+                          <span className="text-[11px] text-gray-400">{enabledCount}/{ids.length} on</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCategoryTools(ids, !allOn)}
+                          role="switch"
+                          aria-checked={allOn}
+                          title={allOn ? t('agentDetails.disableAllInCategory') : t('agentDetails.enableAllInCategory')}
+                          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                            allOn ? 'bg-indigo-600' : noneOn ? 'bg-gray-300' : 'bg-indigo-300'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                              allOn ? 'translate-x-5' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => toggleTool(tool)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${
-                          enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'
-                        }`}
-                      >
-                        {enabled ? 'On' : 'Off'}
-                      </button>
+                      {/* Tools in category */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3">
+                        {ids.map((tool) => {
+                          const enabled = selectedTools.includes(tool);
+                          const meta = toolsMeta[tool] || {};
+                          return (
+                            <div key={tool} className="p-3 border border-gray-100 rounded-lg bg-white flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold text-gray-800 truncate">{meta.label || tool}</div>
+                                <div className="text-xs text-gray-500 mt-1 truncate">{meta.description || tool}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => toggleTool(tool)}
+                                className={`px-2.5 py-1 rounded-full text-xs font-semibold border shrink-0 ${
+                                  enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'
+                                }`}
+                              >
+                                {enabled ? 'On' : 'Off'}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <p className="text-sm text-gray-500 italic">No tools configured for this agent.</p>
+              <p className="text-sm text-gray-500 italic">{t('agentDetails.noToolsConfiguredForThis')}</p>
             )}
             <p className="text-xs text-gray-500 mt-3">
-              Toggle tools on/off, then click <span className="font-semibold">Save Tools</span> to apply changes.
+              Toggle tools on/off, then click <span className="font-semibold">{t('agentDetails.saveTools')}</span> to apply changes.
             </p>
           </div>
+
+          {selectedTools.includes('run_agent_tool') && (
+            <div className="bg-white p-6 shadow-md rounded-lg">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2">
+                  <Share2 className="w-5 h-5 text-indigo-600" />
+                  <h3 className="text-lg font-bold text-gray-900">{t('agentDetails.delegation')}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSaveDelegates}
+                  disabled={delegatesSaving || !delegatesDirty.current}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                    delegatesSaving || !delegatesDirty.current
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                  }`}
+                >
+                  {delegatesSaving ? t('common.saving') : t('agentDetails.saveDelegation')}
+                </button>
+              </div>
+              <p className="text-sm text-gray-600 mb-4">
+                {t('agentDetails.delegationIntro')} <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">{t('agentDetails.runAgentTool')}</code>.
+                {t('agentDetails.delegationSelect')} <span className="font-semibold">{t('agentDetails.allUnselected')}</span> {t('agentDetails.delegationNoRestriction')}
+              </p>
+
+              <div className="flex items-center justify-between mb-2">
+                <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                  delegates.length ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
+                }`}>
+                  {delegates.length
+                    ? t('agentDetails.restrictedToCount', { count: delegates.length })
+                    : t('agentDetails.noRestriction')}
+                </span>
+                {delegates.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setDelegates([]); delegatesDirty.current = true; setDelegatesMessage(''); }}
+                    className="text-xs font-semibold text-gray-500 hover:text-gray-700"
+                  >
+                    {t('agentDetails.clearRestriction')}
+                  </button>
+                )}
+              </div>
+
+              {allAgents.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {allAgents.map((a) => {
+                    const aid = a.id || a;
+                    const enabled = delegates.includes(aid);
+                    return (
+                      <div key={aid} className="p-3 border border-gray-100 rounded-lg bg-white flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-gray-800 truncate">{a.name || aid}</div>
+                          <div className="text-xs text-gray-500 mt-1 truncate">{a.description || aid}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleDelegate(aid)}
+                          className={`px-2.5 py-1 rounded-full text-xs font-semibold border shrink-0 ${
+                            enabled ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'
+                          }`}
+                        >
+                          {enabled ? 'Allowed' : 'Off'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500 italic">{t('agentDetails.noOtherAgentsAvailableIn')}</p>
+              )}
+
+              {delegatesMessage && (
+                <p className="text-xs text-gray-600 mt-3">{delegatesMessage}</p>
+              )}
+            </div>
+          )}
 
         </div>
       )}
@@ -1891,11 +2602,11 @@ const AgentDetails = () => {
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold flex items-center">
               <Server className="w-5 h-5 mr-2 text-indigo-600" />
-              Agent Nodes
+              {t('agentDetails.agentNodes')}
             </h3>
             <div className="flex items-center gap-2">
               {nodesOverWsCap && (
-                <span className="text-xs text-orange-600 font-medium">Node limit reached ({wsSessionCap})</span>
+                <span className="text-xs text-orange-600 font-medium">{t('agentDetails.nodeLimitReached', { limit: wsSessionCap })}</span>
               )}
               <button
                 type="button"
@@ -1904,24 +2615,24 @@ const AgentDetails = () => {
                 className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Play className="w-3.5 h-3.5 mr-1" />
-                Start Node
+                {t('agentDetails.startNode')}
               </button>
             </div>
           </div>
           {nodes.length === 0 ? (
-            <p className="text-sm text-gray-500 italic">No nodes found for this agent.</p>
+            <p className="text-sm text-gray-500 italic">{t('agentDetails.noNodesFoundForThis')}</p>
           ) : (
             <div className="overflow-x-auto border border-gray-100 rounded-lg">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
-                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Node ID</th>
-                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Label</th>
-                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Workspace</th>
-                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Started</th>
-                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Uptime</th>
-                    <th className="text-right px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Actions</th>
+                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.status')}</th>
+                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.nodeId')}</th>
+                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.label')}</th>
+                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.workspace')}</th>
+                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.started')}</th>
+                    <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.uptime')}</th>
+                    <th className="text-right px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('agentDetails.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -1955,7 +2666,7 @@ const AgentDetails = () => {
                             <button
                               type="button"
                               onClick={() => openNodeLogs(node)}
-                              title="View logs"
+                              title={t('agentDetails.viewLogs')}
                               className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
                             >
                               <FileText className="w-4 h-4" />
@@ -1965,7 +2676,7 @@ const AgentDetails = () => {
                                 type="button"
                                 onClick={() => handleStopNode(nodeId)}
                                 disabled={!!busy}
-                                title="Stop node"
+                                title={t('agentDetails.stopNode')}
                                 className="p-1.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition-colors disabled:opacity-40"
                               >
                                 {busy === 'stopping' ? <Loader className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
@@ -1975,7 +2686,7 @@ const AgentDetails = () => {
                                 type="button"
                                 onClick={() => handleDeleteNode(nodeId)}
                                 disabled={!!busy}
-                                title="Remove record"
+                                title={t('agentDetails.removeRecord')}
                                 className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
                               >
                                 {busy === 'deleting' ? <Loader className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -1997,10 +2708,10 @@ const AgentDetails = () => {
         <div className="bg-white p-6 shadow-md rounded-lg">
           <h3 className="text-lg font-bold mb-4 flex items-center">
             <Clock className="w-5 h-5 mr-2 text-indigo-600" />
-            Tasks Assigned To This Agent
+            {t('agentDetails.tasksAssignedToThisAgent')}
           </h3>
           {agentTasks.length === 0 ? (
-            <p className="text-sm text-gray-500 italic">No tasks assigned to this agent yet.</p>
+            <p className="text-sm text-gray-500 italic">{t('agentDetails.noTasksAssignedToThis')}</p>
           ) : (
             <div className="space-y-3">
               {agentTasks
@@ -2021,7 +2732,7 @@ const AgentDetails = () => {
                           {task.title || task.id}
                         </Link>
                         <div className="text-xs text-gray-500 mt-1 truncate">{task.id}</div>
-                        <div className="text-xs text-gray-500 mt-1">Workspace: <span className="">{task.workspace || '—'}</span></div>
+                        <div className="text-xs text-gray-500 mt-1">{t('agentDetails.workspace2')} <span className="">{task.workspace || '—'}</span></div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <span className={`text-xs px-2 py-0.5 rounded font-semibold capitalize ${
@@ -2052,31 +2763,31 @@ const AgentDetails = () => {
       {activeTab === 'commands' && (() => {
         const agentCmds = agent?.commands || [];
         const globalCmds = [
-          { name: '/help', description: 'Show available commands', template: '/help' },
-          { name: '/clear', description: 'Clear the current conversation', template: '/clear' },
-          { name: '/new', description: 'Start a new conversation', template: '/new' },
-          { name: '/config', description: 'Show configuration for the current agent', template: '/config' },
+          { name: '/help', description: t('chat.commands.help'), template: '/help' },
+          { name: '/clear', description: t('chat.commands.clear'), template: '/clear' },
+          { name: '/new', description: t('chat.commands.new'), template: '/new' },
+          { name: '/config', description: t('chat.commands.config'), template: '/config' },
         ];
         return (
           <div className="space-y-6">
             <div className="bg-white p-6 shadow-md rounded-lg">
               <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
-                <Terminal className="w-5 h-5 text-indigo-600" /> Slash Commands
+                <Terminal className="w-5 h-5 text-indigo-600" /> {t('agentDetails.slashCommands')}
               </h3>
               <p className="text-sm text-gray-500 mb-5">
-                Type <span className=" bg-gray-100 px-1 rounded">/</span> in the chat to trigger these commands. Use <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">↑↓</kbd> to navigate, <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">Enter</kbd> or <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">Tab</kbd> to select, <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">Esc</kbd> to dismiss.
+                Type <span className=" bg-gray-100 px-1 rounded">/</span> {t('agentDetails.inTheChatToTrigger')} <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">↑↓</kbd> {t('agentDetails.toNavigate')} <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">{t('agentDetails.enter')}</kbd> {t('agentDetails.or')} <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">{t('agentDetails.tab')}</kbd> {t('agentDetails.toSelect')} <kbd className="text-xs bg-gray-100 border border-gray-200 rounded px-1">{t('agentDetails.esc')}</kbd> {t('agentDetails.toDismiss')}
               </p>
 
               {agentCmds.length > 0 && (
                 <div className="mb-6">
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Agent Commands</h4>
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">{t('agentDetails.agentCommands')}</h4>
                   <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden">
                     {agentCmds.map((cmd) => (
                       <div key={cmd.name} className="flex items-start gap-4 px-4 py-3 bg-white hover:bg-gray-50 transition-colors">
                         <span className=" text-sm font-semibold text-indigo-600 shrink-0 w-40">{cmd.name}</span>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-gray-700">{cmd.description}</p>
-                          <p className="text-xs text-gray-400 mt-0.5 truncate">Template: {cmd.template}</p>
+                          <p className="text-xs text-gray-400 mt-0.5 truncate">{t('agentDetails.template')}: {cmd.template}</p>
                         </div>
                       </div>
                     ))}
@@ -2087,12 +2798,12 @@ const AgentDetails = () => {
               {agentCmds.length === 0 && (
                 <div className="mb-6 flex items-center gap-3 p-4 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-700">
                   <Hash className="w-4 h-4 shrink-0" />
-                  No agent-specific commands defined. Add a <span className=" mx-1">"commands"</span> array to this agent in <span className=" ml-1">.agents_hub/agents.json</span>.
+                  {t('agentDetails.noAgentCommands')} <span className=" mx-1">"commands"</span> {t('agentDetails.arrayToThisAgentIn')} <span className=" ml-1">.agents_hub/agents.json</span>.
                 </div>
               )}
 
               <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Global Commands</h4>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">{t('agentDetails.globalCommands')}</h4>
                 <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden">
                   {globalCmds.map((cmd) => (
                     <div key={cmd.name} className="flex items-start gap-4 px-4 py-3 bg-white hover:bg-gray-50 transition-colors">
@@ -2110,17 +2821,15 @@ const AgentDetails = () => {
       })()}
 
       {activeTab === 'config' && (
-        <div className="space-y-6">
-          {agentDefinition.definition_dir && (
-            <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-4 py-2 text-xs text-indigo-700 break-all">
-              Definition folder: <span className="font-mono">{agentDefinition.definition_dir}</span>
-            </div>
-          )}
+        <>
+        <div className={defChat.gridClass}>
+          <div className={`space-y-6 ${defChat.mainClass}`}>
+          {agent.system && <SystemAgentWarning scope="config" />}
 
           {[
-            { key: 'instructions', label: 'instructions.md', desc: 'Main system prompt (required).', icon: Terminal, required: true },
-            { key: 'capabilities', label: 'capabilities.md', desc: 'What this agent can do. Optional — leave empty to delete.', icon: Zap, required: false },
-            { key: 'usage',        label: 'usage.md',        desc: 'When and how to invoke this agent. Optional — leave empty to delete.', icon: BookOpen, required: false },
+            { key: 'instructions', label: 'instructions.md', desc: t('agentDetails.definitions.instructions'), icon: Terminal, required: true },
+            { key: 'capabilities', label: 'capabilities.md', desc: t('agentDetails.definitions.capabilities'), icon: Zap, required: false },
+            { key: 'usage',        label: 'usage.md',        desc: t('agentDetails.definitions.usage'), icon: BookOpen, required: false },
           ].map(({ key, label, desc, icon: Icon, required }) => {
             const original = agentDefinition[key] || '';
             const draft = defDraft[key] || '';
@@ -2135,7 +2844,7 @@ const AgentDetails = () => {
                     <h3 className="text-lg font-bold flex items-center">
                       <Icon className="w-5 h-5 mr-2 text-indigo-600" />
                       {label}
-                      {required && <span className="ml-2 text-[10px] uppercase tracking-wide font-bold text-red-500">Required</span>}
+                      {required && <span className="ml-2 text-[10px] uppercase tracking-wide font-bold text-red-500">{t('agentDetails.required')}</span>}
                     </h3>
                     <p className="text-xs text-gray-500 mt-1">{desc}</p>
                   </div>
@@ -2145,12 +2854,12 @@ const AgentDetails = () => {
                       disabled={!dirty || saving}
                       className="px-3 py-1.5 text-xs font-semibold text-gray-600 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      Reset
+                      {t('agentDetails.reset')}
                     </button>
                     <button
                       onClick={() => handleSaveDefinitionField(key)}
                       disabled={!dirty || saving || cannotDelete}
-                      title={cannotDelete ? 'instructions.md cannot be empty' : undefined}
+                      title={cannotDelete ? t('agentDetails.instructionsRequired') : undefined}
                       className="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {saving ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1" />}
@@ -2163,13 +2872,13 @@ const AgentDetails = () => {
                   onChange={e => handleDefinitionDraftChange(key, e.target.value)}
                   spellCheck={false}
                   className="w-full font-mono text-xs bg-gray-900 text-green-300 p-4 rounded-lg min-h-[200px] resize-y border border-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder={required ? 'Required — must contain the system prompt' : 'Optional — leave empty to delete this file'}
+                  placeholder={required ? t('agentDetails.definitionRequired') : t('agentDetails.definitionOptional')}
                 />
                 {error && (
                   <p className="text-xs text-red-600 mt-2">{error}</p>
                 )}
                 {dirty && !error && (
-                  <p className="text-xs text-amber-600 mt-2">Unsaved changes</p>
+                  <p className="text-xs text-amber-600 mt-2">{t('agentDetails.unsavedChanges')}</p>
                 )}
               </div>
             );
@@ -2182,14 +2891,22 @@ const AgentDetails = () => {
                 Assembled System Prompt (read-only)
               </h3>
               <p className="text-xs text-gray-500 mb-3">
-                What the agent actually receives at runtime: instructions.md plus capabilities.md and usage.md sections when present.
+                {t('agentDetails.whatTheAgentActuallyReceives')}
               </p>
               <pre className="text-xs bg-gray-900 text-green-300 p-4 rounded-lg overflow-auto whitespace-pre-wrap max-h-96">
                 {agentDefinition.system_prompt}
               </pre>
             </div>
           )}
+          </div>
+
+          {defChat.open && definitionChat && (
+            <ChatColumn>
+              <EntityChat {...definitionChat} {...FILL_COLUMN} />
+            </ChatColumn>
+          )}
         </div>
+        </>
       )}
 
       {activeTab === 'model' && (
@@ -2201,7 +2918,7 @@ const AgentDetails = () => {
                 <BrainCircuit className="w-5 h-5 text-indigo-600" /> Model & Access Settings
               </h3>
               <p className="text-sm text-gray-500 mt-1">
-                Override the global model settings for this agent. Leave fields blank to inherit from global settings.
+                {t('agentDetails.overrideTheGlobalModelSettings')}
               </p>
             </div>
             <button
@@ -2222,15 +2939,16 @@ const AgentDetails = () => {
 
           {/* Provider */}
           <div className="bg-white p-6 shadow-md rounded-lg space-y-5">
-            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Provider</h4>
+            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">{t('agentDetails.provider')}</h4>
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
               {[
-                { value: 'inherit',   label: 'Inherit',    sub: 'global' },
-                { value: 'openai',    label: 'OpenAI',     sub: 'Cloud' },
+                { value: 'inherit',   label: t('agentDetails.inherit'), sub: t('agentDetails.globalSub') },
+                { value: 'openai',    label: 'OpenAI',     sub: t('agentDetails.cloudSub') },
                 { value: 'anthropic', label: 'Anthropic',  sub: 'Claude' },
                 { value: 'google',    label: 'Google',     sub: 'Gemini' },
-                { value: 'ollama',    label: 'Ollama',     sub: 'Local' },
-                { value: 'lmstudio', label: 'LM Studio',  sub: 'Local' },
+                { value: 'ollama',    label: 'Ollama',     sub: t('agentDetails.localSub') },
+                { value: 'lmstudio', label: 'LM Studio',  sub: t('agentDetails.localSub') },
+                ...customBackends.map(b => ({ value: b.id, label: b.label || b.id, sub: t('agentDetails.customSub') })),
               ].map(opt => (
                 <button
                   key={opt.value}
@@ -2251,16 +2969,17 @@ const AgentDetails = () => {
 
           {/* Model name */}
           <div className="bg-white p-6 shadow-md rounded-lg space-y-5">
-            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Model</h4>
+            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">{t('agentDetails.model2')}</h4>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Model name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.modelName')}</label>
               <p className="text-xs text-gray-500 mb-2">
-                {modelForm.provider === 'inherit' && 'Inheriting model from global settings.'}
+                {modelForm.provider === 'inherit' && t('agentDetails.inheritingModel')}
                 {modelForm.provider === 'openai' && 'e.g. gpt-4o, gpt-4o-mini, gpt-4-turbo'}
                 {modelForm.provider === 'anthropic' && 'e.g. claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001'}
                 {modelForm.provider === 'google' && 'e.g. gemini-2.0-flash, gemini-1.5-pro'}
-                {modelForm.provider === 'ollama' && 'e.g. llama3, mistral, phi3 (must be pulled via ollama pull)'}
-                {modelForm.provider === 'lmstudio' && 'Model identifier shown in LM Studio'}
+                {modelForm.provider === 'ollama' && t('agentDetails.ollamaModelHint')}
+                {modelForm.provider === 'lmstudio' && t('agentDetails.lmstudioModelHint')}
+                {customBackends.some(b => b.id === modelForm.provider) && t('agentDetails.customBackendModelHint')}
               </p>
               {(modelForm.provider === 'ollama' || modelForm.provider === 'lmstudio') && localModels.length > 0 ? (
                 <select
@@ -2268,7 +2987,7 @@ const AgentDetails = () => {
                   onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 >
-                  <option value="">— select a model —</option>
+                  <option value="">{t('agentDetails.selectAModel')}</option>
                   {localModels.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               ) : (
@@ -2276,7 +2995,7 @@ const AgentDetails = () => {
                   type="text"
                   value={modelForm.model}
                   onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
-                  placeholder={modelForm.provider === 'inherit' ? '(inheriting from global settings)' : 'Enter model name…'}
+                  placeholder={modelForm.provider === 'inherit' ? t('agentDetails.inheritingPlaceholder') : t('agentDetails.enterModelName')}
                   disabled={modelForm.provider === 'inherit'}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:opacity-50 disabled:bg-gray-50"
                 />
@@ -2289,11 +3008,11 @@ const AgentDetails = () => {
             {/* Base URL */}
             {(modelForm.provider === 'openai' || modelForm.provider === 'ollama' || modelForm.provider === 'lmstudio') && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Base URL override</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.baseUrlOverride')}</label>
                 <p className="text-xs text-gray-500 mb-2">
-                  {modelForm.provider === 'openai' && 'Leave blank for api.openai.com. Use for Azure or compatible proxies.'}
-                  {modelForm.provider === 'ollama' && 'Ollama server address (default: http://localhost:11434)'}
-                  {modelForm.provider === 'lmstudio' && 'LM Studio server address (default: http://localhost:1234)'}
+                  {modelForm.provider === 'openai' && t('agentDetails.openaiBaseUrlHint')}
+                  {modelForm.provider === 'ollama' && t('agentDetails.ollamaBaseUrlHint')}
+                  {modelForm.provider === 'lmstudio' && t('agentDetails.lmstudioBaseUrlHint')}
                 </p>
                 <div className="flex gap-2">
                   <input
@@ -2326,28 +3045,28 @@ const AgentDetails = () => {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Temperature override</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.temperatureOverride')}</label>
                 <input
                   type="number"
                   value={modelForm.temperature}
                   onChange={e => setModelForm(f => ({ ...f, temperature: e.target.value }))}
-                  placeholder="(inherit global)"
+                  placeholder={t('agentDetails.inheritGlobal')}
                   min="0" max="2" step="0.05"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
-                <p className="text-xs text-gray-400 mt-1">Clear to inherit from global settings</p>
+                <p className="text-xs text-gray-400 mt-1">{t('agentDetails.clearToInheritFromGlobal')}</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Max tokens override</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.maxTokensOverride')}</label>
                 <input
                   type="number"
                   value={modelForm.max_tokens}
                   onChange={e => setModelForm(f => ({ ...f, max_tokens: e.target.value }))}
-                  placeholder="(inherit global)"
+                  placeholder={t('agentDetails.inheritGlobal')}
                   min="256" step="256"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
-                <p className="text-xs text-gray-400 mt-1">Clear to inherit from global settings</p>
+                <p className="text-xs text-gray-400 mt-1">{t('agentDetails.clearToInheritFromGlobal')}</p>
               </div>
             </div>
           </div>
@@ -2355,17 +3074,17 @@ const AgentDetails = () => {
           {/* API Key override */}
           {(modelForm.provider !== 'inherit' && modelForm.provider !== 'ollama' && modelForm.provider !== 'lmstudio') && (
             <div className="bg-white p-6 shadow-md rounded-lg space-y-4">
-              <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">API Key Override</h4>
+              <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">{t('agentDetails.apiKeyOverride')}</h4>
               <p className="text-sm text-gray-500">
                 Optionally store a per-agent API key. This overrides the key from global settings for this agent only.
-                {modelHasApiKey && <span className="ml-1 text-green-600 font-medium">A key is currently stored.</span>}
+                {modelHasApiKey && <span className="ml-1 text-green-600 font-medium">{t('agentDetails.aKeyIsCurrentlyStored')}</span>}
               </p>
               <div className="relative">
                 <input
                   type={modelShowKey ? 'text' : 'password'}
                   value={modelForm.api_key}
                   onChange={e => setModelForm(f => ({ ...f, api_key: e.target.value }))}
-                  placeholder={modelHasApiKey ? '(key stored — enter new to replace)' : 'Enter API key…'}
+                  placeholder={modelHasApiKey ? t('agentDetails.keyStored') : t('agentDetails.enterApiKey')}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
                 <button
@@ -2381,12 +3100,12 @@ const AgentDetails = () => {
                   type="button"
                   onClick={() => {
                     updateAgentModel(id, { clear_api_key: true })
-                      .then(r => { setModelHasApiKey(!!r.data.has_api_key); setModelMessage('API key removed'); setTimeout(() => setModelMessage(''), 3000); })
-                      .catch(() => setModelMessage('Failed to remove key'));
+                      .then(r => { setModelHasApiKey(!!r.data.has_api_key); setModelMessage(t('agentDetails.apiKeyRemoved')); setTimeout(() => setModelMessage(''), 3000); })
+                      .catch(() => setModelMessage(t('agentDetails.errors.removeKey')));
                   }}
                   className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
                 >
-                  <Trash2 className="w-3.5 h-3.5" /> Remove stored key
+                  <Trash2 className="w-3.5 h-3.5" /> {t('agentDetails.removeStoredKey')}
                 </button>
               )}
             </div>
@@ -2400,7 +3119,7 @@ const AgentDetails = () => {
           <div className="bg-white p-6 shadow-md rounded-lg">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2">
-                <Layers className="w-4 h-4 text-indigo-500" /> Docker Images
+                <Layers className="w-4 h-4 text-indigo-500" /> {t('agentDetails.dockerImages')}
               </h3>
               <button
                 onClick={fetchDockerData}
@@ -2415,8 +3134,8 @@ const AgentDetails = () => {
             {/* Image rows */}
             <div className="space-y-2 mb-5">
               {[
-                { label: 'Base image', tag: 'agents-hub/base:latest' },
-                { label: `Agent image (${id})`, tag: `agents-hub/${id}:latest` },
+                { label: t('agentDetails.baseImage'), tag: 'agents-hub/base:latest' },
+                { label: t('agentDetails.agentImage', { id }), tag: `agents-hub/${id}:latest` },
               ].map(({ label, tag }) => {
                 const exists = dockerImages.some(img => `${img.repository}:${img.tag}` === tag || img.repository === tag.split(':')[0]);
                 return (
@@ -2427,7 +3146,7 @@ const AgentDetails = () => {
                     </div>
                     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold ${exists ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${exists ? 'bg-green-500' : 'bg-gray-400'}`} />
-                      {exists ? 'Built' : 'Not built'}
+                      {exists ? t('agentDetails.built') : t('agentDetails.notBuilt')}
                     </span>
                   </div>
                 );
@@ -2442,7 +3161,7 @@ const AgentDetails = () => {
                 className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-gray-700 rounded-lg hover:bg-gray-800 disabled:opacity-50"
               >
                 {buildingBase ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                {buildingBase ? 'Building base…' : 'Build base image'}
+                {buildingBase ? t('agentDetails.buildingBase') : t('agentDetails.buildBaseImage')}
               </button>
               <button
                 onClick={handleBuildAgent}
@@ -2450,7 +3169,7 @@ const AgentDetails = () => {
                 className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >
                 {buildingAgent ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                {buildingAgent ? 'Building…' : `Build agent image`}
+                {buildingAgent ? t('agentDetails.building') : t('agentDetails.buildAgentImage')}
               </button>
             </div>
 
@@ -2472,34 +3191,34 @@ const AgentDetails = () => {
           {/* Dockerfile preview */}
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-3">
-              <FileCode className="w-4 h-4 text-indigo-500" /> Dockerfile
+              <FileCode className="w-4 h-4 text-indigo-500" /> {t('agentDetails.dockerfile')}
             </h3>
             <p className="text-xs text-gray-500 mb-3">
-              Auto-generated per-agent Dockerfile. Extends <code className="text-indigo-600">agents-hub/base:latest</code> and sets the agent identity.
-              Saved to <code className="text-indigo-600">agents/state/dockerfiles/{id}.Dockerfile</code>.
+              {t('agentDetails.dockerfileHintBefore')} <code className="text-indigo-600">agents-hub/base:latest</code> {t('agentDetails.dockerfileHintAfter')}{' '}
+              <code className="text-indigo-600">agents/state/dockerfiles/{id}.Dockerfile</code>.
             </p>
             {dockerfileLoading ? (
               <div className="flex justify-center py-8"><Loader className="w-5 h-5 animate-spin text-indigo-400" /></div>
             ) : dockerfileContent ? (
               <pre className="text-xs bg-gray-900 text-green-300 rounded-lg p-4 overflow-auto max-h-72 whitespace-pre-wrap">{dockerfileContent}</pre>
             ) : (
-              <p className="text-sm text-gray-400 italic">Dockerfile preview unavailable.</p>
+              <p className="text-sm text-gray-400 italic">{t('agentDetails.dockerfilePreviewUnavailable')}</p>
             )}
           </div>
 
           {/* Running containers */}
           <div className="bg-white p-6 shadow-md rounded-lg">
             <h3 className="text-base font-semibold text-gray-800 flex items-center gap-2 mb-4">
-              <Server className="w-4 h-4 text-indigo-500" /> Containers
-              <span className="text-xs text-gray-400 font-normal">(for this agent)</span>
+              <Server className="w-4 h-4 text-indigo-500" /> {t('agentDetails.containers')}
+              <span className="text-xs text-gray-400 font-normal">({t('agentDetails.forThisAgent')})</span>
             </h3>
             {dockerLoading ? (
               <div className="flex justify-center py-6"><Loader className="w-5 h-5 animate-spin text-indigo-400" /></div>
             ) : dockerContainers.length === 0 ? (
               <div className="text-center py-8 text-gray-400">
                 <Server className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                <p className="text-sm">No containers found for this agent.</p>
-                <p className="text-xs mt-1">Start a node in Docker mode from the Nodes tab.</p>
+                <p className="text-sm">{t('agentDetails.noContainersFoundForThis')}</p>
+                <p className="text-xs mt-1">{t('agentDetails.startANodeInDocker')}</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -2521,7 +3240,7 @@ const AgentDetails = () => {
                           onClick={() => handleShowContainerLogs(c.name)}
                           className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 px-2 py-1 rounded-lg hover:bg-gray-50"
                         >
-                          Logs
+                          {t('agentDetails.logs')}
                         </button>
                         {isRunning && (
                           <button
@@ -2557,16 +3276,16 @@ const AgentDetails = () => {
           {/* ── Configuration card ── */}
           <div className="bg-white rounded-xl border border-t-4 border-t-purple-500 border-gray-200 p-6 shadow-sm">
             <h3 className="text-base font-bold text-gray-900 mb-1 flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-purple-500" /> Skills Configuration
+              <BookOpen className="w-5 h-5 text-purple-500" /> {t('agentDetails.skillsConfiguration')}
             </h3>
             <p className="text-sm text-gray-500 mb-5">
               When enabled, relevant skills are automatically matched to the task description and injected before the agent starts.
-              Agents can also discover and save new skills using the <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">save_skill</code> tool.
+              Agents can also discover and save new skills using the <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">{t('agentDetails.saveSkill')}</code> tool.
             </p>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-700">Procedural Skills</p>
-                <p className="text-xs text-gray-400 mt-0.5">Scope: this agent · workspace-specific</p>
+                <p className="text-sm font-medium text-gray-700">{t('agentDetails.proceduralSkills')}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{t('agentDetails.scopeThisAgentWorkspaceSpecific')}</p>
               </div>
               <button
                 onClick={() => handleToggleSkillsEnabled(!skillsEnabled)}
@@ -2585,7 +3304,7 @@ const AgentDetails = () => {
           {!selectedWorkspace ? (
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center shadow-sm">
               <BookOpen className="w-8 h-8 text-gray-300 mx-auto mb-3" />
-              <p className="text-sm text-gray-500">Select a workspace to view and manage skills.</p>
+              <p className="text-sm text-gray-500">{t('agentDetails.selectAWorkspaceToView')}</p>
             </div>
           ) : (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -2607,7 +3326,7 @@ const AgentDetails = () => {
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700"
                 >
                   {showAddSkill ? <ChevronUp className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                  {showAddSkill ? 'Cancel' : 'Add Skill'}
+                  {showAddSkill ? t('common.cancel') : t('agentDetails.addSkill')}
                 </button>
               </div>
 
@@ -2616,43 +3335,43 @@ const AgentDetails = () => {
                 <div className="px-5 py-4 bg-purple-50 border-b border-purple-100 space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Name</label>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('agentDetails.name')}</label>
                       <input
                         type="text"
                         value={skillForm.name}
                         onChange={e => setSkillForm(f => ({ ...f, name: e.target.value }))}
-                        placeholder="e.g. Fix Python Import Error"
+                        placeholder={t('agentDetails.eGFixPythonImport')}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">Tags <span className="text-gray-400 font-normal">(comma-separated)</span></label>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('agentDetails.tags')} <span className="text-gray-400 font-normal">({t('agentDetails.commaSeparated')})</span></label>
                       <input
                         type="text"
                         value={skillForm.tags}
                         onChange={e => setSkillForm(f => ({ ...f, tags: e.target.value }))}
-                        placeholder="e.g. debugging, python, api"
+                        placeholder={t('agentDetails.eGDebuggingPythonApi')}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">When to use this skill</label>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">{t('agentDetails.whenToUseThisSkill')}</label>
                     <input
                       type="text"
                       value={skillForm.description}
                       onChange={e => setSkillForm(f => ({ ...f, description: e.target.value }))}
-                      placeholder="e.g. When a Python module import fails with ModuleNotFoundError"
+                      placeholder={t('agentDetails.eGWhenAPython')}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Steps <span className="text-gray-400 font-normal">(one per line)</span></label>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">{t('agentDetails.steps')} <span className="text-gray-400 font-normal">({t('agentDetails.onePerLine')})</span></label>
                     <textarea
                       value={skillForm.steps}
                       onChange={e => setSkillForm(f => ({ ...f, steps: e.target.value }))}
                       rows={5}
-                      placeholder={"Check if package is in requirements.txt\nActivate virtual environment\nRun pip install -r requirements.txt\nRetry the import"}
+                      placeholder={t('agentDetails.stepsPlaceholder')}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
                     />
                   </div>
@@ -2663,7 +3382,7 @@ const AgentDetails = () => {
                       className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-40"
                     >
                       {skillSaving ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                      {skillSaving ? 'Saving…' : 'Save Skill'}
+                      {skillSaving ? t('common.saving') : t('agentDetails.saveSkillButton')}
                     </button>
                   </div>
                 </div>
@@ -2677,8 +3396,8 @@ const AgentDetails = () => {
               ) : skills.length === 0 ? (
                 <div className="py-12 text-center">
                   <BookOpen className="w-8 h-8 text-gray-200 mx-auto mb-3" />
-                  <p className="text-sm text-gray-500">No skills yet for this agent in <strong>{selectedWorkspace}</strong>.</p>
-                  <p className="text-xs text-gray-400 mt-1">Add one above, or the agent will create skills automatically when <code className="bg-gray-100 px-1 rounded">save_skill</code> is called.</p>
+                  <p className="text-sm text-gray-500">{t('agentDetails.noSkillsYetForThis')} <strong>{selectedWorkspace}</strong>.</p>
+                  <p className="text-xs text-gray-400 mt-1">{t('agentDetails.addOneAboveOrThe')} <code className="bg-gray-100 px-1 rounded">{t('agentDetails.saveSkill')}</code> {t('agentDetails.isCalled')}</p>
                 </div>
               ) : (
                 <div className="divide-y divide-gray-100">
@@ -2692,15 +3411,15 @@ const AgentDetails = () => {
                               {skill.source}
                             </span>
                             {skill.use_count > 0 && (
-                              <span className="text-[10px] text-gray-400">{skill.use_count}× used</span>
+                              <span className="text-[10px] text-gray-400">{t('agentDetails.usedCount', { count: skill.use_count })}</span>
                             )}
                           </div>
                           <p className="text-xs text-gray-500 italic mb-2">{skill.description}</p>
                           {skill.tags.length > 0 && (
                             <div className="flex items-center gap-1 flex-wrap mb-2">
                               <Tag className="w-3 h-3 text-gray-300" />
-                              {skill.tags.map(t => (
-                                <span key={t} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{t}</span>
+                              {skill.tags.map(tag => (
+                                <span key={tag} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{tag}</span>
                               ))}
                             </div>
                           )}
@@ -2714,7 +3433,7 @@ const AgentDetails = () => {
                           onClick={() => handleDeleteSkill(skill.id)}
                           disabled={skillDeleteBusy[skill.id]}
                           className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 mt-0.5"
-                          title="Delete skill"
+                          title={t('agentDetails.deleteSkill')}
                         >
                           {skillDeleteBusy[skill.id]
                             ? <Loader className="w-4 h-4 animate-spin" />
@@ -2758,7 +3477,7 @@ const AgentDetails = () => {
             <div className="flex items-center justify-between p-5 border-b">
               <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
                 <Play className="w-4 h-4 text-indigo-600" />
-                Start Node
+                {t('agentDetails.startNode')}
               </h2>
               <button onClick={() => setShowStartNodeModal(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
@@ -2767,14 +3486,14 @@ const AgentDetails = () => {
             <div className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-                  Workspace
+                  {t('agentDetails.workspace')}
                 </label>
                 <select
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   value={startWorkspace}
                   onChange={(e) => setStartWorkspace(e.target.value)}
                 >
-                  <option value="">— None —</option>
+                  <option value="">{t('agentDetails.none2')}</option>
                   {workspaces.map((ws) => (
                     <option key={ws.name} value={ws.name}>{ws.label || ws.id || ws.name}</option>
                   ))}
@@ -2782,11 +3501,11 @@ const AgentDetails = () => {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-                  Label <span className="text-gray-400 font-normal normal-case">(optional)</span>
+                  {t('agentDetails.label')} <span className="text-gray-400 font-normal normal-case">({t('common.optional')})</span>
                 </label>
                 <input
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="e.g. dev-worker"
+                  placeholder={t('agentDetails.eGDevWorker')}
                   value={startLabel}
                   onChange={(e) => setStartLabel(e.target.value)}
                 />
@@ -2798,7 +3517,7 @@ const AgentDetails = () => {
                   className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
                   disabled={startingNode}
                 >
-                  Cancel
+                  {t('agentDetails.cancel')}
                 </button>
                 <button
                   type="button"
@@ -2807,7 +3526,7 @@ const AgentDetails = () => {
                   className="flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {startingNode ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                  {startingNode ? 'Starting…' : 'Start Node'}
+                  {startingNode ? t('agentDetails.starting') : t('agentDetails.startNode')}
                 </button>
               </div>
             </div>
@@ -2844,7 +3563,7 @@ const AgentDetails = () => {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 };
 

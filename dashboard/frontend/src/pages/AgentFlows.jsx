@@ -1,17 +1,22 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ChevronDown, ChevronUp, Factory, GitBranch, Loader2, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
-import { createFlow, deleteFlow, generateFlow, listFlows, testLocalModel } from '../api';
-import { useWorkspace } from '../components/WorkspaceContext';
+import { AlertTriangle, ChevronDown, ChevronUp, Download, Factory, GitBranch, Globe, Loader2, Plus, RefreshCw, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { createFlow, deleteFlow, exportFlow, generateFlow, importFlow, listFlows, testLocalModel, updateFlowSharing } from '../api';
+import { useWorkspace } from '../components/workspace';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
 const PROVIDERS = [
-  { value: '', label: 'Inherit global settings' },
+  { value: '', labelKey: 'agentFlows.providers.inherit' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'google', label: 'Google' },
-  { value: 'ollama', label: 'Ollama (local)' },
-  { value: 'lmstudio', label: 'LM Studio (local)' },
+  { value: 'ollama', labelKey: 'agentFlows.providers.ollama' },
+  { value: 'lmstudio', labelKey: 'agentFlows.providers.lmstudio' },
 ];
+
+// Built-in brand names stay as they are; only the descriptive rows carry a key.
+const providerLabel = (p, t) => (p.labelKey ? t(p.labelKey) : p.label);
 
 const CLOUD_MODELS = {
   openai: [
@@ -32,17 +37,19 @@ const DEFAULT_BASE_URLS = {
   lmstudio: 'http://localhost:1234',
 };
 
-function formatDate(value) {
-  if (!value) return 'No activity yet';
+function formatDate(value, t) {
+  if (!value) return t('agentFlows.noActivityYet');
   return new Date(value).toLocaleString();
 }
 
 const AgentFlows = () => {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { selectedWorkspace, workspaceFilter } = useWorkspace();
   const [flows, setFlows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [newFlow, setNewFlow] = useState({ name: '', description: '' });
 
   // AI wizard state
@@ -60,7 +67,16 @@ const AgentFlows = () => {
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState('');
 
-  const loadFlows = async () => {
+  // Import state
+  const fileInputRef = useRef(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importYaml, setImportYaml] = useState('');
+  const [importName, setImportName] = useState('');
+  const [importFileName, setImportFileName] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+
+  const loadFlows = useCallback(async () => {
     setLoading(true);
     try {
       const response = await listFlows(workspaceFilter);
@@ -70,11 +86,11 @@ const AgentFlows = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [workspaceFilter]);
 
   useEffect(() => {
     loadFlows();
-  }, [selectedWorkspace]);
+  }, [loadFlows, selectedWorkspace]);
 
   const visibleFlows = useMemo(() => flows, [flows]);
 
@@ -97,13 +113,90 @@ const AgentFlows = () => {
   };
 
   const handleDelete = async (flowId) => {
-    if (!confirm('Delete this flow?')) return;
+    if (!confirm(t('agentFlows.confirmDelete'))) return;
     try {
       await deleteFlow(flowId);
       await loadFlows();
     } catch (error) {
-      alert(`Failed to delete flow: ${error.response?.data?.detail || error.message}`);
+      alert(`${t('agentFlows.deleteFailed')}: ${error.response?.data?.detail || error.message}`);
     }
+  };
+
+  const handleShare = async (flow) => {
+    const next = !flow.shared;
+    const prompt = next
+      ? t('agentFlows.confirmPublish')
+      : t('agentFlows.confirmUnpublish');
+    if (!confirm(prompt)) return;
+    try {
+      await updateFlowSharing(flow.id, next);
+      await loadFlows();
+    } catch (error) {
+      alert(`Failed to update sharing: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  const handleExport = async (flow) => {
+    try {
+      const response = await exportFlow(flow.id);
+      const blob = new Blob([response.data], { type: 'application/x-yaml' });
+      const url = URL.createObjectURL(blob);
+      const slug = (flow.name || flow.id).replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '') || 'flow';
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${slug}.yaml`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(`Failed to export flow: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  const handleFilePicked = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // allow re-picking the same file later
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setImportYaml(text);
+      setImportFileName(file.name);
+      setImportName(file.name.replace(/\.ya?ml$/i, ''));
+      setImportError('');
+      setImportOpen(true);
+    } catch (error) {
+      alert(`${t('agentFlows.readFileFailed')}: ${error.message}`);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importYaml.trim()) {
+      setImportError(t('agentFlows.noYamlToImport'));
+      return;
+    }
+    setImporting(true);
+    setImportError('');
+    try {
+      const response = await importFlow({
+        yaml: importYaml,
+        name: importName.trim() || undefined,
+      });
+      closeImport();
+      navigate(`/flows/${response.data.id}`);
+    } catch (error) {
+      setImportError(error.response?.data?.detail || error.message || t('agentFlows.importFailed'));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const closeImport = () => {
+    setImportOpen(false);
+    setImportYaml('');
+    setImportName('');
+    setImportFileName('');
+    setImportError('');
   };
 
   const handleWizardGenerate = async () => {
@@ -121,7 +214,7 @@ const AgentFlows = () => {
       });
       setWizardResult(response.data);
     } catch (error) {
-      setWizardError(error.response?.data?.detail || error.message || 'Generation failed');
+      setWizardError(error.response?.data?.detail || error.message || t('agentFlows.generationFailed'));
     } finally {
       setWizardLoading(false);
     }
@@ -129,16 +222,24 @@ const AgentFlows = () => {
 
   const handleApplyGeneratedFlow = async () => {
     if (!wizardResult || wizardResult.type !== 'flow') return;
+    // The flow_creator agent already persisted the flow — just open it.
+    if (wizardResult.flow_id) {
+      const flowId = wizardResult.flow_id;
+      setWizardOpen(false);
+      setWizardResult(null);
+      setWizardReq('');
+      navigate(`/flows/${flowId}`);
+      return;
+    }
     setApplyingFlow(true);
     try {
       const response = await createFlow({
-        name: wizardResult.name || 'AI Generated Flow',
+        name: wizardResult.name || t('agentFlows.aiGeneratedFlow'),
         description: wizardResult.description || '',
       });
       const flowId = response.data.id;
 
       // Build ReactFlow-compatible nodes and edges with positions
-      const nodeCount = wizardResult.nodes?.length || 0;
       const nodes = (wizardResult.nodes || []).map((n, i) => ({
         id: n.id,
         agent_id: n.agent_id,
@@ -180,10 +281,10 @@ const AgentFlows = () => {
           setWizardModel(models[0]);
         }
       } else {
-        setFetchModelsError(response.data.error || 'Could not connect to server');
+        setFetchModelsError(response.data.error || t('agentFlows.couldNotConnect'));
       }
     } catch (e) {
-      setFetchModelsError(e.response?.data?.detail || e.message || 'Failed to fetch models');
+      setFetchModelsError(e.response?.data?.detail || e.message || t('agentFlows.fetchModelsFailed'));
     } finally {
       setFetchingModels(false);
     }
@@ -212,96 +313,56 @@ const AgentFlows = () => {
   };
 
   return (
-    <div className="space-y-8">
-      <section className="rounded-[28px] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(14,116,144,0.16),_transparent_32%),linear-gradient(135deg,#f8fafc_0%,#ecfeff_45%,#fefce8_100%)] p-8 shadow-sm">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-2xl space-y-3">
-            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-700">
-              <Factory className="h-3.5 w-3.5" />
-              Agent Flows
-            </div>
-            <h1 className="text-4xl font-black tracking-tight text-slate-900">Agents as visual flows</h1>
-            <p className="max-w-xl text-sm leading-6 text-slate-600">
-              Build reusable delivery pipelines, attach a shared task context, and run either the whole flow or one agent at a time.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-2xl border border-white/70 bg-white/80 p-4 shadow-sm backdrop-blur">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Visible</div>
-              <div className="mt-2 text-3xl font-black text-slate-900">{visibleFlows.length}</div>
-            </div>
-            <div className="rounded-2xl border border-white/70 bg-white/80 p-4 shadow-sm backdrop-blur">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Workspace</div>
-              <div className="mt-2 text-sm font-bold text-slate-900">{selectedWorkspace || 'All'}</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <div className="space-y-4">
-          <form onSubmit={handleCreate} className="space-y-5 rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="space-y-2">
-              <h2 className="text-lg font-bold text-slate-900">New flow</h2>
-              <p className="text-sm text-slate-500">Start with a blank canvas, then drag agents into the flow.</p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Name</label>
-              <input
-                value={newFlow.name}
-                onChange={(event) => setNewFlow((current) => ({ ...current, name: event.target.value }))}
-                placeholder="Customer onboarding pipeline"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Description</label>
-              <textarea
-                value={newFlow.description}
-                onChange={(event) => setNewFlow((current) => ({ ...current, description: event.target.value }))}
-                rows={4}
-                placeholder="What this flow is responsible for."
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={creating}
-              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-300"
-            >
-              <Plus className="h-4 w-4" />
-              {creating ? 'Creating...' : 'Create flow'}
-            </button>
-          </form>
-
-          {/* AI Wizard button */}
+    <PageContainer className="space-y-6">
+      <PageHeader
+        icon={Factory}
+        title={t('agentFlows.agentFlows')}
+        description={t('agentFlows.buildReusableDeliveryPipelinesAnd')}
+        actions={<>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".yaml,.yml,application/x-yaml,text/yaml"
+            onChange={handleFilePicked}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
+          >
+            <Upload className="w-4 h-4" />
+            {t('agentFlows.import')}
+          </button>
           <button
             onClick={() => setWizardOpen(true)}
-            className="flex w-full items-center justify-center gap-2 rounded-[24px] border border-violet-200 bg-gradient-to-br from-violet-50 to-fuchsia-50 px-4 py-4 text-sm font-semibold text-violet-700 shadow-sm transition hover:border-violet-400 hover:from-violet-100 hover:to-fuchsia-100"
+            className="flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 transition-all hover:bg-violet-100"
           >
-            <Sparkles className="h-4 w-4" />
-            Generate flow with AI
+            <Sparkles className="w-4 h-4" />
+            {t('agentFlows.generateWithAi')}
           </button>
-        </div>
+          <button
+            onClick={() => setCreateOpen(true)}
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-indigo-700"
+          >
+            <Plus className="w-4 h-4" />
+            {t('agentFlows.createFlow2')}
+          </button>
+        </>}
+      />
 
-        <div className="p-2">
-          <div className="mb-5 flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">Flows</h2>
-              <p className="text-sm text-slate-500">Flows are scoped to the current workspace when assigned.</p>
-            </div>
-          </div>
+      <section>
+        <div>
 
           {loading ? (
             <div className="flex min-h-[280px] items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-              Loading flows...
+              {t('agentFlows.loadingFlows')}
             </div>
           ) : visibleFlows.length === 0 ? (
             <div className="flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
               <GitBranch className="h-9 w-9 text-slate-300" />
               <div className="space-y-1">
-                <div className="text-sm font-semibold text-slate-900">No flows yet</div>
-                <div className="text-sm text-slate-500">Create one on the left, then open it to design the flow.</div>
+                <div className="text-sm font-semibold text-slate-900">{t('agentFlows.noFlowsYet')}</div>
+                <div className="text-sm text-slate-500">{t('agentFlows.useTheCreateFlowButton')}</div>
               </div>
             </div>
           ) : (
@@ -318,34 +379,59 @@ const AgentFlows = () => {
                           {flow.name}
                         </Link>
                         {flow.running && (
-                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-cyan-500" title="Running" />
+                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-cyan-500" title={t('agentFlows.running')} />
                         )}
                       </div>
                       <div className="mt-0.5 line-clamp-2 text-[11px] text-gray-500">
                         {flow.description || 'No description provided.'}
                       </div>
                     </div>
-                    <span className="shrink-0 rounded bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
-                      {flow.workspace || 'Shared'}
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <span className="rounded bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
+                        {flow.workspace || 'Shared'}
+                      </span>
+                      {flow.shared && (
+                        <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-indigo-600" title={t('agentFlows.publishedToTheMarketplace')}>
+                          <Globe className="h-2.5 w-2.5" /> {t('agentFlows.market')}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="mb-3 grid grid-cols-2 gap-2">
                     <div className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1.5 text-center">
-                      <div className="text-[9px] font-semibold uppercase tracking-wide text-blue-500">Nodes</div>
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-blue-500">{t('agentFlows.nodes')}</div>
                       <div className="text-xs font-semibold text-blue-900">{flow.nodes?.length || 0}</div>
                     </div>
                     <div className="rounded-md border border-amber-100 bg-amber-50 px-2 py-1.5 text-center">
-                      <div className="text-[9px] font-semibold uppercase tracking-wide text-amber-500">Updated</div>
-                      <div className="truncate text-xs font-semibold text-amber-900">{formatDate(flow.updated_at)}</div>
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-amber-500">{t('agentFlows.updated')}</div>
+                      <div className="truncate text-xs font-semibold text-amber-900">{formatDate(flow.updated_at, t)}</div>
                     </div>
                   </div>
 
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-1">
+                    <button
+                      onClick={() => handleShare(flow)}
+                      className={`rounded-lg border border-transparent p-1.5 transition ${
+                        flow.shared
+                          ? 'text-indigo-500 hover:border-indigo-200 hover:bg-indigo-50'
+                          : 'text-gray-400 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600'
+                      }`}
+                      title={flow.shared ? 'Remove from marketplace' : 'Publish to marketplace (also publishes its agents)'}
+                    >
+                      <Globe className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleExport(flow)}
+                      className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600"
+                      title={t('agentFlows.exportFlowAsYaml')}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </button>
                     <button
                       onClick={() => handleDelete(flow.id)}
                       className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
-                      title="Delete flow"
+                      title={t('agentFlows.deleteFlow')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -357,6 +443,145 @@ const AgentFlows = () => {
         </div>
       </section>
 
+      {/* Create Flow Modal */}
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="relative flex w-full max-w-lg flex-col rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+              <div className="flex items-center gap-2">
+                <Plus className="h-5 w-5 text-cyan-600" />
+                <h2 className="text-lg font-bold text-slate-900">{t('agentFlows.createFlow')}</h2>
+              </div>
+              <button
+                onClick={() => setCreateOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreate} className="space-y-5 p-6">
+              <p className="text-sm text-slate-500">{t('agentFlows.startWithABlankCanvas')}</p>
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{t('agentFlows.name')}</label>
+                <input
+                  autoFocus
+                  value={newFlow.name}
+                  onChange={(event) => setNewFlow((current) => ({ ...current, name: event.target.value }))}
+                  placeholder={t('agentFlows.customerOnboardingPipeline')}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{t('agentFlows.description')}</label>
+                <textarea
+                  value={newFlow.description}
+                  onChange={(event) => setNewFlow((current) => ({ ...current, description: event.target.value }))}
+                  rows={4}
+                  placeholder={t('agentFlows.whatThisFlowIsResponsible')}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCreateOpen(false)}
+                  disabled={creating}
+                  className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {t('agentFlows.cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating || !newFlow.name.trim()}
+                  className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-300"
+                >
+                  <Plus className="h-4 w-4" />
+                  {creating ? 'Creating...' : 'Create flow'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Import Modal — review parsed YAML before validating + storing it */}
+      {importOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+              <div className="flex items-center gap-2">
+                <Upload className="h-5 w-5 text-cyan-600" />
+                <h2 className="text-lg font-bold text-slate-900">{t('agentFlows.importFlowFromYaml')}</h2>
+              </div>
+              <button
+                onClick={closeImport}
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
+              {importFileName && (
+                <div className="text-xs text-slate-500">
+                  From file: <span className="font-semibold text-slate-700">{importFileName}</span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{t('agentFlows.flowName')}</label>
+                <input
+                  value={importName}
+                  onChange={(e) => setImportName(e.target.value)}
+                  placeholder={t('agentFlows.importedFlow')}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                  disabled={importing}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">YAML</label>
+                <textarea
+                  value={importYaml}
+                  onChange={(e) => setImportYaml(e.target.value)}
+                  rows={14}
+                  spellCheck={false}
+                  placeholder={t('agentFlows.pasteFlowYamlHereOr')}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs text-slate-900 outline-none transition focus:border-cyan-400 focus:bg-white"
+                  disabled={importing}
+                />
+              </div>
+
+              {importError && (
+                <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+                  <p className="text-sm text-rose-700">{importError}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
+              <button
+                onClick={closeImport}
+                disabled={importing}
+                className="rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                {t('agentFlows.cancel')}
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={importing || !importYaml.trim()}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-300"
+              >
+                {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {importing ? 'Validating…' : 'Validate & import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* AI Wizard Modal */}
       {wizardOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
@@ -365,7 +590,7 @@ const AgentFlows = () => {
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-violet-600" />
-                <h2 className="text-lg font-bold text-slate-900">Generate flow with AI</h2>
+                <h2 className="text-lg font-bold text-slate-900">{t('agentFlows.generateFlowWithAi')}</h2>
               </div>
               <button
                 onClick={closeWizard}
@@ -379,13 +604,13 @@ const AgentFlows = () => {
               {/* Requirement input */}
               <div className="space-y-2">
                 <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Describe the functionality you need
+                  {t('agentFlows.describeTheFunctionalityYouNeed')}
                 </label>
                 <textarea
                   value={wizardReq}
                   onChange={(e) => setWizardReq(e.target.value)}
                   rows={5}
-                  placeholder="e.g. I need a flow that takes requirements from a product manager, creates a technical spec, splits it into tasks, then has a backend and frontend developer implement them in parallel, followed by QA testing."
+                  placeholder={t('agentFlows.eGINeedA')}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-violet-400 focus:bg-white"
                   disabled={wizardLoading}
                 />
@@ -398,7 +623,9 @@ const AgentFlows = () => {
                   onClick={() => setModelOpen((v) => !v)}
                   className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-slate-700"
                 >
-                  <span>Model settings{wizardProvider ? ` · ${PROVIDERS.find((p) => p.value === wizardProvider)?.label}${wizardModel ? ` / ${wizardModel}` : ''}` : ' · global defaults'}</span>
+                  <span>{t('agentFlows.modelSettings')}{wizardProvider
+                    ? ` · ${providerLabel(PROVIDERS.find((p) => p.value === wizardProvider) || {}, t)}${wizardModel ? ` / ${wizardModel}` : ''}`
+                    : ` · ${t('agentFlows.globalDefaults')}`}</span>
                   {modelOpen ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
                 </button>
 
@@ -406,7 +633,7 @@ const AgentFlows = () => {
                   <div className="space-y-3 border-t border-slate-200 px-4 pb-4 pt-3">
                     {/* Provider */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Provider</label>
+                      <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('agentFlows.provider')}</label>
                       <select
                         value={wizardProvider}
                         onChange={(e) => handleProviderChange(e.target.value)}
@@ -414,7 +641,7 @@ const AgentFlows = () => {
                         disabled={wizardLoading}
                       >
                         {PROVIDERS.map((p) => (
-                          <option key={p.value} value={p.value}>{p.label}</option>
+                          <option key={p.value} value={p.value}>{providerLabel(p, t)}</option>
                         ))}
                       </select>
                     </div>
@@ -422,7 +649,7 @@ const AgentFlows = () => {
                     {/* Base URL for local providers */}
                     {(wizardProvider === 'ollama' || wizardProvider === 'lmstudio') && (
                       <div className="space-y-1.5">
-                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Base URL</label>
+                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('agentFlows.baseUrl')}</label>
                         <div className="flex gap-2">
                           <input
                             value={wizardBaseUrl}
@@ -450,7 +677,7 @@ const AgentFlows = () => {
                     {/* Model selector */}
                     {wizardProvider && (
                       <div className="space-y-1.5">
-                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Model</label>
+                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('agentFlows.model')}</label>
                         {(() => {
                           const list = CLOUD_MODELS[wizardProvider] || availableModels;
                           return list.length > 0 ? (
@@ -468,7 +695,7 @@ const AgentFlows = () => {
                             <input
                               value={wizardModel}
                               onChange={(e) => setWizardModel(e.target.value)}
-                              placeholder="Type model name or fetch from server above"
+                              placeholder={t('agentFlows.typeModelNameOrFetch')}
                               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-violet-400"
                               disabled={wizardLoading}
                             />
@@ -502,7 +729,7 @@ const AgentFlows = () => {
                 <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="h-4 w-4 text-amber-600" />
-                    <span className="text-sm font-semibold text-amber-800">Cannot fully implement with available agents</span>
+                    <span className="text-sm font-semibold text-amber-800">{t('agentFlows.cannotFullyImplementWithAvailable')}</span>
                   </div>
                   <p className="text-sm leading-6 text-amber-700">{wizardResult.message}</p>
                 </div>
@@ -518,7 +745,7 @@ const AgentFlows = () => {
 
                   {wizardResult.reasoning && (
                     <div className="rounded-xl border border-emerald-200 bg-white/60 px-3 py-2">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Reasoning</div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600">{t('agentFlows.reasoning')}</div>
                       <p className="mt-1 text-xs leading-5 text-slate-600">{wizardResult.reasoning}</p>
                     </div>
                   )}
@@ -551,7 +778,7 @@ const AgentFlows = () => {
                     className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
                   >
                     <Plus className="h-4 w-4" />
-                    {applyingFlow ? 'Creating...' : 'Create this flow'}
+                    {applyingFlow ? 'Creating...' : wizardResult.flow_id ? 'Open flow' : 'Create this flow'}
                   </button>
                 </div>
               )}
@@ -559,7 +786,7 @@ const AgentFlows = () => {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 };
 

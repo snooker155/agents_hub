@@ -39,10 +39,12 @@ ensure_initial_state()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
-from routes import agents, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram
+from routes import agent_import, agents, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances
 from routes import settings as settings_router
+from routes import models as models_router
 
 # Import settings for API key validation
 from common.config import settings
@@ -57,10 +59,21 @@ app = FastAPI(
 # Startup event to validate OpenAI API key
 @app.on_event("startup")
 async def startup_event():
-    """Validate API key, wire session broker, and launch the default orchestrator node."""
+    """Validate API key and wire up background services (broker, telegram, scheduler).
+
+    The orchestrator node is intentionally NOT started here: orchestration runs
+    only when the user starts an orchestrator node (Nodes UI / POST /api/nodes).
+    """
     import asyncio
     from common.session_broker import broker
     broker.set_loop(asyncio.get_running_loop())
+
+    # Apply the configured log level (Settings -> System -> Logging) to this
+    # process. Uvicorn has already installed its handlers by now, so this only
+    # moves the threshold they log at. The level is read for the workspace the
+    # UI has selected, which is where the Settings page writes it.
+    from common.logging_config import configure_logging_for_active_workspace
+    print(f"✓ Log level: {configure_logging_for_active_workspace()}")
     if not settings.openai_api_key:
         print("\n" + "="*70)
         print("WARNING: OPENAI_API_KEY is not set!")
@@ -74,21 +87,12 @@ async def startup_event():
     else:
         print("✓ OpenAI API key is configured")
 
-    # Auto-start the default orchestrator node (runs in its own process)
-    try:
-        from agents.node_manager import ensure_default_node
-        node_id = ensure_default_node()
-        if node_id:
-            print(f"✓ Default orchestrator node started  ({node_id[:8]})")
-        else:
-            print("✓ Orchestrator node already running")
-    except Exception as e:
-        print(f"⚠ Could not start default orchestrator node: {e}")
+    # The orchestrator node is started on demand by the user, not at startup.
 
     # Auto-start the Telegram poller if it's been configured + enabled.
     try:
-        from agents.telegram_runner import service as _tg_service
-        from common import telegram_store
+        from connectors.telegram.telegram_runner import service as _tg_service
+        from connectors.telegram import telegram_store
         if telegram_store.is_enabled() and telegram_store.has_token():
             await _tg_service.start()
             if _tg_service.is_running():
@@ -100,22 +104,62 @@ async def startup_event():
     except Exception as e:
         print(f"⚠ Could not start Telegram poller: {e}")
 
+    # Start the plan scheduler (fires due scheduled jobs / notifications).
+    try:
+        from plans.scheduler import scheduler as _plan_scheduler
+        await _plan_scheduler.start()
+        print("✓ Plan scheduler started")
+    except Exception as e:
+        print(f"⚠ Could not start plan scheduler: {e}")
+
+    # Start the periodic external-state publisher (containers, node heartbeats,
+    # log tails) — pushes snapshots over the single SSE stream so the UI never polls.
+    try:
+        from common.live_state import run_external_publisher
+        app.state.external_publisher = asyncio.create_task(run_external_publisher())
+        print("✓ External-state publisher started")
+    except Exception as e:
+        print(f"⚠ Could not start external-state publisher: {e}")
+
+    # Start the run watchdog (fails runs stuck in 'pending' and runs whose
+    # process died, so tasks never freeze waiting on a run that cannot finish).
+    try:
+        from managers.run_watchdog import watchdog as _run_watchdog
+        await _run_watchdog.start()
+        print("✓ Run watchdog started")
+    except Exception as e:
+        print(f"⚠ Could not start run watchdog: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    task = getattr(app.state, "external_publisher", None)
+    if task:
+        task.cancel()
     try:
-        from agents.telegram_runner import service as _tg_service
+        from plans.scheduler import scheduler as _plan_scheduler
+        await _plan_scheduler.stop()
+    except Exception:
+        pass
+    try:
+        from managers.run_watchdog import watchdog as _run_watchdog
+        await _run_watchdog.stop()
+    except Exception:
+        pass
+    try:
+        from connectors.telegram.telegram_runner import service as _tg_service
         await _tg_service.stop()
     except Exception:
         pass
 
-# Helper to locate orchestrator settings (moved under agents/state)
+# Helper to locate orchestrator settings (stored under .agents_hub)
 def get_orchestrator_settings_path() -> PathlibPath:
-    """Return the path to orchestrator settings JSON under agents/state.
+    """Return the path to orchestrator settings JSON under .agents_hub.
 
     Ensures the directory exists and initializes the file if missing.
     """
-    path = project_root / "agents" / "state" / "orchestrator_settings.json"
+    from common.paths import AGENTS_HUB_ROOT
+    path = AGENTS_HUB_ROOT / "orchestrator_settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         try:
@@ -123,6 +167,38 @@ def get_orchestrator_settings_path() -> PathlibPath:
         except Exception:
             pass
     return path
+
+# ============================================================================
+# Optional bearer-token authentication
+# ============================================================================
+# Off by default (settings.api_token == "") so the local-only workflow is
+# unchanged. When a token is configured, every /api request must present it via
+# ``Authorization: Bearer <token>``, ``X-Api-Token: <token>`` header, or a
+# ``?token=<token>`` query parameter — the query form lets the browser's
+# EventSource (which cannot set headers) authenticate the /api/stream SSE.
+#
+# Registered BEFORE the CORS middleware on purpose. Starlette's add_middleware
+# inserts at the head of the list and the head is the outermost layer, so the
+# *last* registration wraps every earlier one — registering this guard after
+# CORS would put it outside CORSMiddleware, and its 401 would reach the browser
+# with no Access-Control-Allow-Origin header. The browser then reports a CORS
+# failure instead of the auth failure that actually happened.
+async def _api_token_guard(request, call_next):
+    from common.auth import is_authorized
+    if not is_authorized(
+        configured_token=settings.api_token,
+        method=request.method,
+        path=request.url.path,
+        auth_header=request.headers.get("authorization"),
+        x_api_token=request.headers.get("x-api-token"),
+        query_token=request.query_params.get("token"),
+    ):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Invalid or missing API token"})
+    return await call_next(request)
+
+
+app.add_middleware(BaseHTTPMiddleware, dispatch=_api_token_guard)
 
 # ============================================================================
 # CORS Configuration
@@ -188,17 +264,56 @@ async def root():
 # Agents domain: agent registry, connections, memory management
 app.include_router(agents.router)
 
+# Agent import domain: bringing an agent in from its own git repository
+app.include_router(agent_import.router)
+
+# Marketplace domain: catalog of agents published across workspaces
+app.include_router(marketplace.router)
+
 # Tasks domain: task creation, assignment, execution
 app.include_router(tasks.router)
+
+# Plan domain: scheduled jobs (future notifications / agent tasks) + inbox
+app.include_router(plan.router)
 
 # Flows domain: user-defined factories / visual pipelines
 app.include_router(flows.router)
 
+# Flow entity registry: federated catalog of flow-usable nodes
+app.include_router(flow_entities.router)
+
+# Loops domain: a flow re-run until an agent judges the exit criterion met
+app.include_router(loops.router)
+
+# Teams domain: a bounded roster of agents that know each other and talk
+app.include_router(teams.router)
+
 # Stats domain: system statistics and monitoring
 app.include_router(stats.router)
 
+# Models domain: curated model catalog and per-model usage stats
+app.include_router(models_router.router)
+
+# Costs domain: token/$ spend breakdowns and per-workspace budget caps
+app.include_router(costs.router)
+
+# Replay domain: re-run a recorded run and diff outputs (regression eval)
+app.include_router(replay.router)
+
+# Evals domain: batch replay across cases x models, scored by graders
+app.include_router(evals.router)
+
+# Playground domain: multi-agent simulation against a deterministic environment
+app.include_router(playground.router)
+
 # Memory domain: shared memory management
 app.include_router(memory.router)
+
+# Skills domain: workspace skill catalog, publishing, install-onto-agent
+app.include_router(skills.router)
+
+# Web log domain: recorded web_search / fetch_url calls and their responses
+app.include_router(weblogs.router)
 
 # Workspaces domain: workspace management and tasks
 app.include_router(workspaces.router)
@@ -212,8 +327,20 @@ app.include_router(sessions.router)
 # Messages domain: individual agent run logs
 app.include_router(messages.router)
 
+# Live agent copies: what is running right now, and how to write to one.
+app.include_router(instances.router)
+
 # Chat domain: direct in-process agent conversation
 app.include_router(chat.router)
+
+# What the chat composer can attach besides a file: the entity picker's catalog
+app.include_router(context_refs.router)
+
+# The page chat: one assistant, any page, about the records that page is showing
+app.include_router(page_chat.router)
+
+# Session history shared by every entity build chat: list past threads, reopen one
+app.include_router(entity_chats.router)
 
 # Nodes domain: long-running agent node management
 app.include_router(nodes.router)
@@ -233,6 +360,21 @@ app.include_router(settings_router.router)
 # Telegram domain: bot config, bindings, and outbound message proxy
 app.include_router(telegram.router)
 
+# Git connectors domain: GitHub/GitLab tokens, repo browsing
+app.include_router(git.router)
+
+# Blender geometry connector: binary path / mode, and the running engines.
+app.include_router(blender.router)
+
+# Real-time domain: single multiplexed SSE stream for the whole UI
+app.include_router(stream.router)
+
+# Health domain: liveness, store counts, background-service status, state sizes
+app.include_router(health.router)
+
+# Views domain: rich agent-generated views + their assets and per-user state
+app.include_router(views.router)
+
 # ============================================================================
 # Entry Point
 # ============================================================================
@@ -250,5 +392,7 @@ if __name__ == "__main__":
             str(_root / "common"),
             str(_root / "tools"),
             str(_root / "tasks"),
+            str(_root / "chat"),
+            str(_root / "flow"),
         ],
     )

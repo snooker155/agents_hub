@@ -10,6 +10,10 @@ Validation rules:
 - JSON must contain object with key "agents": [ ... ]
 - Each agent must provide: id, name, type, entrypoint
 - The system prompt lives in agents/definitions/<id>/instructions.md, NOT here
+- type is "langchain" for agents this hub assembles and runs, or "remote" for an
+  agent imported from its own repository and reached over HTTP; a remote record
+  carries its endpoint, provenance and last readiness report under `remote`
+  (see agents/importer/ and agents/remote_agent.py)
 - Flat execution fields: temperature (float|None), max_tokens (int|None),
   api_key (str|None), verbose (bool), streaming (bool)
 - tools is a list of strings (defaults to [])
@@ -30,12 +34,35 @@ from common.paths import AGENTS_FILE
 
 # -------------------- Data models --------------------
 
+def normalize_memory_pools(memory_type: str, memory_data: Any) -> List[str]:
+    """Normalize a memory assignment to a list of pool ids, primary first.
+
+    Accepts a single pool id (legacy) or a list of ids; strips and dedupes.
+    Returns [] unless memory_type is 'shared' with at least one pool.
+    """
+    if memory_type != "shared" or not memory_data:
+        return []
+    raw = memory_data if isinstance(memory_data, (list, tuple)) else [memory_data]
+    pools: List[str] = []
+    for p in raw:
+        pid = str(p).strip()
+        if pid and pid not in pools:
+            pools.append(pid)
+    return pools
+
+
 @dataclass(frozen=True)
 class AgentSpec:
     id: str
     name: str
     type: str
     entrypoint: str
+    # definition_id: when set, the agent's prompt/markdown is loaded from
+    # agents/definitions/<definition_id>/ instead of agents/definitions/<id>/.
+    # This lets multiple records (e.g. one per workspace, each with its own
+    # model/memory settings) share a single common definition. None means
+    # "same as id" (the legacy 1:1 behaviour). Use def_id() to resolve.
+    definition_id: Optional[str] = None
     description: str = ""
     domain: str = "general"
     default_params: Dict[str, Any] = field(default_factory=dict)
@@ -76,10 +103,125 @@ class AgentSpec:
     node_type: str = "worker"
     # Chat default — if True, this agent is pre-selected when opening the Chat page
     is_default_chat_agent: bool = False
+    # ── System vs. custom ────────────────────────────────────────────────────
+    # An agent is one of exactly two things. A system agent is shipped in
+    # bootstrap/agents.json and owned by the product: it is present in every
+    # workspace, cannot be removed from one, and bootstrap keeps its tools and
+    # description in sync with the seed on every start (see
+    # common.bootstrap._sync_system_agents). Everything else is a custom agent,
+    # owned by the operator, and bootstrap never touches it.
+    #
+    # This flag is the single source of truth for that split. It replaced both
+    # the older `domain == "System"` convention (now purely thematic) and the
+    # hardcoded id tuples that used to live in workspace/storage.py and
+    # common/workspace_context.py.
+    system: bool = False
+    # Set on any system agent the operator has edited (through the dashboard or
+    # the agent-management tools). Bootstrap's sync skips these records, so a
+    # hand-tuned system agent is never silently reverted to the seed.
+    user_modified: bool = False
     # When True: skills tools are auto-added and procedural context is injected at runtime
     skills_enabled: bool = False
+    # Controls the episodic WRITE tool (record_episode) for agents with a shared
+    # memory pool. Tri-state:
+    #   None (default) — AUTO: on for cloud providers, off for local providers
+    #     (ollama/lmstudio), whose smaller models tend to misfire on it.
+    #   True  — always attach record_episode and teach its use.
+    #   False — never attach it (other memory — recall/remember/recall_episodes/
+    #     graph — and the automatic silent journal are unaffected).
+    episodic_write_enabled: Optional[bool] = None
+    # Delegation allowlist — agent ids this agent may delegate to / see via the
+    # coordination tools (list_agents_tool, run_agent_tool, assign_agent_tool).
+    # Empty list (default) means no restriction: every agent available in the
+    # workspace is delegatable. When non-empty, only these ids (intersected with
+    # workspace availability) are visible and runnable as delegation targets.
+    delegates: List[str] = field(default_factory=list)
     # Reasoning capability settings — keyed by tool id (e.g. "think", "plan")
     reasoning: Dict[str, Any] = field(default_factory=dict)
+    # Structured response format this agent may emit (rendered as buttons / a
+    # Telegram inline keyboard). One of "none" (default), "buttons", "telegram".
+    # When not "none", agent_factory injects a system-prompt snippet teaching the
+    # <<<ui>>> block convention, the same way reasoning guidance is injected.
+    response_format: str = "none"
+    # Chat clarification gate. When True, agent_factory injects a system-prompt
+    # snippet telling the agent to assess whether it has enough information before
+    # producing deliverables and, if not, ask concise clarifying questions and
+    # stop rather than proceeding on assumptions. Primarily meaningful in chat,
+    # where the next turn replays history so the agent resumes once answered.
+    clarify_gate: bool = False
+    # Self-delegation. When False (default) an agent may not target itself in the
+    # coordination tools (run_agent_tool / assign_agent_tool) — a self-run would
+    # recurse the same agent. When True the agent is allowed to hand a sub-goal
+    # back to itself; enforced in tools._delegation_blocked.
+    allow_self_delegation: bool = False
+    # Capability guard escape hatch. When True the operator has explicitly
+    # accepted a tool combination that tools/capabilities.py would otherwise
+    # block (see enforce_capabilities below). Under
+    # settings.capability_override_requires_container the override is only
+    # honoured at build time for container-isolated, no-network runs.
+    capability_override: bool = False
+    # External-agent descriptor — empty for built-in agents. When ``type`` is
+    # "remote" this holds everything needed to reach the agent over HTTP
+    # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
+    # provenance of the import (``repo_url``/``branch``/``commit``/``clone_path``)
+    # and the last readiness report (``readiness``). Written by
+    # ``agents.importer``, consumed by ``agents.remote_agent.RemoteAgent``.
+    remote: Dict[str, Any] = field(default_factory=dict)
+
+    def is_remote(self) -> bool:
+        """Whether this record is an externally hosted (HTTP) agent.
+
+        Remote agents are not built from ``agents/definitions`` + the internal
+        tool registry; ``agent_factory`` hands them to ``RemoteAgent`` instead.
+        """
+        return self.type == "remote"
+
+    def def_id(self) -> str:
+        """Resolve the definition folder name for this agent.
+
+        Returns ``definition_id`` when set (shared definition), otherwise the
+        agent's own ``id`` (legacy 1:1 mapping). This is the single accessor
+        used wherever the ``agents/definitions/<...>/`` folder is resolved.
+        """
+        return self.definition_id or self.id
+
+    def memory_pools(self) -> List[str]:
+        """Shared memory pool ids on this record, primary first.
+
+        ``memory_data`` holds either a single pool id (legacy) or a list of
+        ids. The first entry is the primary pool — all memory writes go there;
+        the rest are read-only context. Returns [] when the record has no
+        shared memory.
+
+        NB: this is the record-level assignment, which applies in the agent's
+        home workspace only. Runtime consumers should resolve the assignment
+        for the workspace they operate in via memory.binding.effective_memory_pools.
+        """
+        return normalize_memory_pools(self.memory_type, self.memory_data)
+
+    def model_overrides(self) -> Dict[str, Any]:
+        """Per-agent model/provider overrides as a canonical kwargs dict.
+
+        The single source of truth for the registry override cascade used by
+        both in-process agent creation (``create_agent(**overrides)`` in the
+        chat routes) and subprocess launches (``agent_launcher`` maps these
+        onto ``AGENT_*`` env vars). Only set fields are included; ``provider``
+        is skipped when it is the sentinel ``"inherit"``.
+        """
+        overrides: Dict[str, Any] = {}
+        if self.provider and self.provider != "inherit":
+            overrides["provider"] = self.provider
+        if self.model:
+            overrides["model"] = self.model
+        if self.base_url:
+            overrides["base_url"] = self.base_url
+        if self.api_key:
+            overrides["api_key"] = self.api_key
+        if self.temperature is not None:
+            overrides["temperature"] = self.temperature
+        if self.max_tokens is not None:
+            overrides["max_tokens"] = self.max_tokens
+        return overrides
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -97,6 +239,10 @@ class AgentSpec:
             "default_workspace_only": self.default_workspace_only,
             "shared": self.shared,
         }
+        # Only write definition_id when it differs from id (shared definition).
+        # Legacy 1:1 records stay clean and unchanged.
+        if self.definition_id and self.definition_id != self.id:
+            d["definition_id"] = self.definition_id
         # Only write owner_workspace when set to keep JSON clean and to treat
         # legacy agents (no owner) as globally available.
         if self.owner_workspace:
@@ -126,8 +272,36 @@ class AgentSpec:
         if self.node_type != "worker":
             d["node_type"] = self.node_type
         d["skills_enabled"] = self.skills_enabled
+        # Only write the system fields on system records, so operator-created
+        # agents keep a clean JSON shape.
+        if self.system:
+            d["system"] = True
+            if self.user_modified:
+                d["user_modified"] = True
+        # Only write when explicitly set (True/False); omit when auto (None).
+        if self.episodic_write_enabled is not None:
+            d["episodic_write_enabled"] = self.episodic_write_enabled
         if self.reasoning:
             d["reasoning"] = dict(self.reasoning)
+        # Only write when set, to keep default records clean.
+        if self.response_format and self.response_format != "none":
+            d["response_format"] = self.response_format
+        # Only write when enabled, to keep default records clean.
+        if self.clarify_gate:
+            d["clarify_gate"] = self.clarify_gate
+        # Only write when enabled, to keep default (self-block) records clean.
+        if self.allow_self_delegation:
+            d["allow_self_delegation"] = self.allow_self_delegation
+        # Only write delegates when restricted, to keep unrestricted records clean.
+        if self.delegates:
+            d["delegates"] = list(self.delegates)
+        # Only write when the operator has accepted a blocked combination.
+        if self.capability_override:
+            d["capability_override"] = self.capability_override
+        # Only write the external-agent descriptor when the record has one, so
+        # built-in agents keep a clean JSON shape.
+        if self.remote:
+            d["remote"] = dict(self.remote)
         return d
 
     def load_callable(self) -> Callable[..., Any]:
@@ -219,6 +393,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     memory_type = ad.get("memory_type", "none")
     memory_data = ad.get("memory_data")
     default_workspace_only = bool(ad.get("default_workspace_only", False))
+    definition_id = ad.get("definition_id") or None
     owner_workspace = ad.get("owner_workspace") or None
     shared = bool(ad.get("shared", False))
     provider = ad.get("provider") or None
@@ -242,10 +417,37 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     if node_type not in ("worker", "service"):
         node_type = "worker"
     is_default_chat_agent = bool(ad.get("is_default_chat_agent", False))
+    # Legacy seeds marked system agents with domain == "System". Keep reading it
+    # so an install that predates the `system` flag still recognises its own
+    # system agents on the first start after the upgrade.
+    system = bool(ad.get("system", ad.get("domain") == "System"))
+    user_modified = bool(ad.get("user_modified", False))
     skills_enabled = bool(ad.get("skills_enabled", False))
+    _raw_epi = ad.get("episodic_write_enabled")
+    episodic_write_enabled = bool(_raw_epi) if _raw_epi is not None else None
     reasoning = ad.get("reasoning") or {}
     if not isinstance(reasoning, dict):
         reasoning = {}
+
+    response_format = ad.get("response_format") or "none"
+    if response_format not in ("none", "buttons", "telegram"):
+        response_format = "none"
+
+    clarify_gate = bool(ad.get("clarify_gate", False))
+    allow_self_delegation = bool(ad.get("allow_self_delegation", False))
+    capability_override = bool(ad.get("capability_override", False))
+
+    remote = ad.get("remote") or {}
+    if not isinstance(remote, dict):
+        remote = {}
+
+    raw_delegates = ad.get("delegates")
+    delegates: List[str] = []
+    if isinstance(raw_delegates, (list, tuple)):
+        for d in raw_delegates:
+            did = str(d).strip()
+            if did and did not in delegates:
+                delegates.append(did)
 
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
@@ -255,6 +457,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
 
     return AgentSpec(
         id=ad["id"].strip(),
+        definition_id=definition_id,
         name=ad["name"].strip(),
         type=ad["type"].strip(),
         entrypoint=ad["entrypoint"].strip(),
@@ -282,8 +485,17 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         http_host_port=http_host_port,
         node_type=node_type,
         is_default_chat_agent=is_default_chat_agent,
+        system=system,
+        user_modified=user_modified,
         skills_enabled=skills_enabled,
+        episodic_write_enabled=episodic_write_enabled,
         reasoning=reasoning,
+        response_format=response_format,
+        clarify_gate=clarify_gate,
+        allow_self_delegation=allow_self_delegation,
+        capability_override=capability_override,
+        delegates=delegates,
+        remote=remote,
     )
 
 
@@ -361,8 +573,48 @@ def get_agent(agent_id: str) -> Optional[AgentSpec]:
     return None
 
 
-def add_agent(spec: AgentSpec) -> None:
-    """Persist a new agent spec to agents.json."""
+def system_agent_ids() -> List[str]:
+    """Ids of the product's own agents, in registry order.
+
+    The single source of truth for the system/custom split. A broken or
+    unreadable registry yields an empty list rather than raising: callers fall
+    back to their own constants, so a bad agents.json cannot strip every
+    workspace of its system agents at once.
+    """
+    try:
+        specs = _maybe_reload()
+    except Exception:
+        return []
+    return [spec.id for spec in specs if spec.system]
+
+
+def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
+    """Persist a new agent spec to agents.json.
+
+    Save time is the capability guard's chokepoint: every write path (dashboard
+    routes, ``create_agent_tool`` / ``modify_agent_tool``, bootstrap) lands here,
+    so a tool set forming a blocked capability combination never reaches disk.
+    Raises ``CapabilityViolation`` (a ``ValueError``) when it does — the routes'
+    existing ValueError handlers turn that into a 400 with the offending
+    capabilities named.
+    """
+    from agents.capability_guard import enforce_agent_tools
+
+    _prev = get_agent(spec.id)
+    enforce_agent_tools(
+        spec.id,
+        list(spec.tools or []),
+        previous_tools=list(_prev.tools or []) if _prev else None,
+        override=bool(spec.capability_override),
+    )
+
+    # A system agent the operator edits stops tracking the seed: bootstrap's
+    # sync skips records carrying this flag, so the edit survives every restart.
+    # Bootstrap itself writes with user_edit=False and leaves the flag alone.
+    if user_edit and spec.system and not spec.user_modified:
+        import dataclasses as _dc
+        spec = _dc.replace(spec, user_modified=True)
+
     path = _config_path()
     try:
         data = _load_file_raw(path)
@@ -388,6 +640,7 @@ def add_agent(spec: AgentSpec) -> None:
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
+    _notify_agents_changed(spec.id)
 
 
 def remove_agent(agent_id: str) -> bool:
@@ -412,14 +665,31 @@ def remove_agent(agent_id: str) -> bool:
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
+    _notify_agents_changed(agent_id)
     return True
+
+
+def _notify_agents_changed(agent_id: str | None = None) -> None:
+    # Drop any cached build for the changed agent immediately. The build cache
+    # also fingerprints agents.json's mtime, so this is belt-and-braces against
+    # coarse filesystem timestamps — an edit takes effect on the very next run.
+    try:
+        from agents.agent_cache import invalidate
+        invalidate(agent_id)
+    except Exception:
+        pass
+    try:
+        from common.session_broker import notify_change
+        notify_change("agents", agent_id=agent_id)
+    except Exception:
+        pass
 
 
 def set_default_chat_agent(agent_id: str) -> None:
     """Deprecated: default chat agent is stored per workspace metadata."""
-    raise ValueError("Default chat agent is stored in workspace .workspace.json, not agents.json")
+    raise ValueError("Default chat agent is stored in workspace metadata (workspaces.json), not agents.json")
 
 
 def clear_default_chat_agent() -> None:
     """Deprecated: default chat agent is stored per workspace metadata."""
-    raise ValueError("Default chat agent is stored in workspace .workspace.json, not agents.json")
+    raise ValueError("Default chat agent is stored in workspace metadata (workspaces.json), not agents.json")

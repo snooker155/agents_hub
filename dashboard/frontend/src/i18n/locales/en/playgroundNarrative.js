@@ -1,0 +1,16 @@
+export default {
+  openFromSetup: 'Write the world’s prose',
+  tab: 'Narrative',
+  title: 'The world as written',
+  hint: 'Authored prose about the world: its history, the rules its people live by, the tone a retelling should keep. The characters never read it. It opens the chronicle of every run, and it is what the narrator is handed as the setting it must not contradict.',
+  placeholder: 'The town has not paid the guild in three winters, and everybody here knows what that means…',
+  emptyPreview: 'Nothing written yet.',
+  preview: 'Preview',
+  save: 'Save narrative',
+  saved: 'Narrative saved',
+  wordCount_one: '{{count}} word',
+  wordCount_other: '{{count}} words',
+  askAgent: 'Ask the agent',
+  askPrompt: 'Write the narrative for this scenario: the world\'s history, the rules its people live by, the atmosphere and the tone a retelling should keep. Use the cast, the locations and the items this scenario actually has, invent nothing that contradicts them, and save it in the scenario\'s narrative field.',
+  askPromptExtend: 'Extend and polish this scenario\'s narrative, keeping what is already written and its voice. Fill in the world\'s history, its rules and its atmosphere where they are thin, stay inside the cast, the locations and the items this scenario actually has, and save the result in the narrative field.',
+};

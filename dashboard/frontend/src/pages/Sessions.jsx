@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useWorkspace } from '../components/WorkspaceContext';
+import { useWorkspace } from '../components/workspace';
+import { useLiveRefetch } from '../components/stream';
 import {
   getSessions,
   stopSession,
@@ -19,8 +20,12 @@ import {
   Trash2,
   Workflow,
   MessageSquare,
+  PlayCircle,
 } from 'lucide-react';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n, statusLabel } from '../i18n';
+import DateInput from '../components/DateInput';
 // ---- helpers ----------------------------------------------------------------
 
 const STATUS_STYLES = {
@@ -34,12 +39,13 @@ const STATUS_STYLES = {
 };
 
 function StatusBadge({ status }) {
+  const { t } = useI18n();
   const s = STATUS_STYLES[status] || { bg: 'bg-gray-100', text: 'text-gray-500', icon: AlertCircle };
   const Icon = s.icon;
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
       <Icon className={`w-3 h-3 ${status === 'running' ? 'animate-spin' : ''}`} />
-      {status}
+      {statusLabel(status, t)}
     </span>
   );
 }
@@ -56,15 +62,23 @@ function duration(started, finished) {
 
 // ---- Main page --------------------------------------------------------------
 
+// One window of sessions per request — large enough for a single round-trip
+// in the common case, small enough that the first paint never waits on the
+// whole table.
+const PAGE_SIZE = 200;
+
 export default function Sessions() {
-  const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
+  const { t } = useI18n();
+  const { selectedWorkspace, liveUpdates } = useWorkspace();
   const navigate = useNavigate();
 
   const [sessions, setSessions]     = useState([]);
+  const [totalSessions, setTotalSessions] = useState(0);
+  const [offset, setOffset]         = useState(0);
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading]       = useState(true);
 
-  const [filterWorkspace, setFilterWorkspace] = useState(workspaceFilter || '');
+  const [filterWorkspace, setFilterWorkspace] = useState(selectedWorkspace || '');
   const [filterStatus,    setFilterStatus]    = useState('');
   const [filterFlow,      setFilterFlow]      = useState('');
   const [filterFrom,      setFilterFrom]      = useState('');
@@ -76,11 +90,22 @@ export default function Sessions() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const selectAllRef = useRef(null);
 
+  // The workspace filter is only offered in the default workspace. In a specific
+  // workspace the page is locked to it and the dropdown is hidden.
+  const isDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
   const effectiveWorkspace = filterWorkspace || '';
 
-  const fetchSessions = useCallback(async () => {
+  // The Workspace column is only shown in the default workspace. The grid
+  // template literals are written out in full so Tailwind's JIT can detect them.
+  const mdGridCols = isDefaultWorkspace
+    ? 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1fr_0.7fr_0.7fr_0.6fr_140px]'
+    : 'md:grid-cols-[36px_minmax(0,2.3fr)_1fr_0.7fr_0.7fr_0.6fr_140px]';
+
+  // The backend filters, orders and pages in SQL and answers {items, total, ...};
+  // the page asks for one window and grows it on demand.
+  const fetchSessions = useCallback(async (nextOffset = 0, append = false) => {
     try {
-      const params = {};
+      const params = { limit: PAGE_SIZE, offset: nextOffset };
       if (effectiveWorkspace) params.workspace = effectiveWorkspace;
       if (filterStatus) params.status = filterStatus;
       if (filterFrom)   params.from_date = filterFrom;
@@ -88,7 +113,11 @@ export default function Sessions() {
       if (filterFlow === 'true')  params.is_flow = true;
       if (filterFlow === 'false') params.is_flow = false;
       const res = await getSessions(params);
-      setSessions(res.data);
+      const data = res.data || {};
+      const items = Array.isArray(data) ? data : (data.items || []);
+      setSessions(prev => (append ? [...prev, ...items] : items));
+      setTotalSessions(Array.isArray(data) ? items.length : (data.total || 0));
+      setOffset(nextOffset);
     } catch (err) {
       console.error('Failed to load sessions', err);
     } finally {
@@ -96,7 +125,7 @@ export default function Sessions() {
     }
   }, [effectiveWorkspace, filterStatus, filterFrom, filterTo, filterFlow]);
 
-  useEffect(() => { setFilterWorkspace(workspaceFilter || ''); }, [workspaceFilter]);
+  useEffect(() => { setFilterWorkspace(selectedWorkspace || ''); }, [selectedWorkspace]);
 
   useEffect(() => {
     getWorkspaces().then(r => setWorkspaces(r.data)).catch(() => {});
@@ -104,11 +133,9 @@ export default function Sessions() {
 
   useEffect(() => {
     setLoading(true);
-    fetchSessions();
-    if (!liveUpdates) return;
-    const id = setInterval(fetchSessions, 5000);
-    return () => clearInterval(id);
+    fetchSessions(0, false);
   }, [fetchSessions, liveUpdates]);
+  useLiveRefetch(() => fetchSessions(0, false), { type: 'sessions.changed', enabled: liveUpdates });
 
   useEffect(() => {
     const visible = new Set(sessions.map(s => s.session_id));
@@ -135,14 +162,14 @@ export default function Sessions() {
 
   const handleDelete = async (session) => {
     if (!session?.session_id) return;
-    if (!window.confirm(`Delete session "${session.title || session.session_id}"?`)) return;
+    if (!window.confirm(t('sessions.confirmDelete', { name: session.title || session.session_id }))) return;
     setDeleting(s => ({ ...s, [session.session_id]: true }));
     try {
       await deleteSession(session.session_id);
       setSelectedIds(prev => { const next = { ...prev }; delete next[session.session_id]; return next; });
       await fetchSessions();
     } catch (err) {
-      window.alert(err?.response?.data?.detail || 'Failed to delete session');
+      window.alert(err?.response?.data?.detail || t('sessions.deleteFailed'));
     } finally {
       setDeleting(s => ({ ...s, [session.session_id]: false }));
     }
@@ -165,7 +192,7 @@ export default function Sessions() {
 
   const handleBulkDelete = async () => {
     if (!checkedIds.length) return;
-    if (!window.confirm(`Delete ${checkedIds.length} selected session(s)?`)) return;
+    if (!window.confirm(t('sessions.confirmBulkDelete', { count: checkedIds.length }))) return;
     setBulkDeleting(true);
     try {
       const results = await Promise.all(
@@ -174,7 +201,7 @@ export default function Sessions() {
             await deleteSession(sid);
             return { sid, ok: true };
           } catch (err) {
-            return { sid, ok: false, msg: err?.response?.data?.detail || 'Failed' };
+            return { sid, ok: false, msg: err?.response?.data?.detail || t('common.failed') };
           }
         })
       );
@@ -182,7 +209,7 @@ export default function Sessions() {
       setSelectedIds({});
       await fetchSessions();
       if (failed.length) {
-        window.alert(`Some deletions failed (${failed.length}). Example: ${failed[0].sid} (${failed[0].msg})`);
+        window.alert(t('sessions.bulkDeletePartial', { count: failed.length, id: failed[0].sid, reason: failed[0].msg }));
       }
     } finally {
       setBulkDeleting(false);
@@ -190,102 +217,103 @@ export default function Sessions() {
   };
 
   const allStatuses = ['running', 'completed', 'failed', 'stopped', 'pending', 'awaiting_approval'];
-  const hasFilters = filterStatus || filterFrom || filterTo || filterWorkspace || filterFlow;
+  const hasFilters = filterStatus || filterFrom || filterTo || filterFlow || (isDefaultWorkspace && filterWorkspace);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Sessions</h1>
-          <p className="text-sm text-gray-500 mt-1">Process-level execution contexts grouping one or more agent runs</p>
-        </div>
-        <div className="flex items-center gap-3">
+    <PageContainer className="space-y-6">
+      <PageHeader
+        icon={PlayCircle}
+        title={t('sessions.sessions')}
+        description={t('sessions.processLevelExecutionContextsGrouping')}
+        actions={<>
           <button
             onClick={handleBulkDelete}
             disabled={!checkedIds.length || bulkDeleting}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
           >
             {bulkDeleting ? <Loader className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-            Delete Selected
+            {t('sessions.deleteSelected')}
           </button>
           <button
             onClick={fetchSessions}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
           >
             <RefreshCw className="w-4 h-4" />
-            Refresh
+            {t('sessions.refresh')}
           </button>
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Filter bar */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <div className="flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[160px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">Workspace</label>
-            <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={filterWorkspace}
-              onChange={e => setFilterWorkspace(e.target.value)}
-            >
-              <option value="">All workspaces</option>
-              {selectedWorkspace && <option value={selectedWorkspace}>Current: {selectedWorkspace}</option>}
-              {workspaces.map(ws => <option key={ws.name} value={ws.name}>{ws.name}</option>)}
-            </select>
-          </div>
+          {isDefaultWorkspace && (
+            <div className="flex-1 min-w-[160px]">
+              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('sessions.workspace')}</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={filterWorkspace}
+                onChange={e => setFilterWorkspace(e.target.value)}
+              >
+                <option value="">{t('sessions.allWorkspaces')}</option>
+                {workspaces.map(ws => <option key={ws.name} value={ws.name}>{ws.name}</option>)}
+              </select>
+            </div>
+          )}
 
           <div className="flex-1 min-w-[140px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">Status</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('sessions.status')}</label>
             <select
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={filterStatus}
               onChange={e => setFilterStatus(e.target.value)}
             >
-              <option value="">All statuses</option>
-              {allStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+              <option value="">{t('sessions.allStatuses')}</option>
+              {allStatuses.map(s => <option key={s} value={s}>{statusLabel(s, t)}</option>)}
             </select>
           </div>
 
           <div className="flex-1 min-w-[140px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">Type</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('sessions.type')}</label>
             <select
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={filterFlow}
               onChange={e => setFilterFlow(e.target.value)}
             >
-              <option value="">All types</option>
-              <option value="true">Flow</option>
-              <option value="false">Standalone</option>
+              <option value="">{t('sessions.allTypes')}</option>
+              <option value="true">{t('sessions.flow')}</option>
+              <option value="false">{t('sessions.standalone')}</option>
             </select>
           </div>
 
           <div className="flex-1 min-w-[160px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">From</label>
-            <input
-              type="datetime-local"
+            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('sessions.from')}</label>
+            <DateInput
+              mode="datetime"
+              valueFormat="iso"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={filterFrom}
-              onChange={e => setFilterFrom(e.target.value ? new Date(e.target.value).toISOString() : '')}
+              onChange={setFilterFrom}
             />
           </div>
 
           <div className="flex-1 min-w-[160px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">To</label>
-            <input
-              type="datetime-local"
+            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('sessions.to')}</label>
+            <DateInput
+              mode="datetime"
+              valueFormat="iso"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={filterTo}
-              onChange={e => setFilterTo(e.target.value ? new Date(e.target.value).toISOString() : '')}
+              onChange={setFilterTo}
             />
           </div>
 
           {hasFilters && (
             <button
-              onClick={() => { setFilterWorkspace(''); setFilterStatus(''); setFilterFlow(''); setFilterFrom(''); setFilterTo(''); }}
+              onClick={() => { setFilterWorkspace(isDefaultWorkspace ? '' : (selectedWorkspace || '')); setFilterStatus(''); setFilterFlow(''); setFilterFrom(''); setFilterTo(''); }}
               className="flex items-center gap-1 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50"
             >
-              <X className="w-4 h-4" /> Clear
+              <X className="w-4 h-4" /> {t('sessions.clear')}
             </button>
           )}
         </div>
@@ -300,12 +328,12 @@ export default function Sessions() {
         ) : sessions.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
             <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 text-sm">No sessions found.</p>
-            <p className="text-gray-400 text-xs mt-1">Sessions are created when you start a new agent run.</p>
+            <p className="text-gray-500 text-sm">{t('sessions.noSessionsFound')}</p>
+            <p className="text-gray-400 text-xs mt-1">{t('sessions.sessionsAreCreatedWhenYou')}</p>
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="hidden md:grid grid-cols-[36px_minmax(0,2.3fr)_1fr_1fr_0.7fr_0.7fr_0.6fr_140px] gap-3 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 bg-gray-50 border-b border-gray-200">
+            <div className={`hidden md:grid ${mdGridCols} gap-3 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 bg-gray-50 border-b border-gray-200`}>
               <div className="flex items-center justify-center">
                 <input
                   ref={selectAllRef}
@@ -315,13 +343,13 @@ export default function Sessions() {
                   className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                 />
               </div>
-              <div>Session</div>
-              <div className="text-center">Status</div>
-              <div className="text-center">Workspace</div>
-              <div className="text-center">Messages</div>
-              <div className="text-center">Duration</div>
-              <div className="text-center">Type</div>
-              <div className="text-right">Actions</div>
+              <div>{t('sessions.session')}</div>
+              <div className="text-center">{t('sessions.status')}</div>
+              {isDefaultWorkspace && <div className="text-center">{t('sessions.workspace')}</div>}
+              <div className="text-center">{t('sessions.messages')}</div>
+              <div className="text-center">{t('sessions.duration')}</div>
+              <div className="text-center">{t('sessions.type')}</div>
+              <div className="text-right">{t('sessions.actions')}</div>
             </div>
             <div className="divide-y divide-gray-100">
               {sessions.map(session => (
@@ -331,7 +359,7 @@ export default function Sessions() {
                   tabIndex={0}
                   onClick={() => navigate(`/sessions/${session.session_id}`)}
                   onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/sessions/${session.session_id}`); } }}
-                  className="grid grid-cols-1 md:grid-cols-[36px_minmax(0,2.3fr)_1fr_1fr_0.7fr_0.7fr_0.6fr_140px] gap-3 px-4 py-3 hover:bg-indigo-50/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-inset"
+                  className={`grid grid-cols-1 ${mdGridCols} gap-3 px-4 py-3 hover:bg-indigo-50/40 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-inset`}
                 >
                   <div className="hidden md:flex items-center justify-center">
                     <input
@@ -345,7 +373,7 @@ export default function Sessions() {
 
                   <div className="min-w-0">
                     <div className="font-medium text-gray-900 truncate">
-                      {session.title || <span className="text-gray-400 italic">Untitled</span>}
+                      {session.title || <span className="text-gray-400 italic">{t('sessions.untitled')}</span>}
                     </div>
                     <div className="text-xs text-gray-500 mt-1 truncate">{session.session_id}</div>
                     {(session.agents || []).length > 0 && (
@@ -359,9 +387,11 @@ export default function Sessions() {
                     <StatusBadge status={session.status} />
                   </div>
 
-                  <div className="text-sm text-gray-700 md:self-center md:text-center">
-                    {session.workspace || '—'}
-                  </div>
+                  {isDefaultWorkspace && (
+                    <div className="text-sm text-gray-700 md:self-center md:text-center">
+                      {session.workspace || '—'}
+                    </div>
+                  )}
 
                   <div className="text-sm text-gray-700 md:self-center md:text-center">
                     <span className="inline-flex items-center gap-1 text-xs text-gray-600">
@@ -378,7 +408,7 @@ export default function Sessions() {
                     {session.is_flow ? (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 text-violet-700">
                         <Workflow className="w-3 h-3" />
-                        Flow
+                        {t('sessions.flow')}
                       </span>
                     ) : (
                       <span className="text-xs text-gray-400">—</span>
@@ -391,40 +421,49 @@ export default function Sessions() {
                         <button
                           onClick={e => { e.stopPropagation(); handleStop(session.session_id); }}
                           disabled={stopping[session.session_id]}
-                          title="Stop all runs in session"
+                          title={t('sessions.stopAllRunsInSession')}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-md hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
                         >
                           {stopping[session.session_id]
                             ? <Loader className="w-3.5 h-3.5 animate-spin" />
                             : <Square className="w-3.5 h-3.5" />}
-                          Stop
+                          {t('common.stop')}
                         </button>
                       )}
                       <button
                         onClick={e => { e.stopPropagation(); handleDelete(session); }}
                         disabled={deleting[session.session_id] || session.status === 'running'}
-                        title={session.status === 'running' ? 'Stop session before deleting' : 'Delete session'}
+                        title={session.status === 'running' ? t('sessions.stopBeforeDeleting') : t('sessions.deleteSession')}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-md hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
                       >
                         {deleting[session.session_id]
                           ? <Loader className="w-3.5 h-3.5 animate-spin" />
                           : <Trash2 className="w-3.5 h-3.5" />}
-                        Delete
+                        {t('common.delete')}
                       </button>
                     </div>
                   </div>
                 </div>
               ))}
             </div>
+            {sessions.length < totalSessions && (
+              <button
+                type="button"
+                onClick={() => fetchSessions(offset + PAGE_SIZE, true)}
+                className="w-full py-2.5 text-sm text-indigo-600 hover:bg-indigo-50 border-t border-gray-100"
+              >
+                {t('sessions.loadMore', { count: totalSessions - sessions.length })}
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {!loading && sessions.length > 0 && (
         <p className="text-xs text-gray-400 text-right">
-          {sessions.length} session{sessions.length !== 1 ? 's' : ''} shown
+          {t('sessions.shownOfTotal', { shown: sessions.length, total: totalSessions })}
         </p>
       )}
-    </div>
+    </PageContainer>
   );
 }

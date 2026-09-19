@@ -24,8 +24,17 @@ class Procedure(BaseModel):
     steps: List[str]
     tags: List[str] = Field(default_factory=list)
     source: Literal["user", "agent"] = "user"
-    agent_id: str                  # which agent owns this procedure
+    # The agent this skill is attached to. Empty means it is a catalog entry in
+    # its workspace — visible in the Skills page and installable onto an agent,
+    # but not injected into anyone's prompt until it is.
+    agent_id: str = ""
     workspace: str                 # which workspace this procedure lives in
+    # Published to the global skills catalog, mirroring AgentSpec.shared: off by
+    # default (a skill belongs to the workspace that authored it), on once the
+    # author publishes it, at which point any workspace may install a copy.
+    shared: bool = False
+    # Set on an installed copy, pointing at the published skill it came from.
+    origin_skill_id: Optional[str] = None
     # None for user-authored; tracked for agent-discovered procedures over time
     success_rate: Optional[float] = None
     use_count: int = 0
@@ -220,6 +229,26 @@ class ProcedureStore:
                 return False
             self._atomic_write_all([p.model_dump() for p in new_list])
             return True
+
+
+def all_procedures() -> List[Procedure]:
+    """Every procedure in every workspace, newest file state.
+
+    The per-workspace ``ProcedureStore`` deliberately filters on read; the
+    global skills catalog is the one caller that needs the unfiltered view.
+    """
+    store = ProcedureStore("default")
+    with FileLock(str(store.lock_path), timeout=10.0):
+        return store._load_all_unlocked()
+
+
+def find_procedure(procedure_id: UUID | str) -> Optional[Procedure]:
+    """Look a procedure up by id across all workspaces."""
+    pid = str(procedure_id)
+    for p in all_procedures():
+        if str(p.id) == pid:
+            return p
+    return None
 
 
 # ── Relevance matching ────────────────────────────────────────────────────────

@@ -1,0 +1,16 @@
+export default {
+  toolInventory: 'Каталог инструментов',
+  browseToolsAvailableToAgents: 'Обзор инструментов, доступных агентам в кластере.',
+  searchTools: 'Поиск инструментов…',
+  loadingToolDefinitions: 'Загрузка описаний инструментов…',
+  noToolsFound: 'Инструменты не найдены.',
+  argumentsSchema: 'Схема аргументов',
+  sourceCode: 'Исходный код',
+  saving: 'Сохранение',
+  loadingSource: 'Загрузка исходника…',
+  noSourceAvailableForThis: 'Для этого инструмента нет исходного кода.',
+  selectAToolFromThe: 'Выберите инструмент из каталога, чтобы посмотреть его техническое описание.',
+  workspace: 'пространство',
+  loadSourceFailed: 'Не удалось загрузить исходный код инструмента',
+  saveSourceFailed: 'Не удалось сохранить исходный код',
+};

@@ -1,21 +1,29 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   getProject, updateProject, getProjectTasks,
   cloneProjectRepo, getProjectGitStatus, pullProjectRepo,
   getProjectSwaggerSpec, proxyProjectApiRequest,
   getProjectFiles, getProjectFileContent,
-  getProjectSpecFromCode,
+  getProjectSpecFromCode, syncProjectIssues,
 } from '../api';
+import ImportRepoModal from '../components/ImportRepoModal';
+import ProjectGraph from '../components/flow/ProjectGraph';
+import PlannerChat from '../components/flow/PlannerChat';
+import TaskBoard from '../components/TaskBoard';
+import { useWorkspace } from '../components/workspace';
 import {
   FolderGit2, Globe, Server, GitBranch, Github, Gitlab, ChevronLeft,
   RefreshCw, Play, Download, ExternalLink, CheckSquare, AlertCircle,
   Edit3, Save, X, Send, Code2, BookOpen, FileText, Tag, Clock,
   ArrowUpDown, Terminal, Folder, FolderOpen, ChevronRight, ChevronDown,
-  Search, ChevronUp, Zap,
+  Search, ChevronUp, Zap, Link2, PanelRightOpen,
 } from 'lucide-react';
 
-const TABS = ['Overview', 'Tasks', 'Progress', 'Files'];
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
+import { useToast, errorDetail } from '../components/toast';
+const TABS = ['Overview', 'Tasks', 'Architecture', 'Files'];
 
 // ── File tree helpers ──────────────────────────────────────────
 const buildFileTree = (paths) => {
@@ -49,11 +57,6 @@ const buildFileTree = (paths) => {
   return toArray(root);
 };
 
-const parentDirPaths = (filePath) => {
-  const parts = String(filePath || '').split('/').filter(Boolean);
-  return parts.slice(1).map((_, i) => parts.slice(0, i + 1).join('/'));
-};
-
 const STATUS_COLORS = {
   todo: 'bg-gray-100 text-gray-600',
   ready: 'bg-blue-100 text-blue-700',
@@ -72,11 +75,20 @@ const METHOD_COLORS = {
 };
 
 export default function ProjectDetails() {
+  const { t } = useI18n();
+  const toast = useToast();
   const { id } = useParams();
   const navigate = useNavigate();
+  const { liveUpdates, selectedWorkspace } = useWorkspace();
+  // The project's workspace is redundant when a specific workspace is selected in
+  // the header — only surface it in the default (all-workspaces) view.
+  const onDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('Overview');
+  const [taskToolbar, setTaskToolbar] = useState(null);
+  const [plannerToolbar, setPlannerToolbar] = useState(null);
+  const [showPlanner, setShowPlanner] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
@@ -102,6 +114,8 @@ export default function ProjectDetails() {
   const [cloning, setCloning] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [gitMsg, setGitMsg] = useState('');
+  const [showConnect, setShowConnect] = useState(false);
+  const [syncingIssues, setSyncingIssues] = useState(false);
 
   // API tab
   const [swaggerSpec, setSwaggerSpec] = useState(null);
@@ -122,7 +136,7 @@ export default function ProjectDetails() {
   const [specFromCodeLoading, setSpecFromCodeLoading] = useState(false);
   const [specFromCodeError, setSpecFromCodeError] = useState('');
 
-  const fetchProject = async () => {
+  const fetchProject = useCallback(async () => {
     try {
       const resp = await getProject(id);
       setProject(resp.data);
@@ -150,9 +164,9 @@ export default function ProjectDetails() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, navigate]);
 
-  useEffect(() => { fetchProject(); }, [id]);
+  useEffect(() => { fetchProject(); }, [fetchProject, id]);
 
   const loadFileContent = useCallback(async (path) => {
     if (!path) return;
@@ -166,11 +180,11 @@ export default function ProjectDetails() {
       setSelectedFileContent(resp.data.content || '');
       setSelectedFileSize(resp.data.size || 0);
     } catch (e) {
-      setFileContentError(e.response?.data?.detail || 'Failed to load file');
+      setFileContentError(e.response?.data?.detail || t('projectDetails.errors.loadFile'));
     } finally {
       setFileContentLoading(false);
     }
-  }, [id]);
+  }, [id, t]);
 
   const loadFiles = useCallback(async () => {
     setFilesLoading(true);
@@ -186,25 +200,27 @@ export default function ProjectDetails() {
         loadFileContent(list[0]);
       }
     } catch (e) {
-      setFilesError(e.response?.data?.detail || e.message || 'Failed to load files');
+      setFilesError(e.response?.data?.detail || e.message || t('projectDetails.errors.loadFiles'));
     } finally {
       setFilesLoading(false);
     }
-  }, [id, loadFileContent]);
+  }, [id, loadFileContent, t]);
 
   useEffect(() => {
-    if (activeTab === 'Tasks' || activeTab === 'Progress') loadTasks();
+    if (activeTab === 'Tasks' || activeTab === 'Overview') loadTasks();
     if (activeTab === 'Files') loadFiles();
     if (activeTab === 'Repository') loadGitStatus();
     if (activeTab === 'API') loadSwagger(backendBase);
-  }, [activeTab]);
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps -- loaders and backendBase are declared below; naming them here would hit the TDZ
 
   const loadTasks = async () => {
     setTasksLoading(true);
     try {
       const resp = await getProjectTasks(id);
       setTasks(resp.data);
-    } catch { }
+    } catch (e) {
+      toast.error(t('projectDetails.errors.loadTasks'), errorDetail(e));
+    }
     finally { setTasksLoading(false); }
   };
 
@@ -216,7 +232,7 @@ export default function ProjectDetails() {
       setGitStatus(resp.data);
     } catch (e) {
       setGitStatus(null);
-      setGitMsg(e.response?.data?.detail || 'Could not fetch git status');
+      setGitMsg(e.response?.data?.detail || t('projectDetails.errors.gitStatus'));
     } finally { setGitLoading(false); }
   };
 
@@ -228,7 +244,7 @@ export default function ProjectDetails() {
       setGitMsg(`Cloned successfully to ${resp.data.path}`);
       loadGitStatus();
     } catch (e) {
-      setGitMsg(e.response?.data?.detail || 'Clone failed');
+      setGitMsg(e.response?.data?.detail || t('projectDetails.errors.clone'));
     } finally { setCloning(false); }
   };
 
@@ -237,12 +253,38 @@ export default function ProjectDetails() {
     setGitMsg('');
     try {
       const resp = await pullProjectRepo(id);
-      setGitMsg(resp.data.output || 'Pulled successfully');
+      setGitMsg(resp.data.output || t('projectDetails.pulled'));
       loadGitStatus();
     } catch (e) {
-      setGitMsg(e.response?.data?.detail || 'Pull failed');
+      setGitMsg(e.response?.data?.detail || t('projectDetails.errors.pull'));
     } finally { setPulling(false); }
   };
+
+  const handleSyncIssues = async () => {
+    setSyncingIssues(true);
+    setGitMsg('');
+    try {
+      const resp = await syncProjectIssues(id);
+      const r = resp.data || {};
+      setGitMsg(`Issues synced: ${r.imported || 0} new, ${r.updated || 0} updated (of ${r.total || 0})`);
+      loadTasks();
+    } catch (e) {
+      setGitMsg(e.response?.data?.detail || t('projectDetails.errors.issueSync'));
+    } finally { setSyncingIssues(false); }
+  };
+
+  const handleConnected = (result) => {
+    setShowConnect(false);
+    const issues = result?.issues;
+    let msg = result?.cloned ? t('projectDetails.repoConnectedCloned') : t('projectDetails.repoConnected');
+    if (issues?.error) msg += ` — issue import failed: ${issues.error}`;
+    else if (issues) msg += ` — ${issues.imported} issue${issues.imported === 1 ? '' : 's'} imported as tasks`;
+    setGitMsg(msg);
+    fetchProject();
+    loadGitStatus();
+  };
+
+  const isConnectedRepo = ['github', 'gitlab'].includes(project?.repo?.type) && project?.repo?.remote_id;
 
   const loadSwagger = async (baseOverride) => {
     if (!project?.backend?.enabled) return;
@@ -278,7 +320,7 @@ export default function ProjectDetails() {
           : ['default']
       ));
     } catch (e) {
-      setSpecFromCodeError(e.response?.data?.detail || e.message || 'Failed to extract spec from code');
+      setSpecFromCodeError(e.response?.data?.detail || e.message || t('projectDetails.errors.extractSpec'));
     } finally {
       setSpecFromCodeLoading(false);
     }
@@ -461,28 +503,67 @@ export default function ProjectDetails() {
   });
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64 text-gray-400">Loading…</div>;
+    return <div className="flex items-center justify-center h-64 text-gray-400">{t('projectDetails.loading')}</div>;
   }
   if (!project) return null;
 
   return (
-    <div className="space-y-6">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-gray-500">
-        <Link to="/projects" className="hover:text-indigo-600 flex items-center gap-1">
-          <ChevronLeft className="w-4 h-4" /> Projects
-        </Link>
-        <span>/</span>
-        <span className="text-gray-900 font-medium">{project.name}</span>
-      </div>
+    <PageContainer fill={activeTab === 'Tasks'}>
+      <PageHeader
+        icon={FolderGit2}
+        title={project.name}
+        description={!editing ? project.description : undefined}
+        backTo="/projects"
+        backLabel={t('projectDetails.projects')}
+        badges={!editing && (
+              <>
+                <span className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">{project.type}</span>
+                <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
+                  project.status === 'active' ? 'bg-green-100 text-green-700' :
+                  project.status === 'completed' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+                }`}>{project.status}</span>
+                {onDefaultWorkspace && (
+                  <span className="shrink-0 text-xs text-gray-400">{t('projectDetails.workspace')} <strong>{project.workspace}</strong></span>
+                )}
+                {project.repo?.type && project.repo.type !== 'none' && (
+                  <span className="flex shrink-0 items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                    <GitBranch className="w-3 h-3" /> {project.repo.type}
+                    {project.repo.url && <a href={project.repo.url} target="_blank" rel="noreferrer" className="ml-1 underline">{t('projectDetails.repo')}</a>}
+                  </span>
+                )}
+                {project.frontend?.enabled && (
+                  <span className="flex shrink-0 items-center gap-1 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
+                    <Globe className="w-3 h-3" /> Frontend
+                    {frontendUrl && <a href={frontendUrl} target="_blank" rel="noreferrer" className="ml-1"><ExternalLink className="w-2.5 h-2.5" /></a>}
+                  </span>
+                )}
+                {project.backend?.enabled && (
+                  <span className="flex shrink-0 items-center gap-1 text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">
+                    <Server className="w-3 h-3" /> Backend
+                    {swaggerUrl && <a href={swaggerUrl} target="_blank" rel="noreferrer" className="ml-1"><ExternalLink className="w-2.5 h-2.5" /></a>}
+                  </span>
+                )}
+                {project.tags?.map(tag => (
+                  <span key={tag} className="shrink-0 text-xs text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">
+                    {tag}
+                  </span>
+                ))}
+              </>
+            )}
+        actions={!editing && (
+          <button onClick={() => setEditing(true)}
+            className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+            <Edit3 className="w-4 h-4" /> {t('projectDetails.edit')}
+          </button>
+        )}
+      />
 
-      {/* Project Header */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        {editing ? (
-          <div className="space-y-4">
+      <div className={editing ? 'mb-6' : ''}>
+        {editing && (
+          <div className="space-y-4 rounded-xl border border-gray-200 bg-white p-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-500 mb-1">Name</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.name')}</label>
                 <input
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={editForm.name}
@@ -490,7 +571,7 @@ export default function ProjectDetails() {
                 />
               </div>
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-500 mb-1">Description</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.description')}</label>
                 <textarea
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none"
                   rows={2}
@@ -499,33 +580,33 @@ export default function ProjectDetails() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.status')}</label>
                 <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}>
-                  <option value="active">Active</option>
-                  <option value="archived">Archived</option>
-                  <option value="completed">Completed</option>
+                  <option value="active">{t('projectDetails.active')}</option>
+                  <option value="archived">{t('projectDetails.archived')}</option>
+                  <option value="completed">{t('projectDetails.completed')}</option>
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Type</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.type')}</label>
                 <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
-                  <option value="general">General</option>
-                  <option value="code">Code</option>
-                  <option value="research">Research</option>
-                  <option value="documentation">Documentation</option>
+                  <option value="general">{t('projectDetails.general')}</option>
+                  <option value="code">{t('projectDetails.code')}</option>
+                  <option value="research">{t('projectDetails.research')}</option>
+                  <option value="documentation">{t('projectDetails.documentation')}</option>
                 </select>
               </div>
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-500 mb-1">Tags (comma-separated)</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.tagsCommaSeparated')}</label>
                 <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={editForm.tags} onChange={e => setEditForm(f => ({ ...f, tags: e.target.value }))} />
               </div>
             </div>
             {/* Repo */}
             <div className="border border-gray-100 rounded-xl p-4 space-y-2">
-              <h4 className="text-xs font-semibold text-gray-600 flex items-center gap-1"><GitBranch className="w-3.5 h-3.5" /> Repository</h4>
+              <h4 className="text-xs font-semibold text-gray-600 flex items-center gap-1"><GitBranch className="w-3.5 h-3.5" /> {t('projectDetails.repository')}</h4>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">URL</label>
@@ -533,7 +614,7 @@ export default function ProjectDetails() {
                     value={editForm.repo_url} onChange={e => setEditForm(f => ({ ...f, repo_url: e.target.value }))} placeholder="https://github.com/org/repo.git" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Branch</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.branch')}</label>
                   <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                     value={editForm.repo_branch} onChange={e => setEditForm(f => ({ ...f, repo_branch: e.target.value }))} />
                 </div>
@@ -544,17 +625,17 @@ export default function ProjectDetails() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={editForm.frontend_enabled} onChange={e => setEditForm(f => ({ ...f, frontend_enabled: e.target.checked }))} />
                 <Globe className="w-3.5 h-3.5 text-blue-600" />
-                <span className="text-xs font-semibold text-gray-600">Frontend</span>
+                <span className="text-xs font-semibold text-gray-600">{t('projectDetails.frontend')}</span>
               </label>
               {editForm.frontend_enabled && (
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Port</label>
+                    <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.port')}</label>
                     <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                       value={editForm.frontend_port} onChange={e => setEditForm(f => ({ ...f, frontend_port: e.target.value }))} placeholder="5173" />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Dev Command</label>
+                    <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.devCommand')}</label>
                     <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                       value={editForm.frontend_dev_command} onChange={e => setEditForm(f => ({ ...f, frontend_dev_command: e.target.value }))} placeholder="npm run dev" />
                   </div>
@@ -566,17 +647,17 @@ export default function ProjectDetails() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={editForm.backend_enabled} onChange={e => setEditForm(f => ({ ...f, backend_enabled: e.target.checked }))} />
                 <Server className="w-3.5 h-3.5 text-green-600" />
-                <span className="text-xs font-semibold text-gray-600">Backend</span>
+                <span className="text-xs font-semibold text-gray-600">{t('projectDetails.backend')}</span>
               </label>
               {editForm.backend_enabled && (
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Port</label>
+                    <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.port')}</label>
                     <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                       value={editForm.backend_port} onChange={e => setEditForm(f => ({ ...f, backend_port: e.target.value }))} placeholder="8000" />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Swagger Path</label>
+                    <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.swaggerPath')}</label>
                     <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                       value={editForm.backend_swagger_path} onChange={e => setEditForm(f => ({ ...f, backend_swagger_path: e.target.value }))} placeholder="/docs" />
                   </div>
@@ -590,72 +671,50 @@ export default function ProjectDetails() {
               </button>
               <button onClick={() => setEditing(false)}
                 className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">
-                Cancel
+                {t('projectDetails.cancel')}
               </button>
             </div>
-          </div>
-        ) : (
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-xl font-bold text-gray-900">{project.name}</h1>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">{project.type}</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                  project.status === 'active' ? 'bg-green-100 text-green-700' :
-                  project.status === 'completed' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
-                }`}>{project.status}</span>
-                <span className="text-xs text-gray-400">Workspace: <strong>{project.workspace}</strong></span>
-              </div>
-              {project.description && <p className="text-sm text-gray-500 mt-2">{project.description}</p>}
-              <div className="flex items-center gap-2 mt-3 flex-wrap">
-                {project.repo?.type && project.repo.type !== 'none' && (
-                  <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                    <GitBranch className="w-3 h-3" /> {project.repo.type}
-                    {project.repo.url && <a href={project.repo.url} target="_blank" rel="noreferrer" className="ml-1 underline">repo</a>}
-                  </span>
-                )}
-                {project.frontend?.enabled && (
-                  <span className="flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
-                    <Globe className="w-3 h-3" /> Frontend
-                    {frontendUrl && <a href={frontendUrl} target="_blank" rel="noreferrer" className="ml-1"><ExternalLink className="w-2.5 h-2.5" /></a>}
-                  </span>
-                )}
-                {project.backend?.enabled && (
-                  <span className="flex items-center gap-1 text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">
-                    <Server className="w-3 h-3" /> Backend
-                    {swaggerUrl && <a href={swaggerUrl} target="_blank" rel="noreferrer" className="ml-1"><ExternalLink className="w-2.5 h-2.5" /></a>}
-                  </span>
-                )}
-                {project.tags?.map(tag => (
-                  <span key={tag} className="text-xs text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <button onClick={() => setEditing(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shrink-0">
-              <Edit3 className="w-3.5 h-3.5" /> Edit
-            </button>
           </div>
         )}
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 gap-0">
-        {TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
+      <div className="border-b border-gray-200 shrink-0 flex items-end justify-between gap-3">
+        <nav className="flex flex-wrap gap-2 -mb-px">
+          {[
+            ...TABS,
+            ...(project.type === 'code' || (project.repo?.type && project.repo.type !== 'none') ? ['Repository'] : []),
+            ...(project.backend?.enabled ? ['API'] : []),
+            ...(project.frontend?.enabled ? ['Preview'] : []),
+          ].map(tab => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`inline-flex items-center px-4 py-2 first:pl-0 text-sm font-semibold border-b-2 transition-colors ${
+                activeTab === tab
+                  ? 'border-indigo-600 text-indigo-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+              aria-current={activeTab === tab ? 'page' : undefined}
+            >
+              {t(`projectDetails.tabs.${tab.toLowerCase()}`)}
+            </button>
+          ))}
+        </nav>
+        {activeTab === 'Tasks' && (
+          <div className="flex items-center gap-2 shrink-0">
+            <div ref={setPlannerToolbar} className="flex items-center" />
+            <div ref={setTaskToolbar} className="flex items-center" />
+            {!showPlanner && (
+              <button onClick={() => setShowPlanner(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-emerald-600 hover:bg-emerald-50"
+                title={t('projectDetails.showTheTaskPlanner')}>
+                <PanelRightOpen className="w-4 h-4" /> {t('projectDetails.planner')}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tab Content */}
@@ -663,86 +722,68 @@ export default function ProjectDetails() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <CheckSquare className="w-4 h-4 text-indigo-500" /> Tasks
+              <CheckSquare className="w-4 h-4 text-indigo-500" /> {t('projectDetails.tasks')}
             </h3>
             <div className="text-3xl font-bold text-gray-900">{project.tasks_count ?? 0}</div>
             <Link to={`/tasks?project=${project.id}`} className="text-xs text-indigo-600 hover:underline mt-1 block">
-              View all tasks →
+              {t('projectDetails.viewAllTasks')}
             </Link>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <GitBranch className="w-4 h-4 text-gray-500" /> Repository
+              <GitBranch className="w-4 h-4 text-gray-500" /> {t('projectDetails.repository')}
             </h3>
             {project.repo?.type !== 'none' ? (
               <>
                 <p className="text-sm text-gray-600 font-medium capitalize">{project.repo?.type}</p>
                 {project.repo?.url && <p className="text-xs text-gray-400 truncate">{project.repo.url}</p>}
-                <p className="text-xs text-gray-400">Branch: {project.repo?.branch}</p>
+                <p className="text-xs text-gray-400">{t('projectDetails.branch')}: {project.repo?.branch}</p>
               </>
             ) : (
-              <p className="text-sm text-gray-400 italic">No repo configured</p>
+              <p className="text-sm text-gray-400 italic">{t('projectDetails.noRepoConfigured')}</p>
             )}
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-gray-400" /> Info
+              <Clock className="w-4 h-4 text-gray-400" /> {t('projectDetails.info')}
             </h3>
-            <p className="text-xs text-gray-500">Created</p>
+            <p className="text-xs text-gray-500">{t('projectDetails.created')}</p>
             <p className="text-sm text-gray-700">{new Date(project.created_at).toLocaleDateString()}</p>
-            <p className="text-xs text-gray-500 mt-2">Updated</p>
+            <p className="text-xs text-gray-500 mt-2">{t('projectDetails.updated')}</p>
             <p className="text-sm text-gray-700">{new Date(project.updated_at).toLocaleDateString()}</p>
           </div>
         </div>
       )}
 
       {activeTab === 'Tasks' && (
-        <div className="bg-white rounded-xl border border-gray-200">
-          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <h3 className="font-semibold text-gray-800 text-sm">Project Tasks</h3>
-            <div className="flex gap-2">
-              <button onClick={loadTasks} className="p-1.5 text-gray-400 hover:text-gray-600 rounded">
-                <RefreshCw className="w-4 h-4" />
-              </button>
-              <Link to={`/tasks`}
-                className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
-                <ExternalLink className="w-3.5 h-3.5" /> Open Task Manager
-              </Link>
-            </div>
+        <div className="flex-1 min-h-0 flex gap-3">
+          <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
+            <TaskBoard
+              workspace={project.workspace}
+              projectId={project.id}
+              selectedWorkspace={project.workspace}
+              showWorkspaceColumn={false}
+              liveUpdates={liveUpdates}
+              toolbarTarget={taskToolbar}
+            />
           </div>
-          {tasksLoading ? (
-            <div className="p-8 text-center text-gray-400">Loading…</div>
-          ) : tasks.length === 0 ? (
-            <div className="p-8 text-center text-gray-400">
-              <CheckSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p>No tasks linked to this project yet</p>
-              <p className="text-xs mt-1">Create tasks and set their project_id to <code>{id}</code></p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {tasks.map(task => (
-                <div key={task.id} className="px-5 py-3 flex items-center justify-between hover:bg-gray-50">
-                  <div className="min-w-0">
-                    <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-gray-800 hover:text-indigo-600 truncate block">
-                      {task.title}
-                    </Link>
-                    {task.description && (
-                      <p className="text-xs text-gray-400 truncate mt-0.5">{task.description}</p>
-                    )}
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ml-4 shrink-0 ${STATUS_COLORS[task.status] || 'bg-gray-100 text-gray-600'}`}>
-                    {task.status}
-                  </span>
-                </div>
-              ))}
-            </div>
+          {showPlanner && (
+            <PlannerChat projectId={project.id} onGenerated={loadTasks}
+              onClose={() => setShowPlanner(false)} toolbarTarget={plannerToolbar} />
           )}
         </div>
       )}
 
-      {activeTab === 'Progress' && (() => {
+      {activeTab === 'Overview' && (() => {
         const statusOrder = ['done', 'in_progress', 'ready', 'blocked', 'stopped', 'todo'];
-        const statusLabels = { done: 'Done', in_progress: 'In Progress', ready: 'Ready', blocked: 'Blocked', stopped: 'Stopped', todo: 'To Do' };
+        const statusLabels = {
+          done: t('projectDetails.taskStatuses.done'),
+          in_progress: t('projectDetails.taskStatuses.in_progress'),
+          ready: t('projectDetails.taskStatuses.ready'),
+          blocked: t('projectDetails.taskStatuses.blocked'),
+          stopped: t('projectDetails.taskStatuses.stopped'),
+          todo: t('projectDetails.taskStatuses.todo'),
+        };
         const statusColors = {
           done: { bar: 'bg-green-500', badge: 'bg-green-100 text-green-700' },
           in_progress: { bar: 'bg-yellow-400', badge: 'bg-yellow-100 text-yellow-700' },
@@ -758,23 +799,23 @@ export default function ProjectDetails() {
         tasks.forEach(t => { byCounts[t.status] = (byCounts[t.status] || 0) + 1; });
 
         return (
-          <div className="space-y-6">
+          <div className="space-y-6 mt-6">
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                Project Progress
+                {t('projectDetails.projectProgress')}
               </h3>
               {tasksLoading ? (
-                <div className="text-center py-8 text-gray-400">Loading…</div>
+                <div className="text-center py-8 text-gray-400">{t('projectDetails.loading')}</div>
               ) : total === 0 ? (
                 <div className="text-center py-8 text-gray-400">
                   <CheckSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">No tasks in this project yet.</p>
+                  <p className="text-sm">{t('projectDetails.noTasksInThisProject')}</p>
                 </div>
               ) : (
                 <>
                   <div className="flex items-end justify-between mb-2">
                     <span className="text-3xl font-bold text-gray-900">{pct}%</span>
-                    <span className="text-sm text-gray-500">{doneCnt} / {total} tasks done</span>
+                    <span className="text-sm text-gray-500">{t('projectDetails.tasksDone', { done: doneCnt, total })}</span>
                   </div>
                   <div className="w-full bg-gray-100 rounded-full h-3 mb-6">
                     <div className="bg-green-500 h-3 rounded-full transition-all" style={{ width: `${pct}%` }} />
@@ -797,7 +838,7 @@ export default function ProjectDetails() {
 
                   {/* Task list */}
                   <div className="border-t border-gray-100 pt-4 mb-6">
-                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Tasks</h4>
+                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{t('projectDetails.tasks')}</h4>
                     <div className="space-y-2">
                       {tasks.map(task => {
                         const color = statusColors[task.status] || { bar: 'bg-gray-300', badge: 'bg-gray-100 text-gray-500' };
@@ -833,7 +874,7 @@ export default function ProjectDetails() {
                     };
                     return (
                       <div className="border-t border-gray-100 pt-4">
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Activity Log</h4>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{t('projectDetails.activityLog')}</h4>
                         <div className="space-y-0 max-h-80 overflow-y-auto">
                           {logEntries.map((e, i) => {
                             const style = typeStyle[e.type] || { dot: 'bg-gray-300', text: 'text-gray-600' };
@@ -865,13 +906,17 @@ export default function ProjectDetails() {
         );
       })()}
 
+      {activeTab === 'Architecture' && (
+        <ProjectGraph projectId={project.id} />
+      )}
+
       {activeTab === 'Files' && (
         <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
           <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-indigo-500" /> Project Files
+            <FileText className="w-5 h-5 text-indigo-500" /> {t('projectDetails.projectFiles')}
           </h3>
           {filesLoading ? (
-            <p className="text-sm text-gray-400">Loading files…</p>
+            <p className="text-sm text-gray-400">{t('projectDetails.loadingFiles')}</p>
           ) : filesError ? (
             <p className="text-sm text-red-500">{filesError}</p>
           ) : files.length ? (
@@ -881,27 +926,27 @@ export default function ProjectDetails() {
               </div>
               <div className="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden">
                 <div className="px-4 py-2 border-b bg-gray-50">
-                  <div className="text-xs text-gray-500">Selected file</div>
+                  <div className="text-xs text-gray-500">{t('projectDetails.selectedFile')}</div>
                   <div className="text-sm text-gray-700 truncate">{selectedFilePath || '-'}</div>
                   {selectedFileSize > 0 && (
-                    <div className="text-xs text-gray-400 mt-0.5">{selectedFileSize} bytes</div>
+                    <div className="text-xs text-gray-400 mt-0.5">{t('projectDetails.bytes', { count: selectedFileSize })}</div>
                   )}
                 </div>
                 <div className="p-4 max-h-[32rem] overflow-auto">
                   {fileContentLoading ? (
-                    <p className="text-sm text-gray-500">Loading…</p>
+                    <p className="text-sm text-gray-500">{t('projectDetails.loading')}</p>
                   ) : fileContentError ? (
                     <p className="text-sm text-red-600">{fileContentError}</p>
                   ) : selectedFilePath ? (
                     <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words">{selectedFileContent}</pre>
                   ) : (
-                    <p className="text-sm text-gray-500">Select a file to preview its content.</p>
+                    <p className="text-sm text-gray-500">{t('projectDetails.selectAFileToPreview')}</p>
                   )}
                 </div>
               </div>
             </div>
           ) : (
-            <p className="text-sm text-gray-400">No files found in this project folder.</p>
+            <p className="text-sm text-gray-400">{t('projectDetails.noFilesFoundInThis')}</p>
           )}
         </div>
       )}
@@ -913,8 +958,24 @@ export default function ProjectDetails() {
             <div className="flex items-center gap-3 flex-wrap">
               <h3 className="text-sm font-semibold text-gray-700 flex-1">
                 <GitBranch className="w-4 h-4 inline mr-1.5 text-gray-500" />
-                {project.repo?.type !== 'none' ? `${project.repo?.type} — ${project.repo?.url || 'no URL'}` : 'No repo configured'}
+                {project.repo?.type !== 'none' ? `${project.repo?.type} — ${project.repo?.url || t('projectDetails.noUrl')}` : t('projectDetails.noRepoConfigured')}
               </h3>
+              {!isConnectedRepo && (
+                <button
+                  onClick={() => setShowConnect(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
+                >
+                  <Link2 className="w-3.5 h-3.5" /> {t('projectDetails.connectRepository')}
+                </button>
+              )}
+              {isConnectedRepo && (
+                <button
+                  onClick={handleSyncIssues} disabled={syncingIssues}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncingIssues ? 'animate-spin' : ''}`} /> {syncingIssues ? t('projectDetails.syncing') : t('projectDetails.syncIssues')}
+                </button>
+              )}
               {project.repo?.url && (
                 <>
                   <button
@@ -944,29 +1005,29 @@ export default function ProjectDetails() {
           </div>
 
           {gitLoading ? (
-            <div className="text-center py-8 text-gray-400">Loading git status…</div>
+            <div className="text-center py-8 text-gray-400">{t('projectDetails.loadingGitStatus')}</div>
           ) : gitStatus ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white rounded-xl border border-gray-200 p-5">
                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                  Branch: <span className="text-gray-900 normal-case font-bold">{gitStatus.branch || 'unknown'}</span>
+                  {t('projectDetails.branch')}: <span className="text-gray-900 normal-case font-bold">{gitStatus.branch || t('common.unknown')}</span>
                 </h4>
-                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Status</h4>
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('projectDetails.status')}</h4>
                 <pre className="text-xs bg-gray-50 rounded-lg p-3 whitespace-pre-wrap text-gray-700 max-h-48 overflow-y-auto">
-                  {gitStatus.status || 'Clean working tree'}
+                  {gitStatus.status || t('projectDetails.cleanWorkingTree')}
                 </pre>
               </div>
               <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Recent Commits</h4>
+                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('projectDetails.recentCommits')}</h4>
                 <pre className="text-xs bg-gray-50 rounded-lg p-3 whitespace-pre-wrap text-gray-700 max-h-48 overflow-y-auto">
-                  {gitStatus.recent_commits || 'No commits'}
+                  {gitStatus.recent_commits || t('projectDetails.noCommits')}
                 </pre>
               </div>
             </div>
           ) : (
             <div className="text-center py-8 text-gray-400">
               <Terminal className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">No local repo found. Clone the repo first.</p>
+              <p className="text-sm">{t('projectDetails.noLocalRepoFoundClone')}</p>
             </div>
           )}
         </div>
@@ -987,7 +1048,7 @@ export default function ProjectDetails() {
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" style={{ height: '70vh' }}>
                 <iframe
                   src={frontendUrl}
-                  title="Frontend Preview"
+                  title={t('projectDetails.frontendPreview')}
                   className="w-full h-full border-0"
                   sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
                 />
@@ -996,8 +1057,8 @@ export default function ProjectDetails() {
           ) : (
             <div className="text-center py-16 text-gray-400">
               <Globe className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">No frontend configured</p>
-              <p className="text-sm mt-1">Enable the frontend and set a port in the Overview tab</p>
+              <p className="font-medium">{t('projectDetails.noFrontendConfigured')}</p>
+              <p className="text-sm mt-1">{t('projectDetails.enableTheFrontendAndSet')}</p>
             </div>
           )}
         </div>
@@ -1008,8 +1069,8 @@ export default function ProjectDetails() {
           {!project.backend?.enabled ? (
             <div className="text-center py-16 text-gray-400">
               <Server className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">No backend configured</p>
-              <p className="text-sm mt-1">Enable the backend in the Overview tab</p>
+              <p className="font-medium">{t('projectDetails.noBackendConfigured')}</p>
+              <p className="text-sm mt-1">{t('projectDetails.enableTheBackendInThe')}</p>
             </div>
           ) : (
             <>
@@ -1023,9 +1084,9 @@ export default function ProjectDetails() {
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 shrink-0"
                 >
                   <Code2 className="w-3.5 h-3.5" />
-                  {specFromCodeLoading ? 'Extracting…' : 'Load from Code'}
+                  {specFromCodeLoading ? t('projectDetails.extracting') : t('projectDetails.loadFromCode')}
                 </button>
-                <span className="text-gray-300 text-xs">or</span>
+                <span className="text-gray-300 text-xs">{t('projectDetails.or')}</span>
                 {/* Live server URL + load */}
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                   <Server className="w-4 h-4 text-gray-400 shrink-0" />
@@ -1040,7 +1101,7 @@ export default function ProjectDetails() {
                     disabled={swaggerLoading}
                     className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50 shrink-0"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" /> Load Live Spec
+                    <RefreshCw className="w-3.5 h-3.5" /> {t('projectDetails.loadLiveSpec')}
                   </button>
                 </div>
               </div>
@@ -1050,11 +1111,11 @@ export default function ProjectDetails() {
                   {specFromCodeError ? (
                     <span className="text-red-500">{specFromCodeError}</span>
                   ) : swaggerSource === 'live' ? (
-                    <span className="text-green-600">Loaded from live server</span>
+                    <span className="text-green-600">{t('projectDetails.loadedFromLiveServer')}</span>
                   ) : swaggerSource === 'dynamic_import' ? (
-                    <span className="text-green-600">Extracted via dynamic import</span>
+                    <span className="text-green-600">{t('projectDetails.extractedViaDynamicImport')}</span>
                   ) : swaggerSource ? (
-                    <span className="text-green-600">Loaded from <code className="font-mono">{swaggerSource}</code></span>
+                    <span className="text-green-600">{t('projectDetails.loadedFrom')} <code className="font-mono">{swaggerSource}</code></span>
                   ) : null}
                 </div>
               )}
@@ -1087,7 +1148,7 @@ export default function ProjectDetails() {
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                     <input
                       className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg"
-                      placeholder="Search endpoints…"
+                      placeholder={t('projectDetails.searchEndpoints')}
                       value={endpointSearch}
                       onChange={e => setEndpointSearch(e.target.value)}
                     />
@@ -1097,14 +1158,14 @@ export default function ProjectDetails() {
                 {/* Endpoint list */}
                 <div className="overflow-y-auto max-h-[32rem]">
                   {swaggerLoading ? (
-                    <p className="text-xs text-gray-400 p-4 text-center">Loading spec…</p>
+                    <p className="text-xs text-gray-400 p-4 text-center">{t('projectDetails.loadingSpec')}</p>
                   ) : !swaggerSpec ? (
                     <div className="p-4 text-center text-xs text-gray-400">
-                      <p>Could not load API spec.</p>
-                      <button onClick={loadSwagger} className="mt-1 text-indigo-500 hover:underline">Retry</button>
+                      <p>{t('projectDetails.couldNotLoadApiSpec')}</p>
+                      <button onClick={loadSwagger} className="mt-1 text-indigo-500 hover:underline">{t('projectDetails.retry')}</button>
                     </div>
                   ) : Object.keys(groupedEndpoints).length === 0 ? (
-                    <p className="text-xs text-gray-400 p-4 text-center">No endpoints match.</p>
+                    <p className="text-xs text-gray-400 p-4 text-center">{t('projectDetails.noEndpointsMatch')}</p>
                   ) : (
                     Object.entries(groupedEndpoints).map(([tag, endpoints]) => {
                       const isOpen = expandedTags.has(tag);
@@ -1160,14 +1221,14 @@ export default function ProjectDetails() {
                     {/* Parameters table */}
                     {selectedEndpointSpec.spec.parameters?.length > 0 && (
                       <div className="mt-3">
-                        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Parameters</div>
+                        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('projectDetails.parameters')}</div>
                         <div className="space-y-1">
                           {selectedEndpointSpec.spec.parameters.map(p => (
                             <div key={p.name} className="flex items-center gap-2 text-xs">
                               <span className="font-mono text-indigo-700 w-28 shrink-0">{p.name}</span>
                               <span className="text-gray-400 w-14 shrink-0">{p.in}</span>
                               <span className="text-gray-400">{p.schema?.type || ''}</span>
-                              {p.required && <span className="text-red-400 text-[10px]">required</span>}
+                              {p.required && <span className="text-red-400 text-[10px]">{t('projectDetails.required')}</span>}
                               {p.description && <span className="text-gray-400 truncate">{p.description}</span>}
                             </div>
                           ))}
@@ -1180,7 +1241,7 @@ export default function ProjectDetails() {
                 {/* Request builder */}
                 <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
                   <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5" /> Request
+                    <Zap className="w-3.5 h-3.5" /> {t('projectDetails.request')}
                   </h3>
 
                   {/* Method + path + send */}
@@ -1217,7 +1278,7 @@ export default function ProjectDetails() {
                   {/* Path params */}
                   {Object.keys(apiPathParams).length > 0 && (
                     <div>
-                      <div className="text-xs font-medium text-gray-500 mb-1.5">Path Parameters</div>
+                      <div className="text-xs font-medium text-gray-500 mb-1.5">{t('projectDetails.pathParameters')}</div>
                       <div className="grid grid-cols-2 gap-2">
                         {Object.entries(apiPathParams).map(([k, v]) => (
                           <div key={k} className="flex items-center gap-1.5">
@@ -1237,14 +1298,14 @@ export default function ProjectDetails() {
                   {/* Query params */}
                   {Object.keys(apiQueryParams).length > 0 && (
                     <div>
-                      <div className="text-xs font-medium text-gray-500 mb-1.5">Query Parameters</div>
+                      <div className="text-xs font-medium text-gray-500 mb-1.5">{t('projectDetails.queryParameters')}</div>
                       <div className="grid grid-cols-2 gap-2">
                         {Object.entries(apiQueryParams).map(([k, v]) => (
                           <div key={k} className="flex items-center gap-1.5">
                             <span className="text-xs font-mono text-gray-600 shrink-0 w-24 truncate">{k}</span>
                             <input
                               className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs"
-                              placeholder="value"
+                              placeholder={t('projectDetails.value')}
                               value={v}
                               onChange={e => setApiQueryParams(prev => ({ ...prev, [k]: e.target.value }))}
                             />
@@ -1257,7 +1318,7 @@ export default function ProjectDetails() {
                   {/* Headers + Body */}
                   <div className="grid grid-cols-1 gap-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Headers (JSON)</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.headersJson')}</label>
                       <textarea
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono resize-none"
                         rows={2}
@@ -1268,7 +1329,7 @@ export default function ProjectDetails() {
                     </div>
                     {!['GET', 'DELETE'].includes(apiMethod) && (
                       <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Body (JSON)</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.bodyJson')}</label>
                         <textarea
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono resize-none"
                           rows={5}
@@ -1285,7 +1346,7 @@ export default function ProjectDetails() {
                 {apiResponse && (
                   <div className="bg-white rounded-xl border border-gray-200 p-4">
                     <div className="flex items-center gap-2 mb-3">
-                      <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Response</span>
+                      <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{t('projectDetails.response')}</span>
                       {apiResponse.status_code && (
                         <span className={`text-xs px-2 py-0.5 rounded font-bold ${
                           apiResponse.status_code < 300 ? 'bg-green-100 text-green-700' :
@@ -1307,6 +1368,16 @@ export default function ProjectDetails() {
           )}
         </div>
       )}
-    </div>
+
+      {/* Connect repository modal */}
+      {showConnect && (
+        <ImportRepoModal
+          mode="connect"
+          project={project}
+          onClose={() => setShowConnect(false)}
+          onDone={handleConnected}
+        />
+      )}
+    </PageContainer>
   );
 }

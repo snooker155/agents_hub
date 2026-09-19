@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useWorkspace } from '../components/WorkspaceContext';
-import { getNodes, startNode, stopNode, restartNode, deleteNode, getNodeLogs, getAgents, getWorkspaces, getWorkspace, setWorkspaceAgentMode, getSettings } from '../api';
+import { useWorkspace } from '../components/workspace';
+import { getNodes, startNode, stopNode, restartNode, deleteNode, getNodeLogs, getAgents, getWorkspace, setWorkspaceAgentMode, getSettings } from '../api';
+import { useChannel } from '../components/stream';
 import {
   Play,
   RotateCw,
@@ -23,23 +24,26 @@ import {
   Box,
 } from 'lucide-react';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
 // ── Status helpers ────────────────────────────────────────────────────────────
 
 const STATUS = {
-  running:  { dot: 'bg-green-500 animate-pulse', badge: 'bg-green-100 text-green-800',  label: 'Running' },
-  starting: { dot: 'bg-yellow-400 animate-pulse', badge: 'bg-yellow-100 text-yellow-800', label: 'Starting' },
-  stopping: { dot: 'bg-orange-400 animate-pulse', badge: 'bg-orange-100 text-orange-800', label: 'Stopping' },
-  stopped:  { dot: 'bg-gray-400',                badge: 'bg-gray-100 text-gray-600',    label: 'Stopped' },
-  failed:   { dot: 'bg-red-500',                 badge: 'bg-red-100 text-red-700',      label: 'Failed' },
-  completed:{ dot: 'bg-blue-400',                badge: 'bg-blue-100 text-blue-700',    label: 'Completed' },
+  running:  { dot: 'bg-green-500 animate-pulse',  badge: 'bg-green-100 text-green-800',   key: 'running' },
+  starting: { dot: 'bg-yellow-400 animate-pulse', badge: 'bg-yellow-100 text-yellow-800', key: 'starting' },
+  stopping: { dot: 'bg-orange-400 animate-pulse', badge: 'bg-orange-100 text-orange-800', key: 'stopping' },
+  stopped:  { dot: 'bg-gray-400',                 badge: 'bg-gray-100 text-gray-600',     key: 'stopped' },
+  failed:   { dot: 'bg-red-500',                  badge: 'bg-red-100 text-red-700',       key: 'failed' },
+  completed:{ dot: 'bg-blue-400',                 badge: 'bg-blue-100 text-blue-700',     key: 'completed' },
 };
 
 function StatusBadge({ status }) {
+  const { t } = useI18n();
   const s = STATUS[status] || STATUS.stopped;
   return (
     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold ${s.badge}`}>
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`} />
-      {s.label}
+      {t(`nodes.statuses.${s.key}`)}
     </span>
   );
 }
@@ -64,6 +68,7 @@ function fmtDate(iso) {
 // ── Logs modal ────────────────────────────────────────────────────────────────
 
 function LogsModal({ node, onClose }) {
+  const { t } = useI18n();
   const [logs, setLogs] = useState('');
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef(null);
@@ -74,18 +79,20 @@ function LogsModal({ node, onClose }) {
     const load = async () => {
       try {
         const r = await getNodeLogs(node.node_id);
-        if (!cancelled) { setLogs(r.data.logs || '(empty)'); setLoading(false); }
+        if (!cancelled) { setLogs(r.data.logs || t('nodes.emptyLogs')); setLoading(false); }
       } catch {
-        if (!cancelled) { setLogs('Failed to load logs.'); setLoading(false); }
+        if (!cancelled) { setLogs(t('nodes.logsFailed')); setLoading(false); }
       }
     };
     load();
-    // Auto-refresh logs every 3s while node is active (running/starting/stopping)
-    const isActive = ['running', 'starting', 'stopping'].includes(node.status);
-    if (!liveUpdates || !isActive) return () => { cancelled = true; };
-    const interval = setInterval(load, 3000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [node.node_id, node.status, liveUpdates]);
+    return () => { cancelled = true; };
+  }, [node.node_id, node.status, liveUpdates, t]);
+
+  // Live log tail pushed over the shared stream while the node is active.
+  const isActive = ['running', 'starting', 'stopping'].includes(node.status);
+  useChannel(liveUpdates && isActive ? `logs:node:${node.node_id}` : null, (ev) => {
+    if (ev.type === 'logs') setLogs(ev.content || '(empty)');
+  });
 
   useEffect(() => { bottomRef.current?.scrollIntoView(); }, [logs]);
 
@@ -117,7 +124,7 @@ function LogsModal({ node, onClose }) {
         {['running', 'starting', 'stopping'].includes(node.status) && (
           <div className="px-5 py-2 border-t border-gray-800 text-xs text-gray-500 flex items-center gap-1.5">
             <Activity className="w-3 h-3 animate-pulse text-green-500" />
-            Live — refreshing every 3s
+            {t('nodes.liveRefreshingEvery3s')}
           </div>
         )}
       </div>
@@ -128,6 +135,7 @@ function LogsModal({ node, onClose }) {
 // ── Start Node modal ──────────────────────────────────────────────────────────
 
 function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, currentWorkspace, wsCapacityOverrides, wsAllowedAgents, agentMode, wsAgentMode, onSetAgentMode }) {
+  const { t } = useI18n();
   const [agentId, setAgentId] = useState(defaultAgentId || '');
   const [label, setLabel] = useState('');
   const [nodeType, setNodeType] = useState('worker');
@@ -149,15 +157,15 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!agentId) { setError('Select an agent'); return; }
-    if (capacityExceeded) { setError(`Node limit (${wsCapacity}) reached for this agent in workspace "${currentWorkspace}"`); return; }
+    if (!agentId) { setError(t('nodes.selectAnAgentError')); return; }
+    if (capacityExceeded) { setError(t('nodes.capacityError', { limit: wsCapacity, workspace: currentWorkspace })); return; }
     setError('');
     setSubmitting(true);
     try {
       const r = await startNode({ agent_id: agentId, workspace: currentWorkspace || null, label: label || null, node_type: nodeType });
       onStarted(r.data);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to start node');
+      setError(err.response?.data?.detail || t('nodes.startFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -169,7 +177,7 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
         <div className="flex items-center justify-between p-5 border-b">
           <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
             <Play className="w-4 h-4 text-indigo-600" />
-            Start Node
+            {t('nodes.startNode')}
           </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
@@ -188,12 +196,12 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
               {agentMode === 'docker'
                 ? <Box className="w-3.5 h-3.5 text-blue-500" />
                 : <Server className="w-3.5 h-3.5 text-gray-400" />}
-              <span>Agent mode:</span>
+              <span>{t('nodes.agentMode')}</span>
               <span className="font-semibold">
-                {agentMode === 'docker' ? 'Docker container' : 'Local process'}
+                {agentMode === 'docker' ? t('nodes.dockerContainer') : t('nodes.localProcess')}
               </span>
               {currentWorkspace && wsAgentMode && (
-                <span className="text-xs opacity-60">(workspace)</span>
+                <span className="text-xs opacity-60">({t('nodes.workspaceScope')})</span>
               )}
             </div>
             {onSetAgentMode ? (
@@ -209,13 +217,13 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
                 Switch to {agentMode === 'docker' ? 'local' : 'docker'}
               </button>
             ) : (
-              <span className="text-xs opacity-50">global setting</span>
+              <span className="text-xs opacity-50">{t('nodes.globalSetting')}</span>
             )}
           </div>
 
           {currentWorkspace && currentWorkspace !== 'default' && (
             <div className="flex items-center gap-2 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-              <span className="text-gray-500">Workspace:</span>
+              <span className="text-gray-500">{t('nodes.workspace')}</span>
               <span className=" font-semibold text-gray-800">{currentWorkspace}</span>
               {agentId && wsCapacity !== null && (
                 <span className={`ml-auto font-medium ${capacityExceeded ? 'text-orange-600' : 'text-gray-400'}`}>
@@ -234,25 +242,25 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
               value={agentId}
               onChange={e => setAgentId(e.target.value)}
             >
-              <option value="">— Select agent —</option>
+              <option value="">{t('nodes.selectAgent')}</option>
               {visibleAgents.map(a => (
                 <option key={a.id} value={a.id}>{a.name} {a.domain ? `(${a.domain})` : ''}</option>
               ))}
             </select>
             {capacityExceeded && (
               <p className="text-xs text-orange-600 mt-1 font-medium">
-                Node limit reached — stop a running node first
+                {t('nodes.nodeLimitReachedStopA')}
               </p>
             )}
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-              Label <span className="text-gray-400 font-normal normal-case">(optional)</span>
+              {t('nodes.label')} <span className="text-gray-400 font-normal normal-case">({t('common.optional')})</span>
             </label>
             <input
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="e.g. production, dev-worker"
+              placeholder={t('nodes.eGProductionDevWorker')}
               value={label}
               onChange={e => setLabel(e.target.value)}
             />
@@ -260,12 +268,12 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
 
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-              Node Type
+              {t('nodes.nodeType')}
             </label>
             <div className="flex gap-2">
               {[
-                { value: 'worker', label: 'Task Worker', desc: 'Polls for assigned tasks' },
-                { value: 'service', label: 'HTTP Service', desc: 'Serves external requests' },
+                { value: 'worker', label: t('nodes.taskWorker'), desc: t('nodes.taskWorkerDesc') },
+                { value: 'service', label: t('nodes.httpServiceType'), desc: t('nodes.httpServiceDesc') },
               ].map(opt => (
                 <button
                   key={opt.value}
@@ -289,7 +297,7 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose}
               className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
-              Cancel
+              {t('nodes.cancel')}
             </button>
             <button type="submit" disabled={submitting || !agentId || capacityExceeded}
               className="flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -336,11 +344,11 @@ function SummaryChips({ nodes }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function Nodes() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { liveUpdates, workspaceFilter } = useWorkspace();
   const [nodes, setNodes]       = useState([]);
   const [agents, setAgents]     = useState([]);
-  const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading]   = useState(true);
   // agentId -> capacity override for current workspace filter
   const [wsCapacityOverrides, setWsCapacityOverrides] = useState({});
@@ -362,9 +370,9 @@ export default function Nodes() {
   }, [workspaceFilter]);
 
   useEffect(() => {
-    Promise.all([getAgents(), getWorkspaces()])
-      .then(([ar, wr]) => { setAgents(ar.data); setWorkspaces(wr.data); })
-      .catch(() => {});
+    getAgents()
+      .then((ar) => setAgents(ar.data))
+      .catch(() => { /* the agent list stays empty */ });
   }, []);
 
   const [wsAllowedAgents, setWsAllowedAgents] = useState([]);
@@ -407,10 +415,9 @@ export default function Nodes() {
 
   useEffect(() => {
     fetchNodes();
-    if (!liveUpdates) return;
-    const id = setInterval(fetchNodes, 4000);
-    return () => clearInterval(id);
   }, [fetchNodes, liveUpdates]);
+  // Refetch (workspace-filtered) whenever the node registry actually changes.
+  useChannel('nodes', () => { if (liveUpdates) fetchNodes(); });
 
   const handleStop = async (nodeId) => {
     setBusyNodes(b => ({ ...b, [nodeId]: 'stopping' }));
@@ -460,7 +467,7 @@ export default function Nodes() {
           try {
             await deleteNode(node.node_id);
             break;
-          } catch (_) {
+          } catch {
             await new Promise((r) => setTimeout(r, 500));
           }
         }
@@ -483,32 +490,24 @@ export default function Nodes() {
   const runningCount = nodes.filter(n => n.status === 'running' || n.status === 'starting').length;
 
   return (
-    <div className="space-y-6">
-
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Server className="w-6 h-6 text-indigo-600" />
-            Nodes
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Running agent instances · {runningCount} active
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
+    <PageContainer className="space-y-6">
+      <PageHeader
+        icon={Server}
+        title={t('nodes.nodes')}
+        description={`Running agent instances · ${runningCount} active`}
+        actions={<>
           <button onClick={fetchNodes}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
             <RefreshCw className="w-4 h-4" />
-            Refresh
+            {t('nodes.refresh')}
           </button>
           <button onClick={() => openStart()}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
             <Plus className="w-4 h-4" />
-            Start Node
+            {t('nodes.startNode')}
           </button>
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Summary chips */}
       {nodes.length > 0 && <SummaryChips nodes={nodes} />}
@@ -521,10 +520,10 @@ export default function Nodes() {
       ) : nodes.length === 0 ? (
         <div className="bg-white rounded-xl border border-dashed border-gray-300 py-20 text-center">
           <Server className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm mb-4">No nodes running yet.</p>
+          <p className="text-gray-500 text-sm mb-4">{t('nodes.noNodesRunningYet')}</p>
           <button onClick={() => openStart()}
             className="text-sm text-indigo-600 hover:underline">
-            Start the first node
+            {t('nodes.startTheFirstNode')}
           </button>
         </div>
       ) : (
@@ -554,7 +553,7 @@ export default function Nodes() {
                       {runningInGroup}{groupCapacity !== Infinity ? `/${groupCapacity}` : ''} running
                     </span>
                     {groupAtCapacity && (
-                      <span className="text-xs text-orange-600 font-medium">Limit reached</span>
+                      <span className="text-xs text-orange-600 font-medium">{t('nodes.limitReached')}</span>
                     )}
                     <button
                       onClick={() => openStart(agentId)}
@@ -562,7 +561,7 @@ export default function Nodes() {
                       className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 hover:border-indigo-400 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-indigo-200 disabled:hover:text-indigo-600"
                     >
                       <Plus className="w-3 h-3" />
-                      Add node
+                      {t('nodes.addNode')}
                     </button>
                   </div>
                 </div>
@@ -571,15 +570,15 @@ export default function Nodes() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100">
-                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
-                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Node ID</th>
-                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Mode</th>
-                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Label</th>
-                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Workspace</th>
-                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Sessions</th>
-                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Started</th>
-                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Uptime</th>
-                      <th className="text-right px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Actions</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.status')}</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.nodeId')}</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.mode')}</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.label')}</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.workspace2')}</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.sessions')}</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.started')}</th>
+                      <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.uptime')}</th>
+                      <th className="text-right px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodes.actions')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
@@ -605,33 +604,33 @@ export default function Nodes() {
                             </span>
                             {node.is_default && (
                               <span className="ml-2 text-[9px] font-bold uppercase bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">
-                                default
+                                {t('nodes.default')}
                               </span>
                             )}
                             {node.is_exposed && (
                               <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-bold uppercase bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
                                 <Globe className="w-2.5 h-2.5" />
-                                exposed
+                                {t('nodes.exposed')}
                               </span>
                             )}
                           </td>
                           <td className="px-5 py-3">
-                            <div className="flex flex-col gap-1">
+                            <div className="flex flex-col items-start gap-1">
                               {node.execution_mode === 'docker'
                                 ? (
                                   <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
                                     <Box className="w-3 h-3" />
-                                    Container
+                                    {t('nodes.container')}
                                   </span>
                                 ) : (
                                   <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                                    Local
+                                    {t('nodes.local')}
                                   </span>
                                 )
                               }
                               {(node.node_type || 'worker') === 'service' && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded-full">
-                                  HTTP Service
+                                  {t('nodes.httpService')}
                                 </span>
                               )}
                             </div>
@@ -657,7 +656,7 @@ export default function Nodes() {
                               {/* Open detail */}
                               <button
                                 onClick={() => navigate(`/nodes/${node.node_id}`)}
-                                title="Open node detail"
+                                title={t('nodes.openNodeDetail')}
                                 className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
                               >
                                 <ExternalLink className="w-4 h-4" />
@@ -666,7 +665,7 @@ export default function Nodes() {
                               {/* Logs */}
                               <button
                                 onClick={() => setLogsNode(node)}
-                                title="View logs"
+                                title={t('nodes.viewLogs')}
                                 className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
                               >
                                 <FileText className="w-4 h-4" />
@@ -677,7 +676,7 @@ export default function Nodes() {
                                 <button
                                   onClick={() => handleRestart(node)}
                                   disabled={!!busy}
-                                  title="Restart node"
+                                  title={t('nodes.restartNode')}
                                   className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-40"
                                 >
                                   {busy === 'restarting' ? <Loader className="w-4 h-4 animate-spin" /> : <RotateCw className="w-4 h-4" />}
@@ -689,7 +688,7 @@ export default function Nodes() {
                                 <button
                                   onClick={() => handleStop(node.node_id)}
                                   disabled={!!busy}
-                                  title="Stop node"
+                                  title={t('nodes.stopNode')}
                                   className="p-1.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition-colors disabled:opacity-40"
                                 >
                                   {busy === 'stopping' ? <Loader className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
@@ -713,7 +712,7 @@ export default function Nodes() {
                                 <button
                                   onClick={() => handleDelete(node.node_id)}
                                   disabled={!!busy}
-                                  title="Remove record"
+                                  title={t('nodes.removeRecord')}
                                   className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
                                 >
                                   {busy === 'deleting' ? <Loader className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -751,6 +750,6 @@ export default function Nodes() {
       {logsNode && (
         <LogsModal node={logsNode} onClose={() => setLogsNode(null)} />
       )}
-    </div>
+    </PageContainer>
   );
 }

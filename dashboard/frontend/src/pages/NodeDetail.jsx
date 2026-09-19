@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useWorkspace } from '../components/WorkspaceContext';
+import { useWorkspace } from '../components/workspace';
+import { useChannel, useLiveRefetch } from '../components/stream';
+import LiveRunStream from '../components/LiveRunStream';
 import {
   getNodeById,
   getNodeLogs,
@@ -14,7 +16,6 @@ import {
 } from '../api';
 import {
   Server,
-  ArrowLeft,
   Activity,
   Globe,
   GlobeLock,
@@ -35,6 +36,8 @@ import {
   Box,
 } from 'lucide-react';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
 // ── Status helpers ─────────────────────────────────────────────────────────
 
 const STATUS = {
@@ -78,6 +81,7 @@ function fmtDate(iso) {
 // ── Copy button ────────────────────────────────────────────────────────────
 
 function CopyButton({ text, className = '' }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
     navigator.clipboard.writeText(text).then(() => {
@@ -88,7 +92,7 @@ function CopyButton({ text, className = '' }) {
   return (
     <button
       onClick={handleCopy}
-      title="Copy to clipboard"
+      title={t('nodeDetail.copyToClipboard')}
       className={`p-1.5 rounded transition-colors ${copied ? 'text-green-600 bg-green-50' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'} ${className}`}
     >
       {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -99,6 +103,7 @@ function CopyButton({ text, className = '' }) {
 // ── Expose panel ───────────────────────────────────────────────────────────
 
 function ExposePanel({ node, onNodeUpdated }) {
+  const { t } = useI18n();
   const [toggling, setToggling] = useState(false);
   const [error, setError] = useState('');
   const isExposed = !!node.is_exposed;
@@ -121,7 +126,7 @@ function ExposePanel({ node, onNodeUpdated }) {
         onNodeUpdated(r.data);
       }
     } catch (e) {
-      setError(e.response?.data?.detail || 'Failed to update exposure');
+      setError(e.response?.data?.detail || t('nodeDetail.exposureFailed'));
     } finally {
       setToggling(false);
     }
@@ -134,12 +139,12 @@ function ExposePanel({ node, onNodeUpdated }) {
         <div className="flex items-center gap-3">
           <Globe className="w-5 h-5 text-violet-600" />
           <div>
-            <h2 className="text-sm font-semibold text-gray-800">HTTP Service</h2>
+            <h2 className="text-sm font-semibold text-gray-800">{t('nodeDetail.httpService')}</h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              This node runs its own HTTP server and accepts requests directly.
+              {t('nodeDetail.httpServiceIntro')}{' '}
               {node.expose_token
-                ? ' Bearer token authentication is active.'
-                : ' Generate a token to enable bearer token authentication.'}
+                ? t('nodeDetail.bearerActive')
+                : t('nodeDetail.bearerGenerate')}
             </p>
           </div>
         </div>
@@ -150,7 +155,7 @@ function ExposePanel({ node, onNodeUpdated }) {
 
         {runUrl && (
           <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1.5">Service URL</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1.5">{t('nodeDetail.serviceUrl')}</p>
             <div className="flex items-center gap-2">
               <code className="flex-1 text-xs text-indigo-800 break-all">{runUrl}</code>
               <CopyButton text={runUrl} />
@@ -160,14 +165,14 @@ function ExposePanel({ node, onNodeUpdated }) {
 
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
           <div className="flex items-center justify-between mb-1.5">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Access Token</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{t('nodeDetail.accessToken')}</p>
             <button
               onClick={handleToggle}
               disabled={toggling}
               className="text-[10px] font-semibold px-2 py-0.5 rounded border transition-colors disabled:opacity-50
                 border-gray-300 text-gray-600 hover:bg-gray-100"
             >
-              {toggling ? '…' : node.expose_token ? 'Revoke' : 'Generate'}
+              {toggling ? '…' : node.expose_token ? t('nodeDetail.revoke') : t('nodeDetail.generate')}
             </button>
           </div>
           {node.expose_token ? (
@@ -176,13 +181,13 @@ function ExposePanel({ node, onNodeUpdated }) {
               <CopyButton text={node.expose_token} />
             </div>
           ) : (
-            <p className="text-xs text-gray-400 italic">No token — endpoint is open</p>
+            <p className="text-xs text-gray-400 italic">{t('nodeDetail.noTokenEndpointIsOpen')}</p>
           )}
         </div>
 
         {runUrl && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">Example Request</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">{t('nodeDetail.exampleRequest')}</p>
             <pre className="text-xs text-amber-800 whitespace-pre-wrap break-all leading-5">{node.expose_token
               ? `curl -X POST "${runUrl}" \\\n  -H "Authorization: Bearer ${node.expose_token}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"prompt": "Hello, what can you do?"}'`
               : `curl -X POST "${runUrl}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"prompt": "Hello, what can you do?"}'`
@@ -192,7 +197,7 @@ function ExposePanel({ node, onNodeUpdated }) {
 
         {serviceUrl && (
           <div className="bg-violet-50 border border-violet-200 rounded-lg p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-violet-600 mb-1.5">Health Check</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-violet-600 mb-1.5">{t('nodeDetail.healthCheck')}</p>
             <pre className="text-xs text-violet-800 whitespace-pre-wrap break-all leading-5">{`curl "${serviceUrl}/health"`}</pre>
           </div>
         )}
@@ -210,11 +215,11 @@ function ExposePanel({ node, onNodeUpdated }) {
             : <GlobeLock className="w-5 h-5 text-gray-400" />
           }
           <div>
-            <h2 className="text-sm font-semibold text-gray-800">External Access</h2>
+            <h2 className="text-sm font-semibold text-gray-800">{t('nodeDetail.externalAccess')}</h2>
             <p className="text-xs text-gray-500 mt-0.5">
               {isExposed
-                ? 'This node is reachable via an external URL with a secret token.'
-                : 'Enable to allow external services to submit tasks to this node.'}
+                ? t('nodeDetail.exposedHint')
+                : t('nodeDetail.notExposedHint')}
             </p>
           </div>
         </div>
@@ -241,7 +246,7 @@ function ExposePanel({ node, onNodeUpdated }) {
       {isExposed && gatewayUrl && (
         <div className="mt-4 space-y-3">
           <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1.5">External URL</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1.5">{t('nodeDetail.externalUrl')}</p>
             <div className="flex items-center gap-2">
               <code className="flex-1 text-xs text-indigo-800 break-all">{gatewayUrl}</code>
               <CopyButton text={gatewayUrl} />
@@ -250,7 +255,7 @@ function ExposePanel({ node, onNodeUpdated }) {
 
           {node.expose_token && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Access Token</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">{t('nodeDetail.accessToken')}</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-xs text-gray-700 break-all">{node.expose_token}</code>
                 <CopyButton text={node.expose_token} />
@@ -259,7 +264,7 @@ function ExposePanel({ node, onNodeUpdated }) {
           )}
 
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">Example Request</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">{t('nodeDetail.exampleRequest')}</p>
             <pre className="text-xs text-amber-800 whitespace-pre-wrap break-all leading-5">{`curl -X POST "${gatewayUrl}" \\
   -H "Content-Type: application/json" \\
   -d '{"prompt": "Your task description here"}'`}</pre>
@@ -302,6 +307,7 @@ function elapsedMs(startedAt, finishedAt) {
 }
 
 function ConnectionHistory({ node }) {
+  const { t } = useI18n();
   const nodeId = node.node_id;
   const isService = (node.node_type || 'worker') === 'service';
   const [connections, setConnections] = useState([]);
@@ -327,20 +333,18 @@ function ConnectionHistory({ node }) {
 
   useEffect(() => {
     fetchConnections();
-    if (!liveUpdates) return;
-    const id = setInterval(fetchConnections, 5000);
-    return () => clearInterval(id);
   }, [fetchConnections, liveUpdates]);
+  useChannel('nodes', () => { if (liveUpdates) fetchConnections(); });
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
         <h2 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
           <Wifi className="w-4 h-4 text-gray-500" />
-          Connection History
+          {t('nodeDetail.connectionHistory')}
         </h2>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400">{connections.length} total</span>
+          <span className="text-xs text-gray-400">{t('nodeDetail.totalCount', { count: connections.length })}</span>
           <button onClick={fetchConnections} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100">
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
@@ -354,9 +358,9 @@ function ConnectionHistory({ node }) {
       ) : connections.length === 0 ? (
         <div className="py-12 text-center">
           <WifiOff className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-          <p className="text-sm text-gray-400">No connections yet.</p>
+          <p className="text-sm text-gray-400">{t('nodeDetail.noConnectionsYet')}</p>
           <p className="text-xs text-gray-400 mt-0.5">
-            {isService ? 'Make your first POST /run request to this service.' : 'Expose the node and make your first external request.'}
+            {isService ? t('nodeDetail.firstServiceRequest') : t('nodeDetail.firstExternalRequest')}
           </p>
         </div>
       ) : isService ? (
@@ -364,12 +368,12 @@ function ConnectionHistory({ node }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-gray-100">
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Time</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Run ID</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Prompt</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Output</th>
-                <th className="text-right px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">ms</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.time')}</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.runId')}</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.prompt')}</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.status')}</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.output')}</th>
+                <th className="text-right px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.ms')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -410,12 +414,12 @@ function ConnectionHistory({ node }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-gray-100">
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Time</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Client IP</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Prompt</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
-                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Detail</th>
-                <th className="text-right px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">ms</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.time')}</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.clientIp')}</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.prompt')}</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.status')}</th>
+                <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.detail')}</th>
+                <th className="text-right px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.ms')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -455,6 +459,7 @@ const RUN_STATUS = {
 };
 
 function RunsPanel({ node }) {
+  const { t } = useI18n();
   const isService = (node.node_type || 'worker') === 'service';
   const { liveUpdates } = useWorkspace();
   const navigate = useNavigate();
@@ -478,21 +483,30 @@ function RunsPanel({ node }) {
   useEffect(() => {
     if (!isService) return;
     fetchRuns();
-    if (!liveUpdates || !isActive) return;
-    const id = setInterval(fetchRuns, 5000);
-    return () => clearInterval(id);
   }, [fetchRuns, isService, isActive, liveUpdates]);
+  useLiveRefetch(fetchRuns, { type: 'runs.changed', enabled: isService && isActive && liveUpdates });
 
   // Worker nodes: use in-progress sessions from enriched node data
   const workerRuns = Array.isArray(node.running_sessions) ? node.running_sessions : [];
   const displayRuns = isService ? runs : workerRuns;
-  const emptyMsg = isService ? 'No runs yet for this service node.' : 'No sessions currently running on this node.';
+  const emptyMsg = isService ? t('nodeDetail.noRunsYet') : t('nodeDetail.noRunningSessions');
+
+  // Live output for the sessions still executing on this node. One panel per
+  // session, each attached to its own SSE channel; a session that has produced
+  // no events renders nothing.
+  const liveSessions = [...new Set(
+    displayRuns.filter((r) => r.status === 'running' && r.session_id).map((r) => r.session_id)
+  )];
 
   return (
+    <div className="space-y-3">
+    {liveSessions.map((sid) => (
+      <LiveRunStream key={sid} sessionId={sid} title={t('nodeDetail.liveAgentOutput')} />
+    ))}
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
         <h2 className="text-sm font-semibold text-gray-800">
-          {isService ? 'Runs' : 'Running Sessions'}
+          {isService ? t('nodeDetail.runs') : t('nodeDetail.runningSessions')}
         </h2>
         <div className="flex items-center gap-2">
           {isService && (
@@ -515,19 +529,19 @@ function RunsPanel({ node }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-gray-100">
-                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Run ID</th>
+                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.runId')}</th>
                 {isService ? (
-                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Prompt</th>
+                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.prompt')}</th>
                 ) : (
-                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Task ID</th>
+                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.taskId')}</th>
                 )}
-                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Status</th>
-                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Started</th>
+                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.status')}</th>
+                <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.started')}</th>
                 {isService && (
-                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Finished</th>
+                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.finished')}</th>
                 )}
                 {isService && (
-                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Output</th>
+                  <th className="text-left px-5 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('nodeDetail.output')}</th>
                 )}
               </tr>
             </thead>
@@ -572,12 +586,14 @@ function RunsPanel({ node }) {
         </div>
       )}
     </div>
+    </div>
   );
 }
 
 // ── Logs panel ─────────────────────────────────────────────────────────────
 
 function LogsPanel({ node }) {
+  const { t } = useI18n();
   const [logs, setLogs] = useState('');
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef(null);
@@ -589,18 +605,18 @@ function LogsPanel({ node }) {
       const r = await getNodeLogs(node.node_id);
       setLogs(r.data.logs || '(empty)');
     } catch {
-      setLogs('Failed to load logs.');
+      setLogs(t('nodeDetail.logsFailed'));
     } finally {
       setLoading(false);
     }
-  }, [node.node_id]);
+  }, [node.node_id, t]);
 
   useEffect(() => {
     fetchLogs();
-    if (!liveUpdates || !isActive) return;
-    const id = setInterval(fetchLogs, 3000);
-    return () => clearInterval(id);
   }, [fetchLogs, isActive, liveUpdates]);
+  useChannel(liveUpdates && isActive ? `logs:node:${node.node_id}` : null, (ev) => {
+    if (ev.type === 'logs') setLogs(ev.content || '(empty)');
+  });
 
   useEffect(() => { bottomRef.current?.scrollIntoView(); }, [logs]);
 
@@ -609,13 +625,13 @@ function LogsPanel({ node }) {
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
         <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
           <FileText className="w-4 h-4 text-gray-400" />
-          Activity Log
+          {t('nodeDetail.activityLog')}
         </h2>
         <div className="flex items-center gap-2">
           {isActive && (
             <span className="flex items-center gap-1 text-[10px] text-green-500">
               <Activity className="w-3 h-3 animate-pulse" />
-              Live
+              {t('nodeDetail.live')}
             </span>
           )}
           <button onClick={fetchLogs} className="p-1 rounded text-gray-500 hover:text-gray-300 hover:bg-gray-800">
@@ -640,6 +656,7 @@ function LogsPanel({ node }) {
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function NodeDetail() {
+  const { t } = useI18n();
   const { nodeId } = useParams();
   const navigate = useNavigate();
   const { liveUpdates } = useWorkspace();
@@ -653,34 +670,32 @@ export default function NodeDetail() {
       const r = await getNodeById(nodeId);
       setNode(r.data);
     } catch (e) {
-      setError(e.response?.data?.detail || 'Node not found');
+      setError(e.response?.data?.detail || t('nodeDetail.notFound'));
     } finally {
       setLoading(false);
     }
-  }, [nodeId]);
+  }, [nodeId, t]);
 
   useEffect(() => {
     fetchNode();
-    if (!liveUpdates) return;
-    const id = setInterval(fetchNode, 5000);
-    return () => clearInterval(id);
   }, [fetchNode, liveUpdates]);
+  useChannel('nodes', () => { if (liveUpdates) fetchNode(); });
 
   const handleStop = async () => {
     setBusy('stopping');
     try { await stopNode(nodeId); await fetchNode(); }
-    catch (e) { setError(e.response?.data?.detail || 'Failed to stop'); }
+    catch (e) { setError(e.response?.data?.detail || t('nodeDetail.stopFailed')); }
     finally { setBusy(''); }
   };
 
   const handleDelete = async () => {
-    if (!window.confirm('Remove this node record?')) return;
+    if (!window.confirm(t('nodeDetail.confirmRemove'))) return;
     setBusy('deleting');
     try {
       await deleteNode(nodeId);
       navigate('/nodes');
     } catch (e) {
-      setError(e.response?.data?.detail || 'Cannot delete — stop the node first');
+      setError(e.response?.data?.detail || t('nodeDetail.cannotDelete'));
       setBusy('');
     }
   };
@@ -696,7 +711,7 @@ export default function NodeDetail() {
       });
       navigate(`/nodes/${r.data.node_id}`);
     } catch (e) {
-      setError(e.response?.data?.detail || 'Failed to start node');
+      setError(e.response?.data?.detail || t('nodeDetail.startFailed'));
       setBusy('');
     }
   };
@@ -719,14 +734,14 @@ export default function NodeDetail() {
           try {
             await deleteNode(nodeId);
             break;
-          } catch (_) {
+          } catch {
             await new Promise((res) => setTimeout(res, 500));
           }
         }
       }
       navigate(`/nodes/${r.data.node_id}`);
     } catch (e) {
-      setError(e.response?.data?.detail || 'Failed to restart node');
+      setError(e.response?.data?.detail || t('nodeDetail.restartFailed'));
       setBusy('');
     }
   };
@@ -745,7 +760,7 @@ export default function NodeDetail() {
         <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
         <p className="text-gray-600 text-sm">{error}</p>
         <button onClick={() => navigate('/nodes')} className="mt-4 text-sm text-indigo-600 hover:underline">
-          Back to Nodes
+          {t('nodeDetail.backToNodes')}
         </button>
       </div>
     );
@@ -754,31 +769,19 @@ export default function NodeDetail() {
   const isActive = node.status === 'running' || node.status === 'starting';
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/nodes')}
-            className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <Server className="w-5 h-5 text-indigo-600" />
-              {node.agent_name || node.agent_id}
-              {node.is_default && (
-                <span className="text-[10px] font-bold uppercase bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">
-                  default
-                </span>
-              )}
-            </h1>
-            <p className="text-xs text-gray-400 mt-0.5">{node.node_id}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
+    <PageContainer className="space-y-6">
+      <PageHeader
+        icon={Server}
+        title={node.agent_name || node.agent_id}
+        description={node.node_id}
+        backTo="/nodes"
+        backLabel={t('nodeDetail.nodes')}
+        badges={node.is_default && (
+          <span className="text-[10px] font-bold uppercase bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">
+            {t('nodeDetail.default')}
+          </span>
+        )}
+        actions={<>
           {/* Stopped/failed/completed: Start + Delete */}
           {!isActive && (
             <>
@@ -821,44 +824,44 @@ export default function NodeDetail() {
               </button>
             </>
           )}
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Info cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Status</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">{t('nodeDetail.status')}</p>
           <StatusBadge status={node.status} />
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Uptime</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">{t('nodeDetail.uptime')}</p>
           <p className="text-sm font-semibold text-gray-700">
             {uptime(node.started_at, node.finished_at)}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Workspace</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">{t('nodeDetail.workspace')}</p>
           <p className="text-sm text-gray-700 truncate">{node.workspace || '—'}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Node Type</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">{t('nodeDetail.nodeType')}</p>
           {(node.node_type || 'worker') === 'service' ? (
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-violet-700">
-              HTTP Service
+              {t('nodeDetail.httpService')}
             </span>
           ) : (
-            <span className="text-sm font-semibold text-gray-600">Task Worker</span>
+            <span className="text-sm font-semibold text-gray-600">{t('nodeDetail.taskWorker')}</span>
           )}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Agent Mode</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">{t('nodeDetail.agentMode')}</p>
           {node.execution_mode === 'docker' ? (
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-700">
               <Box className="w-4 h-4" />
-              Container
+              {t('nodeDetail.container')}
             </span>
           ) : (
-            <span className="text-sm font-semibold text-gray-600">Local Process</span>
+            <span className="text-sm font-semibold text-gray-600">{t('nodeDetail.localProcess')}</span>
           )}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -875,15 +878,15 @@ export default function NodeDetail() {
           )}
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Started</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">{t('nodeDetail.started')}</p>
           <p className="text-sm text-gray-700">{fmtDate(node.started_at)}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Runs</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">{t('nodeDetail.runs')}</p>
           <p className="text-sm font-semibold text-indigo-700">{node.running_sessions_count ?? 0}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Finished</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">{t('nodeDetail.finished')}</p>
           <p className="text-sm text-gray-700">{fmtDate(node.finished_at)}</p>
         </div>
       </div>
@@ -898,6 +901,6 @@ export default function NodeDetail() {
 
       {/* Activity log */}
       <LogsPanel node={node} />
-    </div>
+    </PageContainer>
   );
 }

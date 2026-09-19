@@ -9,7 +9,8 @@ from typing import Optional
 from pathlib import Path
 from pydantic import BaseModel
 
-from agents import node_manager, registry
+from agents import registry
+from managers import node_manager
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -35,6 +36,9 @@ def _enrich(node: dict) -> dict:
             {
                 "run_id": r.get("run_id"),
                 "task_id": r.get("task_id"),
+                # The SSE channel this run publishes its live output on, so the
+                # node page can stream it (see components/LiveRunStream.jsx).
+                "session_id": r.get("session_id"),
                 "agent_id": r.get("agent_id"),
                 "status": r.get("status"),
                 "started_at": r.get("started_at"),
@@ -171,7 +175,7 @@ async def get_node_runs(node_id: str, limit: int = 50):
     node = node_manager.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
-    from agents.run_manager import get_all_runs_for_node
+    from managers.run_manager import get_all_runs_for_node
     runs = get_all_runs_for_node(node_id, limit=limit)
     return [
         {
@@ -179,6 +183,7 @@ async def get_node_runs(node_id: str, limit: int = 50):
             "agent_id": r.get("agent_id"),
             "task_id": r.get("task_id"),
             "session_type": r.get("session_type"),
+            "channel": r.get("channel"),
             "status": r.get("status"),
             "title": r.get("title"),
             "output": r.get("output"),

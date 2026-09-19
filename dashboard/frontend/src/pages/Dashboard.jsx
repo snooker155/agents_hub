@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { useLiveRefetch } from '../components/stream';
 import {
   Activity,
   Users,
@@ -11,8 +12,6 @@ import {
   GitBranch,
   Server,
   MessageSquare,
-  Wrench,
-  FileCode2,
   Settings as SettingsIcon,
   Network,
   TrendingUp,
@@ -21,7 +20,9 @@ import {
   ChevronRight,
   Layers,
   Bot,
-  FlaskConical,
+  HardDrive,
+  Gauge,
+  LayoutDashboard,
 } from 'lucide-react';
 import {
   getStats,
@@ -30,56 +31,52 @@ import {
   getSharedMemories,
   getNodes,
   listFlows,
-  getSessions,
+  getSystemHealth,
 } from '../api';
-import { useWorkspace } from '../components/WorkspaceContext';
+import { useWorkspace } from '../components/workspace';
+import { useI18n } from '../i18n';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
 const Dashboard = () => {
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
+  const { t } = useI18n();
   const [stats, setStats] = useState(null);
   const [agents, setAgents] = useState([]);
   const [runs, setRuns] = useState([]);
   const [memories, setMemories] = useState([]);
   const [nodes, setNodes] = useState([]);
   const [flows, setFlows] = useState([]);
-  const [sessions, setSessions] = useState([]);
+  const [health, setHealth] = useState(null);
   const [loading, setLoading] = useState(true);
-  const fetchData = async () => {
-    try {
-      const sessParams = { limit: 10 };
-      if (workspaceFilter) sessParams.workspace = workspaceFilter;
-      const [statsResp, agentsResp, runsResp, memResp, nodesResp, flowsResp, sessResp] =
-        await Promise.allSettled([
-          getStats(workspaceFilter),
-          getAgents(workspaceFilter),
-          getRuns(workspaceFilter),
-          getSharedMemories(workspaceFilter),
-          getNodes(workspaceFilter),
-          listFlows(workspaceFilter),
-          getSessions(sessParams),
-        ]);
-
-      if (statsResp.status === 'fulfilled') setStats(statsResp.value.data);
-      if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
-      if (runsResp.status === 'fulfilled') setRuns(runsResp.value.data);
-      if (memResp.status === 'fulfilled') setMemories(memResp.value.data);
-      if (nodesResp.status === 'fulfilled') setNodes(nodesResp.value.data);
-      if (flowsResp.status === 'fulfilled') setFlows(flowsResp.value.data);
-      if (sessResp.status === 'fulfilled') setSessions(sessResp.value.data);
-
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
-      setLoading(false);
-    }
-  };
+  const fetchData = useCallback(() => (
+    Promise.allSettled([
+      getStats(workspaceFilter),
+      getAgents(workspaceFilter),
+      getRuns(workspaceFilter),
+      getSharedMemories(workspaceFilter),
+      getNodes(workspaceFilter),
+      listFlows(workspaceFilter),
+      getSystemHealth(),
+    ])
+      .then(([statsResp, agentsResp, runsResp, memResp, nodesResp, flowsResp, healthResp]) => {
+        // Each panel stands on its own: one failed endpoint must not blank the page.
+        if (statsResp.status === 'fulfilled') setStats(statsResp.value.data);
+        if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
+        if (runsResp.status === 'fulfilled') setRuns(runsResp.value.data);
+        if (memResp.status === 'fulfilled') setMemories(memResp.value.data);
+        if (nodesResp.status === 'fulfilled') setNodes(nodesResp.value.data);
+        if (flowsResp.status === 'fulfilled') setFlows(flowsResp.value.data);
+        if (healthResp.status === 'fulfilled') setHealth(healthResp.value.data);
+      })
+      .catch((error) => console.error('Error fetching dashboard data:', error))
+      .finally(() => setLoading(false))
+  ), [workspaceFilter]);
 
   useEffect(() => {
     fetchData();
-    if (!liveUpdates) return;
-    const interval = setInterval(fetchData, 8000);
-    return () => clearInterval(interval);
-  }, [selectedWorkspace, liveUpdates]);
+  }, [selectedWorkspace, liveUpdates, fetchData]);
+  // Aggregate page: refetch (debounced) on any app-wide change.
+  useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   if (loading || !stats) {
     return (
@@ -96,75 +93,78 @@ const Dashboard = () => {
   }, 0);
   const totalMemoryFiles = memories.reduce((acc, m) => acc + (m.files || []).length, 0);
 
-  const sessionSuccessRate = sessions.length > 0
-    ? Math.round((sessions.filter(s => s.status === 'completed').length / sessions.length) * 100)
-    : 0;
-
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">System Overview</h2>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {workspaceFilter ? `Workspace: ${workspaceFilter}` : 'All workspaces'}
-          </p>
-        </div>
-        <span className="flex items-center text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full border border-blue-100 font-medium">
-          <Activity className="w-3 h-3 mr-1" />
-          Cluster Healthy
-        </span>
-      </div>
+    <PageContainer className="space-y-6">
+      {/* The selected workspace is already shown in the top bar — only label the
+          scope on the default (all-workspaces) view. */}
+      <PageHeader
+        icon={LayoutDashboard}
+        title={t('dashboard.title')}
+        description={(!selectedWorkspace || selectedWorkspace === 'default') ? t('dashboard.allWorkspaces') : undefined}
+        actions={(() => {
+          const degraded = health && health.status !== 'ok';
+          return (
+            <span className={`flex items-center text-xs px-2.5 py-1 rounded-full border font-medium ${
+              degraded
+                ? 'bg-red-50 text-red-700 border-red-100'
+                : 'bg-blue-50 text-blue-700 border-blue-100'
+            }`}>
+              {degraded ? <AlertCircle className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
+              {degraded ? t('dashboard.clusterDegraded') : t('dashboard.clusterHealthy')}
+            </span>
+          );
+        })()}
+      />
 
       {/* Top Stats — 6 cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
-          title="Tasks"
+          title={t('dashboard.stats.tasks')}
           value={stats.total_tasks}
           icon={CheckCircle2}
           color="bg-blue-500"
-          subtext={`${stats.completed_tasks} done · ${stats.completion_rate}%`}
+          subtext={t('dashboard.stats.tasksSub', { done: stats.completed_tasks, rate: stats.completion_rate })}
           to="/tasks"
         />
         <StatCard
-          title="Active Sessions"
+          title={t('dashboard.stats.activeSessions')}
           value={stats.active_runs}
           icon={Zap}
           color="bg-orange-500"
-          subtext={`${stats.available_slots} slots free`}
+          subtext={t('dashboard.stats.slotsFree', { count: stats.available_slots })}
           to="/sessions"
           pulse={stats.active_runs > 0}
         />
         <StatCard
-          title="Agents"
+          title={t('dashboard.stats.agents')}
           value={agents.length}
           icon={Bot}
           color="bg-indigo-500"
-          subtext={`${agents.filter(a => a.type === 'http').length} remote`}
+          subtext={t('dashboard.stats.agentsRemote', { count: agents.filter(a => a.type === 'http').length })}
           to="/agents"
         />
         <StatCard
-          title="Memory Pools"
+          title={t('dashboard.stats.memoryPools')}
           value={memories.length}
           icon={Brain}
           color="bg-purple-500"
-          subtext={`${ragIndexedFiles} RAG-indexed files`}
+          subtext={t('dashboard.stats.ragIndexedFiles', { count: ragIndexedFiles })}
           to="/memory"
         />
         <StatCard
-          title="Flows"
+          title={t('dashboard.stats.flows')}
           value={flows.length}
           icon={GitBranch}
           color="bg-rose-500"
-          subtext="custom pipelines"
+          subtext={t('dashboard.stats.customPipelines')}
           to="/flows"
         />
         <StatCard
-          title="Nodes"
+          title={t('dashboard.stats.nodes')}
           value={`${activeNodes.length}/${nodes.length}`}
           icon={Server}
           color="bg-gray-500"
-          subtext={activeNodes.length > 0 ? `${activeNodes.length} running` : 'none running'}
+          subtext={activeNodes.length > 0 ? t('dashboard.stats.nodesRunning', { count: activeNodes.length }) : t('dashboard.stats.noneRunning')}
           to="/nodes"
           pulse={activeNodes.length > 0}
         />
@@ -172,71 +172,71 @@ const Dashboard = () => {
 
       {/* Feature Quick Access */}
       <div>
-        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Features</h3>
+        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">{t('dashboard.features.heading')}</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-3">
           <FeatureCard
-            to="/"
+            to="/chat"
             icon={MessageSquare}
             iconColor="text-blue-600"
             bgColor="bg-blue-50"
-            title="Chat"
-            description="Converse with agents in real time"
+            title={t('dashboard.features.chat')}
+            description={t('dashboard.features.chatDesc')}
           />
           <FeatureCard
             to="/orchestrator"
             icon={Network}
             iconColor="text-indigo-600"
             bgColor="bg-indigo-50"
-            title="Orchestrator"
-            description="Auto-route tasks to specialized agents"
+            title={t('dashboard.features.orchestrator')}
+            description={t('dashboard.features.orchestratorDesc')}
+          />
+          <FeatureCard
+            to="/projects"
+            icon={GitBranch}
+            iconColor="text-emerald-600"
+            bgColor="bg-emerald-50"
+            title={t('dashboard.features.projects')}
+            description={t('dashboard.features.projectsDesc')}
           />
           <FeatureCard
             to="/flows"
             icon={Layers}
             iconColor="text-rose-600"
             bgColor="bg-rose-50"
-            title="Agent Flows"
-            description={`${flows.length} visual workflows`}
+            title={t('dashboard.features.flows')}
+            description={t('dashboard.features.flowsDesc', { count: flows.length })}
           />
           <FeatureCard
-            to="/tools"
-            icon={Wrench}
-            iconColor="text-amber-600"
-            bgColor="bg-amber-50"
-            title="Tools Explorer"
-            description="Browse agent capabilities"
+            to="/models"
+            icon={Brain}
+            iconColor="text-violet-600"
+            bgColor="bg-violet-50"
+            title={t('dashboard.features.models')}
+            description={t('dashboard.features.modelsDesc')}
           />
           <FeatureCard
-            to="/manifest"
-            icon={FileCode2}
+            to="/marketplace"
+            icon={Bot}
             iconColor="text-cyan-600"
             bgColor="bg-cyan-50"
-            title="Agent Manifest"
-            description="View & apply YAML definitions"
+            title={t('dashboard.features.marketplace')}
+            description={t('dashboard.features.marketplaceDesc')}
           />
           <FeatureCard
-            to="/sessions"
-            icon={FlaskConical}
-            iconColor="text-green-600"
-            bgColor="bg-green-50"
-            title="Sessions"
-            description={`${sessionSuccessRate}% success rate`}
-          />
-          <FeatureCard
-            to="/nodes"
-            icon={Server}
-            iconColor="text-gray-600"
-            bgColor="bg-gray-100"
-            title="Nodes"
-            description={`${activeNodes.length} running`}
+            to="/memory"
+            icon={Database}
+            iconColor="text-amber-600"
+            bgColor="bg-amber-50"
+            title={t('dashboard.features.memory')}
+            description={t('dashboard.features.memoryDesc')}
           />
           <FeatureCard
             to="/settings"
             icon={SettingsIcon}
-            iconColor="text-violet-600"
-            bgColor="bg-violet-50"
-            title="Settings"
-            description="Models, RAG & observability"
+            iconColor="text-gray-600"
+            bgColor="bg-gray-100"
+            title={t('dashboard.features.settings')}
+            description={t('dashboard.features.settingsDesc')}
           />
         </div>
       </div>
@@ -248,7 +248,7 @@ const Dashboard = () => {
           <div className="flex justify-between items-center mb-5">
             <h3 className="font-bold text-gray-700 flex items-center text-sm">
               <Activity className="w-4 h-4 mr-2 text-orange-500" />
-              Active Sessions
+              {t('dashboard.sessions.heading')}
               {activePods.length > 0 && (
                 <span className="ml-2 px-1.5 py-0.5 text-xs bg-orange-100 text-orange-700 rounded-full font-semibold">
                   {activePods.length}
@@ -256,7 +256,7 @@ const Dashboard = () => {
               )}
             </h3>
             <Link to="/sessions" className="text-xs text-indigo-600 hover:underline flex items-center">
-              View all <ChevronRight className="w-3 h-3 ml-0.5" />
+              {t('dashboard.sessions.viewAll')} <ChevronRight className="w-3 h-3 ml-0.5" />
             </Link>
           </div>
           {activePods.length > 0 ? (
@@ -284,11 +284,11 @@ const Dashboard = () => {
               ))}
             </div>
           ) : (
-            <EmptyState message="No sessions currently running" icon={Play} />
+            <EmptyState message={t('dashboard.sessions.empty')} icon={Play} />
           )}
           <div className="mt-4 pt-4 border-t border-gray-50">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
-              <span>Capacity</span>
+              <span>{t('dashboard.sessions.capacity')}</span>
               <span>{stats.active_runs}/{stats.total_capacity}</span>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-2">
@@ -305,16 +305,16 @@ const Dashboard = () => {
           <div className="flex justify-between items-center mb-5">
             <h3 className="font-bold text-gray-700 flex items-center text-sm">
               <Brain className="w-4 h-4 mr-2 text-purple-500" />
-              Shared Memory & RAG
+              {t('dashboard.memory.heading')}
             </h3>
             <Link to="/memory" className="text-xs text-indigo-600 hover:underline flex items-center">
-              Manage <ChevronRight className="w-3 h-3 ml-0.5" />
+              {t('dashboard.memory.manage')} <ChevronRight className="w-3 h-3 ml-0.5" />
             </Link>
           </div>
           <div className="grid grid-cols-3 gap-3 mb-4">
-            <MiniStat label="Pools" value={memories.length} color="text-purple-600" />
-            <MiniStat label="Files" value={totalMemoryFiles} color="text-blue-600" />
-            <MiniStat label="Indexed" value={ragIndexedFiles} color="text-green-600" />
+            <MiniStat label={t('dashboard.memory.pools')} value={memories.length} color="text-purple-600" />
+            <MiniStat label={t('dashboard.memory.files')} value={totalMemoryFiles} color="text-blue-600" />
+            <MiniStat label={t('dashboard.memory.indexed')} value={ragIndexedFiles} color="text-green-600" />
           </div>
           {memories.length > 0 ? (
             <div className="space-y-2">
@@ -328,10 +328,10 @@ const Dashboard = () => {
                       <span className="text-sm font-medium text-gray-700">{mem.name}</span>
                     </div>
                     <div className="flex items-center space-x-2 text-xs text-gray-400">
-                      <span>{fileCount} files</span>
+                      <span>{t('dashboard.memory.fileCount', { count: fileCount })}</span>
                       {indexed > 0 && (
                         <span className="bg-green-50 text-green-700 border border-green-100 px-1.5 py-0.5 rounded-full font-medium">
-                          {indexed} indexed
+                          {t('dashboard.memory.indexedCount', { count: indexed })}
                         </span>
                       )}
                     </div>
@@ -340,31 +340,34 @@ const Dashboard = () => {
               })}
             </div>
           ) : (
-            <EmptyState message="No memory pools created yet" />
+            <EmptyState message={t('dashboard.memory.empty')} />
           )}
         </div>
       </div>
+
+      {/* System Health */}
+      {health && <SystemHealth health={health} />}
 
       {/* Recent Run History */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
           <h3 className="font-bold text-gray-700 flex items-center text-sm">
             <TrendingUp className="w-4 h-4 mr-2 text-emerald-500" />
-            Recent Run History
+            {t('dashboard.runs.heading')}
           </h3>
           <Link to="/sessions" className="text-xs text-indigo-600 hover:underline flex items-center">
-            All sessions <ChevronRight className="w-3 h-3 ml-0.5" />
+            {t('dashboard.runs.allSessions')} <ChevronRight className="w-3 h-3 ml-0.5" />
           </Link>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr className="text-xs uppercase text-gray-400">
-                <th className="px-6 py-3 font-semibold">Agent</th>
-                <th className="px-6 py-3 font-semibold">Workspace</th>
-                <th className="px-6 py-3 font-semibold">Status</th>
-                <th className="px-6 py-3 font-semibold">Duration</th>
-                <th className="px-6 py-3 font-semibold">Finished</th>
+                <th className="px-6 py-3 font-semibold">{t('dashboard.runs.agent')}</th>
+                <th className="px-6 py-3 font-semibold">{t('dashboard.runs.workspace')}</th>
+                <th className="px-6 py-3 font-semibold">{t('dashboard.runs.status')}</th>
+                <th className="px-6 py-3 font-semibold">{t('dashboard.runs.duration')}</th>
+                <th className="px-6 py-3 font-semibold">{t('dashboard.runs.finished')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -406,7 +409,7 @@ const Dashboard = () => {
               }) : (
                 <tr>
                   <td colSpan="5" className="px-6 py-10 text-center text-gray-400 italic text-sm">
-                    No runs recorded yet
+                    {t('dashboard.runs.empty')}
                   </td>
                 </tr>
               )}
@@ -414,11 +417,141 @@ const Dashboard = () => {
           </table>
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 };
 
 /* ── Sub-components ─────────────────────────────────────────── */
+
+const formatBytes = (n) => {
+  const b = Number(n || 0);
+  if (b < 1024) return `${b} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = b / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+};
+
+const SystemHealth = ({ health }) => {
+  const { t } = useI18n();
+  const db = health.database || {};
+  const counts = db.counts || {};
+  const services = health.services || {};
+  const storage = health.storage || {};
+  const cache = health.agent_cache || {};
+  const cacheLookups = (cache.hits || 0) + (cache.misses || 0);
+  const cacheHitRate = cacheLookups > 0 ? Math.round((cache.hits / cacheLookups) * 100) : null;
+
+  // Order services so the always-on ones read first; label each for humans.
+  const serviceLabels = {
+    plan_scheduler: t('dashboard.health.serviceScheduler'),
+    run_watchdog: t('dashboard.health.serviceWatchdog'),
+    external_publisher: t('dashboard.health.serviceLiveUpdates'),
+    telegram_poller: t('dashboard.health.serviceTelegram'),
+  };
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+        <h3 className="font-bold text-gray-700 flex items-center text-sm">
+          <Activity className="w-4 h-4 mr-2 text-emerald-500" />
+          {t('dashboard.health.heading')}
+        </h3>
+        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
+          health.status === 'ok'
+            ? 'bg-green-50 text-green-700 border-green-100'
+            : 'bg-red-50 text-red-700 border-red-100'
+        }`}>
+          {health.status === 'ok' ? t('dashboard.health.operational') : t('dashboard.health.degraded')}
+        </span>
+      </div>
+
+      <div className="p-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Database */}
+        <div>
+          <div className="flex items-center text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <Database className="w-3.5 h-3.5 mr-1.5 text-indigo-500" />
+            {t('dashboard.health.database')}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <MiniStat label={t('dashboard.health.runs')} value={counts.runs ?? '—'} color="text-indigo-600" />
+            <MiniStat label={t('dashboard.health.tasks')} value={counts.tasks ?? '—'} color="text-blue-600" />
+            <MiniStat label={t('dashboard.health.sessions')} value={counts.sessions ?? '—'} color="text-purple-600" />
+            <MiniStat label={t('dashboard.health.running')} value={db.running_runs ?? '—'} color="text-orange-600" />
+          </div>
+        </div>
+
+        {/* Background services */}
+        <div>
+          <div className="flex items-center text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <Server className="w-3.5 h-3.5 mr-1.5 text-gray-500" />
+            {t('dashboard.health.services')}
+          </div>
+          <div className="space-y-1.5">
+            {Object.entries(serviceLabels).map(([key, label]) => (
+              <ServiceRow key={key} label={label} state={services[key]} />
+            ))}
+          </div>
+        </div>
+
+        {/* Agent build cache */}
+        <div>
+          <div className="flex items-center text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <Gauge className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />
+            {t('dashboard.health.agentCache')}
+          </div>
+          {cache.enabled === false ? (
+            <p className="text-sm text-gray-400 italic">{t('dashboard.health.cacheDisabled')}</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <MiniStat label={t('dashboard.health.hitRate')} value={cacheHitRate === null ? '—' : `${cacheHitRate}%`} color="text-emerald-600" />
+              <MiniStat label={t('dashboard.health.cached')} value={cache.entries ?? '—'} color="text-gray-600" />
+              <MiniStat label={t('dashboard.health.hits')} value={cache.hits ?? '—'} color="text-green-600" />
+              <MiniStat label={t('dashboard.health.misses')} value={cache.misses ?? '—'} color="text-gray-500" />
+            </div>
+          )}
+        </div>
+
+        {/* Storage */}
+        <div>
+          <div className="flex items-center text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            <HardDrive className="w-3.5 h-3.5 mr-1.5 text-rose-500" />
+            {t('dashboard.health.storage')}
+          </div>
+          <div className="space-y-1.5 text-sm">
+            <StorageRow label={t('dashboard.health.storageDatabase')} value={formatBytes(storage.db_bytes)} />
+            <StorageRow label={t('dashboard.health.storageRunLogs')} value={t('dashboard.health.logFiles', { size: formatBytes(storage.run_logs_bytes), count: storage.run_logs_files ?? 0 })} />
+            <StorageRow label={t('dashboard.health.storageTotalState')} value={formatBytes(storage.agents_hub_bytes)} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ServiceRow = ({ label, state }) => {
+  const { t } = useI18n();
+  // true = running (green), false = stopped (gray), null/undefined = unknown (amber).
+  const color = state === true ? 'bg-green-400' : state === false ? 'bg-gray-300' : 'bg-amber-400';
+  const text = state === true ? t('dashboard.health.stateRunning') : state === false ? t('dashboard.health.stateStopped') : t('dashboard.health.stateUnknown');
+  return (
+    <div className="flex items-center justify-between py-1 px-2.5 rounded-lg bg-gray-50">
+      <span className="text-sm text-gray-700">{label}</span>
+      <span className="flex items-center gap-1.5 text-xs text-gray-400">
+        <span className={`w-2 h-2 rounded-full ${color} ${state === true ? 'animate-pulse' : ''}`} />
+        {text}
+      </span>
+    </div>
+  );
+};
+
+const StorageRow = ({ label, value }) => (
+  <div className="flex items-center justify-between py-1 px-2.5 rounded-lg bg-gray-50">
+    <span className="text-gray-500 text-xs">{label}</span>
+    <span className="text-gray-700 text-xs font-medium">{value}</span>
+  </div>
+);
 
 const StatCard = ({ title, value, icon: Icon, color, subtext, to, pulse }) => (
   <Link to={to} className="block bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md hover:border-gray-200 transition-all group">

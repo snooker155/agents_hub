@@ -1,0 +1,17 @@
+export default {
+  graph: 'Граф',
+  scene3d: '3D-сцена',
+  simulation: 'Симуляция',
+  math: 'Математический график',
+  process: 'Процесс',
+  chart: 'Диаграмма',
+  table: 'Таблица',
+  html: 'Живой HTML',
+  diagram: 'Схема',
+  latex: 'Формула',
+  slides: 'Слайды',
+  document: 'Документ',
+  scene: 'Сцена',
+  map: 'Карта',
+  timeline: 'Хронология',
+};

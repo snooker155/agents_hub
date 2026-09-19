@@ -14,11 +14,12 @@ from typing import Optional
 
 from filelock import FileLock
 
-_STATE_DIR = Path(__file__).resolve().parents[1] / "agents" / "state"
-_STATE_DIR.mkdir(parents=True, exist_ok=True)
+from common.paths import AGENTS_HUB_ROOT
 
-_CTX_FILE = _STATE_DIR / "user_context.json"
-_CTX_LOCK = _STATE_DIR / "user_context.json.lock"
+AGENTS_HUB_ROOT.mkdir(parents=True, exist_ok=True)
+
+_CTX_FILE = AGENTS_HUB_ROOT / "user_context.json"
+_CTX_LOCK = AGENTS_HUB_ROOT / "user_context.json.lock"
 
 
 def _load() -> dict:

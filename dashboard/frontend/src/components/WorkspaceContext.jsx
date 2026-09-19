@@ -1,7 +1,6 @@
-import { createContext, useState, useContext, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { WorkspaceContext } from './workspace';
 import { setActiveWorkspace as apiSetActiveWorkspace } from '../api';
-
-const WorkspaceContext = createContext();
 
 function pushWorkspaceToBackend(workspace) {
   // best-effort — don't block or throw
@@ -43,5 +42,3 @@ export const WorkspaceProvider = ({ children }) => {
     </WorkspaceContext.Provider>
   );
 };
-
-export const useWorkspace = () => useContext(WorkspaceContext);

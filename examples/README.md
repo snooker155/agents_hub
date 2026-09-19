@@ -22,6 +22,14 @@ Each example lives in its own directory and includes a dedicated `README.md` wit
 | 6 | `06_flow_based_automation` | Run a flow-based multi-agent pipeline |
 | 7 | `07_docker_isolated_agent_runs` | Execute agents in Docker-managed containers |
 | 8 | `08_local_model_lab` | Run the system with Ollama or LM Studio |
+| 9 | `09_thinking_capability_check` | Verify an agent's think/plan reasoning capabilities |
+| — | `imported-agents` | Make an external agent importable: a worked [Aider](https://github.com/Aider-AI/aider) adapter with its manifest, HTTP server and Dockerfile |
+| — | `sample-documents` | Input files for the RAG, memory-extraction and structured-extraction walkthroughs |
+
+`imported-agents` is not a numbered walkthrough: it is a reference
+implementation of the import contract. `prepare_example_repo.sh` turns it into a
+clone-able repository in a temp directory, so the import dialog can be tried
+without network access.
 
 ## Before You Start
 
@@ -47,3 +55,4 @@ If you are new to the project, go through the examples in this order:
 6. `06_flow_based_automation`
 7. `07_docker_isolated_agent_runs`
 8. `08_local_model_lab`
+9. `09_thinking_capability_check`

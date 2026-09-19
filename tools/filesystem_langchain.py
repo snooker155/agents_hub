@@ -22,6 +22,8 @@ from tools.filesystem import (
 )
 from common.config import SweAgentConfig, DEFAULT_IGNORE
 from common.artifact_sink import record_artifact as _record_artifact
+from common.entity_sink import record_entity
+from common.workspace_context import workspace_name_from_path
 
 
 def _snapshot_text(path: str, ws_path: Optional[Path]) -> Optional[str]:
@@ -41,6 +43,25 @@ def _snapshot_text(path: str, ws_path: Optional[Path]) -> Optional[str]:
         return abs_path.read_text(encoding="utf-8")
     except Exception:
         return None
+
+
+def _workspace_rel_prefix(ws_path: Optional[Path]) -> str:
+    """Where the agent's operating dir sits inside its workspace ("" at the root).
+
+    Task and project runs operate in ``WORKSPACES_ROOT/<ws>/<project>`` and their
+    file paths are relative to that, while the workspace file browser addresses
+    everything from ``<ws>``. This prefix bridges the two so a file link opens
+    the right file.
+    """
+    if ws_path is None:
+        return ""
+    try:
+        from workspace import WORKSPACES_ROOT
+        rel = ws_path.relative_to(Path(WORKSPACES_ROOT).resolve())
+    except Exception:
+        return ""
+    parts = rel.parts[1:]  # drop the workspace name itself
+    return "/".join(parts) + "/" if parts else ""
 
 
 # -------------------- I/O Schemas --------------------
@@ -136,6 +157,19 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
         List of LangChain tool objects
     """
     ws_path = Path(workspace).resolve() if workspace else None
+    ws_name = workspace_name_from_path(str(ws_path)) if ws_path else None
+    ws_prefix = _workspace_rel_prefix(ws_path)
+
+    def _record(op: str, rel: str, before: Optional[str], after: Optional[str]) -> None:
+        """Report a file change as both a diff artifact and a linkable entity.
+
+        A deleted file gets no entity record: its page in the workspace browser
+        is gone, and the change is already visible in the diff panel.
+        """
+        _record_artifact(op, rel, before, after)
+        if op != "delete":
+            record_entity("file", f"{ws_prefix}{rel}", "created" if op == "add" else "updated",
+                          rel, workspace=ws_name)
     
     c = config or {}
     cfg = SweAgentConfig(
@@ -165,7 +199,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
             before = _snapshot_text(path, ws_path)
             rel = _write_file(path, content, create_dirs=create_dirs, workspace=ws_path)
             after = _snapshot_text(rel, ws_path)
-            _record_artifact("add" if before is None else "modify", rel, before, after)
+            _record("add" if before is None else "modify", rel, before, after)
             return json.dumps(WriteFileOutput(path=rel).model_dump(), ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": f"write_file failed: {e}", "path": path}, ensure_ascii=False)
@@ -181,7 +215,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
         try:
             before = _snapshot_text(path, ws_path)
             rel = _delete_file(path, workspace=ws_path, config=cfg)
-            _record_artifact("delete", rel, before, None)
+            _record("delete", rel, before, None)
             return json.dumps(DeleteFileOutput(path=rel).model_dump(), ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": f"delete_file failed: {e}", "path": path}, ensure_ascii=False)
@@ -243,7 +277,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
                     continue
                 before = before_by_path.get(rel)
                 after = None if fo.get("op") == "delete" else _snapshot_text(rel, ws_path)
-                _record_artifact(fo.get("op") or "modify", rel, before, after)
+                _record(fo.get("op") or "modify", rel, before, after)
             files = [FileOp(**fo) for fo in (result.get("files") or [])]
             out = ApplyUnifiedDiffOutput(applied=bool(result.get("applied")), files=files)
             return json.dumps(out.model_dump(), ensure_ascii=False)
@@ -263,7 +297,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
             before = _snapshot_text(path, ws_path)
             rel = _create_file(path, content, workspace=str(ws_path) if ws_path else None)
             after = _snapshot_text(rel, ws_path)
-            _record_artifact("add" if before is None else "modify", rel, before, after)
+            _record("add" if before is None else "modify", rel, before, after)
             return json.dumps(CreateFileOutput(path=rel).model_dump(), ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": f"create_file failed: {e}", "path": path}, ensure_ascii=False)

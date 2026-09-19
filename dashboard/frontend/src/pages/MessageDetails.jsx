@@ -1,10 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Loader, RefreshCw, MessageSquare, Wrench, Bot, FileText, Copy, Check, Workflow, Square, Globe, Zap, ChevronRight, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical } from 'lucide-react';
 
-const SKILL_TOOL = 'get_skill';
-import { getMessage, getMessageLogs, getMessageInsights, stopMessage } from '../api';
+import { getMessage, getMessageLogs, getMessageInsights, stopMessage, replayRun, getEvalSets, createEvalSet, addEvalCase } from '../api';
+import { TokenPill } from '../components/ProcessGraph';
+import MessageProcessFlow from '../components/MessageProcessFlow';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
 function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString();
@@ -20,291 +23,250 @@ function duration(started, finished) {
   return `${mins}m ${rem}s`;
 }
 
-function TokenPill({ label, value }) {
+const STATUS_STYLES = {
+  running:   { bg: 'bg-blue-100',   text: 'text-blue-700',   icon: Loader },
+  completed: { bg: 'bg-green-100',  text: 'text-green-700',  icon: CheckCircle },
+  failed:    { bg: 'bg-red-100',    text: 'text-red-700',    icon: XCircle },
+  error:     { bg: 'bg-red-100',    text: 'text-red-700',    icon: XCircle },
+  stopped:   { bg: 'bg-gray-100',   text: 'text-gray-600',   icon: Square },
+  stop:      { bg: 'bg-orange-100', text: 'text-orange-700', icon: Square },
+  pending:   { bg: 'bg-gray-100',   text: 'text-gray-500',   icon: Clock },
+};
+
+function StatusBadge({ status }) {
+  const s = STATUS_STYLES[status] || { bg: 'bg-gray-100', text: 'text-gray-500', icon: AlertCircle };
+  const Icon = s.icon;
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] font-medium">
-      {label}: {value ?? 0}
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
+      <Icon className={`w-3 h-3 ${status === 'running' ? 'animate-spin' : ''}`} />
+      {status}
     </span>
   );
 }
 
-function CopyButton({ text }) {
-  const [copied, setCopied] = React.useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-  return (
-    <button
-      onClick={copy}
-      className="absolute top-2 right-2 p-1 rounded text-gray-400 hover:text-gray-200 transition-colors"
-      title="Copy"
-    >
-      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-    </button>
-  );
-}
-
-// Attempt to coerce a tool input/output value into a parsed JSON object/array.
-// Tool payloads can arrive as already-parsed objects, as JSON strings, or as
-// plain text. Returns { json, raw } where `json` is non-null only when the
-// value is valid JSON worth pretty-printing — anything else stays raw text.
-function parseMaybeJson(value) {
-  if (value === null || value === undefined) return { json: null, raw: '' };
-  if (typeof value === 'object') {
-    return { json: value, raw: '' };
-  }
-  const raw = String(value);
-  const trimmed = raw.trim();
-  const structural =
-    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-    (trimmed.startsWith('[') && trimmed.endsWith(']'));
-  if (structural) {
-    try {
-      return { json: JSON.parse(trimmed), raw };
-    } catch {
-      // Not valid JSON (e.g. a Python repr) — show as raw text.
+// Splits the LangChain-serialized prompt string into role-tagged segments so
+// the input-context log can show clear dividers between the init/system prompt,
+// any prior conversation history, and the current human message. LangChain
+// stringifies chat messages with line-leading role prefixes (e.g. "System:",
+// "Human:", "AI:"), which we use as segment boundaries.
+function parseInputContext(text) {
+  if (!text) return [];
+  const ROLE_RE = /^(System|Human|AI|Assistant|Tool|Function):\s?/;
+  const lines = String(text).split('\n');
+  const segments = [];
+  let current = null;
+  for (const line of lines) {
+    const match = line.match(ROLE_RE);
+    if (match) {
+      if (current) segments.push(current);
+      current = { role: match[1], content: line.slice(match[0].length) };
+    } else if (current) {
+      current.content += `\n${line}`;
+    } else {
+      // Leading text before any role marker — treat as a raw preamble.
+      current = { role: 'Prompt', content: line };
     }
   }
-  return { json: null, raw };
+  if (current) segments.push(current);
+  return segments;
 }
 
-const MAX_STRING_LEN = 300;
-
-// Recursively shorten any string value longer than MAX_STRING_LEN, appending an
-// ellipsis with the original length. Returns { data, truncated } so callers can
-// offer an expand toggle. Non-string values pass through untouched.
-function truncateLongStrings(value) {
-  let truncated = false;
-  const walk = (v) => {
-    if (typeof v === 'string') {
-      if (v.length > MAX_STRING_LEN) {
-        truncated = true;
-        return `${v.slice(0, MAX_STRING_LEN)}… (+${v.length - MAX_STRING_LEN} chars)`;
-      }
-      return v;
-    }
-    if (Array.isArray(v)) return v.map(walk);
-    if (v && typeof v === 'object') {
-      const out = {};
-      for (const [k, val] of Object.entries(v)) out[k] = walk(val);
-      return out;
-    }
-    return v;
-  };
-  return { data: walk(value), truncated };
-}
-
-// Pretty-printed, syntax-highlighted JSON block with copy support. Long string
-// values are visually shortened by default, with a toggle to reveal them.
-function JsonBlock({ data }) {
-  const [expanded, setExpanded] = useState(false);
-  const fullText = JSON.stringify(data, null, 2);
-  const { data: shortData, truncated } = truncateLongStrings(data);
-  const shownText = expanded || !truncated ? fullText : JSON.stringify(shortData, null, 2);
+// One labeled, divider-separated block in the input-context log.
+function ContextSegment({ label, color, content }) {
   return (
-    <div className="relative">
-      <CopyButton text={fullText} />
-      <pre className="bg-gray-900 text-gray-100 text-[11px] leading-5 p-3 pr-8 rounded-lg overflow-x-auto whitespace-pre">
-        {shownText}
-      </pre>
-      {truncated && (
-        <button
-          type="button"
-          onClick={() => setExpanded((e) => !e)}
-          className="mt-1 text-[10px] font-medium text-indigo-500 hover:text-indigo-600"
-        >
-          {expanded ? 'Show less' : 'Show full values'}
-        </button>
-      )}
-    </div>
-  );
-}
-
-// Plain-text payload, visually shortened past MAX_STRING_LEN with an expander.
-function RawText({ text }) {
-  const [expanded, setExpanded] = useState(false);
-  const long = text.length > MAX_STRING_LEN;
-  const shown = expanded || !long ? text : `${text.slice(0, MAX_STRING_LEN)}…`;
-  return (
-    <div className="relative">
-      <CopyButton text={text} />
-      <pre className="bg-gray-50 border border-gray-100 text-gray-700 text-[11px] leading-5 p-2 pr-8 rounded-lg overflow-x-auto whitespace-pre-wrap break-words max-h-64">
-        {shown}
-      </pre>
-      {long && (
-        <button
-          type="button"
-          onClick={() => setExpanded((e) => !e)}
-          className="mt-1 text-[10px] font-medium text-indigo-500 hover:text-indigo-600"
-        >
-          {expanded ? 'Show less' : `Show full (${text.length} chars)`}
-        </button>
-      )}
-    </div>
-  );
-}
-
-// Renders a single tool input/output section: parses JSON when possible,
-// otherwise shows wrapped plain text. Falls back gracefully on empty values.
-function ToolPayload({ label, value, icon: Icon, accent }) {
-  const { json, raw } = parseMaybeJson(value);
-  if (json === null && !raw) return null;
-  return (
-    <div className="mt-2">
-      <div className={`flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide mb-1 ${accent}`}>
-        {Icon && <Icon className="w-3 h-3" />}
+    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+      <div className={`px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold uppercase tracking-wide ${color}`}>
         {label}
       </div>
-      {json !== null ? <JsonBlock data={json} /> : <RawText text={raw} />}
+      <pre className="px-4 py-3 text-xs leading-5 whitespace-pre-wrap break-words text-gray-700">
+        {content || '(empty)'}
+      </pre>
     </div>
   );
 }
 
-// Collapsible card for one tool invocation, showing parsed input & output.
-function ToolActivityItem({ tool, index }) {
-  const [open, setOpen] = useState(false);
-  const isSkill = tool.tool === SKILL_TOOL;
-  const name = isSkill ? 'Skill Retrieved' : (tool.tool || 'tool');
-  const cardClass = isSkill
-    ? 'border-violet-200 bg-violet-50/40'
-    : 'border-gray-200 bg-white';
-  const HeaderIcon = isSkill ? Zap : Wrench;
+const ROLE_LABELS = {
+  system: { labelKey: 'messageDetails.roles.system', color: 'text-sky-600' },
+  user: { labelKey: 'messageDetails.roles.user', color: 'text-sky-600' },
+  assistant: { labelKey: 'messageDetails.roles.assistant', color: 'text-sky-600' },
+  tool: { labelKey: 'messageDetails.roles.tool', color: 'text-sky-600' },
+};
+
+// The chat pipeline folds prior turns into a single prompt string
+// (build_chat_context): a "Conversation history:" block of "User:"/"Assistant:"
+// lines followed by a "Latest user message:" section. When that string lands in
+// `user_message` with no separate `history`, the whole block would otherwise be
+// shown as one user message. Split it back into history turns + the real latest
+// message so the divider view matches what was actually sent.
+const HISTORY_HEADER = 'Conversation history:';
+const LATEST_MARKER = 'Latest user message:';
+
+function splitEmbeddedHistory(userMessage) {
+  const text = String(userMessage || '');
+  const headerIdx = text.indexOf(HISTORY_HEADER);
+  const latestIdx = text.indexOf(LATEST_MARKER);
+  if (headerIdx === -1 || latestIdx === -1 || latestIdx < headerIdx) {
+    return { history: [], userMessage: text };
+  }
+  const block = text.slice(headerIdx + HISTORY_HEADER.length, latestIdx);
+  const latest = text.slice(latestIdx + LATEST_MARKER.length).replace(/^\n/, '');
+
+  const history = [];
+  let current = null;
+  for (const line of block.split('\n')) {
+    const match = line.match(/^(User|Assistant):\s?/);
+    if (match) {
+      if (current) history.push(current);
+      current = {
+        role: match[1] === 'User' ? 'user' : 'assistant',
+        content: line.slice(match[0].length),
+      };
+    } else if (current) {
+      current.content += `\n${line}`;
+    }
+  }
+  if (current) history.push(current);
+  // Trim trailing blank lines accumulated from the block separators.
+  history.forEach((h) => { h.content = h.content.replace(/\s+$/, ''); });
+  return { history, userMessage: latest.trimEnd() };
+}
+
+// Renders the structured input context object stored on new runs:
+// {system_prompt, history:[{role,content}], user_message, response,
+//  llm_invocations:[{kind, ...}]}. Each field gets a labeled divider.
+function StructuredContextView({ struct, output }) {
+  const { t } = useI18n();
+  let history = Array.isArray(struct?.history) ? struct.history : [];
+  let userMessage = struct?.user_message;
+  // Recover prior turns folded into the prompt string by the chat pipeline.
+  if (history.length === 0 && typeof userMessage === 'string') {
+    const split = splitEmbeddedHistory(userMessage);
+    history = split.history;
+    userMessage = split.userMessage;
+  }
+  const invocations = Array.isArray(struct?.llm_invocations) ? struct.llm_invocations : [];
+  const response = struct?.response || output || '';
   return (
-    <div className={`text-xs rounded-lg border ${cardClass}`}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left"
-      >
-        <ChevronRight className={`w-3.5 h-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
-        <HeaderIcon className={`w-3.5 h-3.5 shrink-0 ${isSkill ? 'text-violet-500' : 'text-indigo-500'}`} />
-        <span className="font-semibold text-gray-800 truncate">
-          {!isSkill && <span className="text-gray-400 font-normal mr-1">Step {tool.step || index + 1}</span>}
-          {name}
-        </span>
-      </button>
-      {open && (
-        <div className="px-3 pb-3 border-t border-gray-100 pt-1">
-          <ToolPayload label="Input" value={tool.input} icon={ArrowDownToLine} accent="text-gray-500" />
-          <ToolPayload label="Output" value={tool.output} icon={ArrowUpFromLine} accent="text-emerald-600" />
-          {!tool.input && !tool.output && (
-            <p className="text-[11px] text-gray-400 italic mt-2">No input/output captured.</p>
-          )}
+    <div className="space-y-3">
+      <ContextSegment label={t('messageDetails.initPromptSystem')} color="text-amber-600" content={struct?.system_prompt} />
+      {history.map((h, idx) => {
+        const known = ROLE_LABELS[String(h?.role || '').toLowerCase()];
+        const meta = known
+          ? { label: t(known.labelKey), color: known.color }
+          : { label: t('messageDetails.roles.other', { role: h?.role || '?' }), color: 'text-sky-600' };
+        return <ContextSegment key={idx} label={meta.label} color={meta.color} content={h?.content} />;
+      })}
+      <ContextSegment label={t('messageDetails.currentUserMessage')} color="text-emerald-600" content={userMessage} />
+      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+        <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
+          {t('messageDetails.generatedResponse')}
+        </div>
+        <pre className="px-4 py-3 text-xs leading-5 whitespace-pre-wrap break-words text-gray-800">
+          {response || t('messageDetails.empty')}
+        </pre>
+      </div>
+      {invocations.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+          <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-fuchsia-600">
+            {t('messageDetails.llmInvocations')} ({invocations.length})
+          </div>
+          <div className="px-4 py-3 space-y-1">
+            {invocations.map((inv, idx) => {
+              const tu = inv?.token_usage || {};
+              // A tool-driven call is only interesting for *which* tool drove
+              // it — "tool-driven LLM call" repeated eight times says nothing
+              // a reader can follow. The names are the tools whose output this
+              // call was handed, so the list reads as the loop it was.
+              const tools = (Array.isArray(inv?.tools) ? inv.tools : []).filter(Boolean);
+              const driven = inv?.kind === 'tool';
+              return (
+                <div key={idx} className="text-[11px] text-gray-400 flex items-center gap-2 flex-wrap">
+                  <span className="text-gray-500">#{idx + 1}</span>
+                  {tools.length > 0 ? (
+                    <span className="font-mono font-semibold text-orange-600 break-all">
+                      {tools.join(' · ')}
+                    </span>
+                  ) : (
+                    <span className={`font-semibold ${driven ? 'text-orange-600' : 'text-cyan-600'}`}>
+                      {driven ? t('messageDetails.toolDrivenLlmCall') : t('messageDetails.llmCall')}
+                    </span>
+                  )}
+                  <span className="text-gray-500">
+                    {tu.inbound_tokens || 0} in / {tu.outbound_tokens || 0} out
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function renderTableAwareText(text, keyPrefix = '') {
-  const lines = text.split('\n');
-  const elements = [];
-  let i = 0;
-  let plainBuf = [];
-  let elemIdx = 0;
-
-  const renderInlineText = (str, key) => {
-    const inlineParts = str.split(/(`[^`]+`)/g);
-    return (
-      <span key={key}>
-        {inlineParts.map((ip, j) => {
-          if (ip.startsWith('`') && ip.endsWith('`') && ip.length > 2) {
-            return (
-              <code key={j} className="bg-gray-100 text-indigo-700 px-1 py-0.5 rounded text-xs">
-                {ip.slice(1, -1)}
-              </code>
-            );
-          }
-          return ip.split('\n').map((line, k, arr) => (
-            <React.Fragment key={`${j}-${k}`}>
-              {line}
-              {k < arr.length - 1 && <br />}
-            </React.Fragment>
-          ));
-        })}
-      </span>
-    );
-  };
-
-  const flushPlain = () => {
-    if (!plainBuf.length) return;
-    const content = plainBuf.join('\n');
-    plainBuf = [];
-    elements.push(renderInlineText(content, `${keyPrefix}p${elemIdx++}`));
-  };
-
-  while (i < lines.length) {
-    const trimmed = lines[i].trim();
-    const nextTrimmed = i + 1 < lines.length ? lines[i + 1].trim() : '';
-
-    if (
-      trimmed.startsWith('|') && trimmed.endsWith('|') &&
-      nextTrimmed.startsWith('|') && /^\|[\s\-:|]+\|$/.test(nextTrimmed)
-    ) {
-      flushPlain();
-      const headers = trimmed.split('|').slice(1, -1).map(h => h.trim());
-      i += 2;
-      const rows = [];
-      while (i < lines.length) {
-        const rowLine = lines[i].trim();
-        if (rowLine.startsWith('|') && rowLine.endsWith('|')) {
-          rows.push(rowLine.split('|').slice(1, -1).map(c => c.trim()));
-          i++;
-        } else {
-          break;
-        }
-      }
-      elements.push(
-        <div key={`${keyPrefix}t${elemIdx++}`} className="my-3 overflow-x-auto">
-          <table className="min-w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
-            <thead className="bg-gray-50">
-              <tr>{headers.map((h, j) => <th key={j} className="px-3 py-2 text-left font-semibold text-gray-700 border-b border-gray-200">{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {rows.map((row, j) => (
-                <tr key={j} className={j % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                  {row.map((cell, k) => <td key={k} className="px-3 py-2 text-gray-700 border-b border-gray-100">{cell}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    } else {
-      plainBuf.push(lines[i]);
-      i++;
-    }
+// Renders the message input context with dividers between the init/system
+// prompt, conversation history, the human message, and the generated response.
+// Prefers the structured object; falls back to parsing the legacy string.
+function InputContextView({ struct, text, output }) {
+  const { t } = useI18n();
+  if (struct && typeof struct === 'object') {
+    return <StructuredContextView struct={struct} output={output} />;
   }
-  flushPlain();
-  return elements;
-}
+  const segments = parseInputContext(text);
 
-function renderContent(text) {
-  const parts = text.split(/(```[\s\S]*?```)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith('```')) {
-      const inner = part.slice(3, -3);
-      const newline = inner.indexOf('\n');
-      const lang = newline > 0 ? inner.slice(0, newline).trim() : '';
-      const code = newline > 0 ? inner.slice(newline + 1) : inner;
-      return (
-        <div key={i} className="relative my-2">
-          {lang && <div className="bg-gray-800 text-gray-400 text-xs px-4 py-1.5 rounded-t-lg border-b border-gray-700">{lang}</div>}
-          <pre className={`bg-gray-900 text-gray-100 text-xs p-4 overflow-x-auto ${lang ? 'rounded-b-lg' : 'rounded-lg'} whitespace-pre`}>
-            <CopyButton text={code} />
-            {code}
+  // The first System segment is the init prompt; any further System/AI/Tool
+  // segments before the final Human message are prior conversation history.
+  const lastHumanIdx = segments.map((s) => s.role).lastIndexOf('Human');
+  const labelFor = (seg, idx) => {
+    if (seg.role === 'System') {
+      return idx === 0
+        ? { label: t('messageDetails.initPromptSystem'), color: 'text-amber-600' }
+        : { label: t('messageDetails.roles.system'), color: 'text-sky-600' };
+    }
+    if (seg.role === 'Human') {
+      return idx === lastHumanIdx
+        ? { label: t('messageDetails.humanMessage'), color: 'text-emerald-600' }
+        : { label: t('messageDetails.roles.human'), color: 'text-sky-600' };
+    }
+    if (seg.role === 'AI' || seg.role === 'Assistant') {
+      return { label: t('messageDetails.roles.assistant'), color: 'text-sky-600' };
+    }
+    if (seg.role === 'Tool' || seg.role === 'Function') {
+      return { label: t('messageDetails.roles.tool'), color: 'text-sky-600' };
+    }
+    return { label: seg.role, color: 'text-gray-600' };
+  };
+
+  return (
+    <div className="space-y-3">
+      {segments.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+          <pre className="px-4 py-3 text-xs leading-5 whitespace-pre-wrap break-words text-gray-700">
+            {text || t('messageDetails.noInputContext')}
           </pre>
         </div>
-      );
-    }
-    return <React.Fragment key={i}>{renderTableAwareText(part, `${i}-`)}</React.Fragment>;
-  });
+      ) : (
+        segments.map((seg, idx) => {
+          const { label, color } = labelFor(seg, idx);
+          return <ContextSegment key={idx} label={label} color={color} content={seg.content} />;
+        })
+      )}
+      {output ? (
+        <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+          <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-indigo-600">
+            {t('messageDetails.generatedResponse')}
+          </div>
+          <pre className="px-4 py-3 text-xs leading-5 whitespace-pre-wrap break-words text-gray-800">
+            {output}
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function MessageDetails() {
+  const { t } = useI18n();
   const { runId } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -314,6 +276,21 @@ export default function MessageDetails() {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('insights');
   const [stopping, setStopping] = useState(false);
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [replaying, setReplaying] = useState(false);
+  const [replayModel, setReplayModel] = useState('');
+  const [replayResult, setReplayResult] = useState(null);
+  const [replayError, setReplayError] = useState('');
+
+  // "Save as eval case" — seeding an eval dataset from real traffic is the
+  // cheapest way to build one, so the button lives next to Replay rather than
+  // requiring a trip to the Evals page to type the input back in by hand.
+  const [caseOpen, setCaseOpen] = useState(false);
+  const [evalSets, setEvalSets] = useState([]);
+  const [caseTarget, setCaseTarget] = useState('');
+  const [newSetName, setNewSetName] = useState('');
+  const [caseSaving, setCaseSaving] = useState(false);
+  const [caseMessage, setCaseMessage] = useState('');
 
   const load = useCallback(async () => {
     if (!runId) return;
@@ -329,11 +306,11 @@ export default function MessageDetails() {
       setInsights(insightsRes.data || { tools: [], thinking: [] });
       setLogs(logsRes.data?.logs || '');
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load message details');
+      setError(err.response?.data?.detail || t('messageDetails.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [runId]);
+  }, [runId, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -349,6 +326,66 @@ export default function MessageDetails() {
     }
   };
 
+  const handleReplay = async () => {
+    setReplaying(true);
+    setReplayError('');
+    setReplayResult(null);
+    try {
+      const body = replayModel.trim() ? { model: replayModel.trim() } : {};
+      const { data } = await replayRun(runId, body);
+      setReplayResult(data);
+    } catch (err) {
+      setReplayError(err.response?.data?.detail || t('messageDetails.replayFailed'));
+    } finally {
+      setReplaying(false);
+    }
+  };
+
+  const openCasePanel = async () => {
+    const next = !caseOpen;
+    setCaseOpen(next);
+    setCaseMessage('');
+    if (next) {
+      try {
+        const { data } = await getEvalSets(message?.workspace);
+        setEvalSets(data.eval_sets || []);
+        setCaseTarget(data.eval_sets?.[0]?.eval_set_id || '');
+      } catch {
+        setEvalSets([]);
+      }
+    }
+  };
+
+  const handleSaveAsCase = async () => {
+    setCaseSaving(true);
+    setCaseMessage('');
+    try {
+      let targetId = caseTarget;
+      if (!targetId) {
+        if (!newSetName.trim()) {
+          setCaseMessage(t('messageDetails.pickEvalSet'));
+          return;
+        }
+        const { data } = await createEvalSet({
+          name: newSetName.trim(),
+          workspace: message?.workspace || null,
+          agent_id: message?.agent_id || null,
+          graders: [{ kind: 'substring', params: {}, weight: 1 }],
+        });
+        targetId = data.eval_set_id;
+      }
+      // The run's own output becomes `expected`, which makes the first eval a
+      // pure regression check: does this still do what it did.
+      await addEvalCase(targetId, { from_run_id: runId });
+      setCaseMessage(t('messageDetails.savedAsEvalCase'));
+      setNewSetName('');
+    } catch (err) {
+      setCaseMessage(err.response?.data?.detail || t('messageDetails.saveCaseFailed'));
+    } finally {
+      setCaseSaving(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex justify-center py-20"><Loader className="w-6 h-6 animate-spin text-indigo-500" /></div>;
   }
@@ -357,7 +394,7 @@ export default function MessageDetails() {
     return (
       <div className="space-y-4">
         <Link to="/messages" className="inline-flex items-center gap-1 text-sm text-indigo-600 hover:underline">
-          <ChevronLeft className="w-4 h-4" /> Back to messages
+          <ChevronLeft className="w-4 h-4" /> {t('messageDetails.backToMessages')}
         </Link>
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 text-sm">{error}</div>
       </div>
@@ -369,48 +406,46 @@ export default function MessageDetails() {
   const selectedRun = runs.find((r) => String(r?.run_id || '') === String(runId || '')) || null;
   const messageInput = selectedRun?.input || '';
   const messageOutput = selectedRun?.output || '';
-  const toolsForRun = (insights?.tools || []).filter(
-    (t) => String(t?.run_id || '') === String(runId || '')
-  );
-  const thinkingForRun = (selectedRun?.thinking || []).filter(Boolean);
+  // Runs belonging to this message, rendered as the same execution flow the
+  // Chat process panel shows. Older records may lack run_id — show everything
+  // the insights endpoint returned in that case.
+  const matchedRuns = runs.filter((r) => String(r?.run_id || '') === String(runId || ''));
+  const flowRuns = matchedRuns.length > 0 ? matchedRuns : runs;
   const rawInvoke = (insights?.llm_invoke_responses || []).filter(
     (entry) => String(entry?.run_id || '') === String(runId || '')
   );
   const inputContexts = (insights?.input_contexts || []).filter(
     (entry) => String(entry?.run_id || '') === String(runId || '')
   );
+  const inputContextStruct = inputContexts.length > 0 ? inputContexts[0]?.structured : null;
   const inputContextText = inputContexts.length > 0
     ? String(inputContexts[0]?.context || '')
-    : (messageInput || '(No input context captured for this run.)');
+    : (messageInput || t('messageDetails.noInputContext'));
   const runLogs = logs || insights?.aggregated_logs || '(no logs)';
   const responseJson = Array.isArray(rawInvoke) && rawInvoke.length > 0
     ? (rawInvoke.length === 1 ? rawInvoke[0] : rawInvoke)
-    : { message: 'No raw LLM invoke response captured for this run.' };
+    : { message: t('messageDetails.noRawResponse') };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <Link to="/messages" className="inline-flex items-center gap-1 text-sm text-indigo-600 hover:underline">
-            <ChevronLeft className="w-4 h-4" /> Back to messages
-          </Link>
-          <div className="flex items-center gap-3 mt-2">
-            <h1 className="text-2xl font-bold text-gray-900">Message Details</h1>
-            {message?.is_flow && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">
-                <Workflow className="w-3.5 h-3.5" />
-                Flow
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageContainer fill className="gap-4">
+      <PageHeader
+        className="mb-0"
+        icon={ScrollText}
+        title={t('messageDetails.messageDetails')}
+        backTo="/messages"
+        backLabel={t('messageDetails.messages')}
+        badges={message?.is_flow && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">
+            <Workflow className="w-3.5 h-3.5" /> {t('messageDetails.flow2')}
+          </span>
+        )}
+        actions={<>
           {message?.session_id && (
             <button
               onClick={() => navigate(`/sessions/${message.session_id}`)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-50"
             >
-              View Session
+              {t('messageDetails.viewSession')}
             </button>
           )}
           {message?.status === 'running' && (
@@ -423,26 +458,144 @@ export default function MessageDetails() {
               Stop
             </button>
           )}
+          {message?.channel !== 'replay' && (message?.status === 'completed' || message?.status === 'failed') && (
+            <button
+              onClick={() => setReplayOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-50"
+            >
+              <Repeat className="w-4 h-4" />
+              {t('messageDetails.replay')}
+            </button>
+          )}
+          {message?.channel !== 'replay' && message?.channel !== 'eval'
+            && (message?.status === 'completed' || message?.status === 'failed') && (
+            <button
+              onClick={openCasePanel}
+              title={t('messageDetails.addThisRunToAn')}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-50"
+            >
+              <FlaskConical className="w-4 h-4" />
+              {t('messageDetails.saveAsEvalCase')}
+            </button>
+          )}
           <button
             onClick={load}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
           >
             <RefreshCw className="w-4 h-4" />
-            Refresh
+            {t('messageDetails.refresh')}
           </button>
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Metadata card */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2 text-sm">
-        <div><span className="text-gray-500">Run ID:</span> <span className="text-xs">{message?.run_id}</span></div>
-        <div><span className="text-gray-500">Title:</span> <span className="font-medium text-gray-800">{message?.task_title || message?.title || '—'}</span></div>
-        <div><span className="text-gray-500">Agent:</span> <span className="text-xs">{message?.agent_id || '—'}</span></div>
-        <div><span className="text-gray-500">Model:</span> <span className="text-xs">{message?.model || insights?.model || '—'}</span></div>
-        <div><span className="text-gray-500">Status:</span> <span className="font-medium">{message?.status || '—'}</span></div>
+      <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">
+
+      {/* Save-as-eval-case panel */}
+      {caseOpen && (
+        <div className="mt-4 border border-indigo-100 bg-indigo-50/40 rounded-xl p-4 space-y-3">
+          <div className="text-sm font-semibold text-gray-700">{t('messageDetails.saveThisRunAsAn')}</div>
+          <p className="text-xs text-gray-500">
+            {t('messageDetails.saveCaseHint')}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={caseTarget}
+              onChange={(e) => setCaseTarget(e.target.value)}
+              className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-64"
+            >
+              <option value="">{t('messageDetails.newEvalSet')}</option>
+              {evalSets.map((s2) => (
+                <option key={s2.eval_set_id} value={s2.eval_set_id}>{s2.name}</option>
+              ))}
+            </select>
+            {!caseTarget && (
+              <input
+                value={newSetName}
+                onChange={(e) => setNewSetName(e.target.value)}
+                placeholder={t('messageDetails.newEvalSetName')}
+                className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-56"
+              />
+            )}
+            <button
+              onClick={handleSaveAsCase}
+              disabled={caseSaving}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {caseSaving ? <Loader className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
+              Save case
+            </button>
+            {caseMessage && (
+              <span className={`text-xs ${caseMessage.startsWith('Saved') ? 'text-green-600' : 'text-red-600'}`}>
+                {caseMessage}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Replay / regression panel */}
+      {replayOpen && (
+        <div className="mt-4 border border-indigo-100 bg-indigo-50/40 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-gray-700">{t('messageDetails.replayThisRun')}</span>
+            <input
+              value={replayModel}
+              onChange={(e) => setReplayModel(e.target.value)}
+              placeholder={`Model override (default: ${message?.model || 'same'})`}
+              className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none w-72"
+            />
+            <button
+              onClick={handleReplay}
+              disabled={replaying}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {replaying ? <Loader className="w-4 h-4 animate-spin" /> : <Repeat className="w-4 h-4" />}
+              {replaying ? t('common.running') : t('messageDetails.runReplay')}
+            </button>
+            <span className="text-xs text-gray-500">{t('messageDetails.reInvokesTheAgentOn')}</span>
+          </div>
+
+          {replayError && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-2 text-sm">{replayError}</div>}
+
+          {replayResult && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 text-sm">
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${replayResult.identical ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {replayResult.identical ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                  {replayResult.identical ? t('messageDetails.outputIdentical') : t('messageDetails.outputDiffers')}
+                </span>
+                {!replayResult.replay?.ok && <span className="text-xs text-red-600">{t('messageDetails.replayFailed')}: {replayResult.replay?.error}</span>}
+                <Link to={`/messages/${replayResult.replay_run_id}`} className="text-xs text-indigo-600 hover:underline ml-auto">{t('messageDetails.openReplayRun')}</Link>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-white border border-gray-200 rounded-lg p-3">
+                  <div className="text-xs text-gray-500 mb-1">{t('messageDetails.original')} · {replayResult.original?.model || '—'} · ${Number(replayResult.original?.cost || 0).toFixed(4)}</div>
+                  <pre className="text-xs whitespace-pre-wrap text-gray-800 max-h-64 overflow-auto">{replayResult.original?.text || t('messageDetails.empty')}</pre>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-lg p-3">
+                  <div className="text-xs text-gray-500 mb-1">{t('messageDetails.replay')} · {replayResult.replay?.model || '—'} · ${Number(replayResult.replay?.cost || 0).toFixed(4)} · {replayResult.replay?.duration_ms || 0}ms</div>
+                  <pre className="text-xs whitespace-pre-wrap text-gray-800 max-h-64 overflow-auto">{replayResult.replay?.text || t('messageDetails.empty')}</pre>
+                </div>
+              </div>
+              {replayResult.diff && (
+                <pre className="text-xs font-mono whitespace-pre-wrap bg-gray-900 text-gray-100 rounded-lg p-3 max-h-64 overflow-auto">{replayResult.diff}</pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Metadata */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+        <div><span className="text-gray-500">{t('messageDetails.runId')}</span> <span className="text-xs">{message?.run_id}</span></div>
+        <div><span className="text-gray-500">{t('messageDetails.title')}</span> <span className="font-medium text-gray-800">{message?.task_title || message?.title || '—'}</span></div>
+        <div><span className="text-gray-500">{t('messageDetails.agent')}</span> <span className="text-xs">{message?.agent_id || '—'}</span></div>
+        <div><span className="text-gray-500">{t('messageDetails.model')}</span> <span className="text-xs">{message?.model || insights?.model || '—'}</span></div>
+        <div className="flex items-center gap-2"><span className="text-gray-500">{t('messageDetails.status')}</span> <StatusBadge status={message?.status || 'pending'} /></div>
         {message?.session_id && (
           <div>
-            <span className="text-gray-500">Session:</span>{' '}
+            <span className="text-gray-500">{t('messageDetails.session')}</span>{' '}
             <button
               onClick={() => navigate(`/sessions/${message.session_id}`)}
               className="text-xs text-indigo-600 hover:underline"
@@ -453,7 +606,7 @@ export default function MessageDetails() {
         )}
         {message?.flow_run_id && (
           <div>
-            <span className="text-gray-500">Flow Run:</span>{' '}
+            <span className="text-gray-500">{t('messageDetails.flowRun')}</span>{' '}
             <button
               onClick={() => navigate(`/messages/${message.flow_run_id}`)}
               className="text-xs text-indigo-600 hover:underline"
@@ -464,7 +617,7 @@ export default function MessageDetails() {
         )}
         {message?.flow_id && (
           <div>
-            <span className="text-gray-500">Flow:</span>{' '}
+            <span className="text-gray-500">{t('messageDetails.flow')}</span>{' '}
             <button
               onClick={() => navigate(`/flows/${message.flow_id}`)}
               className="text-xs text-violet-600 hover:underline"
@@ -475,10 +628,32 @@ export default function MessageDetails() {
         )}
         {message?.flow_node_label && (
           <div>
-            <span className="text-gray-500">Flow Node:</span>{' '}
+            <span className="text-gray-500">{t('messageDetails.flowNode')}</span>{' '}
             <span className="text-xs text-gray-700">{message.flow_node_label}</span>
             {message?.flow_node_id && (
               <span className="text-xs text-gray-400 ml-1">({message.flow_node_id})</span>
+            )}
+          </div>
+        )}
+        {/* A simulation turn: which scenario, which role, which tick. Without
+            these a sim run reads as an unattached agent call. */}
+        {message?.sim_run_id && (
+          <div>
+            <span className="text-gray-500">{t('messageDetails.simulation')}</span>{' '}
+            {message?.scenario_id ? (
+              <button
+                onClick={() => navigate(`/playground/${message.scenario_id}`)}
+                className="text-xs text-fuchsia-600 hover:underline"
+              >
+                {message.sim_role || message.sim_run_id}
+              </button>
+            ) : (
+              <span className="text-xs text-gray-700">{message.sim_role || message.sim_run_id}</span>
+            )}
+            {message?.tick != null && (
+              <span className="text-xs text-gray-400 ml-1">
+                {t('messageDetails.simTick', { tick: message.tick })}
+              </span>
             )}
           </div>
         )}
@@ -486,46 +661,82 @@ export default function MessageDetails() {
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-100 text-cyan-700">
               <Globe className="w-3 h-3" />
-              External HTTP Run
+              {t('messageDetails.externalHttpRun')}
             </span>
           </div>
         )}
         {message?.session_type === 'chat' && (
           <div>
-            <span className="text-gray-500">Conversation ID:</span>{' '}
+            <span className="text-gray-500">{t('messageDetails.conversationId')}</span>{' '}
             <span className="text-xs">{message?.task_id || insights?.session_task_id || '—'}</span>
           </div>
         )}
-        <div><span className="text-gray-500">Workspace:</span> {message?.workspace || '—'}</div>
-        <div><span className="text-gray-500">Started:</span> {fmtDate(message?.started_at)}</div>
-        <div><span className="text-gray-500">Finished:</span> {fmtDate(message?.finished_at)}</div>
-        <div><span className="text-gray-500">Duration:</span> {duration(message?.started_at, message?.finished_at)}</div>
-        <div><span className="text-gray-500">Error:</span> {message?.error || '—'}</div>
-        <div className="flex flex-wrap gap-2 pt-1">
-          <TokenPill label="in" value={insights?.token_usage?.inbound_tokens || 0} />
-          <TokenPill label="out" value={insights?.token_usage?.outbound_tokens || 0} />
-          <TokenPill label="total" value={insights?.token_usage?.total_tokens || 0} />
+        <div><span className="text-gray-500">{t('messageDetails.workspace')}</span> {message?.workspace || '—'}</div>
+        <div><span className="text-gray-500">{t('messageDetails.started')}</span> {fmtDate(message?.started_at)}</div>
+        <div><span className="text-gray-500">{t('messageDetails.finished')}</span> {fmtDate(message?.finished_at)}</div>
+        <div><span className="text-gray-500">{t('messageDetails.duration')}</span> {duration(message?.started_at, message?.finished_at)}</div>
+        <div><span className="text-gray-500">{t('messageDetails.error')}</span> {message?.error || '—'}</div>
+        <div className="flex flex-wrap gap-2 pt-1 md:col-span-2">
+          <TokenPill label={t('messageDetails.in')} value={insights?.token_usage?.inbound_tokens || 0} />
+          <TokenPill label={t('messageDetails.out')} value={insights?.token_usage?.outbound_tokens || 0} />
+          <TokenPill label={t('messageDetails.total')} value={insights?.token_usage?.total_tokens || 0} />
+          {/* The three pills above are the run's token bill, summed over every
+              step of the agent loop. This one is the largest single prompt it
+              sent, the figure the context window has to hold. */}
+          {(insights?.context_window?.input_tokens_used || 0) > 0 && (
+            <TokenPill
+              label={t('messageDetails.ctxPeak')}
+              value={
+                insights.context_window.context_window_tokens > 0
+                  ? `${insights.context_window.input_tokens_used} / ${insights.context_window.context_window_tokens}`
+                  : insights.context_window.input_tokens_used
+              }
+              title={t('messageDetails.ctxPeakTooltip')}
+            />
+          )}
         </div>
+        {/* Service entities this run touched — the same links the chat reply
+            shows, kept with the run record (see common/entity_links.py). */}
+        {!!(insights?.entities || []).length && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 md:col-span-2">
+            <span className="text-gray-500">{t('messageDetails.entitiesTouched')}</span>
+            {insights.entities.map((e) => (
+              <Link
+                key={`${e.kind}:${e.id}`}
+                to={e.url}
+                title={t(`chat.entityKind.${e.kind}`, { defaultValue: e.noun || e.kind })}
+                className="inline-flex items-center gap-1 max-w-full rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+              >
+                <span aria-hidden="true">{e.icon}</span>
+                <span className="truncate max-w-[14rem] font-medium">{e.title}</span>
+                <span className="text-gray-400">{t(`chat.entityAction.${e.action}`, { defaultValue: e.action })}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-gray-200">
+      {/* Tabs + content */}
+      <div className="flex-1 min-h-0 flex flex-col">
+      <div className="border-b border-gray-200 shrink-0">
         <nav className="flex flex-wrap gap-2 -mb-px">
           {[
-            { id: 'insights', icon: MessageSquare, label: 'Insights' },
-            { id: 'input_context', icon: MessageSquare, label: 'Input Context' },
-            { id: 'response', icon: Bot, label: 'Response' },
-            { id: 'logs', icon: FileText, label: 'Logs' },
+            { id: 'insights', icon: MessageSquare, label: t('messageDetails.tabs.insights') },
+            { id: 'input_context', icon: MessageSquare, label: t('messageDetails.tabs.inputContext') },
+            { id: 'response', icon: Bot, label: t('messageDetails.tabs.response') },
+            { id: 'logs', icon: FileText, label: t('messageDetails.tabs.logs') },
           ].map(tab => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex items-center px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+              className={`inline-flex items-center px-4 py-2 first:pl-0 text-sm font-semibold border-b-2 transition-colors ${
                 activeTab === tab.id
                   ? 'border-indigo-600 text-indigo-700'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
+              aria-current={activeTab === tab.id ? 'page' : undefined}
             >
               <tab.icon className="w-4 h-4 mr-2" />
               {tab.label}
@@ -535,70 +746,22 @@ export default function MessageDetails() {
       </div>
 
       {activeTab === 'insights' && (
-        <div className="space-y-4">
-          {/* Input / Output for this message */}
-          {(messageInput || messageOutput) && (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {messageInput && (
-                <div className="bg-white border border-gray-200 rounded-xl p-4">
-                  <div className="text-sm font-semibold text-gray-800 mb-3">Input</div>
-                  <div className="text-xs text-gray-700 max-h-64 overflow-auto">{renderContent(messageInput)}</div>
-                </div>
-              )}
-              {messageOutput && (
-                <div className="bg-white border border-emerald-100 rounded-xl p-4">
-                  <div className="text-sm font-semibold text-gray-800 mb-3">Output</div>
-                  <div className="text-xs text-gray-700 max-h-64 overflow-auto">{renderContent(messageOutput)}</div>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {/* Tool Activity */}
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
-                <Wrench className="w-4 h-4 text-indigo-500" />
-                Tool Activity
-              </div>
-              {toolsForRun.length === 0 ? (
-                <p className="text-xs text-gray-500 italic">No tools captured.</p>
-              ) : (
-                <div className="space-y-2 max-h-[28rem] overflow-auto pr-1">
-                  {toolsForRun.map((t, idx) => (
-                    <ToolActivityItem key={idx} tool={t} index={idx} />
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Thinking Process */}
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
-                <Bot className="w-4 h-4 text-indigo-500" />
-                Thinking Process
-              </div>
-              {thinkingForRun.length === 0 ? (
-                <p className="text-xs text-gray-500 italic">No process trace captured.</p>
-              ) : (
-                <div className="space-y-2 max-h-80 overflow-auto">
-                  {thinkingForRun.map((line, idx) => (
-                    <div key={idx} className="text-xs text-gray-700 rounded border border-gray-100 bg-gray-50 p-2">{line}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+        <div className="bg-white border border-gray-200 rounded-xl flex-1 min-h-0 overflow-y-auto">
+          {/* Flat process flow: pinned input + expandable step nodes. */}
+          <MessageProcessFlow
+            key={flowRuns.map((mr, idx) => `${mr?.message_id || idx}`).join('|')}
+            runs={flowRuns}
+          />
         </div>
       )}
 
       {activeTab === 'logs' && (
-        <div className="bg-black rounded-xl border border-gray-800 overflow-hidden">
-          <div className="px-4 py-2 bg-gray-900 text-sm text-gray-300 font-medium flex items-center gap-2">
+        <div className="bg-black rounded-xl border border-gray-800 overflow-hidden flex-1 min-h-0 flex flex-col">
+          <div className="px-4 py-2 bg-gray-900 text-sm text-gray-300 font-medium flex items-center gap-2 shrink-0">
             <FileText className="w-4 h-4" />
-            Logs
+            {t('messageDetails.logs')}
           </div>
-          <div className="p-4 max-h-[460px] overflow-auto">
+          <div className="p-4 flex-1 min-h-0 overflow-auto">
             <pre className="text-xs leading-5 whitespace-pre-wrap break-words text-green-400">
               {runLogs}
             </pre>
@@ -607,12 +770,12 @@ export default function MessageDetails() {
       )}
 
       {activeTab === 'response' && (
-        <div className="bg-black rounded-xl border border-gray-800 overflow-hidden">
-          <div className="px-4 py-2 bg-gray-900 text-sm text-gray-300 font-medium flex items-center gap-2">
+        <div className="bg-black rounded-xl border border-gray-800 overflow-hidden flex-1 min-h-0 flex flex-col">
+          <div className="px-4 py-2 bg-gray-900 text-sm text-gray-300 font-medium flex items-center gap-2 shrink-0">
             <Bot className="w-4 h-4" />
-            Raw LLM Invoke Response
+            {t('messageDetails.rawLlmInvokeResponse')}
           </div>
-          <div className="p-4 max-h-[460px] overflow-auto relative">
+          <div className="p-4 flex-1 min-h-0 overflow-auto relative">
             <pre className="text-xs leading-5 whitespace-pre-wrap break-words text-green-400">
               {JSON.stringify(responseJson, null, 2)}
             </pre>
@@ -621,18 +784,15 @@ export default function MessageDetails() {
       )}
 
       {activeTab === 'input_context' && (
-        <div className="bg-black rounded-xl border border-gray-800 overflow-hidden">
-          <div className="px-4 py-2 bg-gray-900 text-sm text-gray-300 font-medium flex items-center gap-2">
-            <MessageSquare className="w-4 h-4" />
-            Message Input Context
-          </div>
-          <div className="p-4 max-h-[460px] overflow-auto">
-            <pre className="text-xs leading-5 whitespace-pre-wrap break-words text-green-400">
-              {inputContextText}
-            </pre>
-          </div>
+        /* pb-6 is load-bearing: padding on a scroll container counts toward its
+           scrollHeight, so the last card can be scrolled fully into view. With
+           no padding it ended exactly on the clip edge and its bottom border
+           was unreachable — which read as the block being cut off. */
+        <div className="flex-1 min-h-0 overflow-y-auto pt-4 pb-6">
+          <InputContextView struct={inputContextStruct} text={inputContextText} output={messageOutput} />
         </div>
       )}
-    </div>
+      </div>
+    </PageContainer>
   );
 }

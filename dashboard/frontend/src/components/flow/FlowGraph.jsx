@@ -9,15 +9,21 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { getFactoryGraph, getActiveNode, runFactoryAgent } from '../../api';
+import { useStream } from '../stream';
 import { Play, Plus, Trash2, Save } from 'lucide-react';
+import { useI18n } from '../../i18n';
 
 const initialNodes = [];
 const initialEdges = [];
 
+// Node ids are minted here, outside the component: `Date.now()` is impure and
+// may not be called from anything defined during render.
+const newNodeId = (type) => `${type}-${Date.now()}`;
+
 function FlowGraph({ workspace }) {
+  const { t } = useI18n();
   const [nodes, setNodes] = useState(initialNodes);
   const [edges, setEdges] = useState(initialEdges);
-  const [activeNode, setActiveNode] = useState(null);
   const [isEditable, setIsEditable] = useState(false);
   const reactFlowWrapper = useRef(null);
 
@@ -44,7 +50,7 @@ function FlowGraph({ workspace }) {
           id: node.id,
           data: { label: node.label },
           position: { x: i * 200, y: 150 },
-          style: { background: '#fff', border: '1px solid #6366f1', borderRadius: '8px', padding: '10px', width: 150, textAlign: 'center' }
+          style: { background: 'var(--surface-card)', border: '1px solid var(--brand-500)', borderRadius: '8px', padding: '10px', width: 150, textAlign: 'center' }
         }));
 
         const layoutedEdges = graphEdges.map((edge, i) => ({
@@ -52,8 +58,8 @@ function FlowGraph({ workspace }) {
           source: edge.source,
           target: edge.target,
           animated: true,
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
-          style: { stroke: '#6366f1' }
+          markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--brand-500)' },
+          style: { stroke: 'var(--brand-500)' }
         }));
 
         setNodes(layoutedNodes);
@@ -65,6 +71,7 @@ function FlowGraph({ workspace }) {
     fetchGraph();
   }, []);
 
+  const { on } = useStream();
   useEffect(() => {
     if (!workspace || isEditable) return;
 
@@ -72,36 +79,35 @@ function FlowGraph({ workspace }) {
       try {
         const res = await getActiveNode(workspace);
         const currentActive = res.data.active_node;
-        setActiveNode(currentActive);
 
         setNodes((nds) => nds.map((node) => {
           if (node.id === currentActive) {
-            return { ...node, style: { ...node.style, background: '#fef08a', border: '2px solid #eab308' } };
+            return { ...node, style: { ...node.style, background: 'var(--warn-surface)', border: '2px solid #eab308' } };
           }
-          return { ...node, style: { ...node.style, background: '#fff', border: '1px solid #6366f1' } };
+          return { ...node, style: { ...node.style, background: 'var(--surface-card)', border: '1px solid var(--brand-500)' } };
         }));
-      } catch (e) {
+      } catch {
         // console.error("Failed to fetch active node", e);
       }
     };
-    const interval = setInterval(fetchActiveNode, 2000);
-    return () => clearInterval(interval);
-  }, [workspace, isEditable]);
+    fetchActiveNode();
+    return on('app', (ev) => { if (ev.type === 'flow_runs.changed') fetchActiveNode(); });
+  }, [workspace, isEditable, on]);
 
   const addAgentNode = (type) => {
-    const id = `${type}-${Date.now()}`;
+    const id = newNodeId(type);
     const newNode = {
       id,
       data: { label: type.toUpperCase() },
       position: { x: 100, y: 100 },
-      style: { background: '#fff', border: '1px solid #6366f1', borderRadius: '8px', padding: '10px', width: 150, textAlign: 'center' }
+      style: { background: 'var(--surface-card)', border: '1px solid var(--brand-500)', borderRadius: '8px', padding: '10px', width: 150, textAlign: 'center' }
     };
     setNodes((nds) => nds.concat(newNode));
   };
 
   const handleRunCustom = async () => {
     if (!workspace) {
-      alert("Please select a workspace");
+      alert(t('flowFlowGraph.selectWorkspace'));
       return;
     }
     // For now, we'll send the graph structure.
@@ -112,9 +118,9 @@ function FlowGraph({ workspace }) {
         workspace,
         description: JSON.stringify({ nodes, edges })
       });
-      alert("Started custom graph execution");
-    } catch (e) {
-      alert("Failed to start custom graph");
+      alert(t('flowFlowGraph.startedCustom'));
+    } catch {
+      alert(t('flowFlowGraph.startCustomFailed'));
     }
   };
 
@@ -125,7 +131,7 @@ function FlowGraph({ workspace }) {
           onClick={() => setIsEditable(!isEditable)}
           className={`px-3 py-1 rounded shadow text-sm font-medium ${isEditable ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
         >
-          {isEditable ? 'Finish Editing' : 'Edit Graph'}
+          {isEditable ? t('flowFlowGraph.finishEditing') : t('flowFlowGraph.editGraph')}
         </button>
         {isEditable && (
           <div className="flex space-x-1 bg-white p-1 rounded shadow border border-gray-200">
@@ -143,7 +149,7 @@ function FlowGraph({ workspace }) {
           onClick={handleRunCustom}
           className="flex items-center px-4 py-1 bg-green-600 text-white rounded shadow hover:bg-green-700 text-sm font-medium"
         >
-          <Play className="w-4 h-4 mr-1" /> Run Custom
+          <Play className="w-4 h-4 mr-1" /> {t('flowFlowGraph.runCustom')}
         </button>
       </div>
 

@@ -2,20 +2,26 @@
 Task-related API routes.
 """
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from typing import Optional
 from uuid import UUID
 import json
 import threading
+import mimetypes
 from uuid import uuid4
 from pathlib import Path
 
-from common import tasks_service
-from agents import registry, run_manager, worker_runner
+from tasks import service as tasks_service
+from agents import registry
+from managers import run_manager
+from agents import agent_launcher
 from tasks import AgentState, CreatedBy, TaskStatus
-from workspace import create_workspace_folder, resolve_project_root, project_folder_name
+from workspace import create_workspace_folder, resolve_project_root, project_folder_name, resolve_task_project_name
 from workspace import get_workspace_metadata
 from agents.agent_factory import create_agent
-from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate
+from tasks.assign import assign_agent_to_task, AssignError
+from tasks.serialize import task_to_dict
+from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate, TaskAnswer
 from common.session_service import add_event_to_session
 from common.paths import PROJECTS_FILE
 
@@ -23,18 +29,20 @@ from common.paths import PROJECTS_FILE
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
-def task_to_dict(task):
-    """Convert task object to dictionary."""
-    data = task.model_dump() if hasattr(task, "model_dump") else task.dict()
-    data["id"] = str(data["id"])
-    if data.get("parent_id"):
-        data["parent_id"] = str(data["parent_id"])
-    # agent_state is a @property not a field, so model_dump() omits it — add explicitly
+def _resolve_task_ref(ref: str) -> UUID:
+    """Resolve a task reference — UUID string or Jira-style key — to a UUID."""
+    s = str(ref).strip()
     try:
-        data["agent_state"] = task.agent_state.value
-    except Exception:
-        data.setdefault("agent_state", "none")
-    return data
+        return UUID(s)
+    except ValueError:
+        from tasks.keys import looks_like_key
+        if looks_like_key(s):
+            t = tasks_service.find_task_by_key(s)
+            if t:
+                return t.id
+        raise HTTPException(status_code=400, detail=f"Unknown task reference: {ref}")
+
+
 
 
 @router.get("")
@@ -51,23 +59,15 @@ async def list_tasks(workspace: Optional[str] = None):
 
 @router.post("")
 async def create_task(task: TaskCreate):
-    # Resolve or create workspace
+    # Resolve or create workspace. Workspaces always live under
+    # .agents_hub/workspaces/; any supplied value is reduced to its folder name.
     ws_path: Optional[str] = None
-    if task.workspace_name:
+    requested_ws = task.workspace_name or task.workspace
+    if requested_ws:
         try:
-            # If it's an absolute path, use it. If not, create under workspaces root.
-            p = Path(task.workspace_name)
-            if p.is_absolute():
-                ws_path = str(p.resolve())
-            else:
-                ws_path = str(create_workspace_folder(task.workspace_name))
+            ws_path = str(create_workspace_folder(Path(requested_ws).name))
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to resolve workspace '{task.workspace_name}': {e}")
-    elif task.workspace:
-        try:
-            ws_path = str(Path(task.workspace).expanduser().resolve())
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid workspace path '{task.workspace}': {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to resolve workspace '{requested_ws}': {e}")
     else:
         # Auto-create if none provided
         try:
@@ -108,21 +108,30 @@ async def create_task(task: TaskCreate):
         except Exception:
             pass
 
-    t = tasks_service.create_task(
-        title=task.title,
-        description=task.description,
-        workspace=ws_name,
-        project=project_name,
-        should_decompose=task.should_decompose,
-        parent_id=parent_uuid,
-    )
+    # Resolve dependency references (UUIDs or task keys like "DEMO-12")
+    depends_uuids = None
+    if task.depends:
+        depends_uuids = [_resolve_task_ref(d) for d in task.depends]
+
+    # Set project_id before creation so the Jira-style key uses the project prefix
+    try:
+        t = tasks_service.create_task(
+            title=task.title,
+            description=task.description,
+            workspace=ws_name,
+            project=project_name,
+            project_id=task.project_id or None,
+            should_decompose=task.should_decompose,
+            parent_id=parent_uuid,
+            depends=depends_uuids,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Apply optional fields not in create signature
     extra = {}
     if task.priority:
         extra["priority"] = task.priority
-    if task.project_id:
-        extra["project_id"] = task.project_id
     if extra:
         tasks_service.update_task(t.id, **extra)
         t = tasks_service.get_task(t.id) or t
@@ -159,6 +168,8 @@ async def update_task(task_id: UUID, update: TaskUpdate):
             raise HTTPException(status_code=400, detail=f"Invalid status: {fields['status']}")
     if "priority" in fields and fields["priority"] not in ("low", "medium", "high", "critical"):
         raise HTTPException(status_code=400, detail=f"Invalid priority: {fields['priority']}")
+    if "depends" in fields and fields["depends"] is not None:
+        fields["depends"] = [_resolve_task_ref(d) for d in fields["depends"]]
 
     # If task is being moved back to an unassigned state, clear the assignment
     # and delete any pre-start run record (awaiting_approval or node-queued assigned).
@@ -172,11 +183,15 @@ async def update_task(task_id: UUID, update: TaskUpdate):
             tasks_service.clear_agent(task_id)
             run_manager.delete_assigned_run(str(task_id))
 
-    updated = tasks_service.update_task(task_id, **fields)
+    try:
+        updated = tasks_service.update_task(task_id, **fields)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not updated:
         raise HTTPException(status_code=500, detail="Failed to update task")
 
-    return task_to_dict(updated)
+    # Dependency changes may have re-blocked/released the task after the update
+    return task_to_dict(tasks_service.get_task(task_id) or updated)
 
 
 @router.delete("/{task_id}")
@@ -193,6 +208,30 @@ async def stop_task(task_id: UUID):
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
     return task_to_dict(t)
+
+
+@router.post("/{task_id}/pause")
+async def pause_container(task_id: UUID):
+    """Pause a container task: stop the active subtask run and freeze dispatch."""
+    t = tasks_service.get_task(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not tasks_service.get_subtasks(task_id):
+        raise HTTPException(status_code=400, detail="Task has no subtasks — pause applies to container tasks")
+    result = tasks_service.pause_container(task_id)
+    return {"task": task_to_dict(tasks_service.get_task(task_id)), **result}
+
+
+@router.post("/{task_id}/resume")
+async def resume_container(task_id: UUID):
+    """Resume a paused container: re-queue paused subtasks and restart dispatch."""
+    t = tasks_service.get_task(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not tasks_service.get_subtasks(task_id):
+        raise HTTPException(status_code=400, detail="Task has no subtasks — resume applies to container tasks")
+    result = tasks_service.resume_container(task_id)
+    return {"task": task_to_dict(tasks_service.get_task(task_id)), **result}
 
 
 @router.post("/{task_id}/workspace")
@@ -292,87 +331,97 @@ async def list_workspace_files(task_id: UUID):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _resolve_task_file(task_id: UUID, path: str) -> Path:
+    """Resolve a workspace-relative file path within a task's project root.
 
-@router.post("/{task_id}/assign")
-async def assign_agent(task_id: UUID, assign: AgentAssign):
+    Task workspace files are listed relative to ``resolve_project_root`` (the
+    workspace root, or its ``{project}`` subfolder when the task has a project),
+    so file preview/raw access must resolve against the same root.
+    """
     t = tasks_service.get_task(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
-    if t.status == TaskStatus.stopped:
-        raise HTTPException(status_code=400, detail="Task is stopped and cannot be assigned")
+    name = (t.workspace or "").strip()
+    if not name:
+        raise HTTPException(status_code=404, detail="Task has no workspace")
 
-    spec = registry.get_agent(assign.agent_id)
-    if not spec:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    project_name = resolve_task_project_name(t)
+    root = resolve_project_root(name, project_name).resolve()
 
-    # Check if agent is allowed in workspace
-    if t.workspace:
-        metadata = get_workspace_metadata(t.workspace)
-        allowed = metadata.get("allowed_agents")  # None means unrestricted
-        # Always allow orchestrator/decomposer; when allowed list is set, enforce it
-        if allowed is not None and assign.agent_id not in allowed and assign.agent_id not in ["orchestrator", "decomposer"]:
-            raise HTTPException(status_code=403, detail=f"Agent '{assign.agent_id}' is not authorized for workspace '{t.workspace}'")
+    rel_path = (path or "").strip()
+    if not rel_path:
+        raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
 
-    # Policy: only user-created tasks may be assigned to the dedicated decomposer agent
-    if assign.agent_id == "decomposer" and getattr(t, "created_by", None) != CreatedBy.user:
-        raise HTTPException(status_code=400, detail="Decomposer agent can only be assigned to user-created tasks")
-
+    candidate = (root / rel_path).resolve()
     try:
-        ws_name = str(getattr(t, "workspace", "") or "default")
-        execution_mode = get_workspace_metadata(ws_name).get("orchestrator", {}).get("execution_mode", "subprocess")
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return candidate
 
-        if execution_mode == "node":
-            # Node mode: register an "assigned" run record so agent_state resolves to
-            # AgentState.assigned (not pending_approval). Task stays "ready to assign"
-            # until a worker node picks it up and transitions the run to "running".
-            session_id = getattr(t, "session_id", None) or None
-            if not session_id:
-                try:
-                    from common.session_service import get_or_create_task_session
-                    session_id = get_or_create_task_session(title=t.title, workspace=t.workspace)
-                    tasks_service.update_task(task_id, session_id=session_id)
-                except Exception:
-                    session_id = None
-            run_id = str(uuid4())
-            run_manager.upsert_run({
-                "run_id": run_id,
-                "task_id": str(task_id),
-                "agent_id": assign.agent_id,
-                "status": "assigned",
-                "session_type": "task",
-                "session_id": session_id,
-                "created_at": run_manager.utc_now_iso(),
-                "started_at": None,
-                "finished_at": None,
-                "pid": None,
-                "exit_code": None,
-                "error": None,
-            })
-            tasks_service.assign_agent(task_id, assign.agent_id, assign.params, run_id=run_id)
-            new_status = TaskStatus.reviewing if assign.agent_id == "code_reviewer" else TaskStatus.ready
-            tasks_service.update_task(task_id, status=new_status)
+
+@router.get("/{task_id}/file-content")
+async def get_task_file_content(task_id: UUID, path: str):
+    """Return a preview of a file produced/modified by a task."""
+    from routes.workspaces import _extract_pdf_preview
+
+    candidate = _resolve_task_file(task_id, path)
+    is_pdf = candidate.suffix.lower() == ".pdf"
+    max_bytes = 5_000_000 if is_pdf else 256_000
+    try:
+        size = candidate.stat().st_size
+        if size > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File is too large to preview ({size} bytes). Limit is {max_bytes} bytes.",
+            )
+        if is_pdf:
+            content = _extract_pdf_preview(candidate)
         else:
-            # start_run creates/reuses a session and returns (run_id, session_id)
-            run_id, session_id = worker_runner.start_run(str(task_id), assign.agent_id, assign.params)
-            tasks_service.assign_agent(task_id, assign.agent_id, assign.params, run_id=run_id)
-            new_status = TaskStatus.reviewing if assign.agent_id == "code_reviewer" else TaskStatus.in_progress
-            tasks_service.update_task(task_id, status=new_status)
-        if session_id:
-            try:
-                add_event_to_session(session_id, {
-                    "type": "agent_assigned",
-                    "agent_id": assign.agent_id,
-                    "timestamp": run_manager.utc_now_iso(),
-                    "description": f"Assignment of {assign.agent_id} is done by user",
-                })
-            except Exception:
-                pass
-        updated = tasks_service.get_task(task_id)
+            content = candidate.read_text(encoding="utf-8", errors="replace")
         return {
-            "task": task_to_dict(updated),
-            "run_id": run_id,
-            "pending_approval": False,
+            "path": (path or "").strip(),
+            "size": size,
+            "content": content,
+            "is_pdf": is_pdf,
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{task_id}/file-raw")
+async def get_task_file_raw(task_id: UUID, path: str):
+    """Serve a task file's raw bytes (e.g. for in-browser PDF rendering)."""
+    candidate = _resolve_task_file(task_id, path)
+    media_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+    return FileResponse(
+        str(candidate),
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{candidate.name}"'},
+    )
+
+
+@router.post("/{task_id}/assign")
+async def assign_agent(task_id: UUID, assign: AgentAssign):
+    """Assign an agent to a task and start it.
+
+    The policy and the launch live in :func:`tasks.assign.assign_agent_to_task`,
+    so the terminal client assigns on exactly the same terms; this maps its
+    refusals onto HTTP.
+    """
+    try:
+        return assign_agent_to_task(
+            task_id,
+            assign.agent_id,
+            assign.params,
+            task_to_dict=task_to_dict,
+        )
+    except AssignError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -399,7 +448,7 @@ async def approve_assignment(task_id: UUID):
             if not session_id:
                 try:
                     from common.session_service import get_or_create_task_session
-                    session_id = get_or_create_task_session(title=t.title, workspace=t.workspace)
+                    session_id = get_or_create_task_session(title=t.title, workspace=t.workspace, task_id=str(task_id))
                     tasks_service.update_task(task_id, session_id=session_id)
                 except Exception:
                     session_id = None
@@ -422,7 +471,7 @@ async def approve_assignment(task_id: UUID):
             tasks_service.update_task(task_id, status=TaskStatus.ready)
         else:
             # start_run creates/reuses a session and returns (run_id, session_id)
-            run_id, session_id = worker_runner.start_run(str(task_id), t.assigned_agent_type, t.assigned_agent_params)
+            run_id, session_id = agent_launcher.start_run(str(task_id), t.assigned_agent_type, t.assigned_agent_params)
             tasks_service.assign_agent(task_id, t.assigned_agent_type, t.assigned_agent_params, run_id=run_id)
             tasks_service.update_task(task_id, status=TaskStatus.in_progress)
         if session_id:
@@ -452,7 +501,7 @@ async def approve_assignment(task_id: UUID):
                     f"Skip Steps 1-3. Go directly to Step 4: use wait_for_agent_tool with task id {task_id}, "
                     f"then get_agent_status_tool, and repeat until done. Then summarise."
                 )
-                worker_runner.start_run(
+                agent_launcher.start_run(
                     str(task_id),
                     "orchestrator",
                     {"description": monitor_desc},
@@ -465,6 +514,7 @@ async def approve_assignment(task_id: UUID):
                     session_id=session_id,
                     task_id=str(task_id),
                     workspace=ws_name,
+                    run_id=run_id,
                 )
         except Exception:
             pass
@@ -523,6 +573,67 @@ async def stop_agent(task_id: UUID):
     return {"stopped": True}
 
 
+@router.post("/{task_id}/answer")
+async def answer_task(task_id: UUID, payload: TaskAnswer):
+    """Answer a task that is paused in the awaiting_input state and resume it.
+
+    The agent that asked is re-run with a resume instruction that carries the
+    question and the user's answer; ``build_task_instruction`` additionally folds
+    in the prior run output (the question), so the agent continues with full
+    context. Clears the pending question and moves the task back to in_progress.
+    """
+    t = tasks_service.get_task(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if t.status != TaskStatus.awaiting_input:
+        raise HTTPException(status_code=400, detail="Task is not awaiting input")
+
+    pending = getattr(t, "pending_question", None) or {}
+    agent_id = pending.get("agent_id") or t.assigned_agent_type
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    question = str(pending.get("question") or "").strip()
+    answer = (payload.answer or "").strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="Answer must not be empty")
+
+    resume_desc = (
+        f'You previously paused this task to ask the user:\n"{question}"\n\n'
+        f'The user answered:\n"{answer}"\n\n'
+        "Continue the task using this answer. Do not ask the same question again."
+    )
+    params = {"description": resume_desc}
+
+    try:
+        run_id, session_id = agent_launcher.start_run(str(task_id), agent_id, params)
+        tasks_service.assign_agent(task_id, agent_id, params, run_id=run_id)
+        tasks_service.update_task(task_id, status=TaskStatus.in_progress, pending_question=None)
+        # The task resumes under a fresh run; re-point any run-bound session
+        # continuation at it so it still fires when the resumed run finishes.
+        try:
+            from common.session_service import rebind_continuations_to_run
+            rebind_continuations_to_run(str(task_id), run_id)
+        except Exception:
+            pass
+        if session_id:
+            try:
+                add_event_to_session(session_id, {
+                    "type": "user_answer",
+                    "agent_id": agent_id,
+                    "timestamp": run_manager.utc_now_iso(),
+                    "description": f"User answered: {answer}",
+                })
+            except Exception:
+                pass
+        updated = tasks_service.get_task(task_id)
+        return {"task": task_to_dict(updated), "run_id": run_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{task_id}/agent-status")
 async def get_agent_status(task_id: UUID):
     task = tasks_service.get_task(task_id)
@@ -550,7 +661,26 @@ async def get_task_execution_log(task_id: UUID):
     t = tasks_service.get_task(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
-    return {"entries": tasks_service.get_task_execution_log(task_id)}
+    # Derive the task's runs from its session (canonical run list) rather than
+    # the assigned_agent_run_id pointer, which is cleared once a run completes.
+    runs = tasks_service.get_task_runs(task_id)
+    entries = []
+    for r in runs:
+        tokens = (r.get("process") or {}).get("token_usage") or {}
+        entries.append({
+            "run_id": r.get("run_id"),
+            "agent_id": r.get("agent_id"),
+            "status": r.get("status"),
+            "channel": r.get("channel"),
+            "started_at": r.get("started_at"),
+            "finished_at": r.get("finished_at"),
+            "model": r.get("model"),
+            "error": r.get("error"),
+            "inbound_tokens": int(tokens.get("inbound_tokens") or 0),
+            "outbound_tokens": int(tokens.get("outbound_tokens") or 0),
+            "total_tokens": int(tokens.get("total_tokens") or 0),
+        })
+    return {"entries": entries}
 
 
 @router.get("/{task_id}/activity-log")
@@ -633,7 +763,8 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
                     prompt = (
                         "Decompose the following high-level task into concrete, small, and verifiable subtasks. "
                         f"Create subtasks ONLY using the add_subtask tool with parent_id={task_id}. "
-                        "Do not create other high-level tasks. Establish sequence between subtasks if needed.\n\n"
+                        "Do not create other high-level tasks. When a subtask must wait for others, "
+                        "pass their IDs in the depends parameter of add_subtask so execution order is enforced.\n\n"
                         f"Task Data:\nID: {task_id}\nTITLE: {t.title}\nDESCRIPTION: {t.description or ''}\n\n"
                         "Provide a brief summary of the created subtasks at the end."
                     )

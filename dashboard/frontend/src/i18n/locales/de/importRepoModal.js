@@ -1,0 +1,17 @@
+export default {
+  importProjectFromRepository: 'Projekt aus Repository importieren',
+  connectProject: '„{{name}}“ mit einem Repository verbinden',
+  settingsGit: 'Einstellungen → Git',
+  searchRepositories: 'Repositories suchen…',
+  noRepositoriesFound: 'Keine Repositories gefunden.',
+  loadingRepositories: 'Repositories werden geladen…',
+  projectName: 'Projektname',
+  workspace: 'Workspace',
+  selectWorkspace: '— Workspace wählen —',
+  branch: 'Branch',
+  importIssuesAsTasks: 'Issues als Aufgaben importieren',
+  cloningRepository: 'Repository wird geklont…',
+  connectRepository: 'Repository verbinden',
+  importProject: 'Projekt importieren',
+  cancel: 'Abbrechen',
+};

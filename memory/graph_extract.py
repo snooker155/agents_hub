@@ -68,19 +68,11 @@ def _parse_triples(raw: str) -> list[dict]:
     """Parse the LLM output. Tolerates surrounding prose / code fences."""
     if not raw:
         return []
-    # Strip code fences if present.
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
-        cleaned = re.sub(r"\n?```$", "", cleaned)
-    # Find the first balanced JSON object.
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return []
-    try:
-        obj = json.loads(cleaned[start : end + 1])
-    except Exception:
+    # Robust against reasoning-model output (inline <think> blocks that contain
+    # braces, code fences, trailing prose). See memory.json_extract.
+    from memory.json_extract import extract_json_object
+    obj = extract_json_object(raw)
+    if not obj:
         return []
     triples = obj.get("triples")
     if not isinstance(triples, list):
@@ -187,7 +179,7 @@ def extract_and_persist(
         if len(snippet) > max_text_chars:
             snippet = snippet[:max_text_chars]
 
-        from common.agent_utils import build_chat_model
+        from agents.agent_utils import build_chat_model
         # Layer overrides: workspace defaults first, caller-supplied on top.
         overrides: dict = {}
         ws_overrides = _resolve_workspace_model(pool_id)

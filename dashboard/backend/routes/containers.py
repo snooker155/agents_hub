@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/containers", tags=["containers"])
 
 def _mgr():
     """Lazy import so the module loads even without Docker installed."""
-    import agents.container_manager as cm
+    import managers.container_manager as cm
     return cm
 
 
@@ -89,7 +89,7 @@ async def build_agent_image(agent_id: str, body: BuildRequest):
     """Build the per-agent image for the given agent.
 
     The base image (agents-hub/base:latest) must exist first.
-    Generates and saves the Dockerfile to agents/state/dockerfiles/<id>.Dockerfile,
+    Generates and saves the Dockerfile to .agents_hub/dockerfiles/<id>.Dockerfile,
     then runs docker build.
     """
     spec = get_agent(agent_id)
@@ -128,7 +128,7 @@ async def list_containers():
         containers = _mgr().list_containers()
         # Enrich with HTTP URL from node manager state
         try:
-            from agents.node_manager import list_nodes
+            from managers.node_manager import list_nodes
             nodes_by_container = {
                 n["container_name"]: n
                 for n in list_nodes()

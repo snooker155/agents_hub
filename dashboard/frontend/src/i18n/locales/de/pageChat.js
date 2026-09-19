@@ -1,0 +1,17 @@
+export default {
+  title: 'Seiten-Chat',
+  open: 'Seiten-Chat öffnen',
+  openHint: 'Nach dem fragen, was auf dieser Seite steht',
+  close: 'Schließen',
+  widen: 'Breiter',
+  narrow: 'Schmaler',
+  aboutThisPage: 'Über diese Seite',
+  pageOwnChat: 'Eigener Agent dieser Seite',
+  emptyHint: 'Fragen Sie nach dem, was auf dem Bildschirm steht. Ich sehe die Datensätze dieser Seite.',
+  emptyHintOn: 'Fragen Sie nach „{{page}}“. Ich sehe die Datensätze dieser Seite.',
+  suggestWhatIsHere: 'Was sehe ich hier?',
+  suggestExplain: 'Was ist hier wichtig?',
+  suggestNext: 'Was sollte ich als Nächstes tun?',
+  inPanel: 'Dieser Chat ist im Seitenpanel geöffnet.',
+  bringBack: 'Wieder hier anzeigen',
+};

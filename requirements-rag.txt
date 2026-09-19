@@ -1,0 +1,20 @@
+# RAG dependencies — embeddings and vector stores.
+#
+# Kept out of requirements-agents.txt because these are heavy: the
+# sentence-transformers stack pulls in torch, which is most of the weight.
+# Everything here is imported lazily (memory/rag_query.py,
+# dashboard/backend/rag/vector_store.py), so the app starts without them and
+# only the RAG features fail. Install when you actually use RAG:
+#
+#   pip install -r requirements-rag.txt
+#
+# The default configuration (RAG_EMBEDDING_PROVIDER=sentence-transformers,
+# RAG_VECTOR_DB=chroma) needs the first two lines; the other stores are only
+# needed if you point RAG_VECTOR_DB at them.
+
+sentence-transformers>=3.0.0
+chromadb>=0.5.0
+
+# Remote vector stores — optional, selected by RAG_VECTOR_DB
+qdrant-client>=1.9.0
+pinecone>=5.0.0

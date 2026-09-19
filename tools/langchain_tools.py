@@ -15,7 +15,7 @@ from uuid import uuid4
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field, field_validator
 
-from agents import run_manager
+from managers import run_manager
 from agents.registry import (
     AgentSpec,
     add_agent as reg_add_agent,
@@ -23,19 +23,21 @@ from agents.registry import (
     list_agents as reg_list_agents,
     remove_agent as reg_remove_agent,
 )
-from agents.run_manager import (
+from managers.run_manager import (
     stop_run as rm_stop_run,
 )
-from agents.worker_runner import (
+from agents.agent_launcher import (
     start_run as rm_start_run,
-    preregister_run as rm_preregister_run
+    preregister_run as rm_preregister_run,
 )
-from common.orchestrator_context import (
+from common.entity_sink import record_entity
+from common.workspace_context import (
     filter_agents_for_workspace,
     task_in_workspace,
 )
 from common.session_service import get_or_create_task_session, add_run_to_session
-from common.tasks_service import (
+from tasks.context import augment_params_with_block_reason
+from tasks.service import (
     CreatedBy,
     TaskStatus,
     assign_agent as svc_assign_agent,
@@ -73,13 +75,100 @@ def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[s
 
 # -------------------- Agent coordination tools --------------------
 
+def _caller_delegates() -> Optional[set]:
+    """Delegation allowlist of the agent currently executing, or None.
+
+    Returns the set of agent ids the running agent is allowed to delegate to
+    (AgentSpec.delegates). Returns None when there is no caller in context or
+    the caller has no restriction configured — callers treat None as "no
+    restriction" and skip filtering entirely.
+    """
+    from common.agent_context import current_agent_id
+    caller_id = current_agent_id.get()
+    if not caller_id:
+        return None
+    caller = reg_get_agent(caller_id)
+    if not caller or not caller.delegates:
+        return None
+    return set(caller.delegates)
+
+
+def _filter_delegatable(specs: List[Any]) -> List[Any]:
+    """Restrict specs to the running agent's delegation allowlist (if any)."""
+    allow = _caller_delegates()
+    if allow is None:
+        return specs
+    return [s for s in specs if s.id in allow]
+
+
+# Appended to every delegation-block reason. A blocked delegation is terminal
+# for this call — retrying it, or churning through other agents, is what turns a
+# single refusal into an infinite loop. This guidance tells the model to stop and
+# report instead. Kept in the tool (not agent instructions) so every delegating
+# agent gets the same failure protocol.
+_DELEGATION_STOP_GUIDANCE = (
+    "This is a permanent restriction for this call: do not retry it, and do not "
+    "loop trying other agents. If no other agent clearly fits the request, stop "
+    "now and reply to the user, stating plainly what you could not do and why."
+)
+
+
+def _delegation_blocked(agent_id: str) -> Optional[str]:
+    """Return an error reason if the running agent may not delegate to agent_id.
+
+    None means the delegation is permitted (no restriction, or target allowed).
+    A returned reason always ends with _DELEGATION_STOP_GUIDANCE so the model
+    treats the block as terminal and reports back instead of retry-looping.
+    """
+    from common.agent_context import current_agent_id
+    caller_id = current_agent_id.get()
+    # Self-delegation is off by default: a self-run recurses the same agent and
+    # never produces a distinct worker result. An agent may opt in by setting
+    # allow_self_delegation, in which case a self-target is explicitly permitted
+    # (and bypasses the delegates allowlist below — it is targeting itself).
+    if caller_id and agent_id == caller_id:
+        caller = reg_get_agent(caller_id)
+        if caller and getattr(caller, "allow_self_delegation", False):
+            return None
+        return (
+            f"Agent '{caller_id}' cannot delegate to itself (self-delegation is "
+            f"disabled; enable it on the agent to allow recursion). "
+            f"{_DELEGATION_STOP_GUIDANCE}"
+        )
+    allow = _caller_delegates()
+    if allow is None or agent_id in allow:
+        return None
+    return (
+        f"Agent '{caller_id}' is not allowed to delegate to '{agent_id}'. "
+        f"Allowed delegation targets: {sorted(allow)}. {_DELEGATION_STOP_GUIDANCE}"
+    )
+
+
+
 @tool("list_agents_tool")
 def list_agents_tool() -> str:
-    """List all available agents from the registry. Returns JSON with an array of agents."""
+    """List all available agents from the registry. Returns JSON with an array of agents.
+
+    Each agent has id/name/description. The entry for the calling agent is flagged
+    with `is_self: true`; when that agent has self-delegation enabled it also carries
+    `self_delegation: true`, meaning you may pass its id to run_agent_tool to recurse.
+    """
     try:
+        from common.agent_context import current_agent_id
+        caller_id = current_agent_id.get()
         ws = _active_workspace()
         specs = filter_agents_for_workspace(reg_list_agents(), ws)
-        agents = [{"id": s.id, "name": s.name, "description": s.description} for s in specs]
+        specs = _filter_delegatable(specs)
+        agents = []
+        for s in specs:
+            entry = {"id": s.id, "name": s.name, "description": s.description}
+            if caller_id and s.id == caller_id:
+                entry["is_self"] = True
+                # Only advertise self-delegation when it is actually enabled, so the
+                # model doesn't attempt a self-call the gate will refuse.
+                if getattr(s, "allow_self_delegation", False):
+                    entry["self_delegation"] = True
+            agents.append(entry)
         return _json_ok({"agents": agents})
     except Exception as e:
         return _json_err(f"Failed to list agents: {e}")
@@ -155,6 +244,9 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
                 f"Agent '{agent_id}' is not available in workspace '{ws}'",
                 code="forbidden",
             )
+        blocked = _delegation_blocked(agent_id)
+        if blocked:
+            return _json_err(blocked, code="forbidden", extra={"agent_id": agent_id})
         if agent_id == "decomposer":
             if getattr(task, "created_by", None) != CreatedBy.user:
                 return _json_err(
@@ -173,6 +265,12 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
         if reason:
             svc_update_task(task.id, routing_reason=reason.strip())
 
+        # If the task is currently blocked (e.g. the reviewer rejected the prior
+        # attempt), carry the block reason into the worker's input so the next
+        # agent knows exactly what to fix. Done here, while the reason is still
+        # set: starting the run flips the task to in_progress, which clears it.
+        params = augment_params_with_block_reason(task, params)
+
         ws_name = task.workspace or "default"
         try:
             from workspace import get_workspace_metadata
@@ -187,6 +285,7 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
                 session_id = get_or_create_task_session(
                     title=task.title,
                     workspace=task.workspace,
+                    task_id=str(task.id),
                 )
                 svc_update_task(task.id, session_id=session_id)
             except Exception:
@@ -234,6 +333,7 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
                 if wait_for_completion
                 else "Agent assigned. STOP — report this assignment to the user."
         )
+        record_entity("task", str(task.id), "assigned", (task.title or "").strip())
         return _json_ok({
             "message": message,
             "run_id": run_id,
@@ -243,6 +343,459 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
         })
     except Exception as e:
         return _json_err(f"Failed to assign agent: {e}")
+
+
+class InvokeAgentInput(BaseModel):
+    agent_id: str = Field(..., min_length=1, description="Agent identifier from the registry")
+    input: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "The full, self-contained instruction for the delegated agent. It does "
+            "NOT see this conversation, your own instructions, or the previous "
+            "steps, so include every piece of context and every constraint it needs. "
+            "For a multi-level or recursive task, spell out what the agent must do "
+            "AND that it should delegate further — e.g. state the remaining depth "
+            "and how many sub-agents to spawn — or the recursion stops at this level."
+        ),
+    )
+    workspace: Optional[str] = Field(
+        None,
+        description=(
+            "Leave empty. The delegated agent runs in the current workspace by "
+            "default; only set this to intentionally target a DIFFERENT workspace. "
+            "Do not pass 'default' unless you truly mean the workspace named "
+            "'default' — a stray value here moves the sub-agent out of the current "
+            "workspace and away from its files."
+        ),
+    )
+
+
+@tool("run_agent_tool", args_schema=InvokeAgentInput)
+def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -> str:
+    """Delegate a request to another agent and get its result back, without a task.
+
+    Runs `agent_id` on the given `input` synchronously, to completion, and returns
+    the worker's output in this tool's result so YOU (the orchestrator) can act on
+    it. The delegation appears in the chat as a tool call. No task is created and
+    no approval gate applies — use this for a free-form chat request where the
+    user just wants agents run. For tracked, multi-step work that needs a task
+    record or approval, use assign_agent_tool + start_agent_tool.
+
+    After this returns, review the worker's output (in the `output` field) and
+    decide the next step yourself: if the request is fully handled, write a short
+    final message to the user summarising that output; if another agent should
+    continue the work (e.g. a reviewer or follow-up specialist), call
+    run_agent_tool again with that agent and an input built from this output.
+    Each run has already finished when the tool returns — never poll or wait.
+
+    You may target your OWN agent id here when self-delegation is enabled for you
+    (list_agents_tool marks your entry with `self_delegation: true`). This is how
+    you recurse — hand a sub-goal back to a fresh instance of yourself. When it is
+    not enabled, a self-target is refused; that is the only case where calling
+    yourself fails.
+
+    The child sees ONLY the `input` you pass — never this conversation or your
+    instructions. So for a multi-level or recursive task the continuation must
+    live inside `input`: state what the child should do and, if the recursion is
+    meant to go deeper, that it should itself call run_agent_tool again, with the
+    remaining depth and fan-out spelled out (e.g. "then delegate this same task to
+    2 more agents, each at depth N-1"). Leave `workspace` empty so the child stays
+    in the current workspace.
+
+    If a delegation is refused (the result has `ok: false` — e.g. self-delegation
+    is disabled for you, or the target is not an allowed/available agent), treat
+    it as terminal: do NOT retry the same call or churn through other agents
+    hunting for one that is accepted. Pick a different agent only when one clearly
+    fits the request; if none does, stop and reply to the user, stating what you
+    could not do and why. Repeatedly retrying delegations is a loop, not progress.
+
+    Returns JSON with the worker's `output`, `run_id`, `session_id`, agent info,
+    and whether the run succeeded.
+    """
+    try:
+        # Taskless delegation is only for free-form requests (e.g. chat). When the
+        # orchestrator is running inside a tracked task, current_task_id is set and
+        # the established assign/start task flow must be used instead.
+        from common.agent_context import current_task_id
+        active_task = current_task_id.get()
+        if active_task:
+            return _json_err(
+                "run_agent_tool is for taskless (chat) delegation only. This run is "
+                f"bound to task {active_task}; use assign_agent_tool + start_agent_tool instead.",
+                code="task_context",
+                extra={"task_id": active_task},
+            )
+        spec = reg_get_agent(agent_id)
+        if not spec:
+            return _json_err("Agent not found", code="not_found", extra={"agent_id": agent_id})
+        # The delegated child inherits the caller's current workspace: taskless
+        # chat delegation should stay where the conversation is, with its files.
+        # The active workspace therefore wins over the `workspace` argument (which
+        # models tend to fill spuriously with "default", pushing the sub-agent out
+        # of the current workspace); the argument is only a fallback for callers
+        # with no active workspace context.
+        ws = _active_workspace() or workspace
+        if ws and not filter_agents_for_workspace([spec], ws):
+            return _json_err(
+                f"Agent '{agent_id}' is not available in workspace '{ws}'",
+                code="forbidden",
+            )
+        blocked = _delegation_blocked(agent_id)
+        if blocked:
+            return _json_err(blocked, code="forbidden", extra={"agent_id": agent_id})
+
+        from agents.agent_factory import create_agent
+        from agents.agent_invoke import invoke_agent
+        from agents.callbacks import FileStatsCallback
+        from managers.run_manager import (
+            run_log_path,
+            _utc_now_iso,
+            close_run,
+            close_run_from_result,
+            new_unique_run_id,
+            open_run,
+            update_run,
+        )
+        from workspace import resolve_workspace_arg
+        from common.agent_context import current_session_id as _sess_ctx
+
+        ws_path, _ws_name = resolve_workspace_arg(ws)
+        # Reuse the orchestrator's chat session so the worker run is grouped with
+        # this conversation rather than spawning an orphan session.
+        session_id = _sess_ctx.get() or os.environ.get("AGENT_SESSION_ID") or None
+
+        run_id = new_unique_run_id()
+        title = input.strip()[:60]
+        started = _utc_now_iso()
+
+        # The worker runs in-process — no subprocess stdout tee, no SSE stream —
+        # so scaffold a chat-format log file and write tool/LLM markers into it
+        # via FileStatsCallback. The chat-log parser then surfaces this run's
+        # logs and insights like any other chat message.
+        msg_id = str(uuid4())[:8]
+        log_file = run_log_path(run_id)
+        log_file.write_text("\n".join([
+            f"=== Chat message  run_id={run_id} ===",
+            f"Started   : {started}",
+            f"Agent     : {agent_id}",
+            f"Workspace : {ws or '—'}",
+            f"Session ID: {session_id or '—'}",
+            "Origin    : delegation (run_agent_tool)",
+            f"Title     : {title}",
+            "",
+            f"=== Message at {started} id={msg_id} ===",
+            f"Agent: {agent_id}",
+            "",
+            "--- User message ---",
+            input,
+            "",
+            "--- Agent response (stream) ---",
+            "",
+        ]), encoding="utf-8")
+
+        open_run(
+            run_id,
+            agent_id,
+            task_id=None,
+            session_id=session_id,
+            session_type="chat",
+            message_origin="delegation",
+            channel="chat_delegate",
+            workspace=ws or None,
+            title=title,
+            status="running",
+            log_file=str(log_file),
+            input=input,
+        )
+
+        try:
+            worker = create_agent(agent_id, workspace=ws_path)
+        except Exception as e:
+            # Close the record here, or a build failure leaves it "running" forever.
+            close_run(run_id, status="failed", exit_code=1, error=f"create_agent failed: {e}")
+            return _json_err(
+                f"Failed to build agent '{agent_id}': {e}",
+                code="worker_failed",
+                extra={"run_id": run_id, "agent_id": agent_id, "succeeded": False},
+            )
+        try:
+            update_run(run_id, {"provider": worker.provider or "", "model": worker.model or ""})
+        except Exception:
+            pass
+        # Seed the input context so the worker's system prompt is visible in the
+        # dashboard while it runs (replaced by the full context at close).
+        from managers.run_manager import seed_run_input_context
+        seed_run_input_context(run_id, getattr(worker, "system_prompt", "") or "", input)
+
+        stats = FileStatsCallback(log_file)
+        # A user stop (chat stop button cascades to delegation runs) flips this
+        # run's status to "stop"; the callback then aborts the worker at the
+        # next LLM/tool boundary instead of letting it run to completion.
+        from agents.callbacks import RunStopCallback
+        stop_cb = RunStopCallback(run_id)
+        # When this delegation runs inside a streaming chat turn, forward the
+        # child's tool/thought events onto the parent's SSE stream so the browser
+        # renders a live nested block. No-op outside streaming (emitter is None).
+        from common import stream_sink
+        from agents.callbacks import DelegationStreamCallback
+        emitter = stream_sink.get_emitter()
+        deleg_scope = None
+        deleg_depth = 0
+        extra_cbs = [stop_cb]
+        if emitter is not None:
+            parent_run_id = stream_sink.current_run_id()
+            deleg_scope = stream_sink.delegation_scope(run_id)
+            deleg_depth = deleg_scope[2]
+            emitter({
+                "type": "delegation_start",
+                "run_id": run_id,
+                "parent_run_id": parent_run_id,
+                "agent_id": agent_id,
+                "agent_name": spec.name,
+                "depth": deleg_depth,
+                "input": input,
+                "title": title,
+            })
+            extra_cbs.append(
+                DelegationStreamCallback(
+                    emitter, run_id=run_id, agent_id=agent_id, depth=deleg_depth
+                )
+            )
+
+        # run_id is tracked via open_run/close_run_from_result below; we don't pass
+        # it into invoke_agent because StandardAgent.run() takes no positional run_id.
+        try:
+            invocation = invoke_agent(
+                worker, input, stats=stats, extra_callbacks=extra_cbs, catch_exceptions=True
+            )
+        finally:
+            # Leave the delegation scope before emitting the end event, so a nested
+            # delegation's depth/parent bookkeeping is fully unwound.
+            if deleg_scope is not None:
+                stream_sink.reset_scope(deleg_scope)
+        result = invocation.result
+        stopped = stop_cb.cancelled
+        if stopped:
+            close_run(
+                run_id, status="stopped", exit_code=1,
+                error="stopped by user", process=invocation.process,
+            )
+        else:
+            close_run_from_result(run_id, result, process=invocation.process)
+
+        ok = bool(getattr(result, "ok", False)) and not stopped
+        output = (getattr(result, "agent_output", None) or "").strip()
+        error = str(getattr(result, "error", None) or "") if not ok else ""
+
+        if emitter is not None:
+            emitter({
+                "type": "delegation_end",
+                "run_id": run_id,
+                "depth": deleg_depth,
+                "agent_id": agent_id,
+                "ok": ok,
+                "stopped": stopped,
+                "output": output if ok else "",
+                "error": error if not ok else "",
+                "duration_ms": invocation.duration_ms,
+            })
+
+        # Footer mirrors the chat driver's, so the parser picks up the response
+        # text and the message summary (tokens / tool calls / duration).
+        if stopped:
+            stats.write("(stopped by user)")
+        else:
+            stats.write(output if ok else f"Error: {error or 'unknown error'}")
+        stats.write(
+            f"[message_summary] id={msg_id} "
+            f"inbound_tokens={stats.prompt_tokens} "
+            f"outbound_tokens={stats.completion_tokens} "
+            f"total_tokens={stats.total_tokens} "
+            f"tool_calls={stats.tool_calls} "
+            f"duration_ms={invocation.duration_ms}"
+        )
+        stats.write("")
+        stats.write(f"Finished: {_utc_now_iso()}")
+        stats.write(f"Status  : {'stopped' if stopped else 'completed' if ok else 'failed'}")
+        stats.close()
+
+        if stopped:
+            return _json_err(
+                f"Worker '{agent_id}' was stopped by the user. Do not retry.",
+                code="worker_stopped",
+                extra={"run_id": run_id, "agent_id": agent_id, "succeeded": False},
+            )
+
+        if ok:
+            return _json_ok({
+                "message": (
+                    "Worker finished. Review this output and decide: if the request "
+                    "is fully handled, summarise it for the user; if follow-up work "
+                    "is needed, chain another agent with run_agent_tool."
+                ),
+                "output": output,
+                "run_id": run_id,
+                "session_id": session_id,
+                "agent": spec.to_dict(),
+                "workspace": ws or None,
+                "succeeded": True,
+            })
+        return _json_err(
+            f"Worker '{agent_id}' failed: {error or 'unknown error'}",
+            code="worker_failed",
+            extra={"run_id": run_id, "agent_id": agent_id, "succeeded": False},
+        )
+    except Exception as e:
+        return _json_err(f"Failed to invoke agent: {e}")
+
+
+# -------------------- Flow tools --------------------
+
+@tool("list_flows_tool")
+def list_flows_tool() -> str:
+    """List the agent flows available in the active workspace.
+
+    A flow is a saved multi-agent graph that can be executed end to end. Use
+    this when the user wants to run a flow, so you can present the choices and
+    ask them which one to run. Returns JSON with an array of flows, each with
+    `id`, `name`, `description`, and `running` (whether an instance is active).
+
+    Only flows belonging to the active workspace (or with no workspace set) are
+    returned. After listing, ASK the user to pick a target flow and confirm —
+    then call run_flow_tool with the chosen flow_id.
+    """
+    try:
+        from flow import store as flow_store
+        ws = _active_workspace()
+        flows = []
+        for f in flow_store.list_flows():
+            f_ws = f.get("workspace")
+            if ws and f_ws and f_ws != ws:
+                continue
+            flows.append({
+                "id": f.get("id"),
+                "name": f.get("name") or f.get("id"),
+                "description": f.get("description") or "",
+                "workspace": f_ws,
+                "running": bool(f.get("running")),
+            })
+        return _json_ok({"flows": flows, "workspace": ws})
+    except Exception as e:
+        return _json_err(f"Failed to list flows: {e}")
+
+
+class RunFlowInput(BaseModel):
+    flow_id: str = Field(..., min_length=1, description="ID of the flow to run (from list_flows_tool)")
+    description: Optional[str] = Field(
+        None, description="Optional run description / input passed to the flow"
+    )
+    user_approved: bool = Field(
+        False,
+        description=(
+            "Must be True. Set only after the user has explicitly selected this "
+            "flow and approved running it. Never set True on the user's behalf."
+        ),
+    )
+    create_task: bool = Field(
+        False,
+        description=(
+            "Leave False for a normal taskless run (the default). Set True ONLY "
+            "when the user explicitly asks to create/track a task for this flow run."
+        ),
+    )
+
+
+@tool("run_flow_tool", args_schema=RunFlowInput)
+def run_flow_tool(
+    flow_id: str,
+    description: Optional[str] = None,
+    user_approved: bool = False,
+    create_task: bool = False,
+) -> str:
+    """Run an agent flow in the active workspace, AFTER the user has approved it.
+
+    Taskless by default: the run is ephemeral (tracked only as a background run /
+    session, like run_agent_tool) and is NOT surfaced as a user task. Only when
+    the user explicitly asks to create or track a task should you pass
+    create_task=True.
+
+    Approval gate: this tool refuses unless `user_approved` is True. Before
+    calling it you MUST (1) call list_flows_tool, (2) ask the user which flow to
+    run and to confirm, and (3) only once they have explicitly chosen a target
+    flow and approved, call this with that flow_id and user_approved=True. Do not
+    set user_approved yourself without a clear "yes, run it" from the user.
+
+    Launches the flow as a background process. Returns JSON with the run_id,
+    session_id, and task_id (an internal task that drives execution; omitted from
+    the user unless create_task was requested). The flow runs asynchronously —
+    report that it has started; do not poll for completion here.
+    """
+    try:
+        if not user_approved:
+            return _json_err(
+                "Flow run not approved. First call list_flows_tool, ask the user to "
+                "select a target flow and confirm, then call run_flow_tool again with "
+                "user_approved=True.",
+                code="approval_required",
+                extra={"flow_id": flow_id},
+            )
+
+        from flow import store as flow_store
+        from flow import launcher as flow_launcher
+
+        flow = flow_store.get_flow(flow_id)
+        if not flow:
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+
+        ws = _active_workspace()
+        flow_ws = flow.get("workspace")
+        if ws and flow_ws and flow_ws != ws:
+            return _json_err(
+                f"Flow '{flow_id}' belongs to workspace '{flow_ws}', not the active "
+                f"workspace '{ws}'",
+                code="forbidden",
+            )
+
+        ws_name = flow_ws or ws
+        desc = (description or flow.get("description") or "").strip()
+        flow_name = flow.get("name") or flow_id
+
+        # The flow runtime is task-driven (it finalizes a task record on completion),
+        # so a backing task always exists. For a taskless run we mark it
+        # orchestrator-created so it is not presented as a user task; only when the
+        # user explicitly asks do we create a user-facing task.
+        from tasks.service import create_task as svc_create_task
+        task = svc_create_task(
+            title=f"Flow: {flow_name}",
+            description=desc,
+            workspace=ws_name,
+            created_by=CreatedBy.user if create_task else CreatedBy.orchestrator,
+        )
+
+        params = {"workspace": ws_name, "description": desc}
+        run_id, session_id = flow_launcher.start_flow_run(str(task.id), flow_id, params)
+        svc_assign_agent(task.id, "flow-custom-graph", params, run_id=run_id)
+
+        payload: Dict[str, object] = {
+            "message": (
+                f"Flow '{flow_name}' started. It runs in the background — report this "
+                "to the user; do not poll for completion."
+            ),
+            "flow_id": flow_id,
+            "flow_name": flow_name,
+            "run_id": run_id,
+            "session_id": session_id,
+            "workspace": ws_name,
+            "taskless": not create_task,
+        }
+        # Only surface the task id when the user asked to track it; otherwise it is
+        # an internal execution record and not something to report.
+        if create_task:
+            payload["task_id"] = str(task.id)
+        return _json_ok(payload)
+    except Exception as e:
+        return _json_err(f"Failed to run flow: {e}")
 
 
 class StartAgentInput(BaseModel):
@@ -339,6 +892,7 @@ def start_agent_tool(task_id: str) -> str:
                         session_id=_sid,
                         task_id=str(task.id),
                         workspace=_task_ws or None,
+                        run_id=run_id,
                     )
         except Exception:
             pass
@@ -354,6 +908,7 @@ def start_agent_tool(task_id: str) -> str:
                 if wait_for_completion
                 else "Agent started. YOUR TURN IS DONE. Do not call any more tools."
             )
+        record_entity("task", str(task.id), "started", (task.title or "").strip())
         return _json_ok({
             "message": message,
             "run_id": run_id,
@@ -440,6 +995,7 @@ def stop_agent_tool(task_id: str) -> str:
                 pass
         updated = svc_get_task(task.id)
         status = run_manager.get_run_by_id(current_run_id) if current_run_id else None
+        record_entity("task", str(task.id), "stopped", (task.title or "").strip())
         return _json_ok({
             "stopped": True if not stopped else bool(stopped),
             "status": status,
@@ -565,21 +1121,62 @@ def get_agent_status_tool(task_id: str) -> str:
         if not agent_running and not agent_finished and not agent_failed:
             agent_running = True
 
-        # In fire-and-forget mode (wait_for_completion=false) the orchestrator's job
-        # is done as soon as the agent was started without error.  Treat any
-        # non-failed state as "finished" so the LLM stops polling and goes to Step 5.
+        # In fire-and-forget mode (wait_for_completion=false) an orchestrator that
+        # just started the agent must not keep polling: while the worker is still
+        # running, clamp to "finished" so the LLM ends its turn. A worker that has
+        # GENUINELY finished or failed (the continuation/monitor case) is not
+        # clamped — the orchestrator must proceed to Step 5 and act on the result.
         _task_ws = str(getattr(task, "workspace", "") or "") if task else ""
-        if not agent_failed and _get_wait_for_completion(_task_ws or ws) is False:
+        _wait_mode = _get_wait_for_completion(_task_ws or ws)
+        clamped_start_turn = False
+        if agent_running and not agent_failed and _wait_mode is False:
             agent_finished = True
             agent_running = False
+            clamped_start_turn = True
 
         assigned_agent = str(getattr(task, "assigned_agent_type", "") or "") if task else ""
+        # During continuation processing the task's assignment points at the
+        # orchestrator itself; report the worker whose run was inspected instead.
+        if assigned_agent == "orchestrator" and status:
+            _worker_agent = str(status.get("agent_id") or "")
+            if _worker_agent and _worker_agent != "orchestrator":
+                assigned_agent = _worker_agent
         routing_reason = str(getattr(task, "routing_reason", "") or "") if task else ""
+        blocked_reason = str(getattr(task, "blocked_reason", "") or "") if task else ""
 
-        if agent_finished:
-            message = "DONE. Task completed successfully. Stop all tool calls and summarise the orchestration: which agent was assigned, why, and that the task finished successfully."
-        elif agent_failed:
-            message = "DONE. Task failed. Stop all tool calls and summarise the orchestration: which agent was assigned, why, and that the task failed."
+        if agent_failed:
+            message = (
+                "DONE. The agent run failed or the task is blocked. Go to Step 5: "
+                "handle the block — re-assign a suitable fixing agent, or report to "
+                "the user if resolving it needs their input."
+            )
+        elif clamped_start_turn:
+            message = (
+                "DONE for this turn. The agent was started and runs in the background; "
+                "a follow-up fires automatically when it finishes. Stop all tool calls "
+                "and report to the user that the agent was started."
+            )
+        elif agent_finished and task_status == "done":
+            message = (
+                "DONE. The task is already finalised (status done). Stop all tool "
+                "calls and summarise the outcome: which agents ran and what was "
+                "verified."
+            )
+        elif agent_finished and task_status == "reviewed":
+            message = (
+                "DONE. The review passed — the task is reviewed and complete. Go to "
+                "Step 5: call the update_task tool (NOT update_scheduled) with "
+                "status=done for this task, then summarise the outcome. Do not chain "
+                "another agent."
+            )
+        elif agent_finished:
+            message = (
+                "DONE. The worker agent finished. Go to Step 5: decide the next action — "
+                "chain the next agent (e.g. a reviewer) with assign_agent_tool + "
+                "start_agent_tool, or, if nothing is left to chain in monitor mode, call "
+                "the update_task tool (NOT update_scheduled) with status=resolved and "
+                "summarise the outcome."
+            )
         else:
             message = "RUNNING. Use wait_for_agent_tool again."
 
@@ -591,6 +1188,9 @@ def get_agent_status_tool(task_id: str) -> str:
             "assigned_agent": assigned_agent,
             "routing_reason": routing_reason,
             "task_status": task_status,
+            "blocked_reason": blocked_reason,
+            "followup_mode": _get_followup_mode(_task_ws or ws),
+            "wait_for_completion": _wait_mode,
         })
     except Exception as e:
         return _json_err(f"Failed to get agent status: {e}")
@@ -642,7 +1242,7 @@ def create_agent_tool(
         # visible in — the workspace it was created from (unless later shared).
         active_ws: Optional[str] = None
         try:
-            from common.orchestrator_context import resolve_active_workspace
+            from common.workspace_context import resolve_active_workspace
             from workspace import get_workspace_folder
             ws = resolve_active_workspace()
             if ws and ws != "default" and get_workspace_folder(ws):
@@ -684,6 +1284,7 @@ def create_agent_tool(
             # Workspace association is best-effort; the agent itself is created.
             pass
 
+        record_entity("agent", agent_id, "created", name)
         payload = {"agent": spec.to_dict(), "message": f"Agent '{name}' created successfully"}
         if added_to_workspace:
             payload["workspace"] = added_to_workspace
@@ -716,6 +1317,7 @@ class ModifyAgentInput(BaseModel):
     memory_type: Optional[str] = Field(None, description="Memory type: none, local, or shared")
     memory_data: Optional[Any] = Field(None, description="Memory payload, such as a shared memory pool id")
     skills_enabled: Optional[bool] = Field(None, description="Enable or disable procedural skills for this agent")
+    episodic_write_enabled: Optional[bool] = Field(None, description="Enable or disable the episodic write tool (record_episode). Other memory (recall/remember/recall_episodes) is unaffected.")
     provider: Optional[str] = Field(None, description="Model provider override; empty string clears")
     model: Optional[str] = Field(None, description="Model override; empty string clears")
     base_url: Optional[str] = Field(None, description="Provider base URL override; empty string clears")
@@ -723,7 +1325,11 @@ class ModifyAgentInput(BaseModel):
     max_tokens: Optional[int] = Field(None, ge=1, description="Max tokens override")
     reasoning: Optional[Dict[str, Any]] = Field(
         None,
-        description="Reasoning settings, e.g. {'think_enabled': true, 'think_mode': 'deep', 'plan_enabled': true, 'plan_format': 'bullet'}",
+        description="Reasoning settings, e.g. {'think_enabled': true, 'think_mode': 'deep', 'thinking_level': 'high', 'plan_enabled': true, 'plan_format': 'bullet'}. 'thinking_level' (off|low|medium|high) is the native model reasoning parameter, separate from the 'think' scratchpad tool.",
+    )
+    delegates: Optional[List[str]] = Field(
+        None,
+        description="Delegation allowlist: agent ids this agent may delegate to / see. Pass an empty list to lift any restriction (delegate to any workspace agent).",
     )
 
 
@@ -740,6 +1346,7 @@ def get_agent_tool(agent_id: str) -> str:
             "capabilities": prompt_assembly.read_capabilities(agent_id),
             "usage": prompt_assembly.read_usage(agent_id),
         }
+        record_entity("agent", agent_id, "viewed", spec.name or "")
         return _json_ok({"agent": spec.to_dict(), "definition": definition})
     except Exception as e:
         return _json_err(f"Failed to get agent: {e}")
@@ -760,12 +1367,14 @@ def modify_agent_tool(
     memory_type: Optional[str] = None,
     memory_data: Optional[Any] = None,
     skills_enabled: Optional[bool] = None,
+    episodic_write_enabled: Optional[bool] = None,
     provider: Optional[str] = None,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     reasoning: Optional[Dict[str, Any]] = None,
+    delegates: Optional[List[str]] = None,
 ) -> str:
     """Modify an existing agent's behavior and configuration.
 
@@ -860,19 +1469,26 @@ def modify_agent_tool(
             node_type=spec.node_type,
             is_default_chat_agent=spec.is_default_chat_agent,
             skills_enabled=bool(skills_enabled) if skills_enabled is not None else spec.skills_enabled,
+            episodic_write_enabled=bool(episodic_write_enabled) if episodic_write_enabled is not None else spec.episodic_write_enabled,
             reasoning=dict(reasoning) if reasoning is not None else dict(spec.reasoning or {}),
+            delegates=(
+                [d.strip() for d in delegates if str(d).strip()]
+                if delegates is not None else list(spec.delegates or [])
+            ),
         )
 
         before = spec.to_dict()
         reg_add_agent(new_spec)
         after = new_spec.to_dict()
-        for key in ("name", "description", "domain", "tools", "capacity", "memory_type", "memory_data", "skills_enabled", "provider", "model", "base_url", "temperature", "max_tokens", "reasoning"):
+        for key in ("name", "description", "domain", "tools", "capacity", "memory_type", "memory_data", "skills_enabled", "episodic_write_enabled", "provider", "model", "base_url", "temperature", "max_tokens", "reasoning", "delegates"):
             if before.get(key) != after.get(key):
                 changed.append(key)
 
         if not changed:
+            record_entity("agent", agent_id, "viewed", new_spec.name or "")
             return _json_ok({"agent": after, "message": f"Agent '{agent_id}' unchanged"})
 
+        record_entity("agent", agent_id, "updated", new_spec.name or "")
         return _json_ok({
             "agent": after,
             "changed": sorted(set(changed)),
@@ -893,7 +1509,7 @@ def delete_agent_tool(agent_id: str) -> str:
     Removes both the agents.json entry and the markdown definition folder.
     """
     try:
-        protected = {"orchestrator", "decomposer", "agent_creator"}
+        protected = {"orchestrator", "decomposer", "agent_creator", "flow_creator"}
         if agent_id in protected:
             return _json_err(f"Agent '{agent_id}' is a system agent and cannot be deleted", code="forbidden")
         removed = reg_remove_agent(agent_id)
@@ -918,6 +1534,9 @@ __all__ = [
     "list_agents_tool",
     "assign_agent_tool",
     "start_agent_tool",
+    "run_agent_tool",
+    "list_flows_tool",
+    "run_flow_tool",
     "reject_assignment_tool",
     "stop_agent_tool",
     "get_agent_status_tool",

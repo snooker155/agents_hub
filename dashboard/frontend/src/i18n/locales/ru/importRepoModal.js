@@ -1,0 +1,17 @@
+export default {
+  importProjectFromRepository: 'Импорт проекта из репозитория',
+  connectProject: 'Подключить «{{name}}» к репозиторию',
+  settingsGit: 'Настройки → Git',
+  searchRepositories: 'Поиск репозиториев…',
+  noRepositoriesFound: 'Репозитории не найдены.',
+  loadingRepositories: 'Загрузка репозиториев…',
+  projectName: 'Название проекта',
+  workspace: 'Пространство',
+  selectWorkspace: '— выберите пространство —',
+  branch: 'Ветка',
+  importIssuesAsTasks: 'Импортировать issues как задачи',
+  cloningRepository: 'Клонирование репозитория…',
+  connectRepository: 'Подключить репозиторий',
+  importProject: 'Импортировать проект',
+  cancel: 'Отмена',
+};

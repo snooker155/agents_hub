@@ -1,0 +1,44 @@
+{
+  "schema": "agents-hub/agent-manifest@1",
+  "id": "aider",
+  "name": "Aider",
+  "description": "Aider is an open-source AI pair programmer that edits files in a local git repository and commits its own changes. This repository wraps its CLI behind the Agents Hub HTTP contract.",
+  "domain": "Software Engineering",
+  "runtime": {
+    "kind": "http",
+    "port": 8410,
+    "run_path": "/run",
+    "stream_path": "/run/stream",
+    "health_path": "/health",
+    "timeout": 1800,
+    "docker": {
+      "dockerfile": "Dockerfile.agenthub",
+      "context": "."
+    },
+    "env": [
+      {
+        "name": "OPENAI_API_KEY",
+        "required": true,
+        "description": "Model key Aider uses for its own completions. Swap for ANTHROPIC_API_KEY if you set AIDER_MODEL to a Claude model."
+      },
+      {
+        "name": "AIDER_MODEL",
+        "required": false,
+        "description": "Model passed to aider --model. Defaults to whatever aider picks for the key it finds."
+      },
+      {
+        "name": "AIDER_WORKDIR",
+        "required": false,
+        "description": "Git repository aider edits when a run does not name a workspace. Defaults to /work."
+      }
+    ]
+  },
+  "capabilities": {
+    "tools": [
+      "edit_files",
+      "run_shell_commands",
+      "git_commit"
+    ]
+  },
+  "docs": "README.md"
+}

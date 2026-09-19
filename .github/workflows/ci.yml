@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Backend + agent deps carry the store/runtime libraries the tests import.
+          pip install -r dashboard/backend/requirements.txt
+          pip install -r requirements-agents.txt
+          pip install pytest
+
+      - name: Run tests
+        # AGENTS_HUB_ROOT is also set to a throwaway dir by tests/conftest.py; this
+        # is belt-and-braces so nothing can touch a real state directory on CI.
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_ci
+        run: python -m pytest tests/ -q

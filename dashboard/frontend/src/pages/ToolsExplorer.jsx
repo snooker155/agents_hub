@@ -2,7 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Wrench, Search, Box, ChevronRight, Terminal, Save, FileCode2, Layers } from 'lucide-react';
 import { getTools, getToolSource, updateToolSource } from '../api';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
 const ToolsExplorer = () => {
+  const { t } = useI18n();
   const [tools, setTools] = useState({ factory: [], swe: [], all: [] });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -47,13 +50,13 @@ const ToolsExplorer = () => {
       } catch (error) {
         setSourceMeta(null);
         setSourceCode('');
-        setSaveMessage(error?.response?.data?.detail || 'Failed to load tool source');
+        setSaveMessage(error?.response?.data?.detail || t('toolsExplorer.loadSourceFailed'));
       } finally {
         setLoadingSource(false);
       }
     };
     loadSource();
-  }, [selectedTool]);
+  }, [selectedTool, t]);
 
   const filteredTools = useMemo(
     () =>
@@ -90,43 +93,41 @@ const ToolsExplorer = () => {
       const refreshed = await getToolSource(toolId);
       setSourceMeta(refreshed.data || null);
       setSourceCode(refreshed.data?.source_code || '');
-      setSaveMessage('Saved');
+      setSaveMessage(t('common.saved'));
     } catch (error) {
-      setSaveMessage(error?.response?.data?.detail || 'Failed to save source');
+      setSaveMessage(error?.response?.data?.detail || t('toolsExplorer.saveSourceFailed'));
     } finally {
       setSaveBusy(false);
     }
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-6">
-      <div className="flex flex-wrap gap-3 justify-between items-center shrink-0">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800 flex items-center">
-            <Wrench className="w-6 h-6 mr-2 text-indigo-600" />
-            Tool Inventory
-          </h2>
-          <p className="text-gray-500 text-sm">Browse tools available to agents in the cluster.</p>
-        </div>
-        <div className="relative">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search tools..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-64 max-w-full"
-          />
-        </div>
-      </div>
+    <PageContainer fill>
+      <PageHeader
+        icon={Wrench}
+        title={t('toolsExplorer.toolInventory')}
+        description={t('toolsExplorer.browseToolsAvailableToAgents')}
+        actions={
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder={t('toolsExplorer.searchTools')}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-64 max-w-full"
+            />
+          </div>
+        }
+      />
 
       {loading ? (
-        <div className="text-center py-20 flex-1 min-h-0">Loading tool definitions...</div>
+        <div className="text-center py-20 flex-1 min-h-0">{t('toolsExplorer.loadingToolDefinitions')}</div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
           <div className="lg:col-span-1 h-full min-h-0 border border-gray-200 rounded-xl bg-white p-3 overflow-y-auto">
             {Object.keys(groupedTools).length === 0 ? (
-              <div className="text-sm text-gray-500 px-2 py-6">No tools found.</div>
+              <div className="text-sm text-gray-500 px-2 py-6">{t('toolsExplorer.noToolsFound')}</div>
             ) : (
               Object.entries(groupedTools)
                 .sort(([a], [b]) => a.localeCompare(b))
@@ -173,7 +174,7 @@ const ToolsExplorer = () => {
                       </span>
                       {selectedTool.requires_workspace && (
                         <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-2 py-1 rounded uppercase tracking-wider">
-                          workspace
+                          {t('toolsExplorer.workspace')}
                         </span>
                       )}
                     </div>
@@ -183,7 +184,7 @@ const ToolsExplorer = () => {
                   </p>
                 </div>
                 <div className="p-6 flex-1 min-h-0 overflow-y-auto">
-                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Arguments Schema</h4>
+                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{t('toolsExplorer.argumentsSchema')}</h4>
                   <div className="bg-gray-900 rounded-lg p-4 overflow-x-auto">
                     <pre className="text-indigo-300 text-xs">
                       {JSON.stringify(selectedArgs, null, 2)}
@@ -192,7 +193,7 @@ const ToolsExplorer = () => {
 
                   <div className="mt-8 flex flex-col min-h-[360px] h-[calc(100%-10rem)]">
                     <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Source Code</h4>
+                      <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">{t('toolsExplorer.sourceCode')}</h4>
                       <div className="flex items-center gap-2">
                         {sourceMeta?.path && (
                           <span className="text-[11px] text-gray-500 inline-flex items-center gap-1">
@@ -206,21 +207,21 @@ const ToolsExplorer = () => {
                           onClick={handleSave}
                           className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40"
                         >
-                          {saveBusy ? <span className="animate-pulse">Saving</span> : <Save className="w-3.5 h-3.5" />}
+                          {saveBusy ? <span className="animate-pulse">{t('toolsExplorer.saving')}</span> : <Save className="w-3.5 h-3.5" />}
                           Save
                         </button>
                       </div>
                     </div>
                     <div className="border border-gray-200 rounded-lg overflow-hidden flex-1 min-h-[280px]">
                       {loadingSource ? (
-                        <div className="p-6 text-sm text-gray-500">Loading source…</div>
+                        <div className="p-6 text-sm text-gray-500">{t('toolsExplorer.loadingSource')}</div>
                       ) : (
                         <textarea
                           value={sourceCode}
                           onChange={(e) => setSourceCode(e.target.value)}
                           spellCheck={false}
                           className="w-full h-full p-3 bg-gray-950 text-emerald-300 text-xs outline-none"
-                          placeholder="No source available for this tool."
+                          placeholder={t('toolsExplorer.noSourceAvailableForThis')}
                           disabled={!sourceMeta}
                         />
                       )}
@@ -236,13 +237,13 @@ const ToolsExplorer = () => {
             ) : (
               <div className="h-full flex flex-col items-center justify-center bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-400 p-12">
                 <Box className="w-12 h-12 mb-4 opacity-20" />
-                <p>Select a tool from the inventory to view its technical specification.</p>
+                <p>{t('toolsExplorer.selectAToolFromThe')}</p>
               </div>
             )}
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 };
 

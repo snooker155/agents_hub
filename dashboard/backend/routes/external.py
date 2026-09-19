@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
-from agents import node_manager
+from managers import node_manager
 
 router = APIRouter(prefix="/api/external", tags=["external"])
 
@@ -81,7 +81,7 @@ async def external_run(token: str, body: ExternalRunRequest, request: Request):
         )
 
     try:
-        from common import tasks_service
+        from tasks import service as tasks_service
         from tasks import TaskStatus, CreatedBy
 
         workspace = body.workspace or node.get("workspace")
@@ -100,12 +100,13 @@ async def external_run(token: str, body: ExternalRunRequest, request: Request):
         # worker loop can pick it up without waiting for the orchestrator.
         if agent_id != "orchestrator":
             run_id = str(uuid4())
-            from agents.run_manager import _upsert_run
+            from managers.run_manager import _upsert_run
             _upsert_run({
                 "run_id": run_id,
                 "task_id": task_id,
                 "agent_id": agent_id,
                 "node_id": node_id,
+                "channel": "external",
                 "pid": None,
                 "status": "assigned",
                 "session_type": "task",

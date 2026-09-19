@@ -1,7 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { useWorkspace } from '../components/WorkspaceContext';
-import { getProjects, createProject, deleteProject } from '../api';
+import { useWorkspace } from '../components/workspace';
+import {
+  getProjects, createProject, deleteProject, getWorkspaces,
+  getProjectRegistryChat, clearProjectRegistryChat, stopProjectRegistryChat,
+  projectRegistryChatUrl,
+} from '../api';
+import EntityChat from '../components/EntityChat';
+import { usePageChat } from '../components/pageChat/pageChat';
+import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
+import ImportRepoModal from '../components/ImportRepoModal';
 import {
   FolderGit2,
   Folder,
@@ -17,8 +25,11 @@ import {
   GitBranch,
   Github,
   Gitlab,
+  Download,
 } from 'lucide-react';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
 const TYPE_CONFIG = {
   general:       { label: 'General',       icon: FolderGit2, color: 'bg-gray-100 text-gray-700' },
   code:          { label: 'Code',          icon: Code2,       color: 'bg-blue-100 text-blue-700' },
@@ -47,7 +58,44 @@ const DEFAULT_FORM = {
   tags: '',
 };
 
+/**
+ * The registry's own chat, as one descriptor the column and the floating page
+ * chat both draw: the Project Manager creates and retires projects in the
+ * current workspace while the list updates beside it.
+ *
+ * Distinct from the two per-project chats. Those are about the contents of one
+ * project (its graph, its tasks); this one is about which projects exist.
+ *
+ * The callbacks are memoised on the workspace because EntityChat loads its
+ * transcript in an effect keyed on them.
+ */
+function useRegistryChatDescriptor(workspace, onProjectsChanged) {
+  const { t } = useI18n();
+
+  const loadChat = useCallback(() => getProjectRegistryChat(workspace), [workspace]);
+  const clearChat = useCallback(() => clearProjectRegistryChat(workspace), [workspace]);
+  const stopChat = useCallback(() => stopProjectRegistryChat(workspace), [workspace]);
+
+  const onEvent = useCallback((ev) => {
+    if (ev.type === 'projects') onProjectsChanged();
+  }, [onProjectsChanged]);
+
+  return useMemo(() => ({
+    scope: `projects:${workspace || ''}`,
+    path: projectRegistryChatUrl(workspace),
+    loadChat, clearChat, stopChat, onEvent,
+    title: t('projectManager.registryChat'),
+    emptyHint: t('projectManager.registryChatHint'),
+    suggestions: [
+      t('projectManager.chatSuggestCreate'),
+      t('projectManager.chatSuggestWhatExists'),
+      t('projectManager.chatSuggestRetire'),
+    ],
+  }), [workspace, loadChat, clearChat, stopChat, onEvent, t]);
+}
+
 export default function ProjectManager() {
+  const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -56,8 +104,12 @@ export default function ProjectManager() {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('all');
+  const [showImport, setShowImport] = useState(false);
+  const [workspaceNames, setWorkspaceNames] = useState([]);
+  const [importNotice, setImportNotice] = useState('');
+  const chat = useChatColumn(false);
 
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     try {
       const resp = await getProjects(selectedWorkspace !== 'default' ? selectedWorkspace : undefined);
       setProjects(resp.data);
@@ -66,15 +118,40 @@ export default function ProjectManager() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedWorkspace]);
 
   useEffect(() => {
     fetchProjects();
-  }, [selectedWorkspace]);
+  }, [fetchProjects]);
+
+  // The same conversation the column shows, offered to the floating panel too.
+  const registryChat = useRegistryChatDescriptor(selectedWorkspace, fetchProjects);
+  usePageChat(registryChat);
 
   useEffect(() => {
     setForm(f => ({ ...f, workspace: selectedWorkspace || '' }));
   }, [selectedWorkspace]);
+
+  const openImport = async () => {
+    setShowImport(true);
+    try {
+      const resp = await getWorkspaces();
+      setWorkspaceNames((resp.data || []).map(w => w.name || w).filter(Boolean));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleImported = (result) => {
+    setShowImport(false);
+    const issues = result?.issues;
+    const parts = [`Project "${result?.project?.name}" imported`];
+    if (issues?.error) parts.push(`issue import failed: ${issues.error}`);
+    else if (issues) parts.push(`${issues.imported} issue${issues.imported === 1 ? '' : 's'} imported as tasks`);
+    setImportNotice(parts.join(' — '));
+    setTimeout(() => setImportNotice(''), 6000);
+    fetchProjects();
+  };
 
   const handleCreate = async () => {
     if (!form.name.trim() || !form.workspace) return;
@@ -131,23 +208,34 @@ export default function ProjectManager() {
   });
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <FolderGit2 className="w-7 h-7 text-indigo-600" />
-            Projects
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">Organize tasks and code by project, linked to a workspace</p>
+    <PageContainer className="space-y-6">
+      <PageHeader
+        icon={FolderGit2}
+        title={t('projectManager.projects')}
+        description={t('projectManager.organizeTasksAndCodeBy')}
+        actions={<>
+          <ChatToggle open={chat.open} onToggle={chat.toggle}
+                      label={t('projectManager.registryChat')} />
+          <button
+            onClick={openImport}
+            className="flex items-center gap-2 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 text-sm font-medium"
+          >
+            <Download className="w-4 h-4" /> {t('projectManager.importFromRepo')}
+          </button>
+          <button
+            onClick={() => { setForm({ ...DEFAULT_FORM, workspace: selectedWorkspace || '' }); setShowCreate(true); }}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" /> {t('projectManager.newProject')}
+          </button>
+        </>}
+      />
+
+      {importNotice && (
+        <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-3 text-sm">
+          {importNotice}
         </div>
-        <button
-          onClick={() => { setForm({ ...DEFAULT_FORM, workspace: selectedWorkspace || '' }); setShowCreate(true); }}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-        >
-          <Plus className="w-4 h-4" /> New Project
-        </button>
-      </div>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -155,7 +243,7 @@ export default function ProjectManager() {
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
-            placeholder="Search projects…"
+            placeholder={t('projectManager.searchProjects')}
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 w-56"
@@ -176,17 +264,29 @@ export default function ProjectManager() {
         </div>
       </div>
 
-      {/* Project Grid */}
+      {/* Only the grid sits beside the chat. The notice and the filters stay
+          full width above it: inside the narrowing column they rewrap when the
+          chat opens, which pushes everything below them down — the toggle is
+          supposed to change one column's width and nothing else. */}
+      <div className={chat.gridClass}>
+        <div className={`space-y-6 ${chat.mainClass}`}>
       {loading ? (
-        <div className="text-center py-16 text-gray-400">Loading…</div>
+        <div className="text-center py-16 text-gray-400">{t('projectManager.loading')}</div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <FolderGit2 className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p className="font-medium">No projects yet</p>
-          <p className="text-sm mt-1">Create your first project to get started</p>
+          <p className="font-medium">{t('projectManager.noProjectsYet')}</p>
+          <p className="text-sm mt-1">{t('projectManager.createYourFirstProjectTo')}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4">
+        /* Fixed-width tracks, not breakpoints and not fluid ones.
+           Breakpoints measure the viewport while this grid lives in a column
+           that narrows when the chat opens, so a fixed column count rewrapped
+           every card's text. `1fr` tracks fixed that but resized every card
+           instead. A fixed track does neither: the card is always 17rem, and
+           opening the chat only changes how many fit on a row. The row is
+           left-aligned, so the leftover strip on the right is simply empty. */
+        <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,17rem)] gap-4 items-start">
           {filtered.map(project => {
             const typeConf = TYPE_CONFIG[project.type] || TYPE_CONFIG.general;
             const statusConf = STATUS_CONFIG[project.status] || STATUS_CONFIG.active;
@@ -217,7 +317,7 @@ export default function ProjectManager() {
                       <button
                         onClick={() => handleDelete(project.id, project.name)}
                         className="p-1 text-gray-300 hover:text-red-500 rounded transition-colors"
-                        title="Delete project"
+                        title={t('projectManager.deleteProject')}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -238,12 +338,12 @@ export default function ProjectManager() {
                     )}
                     {project.frontend?.enabled && (
                       <span className="flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
-                        <Globe className="w-3 h-3" /> Frontend
+                        <Globe className="w-3 h-3" /> {t('projectManager.frontend')}
                       </span>
                     )}
                     {project.backend?.enabled && (
                       <span className="flex items-center gap-1 text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">
-                        <Server className="w-3 h-3" /> Backend
+                        <Server className="w-3 h-3" /> {t('projectManager.backend')}
                       </span>
                     )}
                     {project.tasks_count > 0 && (
@@ -270,38 +370,57 @@ export default function ProjectManager() {
           })}
         </div>
       )}
+        </div>
+
+        {chat.open && (
+          <ChatColumn>
+            <EntityChat {...registryChat} {...FILL_COLUMN} />
+          </ChatColumn>
+        )}
+      </div>
+
+      {/* Import from repo modal */}
+      {showImport && (
+        <ImportRepoModal
+          mode="import"
+          workspaces={workspaceNames}
+          defaultWorkspace={selectedWorkspace && selectedWorkspace !== 'default' ? selectedWorkspace : ''}
+          onClose={() => setShowImport(false)}
+          onDone={handleImported}
+        />
+      )}
 
       {/* Create Modal */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-100">
-              <h2 className="text-lg font-bold text-gray-900">New Project</h2>
+              <h2 className="text-lg font-bold text-gray-900">{t('projectManager.newProject')}</h2>
             </div>
             <div className="p-6 space-y-4">
               {/* Basic */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Project Name *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.projectName')}</label>
                   <input
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    placeholder="My Project"
+                    placeholder={t('projectManager.myProject')}
                     value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.description')}</label>
                   <textarea
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
                     rows={2}
-                    placeholder="What is this project about?"
+                    placeholder={t('projectManager.whatIsThisProjectAbout')}
                     value={form.description}
                     onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.type')}</label>
                   <select
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
                     value={form.type}
@@ -313,17 +432,17 @@ export default function ProjectManager() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Workspace</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.workspace')}</label>
                   <div className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700 font-medium flex items-center gap-2">
                     <Folder className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                    {form.workspace || <span className="text-gray-400 italic">No workspace selected</span>}
+                    {form.workspace || <span className="text-gray-400 italic">{t('projectManager.noWorkspaceSelected')}</span>}
                   </div>
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tags (comma-separated)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('projectManager.tagsCommaSeparated')}</label>
                   <input
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    placeholder="python, api, ml"
+                    placeholder={t('projectManager.pythonApiMl')}
                     value={form.tags}
                     onChange={e => setForm(f => ({ ...f, tags: e.target.value }))}
                   />
@@ -333,26 +452,26 @@ export default function ProjectManager() {
               {/* Repo — code only */}
               {form.type === 'code' && <div className="border border-gray-200 rounded-xl p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                  <GitBranch className="w-4 h-4" /> Repository
+                  <GitBranch className="w-4 h-4" /> {t('projectManager.repository')}
                 </h3>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Repo Type</label>
+                    <label className="block text-xs text-gray-500 mb-1">{t('projectManager.repoType')}</label>
                     <select
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                       value={form.repo_type}
                       onChange={e => setForm(f => ({ ...f, repo_type: e.target.value }))}
                     >
-                      <option value="none">None</option>
-                      <option value="github">GitHub</option>
-                      <option value="gitlab">GitLab</option>
-                      <option value="bitbucket">Bitbucket</option>
-                      <option value="local">Local</option>
+                      <option value="none">{t('projectManager.none')}</option>
+                      <option value="github">{t('projectManager.github')}</option>
+                      <option value="gitlab">{t('projectManager.gitlab')}</option>
+                      <option value="bitbucket">{t('projectManager.bitbucket')}</option>
+                      <option value="local">{t('projectManager.local')}</option>
                     </select>
                   </div>
                   {form.repo_type !== 'none' && (
                     <div>
-                      <label className="block text-xs text-gray-500 mb-1">Branch</label>
+                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.branch')}</label>
                       <input
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                         value={form.repo_branch}
@@ -363,7 +482,7 @@ export default function ProjectManager() {
                   )}
                   {form.repo_type !== 'none' && form.repo_type !== 'local' && (
                     <div className="col-span-2">
-                      <label className="block text-xs text-gray-500 mb-1">Repo URL</label>
+                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.repoUrl')}</label>
                       <input
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                         placeholder="https://github.com/org/repo.git"
@@ -385,12 +504,12 @@ export default function ProjectManager() {
                     className="rounded"
                   />
                   <Globe className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-semibold text-gray-700">Has Frontend</span>
+                  <span className="text-sm font-semibold text-gray-700">{t('projectManager.hasFrontend')}</span>
                 </label>
                 {form.has_frontend && (
                   <div className="grid grid-cols-2 gap-3 pt-1">
                     <div>
-                      <label className="block text-xs text-gray-500 mb-1">Dev Port</label>
+                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.devPort')}</label>
                       <input
                         type="number"
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
@@ -400,7 +519,7 @@ export default function ProjectManager() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-500 mb-1">Dev Command</label>
+                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.devCommand')}</label>
                       <input
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                         placeholder="npm run dev"
@@ -422,12 +541,12 @@ export default function ProjectManager() {
                     className="rounded"
                   />
                   <Server className="w-4 h-4 text-green-600" />
-                  <span className="text-sm font-semibold text-gray-700">Has Backend</span>
+                  <span className="text-sm font-semibold text-gray-700">{t('projectManager.hasBackend')}</span>
                 </label>
                 {form.has_backend && (
                   <div className="grid grid-cols-2 gap-3 pt-1">
                     <div>
-                      <label className="block text-xs text-gray-500 mb-1">Port</label>
+                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.port')}</label>
                       <input
                         type="number"
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
@@ -437,7 +556,7 @@ export default function ProjectManager() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-500 mb-1">Swagger Path</label>
+                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.swaggerPath')}</label>
                       <input
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                         placeholder="/docs"
@@ -454,19 +573,19 @@ export default function ProjectManager() {
                 onClick={() => setShowCreate(false)}
                 className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50"
               >
-                Cancel
+                {t('projectManager.cancel')}
               </button>
               <button
                 onClick={handleCreate}
                 disabled={creating || !form.name.trim() || !form.workspace}
                 className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium"
               >
-                {creating ? 'Creating…' : 'Create Project'}
+                {creating ? t('common.creating') : t('projectManager.createProject')}
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

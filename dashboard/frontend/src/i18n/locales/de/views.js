@@ -1,0 +1,16 @@
+export default {
+  views: 'Ansichten',
+  description: 'Von Agenten erzeugte Visualisierungen über alle Workspaces',
+  searchViews: 'Ansichten suchen…',
+  allKinds: 'Alle Arten',
+  loading: 'Wird geladen…',
+  openInStudio: 'Im Studio öffnen',
+  studio: 'Studio',
+  deleteView: 'Ansicht löschen',
+  confirmDelete: 'Diese Ansicht löschen?',
+  loadFailed: 'Ansichten konnten nicht geladen werden',
+  deleteFailed: 'Ansicht konnte nicht gelöscht werden',
+  noViewsMatch: 'Keine Ansichten entsprechen Ihrem Filter.',
+  noViewsYet: 'Noch keine Ansichten.',
+  emptyHint: 'Bitten Sie einen Agenten (Format „Rich views“, das Werkzeug create_view oder das Studio), etwas zu visualisieren.',
+};

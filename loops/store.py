@@ -1,0 +1,281 @@
+"""Persistence for loop definitions, loop runs and the per-iteration log.
+
+Mirrors :mod:`playground.store`: run-level knobs ride in a ``config`` JSON
+column rather than as columns, so tightening a ceiling never needs a migration.
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from common import db
+from loops.models import Iteration, Loop, LoopRun, utc_iso
+
+_CONFIG_FIELDS = (
+    "max_iterations", "min_iterations", "target_score", "patience",
+    "cost_ceiling", "max_wall_seconds", "evaluator_mode", "evaluator_agent_id",
+    "evaluator_provider", "evaluator_model",
+)
+
+
+def _notify(resource: str, **meta) -> None:
+    try:
+        from common.session_broker import notify_change
+        notify_change(resource, **meta)
+    except Exception:
+        pass
+
+
+# ── Loop definitions ─────────────────────────────────────────────────────────
+
+def save_loop(loop: Loop) -> Loop:
+    loop.updated_at = utc_iso()
+    config = {f: getattr(loop, f) for f in _CONFIG_FIELDS}
+    with db.transaction() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO loops
+               (loop_id, name, description, workspace, flow_id, exit_criterion,
+                config, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                loop.loop_id, loop.name, loop.description, loop.workspace,
+                loop.flow_id, loop.exit_criterion, db.dumps(config),
+                loop.created_at, loop.updated_at,
+            ),
+        )
+    _notify("loops", loop_id=loop.loop_id)
+    return loop
+
+
+def _row_to_loop(row) -> Loop:
+    config = db.loads(row["config"], {}) or {}
+    return Loop.from_dict({
+        "loop_id": row["loop_id"],
+        "name": row["name"] or "",
+        "description": row["description"] or "",
+        "workspace": row["workspace"],
+        "flow_id": row["flow_id"] or "",
+        "exit_criterion": row["exit_criterion"] or "",
+        "created_at": row["created_at"] or "",
+        "updated_at": row["updated_at"] or "",
+        **config,
+    })
+
+
+def get_loop(loop_id: str) -> Optional[Loop]:
+    row = db.get_conn().execute(
+        "SELECT * FROM loops WHERE loop_id = ?", (loop_id,)
+    ).fetchone()
+    return _row_to_loop(row) if row else None
+
+
+def list_loops(workspace: Optional[str] = None) -> List[Loop]:
+    conn = db.get_conn()
+    if workspace:
+        rows = conn.execute(
+            "SELECT * FROM loops WHERE workspace = ? OR workspace IS NULL "
+            "ORDER BY updated_at DESC",
+            (workspace,),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM loops ORDER BY updated_at DESC").fetchall()
+    return [_row_to_loop(r) for r in rows]
+
+
+def delete_loop(loop_id: str) -> bool:
+    """Delete a loop and every run/iteration it produced."""
+    with db.transaction() as conn:
+        run_ids = [
+            r["loop_run_id"] for r in conn.execute(
+                "SELECT loop_run_id FROM loop_runs WHERE loop_id = ?", (loop_id,)
+            ).fetchall()
+        ]
+        for rid in run_ids:
+            conn.execute("DELETE FROM loop_iterations WHERE loop_run_id = ?", (rid,))
+        conn.execute("DELETE FROM loop_runs WHERE loop_id = ?", (loop_id,))
+        cur = conn.execute("DELETE FROM loops WHERE loop_id = ?", (loop_id,))
+        removed = cur.rowcount > 0
+    if removed:
+        _notify("loops", loop_id=loop_id)
+    return removed
+
+
+# ── Runs ─────────────────────────────────────────────────────────────────────
+
+def save_run(run: LoopRun) -> LoopRun:
+    with db.transaction() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO loop_runs
+               (loop_run_id, loop_id, workspace, status, goal, task_id, session_id,
+                iterations_done, best_score, final_score, stop_reason, result,
+                error, total_cost, started_at, finished_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                run.loop_run_id, run.loop_id, run.workspace, run.status, run.goal,
+                run.task_id, run.session_id, run.iterations_done, run.best_score,
+                run.final_score, run.stop_reason, run.result, run.error,
+                run.total_cost, run.started_at, run.finished_at,
+            ),
+        )
+    _notify("loop_runs", loop_run_id=run.loop_run_id, loop_id=run.loop_id)
+    return run
+
+
+#: Columns :func:`update_progress` may touch. ``status`` is deliberately absent:
+#: a progress write happens while the run is in flight, and a stop request that
+#: landed in between must survive it.
+_PROGRESS_FIELDS = frozenset({
+    "iterations_done", "best_score", "final_score", "result", "total_cost", "error",
+})
+
+
+def update_progress(loop_run_id: str, **fields: Any) -> None:
+    """Write mid-run progress without touching ``status``.
+
+    Saving the whole record here would resurrect the in-memory ``running``
+    status over a ``stopping`` one written by :func:`request_stop`, and the loop
+    would run on after the user pressed stop.
+    """
+    updates = {k: v for k, v in fields.items() if k in _PROGRESS_FIELDS}
+    if not updates:
+        return
+    assignments = ", ".join(f"{k} = ?" for k in updates)
+    with db.transaction() as conn:
+        conn.execute(
+            f"UPDATE loop_runs SET {assignments} WHERE loop_run_id = ?",
+            (*updates.values(), loop_run_id),
+        )
+    _notify("loop_runs", loop_run_id=loop_run_id)
+
+
+def _row_to_run(row) -> LoopRun:
+    return LoopRun(
+        loop_run_id=row["loop_run_id"],
+        loop_id=row["loop_id"] or "",
+        workspace=row["workspace"],
+        status=row["status"] or "running",
+        goal=row["goal"] or "",
+        task_id=row["task_id"],
+        session_id=row["session_id"],
+        iterations_done=int(row["iterations_done"] or 0),
+        best_score=row["best_score"],
+        final_score=row["final_score"],
+        stop_reason=row["stop_reason"] or "",
+        result=row["result"] or "",
+        error=row["error"],
+        total_cost=float(row["total_cost"] or 0.0),
+        started_at=row["started_at"] or "",
+        finished_at=row["finished_at"],
+    )
+
+
+def get_run(loop_run_id: str) -> Optional[LoopRun]:
+    row = db.get_conn().execute(
+        "SELECT * FROM loop_runs WHERE loop_run_id = ?", (loop_run_id,)
+    ).fetchone()
+    return _row_to_run(row) if row else None
+
+
+def list_runs(loop_id: Optional[str] = None, limit: int = 50) -> List[LoopRun]:
+    conn = db.get_conn()
+    if loop_id:
+        rows = conn.execute(
+            "SELECT * FROM loop_runs WHERE loop_id = ? ORDER BY started_at DESC LIMIT ?",
+            (loop_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM loop_runs ORDER BY started_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [_row_to_run(r) for r in rows]
+
+
+def request_stop(loop_run_id: str) -> bool:
+    """Ask a running loop to stop. The runner checks between nodes and between
+    iterations, so the flow is never left half-applied."""
+    with db.transaction() as conn:
+        cur = conn.execute(
+            "UPDATE loop_runs SET status = 'stopping' "
+            "WHERE loop_run_id = ? AND status = 'running'",
+            (loop_run_id,),
+        )
+        stopped = cur.rowcount > 0
+    if stopped:
+        _notify("loop_runs", loop_run_id=loop_run_id)
+    return stopped
+
+
+def stop_requested(loop_run_id: str) -> bool:
+    row = db.get_conn().execute(
+        "SELECT status FROM loop_runs WHERE loop_run_id = ?", (loop_run_id,)
+    ).fetchone()
+    return bool(row and row["status"] in ("stopping", "stopped"))
+
+
+# ── Iterations ───────────────────────────────────────────────────────────────
+
+def save_iteration(it: Iteration) -> Iteration:
+    with db.transaction() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO loop_iterations
+               (loop_run_id, iteration, flow_run_id, status, score, verdict,
+                reason, feedback, output, node_outputs, state, evaluator_agent,
+                evaluator_raw, cost, duration_ms, started_at, finished_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                it.loop_run_id, it.iteration, it.flow_run_id, it.status, it.score,
+                it.verdict, it.reason, it.feedback, it.output,
+                db.dumps(it.node_outputs), db.dumps(it.state), it.evaluator_agent,
+                it.evaluator_raw, it.cost, it.duration_ms, it.started_at,
+                it.finished_at,
+            ),
+        )
+    return it
+
+
+def _row_to_iteration(row) -> Dict[str, Any]:
+    return {
+        "loop_run_id": row["loop_run_id"],
+        "iteration": int(row["iteration"]),
+        "flow_run_id": row["flow_run_id"] or "",
+        "status": row["status"] or "",
+        "score": row["score"],
+        "verdict": row["verdict"] or "",
+        "reason": row["reason"] or "",
+        "feedback": row["feedback"] or "",
+        "output": row["output"] or "",
+        "node_outputs": db.loads(row["node_outputs"], {}) or {},
+        "state": db.loads(row["state"], {}) or {},
+        "evaluator_agent": row["evaluator_agent"] or "",
+        "evaluator_raw": row["evaluator_raw"] or "",
+        "cost": float(row["cost"] or 0.0),
+        "duration_ms": int(row["duration_ms"] or 0),
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+    }
+
+
+def list_iterations(loop_run_id: str, since: int = 0) -> List[Dict[str, Any]]:
+    """Iterations of a run in order. ``since`` returns only later ones so a live
+    page can poll cheaply."""
+    rows = db.get_conn().execute(
+        "SELECT * FROM loop_iterations WHERE loop_run_id = ? AND iteration > ? "
+        "ORDER BY iteration",
+        (loop_run_id, since),
+    ).fetchall()
+    return [_row_to_iteration(r) for r in rows]
+
+
+def get_iteration(loop_run_id: str, iteration: int) -> Optional[Dict[str, Any]]:
+    row = db.get_conn().execute(
+        "SELECT * FROM loop_iterations WHERE loop_run_id = ? AND iteration = ?",
+        (loop_run_id, iteration),
+    ).fetchone()
+    return _row_to_iteration(row) if row else None
+
+
+__all__ = [
+    "save_loop", "get_loop", "list_loops", "delete_loop",
+    "save_run", "get_run", "list_runs", "update_progress",
+    "request_stop", "stop_requested",
+    "save_iteration", "list_iterations", "get_iteration",
+]

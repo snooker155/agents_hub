@@ -78,7 +78,10 @@ You should see one completed or resolved task with one agent run and one result.
 ## CLI Variant
 
 ```bash
-python cli.py workspace list
-python cli.py task list
-python cli.py agent list
+ah workspace list
+ah task list
+ah agent list
 ```
+
+(`python -m cli ...` does the same from a checkout with nothing installed. See
+[docs/cli.md](../../docs/cli.md).)

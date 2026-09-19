@@ -1,47 +1,178 @@
 import axios from 'axios';
 
+// Empty means same-origin: `/api/...` is served by whatever host the app was
+// loaded from. In dev that is the Vite server, which proxies /api to the
+// backend (see vite.config.js), so the port the backend is published on is not
+// baked in here. Set VITE_API_ORIGIN to point a build at a different host.
+export const API_ORIGIN = import.meta.env.VITE_API_ORIGIN ?? '';
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: `${API_ORIGIN}/api`,
 });
 
-export const getHealth = () => axios.get('http://localhost:8000/');
+// System health snapshot: DB reachability + store counts, background-service
+// liveness, on-disk state sizes, and agent build-cache hit/miss stats.
+//
+// Also serves as the "is the backend up?" probe. It deliberately goes through
+// the shared `/api` client rather than the bare API root (`GET /`): that root
+// banner was the only URL in the app outside `/api`, so it could fail on its
+// own — behind a proxy that forwards just `/api`, or against a stale CORS
+// config — and produce a browser CORS error nothing else in the app would hit.
+export const getSystemHealth = () => api.get('/health');
+
+/**
+ * Drain one `text/event-stream` response, calling `onEvent` per `data:` frame.
+ *
+ * Every streaming POST in this file speaks the same wire format — one JSON
+ * object per `data: ` line, frames separated by a blank line — so the reading
+ * of it lives here once. Frames that are not JSON, or carry no `type`, are
+ * dropped: a stream is a best-effort narration and one malformed chunk must
+ * not end the turn.
+ */
+const consumeSSE = async (response, onEvent) => {
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() || '';
+    for (const chunk of chunks) {
+      const line = chunk.split('\n').map((l) => l.trim()).find((l) => l.startsWith('data: '));
+      if (!line) continue;
+      let event = null;
+      try { event = JSON.parse(line.slice(6)); } catch { continue; }
+      if (event && event.type) onEvent(event);
+    }
+  }
+};
+
+/**
+ * Open the chat SSE stream (POST /api/chat/stream) and invoke `onEvent` for
+ * every parsed event. Shared transport for every chat surface (the full Chat
+ * page, the Session details composer, and the per-node Flow chat) so each only
+ * supplies its request body + an event handler and keeps its own UI state.
+ *
+ * @param {object}   opts
+ * @param {object}   opts.body      JSON body for the chat request.
+ * @param {function} opts.onEvent   called with each parsed event object.
+ * @param {AbortSignal} [opts.signal] optional abort signal.
+ * @throws {Error} if the response is not OK (message = server detail text).
+ */
+export const streamChat = async ({ body, onEvent, signal }) => {
+  const response = await fetch(`${API_ORIGIN}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.text();
+    throw new Error(detail || 'Failed to open chat stream');
+  }
+
+  await consumeSSE(response, onEvent);
+};
+
+/**
+ * Start a chat run whose events are delivered over the shared multiplexed SSE
+ * (/api/stream) instead of a dedicated streaming response. Pass the caller's SSE
+ * `client_id` in the body; the server subscribes that client to a per-conversation
+ * channel and returns `{ channel, conversation_id }`. The caller listens on that
+ * channel (see StreamContext) for the same event shapes `streamChat` yields.
+ * Avoids holding a second long-lived connection per tab.
+ */
+export const startChatOverSSE = (body) => api.post('/chat/stream-sse', body);
+
+// Context references — what the chat composer can attach besides a file. The
+// kind catalog and the per-kind candidate lists both come from the server so the
+// picker always offers exactly what the prompt builder can render.
+export const getContextKinds = () => api.get('/context/kinds');
+export const getContextEntities = (kind, params) => api.get(`/context/${kind}`, { params });
+export const getContextEntityPreview = (kind, id) => api.get(`/context/${kind}/${encodeURIComponent(id)}/preview`);
 
 export const getTasks = (workspace) => api.get('/tasks', { params: { workspace } });
 export const createTask = (data) => api.post('/tasks', data);
 export const getTask = (id) => api.get(`/tasks/${id}`);
 export const deleteTask = (id, params) => api.delete(`/tasks/${id}`, { params });
 export const stopTask = (id) => api.post(`/tasks/${id}/stop`);
+export const pauseTaskContainer = (id) => api.post(`/tasks/${id}/pause`);
+export const resumeTaskContainer = (id) => api.post(`/tasks/${id}/resume`);
 export const setTaskWorkspace = (id, payload) => api.post(`/tasks/${id}/workspace`, payload);
 export const getWorkspaceFiles = (id) => api.get(`/tasks/${id}/workspace-files`);
+export const getTaskFileContent = (id, path) =>
+  api.get(`/tasks/${id}/file-content`, { params: { path } });
+export const getTaskFileRawUrl = (id, path) =>
+  `${api.defaults.baseURL}/tasks/${id}/file-raw?path=${encodeURIComponent(path)}`;
 
 export const getAgents = (workspace) => api.get('/agents', { params: workspace ? { workspace } : {} });
 export const getAgent = (id, workspace) => api.get(`/agents/${id}`, { params: workspace ? { workspace } : {} });
-export const getAgentHistory = (id) => api.get(`/agents/${id}/history`);
+export const getAgentHistory = (id, workspace) => api.get(`/agents/${id}/history`, { params: workspace ? { workspace } : {} });
 export const getAgentLogs = (id, params) => api.get(`/agents/${id}/logs`, { params });
+// Service health, and the Service Agent's chat about it.
+export const getHealth = () => api.get('/health');
+export const getServiceChat = () => api.get('/health/chat');
+export const clearServiceChat = () => api.delete('/health/chat');
+export const stopServiceChat = () => api.post('/health/chat/stop');
+export const serviceChatUrl = () => '/health/chat';
+
 export const getAgentDefinition = (id) => api.get(`/agents/${id}/definition`);
 export const updateAgentDefinition = (id, data) => api.put(`/agents/${id}/definition`, data);
+// The agent's own definition chat — same shape as the entity build chats.
+export const getAgentDefinitionChat = (id) => api.get(`/agents/${id}/definition/chat`);
+export const clearAgentDefinitionChat = (id) => api.delete(`/agents/${id}/definition/chat`);
+export const stopAgentDefinitionChat = (id) => api.post(`/agents/${id}/definition/chat/stop`);
+export const agentDefinitionChatUrl = (id, workspace) =>
+  `/agents/${id}/definition/chat` + (workspace ? `?workspace=${encodeURIComponent(workspace)}` : '');
+export const updateAgentDescription = (id, description) => api.put(`/agents/${id}/description`, { description });
 export const disconnectAgent = (id) => api.delete(`/agents/${id}`);
 export const updateAgentMemory = (id, data) => api.post(`/agents/${id}/memory`, data);
-export const eraseAgentMemory = (id) => api.delete(`/agents/${id}/memory`);
+export const eraseAgentMemory = (id, workspace) => api.delete(`/agents/${id}/memory`, { params: workspace ? { workspace } : {} });
 export const updateAgentSkillsConfig = (id, data) => api.post(`/agents/${id}/skills-config`, data);
 export const updateAgentSharing = (id, shared) => api.post(`/agents/${id}/sharing`, { shared });
 export const getAgentSkills = (id, workspace) => api.get(`/agents/${id}/skills`, { params: { workspace } });
 export const createAgentSkill = (id, data) => api.post(`/agents/${id}/skills`, data);
 export const deleteAgentSkill = (id, skillId, workspace) => api.delete(`/agents/${id}/skills/${skillId}`, { params: { workspace } });
 export const updateAgentTools = (id, data) => api.post(`/agents/${id}/tools`, data);
+export const getAgentDelegates = (id) => api.get(`/agents/${id}/delegates`);
+export const updateAgentDelegates = (id, delegates) => api.post(`/agents/${id}/delegates`, { delegates });
+export const getAgentEpisodicConfig = (id) => api.get(`/agents/${id}/episodic-config`);
+export const updateAgentEpisodicConfig = (id, episodic_write_enabled) => api.post(`/agents/${id}/episodic-config`, { episodic_write_enabled });
 export const getAgentReasoning = (id) => api.get(`/agents/${id}/reasoning`);
 export const updateAgentReasoning = (id, data) => api.post(`/agents/${id}/reasoning`, data);
+export const updateAgentResponseFormat = (id, response_format) => api.post(`/agents/${id}/response-format`, { response_format });
+export const updateAgentClarifyGate = (id, clarify_gate) => api.post(`/agents/${id}/clarify-gate`, { clarify_gate });
+export const getAgentSelfDelegation = (id) => api.get(`/agents/${id}/self-delegation`);
+export const updateAgentSelfDelegation = (id, allow_self_delegation) => api.post(`/agents/${id}/self-delegation`, { allow_self_delegation });
 export const getAgentModel = (id) => api.get(`/agents/${id}/model`);
 export const updateAgentModel = (id, data) => api.post(`/agents/${id}/model`, data);
 export const testLocalModel = (provider, base_url) => api.post('/settings/test-local-model', { provider, base_url });
 export const getAgentHealth = (id) => api.get(`/agents/${id}/health`);
 export const createCustomAgent = (data) => api.post('/agents/create', data);
+export const cloneAgentToWorkspace = (id, data) =>
+  api.post(`/agents/${encodeURIComponent(id)}/clone-to-workspace`, data);
 export const getAgentTools = () => api.get('/agents/tools');
+
+// ── Importing an agent from its own git repository ──────────────────────────
+// inspect() clones and analyses without registering; registerImportedAgent()
+// promotes that same clone. The token returned by the first call is what ties
+// the two together, so confirming an import never clones twice.
+export const getAgentImportRequirements = () => api.get('/agent-import/requirements');
+export const inspectAgentRepo = (data) => api.post('/agent-import/inspect', data);
+export const registerImportedAgent = (data) => api.post('/agent-import/register', data);
+export const discardAgentImport = (token) => api.post('/agent-import/discard', { token });
+export const recheckImportedAgent = (agentId, data) =>
+  api.post(`/agent-import/${encodeURIComponent(agentId)}/recheck`, data || {});
+export const getAgentImportDetails = (agentId) =>
+  api.get(`/agent-import/${encodeURIComponent(agentId)}`);
 export const updateTask = (taskId, data) => api.patch(`/tasks/${taskId}`, data);
 export const assignAgent = (taskId, data) => api.post(`/tasks/${taskId}/assign`, data);
 export const approveAssignment = (taskId) => api.post(`/tasks/${taskId}/approve-assignment`);
 export const rejectAssignment = (taskId) => api.post(`/tasks/${taskId}/reject-assignment`);
 export const stopAgent = (taskId) => api.post(`/tasks/${taskId}/stop-agent`);
+export const answerTask = (taskId, answer) => api.post(`/tasks/${taskId}/answer`, { answer });
 export const getAgentStatus = (taskId) => api.get(`/tasks/${taskId}/agent-status`);
 export const getAgentWorkspaceCapacities = (agentId) => api.get(`/agents/${encodeURIComponent(agentId)}/workspace-capacities`);
 export const setDefaultChatAgent = (agentId, workspace) =>
@@ -54,6 +185,41 @@ export const getTaskResult = (taskId) => api.get(`/tasks/${taskId}/result`);
 export const setTaskResult = (taskId, result) => api.put(`/tasks/${taskId}/result`, { result });
 export const getLogs = (runId) => api.get(`/logs/${runId}`);
 export const runDecomposer = (taskId, payload) => api.post(`/tasks/${taskId}/decompose`, payload || {});
+
+// Marketplace — catalog of agents published across workspaces
+export const getMarketplaceAgents = (workspace) =>
+  api.get('/marketplace/agents', { params: workspace ? { workspace } : {} });
+export const getMarketplaceAgent = (id, workspace) =>
+  api.get(`/marketplace/agents/${encodeURIComponent(id)}`, { params: workspace ? { workspace } : {} });
+export const getMarketplaceFlows = (workspace) =>
+  api.get('/marketplace/flows', { params: workspace ? { workspace } : {} });
+export const getMarketplaceSkills = (workspace) =>
+  api.get('/marketplace/skills', { params: workspace ? { workspace } : {} });
+export const updateFlowSharing = (id, shared) => api.post(`/flows/${encodeURIComponent(id)}/sharing`, { shared });
+export const addFlowToWorkspace = (name, flowId) =>
+  api.post(`/workspaces/${encodeURIComponent(name)}/flows`, { flow_id: flowId });
+export const removeFlowFromWorkspace = (name, flowId) =>
+  api.delete(`/workspaces/${encodeURIComponent(name)}/flows/${encodeURIComponent(flowId)}`);
+
+// Skills catalog — reusable procedures owned by a workspace, publishable to the
+// global catalog, installed onto agents as copies.
+export const getSkills = (workspace, params = {}) =>
+  api.get('/skills', { params: { workspace, ...params } });
+export const getSkillTargets = (workspace) => api.get('/skills/agents', { params: { workspace } });
+export const createSkill = (data) => api.post('/skills', data);
+export const getSkillDetails = (id) => api.get(`/skills/${encodeURIComponent(id)}`);
+export const updateSkill = (id, data) => api.patch(`/skills/${encodeURIComponent(id)}`, data);
+export const updateSkillSharing = (id, shared) =>
+  api.post(`/skills/${encodeURIComponent(id)}/sharing`, { shared });
+export const installSkill = (id, data) => api.post(`/skills/${encodeURIComponent(id)}/install`, data);
+export const deleteSkill = (id) => api.delete(`/skills/${encodeURIComponent(id)}`);
+
+// Web access log — recorded web_search / fetch_url calls, their responses and
+// the security flags raised against them.
+export const getWebLogs = (params) => api.get('/web-logs', { params });
+export const getWebLogStats = () => api.get('/web-logs/stats');
+export const getWebLogEntry = (id) => api.get(`/web-logs/${encodeURIComponent(id)}`);
+export const clearWebLogs = () => api.delete('/web-logs');
 
 // Orchestrator
 export const getOrchestratorSettings = (workspace) =>
@@ -97,6 +263,7 @@ export const getWorkspaceSettingsOverrides = (name) => api.get(`/workspaces/${en
 export const updateWorkspaceSettingsOverrides = (name, overrides) => api.put(`/workspaces/${encodeURIComponent(name)}/settings-overrides`, { overrides });
 export const getWorkspaceModel = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/model`);
 export const updateWorkspaceModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/model`, data);
+export const updateWorkspaceDefaultModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/default-model`, data);
 export const setWorkspaceAgentMode = (name, mode) => api.put(`/workspaces/${encodeURIComponent(name)}/agent-mode`, { agent_mode: mode });
 export const getWorkspaceInstructions = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/instructions`);
 export const updateWorkspaceInstructions = (name, instructions) => api.put(`/workspaces/${encodeURIComponent(name)}/instructions`, { instructions });
@@ -107,6 +274,26 @@ export const createSharedMemory = (data) => api.post('/shared-memory', data);
 export const getSharedMemory = (id) => api.get(`/shared-memory/${id}`);
 export const deleteSharedMemory = (id) => api.delete(`/shared-memory/${id}`);
 export const getRagConfig = () => api.get('/shared-memory/rag-config');
+// The Memory Agent's chat — workspace-scoped, because the agent's pool binding
+// is resolved per workspace rather than per pool row.
+// `memory_id` is the pool open on the page: it keys the transcript and binds the
+// agent's memory tools to that pool for the turn.
+const memoryChatParams = (workspace, memoryId) => {
+  const params = {};
+  if (workspace) params.workspace = workspace;
+  if (memoryId) params.memory_id = memoryId;
+  return params;
+};
+export const getMemoryChat = (workspace, memoryId) =>
+  api.get('/shared-memory/chat', { params: memoryChatParams(workspace, memoryId) });
+export const clearMemoryChat = (workspace, memoryId) =>
+  api.delete('/shared-memory/chat', { params: memoryChatParams(workspace, memoryId) });
+export const stopMemoryChat = (workspace, memoryId) =>
+  api.post('/shared-memory/chat/stop', null, { params: memoryChatParams(workspace, memoryId) });
+export const memoryChatUrl = (workspace, memoryId) => {
+  const qs = new URLSearchParams(memoryChatParams(workspace, memoryId)).toString();
+  return '/shared-memory/chat' + (qs ? `?${qs}` : '');
+};
 export const addMemoryNote = (id, data) => api.post(`/shared-memory/${id}/notes`, data);
 export const updateMemoryNote = (id, noteId, data) => api.put(`/shared-memory/${id}/notes/${noteId}`, data);
 export const deleteMemoryNote = (id, noteId) => api.delete(`/shared-memory/${id}/notes/${noteId}`);
@@ -133,15 +320,39 @@ export const linkMemoryGraph = (id, data) => api.post(`/shared-memory/${id}/grap
 export const deleteMemoryGraphNode = (id, nodeId) => api.delete(`/shared-memory/${id}/graph/nodes/${nodeId}`);
 export const deleteMemoryGraphEdge = (id, edgeId) => api.delete(`/shared-memory/${id}/graph/edges/${edgeId}`);
 export const extractMemoryGraph = (id, text) => api.post(`/shared-memory/${id}/graph/extract`, { text });
+export const mergeMemoryGraphSlots = (id) => api.post(`/shared-memory/${id}/graph/merge-slots`);
+export const mergeMemoryGraphNodes = (id, keepId, dropId) => api.post(`/shared-memory/${id}/graph/merge-nodes`, { keep_id: keepId, drop_id: dropId });
+export const pruneMemoryGraphMirrors = (id, { dryRun = false } = {}) => api.post(`/shared-memory/${id}/graph/prune`, null, { params: { dry_run: dryRun } });
 
 // Sessions API (process-level contexts)
 export const getSessions = (params) => api.get('/sessions', { params });
 export const createSession = (data) => api.post('/sessions', data);
 export const getSession = (sessionId) => api.get(`/sessions/${sessionId}`);
 export const getSessionMessages = (sessionId) => api.get(`/sessions/${sessionId}/messages`);
-export const createSessionMessage = (sessionId, data) => api.post(`/sessions/${sessionId}/messages`, data);
 export const stopSession = (sessionId) => api.post(`/sessions/${sessionId}/stop`);
 export const deleteSession = (sessionId, params) => api.delete(`/sessions/${sessionId}`, { params });
+
+// Instances API — the live copies of agents. A run is what a copy did; an
+// instance is the copy itself, and unlike a run it can still be written to
+// after it has finished.
+export const getInstances = (params) => api.get('/instances', { params });
+export const getInstancesSummary = (params) => api.get('/instances/summary', { params });
+export const getInstance = (instanceId) => api.get(`/instances/${instanceId}`);
+export const getInstanceRuns = (instanceId, params) =>
+  api.get(`/instances/${instanceId}/runs`, { params });
+export const getInstanceTimeline = (instanceId, params) =>
+  api.get(`/instances/${instanceId}/timeline`, { params });
+export const getInstanceContext = (instanceId, params) =>
+  api.get(`/instances/${instanceId}/context`, { params });
+export const getInstanceInbox = (instanceId, params) =>
+  api.get(`/instances/${instanceId}/inbox`, { params });
+export const getInstanceLogs = (instanceId) => api.get(`/instances/${instanceId}/logs`);
+export const messageInstance = (instanceId, data) =>
+  api.post(`/instances/${instanceId}/message`, data);
+export const stopInstance = (instanceId) => api.post(`/instances/${instanceId}/stop`);
+export const renameInstance = (instanceId, label) =>
+  api.patch(`/instances/${instanceId}`, { label });
+export const deleteInstance = (instanceId) => api.delete(`/instances/${instanceId}`);
 
 // Messages API (individual agent run logs)
 export const getMessages = (params) => api.get('/messages', { params });
@@ -151,6 +362,9 @@ export const getMessageLogs = (runId) => api.get(`/messages/${runId}/logs`);
 export const getMessageInsights = (runId) => api.get(`/messages/${runId}/insights`);
 export const stopMessage = (runId) => api.post(`/messages/${runId}/stop`);
 export const deleteMessage = (runId, params) => api.delete(`/messages/${runId}`, { params });
+// Regression replay: re-run a recorded run (optionally overriding provider/model)
+// and diff outputs. Long-running (a real LLM call).
+export const replayRun = (runId, data) => api.post(`/runs/${runId}/replay`, data || {}, { timeout: 300000 });
 
 // Nodes API
 export const getNodes = (workspace) => api.get('/nodes', { params: workspace ? { workspace } : {} });
@@ -173,20 +387,39 @@ export const provideInput = (data) => api.post('/factory/user-input', data);
 export const runFactoryAgent = (data) => api.post('/factory/run-agent', data);
 export const getFactoryLogs = (workspace) => api.get(`/factory/logs?workspace=${encodeURIComponent(workspace)}`);
 
+// Models API — curated catalog + per-model usage stats
+export const getModelsCatalog = () => api.get('/models');
+export const saveModelsCatalog = (providers) => api.put('/models', { providers });
+export const discoverProviderModels = (provider) => api.post(`/models/discover/${encodeURIComponent(provider)}`);
+export const getModelsUsage = (params) => api.get('/models/usage', { params });
+
+// Costs API — spend breakdowns + per-workspace budget caps
+export const getCosts = (params) => api.get('/costs', { params });
+export const getBudget = (workspace) => api.get('/costs/budget', { params: { workspace } });
+export const setBudget = (workspace, data) => api.post('/costs/budget', data, { params: { workspace } });
+
 // Global Settings API
 export const getSettings = () => api.get('/settings');
 export const updateSettings = (data) => api.put('/settings', data);
 export const testProvider = (data) => api.post('/settings/test-provider', data);
+export const getCustomBackends = () => api.get('/settings/custom-backends');
+export const saveCustomBackend = (data) => api.post('/settings/custom-backends', data);
+export const deleteCustomBackend = (id) => api.delete(`/settings/custom-backends/${encodeURIComponent(id)}`);
 export const getActiveWorkspace = () => api.get('/settings/workspace');
 export const setActiveWorkspace = (workspace) => api.put('/settings/workspace', { workspace });
 
 // Flows API
 export const listFlows = (workspace) => api.get('/flows', { params: workspace ? { workspace } : {} });
+// Fire a flow from an external trigger (seed merged into initial state; concurrency-capped).
+export const triggerFlow = (flowId, data) => api.post(`/flows/${flowId}/trigger`, data || {});
 export const generateFlow = (data) => api.post('/flows/generate', data);
 export const createFlow = (data) => api.post('/flows', data);
 export const getFlow = (flowId) => api.get(`/flows/${encodeURIComponent(flowId)}`);
 export const updateFlow = (flowId, data) => api.put(`/flows/${encodeURIComponent(flowId)}`, data);
 export const deleteFlow = (flowId) => api.delete(`/flows/${encodeURIComponent(flowId)}`);
+export const importFlow = (data) => api.post('/flows/import', data);
+export const exportFlow = (flowId) =>
+  api.get(`/flows/${encodeURIComponent(flowId)}/export`, { responseType: 'blob' });
 export const runFlow = (flowId, data) => api.post(`/flows/${encodeURIComponent(flowId)}/run`, data);
 export const stopFlow = (flowId) => api.post(`/flows/${encodeURIComponent(flowId)}/stop`);
 export const runFlowNode = (flowId, data) => api.post(`/flows/${encodeURIComponent(flowId)}/run-node`, data);
@@ -195,6 +428,14 @@ export const getFlowLogs = (flowId, workspace) =>
 export const getFlowRuns = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/runs`, { params: { workspace } });
 
+// Flow entity registry — federated catalog of flow-usable nodes (agents,
+// processors, conditions, transforms, ...). Backs the Registry menu.
+export const listFlowEntities = (category, workspace) =>
+  api.get('/flow-entities', { params: { ...(category ? { category } : {}), ...(workspace ? { workspace } : {}) } });
+export const getFlowEntity = (entityId) => api.get(`/flow-entities/${encodeURIComponent(entityId)}`);
+export const createFlowEntity = (data) => api.post('/flow-entities', data);
+export const deleteFlowEntity = (entityId) => api.delete(`/flow-entities/${encodeURIComponent(entityId)}`);
+
 // Projects API
 export const getProjects = (workspace) => api.get('/projects', { params: workspace ? { workspace } : {} });
 export const createProject = (data) => api.post('/projects', data);
@@ -202,14 +443,167 @@ export const getProject = (id) => api.get(`/projects/${id}`);
 export const updateProject = (id, data) => api.put(`/projects/${id}`, data);
 export const deleteProject = (id) => api.delete(`/projects/${id}`);
 export const getProjectTasks = (id) => api.get(`/projects/${id}/tasks`);
+// The project registry's own chat — workspace-scoped, unlike the per-project
+// graph and task chats.
+export const getProjectRegistryChat = (workspace) =>
+  api.get('/projects/registry/chat', { params: workspace ? { workspace } : {} });
+export const clearProjectRegistryChat = (workspace) =>
+  api.delete('/projects/registry/chat', { params: workspace ? { workspace } : {} });
+export const stopProjectRegistryChat = (workspace) =>
+  api.post('/projects/registry/chat/stop', null, { params: workspace ? { workspace } : {} });
+export const projectRegistryChatUrl = (workspace) =>
+  '/projects/registry/chat' + (workspace ? `?workspace=${encodeURIComponent(workspace)}` : '');
 export const cloneProjectRepo = (id) => api.post(`/projects/${id}/clone-repo`);
 export const getProjectGitStatus = (id) => api.get(`/projects/${id}/git-status`);
 export const pullProjectRepo = (id) => api.post(`/projects/${id}/git-pull`);
 export const getProjectSwaggerSpec = (id, baseUrl) => api.get(`/projects/${id}/swagger-spec`, { params: baseUrl ? { base_url: baseUrl } : {} });
 export const getProjectSpecFromCode = (id) => api.get(`/projects/${id}/spec-from-code`);
 export const proxyProjectApiRequest = (id, data) => api.post(`/projects/${id}/api-request`, data);
+// Rich views (charts, tables, diagrams, …) produced by agents.
+export const listViews = (params = {}) => api.get('/views', { params });
+export const getView = (viewId) => api.get(`/views/${viewId}`);
+export const setViewState = (viewId, state) => api.patch(`/views/${viewId}/state`, { state });
+export const deleteView = (viewId) => api.delete(`/views/${viewId}`);
+export const viewAssetUrl = (viewId, path) =>
+  `${api.defaults.baseURL}/views/${viewId}/assets/${String(path).split('/').map(encodeURIComponent).join('/')}`;
+// Visualization Studio: live views built by the visualizer agent via ops.
+export const createStudioView = (kind, title, workspace) => api.post('/views/studio', { kind, title, workspace });
+export const getViewOps = (viewId, afterSeq = 0) => api.get(`/views/${viewId}/ops`, { params: { after_seq: afterSeq } });
+export const applyViewOps = (viewId, ops) => api.post(`/views/${viewId}/ops`, { ops });
+export const revertView = (viewId, seq) => api.post(`/views/${viewId}/revert`, { seq });
+export const revertViewToCheckpoint = (viewId, name) => api.post(`/views/${viewId}/revert`, { checkpoint: name });
+export const getViewCheckpoints = (viewId) => api.get(`/views/${viewId}/checkpoints`);
+export const saveViewCheckpoint = (viewId, name) => api.post(`/views/${viewId}/checkpoints`, { name });
+export const viewProxyUrl = (viewId) => `${api.defaults.baseURL}/views/${viewId}/proxy/`;
+export const saveViewSnapshot = (viewId, dataUrl) => api.post(`/views/${viewId}/snapshot`, { data_url: dataUrl });
+export const getViewClips = (viewId) => api.get(`/views/${viewId}/clips`);
+export const getViewClip = (viewId, name) => api.get(`/views/${viewId}/clips/${encodeURIComponent(name)}`);
+// The Studio build chat: the Visualizer pinned to one view, stored server-side
+// like every other entity chat so the floating page-chat panel can host it.
+// The streaming turn goes through `streamEntityChat`.
+export const getViewChat = (viewId) => api.get(`/views/${viewId}/chat`);
+export const clearViewChat = (viewId) => api.delete(`/views/${viewId}/chat`);
+export const stopViewChat = (viewId) => api.post(`/views/${viewId}/chat/stop`);
+export const viewChatUrl = (viewId) => `/views/${viewId}/chat`;
+
+export const getProjectGraph = (id, view = 'architecture') => api.get(`/projects/${id}/graph`, { params: { view } });
+export const saveProjectGraph = (id, view, data) => api.put(`/projects/${id}/graph`, data, { params: { view } });
+export const resetProjectGraph = (id, view) => api.delete(`/projects/${id}/graph`, { params: { view } });
+export const generateProjectGraph = (id, view) => api.post(`/projects/${id}/graph/generate`, null, { params: { view } });
+export const projectGraphStreamUrl = (id, view) => `${api.defaults.baseURL}/projects/${id}/graph/generate/stream?view=${encodeURIComponent(view)}`;
+export const relayoutProjectGraph = (id, view, data) => api.post(`/projects/${id}/graph/relayout`, data, { params: { view } });
+export const getProjectGraphMessages = (id, view) => api.get(`/projects/${id}/graph/messages`, { params: { view } });
+export const saveProjectGraphTrace = (id, view, trace) => api.put(`/projects/${id}/graph/trace`, { trace }, { params: { view } });
+export const clearProjectGraphMessages = (id, view) => api.delete(`/projects/${id}/graph/messages`, { params: { view } });
+export const stopProjectGraphChat = (id) => api.post(`/projects/${id}/graph/chat/stop`);
+
+// Interactive graph build: POST a message, read the SSE stream of agent events
+// (tool calls, live graph_node/graph_edge mutations, assistant reply).
+export const streamProjectGraphChat = async ({ projectId, view, message, onEvent, signal }) => {
+  const response = await fetch(`${API_ORIGIN}/api/projects/${projectId}/graph/chat?view=${encodeURIComponent(view)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({ message }),
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.text();
+    throw new Error(detail || 'Failed to open graph chat stream');
+  }
+  await consumeSSE(response, onEvent);
+};
+/**
+ * Drive one turn of an entity build chat (a scenario's, a loop's) over SSE.
+ *
+ * The same wire format the project graph chat uses — `data: {json}` frames —
+ * but the path is a parameter, because what differs between these chats is the
+ * entity behind them, not the transport. POST returns the stream directly, so
+ * unlike the multiplexed chat page this holds one connection for the turn.
+ *
+ * @param {object} opts
+ * @param {string} opts.path      API path under /api (e.g. from `scenarioChatUrl`).
+ * @param {string} opts.message   the user's turn.
+ * @param {object} [opts.body]    extra fields for the turn's payload. The page
+ *   chat sends what the user is looking at this way (scope, route, records);
+ *   an entity chat, whose subject is fixed by its path, sends nothing.
+ * @param {function} opts.onEvent called with each parsed event object.
+ * @param {AbortSignal} [opts.signal]
+ */
+export const streamEntityChat = async ({ path, message, body = null, onEvent, signal }) => {
+  const response = await fetch(`${API_ORIGIN}/api${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({ ...(body || {}), message }),
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.text();
+    throw new Error(detail || 'Failed to open the chat stream');
+  }
+  await consumeSSE(response, onEvent);
+};
+
+// Session history, shared by every entity build chat (routes/entity_chats.py).
+// The ref comes from `chat_ref` on the chat's own GET response, so a page never
+// has to know its chat's storage key. Activating a session swaps it in as the
+// live thread, which is what lets a past conversation be carried on.
+export const getEntityChatSessions = (ref) =>
+  api.get('/entity-chats/sessions', { params: { kind: ref.kind, entity_id: ref.id } });
+export const activateEntityChatSession = (ref, sessionId) =>
+  api.post('/entity-chats/sessions/activate', {
+    kind: ref.kind, entity_id: ref.id, session_id: sessionId,
+  });
+export const deleteEntityChatSession = (ref, sessionId) =>
+  api.delete('/entity-chats/sessions', {
+    params: { kind: ref.kind, entity_id: ref.id, session_id: sessionId },
+  });
+
+// The page chat — the floating panel that follows the user from page to page.
+// One agent, one thread per `scope`, and the records the page is showing sent
+// as pointers with the turn (see routes/page_chat.py). The streaming turn goes
+// through `streamEntityChat` with those pointers as its extra body.
+export const getPageChat = (scope) => api.get('/page-chat', { params: { scope } });
+export const clearPageChat = (scope) => api.delete('/page-chat', { params: { scope } });
+export const stopPageChat = (scope) => api.post('/page-chat/stop', null, { params: { scope } });
+export const pageChatUrl = () => '/page-chat';
+
+// Generate tasks from the project's structure views: POST and read the SSE
+// stream of Planner-agent events (tool calls, thinking, final summary message).
+// The planner always reads both graphs; its chat lives on the Tasks tab.
+export const getProjectTasksChat = (id) => api.get(`/projects/${id}/tasks/chat`);
+export const clearProjectTasksChat = (id) => api.delete(`/projects/${id}/tasks/chat`);
+export const streamProjectTasksGenerate = async ({ projectId, message, onEvent, signal }) => {
+  const response = await fetch(`${API_ORIGIN}/api/projects/${projectId}/tasks/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: message || null }),
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.text();
+    throw new Error(detail || 'Failed to start task generation');
+  }
+  await consumeSSE(response, onEvent);
+};
 export const getProjectFiles = (id) => api.get(`/projects/${id}/files`);
 export const getProjectFileContent = (id, path) => api.get(`/projects/${id}/file-content`, { params: { path } });
+export const importProjectFromRepo = (data) => api.post('/projects/import-from-repo', data);
+export const connectProjectRepo = (id, data) => api.post(`/projects/${id}/connect-repo`, data);
+export const syncProjectIssues = (id) => api.post(`/projects/${id}/sync-issues`);
+
+// Git connectors API (GitHub / GitLab)
+export const getGitConfig = () => api.get('/git/config');
+export const updateGitConfig = (data) => api.put('/git/config', data);
+export const testGitConnection = (provider) => api.post('/git/test', { provider });
+export const listGitRepos = (provider, search) => api.get('/git/repos', { params: { provider, ...(search ? { search } : {}) } });
+
+// Blender geometry connector
+export const getBlenderConfig = () => api.get('/blender/config');
+export const updateBlenderConfig = (data) => api.put('/blender/config', data);
+export const testBlenderBinary = (binary_path) => api.post('/blender/test', { binary_path });
+export const getBlenderDaemons = () => api.get('/blender/daemons');
+export const stopBlenderDaemon = (key) => api.delete(`/blender/daemons/${encodeURIComponent(key)}`);
+export const stopAllBlenderDaemons = () => api.delete('/blender/daemons');
 
 // Containers API
 export const getContainerImages = () => api.get('/containers/images');
@@ -223,6 +617,30 @@ export const removeContainer = (name) => api.delete(`/containers/${encodeURIComp
 export const ensureDockerNetwork = () => api.post('/containers/network/ensure');
 export const getAgentsBuildStatus = () => api.get('/containers/agents-status');
 
+// Plan API — scheduled jobs (future notifications / agent tasks)
+export const getPlanJobs = (workspace, status) =>
+  api.get('/plan/jobs', { params: { ...(workspace ? { workspace } : {}), ...(status ? { status } : {}) } });
+export const createPlanJob = (data) => api.post('/plan/jobs', data);
+export const getPlanJob = (id) => api.get(`/plan/jobs/${id}`);
+export const updatePlanJob = (id, data) => api.patch(`/plan/jobs/${id}`, data);
+export const deletePlanJob = (id) => api.delete(`/plan/jobs/${id}`);
+export const pausePlanJob = (id) => api.post(`/plan/jobs/${id}/pause`);
+export const resumePlanJob = (id) => api.post(`/plan/jobs/${id}/resume`);
+export const cancelPlanJob = (id) => api.post(`/plan/jobs/${id}/cancel`);
+export const runPlanJobNow = (id) => api.post(`/plan/jobs/${id}/run-now`);
+
+// Notifications API — user inbox fed by the plan scheduler
+export const getNotifications = (params) => api.get('/plan/notifications', { params });
+export const getNotificationsUnreadCount = (workspace) =>
+  api.get('/plan/notifications/unread-count', { params: workspace ? { workspace } : {} });
+export const markNotificationRead = (id, read = true) =>
+  api.post(`/plan/notifications/${id}/read`, null, { params: { read } });
+export const markAllNotificationsRead = (workspace) =>
+  api.post('/plan/notifications/read-all', null, { params: workspace ? { workspace } : {} });
+export const deleteNotification = (id) => api.delete(`/plan/notifications/${id}`);
+// Live notification push now arrives on the shared `/api/stream` connection
+// (channel `__notifications__`) via the StreamProvider — no dedicated endpoint.
+
 // Telegram API
 export const getTelegramConfig = () => api.get('/telegram/config');
 export const updateTelegramConfig = (data) => api.put('/telegram/config', data);
@@ -231,5 +649,180 @@ export const getTelegramStatus = () => api.get('/telegram/status');
 export const getTelegramBindings = () => api.get('/telegram/bindings');
 export const deleteTelegramBinding = (chatId) => api.delete(`/telegram/bindings/${chatId}`);
 export const sendTelegramMessage = (chatId, text) => api.post('/telegram/send', { chat_id: chatId, text });
+
+// Evals API — datasets, sweeps, score matrices (see evals/ and routes/evals.py)
+export const getEvalSets = (workspace) =>
+  api.get('/evals', { params: workspace ? { workspace } : {} });
+export const createEvalSet = (data) => api.post('/evals', data);
+export const getEvalSet = (id) => api.get(`/evals/${id}`);
+export const updateEvalSet = (id, data) => api.put(`/evals/${id}`, data);
+export const deleteEvalSet = (id) => api.delete(`/evals/${id}`);
+// The Eval Agent's chat — workspace-scoped, because the first thing anyone
+// wants is a set that does not exist yet.
+export const getEvalChat = (workspace) =>
+  api.get('/evals/chat', { params: workspace ? { workspace } : {} });
+export const clearEvalChat = (workspace) =>
+  api.delete('/evals/chat', { params: workspace ? { workspace } : {} });
+export const stopEvalChat = (workspace) =>
+  api.post('/evals/chat/stop', null, { params: workspace ? { workspace } : {} });
+export const evalChatUrl = (workspace) =>
+  '/evals/chat' + (workspace ? `?workspace=${encodeURIComponent(workspace)}` : '');
+export const addEvalCase = (id, data) => api.post(`/evals/${id}/cases`, data);
+export const deleteEvalCase = (id, caseId) => api.delete(`/evals/${id}/cases/${caseId}`);
+export const estimateEvalRun = (id, data) => api.post(`/evals/${id}/estimate`, data);
+// A sweep is len(cases) x len(configs) LLM calls -- it can take minutes, so the
+// default axios timeout does not apply here.
+export const runEvalSet = (id, data) => api.post(`/evals/${id}/run`, data, { timeout: 0 });
+export const getEvalRuns = (id) => api.get(`/evals/${id}/runs`);
+export const getEvalRun = (runId) => api.get(`/eval-runs/${runId}`);
+export const getEvalGraders = () => api.get('/eval-graders');
+
+// Playground API — multi-agent simulation (see playground/ and routes/playground.py)
+// The catalogue is workspace-aware because authored worlds are in it: a
+// workspace's own worlds sit alongside the shipped ones, which is the whole
+// point of being able to build one.
+export const getSimEnvironments = (workspace) =>
+  api.get('/playground/environments', { params: workspace ? { workspace } : {} });
+
+// Worlds — the user-authored environments (see playground/worlds.py).
+export const getWorlds = (workspace) =>
+  api.get('/playground/worlds', { params: workspace ? { workspace } : {} });
+export const getWorld = (id) => api.get(`/playground/worlds/${id}`);
+export const createWorld = (data) => api.post('/playground/worlds', data);
+export const updateWorld = (id, data) => api.put(`/playground/worlds/${id}`, data);
+// `force` deletes a world that scenarios are still cast in; without it the
+// server refuses, because a scenario whose world is gone fails at Run.
+export const deleteWorld = (id, force = false) =>
+  api.delete(`/playground/worlds/${id}`, { params: force ? { force: true } : {} });
+export const validateWorldDraft = (data) => api.post('/playground/worlds/validate', data);
+export const getWorldTemplates = () => api.get('/playground/worlds/templates');
+// Build a whole world from a plain-language description (the World Builder
+// names the places, declares the values and writes the actions).
+export const generateWorld = (data) => api.post('/playground/worlds/generate', data);
+// The world's own build chat: transcript + rich replay trace, clearing it, and
+// stopping an in-flight turn. The streaming turn goes through `streamEntityChat`.
+export const getWorldChat = (id) => api.get(`/playground/worlds/${id}/chat`);
+export const clearWorldChat = (id) => api.delete(`/playground/worlds/${id}/chat`);
+export const stopWorldChat = (id) => api.post(`/playground/worlds/${id}/chat/stop`);
+export const worldChatUrl = (id) => `/playground/worlds/${id}/chat`;
+export const getScenarios = (workspace) =>
+  api.get('/playground/scenarios', { params: workspace ? { workspace } : {} });
+export const createScenario = (data) => api.post('/playground/scenarios', data);
+export const getScenario = (id) => api.get(`/playground/scenarios/${id}`);
+export const updateScenario = (id, data) => api.put(`/playground/scenarios/${id}`, data);
+export const deleteScenario = (id) => api.delete(`/playground/scenarios/${id}`);
+export const estimateScenario = (id) => api.post(`/playground/scenarios/${id}/estimate`);
+// Build a whole scenario from a plain-language description (the Scenario
+// Creator picks the environment, casts the roles and sets the limits).
+export const generateScenario = (data) => api.post('/playground/scenarios/generate', data);
+/**
+ * The same build, narrated (SSE).
+ *
+ * Designing a scenario is a minute of tool calls, and a spinner cannot tell a
+ * slow run from a stuck one. This streams the Creator's steps as they happen
+ * and closes with one `result` frame carrying `outcome` — the scenario it
+ * made, the limitations it ran into, or an error.
+ *
+ * @param {object} opts
+ * @param {object} opts.body      same payload as `generateScenario`.
+ * @param {function} opts.onEvent called with each parsed event object.
+ * @param {AbortSignal} [opts.signal]
+ */
+export const streamGenerateScenario = async ({ body, onEvent, signal }) => {
+  const response = await fetch(`${API_ORIGIN}/api/playground/scenarios/generate/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.text();
+    throw new Error(detail || 'Failed to start scenario generation');
+  }
+  await consumeSSE(response, onEvent);
+};
+// The scenario's own build chat: transcript + rich replay trace, clearing it,
+// and stopping an in-flight turn. The streaming turn itself goes through
+// `streamEntityChat`.
+export const getScenarioChat = (id) => api.get(`/playground/scenarios/${id}/chat`);
+export const clearScenarioChat = (id) => api.delete(`/playground/scenarios/${id}/chat`);
+export const stopScenarioChat = (id) => api.post(`/playground/scenarios/${id}/chat/stop`);
+export const scenarioChatUrl = (id) => `/playground/scenarios/${id}/chat`;
+export const startSimulation = (id, workspace) =>
+  api.post(`/playground/scenarios/${id}/run`, null, { params: workspace ? { workspace } : {} });
+// One scenario's run history, or — with no scenario id — every scenario's,
+// which is what the history page lists. Runs come back newest first.
+export const getSimRuns = (scenarioId, { workspace, limit } = {}) =>
+  api.get('/playground/runs', {
+    params: {
+      ...(scenarioId ? { scenario_id: scenarioId } : {}),
+      ...(workspace ? { workspace } : {}),
+      ...(limit ? { limit } : {}),
+    },
+  });
+export const getSimRun = (runId) => api.get(`/playground/runs/${runId}`);
+export const getSimTicks = (runId, since = -1) =>
+  api.get(`/playground/runs/${runId}/ticks`, { params: { since } });
+export const stopSimulation = (runId) => api.post(`/playground/runs/${runId}/stop`);
+// Poke one agent in a running simulation from outside the world. In triggered
+// mode this is what wakes them; in synchronous mode it is a message like any
+// other, delivered on the next tick.
+export const triggerSimAgent = (runId, agent, text) =>
+  api.post(`/playground/runs/${runId}/trigger`, { agent, text });
+// The run as one piece of prose: the chronicle is composed from the tick log
+// on every request (free, exact, works mid-run), the narration is a model's
+// retelling of it and is kept once written.
+export const getSimStory = (runId, lang) =>
+  api.get(`/playground/runs/${runId}/story`, { params: { lang } });
+export const narrateSimStory = (runId, lang) =>
+  api.post(`/playground/runs/${runId}/story/narrate`, null,
+           { params: { lang }, timeout: 0 });
+
+// Loops API — a flow re-run until an agent judges the exit criterion met
+// (see loops/ and routes/loops.py).
+export const getLoops = (workspace) =>
+  api.get('/loops', { params: workspace ? { workspace } : {} });
+export const createLoop = (data) => api.post('/loops', data);
+export const getLoop = (id) => api.get(`/loops/${id}`);
+export const updateLoop = (id, data) => api.put(`/loops/${id}`, data);
+export const deleteLoop = (id) => api.delete(`/loops/${id}`);
+export const estimateLoop = (id) => api.post(`/loops/${id}/estimate`);
+// The loop's own build chat — same shape as the scenario's.
+export const getLoopChat = (id) => api.get(`/loops/${id}/chat`);
+export const clearLoopChat = (id) => api.delete(`/loops/${id}/chat`);
+export const stopLoopChat = (id) => api.post(`/loops/${id}/chat/stop`);
+export const loopChatUrl = (id) => `/loops/${id}/chat`;
+export const startLoop = (id, data) => api.post(`/loops/${id}/run`, data || {});
+export const getLoopRuns = (loopId) =>
+  api.get('/loops/runs', { params: loopId ? { loop_id: loopId } : {} });
+export const getLoopRun = (runId) => api.get(`/loops/runs/${runId}`);
+export const getLoopIterations = (runId, since = 0) =>
+  api.get(`/loops/runs/${runId}/iterations`, { params: { since } });
+export const stopLoopRun = (runId) => api.post(`/loops/runs/${runId}/stop`);
+
+// Teams API — a bounded roster of agents that know each other and talk
+// (see teams/ and routes/teams.py).
+export const getTeams = (workspace) =>
+  api.get('/teams', { params: workspace ? { workspace } : {} });
+export const createTeam = (data) => api.post('/teams', data);
+export const getTeam = (id) => api.get(`/teams/${id}`);
+export const updateTeam = (id, data) => api.put(`/teams/${id}`, data);
+export const deleteTeam = (id) => api.delete(`/teams/${id}`);
+export const getTeamBriefing = (id, agentId) =>
+  api.get(`/teams/${id}/briefing`, { params: agentId ? { agent_id: agentId } : {} });
+export const suggestTeamManifest = (agentId) => api.get(`/teams/manifest/${agentId}`);
+// The team's own build chat — same shape as the loop's.
+export const getTeamChat = (id) => api.get(`/teams/${id}/chat`);
+export const clearTeamChat = (id) => api.delete(`/teams/${id}/chat`);
+export const stopTeamChat = (id) => api.post(`/teams/${id}/chat/stop`);
+export const teamChatUrl = (id) => `/teams/${id}/chat`;
+export const estimateTeam = (id) => api.post(`/teams/${id}/estimate`);
+export const startTeamRun = (id, data) => api.post(`/teams/${id}/run`, data || {});
+export const getTeamRuns = (teamId) =>
+  api.get('/teams/runs', { params: teamId ? { team_id: teamId } : {} });
+export const getTeamRun = (runId) => api.get(`/teams/runs/${runId}`);
+export const getTeamMessages = (runId, since = 0) =>
+  api.get(`/teams/runs/${runId}/messages`, { params: { since } });
+export const stopTeamRun = (runId) => api.post(`/teams/runs/${runId}/stop`);
 
 export default api;

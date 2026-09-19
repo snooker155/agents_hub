@@ -1,11 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Send, StopCircle, User, Workflow } from 'lucide-react';
-import { stopMessage } from '../../api';
+import { stopMessage, startChatOverSSE } from '../../api';
+import { useStream } from '../stream';
+import { useI18n } from '../../i18n';
+import { useInlineChatOpen } from '../pageChat/pageChat';
 
 // ---------------------------------------------------------------------------
 // Slim flow chat — embedded version of the Chat page scoped to a single flow.
-// Each user turn is streamed through every node of the flow (one bubble per
-// node) via POST /api/chat/stream with the flow_id set.
+// Each user turn runs through every node of the flow (one bubble per node). The
+// run's events are delivered over the app's single multiplexed SSE connection
+// (POST /api/chat/stream-sse returns immediately; events arrive on the
+// `chat:{conversation_id}` channel), so a flow chat doesn't hold a second
+// long-lived connection and exhaust the browser's per-origin limit.
 // ---------------------------------------------------------------------------
 
 function genId() {
@@ -64,7 +70,7 @@ function ChatBubble({ msg, agentLabel }) {
       >
         {!isUser && !msg.content && msg.running ? (
           <span className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">{msg.running_tool || 'thinking'}</span>
+            <span className="text-xs text-gray-400">{msg.running_tool || 'Working'}</span>
             <span className="flex gap-1">
               {[0, 150, 300].map((d) => (
                 <span
@@ -97,16 +103,32 @@ export default function FlowChat({
   resumeConversationId = null,
   resumeMessages = null,
   resumeKey = null,
+  // Forwarded the raw stream events (flow_meta / node_start / node_done /
+  // node_skip / done) so the parent (FlowEditor) can drive the canvas, node
+  // statuses, and Logs panel live straight from the stream — no refetch.
+  onStreamEvent = null,
+  // Called once when a turn ends so the parent can reconcile the History list /
+  // persisted record. Not used for live progress anymore (see onStreamEvent).
+  onActivity = null,
 }) {
+  const { t } = useI18n();
+  // The flow's own chat, in the editor's right-hand panel: while it is mounted
+  // the floating launcher would sit on its composer, so it stands down.
+  useInlineChatOpen();
+  const { on, acquireChannel, clientId } = useStream();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const abortCtrlRef = useRef(null);
   const activeRunIdRef = useRef(null);
+  // Tears down the current turn's SSE channel subscription (listener + interest).
+  const subCleanupRef = useRef(null);
   const endRef = useRef(null);
   const textareaRef = useRef(null);
 
   const flowName = flow?.name || 'flow';
+
+  // Drop the channel subscription if the component unmounts mid-run.
+  useEffect(() => () => subCleanupRef.current?.(), []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -116,6 +138,8 @@ export default function FlowChat({
   // bump). A fresh nonce also yields a new conversationId below, so the new
   // thread becomes its own History record.
   useEffect(() => {
+    subCleanupRef.current?.(); // drop a previous conversation's live subscription
+    setLoading(false);
     setMessages([]);
     setInput('');
   }, [flowId, chatNonce]);
@@ -125,6 +149,8 @@ export default function FlowChat({
   // dropped (resumeKey → null, e.g. on deselect), clear the thread so the chat
   // returns to an empty new chat rather than keeping the historical messages.
   useEffect(() => {
+    subCleanupRef.current?.(); // drop a previous conversation's live subscription
+    setLoading(false);
     setMessages(resumeKey == null ? [] : resumeMessages || []);
     setInput('');
   }, [resumeKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -155,7 +181,7 @@ export default function FlowChat({
     if (!workspace) {
       setMessages((prev) => [
         ...prev,
-        { id: genId(), role: 'agent', content: 'Select a workspace for this flow first.', error: true },
+        { id: genId(), role: 'agent', content: t('flowFlowChat.selectWorkspaceFirst'), error: true },
       ]);
       return;
     }
@@ -169,132 +195,146 @@ export default function FlowChat({
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    setLoading(true);
 
-    const ctrl = new AbortController();
-    abortCtrlRef.current = ctrl;
-
-    // Per-node bubble ids for this turn.
-    const nodeMsgIds = {};
-    let currentNodeId = null;
-
-    try {
-      const response = await fetch('http://localhost:8000/api/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          agent_id: null,
-          flow_id: flowId,
-          message: text,
-          workspace: workspace || null,
-          conversation_id: conversationId,
-          conversation_title: flowName,
-          history,
-          attachments: [],
-        }),
-      });
-      if (!response.ok || !response.body) {
-        const detail = await response.text();
-        throw new Error(detail || 'Failed to open flow chat stream');
-      }
-
-      const decoder = new TextDecoder();
-      const reader = response.body.getReader();
-      let buffer = '';
-
-      const targetMsgId = (event) => {
-        const nid = event.node_id || currentNodeId;
-        return nid ? nodeMsgIds[nid] : null;
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split('\n\n');
-        buffer = chunks.pop() || '';
-
-        for (const chunk of chunks) {
-          const line = chunk
-            .split('\n')
-            .map((l) => l.trim())
-            .find((l) => l.startsWith('data: '));
-          if (!line) continue;
-          let event = null;
-          try {
-            event = JSON.parse(line.slice(6));
-          } catch {
-            continue;
-          }
-          if (!event || !event.type) continue;
-
-          if (event.type === 'node_start') {
-            currentNodeId = event.node_id;
-            const msgId = genId();
-            nodeMsgIds[event.node_id] = msgId;
-            if (event.run_id) activeRunIdRef.current = event.run_id;
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: msgId,
-                role: 'agent',
-                agent_id: event.agent_id || event.agent_label || '',
-                agent_label: event.agent_label || '',
-                node_id: event.node_id,
-                content: '',
-                running: true,
-                error: false,
-              },
-            ]);
-          } else if (event.type === 'node_done') {
-            const msgId = nodeMsgIds[event.node_id];
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === msgId
-                  ? {
-                      ...m,
-                      content: (m.content || event.response || '').trim() || event.response || '',
-                      error: !event.ok,
-                      running: false,
-                      running_tool: null,
-                    }
-                  : m
-              )
-            );
-          } else if (event.type === 'tool_start') {
-            const tgt = targetMsgId(event);
-            setMessages((prev) =>
-              prev.map((m) => (m.id === tgt ? { ...m, running_tool: event.tool } : m))
-            );
-          } else if (event.type === 'token') {
-            const tgt = targetMsgId(event);
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === tgt
-                  ? { ...m, content: `${m.content || ''}${event.token || ''}`, running_tool: null }
-                  : m
-              )
-            );
-          }
-        }
-      }
-    } catch (err) {
-      if (err?.name === 'AbortError') return;
+    if (!clientId) {
       setMessages((prev) => [
         ...prev,
-        { id: genId(), role: 'agent', content: err.message || 'Failed to get a response.', error: true },
+        { id: genId(), role: 'agent', content: t('flowFlowChat.liveNotReady'), error: true },
       ]);
-    } finally {
-      setLoading(false);
-      abortCtrlRef.current = null;
-      activeRunIdRef.current = null;
+      return;
     }
-  }, [input, loading, flowId, workspace, messages, conversationId, flowName]);
+
+    setLoading(true);
+    // Tear down any lingering subscription from a previous (e.g. stopped) turn so
+    // we never run two subscriptions on the same channel at once.
+    subCleanupRef.current?.();
+
+    // Per-turn state, captured by the channel handler below (which outlives the
+    // POST and runs until the terminal sentinel arrives over the SSE).
+    const nodeMsgIds = {};
+    let currentNodeId = null;
+    let sawDone = false;
+    let finished = false;
+    const channel = `chat:${conversationId}`;
+
+    const targetMsgId = (event) => {
+      const nid = event.node_id || currentNodeId;
+      return nid ? nodeMsgIds[nid] : null;
+    };
+
+    let off = null;
+    let release = null;
+    const cleanup = () => {
+      off?.(); release?.();
+      off = null; release = null;
+      if (subCleanupRef.current === cleanup) subCleanupRef.current = null;
+    };
+    const finalize = () => {
+      if (finished) return;
+      finished = true;
+      setLoading(false);
+      activeRunIdRef.current = null;
+      // Close the live run if it ended without a terminal `done` (Stop / error)
+      // so the parent doesn't leave a node stuck running.
+      if (!sawDone) onStreamEvent?.({ type: 'done', ok: false });
+      onActivity?.(); // turn ended — reconcile History list + persisted record
+      cleanup();
+    };
+
+    const handleEvent = (event) => {
+      // Server sentinel: the run is over, stop listening.
+      if (event.type === 'chat_stream_end') { finalize(); return; }
+      // Forward every event to the parent's live stream-log reducer first so the
+      // canvas/logs/statuses update in lockstep with the bubbles. flow_meta opens
+      // the live History record, so tag it with this turn's user message — the
+      // parent titles the record by the conversation's first message.
+      onStreamEvent?.(event.type === 'flow_meta' ? { ...event, user_message: text } : event);
+      if (event.type === 'done') sawDone = true;
+      if (event.type === 'flow_meta') {
+        // handled by onStreamEvent
+      } else if (event.type === 'node_start') {
+        currentNodeId = event.node_id;
+        const msgId = genId();
+        nodeMsgIds[event.node_id] = msgId;
+        if (event.run_id) activeRunIdRef.current = event.run_id;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: msgId,
+            role: 'agent',
+            agent_id: event.agent_id || event.agent_label || '',
+            agent_label: event.agent_label || '',
+            node_id: event.node_id,
+            content: '',
+            running: true,
+            error: false,
+          },
+        ]);
+      } else if (event.type === 'node_done') {
+        const msgId = nodeMsgIds[event.node_id];
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? {
+                  ...m,
+                  // Prefer the node's final response over accumulated stream
+                  // tokens so a re-stated answer isn't repeated in the bubble.
+                  content: (event.response || '').trim() || (m.content || '').trim() || '',
+                  error: !event.ok,
+                  running: false,
+                  running_tool: null,
+                }
+              : m
+          )
+        );
+      } else if (event.type === 'tool_start') {
+        const tgt = targetMsgId(event);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tgt ? { ...m, running_tool: event.tool } : m))
+        );
+      } else if (event.type === 'token') {
+        const tgt = targetMsgId(event);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === tgt
+              ? { ...m, content: `${m.content || ''}${event.token || ''}`, running_tool: null }
+              : m
+          )
+        );
+      }
+    };
+
+    // Subscribe BEFORE the POST so we don't miss early events; the server also
+    // subscribes our client_id server-side before it starts publishing.
+    off = on(channel, handleEvent);
+    release = acquireChannel(channel);
+    subCleanupRef.current = cleanup;
+
+    try {
+      await startChatOverSSE({
+        agent_id: null,
+        flow_id: flowId,
+        message: text,
+        workspace: workspace || null,
+        conversation_id: conversationId,
+        conversation_title: flowName,
+        history,
+        attachments: [],
+        client_id: clientId,
+      });
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { id: genId(), role: 'agent', content: err?.response?.data?.detail || err.message || t('flowFlowChat.startChatFailed'), error: true },
+      ]);
+      finalize();
+    }
+  }, [input, loading, flowId, workspace, messages, clientId, conversationId, on, acquireChannel, t, onStreamEvent, onActivity, flowName]);
 
   const stopGeneration = () => {
-    abortCtrlRef.current?.abort();
     if (activeRunIdRef.current) stopMessage(activeRunIdRef.current).catch(() => {});
+    // The backend pump still emits its terminal sentinel, which finalizes the
+    // turn; setting loading false here just gives immediate feedback.
     setLoading(false);
   };
 
@@ -315,7 +355,7 @@ export default function FlowChat({
           <Workflow className="h-4 w-4 text-emerald-600" />
         </div>
         <div className="min-w-0">
-          <div className="truncate text-sm font-bold text-slate-900">Chat with flow</div>
+          <div className="truncate text-sm font-bold text-slate-900">{t('flowFlowChat.chatWithFlow')}</div>
           <div className="truncate text-[11px] text-slate-400">{flowName}</div>
         </div>
       </div>
@@ -347,7 +387,7 @@ export default function FlowChat({
           <textarea
             ref={textareaRef}
             className="flex-1 resize-none self-center bg-transparent text-sm leading-relaxed text-slate-800 placeholder-slate-400 focus:outline-none disabled:opacity-50"
-            placeholder={!flowId ? 'No flow selected…' : `Message ${flowName}…`}
+            placeholder={!flowId ? t('flowFlowChat.noFlowSelected') : `Message ${flowName}…`}
             rows={1}
             value={input}
             disabled={loading || !flowId}
@@ -360,7 +400,7 @@ export default function FlowChat({
           {loading ? (
             <button
               onClick={stopGeneration}
-              title="Stop"
+              title={t('flowFlowChat.stop')}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600 transition hover:bg-red-200"
             >
               <StopCircle className="h-4 w-4" />
@@ -369,14 +409,14 @@ export default function FlowChat({
             <button
               onClick={sendMessage}
               disabled={!input.trim() || !flowId}
-              title="Send (Enter)"
+              title={t('flowFlowChat.sendEnter')}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Send className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
-        <p className="mt-1.5 text-center text-[11px] text-slate-400">Enter to send · Shift+Enter for new line</p>
+        <p className="mt-1.5 text-center text-[11px] text-slate-400">{t('flowFlowChat.enterToSendShiftEnter')}</p>
         </div>
       </div>
     </div>

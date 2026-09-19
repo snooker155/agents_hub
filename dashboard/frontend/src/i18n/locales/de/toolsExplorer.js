@@ -1,0 +1,16 @@
+export default {
+  toolInventory: 'Werkzeug-Inventar',
+  browseToolsAvailableToAgents: 'Werkzeuge durchsuchen, die den Agenten im Cluster zur Verfügung stehen.',
+  searchTools: 'Werkzeuge suchen…',
+  loadingToolDefinitions: 'Werkzeugdefinitionen werden geladen…',
+  noToolsFound: 'Keine Werkzeuge gefunden.',
+  argumentsSchema: 'Argument-Schema',
+  sourceCode: 'Quellcode',
+  saving: 'Wird gespeichert',
+  loadingSource: 'Quellcode wird geladen…',
+  noSourceAvailableForThis: 'Für dieses Werkzeug ist kein Quellcode verfügbar.',
+  selectAToolFromThe: 'Wählen Sie ein Werkzeug aus dem Inventar, um seine technische Spezifikation zu sehen.',
+  workspace: 'Workspace',
+  loadSourceFailed: 'Quellcode des Werkzeugs konnte nicht geladen werden',
+  saveSourceFailed: 'Quellcode konnte nicht gespeichert werden',
+};

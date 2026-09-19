@@ -4,31 +4,53 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "gen:theme": "node scripts/gen-theme.mjs",
+    "predev": "npm run gen:theme",
     "dev": "vite",
+    "prebuild": "npm run gen:theme",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
     "axios": "^1.13.4",
+    "cytoscape": "^3.34.0",
+    "katex": "^0.17.0",
     "lucide-react": "^0.563.0",
+    "mermaid": "^11.16.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0",
-    "reactflow": "^11.11.4"
+    "reactflow": "^11.11.4",
+    "three": "^0.185.1",
+    "vega": "^5.33.1",
+    "vega-embed": "^6.29.0",
+    "vega-lite": "^5.23.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "@vitest/coverage-v8": "^3.2.7",
     "autoprefixer": "^10.4.24",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "jsdom": "^27.0.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vitest": "^3.2.7"
   }
 }

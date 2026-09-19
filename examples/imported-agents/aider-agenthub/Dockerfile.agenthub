@@ -1,0 +1,25 @@
+# Aider plus the thin HTTP adapter that makes it importable into Agents Hub.
+#
+# The image carries aider's own dependency tree, which is exactly why the hub
+# talks to it over HTTP instead of importing its Python: nothing in here has to
+# agree with the hub's own requirements.
+FROM python:3.11-slim
+
+# git is not optional here — aider works by committing to a repository.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY server.py agent-hub.json ./
+
+# The repository aider edits is mounted here at run time:
+#   docker run -v /path/to/repo:/work ...
+ENV AIDER_WORKDIR=/work
+RUN mkdir -p /work
+
+EXPOSE 8410
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8410"]

@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useWorkspace } from '../components/WorkspaceContext';
+import { useWorkspace } from '../components/workspace';
 import {
   Database, Plus, Trash2, FileText, Save, X, Upload, Cpu, Users,
   Files, ChevronRight, RefreshCw, CheckCircle, AlertCircle, Clock,
   Zap, Search, Edit3, Link2, BarChart2, FileSearch, StickyNote, Layers,
-  Activity, BookOpen, Share2, Sparkles,
+  Activity, BookOpen, Share2, Sparkles, GitMerge, Eraser, MessageSquare,
 } from 'lucide-react';
 import {
   getSharedMemories, createSharedMemory, deleteSharedMemory,
   getSharedMemory, uploadMemoryFile, deleteMemoryFile,
+  getMemoryChat, clearMemoryChat, stopMemoryChat, memoryChatUrl,
   indexMemoryFile, deindexMemoryFile, listMemoryFiles,
   getRagConfig, getAgents, updateAgentMemory,
   addMemoryNote, updateMemoryNote, deleteMemoryNote,
@@ -16,8 +17,17 @@ import {
   listMemoryEpisodes, getMemoryEpisodesStats, deleteMemoryEpisode,
   getMemoryGraph, getMemoryGraphStats, linkMemoryGraph,
   deleteMemoryGraphNode, deleteMemoryGraphEdge, extractMemoryGraph,
+  mergeMemoryGraphSlots, pruneMemoryGraphMirrors,
 } from '../api';
+import { SlotValue } from '../components/SlotValue';
+import { coerceSlotValue, isSlotContainer } from '../components/slotUtils';
 
+import EntityChat from '../components/EntityChat';
+import { usePageChat } from '../components/pageChat/pageChat';
+import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
+import { useToast, errorDetail } from '../components/toast';
 const EPISODE_KIND_COLOR = {
   interaction: 'bg-blue-100 text-blue-700',
   task:        'bg-indigo-100 text-indigo-700',
@@ -61,7 +71,9 @@ function StatusBadge({ status }) {
 // ---------------------------------------------------------------------------
 // Tab: Memory Pools
 // ---------------------------------------------------------------------------
-function PoolsTab({ memories, onRefresh, workspaceFilter }) {
+function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
+  const { t } = useI18n();
+  const toast = useToast();
   const [selected, setSelected] = useState(null);
   const [contentTab, setContentTab] = useState('structured'); // 'structured' | 'notes'
 
@@ -91,10 +103,14 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
     try {
       const resp = await getSharedMemory(id);
       setSelected(resp.data);
+      // The chat beside this tab binds to whatever is open here.
+      onPoolSelected?.(id);
       setViewingNote(null); setShowAddNote(false); setEditingNote(null);
       setShowAddSlot(false); setEditingSlot(null);
-    } catch {}
-  }, []);
+    } catch (e) {
+      toast.error(t('memoryManager.errors.openMemory'), errorDetail(e));
+    }
+  }, [t, toast, onPoolSelected]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -104,7 +120,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this memory pool?')) return;
+    if (!window.confirm(t('memoryManager.confirmDeletePool'))) return;
     await deleteSharedMemory(id);
     if (selected?.id === id) setSelected(null);
     onRefresh();
@@ -126,7 +142,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
   };
 
   const handleDeleteNote = async (id) => {
-    if (!window.confirm('Delete this note?')) return;
+    if (!window.confirm(t('memoryManager.confirmDeleteNote'))) return;
     await deleteMemoryNote(selected.id, id);
     if (viewingNote?.id === id) setViewingNote(null);
     await selectPool(selected.id);
@@ -196,20 +212,20 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
       data = { value: slotSimpleValue };
     } else if (slotMode === 'json') {
       try { data = JSON.parse(slotDataRaw); }
-      catch { setSlotDataError('Invalid JSON'); return; }
+      catch { setSlotDataError(t('memoryManager.invalidJson')); return; }
       if (typeof data !== 'object' || Array.isArray(data) || data === null) {
-        setSlotDataError('Top-level value must be a JSON object'); return;
+        setSlotDataError(t('memoryManager.mustBeJsonObject')); return;
       }
     } else {
       data = {};
       for (const { key, value } of slotFields) {
         const k = key.trim();
         if (!k) continue;
-        if (k in data) { setSlotDataError(`Duplicate key: ${k}`); return; }
+        if (k in data) { setSlotDataError(t('memoryManager.duplicateKey', { key: k })); return; }
         data[k] = coerceFieldValue(value);
       }
       if (Object.keys(data).length === 0) {
-        setSlotDataError('Add at least one field'); return;
+        setSlotDataError(t('memoryManager.addAtLeastOneField')); return;
       }
     }
     setSlotDataError('');
@@ -273,45 +289,63 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
   const notes = allNotes.filter(n => !isJournalNote(n));
   const journals = allNotes.filter(isJournalNote);
   const structuredSlots = Object.entries(selected?.structured_data || {});
-  const [episodeStats, setEpisodeStats] = useState(null);
-  const [graphStats, setGraphStats] = useState(null);
+  // Each payload carries the pool it was fetched for, so the counts below can be
+  // derived: selecting another pool shows nothing rather than the previous
+  // pool's numbers, and no effect has to reset them.
+  const [episodeStatsFor, setEpisodeStats] = useState(null);
+  const [graphStatsFor, setGraphStats] = useState(null);
 
   useEffect(() => {
-    if (!selected?.id) { setEpisodeStats(null); setGraphStats(null); return; }
+    const poolId = selected?.id;
+    if (!poolId) return undefined;
     let cancelled = false;
-    getMemoryEpisodesStats(selected.id)
-      .then(r => { if (!cancelled) setEpisodeStats(r.data); })
-      .catch(() => { if (!cancelled) setEpisodeStats(null); });
-    getMemoryGraphStats(selected.id)
-      .then(r => { if (!cancelled) setGraphStats(r.data); })
-      .catch(() => { if (!cancelled) setGraphStats(null); });
+    getMemoryEpisodesStats(poolId)
+      .then(r => { if (!cancelled) setEpisodeStats({ poolId, data: r.data }); })
+      .catch(() => { if (!cancelled) setEpisodeStats({ poolId, data: null }); });
+    getMemoryGraphStats(poolId)
+      .then(r => { if (!cancelled) setGraphStats({ poolId, data: r.data }); })
+      .catch(() => { if (!cancelled) setGraphStats({ poolId, data: null }); });
     return () => { cancelled = true; };
   }, [selected?.id, contentTab]);
 
+  // The payload has to be there before its pool can match: with no pool
+  // selected and nothing fetched yet, `?.poolId` and `selected?.id` are both
+  // undefined, and comparing them would claim a match on a null payload.
+  const statsFor = (payload) => (payload && payload.poolId === selected?.id ? payload.data : null);
+  const episodeStats = statsFor(episodeStatsFor);
+  const graphStats = statsFor(graphStatsFor);
+
   const CONTENT_TABS = [
-    { id: 'structured', label: 'Structured',  icon: Layers,     count: structuredSlots.length },
-    { id: 'notes',      label: 'Notes',       icon: StickyNote, count: notes.length },
-    { id: 'journals',   label: 'Journals',    icon: BookOpen,   count: journals.length },
-    { id: 'episodes',   label: 'Episodes',    icon: Activity,   count: episodeStats?.total ?? 0 },
-    { id: 'graph',      label: 'Graph',       icon: Share2,     count: graphStats?.node_count ?? 0 },
+    { id: 'structured', label: t('memoryManager.contentTabs.structured'), icon: Layers,     count: structuredSlots.length },
+    { id: 'notes',      label: t('memoryManager.contentTabs.notes'),      icon: StickyNote, count: notes.length },
+    { id: 'journals',   label: t('memoryManager.contentTabs.journals'),   icon: BookOpen,   count: journals.length },
+    { id: 'episodes',   label: t('memoryManager.contentTabs.episodes'),   icon: Activity,   count: episodeStats?.total ?? 0 },
+    { id: 'graph',      label: t('memoryManager.contentTabs.graph'),      icon: Share2,     count: graphStats?.node_count ?? 0 },
   ];
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    /* `items-start` so the two cards keep their own heights: the detail pane
+       grows with whatever the pool holds, and stretching the list to match it
+       left a column of empty white under the last pool. The list scrolls
+       inside its own viewport-bound height instead. */
+    /* The pool list is a fixed-width picker: it keeps its width whether or not
+       the chat is open, and the detail pane beside it absorbs the difference.
+       Fractional columns would have resized both every time. */
+    <div className="grid grid-cols-1 lg:grid-cols-[16rem_minmax(0,1fr)] gap-6 items-start">
       {/* Pool List */}
-      <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+      <div className="self-start lg:max-h-[calc(100vh-12rem)] bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50">
           <h3 className="font-semibold text-gray-700 flex items-center gap-2">
             <Database className="w-4 h-4 text-indigo-500" /> Memory Pools
             <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full">{memories.length}</span>
           </h3>
-          <button onClick={() => setShowCreate(true)} className="text-indigo-600 hover:text-indigo-800 p-1 rounded hover:bg-indigo-50" title="Create pool">
+          <button onClick={() => setShowCreate(true)} className="text-indigo-600 hover:text-indigo-800 p-1 rounded hover:bg-indigo-50" title={t('memoryManager.createPool')}>
             <Plus className="w-4 h-4" />
           </button>
         </div>
         <div className="divide-y divide-gray-100 overflow-y-auto flex-1">
           {memories.length === 0 ? (
-            <p className="p-6 text-center text-gray-400 text-sm italic">No memory pools yet.</p>
+            <p className="p-6 text-center text-gray-400 text-sm italic">{t('memoryManager.noMemoryPoolsYet')}</p>
           ) : memories.map((m) => (
             <div
               key={m.id}
@@ -320,7 +354,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
             >
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-gray-900 text-sm truncate">{m.name}</p>
-                <p className="text-xs text-gray-500 truncate">{m.description || 'No description'}</p>
+                <p className="text-xs text-gray-500 truncate">{m.description || t('memoryManager.noDescription')}</p>
                 {(() => {
                   const all = m.notes || [];
                   const journalCount = all.filter(n => n.title?.startsWith('journal:')).length;
@@ -335,7 +369,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                 })()}
               </div>
               <div className="flex items-center gap-1 ml-2 shrink-0">
-                <button onClick={(e) => { e.stopPropagation(); handleDelete(m.id); }} className="text-gray-300 hover:text-red-500 p-1" title="Delete pool">
+                <button onClick={(e) => { e.stopPropagation(); handleDelete(m.id); }} className="text-gray-300 hover:text-red-500 p-1" title={t('memoryManager.deletePool')}>
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
                 <ChevronRight className={`w-4 h-4 ${selected?.id === m.id ? 'text-indigo-500' : 'text-gray-300'}`} />
@@ -346,7 +380,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
       </div>
 
       {/* Pool Detail */}
-      <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col min-h-[500px]">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col min-h-[500px] min-w-0">
         {selected ? (
           <>
             {/* Pool header */}
@@ -359,12 +393,12 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
               <div className="flex gap-2">
                 {contentTab === 'notes' && (
                   <button onClick={() => { setShowAddNote(true); setEditingNote(null); setViewingNote(null); }} className="flex items-center gap-1 text-sm border border-indigo-200 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
-                    <Plus className="w-3.5 h-3.5" /> Add Note
+                    <Plus className="w-3.5 h-3.5" /> {t('memoryManager.addNote')}
                   </button>
                 )}
                 {contentTab === 'structured' && (
                   <button onClick={openAddSlot} className="flex items-center gap-1 text-sm border border-indigo-200 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
-                    <Plus className="w-3.5 h-3.5" /> Add Slot
+                    <Plus className="w-3.5 h-3.5" /> {t('memoryManager.addSlot')}
                   </button>
                 )}
               </div>
@@ -372,21 +406,21 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
 
             {/* Content type tabs */}
             <div className="flex border-b border-gray-100 bg-gray-50 px-4">
-              {CONTENT_TABS.map(t => {
-                const Icon = t.icon;
+              {CONTENT_TABS.map(tab => {
+                const Icon = tab.icon;
                 return (
                   <button
-                    key={t.id}
+                    key={tab.id}
                     onClick={() => {
-                      setContentTab(t.id);
+                      setContentTab(tab.id);
                       setViewingNote(null); setShowAddNote(false); setEditingNote(null);
                     }}
                     className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
-                      contentTab === t.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                      contentTab === tab.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
                     }`}
                   >
-                    <Icon className="w-3.5 h-3.5" /> {t.label}
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${contentTab === t.id ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'}`}>{t.count}</span>
+                    <Icon className="w-3.5 h-3.5" /> {tab.label}
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${contentTab === tab.id ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'}`}>{tab.count}</span>
                   </button>
                 );
               })}
@@ -397,7 +431,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
               <div className="flex flex-1 overflow-hidden">
                 <div className="w-64 shrink-0 border-r border-gray-100 overflow-y-auto">
                   {notes.length === 0 ? (
-                    <p className="p-4 text-xs text-gray-400 italic text-center">No notes yet.</p>
+                    <p className="p-4 text-xs text-gray-400 italic text-center">{t('memoryManager.noNotesYet')}</p>
                   ) : notes.map((n) => (
                     <div
                       key={n.id}
@@ -422,19 +456,19 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                   {showAddNote || editingNote ? (
                     <div className="p-5 bg-white h-full">
                       <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-semibold text-gray-900">{editingNote ? 'Edit Note' : 'New Note'}</h3>
+                        <h3 className="font-semibold text-gray-900">{editingNote ? t('memoryManager.editNote') : t('memoryManager.newNote')}</h3>
                         <button onClick={() => { setShowAddNote(false); setEditingNote(null); }} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
                       </div>
                       <form onSubmit={editingNote ? handleSaveNote : handleAddNote} className="space-y-4">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-                          <input required value={noteTitle} onChange={e => setNoteTitle(e.target.value)} placeholder="Note title…" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                          <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.title')}</label>
+                          <input required value={noteTitle} onChange={e => setNoteTitle(e.target.value)} placeholder={t('memoryManager.noteTitle')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
-                          <textarea required value={noteContent} onChange={e => setNoteContent(e.target.value)} rows={12} placeholder="Write your note here…" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                          <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.content')}</label>
+                          <textarea required value={noteContent} onChange={e => setNoteContent(e.target.value)} rows={12} placeholder={t('memoryManager.writeYourNoteHere')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
                         </div>
-                        <button type="submit" className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2"><Save className="w-4 h-4" /> {editingNote ? 'Save Changes' : 'Save'}</button>
+                        <button type="submit" className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2"><Save className="w-4 h-4" /> {editingNote ? t('memoryManager.saveChanges') : t('common.save')}</button>
                       </form>
                     </div>
                   ) : viewingNote && !isJournalNote(viewingNote) ? (
@@ -446,14 +480,14 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                           </h3>
                           <p className="text-xs text-gray-400 mt-0.5">{fmt(viewingNote.created_at)}</p>
                         </div>
-                        <button onClick={() => startEditNote(viewingNote)} className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50"><Edit3 className="w-3.5 h-3.5" /> Edit</button>
+                        <button onClick={() => startEditNote(viewingNote)} className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50"><Edit3 className="w-3.5 h-3.5" /> {t('memoryManager.edit')}</button>
                       </div>
                       <div className="bg-white border border-gray-200 rounded-lg p-4 text-sm whitespace-pre-wrap overflow-x-auto shadow-inner min-h-[300px]">{viewingNote.content}</div>
                     </div>
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8 text-center">
                       <StickyNote className="w-10 h-10 mb-3 opacity-20" />
-                      <p className="text-sm">Select a note to read it,<br />or add a new one.</p>
+                      <p className="text-sm">{t('memoryManager.selectANoteToRead')}<br />{t('memoryManager.orAddANewOne')}</p>
                     </div>
                   )}
                 </div>
@@ -465,7 +499,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
               <div className="flex flex-1 overflow-hidden">
                 <div className="w-64 shrink-0 border-r border-gray-100 overflow-y-auto">
                   {journals.length === 0 ? (
-                    <p className="p-4 text-xs text-gray-400 italic text-center">No journal entries yet.</p>
+                    <p className="p-4 text-xs text-gray-400 italic text-center">{t('memoryManager.noJournalEntriesYet')}</p>
                   ) : journals.map((n) => (
                     <div
                       key={n.id}
@@ -487,7 +521,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                         <div>
                           <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                             <BookOpen className="w-4 h-4 text-amber-500" /> {viewingNote.title.replace(/^journal:\s*/, '')}
-                            <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">read-only</span>
+                            <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">{t('memoryManager.readOnly')}</span>
                           </h3>
                           <p className="text-xs text-gray-400 mt-0.5">{fmt(viewingNote.created_at)}</p>
                         </div>
@@ -497,7 +531,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8 text-center">
                       <BookOpen className="w-10 h-10 mb-3 opacity-20" />
-                      <p className="text-sm">Select a journal entry to read it.</p>
+                      <p className="text-sm">{t('memoryManager.selectAJournalEntryTo')}</p>
                     </div>
                   )}
                 </div>
@@ -511,22 +545,22 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                   <form onSubmit={handleSaveSlot} className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-3">
                     <div className="flex justify-between items-center">
                       <h4 className="text-sm font-semibold text-indigo-800">
-                        {editingSlot ? `Edit "${editingSlot.slot}"` : 'New Slot'}
+                        {editingSlot ? t('memoryManager.editSlot', { slot: editingSlot.slot }) : t('memoryManager.newSlot')}
                       </h4>
                       <button type="button" onClick={() => { setShowAddSlot(false); setEditingSlot(null); resetSlotForm(); }} className="text-indigo-400 hover:text-indigo-600"><X className="w-4 h-4" /></button>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Name</label>
-                      <input required value={slotName} onChange={e => setSlotName(e.target.value)} disabled={!!editingSlot} placeholder="api_version"
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.name')}</label>
+                      <input required value={slotName} onChange={e => setSlotName(e.target.value)} disabled={!!editingSlot} placeholder={t('memoryManager.apiVersion')}
                         className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono disabled:bg-gray-100 disabled:text-gray-400" />
                     </div>
 
                     {/* Mode selector */}
                     <div className="flex gap-1 bg-white border border-gray-200 rounded-lg p-0.5 w-fit">
                       {[
-                        { id: 'structured', label: 'Structured' },
-                        { id: 'simple',     label: 'Simple value' },
-                        { id: 'json',       label: 'Raw JSON' },
+                        { id: 'structured', label: t('memoryManager.structured') },
+                        { id: 'simple',     label: t('memoryManager.simpleValue') },
+                        { id: 'json',       label: t('memoryManager.rawJson') },
                       ].map(({ id: mid, label }) => (
                         <button
                           key={mid}
@@ -543,33 +577,33 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
 
                     {slotMode === 'simple' && (
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Value</label>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.value')}</label>
                         <input
                           value={slotSimpleValue}
                           onChange={e => setSlotSimpleValue(e.target.value)}
-                          placeholder="A single value"
+                          placeholder={t('memoryManager.aSingleValue')}
                           className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono"
                         />
-                        <p className="text-[11px] text-gray-500 mt-1">Stored as <code className="bg-white px-1 rounded">{`{ "value": ... }`}</code>.</p>
+                        <p className="text-[11px] text-gray-500 mt-1">{t('memoryManager.storedAs')} <code className="bg-white px-1 rounded">{`{ "value": ... }`}</code>.</p>
                       </div>
                     )}
 
                     {slotMode === 'structured' && (
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Fields</label>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.fields')}</label>
                         <div className="space-y-2">
                           {slotFields.map((f, i) => (
                             <div key={i} className="flex gap-2 items-start">
                               <input
                                 value={f.key}
                                 onChange={e => updateSlotField(i, { key: e.target.value })}
-                                placeholder="key"
+                                placeholder={t('memoryManager.key')}
                                 className="w-1/3 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                               />
                               <input
                                 value={f.value}
                                 onChange={e => updateSlotField(i, { value: e.target.value })}
-                                placeholder="value"
+                                placeholder={t('memoryManager.value2')}
                                 className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                               />
                               <button
@@ -577,7 +611,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                                 onClick={() => removeSlotField(i)}
                                 disabled={slotFields.length === 1 && !f.key && !f.value}
                                 className="text-gray-300 hover:text-red-500 p-1.5 disabled:opacity-30"
-                                title="Remove field"
+                                title={t('memoryManager.removeField')}
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -589,15 +623,15 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                           onClick={addSlotField}
                           className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
                         >
-                          <Plus className="w-3.5 h-3.5" /> Add field
+                          <Plus className="w-3.5 h-3.5" /> {t('memoryManager.addField')}
                         </button>
-                        <p className="text-[11px] text-gray-500 mt-2">Numbers, booleans, <code>null</code>, and JSON arrays/objects are auto-detected. Everything else is stored as a string.</p>
+                        <p className="text-[11px] text-gray-500 mt-2">{t('memoryManager.numbersBooleans')} <code>null</code>{t('memoryManager.andJsonArraysObjectsAre')}</p>
                       </div>
                     )}
 
                     {slotMode === 'json' && (
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Data (JSON object)</label>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.dataJsonObject')}</label>
                         <textarea
                           rows={6}
                           value={slotDataRaw}
@@ -617,15 +651,18 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                 {structuredSlots.length === 0 && !showAddSlot ? (
                   <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-center">
                     <Layers className="w-10 h-10 mb-3 opacity-20" />
-                    <p className="text-sm">No data stored yet.<br />Add a value for simple facts or a slot for structured records.</p>
+                    <p className="text-sm">{t('memoryManager.noDataStoredYet')}<br />{t('memoryManager.addAValueForSimple')}</p>
                   </div>
                 ) : structuredSlots.map(([slot, data]) => {
-                  const simple = isSimpleSlot(data);
+                  const simple = isSimpleSlot(data) && !isSlotContainer(coerceSlotValue(data.value));
                   if (simple) return (
                     <div key={slot} className={`bg-white border rounded-xl flex items-center justify-between px-4 py-2.5 ${editingSlot?.slot === slot ? 'border-indigo-300' : 'border-gray-200'}`}>
                       <div className="flex items-center gap-4 min-w-0">
                         <span className="font-mono text-sm font-semibold text-indigo-700 shrink-0">{slot}</span>
-                        <span className="font-mono text-sm text-gray-800 truncate">{data?.value ?? '—'}</span>
+                        <span className="text-sm min-w-0">
+                          {data?.value == null ? <span className="font-mono text-gray-800">—</span>
+                            : <SlotValue value={data.value} max={120} />}
+                        </span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0 ml-2">
                         <button onClick={() => startEditSlot(slot, data)} className="text-gray-300 hover:text-indigo-500 p-1"><Edit3 className="w-3.5 h-3.5" /></button>
@@ -648,7 +685,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
                             {Object.entries(data || {}).map(([k, v]) => (
                               <tr key={k}>
                                 <td className="py-1.5 pr-4 font-mono text-gray-500 w-1/3 align-top">{k}</td>
-                                <td className="py-1.5 font-mono text-gray-800 break-all">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</td>
+                                <td className="py-1.5 text-gray-800 break-words"><SlotValue value={v} max={160} /></td>
                               </tr>
                             ))}
                           </tbody>
@@ -677,8 +714,8 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
             <Database className="w-14 h-14 text-gray-200 mb-4" />
-            <h3 className="text-lg font-semibold text-gray-600 mb-1">No Pool Selected</h3>
-            <p className="text-gray-400 text-sm max-w-xs">Select a memory pool from the list or create one to get started.</p>
+            <h3 className="text-lg font-semibold text-gray-600 mb-1">{t('memoryManager.noPoolSelected')}</h3>
+            <p className="text-gray-400 text-sm max-w-xs">{t('memoryManager.selectAMemoryPoolFrom')}</p>
           </div>
         )}
       </div>
@@ -688,23 +725,23 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-indigo-50">
-              <h3 className="text-lg font-bold text-indigo-900">New Memory Pool</h3>
+              <h3 className="text-lg font-bold text-indigo-900">{t('memoryManager.newMemoryPool')}</h3>
               <button onClick={() => setShowCreate(false)} className="text-indigo-400 hover:text-indigo-600"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={handleCreate} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input required value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Project Notes, API Config"
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.name')}</label>
+                <input required value={newName} onChange={e => setNewName(e.target.value)} placeholder={t('memoryManager.eGProjectNotesApi')}
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="What is this for?" rows={3}
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.description')}</label>
+                <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder={t('memoryManager.whatIsThisFor')} rows={3}
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div className="flex gap-3 pt-1">
-                <button type="button" onClick={() => setShowCreate(false)} className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 font-medium">Cancel</button>
-                <button type="submit" className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium">Create</button>
+                <button type="button" onClick={() => setShowCreate(false)} className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 font-medium">{t('memoryManager.cancel')}</button>
+                <button type="submit" className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium">{t('memoryManager.create')}</button>
               </div>
             </form>
           </div>
@@ -718,6 +755,8 @@ function PoolsTab({ memories, onRefresh, workspaceFilter }) {
 // Episodes panel — discrete event log scoped to a pool
 // ---------------------------------------------------------------------------
 function EpisodesPanel({ poolId, stats, onChange }) {
+  const { t } = useI18n();
+  const toast = useToast();
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [kindFilter, setKindFilter] = useState('');
@@ -744,12 +783,14 @@ function EpisodesPanel({ poolId, stats, onChange }) {
   useEffect(() => { load(); }, [load]);
 
   const handleDelete = async (epId) => {
-    if (!window.confirm('Delete this episode?')) return;
+    if (!window.confirm(t('memoryManager.confirmDeleteEpisode'))) return;
     try {
       await deleteMemoryEpisode(poolId, epId);
       await load();
       onChange?.();
-    } catch { /* ignore */ }
+    } catch (e) {
+      toast.error(t('memoryManager.errors.deleteEpisode'), errorDetail(e));
+    }
   };
 
   const cap = stats?.cap;
@@ -759,7 +800,7 @@ function EpisodesPanel({ poolId, stats, onChange }) {
     <div className="flex-1 overflow-y-auto p-4 space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-xs text-gray-500">
-          {total} episode{total === 1 ? '' : 's'} stored{cap ? ` · cap ${cap}` : ''}
+          {t('memoryManager.episodesStored', { count: total })}{cap ? ` · ${t('memoryManager.cap', { cap })}` : ''}
           {stats?.by_kind && Object.keys(stats.by_kind).length > 0 && (
             <span className="ml-2">
               ({Object.entries(stats.by_kind).map(([k, v]) => `${k}: ${v}`).join(', ')})
@@ -767,39 +808,39 @@ function EpisodesPanel({ poolId, stats, onChange }) {
           )}
         </div>
         <button onClick={load} className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
-          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> {t('memoryManager.refresh')}
         </button>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
         <select value={kindFilter} onChange={e => setKindFilter(e.target.value)}
           className="text-xs border border-gray-200 rounded px-2 py-1 bg-white">
-          <option value="">All kinds</option>
-          <option value="interaction">Interaction</option>
-          <option value="task">Task</option>
-          <option value="decision">Decision</option>
-          <option value="error">Error</option>
-          <option value="observation">Observation</option>
+          <option value="">{t('memoryManager.allKinds')}</option>
+          <option value="interaction">{t('memoryManager.interaction')}</option>
+          <option value="task">{t('memoryManager.task')}</option>
+          <option value="decision">{t('memoryManager.decision')}</option>
+          <option value="error">{t('memoryManager.error')}</option>
+          <option value="observation">{t('memoryManager.observation')}</option>
         </select>
         <select value={outcomeFilter} onChange={e => setOutcomeFilter(e.target.value)}
           className="text-xs border border-gray-200 rounded px-2 py-1 bg-white">
-          <option value="">All outcomes</option>
-          <option value="success">Success</option>
-          <option value="failure">Failure</option>
-          <option value="partial">Partial</option>
+          <option value="">{t('memoryManager.allOutcomes')}</option>
+          <option value="success">{t('memoryManager.success')}</option>
+          <option value="failure">{t('memoryManager.failure')}</option>
+          <option value="partial">{t('memoryManager.partial')}</option>
           <option value="n/a">N/A</option>
         </select>
         <input
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="keyword search…"
+          placeholder={t('memoryManager.keywordSearch')}
           className="text-xs border border-gray-200 rounded px-2 py-1 bg-white flex-1 min-w-[140px]"
         />
       </div>
 
       {episodes.length === 0 ? (
         <p className="p-6 text-center text-gray-400 text-sm italic">
-          {loading ? 'Loading…' : 'No episodes match the current filter.'}
+          {loading ? t('common.loading') : t('memoryManager.noEpisodesMatch')}
         </p>
       ) : (
         <div className="space-y-2">
@@ -814,8 +855,8 @@ function EpisodesPanel({ poolId, stats, onChange }) {
                     {outcomeCls && (
                       <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${outcomeCls}`}>{e.outcome}</span>
                     )}
-                    {e.actor && <span className="text-xs text-gray-500">actor: <span className="font-mono">{e.actor}</span></span>}
-                    {e.subject && <span className="text-xs text-gray-500">subject: <span className="font-mono">{e.subject}</span></span>}
+                    {e.actor && <span className="text-xs text-gray-500">{t('memoryManager.actor')} <span className="font-mono">{e.actor}</span></span>}
+                    {e.subject && <span className="text-xs text-gray-500">{t('memoryManager.subject')} <span className="font-mono">{e.subject}</span></span>}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[11px] text-gray-400">{fmt(e.occurred_at)}</span>
@@ -834,7 +875,7 @@ function EpisodesPanel({ poolId, stats, onChange }) {
                 )}
                 {e.details && Object.keys(e.details).length > 0 && (
                   <details className="mt-2">
-                    <summary className="text-[11px] text-gray-400 cursor-pointer hover:text-gray-600">details</summary>
+                    <summary className="text-[11px] text-gray-400 cursor-pointer hover:text-gray-600">{t('memoryManager.details')}</summary>
                     <pre className="text-[11px] bg-gray-50 rounded p-2 mt-1 overflow-x-auto">{JSON.stringify(e.details, null, 2)}</pre>
                   </details>
                 )}
@@ -853,7 +894,7 @@ function EpisodesPanel({ poolId, stats, onChange }) {
 // ---------------------------------------------------------------------------
 
 const GRAPH_TYPE_PALETTE = [
-  ['#6366f1', '#eef2ff'], ['#10b981', '#ecfdf5'], ['#f59e0b', '#fffbeb'],
+  ['#3f66d8', '#eef3ff'], ['#10b981', '#ecfdf5'], ['#f59e0b', '#fffbeb'],
   ['#ef4444', '#fef2f2'], ['#3b82f6', '#eff6ff'], ['#a855f7', '#faf5ff'],
   ['#14b8a6', '#f0fdfa'], ['#ec4899', '#fdf2f8'],
 ];
@@ -863,6 +904,8 @@ function colorForType(type, allTypes) {
 }
 
 function GraphPanel({ poolId, stats, onChange }) {
+  const { t } = useI18n();
+  const toast = useToast();
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -872,6 +915,11 @@ function GraphPanel({ poolId, stats, onChange }) {
   const [extractText, setExtractText] = useState('');
   const [extractRunning, setExtractRunning] = useState(false);
   const [extractResult, setExtractResult] = useState(null);
+  const [mergeResult, setMergeResult] = useState(null);
+  const [mergeRunning, setMergeRunning] = useState(false);
+  const [orphans, setOrphans] = useState([]); // dry-run preview of prunable mirrors
+  const [pruneResult, setPruneResult] = useState(null);
+  const [pruneRunning, setPruneRunning] = useState(false);
 
   // Add-edge form state
   const [srcType, setSrcType] = useState('');
@@ -892,6 +940,14 @@ function GraphPanel({ poolId, stats, onChange }) {
     } finally {
       setLoading(false);
     }
+    // Preview orphaned slot/note mirror nodes (no backing slot/note) so the
+    // prune button can show a count and stay hidden when there's nothing to do.
+    try {
+      const p = await pruneMemoryGraphMirrors(poolId, { dryRun: true });
+      setOrphans(p.data?.removed || []);
+    } catch {
+      setOrphans([]);
+    }
   }, [poolId]);
 
   useEffect(() => { load(); }, [load]);
@@ -909,26 +965,30 @@ function GraphPanel({ poolId, stats, onChange }) {
       await load();
       onChange?.();
     } catch (err) {
-      alert(err?.response?.data?.detail || 'Failed to add edge');
+      alert(err?.response?.data?.detail || t('memoryManager.errors.addEdge'));
     }
   };
 
   const handleDeleteNode = async (nodeId) => {
-    if (!window.confirm('Delete this node and any edges attached to it?')) return;
+    if (!window.confirm(t('memoryManager.confirmDeleteNode'))) return;
     try {
       await deleteMemoryGraphNode(poolId, nodeId);
       await load();
       onChange?.();
-    } catch { /* ignore */ }
+    } catch (e) {
+      toast.error(t('memoryManager.errors.deleteNode'), errorDetail(e));
+    }
   };
 
   const handleDeleteEdge = async (edgeId) => {
-    if (!window.confirm('Delete this edge?')) return;
+    if (!window.confirm(t('memoryManager.confirmDeleteEdge'))) return;
     try {
       await deleteMemoryGraphEdge(poolId, edgeId);
       await load();
       onChange?.();
-    } catch { /* ignore */ }
+    } catch (e) {
+      toast.error(t('memoryManager.errors.deleteEdge'), errorDetail(e));
+    }
   };
 
   const handleExtract = async (e) => {
@@ -942,7 +1002,7 @@ function GraphPanel({ poolId, stats, onChange }) {
       await load();
       onChange?.();
     } catch (err) {
-      setExtractResult({ ok: false, errors: [err?.response?.data?.detail || 'Extraction failed'] });
+      setExtractResult({ ok: false, errors: [err?.response?.data?.detail || t('memoryManager.errors.extraction')] });
     } finally {
       setExtractRunning(false);
     }
@@ -950,56 +1010,169 @@ function GraphPanel({ poolId, stats, onChange }) {
 
   const allTypes = Array.from(new Set(nodes.map(n => n.type)));
 
+  // Slot mirror nodes that have a same-name typed entity twin (separator-
+  // insensitive, mirroring the backend's matching) — candidates for auto-merge.
+  const slotTwinPairs = useMemo(() => {
+    const canon = (s) => String(s || '').toLowerCase().replace(/[_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    return nodes
+      .filter(n => n.type === 'slot')
+      .map(sn => ({ slot: sn, twin: nodes.find(n => n.type !== 'slot' && canon(n.name) === canon(sn.name)) }))
+      .filter(p => p.twin);
+  }, [nodes]);
+
+  const handleMergeSlots = async () => {
+    const lines = slotTwinPairs
+      .map(pair => `• ${t('memoryManager.slotLabel')} "${pair.slot.name}"  →  ${pair.twin.type} "${pair.twin.name}"`)
+      .join('\n');
+    const ok = window.confirm(
+      `${t('memoryManager.confirmMerge', { count: slotTwinPairs.length })}\n\n${lines}\n\n${t('memoryManager.mergeHint')}`
+    );
+    if (!ok) return;
+    setMergeRunning(true);
+    setMergeResult(null);
+    try {
+      const r = await mergeMemoryGraphSlots(poolId);
+      setMergeResult(r.data);
+      await load();
+      onChange?.();
+    } catch (err) {
+      setMergeResult({ merged: [], errors: [err?.response?.data?.detail || t('memoryManager.errors.merge')] });
+    } finally {
+      setMergeRunning(false);
+    }
+  };
+
+  const handlePrune = async () => {
+    const lines = orphans.map(o => `• ${o.type} "${o.name}"`).join('\n');
+    const ok = window.confirm(
+      `Remove ${orphans.length} orphaned graph node${orphans.length === 1 ? '' : 's'} whose backing slot/note no longer exists?\n\n${lines}\n\nTyped entity nodes are not affected.`
+    );
+    if (!ok) return;
+    setPruneRunning(true);
+    setPruneResult(null);
+    try {
+      const r = await pruneMemoryGraphMirrors(poolId, { dryRun: false });
+      setPruneResult(r.data);
+      await load();
+      onChange?.();
+    } catch (err) {
+      setPruneResult({ removed: [], errors: [err?.response?.data?.detail || t('memoryManager.errors.prune')] });
+    } finally {
+      setPruneRunning(false);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-xs text-gray-500">
-          {nodes.length} node{nodes.length === 1 ? '' : 's'}, {edges.length} edge{edges.length === 1 ? '' : 's'}
-          {stats?.node_cap && ` · cap ${stats.node_cap}/${stats.edge_cap}`}
+          {t('memoryManager.nodesAndEdges', { nodes: nodes.length, edges: edges.length })}
+          {stats?.node_cap && ` · ${t('memoryManager.capPair', { nodes: stats.node_cap, edges: stats.edge_cap })}`}
         </div>
         <div className="flex items-center gap-2">
           <div className="flex border border-gray-200 rounded overflow-hidden">
             <button onClick={() => setView('list')}
               className={`text-xs px-2 py-1 ${view === 'list' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
-              List
+              {t('memoryManager.list')}
             </button>
             <button onClick={() => setView('visual')}
               className={`text-xs px-2 py-1 ${view === 'visual' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
-              Visualize
+              {t('memoryManager.visualize')}
             </button>
           </div>
+          {slotTwinPairs.length > 0 && (
+            <button onClick={handleMergeSlots} disabled={mergeRunning}
+              title={t('memoryManager.slotMirrorNodesWithA')}
+              className="text-xs flex items-center gap-1 border border-emerald-200 text-emerald-700 px-2 py-1 rounded hover:bg-emerald-50 disabled:opacity-50">
+              <GitMerge className={`w-3 h-3 ${mergeRunning ? 'animate-pulse' : ''}`} />
+              Merge {slotTwinPairs.length} slot dup{slotTwinPairs.length === 1 ? '' : 's'}
+            </button>
+          )}
+          {orphans.length > 0 && (
+            <button onClick={handlePrune} disabled={pruneRunning}
+              title={t('memoryManager.slotNoteMirrorNodesWhose')}
+              className="text-xs flex items-center gap-1 border border-amber-200 text-amber-700 px-2 py-1 rounded hover:bg-amber-50 disabled:opacity-50">
+              <Eraser className={`w-3 h-3 ${pruneRunning ? 'animate-pulse' : ''}`} />
+              Prune {orphans.length} orphan{orphans.length === 1 ? '' : 's'}
+            </button>
+          )}
           <button onClick={() => setShowExtract(s => !s)}
             className="text-xs flex items-center gap-1 border border-purple-200 text-purple-700 px-2 py-1 rounded hover:bg-purple-50">
-            <Sparkles className="w-3 h-3" /> Extract
+            <Sparkles className="w-3 h-3" /> {t('memoryManager.extract')}
           </button>
           <button onClick={() => setShowAdd(s => !s)}
             className="text-xs flex items-center gap-1 border border-indigo-200 text-indigo-600 px-2 py-1 rounded hover:bg-indigo-50">
-            <Plus className="w-3 h-3" /> Edge
+            <Plus className="w-3 h-3" /> {t('memoryManager.edge')}
           </button>
           <button onClick={load} className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
-            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
+            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> {t('memoryManager.refresh')}
           </button>
         </div>
       </div>
+
+      {/* Merge result banner */}
+      {mergeResult && (
+        <div className={`text-xs border rounded-lg p-2.5 flex items-start gap-2 ${(mergeResult.errors || []).length ? 'border-red-200 bg-red-50/50' : 'border-emerald-200 bg-emerald-50/50'}`}>
+          <GitMerge className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${(mergeResult.errors || []).length ? 'text-red-500' : 'text-emerald-600'}`} />
+          <div className="flex-1 space-y-0.5">
+            {(mergeResult.merged || []).length > 0 ? (
+              <div className="text-emerald-800">
+                Merged {mergeResult.merged.length} slot node{mergeResult.merged.length === 1 ? '' : 's'}:{' '}
+                {mergeResult.merged.map(m => `${m.name} → ${m.into_type}`).join(', ')}
+              </div>
+            ) : (mergeResult.errors || []).length === 0 && (
+              <div className="text-gray-600">{t('memoryManager.noMergeableSlotDuplicatesFound')}</div>
+            )}
+            {(mergeResult.errors || []).map((e, i) => (
+              <div key={i} className="text-red-600">{e}</div>
+            ))}
+          </div>
+          <button onClick={() => setMergeResult(null)} className="text-gray-400 hover:text-gray-600">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
+      {pruneResult && (
+        <div className={`text-xs border rounded-lg p-2.5 flex items-start gap-2 ${(pruneResult.errors || []).length ? 'border-red-200 bg-red-50/50' : 'border-amber-200 bg-amber-50/50'}`}>
+          <Eraser className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${(pruneResult.errors || []).length ? 'text-red-500' : 'text-amber-600'}`} />
+          <div className="flex-1 space-y-0.5">
+            {(pruneResult.removed || []).length > 0 ? (
+              <div className="text-amber-800">
+                Removed {pruneResult.removed.length} orphaned node{pruneResult.removed.length === 1 ? '' : 's'}:{' '}
+                {pruneResult.removed.map(o => `${o.type} "${o.name}"`).join(', ')}
+              </div>
+            ) : (pruneResult.errors || []).length === 0 && (
+              <div className="text-gray-600">{t('memoryManager.noOrphanedMirrorNodesFound')}</div>
+            )}
+            {(pruneResult.errors || []).map((e, i) => (
+              <div key={i} className="text-red-600">{e}</div>
+            ))}
+          </div>
+          <button onClick={() => setPruneResult(null)} className="text-gray-400 hover:text-gray-600">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       {/* Add-edge form */}
       {showAdd && (
         <form onSubmit={handleAddEdge} className="border border-indigo-100 rounded-lg p-3 bg-indigo-50/30 space-y-2">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-            <input value={srcType} onChange={e => setSrcType(e.target.value)} placeholder="source type" required
+            <input value={srcType} onChange={e => setSrcType(e.target.value)} placeholder={t('memoryManager.sourceType')} required
               className="text-xs border border-gray-200 rounded px-2 py-1" />
-            <input value={srcName} onChange={e => setSrcName(e.target.value)} placeholder="source name" required
+            <input value={srcName} onChange={e => setSrcName(e.target.value)} placeholder={t('memoryManager.sourceName')} required
               className="text-xs border border-gray-200 rounded px-2 py-1" />
-            <input value={relation} onChange={e => setRelation(e.target.value)} placeholder="relation" required
+            <input value={relation} onChange={e => setRelation(e.target.value)} placeholder={t('memoryManager.relation')} required
               className="text-xs border border-gray-200 rounded px-2 py-1" />
-            <input value={tgtType} onChange={e => setTgtType(e.target.value)} placeholder="target type" required
+            <input value={tgtType} onChange={e => setTgtType(e.target.value)} placeholder={t('memoryManager.targetType')} required
               className="text-xs border border-gray-200 rounded px-2 py-1" />
-            <input value={tgtName} onChange={e => setTgtName(e.target.value)} placeholder="target name" required
+            <input value={tgtName} onChange={e => setTgtName(e.target.value)} placeholder={t('memoryManager.targetName')} required
               className="text-xs border border-gray-200 rounded px-2 py-1" />
           </div>
           <div className="flex gap-2">
-            <button type="submit" className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">Add</button>
-            <button type="button" onClick={() => setShowAdd(false)} className="text-xs border border-gray-200 px-3 py-1 rounded">Cancel</button>
+            <button type="submit" className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">{t('memoryManager.add')}</button>
+            <button type="button" onClick={() => setShowAdd(false)} className="text-xs border border-gray-200 px-3 py-1 rounded">{t('memoryManager.cancel')}</button>
           </div>
         </form>
       )}
@@ -1008,24 +1181,24 @@ function GraphPanel({ poolId, stats, onChange }) {
       {showExtract && (
         <form onSubmit={handleExtract} className="border border-purple-100 rounded-lg p-3 bg-purple-50/30 space-y-2">
           <p className="text-xs text-purple-800">
-            Paste prose and the LLM will extract entities + relations and add them to the graph.
+            {t('memoryManager.pasteProseAndTheLlm')}
           </p>
           <textarea value={extractText} onChange={e => setExtractText(e.target.value)} rows={4}
-            placeholder="e.g. Alice owns the auth-rewrite project. The mobile-app depends on auth-rewrite. Bob blocks ship-v2…"
+            placeholder={t('memoryManager.eGAliceOwnsThe')}
             className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 font-mono" />
           <div className="flex items-center gap-2">
             <button type="submit" disabled={extractRunning || !extractText.trim()}
               className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1">
-              <Sparkles className="w-3 h-3" /> {extractRunning ? 'Extracting…' : 'Run extraction'}
+              <Sparkles className="w-3 h-3" /> {extractRunning ? t('memoryManager.extracting') : t('memoryManager.runExtraction')}
             </button>
             <button type="button" onClick={() => { setShowExtract(false); setExtractResult(null); }}
-              className="text-xs border border-gray-200 px-3 py-1 rounded">Close</button>
+              className="text-xs border border-gray-200 px-3 py-1 rounded">{t('memoryManager.close')}</button>
           </div>
           {extractResult && (
             <div className="text-xs text-gray-700 bg-white border border-gray-200 rounded p-2">
               {extractResult.ok === false
-                ? <span className="text-red-600">Failed: {(extractResult.errors || []).join('; ') || 'unknown error'}</span>
-                : <span>Found {extractResult.triples_found || 0}, persisted {extractResult.triples_persisted || 0} triples.</span>}
+                ? <span className="text-red-600">{t('common.failed')}: {(extractResult.errors || []).join('; ') || t('memoryManager.unknownError')}</span>
+                : <span>{t('memoryManager.triplesResult', { found: extractResult.triples_found || 0, persisted: extractResult.triples_persisted || 0 })}</span>}
             </div>
           )}
         </form>
@@ -1033,7 +1206,7 @@ function GraphPanel({ poolId, stats, onChange }) {
 
       {nodes.length === 0 && edges.length === 0 ? (
         <p className="p-6 text-center text-gray-400 text-sm italic">
-          {loading ? 'Loading…' : 'Graph is empty. Add an edge or run extraction to seed it.'}
+          {loading ? t('common.loading') : t('memoryManager.graphEmpty')}
         </p>
       ) : view === 'visual' ? (
         <GraphVisual nodes={nodes} edges={edges} allTypes={allTypes} />
@@ -1055,7 +1228,7 @@ function GraphPanel({ poolId, stats, onChange }) {
                       </div>
                       {n.properties && Object.keys(n.properties).length > 0 && (
                         <details className="mt-1">
-                          <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-gray-600">properties</summary>
+                          <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-gray-600">{t('memoryManager.properties')}</summary>
                           <pre className="text-[10px] bg-gray-50 rounded p-1 mt-1 overflow-x-auto">{JSON.stringify(n.properties, null, 2)}</pre>
                         </details>
                       )}
@@ -1216,11 +1389,21 @@ function GraphVisual({ nodes, edges, allTypes }) {
 // ---------------------------------------------------------------------------
 // Tab: Agent Connections
 // ---------------------------------------------------------------------------
+// Attached pool ids for an agent, primary first. memory_data holds a single
+// pool id (legacy) or a list of ids.
+function agentPools(a) {
+  if (a.memory_type !== 'shared' || !a.memory_data) return [];
+  return Array.isArray(a.memory_data) ? a.memory_data.map(String) : [String(a.memory_data)];
+}
+
 function AgentsTab({ memories, workspaceFilter }) {
+  const { t } = useI18n();
+  const toast = useToast();
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(null);
-  const [selectedPoolId, setSelectedPoolId] = useState('');
+  const [selectedPoolId, setSelectedPoolId] = useState('');   // primary (write) pool
+  const [selectedExtraIds, setSelectedExtraIds] = useState([]); // read-only pools
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1228,31 +1411,40 @@ function AgentsTab({ memories, workspaceFilter }) {
       try {
         const resp = await getAgents(workspaceFilter);
         setAgents(resp.data);
-      } catch {} finally { setLoading(false); }
+      } catch (e) {
+        toast.error(t('memoryManager.errors.loadAgents'), errorDetail(e));
+      } finally { setLoading(false); }
     };
     load();
-  }, [workspaceFilter]);
+  }, [workspaceFilter, t, toast]);
 
   const poolById = Object.fromEntries(memories.map(m => [m.id, m]));
 
   const handleAssign = async () => {
     setSaving(true);
     try {
+      const pools = selectedPoolId
+        ? [selectedPoolId, ...selectedExtraIds.filter(p => p !== selectedPoolId)]
+        : [];
       await updateAgentMemory(assigning.agentId, {
-        memory_type: selectedPoolId ? 'shared' : 'none',
-        memory_data: selectedPoolId || null,
+        memory_type: pools.length ? 'shared' : 'none',
+        memory_data: pools.length === 0 ? null : pools.length === 1 ? pools[0] : pools,
+        workspace: workspaceFilter || 'default',
       });
       const resp = await getAgents(workspaceFilter);
       setAgents(resp.data);
       setAssigning(null);
-    } catch {} finally { setSaving(false); }
+    } catch (e) {
+      toast.error(t('memoryManager.errors.assignAgent'), errorDetail(e));
+    } finally { setSaving(false); }
   };
 
-  const agentsWithMemory = agents.filter(a => a.memory_type === 'shared' && a.memory_data);
+  const agentsWithMemory = agents.filter(a => agentPools(a).length > 0);
   const poolUsage = {};
   agentsWithMemory.forEach(a => {
-    const pid = a.memory_data;
-    poolUsage[pid] = (poolUsage[pid] || 0) + 1;
+    agentPools(a).forEach(pid => {
+      poolUsage[pid] = (poolUsage[pid] || 0) + 1;
+    });
   });
 
   if (loading) return (
@@ -1266,9 +1458,9 @@ function AgentsTab({ memories, workspaceFilter }) {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Total Agents', value: agents.length, icon: Users, color: 'text-indigo-600 bg-indigo-50' },
-          { label: 'With Memory', value: agentsWithMemory.length, icon: Link2, color: 'text-green-600 bg-green-50' },
-          { label: 'Memory Pools', value: memories.length, icon: Database, color: 'text-purple-600 bg-purple-50' },
+          { label: t('memoryManager.stats.totalAgents'), value: agents.length, icon: Users, color: 'text-indigo-600 bg-indigo-50' },
+          { label: t('memoryManager.stats.withMemory'), value: agentsWithMemory.length, icon: Link2, color: 'text-green-600 bg-green-50' },
+          { label: t('memoryManager.stats.memoryPools'), value: memories.length, icon: Database, color: 'text-purple-600 bg-purple-50' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4">
             <div className={`p-3 rounded-xl ${color}`}><Icon className="w-5 h-5" /></div>
@@ -1284,17 +1476,17 @@ function AgentsTab({ memories, workspaceFilter }) {
       {memories.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2"><BarChart2 className="w-4 h-4 text-indigo-500" /> Pool Usage</h3>
+            <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2"><BarChart2 className="w-4 h-4 text-indigo-500" /> {t('memoryManager.poolUsage')}</h3>
           </div>
           <div className="divide-y divide-gray-100">
             {memories.map(m => (
               <div key={m.id} className="px-5 py-3 flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-800">{m.name}</p>
-                  <p className="text-xs text-gray-400">{(m.notes || []).length} notes · {Object.keys(m.structured_data || {}).length} slots</p>
+                  <p className="text-xs text-gray-400">{t('memoryManager.notesAndSlots', { notes: (m.notes || []).length, slots: Object.keys(m.structured_data || {}).length })}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500">{poolUsage[m.id] || 0} agent{(poolUsage[m.id] || 0) !== 1 ? 's' : ''}</span>
+                  <span className="text-sm text-gray-500">{t('memoryManager.agentCount', { count: poolUsage[m.id] || 0 })}</span>
                   <div className="w-24 bg-gray-100 rounded-full h-1.5">
                     <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: `${Math.min(100, ((poolUsage[m.id] || 0) / Math.max(1, agents.length)) * 100)}%` }} />
                   </div>
@@ -1308,23 +1500,25 @@ function AgentsTab({ memories, workspaceFilter }) {
       {/* Agent list */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
-          <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2"><Users className="w-4 h-4 text-indigo-500" /> Agents</h3>
+          <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2"><Users className="w-4 h-4 text-indigo-500" /> {t('memoryManager.agents')}</h3>
         </div>
         {agents.length === 0 ? (
-          <p className="p-6 text-center text-gray-400 text-sm italic">No agents registered.</p>
+          <p className="p-6 text-center text-gray-400 text-sm italic">{t('memoryManager.noAgentsRegistered')}</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wider">
-                <th className="px-5 py-2 text-left">Agent</th>
-                <th className="px-5 py-2 text-left">Memory Pool</th>
-                <th className="px-5 py-2 text-left">Status</th>
-                <th className="px-5 py-2 text-right">Action</th>
+                <th className="px-5 py-2 text-left">{t('memoryManager.agent')}</th>
+                <th className="px-5 py-2 text-left">{t('memoryManager.memoryPool')}</th>
+                <th className="px-5 py-2 text-left">{t('memoryManager.status')}</th>
+                <th className="px-5 py-2 text-right">{t('memoryManager.action')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {agents.map(a => {
-                const pool = a.memory_type === 'shared' && a.memory_data ? poolById[a.memory_data] : null;
+                const pools = agentPools(a);
+                const primaryPool = pools[0] ? poolById[pools[0]] : null;
+                const extraPools = pools.slice(1);
                 return (
                   <tr key={a.id} className="hover:bg-gray-50">
                     <td className="px-5 py-3">
@@ -1332,29 +1526,45 @@ function AgentsTab({ memories, workspaceFilter }) {
                       <p className="text-xs text-gray-400">{a.domain || '—'}</p>
                     </td>
                     <td className="px-5 py-3">
-                      {pool ? (
-                        <p className="font-medium text-indigo-700">{pool.name}</p>
+                      {pools.length > 0 ? (
+                        <div>
+                          <p className="font-medium text-indigo-700">
+                            {primaryPool ? primaryPool.name : pools[0]}
+                            {extraPools.length > 0 && (
+                              <span className="ml-1.5 text-[10px] font-semibold text-amber-600 uppercase tracking-wider">{t('memoryManager.primary')}</span>
+                            )}
+                          </p>
+                          {extraPools.length > 0 && (
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              + {extraPools.map(pid => poolById[pid]?.name || pid).join(', ')} (read-only)
+                            </p>
+                          )}
+                        </div>
                       ) : (
-                        <span className="text-gray-400 text-xs italic">None</span>
+                        <span className="text-gray-400 text-xs italic">{t('memoryManager.none')}</span>
                       )}
                     </td>
                     <td className="px-5 py-3">
-                      {pool ? (
+                      {pools.length > 0 ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium">
-                          <CheckCircle className="w-3 h-3" /> Connected
+                          <CheckCircle className="w-3 h-3" /> Connected{pools.length > 1 ? ` ×${pools.length}` : ''}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
-                          No memory
+                          {t('memoryManager.noMemory')}
                         </span>
                       )}
                     </td>
                     <td className="px-5 py-3 text-right">
                       <button
-                        onClick={() => { setAssigning({ agentId: a.id, agentName: a.name || a.id }); setSelectedPoolId(a.memory_data || ''); }}
+                        onClick={() => {
+                          setAssigning({ agentId: a.id, agentName: a.name || a.id });
+                          setSelectedPoolId(pools[0] || '');
+                          setSelectedExtraIds(pools.slice(1));
+                        }}
                         className="text-xs border border-indigo-200 text-indigo-600 px-2 py-1 rounded-lg hover:bg-indigo-50"
                       >
-                        {pool ? 'Change' : 'Assign'}
+                        {pools.length > 0 ? 'Change' : 'Assign'}
                       </button>
                     </td>
                   </tr>
@@ -1370,20 +1580,50 @@ function AgentsTab({ memories, workspaceFilter }) {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-indigo-50">
-              <h3 className="font-bold text-indigo-900">Assign Memory — {assigning.agentName}</h3>
+              <div>
+                <h3 className="font-bold text-indigo-900">{t('memoryManager.assignMemory')} — {assigning.agentName}</h3>
+                <p className="text-xs text-indigo-400 mt-0.5">{t('memoryManager.appliesInWorkspace', { workspace: workspaceFilter || 'default' })}</p>
+              </div>
               <button onClick={() => setAssigning(null)} className="text-indigo-400 hover:text-indigo-600"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Memory Pool</label>
-                <select value={selectedPoolId} onChange={e => setSelectedPoolId(e.target.value)}
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.primaryPool')}</label>
+                <p className="text-xs text-gray-400 mb-2">{t('memoryManager.allMemoryWritesGoTo')}</p>
+                <select value={selectedPoolId}
+                  onChange={e => {
+                    const pid = e.target.value;
+                    setSelectedPoolId(pid);
+                    if (pid) setSelectedExtraIds(prev => prev.filter(p => p !== pid));
+                  }}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                  <option value="">— None (no shared memory) —</option>
+                  <option value="">{t('memoryManager.noneNoSharedMemory')}</option>
                   {memories.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
               </div>
+              {selectedPoolId && memories.filter(m => m.id !== selectedPoolId).length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.additionalPools')}</label>
+                  <p className="text-xs text-gray-400 mb-2">{t('memoryManager.additionalPoolsHint')}</p>
+                  <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                    {memories.filter(m => m.id !== selectedPoolId).map(m => (
+                      <label key={m.id} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedExtraIds.includes(m.id)}
+                          onChange={e => setSelectedExtraIds(prev =>
+                            e.target.checked ? [...prev, m.id] : prev.filter(p => p !== m.id)
+                          )}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="truncate">{m.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex gap-3">
-                <button onClick={() => setAssigning(null)} className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 font-medium text-sm">Cancel</button>
+                <button onClick={() => setAssigning(null)} className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 font-medium text-sm">{t('memoryManager.cancel')}</button>
                 <button onClick={handleAssign} disabled={saving} className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 font-medium text-sm disabled:opacity-50 flex items-center justify-center gap-2">
                   {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
                 </button>
@@ -1399,15 +1639,17 @@ function AgentsTab({ memories, workspaceFilter }) {
 // ---------------------------------------------------------------------------
 // Tab: RAG Pipeline
 // ---------------------------------------------------------------------------
+// Brand names stay as they are; only "not configured"/"none" are translated.
 const PROVIDER_LABELS = {
-  none: 'Not configured', openai: 'OpenAI', 'sentence-transformers': 'Sentence-Transformers',
+  none: null, openai: 'OpenAI', 'sentence-transformers': 'Sentence-Transformers',
   ollama: 'Ollama', google: 'Google',
 };
 const DB_LABELS = {
-  none: 'None', chroma: 'ChromaDB', pinecone: 'Pinecone', qdrant: 'Qdrant',
+  none: null, chroma: 'ChromaDB', pinecone: 'Pinecone', qdrant: 'Qdrant',
 };
 
 function VectorDbStatusCard({ ragCfg }) {
+  const { t } = useI18n();
   if (!ragCfg) return null;
   const active = ragCfg.is_configured;
   return (
@@ -1417,25 +1659,24 @@ function VectorDbStatusCard({ ragCfg }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <p className="font-semibold text-sm text-gray-800">Vector DB Status</p>
+          <p className="font-semibold text-sm text-gray-800">{t('memoryManager.vectorDbStatus')}</p>
           {active
-            ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium"><CheckCircle className="w-3 h-3" /> Active</span>
-            : <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">Not configured</span>}
+            ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium"><CheckCircle className="w-3 h-3" /> {t('memoryManager.active')}</span>
+            : <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{t('memoryManager.notConfigured')}</span>}
         </div>
         <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-600">
-          <span><span className="text-gray-400">Vector DB:</span> {DB_LABELS[ragCfg.vector_db] || ragCfg.vector_db}</span>
-          <span><span className="text-gray-400">Embedding:</span> {PROVIDER_LABELS[ragCfg.embedding_provider] || ragCfg.embedding_provider}</span>
+          <span><span className="text-gray-400">{t('memoryManager.vectorDb')}</span> {DB_LABELS[ragCfg.vector_db] || (ragCfg.vector_db === 'none' ? t('memoryManager.none') : ragCfg.vector_db)}</span>
+          <span><span className="text-gray-400">{t('memoryManager.embedding')}</span> {PROVIDER_LABELS[ragCfg.embedding_provider] || (ragCfg.embedding_provider === 'none' ? t('memoryManager.notConfigured') : ragCfg.embedding_provider)}</span>
           {ragCfg.vector_db !== 'none' && ragCfg.vector_db_collection && (
-            <span><span className="text-gray-400">Collection:</span> {ragCfg.vector_db_collection}</span>
+            <span><span className="text-gray-400">{t('memoryManager.collection')}</span> {ragCfg.vector_db_collection}</span>
           )}
           {ragCfg.embedding_provider !== 'none' && ragCfg.embedding_model && (
-            <span><span className="text-gray-400">Model:</span> <code className="bg-white rounded px-1">{ragCfg.embedding_model}</code></span>
+            <span><span className="text-gray-400">{t('memoryManager.model')}</span> <code className="bg-white rounded px-1">{ragCfg.embedding_model}</code></span>
           )}
         </div>
         {!active && (
           <p className="text-xs text-gray-500 mt-2">
-            Configure a vector database and embedding model in <strong>Settings → RAG & Vectors</strong> to enable full vector search.
-            Without it, files are still chunked and stored as plain text.
+            {t('memoryManager.configureVectorBefore')} <strong>{t('memoryManager.settingsRagVectors')}</strong> {t('memoryManager.configureVectorAfter')}
           </p>
         )}
       </div>
@@ -1444,6 +1685,8 @@ function VectorDbStatusCard({ ragCfg }) {
 }
 
 function RagPipelineTab({ memories, workspaceFilter }) {
+  const { t } = useI18n();
+  const toast = useToast();
   const [poolId, setPoolId] = useState(memories[0]?.id || '');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1483,7 +1726,9 @@ function RagPipelineTab({ memories, workspaceFilter }) {
         await uploadMemoryFile(poolId, workspaceFilter, file);
       }
       await loadFiles(poolId, workspaceFilter);
-    } catch {} finally { setUploading(false); }
+    } catch (e) {
+      toast.error(t('memoryManager.errors.uploadFile'), errorDetail(e));
+    } finally { setUploading(false); }
   };
 
   const handleDrop = async (e) => {
@@ -1497,7 +1742,9 @@ function RagPipelineTab({ memories, workspaceFilter }) {
     try {
       await indexMemoryFile(poolId, filename, workspaceFilter);
       await loadFiles(poolId, workspaceFilter);
-    } catch {} finally { setIndexing(null); }
+    } catch (e) {
+      toast.error(t('memoryManager.errors.indexFile'), errorDetail(e));
+    } finally { setIndexing(null); }
   };
 
   const handleDeindex = async (filename) => {
@@ -1505,7 +1752,9 @@ function RagPipelineTab({ memories, workspaceFilter }) {
     try {
       await deindexMemoryFile(poolId, filename);
       await loadFiles(poolId, workspaceFilter);
-    } catch {} finally { setIndexing(null); }
+    } catch (e) {
+      toast.error(t('memoryManager.errors.deindexFile'), errorDetail(e));
+    } finally { setIndexing(null); }
   };
 
   const handleDelete = async (filename) => {
@@ -1513,7 +1762,9 @@ function RagPipelineTab({ memories, workspaceFilter }) {
     try {
       await deleteMemoryFile(poolId, filename, workspaceFilter);
       await loadFiles(poolId, workspaceFilter);
-    } catch {}
+    } catch (e) {
+      toast.error(t('memoryManager.errors.deleteFile'), errorDetail(e));
+    }
   };
 
   const handleIndexAll = async () => {
@@ -1535,11 +1786,11 @@ function RagPipelineTab({ memories, workspaceFilter }) {
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex-1 min-w-48">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Target Memory Pool</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.targetMemoryPool')}</label>
             <select value={poolId} onChange={e => setPoolId(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
               {memories.length === 0 ? (
-                <option value="">No pools — create one first</option>
+                <option value="">{t('memoryManager.noPoolsCreateOneFirst')}</option>
               ) : (
                 memories.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
               )}
@@ -1562,10 +1813,10 @@ function RagPipelineTab({ memories, workspaceFilter }) {
       {files.length > 0 && (
         <div className={`grid gap-4 ${showVectorCols ? 'grid-cols-4' : 'grid-cols-3'}`}>
           {[
-            { label: 'Total Files', value: files.length, color: 'bg-gray-50 text-gray-600' },
-            { label: 'Pending', value: pendingCount, color: 'bg-yellow-50 text-yellow-700' },
-            { label: 'Indexed', value: indexedCount, color: 'bg-green-50 text-green-700' },
-            ...(showVectorCols ? [{ label: 'Total Chunks', value: totalChunks, color: 'bg-indigo-50 text-indigo-700' }] : []),
+            { label: t('memoryManager.stats.totalFiles'), value: files.length, color: 'bg-gray-50 text-gray-600' },
+            { label: t('memoryManager.stats.pending'), value: pendingCount, color: 'bg-yellow-50 text-yellow-700' },
+            { label: t('memoryManager.stats.indexed'), value: indexedCount, color: 'bg-green-50 text-green-700' },
+            ...(showVectorCols ? [{ label: t('memoryManager.stats.totalChunks'), value: totalChunks, color: 'bg-indigo-50 text-indigo-700' }] : []),
           ].map(({ label, value, color }) => (
             <div key={label} className={`rounded-xl border border-gray-200 p-4 text-center ${color}`}>
               <p className="text-2xl font-bold">{value}</p>
@@ -1593,13 +1844,13 @@ function RagPipelineTab({ memories, workspaceFilter }) {
             ? <RefreshCw className="w-10 h-10 mx-auto mb-3 animate-spin text-indigo-400" />
             : <Upload className={`w-10 h-10 mx-auto mb-3 ${dragging ? 'text-indigo-500' : 'text-gray-300'}`} />
           }
-          <p className="text-gray-600 font-medium">{uploading ? 'Uploading…' : 'Drop files here or click to upload'}</p>
-          <p className="text-xs text-gray-400 mt-1">Supports .txt, .md, .json, .yaml, .csv, .xml and other text formats</p>
+          <p className="text-gray-600 font-medium">{uploading ? t('memoryManager.uploading') : t('memoryManager.dropFilesHere')}</p>
+          <p className="text-xs text-gray-400 mt-1">{t('memoryManager.supportsTxtMdJsonYaml')}</p>
         </div>
       ) : (
         <div className="border-2 border-dashed rounded-xl p-10 text-center border-gray-200 bg-gray-50">
           <AlertCircle className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-          <p className="text-gray-400 text-sm">Select a workspace to upload files.</p>
+          <p className="text-gray-400 text-sm">{t('memoryManager.selectAWorkspaceToUpload')}</p>
         </div>
       )}
 
@@ -1608,18 +1859,18 @@ function RagPipelineTab({ memories, workspaceFilter }) {
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
             <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2">
-              <Files className="w-4 h-4 text-indigo-500" /> Files in "{memories.find(m => m.id === poolId)?.name || poolId}"
+              <Files className="w-4 h-4 text-indigo-500" /> {t('memoryManager.filesInPool', { pool: memories.find(m => m.id === poolId)?.name || poolId })}
             </h3>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wider">
-                  <th className="px-5 py-2 text-left">File</th>
-                  <th className="px-5 py-2 text-left">Status</th>
-                  <th className="px-5 py-2 text-left">Chunks</th>
-                  <th className="px-5 py-2 text-left">Indexed at</th>
-                  <th className="px-5 py-2 text-right">Action</th>
+                  <th className="px-5 py-2 text-left">{t('memoryManager.file')}</th>
+                  <th className="px-5 py-2 text-left">{t('memoryManager.status')}</th>
+                  <th className="px-5 py-2 text-left">{t('memoryManager.chunks')}</th>
+                  <th className="px-5 py-2 text-left">{t('memoryManager.indexedAt')}</th>
+                  <th className="px-5 py-2 text-right">{t('memoryManager.action')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -1633,7 +1884,7 @@ function RagPipelineTab({ memories, workspaceFilter }) {
                       </td>
                       <td className="px-5 py-3">
                         {isBusy
-                          ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium animate-pulse"><RefreshCw className="w-3 h-3 animate-spin" /> Working</span>
+                          ? <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium animate-pulse"><RefreshCw className="w-3 h-3 animate-spin" /> {t('memoryManager.working')}</span>
                           : <StatusBadge status={isIndexed ? 'indexed' : 'raw'} />
                         }
                       </td>
@@ -1646,12 +1897,12 @@ function RagPipelineTab({ memories, workspaceFilter }) {
                           ) : isIndexed ? (
                             <button onClick={() => handleDeindex(f.filename)}
                               className="flex items-center gap-1 text-xs border border-gray-200 text-gray-500 px-2 py-1 rounded-lg hover:bg-gray-50">
-                              De-index
+                              {t('memoryManager.deIndex')}
                             </button>
                           ) : (
                             <button onClick={() => handleIndex(f.filename)}
                               className="flex items-center gap-1 text-xs bg-indigo-600 text-white px-2 py-1 rounded-lg hover:bg-indigo-700">
-                              <Zap className="w-3 h-3" /> Index
+                              <Zap className="w-3 h-3" /> {t('memoryManager.index')}
                             </button>
                           )}
                           <button onClick={() => handleDelete(f.filename)} className="text-gray-300 hover:text-red-500 p-0.5 ml-1">
@@ -1675,6 +1926,7 @@ function RagPipelineTab({ memories, workspaceFilter }) {
 // Tab: Indexed Files
 // ---------------------------------------------------------------------------
 function IndexedFilesTab({ memories }) {
+  const { t } = useI18n();
   const [search, setSearch] = useState('');
   const [filterPool, setFilterPool] = useState('');
 
@@ -1699,10 +1951,10 @@ function IndexedFilesTab({ memories }) {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'Indexed Files', value: ragFiles.length, icon: FileSearch, color: 'text-indigo-600 bg-indigo-50' },
-          { label: 'Total Chunks', value: totalChunks, icon: BarChart2, color: 'text-green-600 bg-green-50' },
-          { label: 'Showing', value: filtered.length, icon: CheckCircle, color: 'text-teal-600 bg-teal-50' },
-          { label: 'Memory Pools', value: pools.length, icon: Database, color: 'text-purple-600 bg-purple-50' },
+          { label: t('memoryManager.stats.indexedFiles'), value: ragFiles.length, icon: FileSearch, color: 'text-indigo-600 bg-indigo-50' },
+          { label: t('memoryManager.stats.totalChunks'), value: totalChunks, icon: BarChart2, color: 'text-green-600 bg-green-50' },
+          { label: t('memoryManager.stats.showing'), value: filtered.length, icon: CheckCircle, color: 'text-teal-600 bg-teal-50' },
+          { label: t('memoryManager.stats.memoryPools'), value: pools.length, icon: Database, color: 'text-purple-600 bg-purple-50' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4">
             <div className={`p-3 rounded-xl ${color}`}><Icon className="w-5 h-5" /></div>
@@ -1718,12 +1970,12 @@ function IndexedFilesTab({ memories }) {
       <div className="flex gap-3">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search files…"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('memoryManager.searchFiles')}
             className="w-full border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
         </div>
         <select value={filterPool} onChange={e => setFilterPool(e.target.value)}
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-          <option value="">All pools</option>
+          <option value="">{t('memoryManager.allPools')}</option>
           {pools.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
       </div>
@@ -1734,18 +1986,18 @@ function IndexedFilesTab({ memories }) {
           <div className="p-12 text-center">
             <FileSearch className="w-12 h-12 text-gray-200 mx-auto mb-3" />
             <p className="text-gray-400 text-sm">
-              {ragFiles.length === 0 ? 'No files have been RAG-indexed yet.' : 'No files match your filters.'}
+              {ragFiles.length === 0 ? t('memoryManager.noRagIndexedFiles') : t('memoryManager.noFilesMatchFilters')}
             </p>
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wider bg-gray-50">
-                <th className="px-5 py-3 text-left">File</th>
-                <th className="px-5 py-3 text-left">Pool</th>
-                <th className="px-5 py-3 text-left">Status</th>
-                <th className="px-5 py-3 text-left">Chunks</th>
-                <th className="px-5 py-3 text-left">Indexed at</th>
+                <th className="px-5 py-3 text-left">{t('memoryManager.file')}</th>
+                <th className="px-5 py-3 text-left">{t('memoryManager.pool')}</th>
+                <th className="px-5 py-3 text-left">{t('memoryManager.status')}</th>
+                <th className="px-5 py-3 text-left">{t('memoryManager.chunks')}</th>
+                <th className="px-5 py-3 text-left">{t('memoryManager.indexedAt')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -1777,40 +2029,95 @@ function IndexedFilesTab({ memories }) {
 // Root
 // ---------------------------------------------------------------------------
 const TABS = [
-  { id: 'pools',   label: 'Memory Pools',     icon: Database   },
-  { id: 'agents',  label: 'Agent Connections', icon: Users      },
-  { id: 'rag',     label: 'RAG Pipeline',      icon: Cpu        },
-  { id: 'indexed', label: 'Indexed Files',     icon: FileSearch },
+  { id: 'pools',   labelKey: 'memoryManager.tabs.pools',   icon: Database   },
+  { id: 'agents',  labelKey: 'memoryManager.tabs.agents',  icon: Users      },
+  { id: 'rag',     labelKey: 'memoryManager.tabs.rag',     icon: Cpu        },
+  { id: 'indexed', labelKey: 'memoryManager.tabs.indexed', icon: FileSearch },
 ];
 
+/**
+ * The Memory Agent's chat, beside the pool it is about.
+ *
+ * The pool open on the page is passed through to the turn, which binds the
+ * agent's memory tools to it for that build — so a question asked while a pool
+ * is open is answered from that pool, not from whatever the agent record
+ * happens to be assigned. The transcript is keyed on the pool too: a
+ * conversation about one pool should not come back under another.
+ *
+ * The callbacks are memoised on workspace and pool because EntityChat loads its
+ * transcript in an effect keyed on them.
+ */
+function useMemoryChatDescriptor(workspace, memoryId, onChanged) {
+  const { t } = useI18n();
+
+  const loadChat = useCallback(() => getMemoryChat(workspace, memoryId), [workspace, memoryId]);
+  const clearChat = useCallback(() => clearMemoryChat(workspace, memoryId), [workspace, memoryId]);
+  const stopChat = useCallback(() => stopMemoryChat(workspace, memoryId), [workspace, memoryId]);
+
+  const onEvent = useCallback((ev) => {
+    if (ev.type === 'memory') onChanged();
+  }, [onChanged]);
+
+  return useMemo(() => ({
+    scope: `memory:${workspace || ''}:${memoryId || ''}`,
+    path: memoryChatUrl(workspace, memoryId),
+    loadChat, clearChat, stopChat, onEvent,
+    title: t('memoryManager.askChat'),
+    emptyHint: memoryId ? t('memoryManager.askChatHint') : t('memoryManager.askChatPickPool'),
+    suggestions: [
+      t('memoryManager.chatSuggestWhatIsKnown'),
+      t('memoryManager.chatSuggestSearch'),
+      t('memoryManager.chatSuggestExtract'),
+    ],
+  }), [workspace, memoryId, loadChat, clearChat, stopChat, onEvent, t]);
+}
+
 export default function MemoryManager() {
+  const { t } = useI18n();
+  const toast = useToast();
   const { workspaceFilter } = useWorkspace();
   const [activeTab, setActiveTab] = useState('pools');
   const [memories, setMemories] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Lifted out of PoolsTab: the chat beside it is bound to whichever pool is
+  // open, and the toggle for the column lives in the page header.
+  const [selectedPoolId, setSelectedPoolId] = useState(null);
+  const chat = useChatColumn(true);
+  const chatVisible = chat.open && activeTab === 'pools';
 
   const fetchMemories = useCallback(async () => {
     setLoading(true);
     try {
       const resp = await getSharedMemories(workspaceFilter);
       setMemories(resp.data);
-    } catch {} finally { setLoading(false); }
-  }, [workspaceFilter]);
+    } catch (e) {
+      toast.error(t('memoryManager.errors.loadMemories'), errorDetail(e));
+    } finally { setLoading(false); }
+  }, [workspaceFilter, t, toast]);
 
   useEffect(() => { fetchMemories(); }, [fetchMemories]);
 
+  // The pool chat, drawn in the column beside the pools or in the floating
+  // panel. Registered only on the Pools tab: that is the only tab it is about.
+  const memoryChat = useMemoryChatDescriptor(workspaceFilter, selectedPoolId, fetchMemories);
+  usePageChat(activeTab === 'pools' ? memoryChat : null);
+
   return (
-    <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Shared Memory</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Manage agent memory pools, RAG indexing pipeline, and data access.</p>
-        </div>
-        <button onClick={fetchMemories} className="flex items-center gap-2 border border-gray-200 text-gray-600 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-500' : ''}`} /> Refresh
-        </button>
-      </div>
+    <PageContainer className="space-y-6">
+      <PageHeader
+        icon={Database}
+        title={t('memoryManager.sharedMemory')}
+        description={t('memoryManager.manageAgentMemoryPoolsRag')}
+        actions={<>
+          {activeTab === 'pools' && (
+            <ChatToggle open={chat.open} onToggle={chat.toggle}
+                        label={t('memoryManager.askChat')} />
+          )}
+          <button onClick={fetchMemories} className="flex items-center gap-2 border border-gray-200 text-gray-600 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-500' : ''}`} /> {t('memoryManager.refresh')}
+          </button>
+        </>}
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
@@ -1825,17 +2132,29 @@ export default function MemoryManager() {
               }`}
             >
               <Icon className="w-4 h-4" />
-              <span className="hidden sm:inline">{tab.label}</span>
+              <span className="hidden sm:inline">{t(tab.labelKey)}</span>
             </button>
           );
         })}
       </div>
 
-      {/* Tab content */}
-      {activeTab === 'pools'   && <PoolsTab memories={memories} onRefresh={fetchMemories} workspaceFilter={workspaceFilter} />}
-      {activeTab === 'agents'  && <AgentsTab memories={memories} workspaceFilter={workspaceFilter} />}
-      {activeTab === 'rag'     && <RagPipelineTab memories={memories} workspaceFilter={workspaceFilter} />}
-      {activeTab === 'indexed' && <IndexedFilesTab memories={memories} />}
-    </div>
+      {/* Tab content, with the Memory Agent beside the pools it is about. */}
+      <div className={chatVisible ? chat.gridClass : ''}>
+        <div className={chatVisible ? chat.mainClass : ''}>
+          {activeTab === 'pools'   && <PoolsTab memories={memories} onRefresh={fetchMemories}
+                                                workspaceFilter={workspaceFilter}
+                                                onPoolSelected={setSelectedPoolId} />}
+          {activeTab === 'agents'  && <AgentsTab memories={memories} workspaceFilter={workspaceFilter} />}
+          {activeTab === 'rag'     && <RagPipelineTab memories={memories} workspaceFilter={workspaceFilter} />}
+          {activeTab === 'indexed' && <IndexedFilesTab memories={memories} />}
+        </div>
+
+        {chatVisible && (
+          <ChatColumn>
+            <EntityChat {...memoryChat} {...FILL_COLUMN} />
+          </ChatColumn>
+        )}
+      </div>
+    </PageContainer>
   );
 }

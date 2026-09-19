@@ -1,8 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
-import { useWorkspace } from '../components/WorkspaceContext';
-import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, createTask, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, deleteWorkspaceFile } from '../api';
-import { ChevronLeft, ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload } from 'lucide-react';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useWorkspace } from '../components/workspace';
+import { useLiveRefetch } from '../components/stream';
+import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace } from '../api';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow } from 'lucide-react';
+import MarkdownRenderer from '../components/MarkdownRenderer';
+import TaskBoard from '../components/TaskBoard';
+
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
+// Tab ids the page can open, so a ?tab= deep-link can be validated before use.
+const WORKSPACE_TABS = ['files', 'agents', 'instructions', 'tasks', 'projects', 'progress'];
+
+const isMarkdownPath = (p) => /\.(md|markdown|mdx)$/i.test(String(p || ''));
 
 const buildFileTree = (paths, directories = []) => {
   const root = { type: 'dir', children: {} };
@@ -74,27 +84,25 @@ const parentDirPaths = (filePath) => {
 };
 
 const WorkspaceDetails = () => {
+  const { t } = useI18n();
   const { name } = useParams();
   const navigate = useNavigate();
+  // Deep-link support: ?tab=<tab>&file=<workspace-relative path>. Chat replies
+  // link a file the agent wrote straight to it (see common/entity_links.py).
+  const [searchParams] = useSearchParams();
+  const linkedTab = searchParams.get('tab') || '';
+  const linkedFile = searchParams.get('file') || '';
   const { liveUpdates } = useWorkspace();
   const [ws, setWs] = useState(null);
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
   const [allAgents, setAllAgents] = useState([]);
+  const [allFlows, setAllFlows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('files');
+  const [activeTab, setActiveTab] = useState(
+    WORKSPACE_TABS.includes(linkedTab) ? linkedTab : 'files');
   const [agentSearch, setAgentSearch] = useState('');
-  const [taskSearch, setTaskSearch] = useState('');
-  const [taskStatusFilter, setTaskStatusFilter] = useState('all');
-  const [taskSort, setTaskSort] = useState('newest');
-  const [showTaskModal, setShowTaskModal] = useState(false);
-  const [creatingTask, setCreatingTask] = useState(false);
-  const [newTask, setNewTask] = useState({
-    title: '',
-    description: '',
-    should_decompose: false,
-    project_id: '',
-  });
+  const [taskToolbar, setTaskToolbar] = useState(null);
   const [wsProjects, setWsProjects] = useState([]);
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [selectedFilePath, setSelectedFilePath] = useState('');
@@ -102,6 +110,7 @@ const WorkspaceDetails = () => {
   const [selectedFileSize, setSelectedFileSize] = useState(0);
   const [selectedFileIsPdf, setSelectedFileIsPdf] = useState(false);
   const [pdfViewMode, setPdfViewMode] = useState('render');
+  const [mdViewMode, setMdViewMode] = useState('rendered'); // 'rendered' | 'raw'
   const [fileContentLoading, setFileContentLoading] = useState(false);
   const [fileContentError, setFileContentError] = useState('');
   const [fileDeleting, setFileDeleting] = useState(false);
@@ -113,21 +122,22 @@ const WorkspaceDetails = () => {
   const [instructionsSaved, setInstructionsSaved] = useState(false);
   const instructionsLoadedRef = React.useRef(false);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       // Fetch in parallel but handle partial failures so the page still opens
-      const [wsRes, filesRes, agentsRes, projectsRes, instrRes] = await Promise.allSettled([
+      const [wsRes, filesRes, agentsRes, projectsRes, instrRes, flowsRes] = await Promise.allSettled([
         getWorkspace(name),
         getWorkspaceFilesByName(name),
         getAgents(),
         getProjects(name),
         getWorkspaceInstructions(name),
+        listFlows(),
       ]);
 
       if (wsRes.status === 'fulfilled') {
         setWs(wsRes.value.data);
       } else {
-        console.error('Failed to load workspace info', wsRes.reason);
+        console.error(t('workspaceDetails.errors.info'), wsRes.reason);
       }
 
       if (filesRes.status === 'fulfilled') {
@@ -138,7 +148,7 @@ const WorkspaceDetails = () => {
           (p) => !p.split('/').some((seg) => seg.startsWith('.'))
         ));
       } else {
-        console.warn('Failed to load workspace files', filesRes.reason);
+        console.warn(t('workspaceDetails.errors.files'), filesRes.reason);
         setFiles([]);
         setFolders([]);
       }
@@ -146,7 +156,7 @@ const WorkspaceDetails = () => {
       if (agentsRes.status === 'fulfilled') {
         setAllAgents(agentsRes.value.data || []);
       } else {
-        console.warn('Failed to load agents list', agentsRes.reason);
+        console.warn(t('workspaceDetails.errors.agents'), agentsRes.reason);
         setAllAgents([]);
       }
 
@@ -164,14 +174,21 @@ const WorkspaceDetails = () => {
           instructionsLoadedRef.current = true;
         }
       }
+
+      if (flowsRes.status === 'fulfilled') {
+        setAllFlows(flowsRes.value.data || []);
+      } else {
+        setAllFlows([]);
+      }
     } catch (e) {
-      console.error('Unexpected error while loading workspace data', e);
+      console.error(t('workspaceDetails.errors.unexpected'), e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [name, t]);
 
-  useEffect(() => { fetchData(); if (!liveUpdates) return; const i = setInterval(fetchData, 5000); return () => clearInterval(i); }, [name, liveUpdates]);
+  useEffect(() => { fetchData(); }, [name, liveUpdates, fetchData]);
+  useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   const handleDelete = async () => {
     if (!window.confirm(`Delete workspace "${ws.name}"? This cannot be undone.`)) return;
@@ -179,7 +196,7 @@ const WorkspaceDetails = () => {
       await deleteWorkspace(name);
       navigate('/workspaces');
     } catch {
-      alert('Failed to delete workspace');
+      alert(t('workspaceDetails.errors.deleteWorkspace'));
     }
   };
 
@@ -188,7 +205,7 @@ const WorkspaceDetails = () => {
       await addAgentToWorkspace(name, agentId);
       fetchData();
     } catch {
-      alert('Failed to add agent');
+      alert(t('workspaceDetails.errors.addAgent'));
     }
   };
 
@@ -197,30 +214,16 @@ const WorkspaceDetails = () => {
       await removeAgentFromWorkspace(name, agentId);
       fetchData();
     } catch {
-      alert('Failed to remove agent');
+      alert(t('workspaceDetails.errors.removeAgent'));
     }
   };
 
-  const handleCreateTask = async (e) => {
-    e.preventDefault();
-    const title = (newTask.title || '').trim();
-    if (!title) return;
-    setCreatingTask(true);
+  const handleRemoveFlow = async (flowId) => {
     try {
-      await createTask({
-        title,
-        description: (newTask.description || '').trim(),
-        workspace_name: ws.name,
-        should_decompose: !!newTask.should_decompose,
-        project_id: newTask.project_id || null,
-      });
-      setShowTaskModal(false);
-      setNewTask({ title: '', description: '', should_decompose: false, project_id: '' });
+      await removeFlowFromWorkspace(name, flowId);
       fetchData();
     } catch {
-      alert('Failed to create task');
-    } finally {
-      setCreatingTask(false);
+      alert(t('workspaceDetails.errors.removeFlow'));
     }
   };
 
@@ -235,8 +238,9 @@ const WorkspaceDetails = () => {
       setSelectedFileSize(Number(resp.data?.size || 0));
       setSelectedFileIsPdf(!!resp.data?.is_pdf);
       setPdfViewMode('render');
+      setMdViewMode('rendered');
     } catch (e) {
-      const detail = e?.response?.data?.detail || 'Failed to load file content';
+      const detail = e?.response?.data?.detail || t('workspaceDetails.errors.fileContent');
       setFileContentError(detail);
       setSelectedFileContent('');
       setSelectedFileSize(0);
@@ -244,7 +248,7 @@ const WorkspaceDetails = () => {
     } finally {
       setFileContentLoading(false);
     }
-  }, [name]);
+  }, [name, t]);
 
   const handleUploadFiles = async (fileList) => {
     const selected = Array.from(fileList || []);
@@ -259,7 +263,7 @@ const WorkspaceDetails = () => {
       await fetchData();
       if (lastPath) loadFileContent(lastPath);
     } catch (e) {
-      const detail = e?.response?.data?.detail || 'Failed to upload file';
+      const detail = e?.response?.data?.detail || t('workspaceDetails.errors.upload');
       alert(detail);
     } finally {
       setUploading(false);
@@ -269,9 +273,9 @@ const WorkspaceDetails = () => {
 
   const handleDeleteWorkspacePath = async (path, type = 'file') => {
     if (!path || fileDeleting) return;
-    const label = type === 'dir' ? 'folder' : 'file';
-    const warning = type === 'dir' ? ' This will delete everything inside it.' : '';
-    if (!window.confirm(`Delete ${label} "${path}" from workspace "${name}"?${warning}`)) return;
+    const label = type === 'dir' ? t('workspaceDetails.folder') : t('workspaceDetails.file');
+    const warning = type === 'dir' ? ` ${t('workspaceDetails.deleteFolderWarning')}` : '';
+    if (!window.confirm(t('workspaceDetails.confirmDeletePath', { label, path, workspace: name }) + warning)) return;
     setFileDeleting(true);
     setFileContentError('');
     try {
@@ -326,12 +330,13 @@ const WorkspaceDetails = () => {
       setInstructionsSaved(true);
       setTimeout(() => setInstructionsSaved(false), 2000);
     } catch {
-      alert('Failed to save instructions');
+      alert(t('workspaceDetails.errors.instructions'));
     } finally {
       setInstructionsSaving(false);
     }
   };
 
+  // Keep in sync with WORKSPACE_TABS (the ?tab= allowlist).
   const tabs = [
     { id: 'files', label: 'Files', icon: FileText },
     { id: 'agents', label: 'Agents', icon: Users },
@@ -355,24 +360,6 @@ const WorkspaceDetails = () => {
       .toLowerCase();
     return haystack.includes(normalizedQuery);
   });
-  const allTaskStatuses = Array.from(new Set((ws?.tasks || []).map((t) => String(t.status || '').trim()).filter(Boolean)));
-  const normalizedTaskQuery = taskSearch.trim().toLowerCase();
-  const filteredSortedTasks = [...(ws?.tasks || [])]
-    .filter((t) => {
-      if (taskStatusFilter !== 'all' && String(t.status || '') !== taskStatusFilter) return false;
-      if (!normalizedTaskQuery) return true;
-      const haystack = [t.title, t.description, t.id, t.status].filter(Boolean).join(' ').toLowerCase();
-      return haystack.includes(normalizedTaskQuery);
-    })
-    .sort((a, b) => {
-      if (taskSort === 'title_az') return String(a.title || '').localeCompare(String(b.title || ''));
-      if (taskSort === 'title_za') return String(b.title || '').localeCompare(String(a.title || ''));
-      if (taskSort === 'progress_desc') return Number(b.progress || 0) - Number(a.progress || 0);
-      if (taskSort === 'progress_asc') return Number(a.progress || 0) - Number(b.progress || 0);
-      const aTs = new Date(a.created_at || 0).getTime() || 0;
-      const bTs = new Date(b.created_at || 0).getTime() || 0;
-      return taskSort === 'oldest' ? aTs - bTs : bTs - aTs;
-    });
   const fileTree = useMemo(() => buildFileTree(files, folders), [files, folders]);
 
   useEffect(() => {
@@ -399,7 +386,7 @@ const WorkspaceDetails = () => {
     });
 
     if (!selectedFilePath || !files.includes(selectedFilePath)) {
-      const first = files[0];
+      const first = files.includes(linkedFile) ? linkedFile : files[0];
       if (first) {
         setExpandedFolders((prev) => {
           const next = new Set(prev);
@@ -414,7 +401,7 @@ const WorkspaceDetails = () => {
         setSelectedFileIsPdf(false);
       }
     }
-  }, [files, folders, loadFileContent, selectedFilePath]);
+  }, [files, folders, loadFileContent, selectedFilePath, linkedFile]);
 
   const renderFileNodes = (nodes, depth = 0) => nodes.map((node) => {
     if (node.type === 'dir') {
@@ -440,7 +427,7 @@ const WorkspaceDetails = () => {
               onClick={() => handleDeleteWorkspacePath(node.path, 'dir')}
               disabled={fileDeleting}
               className="p-1 rounded text-gray-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30"
-              title="Delete folder"
+              title={t('workspaceDetails.deleteFolder')}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -482,7 +469,7 @@ const WorkspaceDetails = () => {
           onClick={() => handleDeleteWorkspacePath(node.path, 'file')}
           disabled={fileDeleting}
           className="p-1 rounded text-gray-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-30"
-          title="Delete file"
+          title={t('workspaceDetails.deleteFile')}
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
@@ -490,34 +477,30 @@ const WorkspaceDetails = () => {
     );
   });
 
-  if (loading) return <div className="text-center py-10">Loading workspace...</div>;
-  if (!ws) return <div className="text-center py-10">Workspace not found</div>;
+  if (loading) return <div className="text-center py-10">{t('workspaceDetails.loadingWorkspace')}</div>;
+  if (!ws) return <div className="text-center py-10">{t('workspaceDetails.workspaceNotFound')}</div>;
 
   return (
-    <div className={activeTab === 'files' ? 'h-full flex flex-col' : ''}>
-      <Link to="/workspaces" className="flex items-center text-indigo-600 hover:text-indigo-900 mb-6 shrink-0">
-        <ChevronLeft className="w-4 h-4 mr-1" /> Back to Workspaces
-      </Link>
+    <PageContainer fill={activeTab === 'files' || activeTab === 'tasks'}>
+      <PageHeader
+        icon={Folder}
+        title={ws.name}
+        description={ws.path}
+        backTo="/workspaces"
+        backLabel={t('workspaceDetails.workspaces')}
+        actions={
+          <button
+            onClick={handleDelete}
+            className="flex items-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
+            title={t('workspaceDetails.deleteWorkspace')}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            {t('workspaceDetails.deleteWorkspace2')}
+          </button>
+        }
+      />
 
-      <div className="flex items-center justify-between mb-6 shrink-0">
-        <div className="flex items-center">
-          <Folder className="w-7 h-7 text-gray-700 mr-2" />
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">{ws.name}</h2>
-            <div className="text-sm text-gray-500 truncate max-w-2xl">{ws.path}</div>
-          </div>
-        </div>
-        <button
-          onClick={handleDelete}
-          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
-          title="Delete workspace"
-        >
-          <Trash2 className="w-4 h-4" />
-          Delete Workspace
-        </button>
-      </div>
-
-      <div className="mb-6 border-b border-gray-200 shrink-0">
+      <div className="border-b border-gray-200 shrink-0 flex items-end justify-between gap-3">
         <nav className="flex flex-wrap gap-2 -mb-px">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -527,7 +510,7 @@ const WorkspaceDetails = () => {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex items-center px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+                className={`inline-flex items-center px-4 py-2 first:pl-0 text-sm font-semibold border-b-2 transition-colors ${
                   isActive
                     ? 'border-indigo-600 text-indigo-700'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -540,101 +523,18 @@ const WorkspaceDetails = () => {
             );
           })}
         </nav>
+        {activeTab === 'tasks' && <div ref={setTaskToolbar} className="flex items-center shrink-0" />}
       </div>
 
       {activeTab === 'tasks' && (
-        <div className="bg-white p-6 shadow-md rounded-lg">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <h3 className="text-lg font-bold">Allocated Tasks</h3>
-            <button
-              type="button"
-              onClick={() => setShowTaskModal(true)}
-              className="inline-flex items-center bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors"
-            >
-              <Plus className="w-4 h-4 mr-1.5" />
-              Create Task
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-            <div className="relative">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={taskSearch}
-                onChange={(e) => setTaskSearch(e.target.value)}
-                placeholder="Find by title, id, status..."
-                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none"
-              />
-            </div>
-            <select
-              value={taskStatusFilter}
-              onChange={(e) => setTaskStatusFilter(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none bg-white"
-            >
-              <option value="all">All statuses</option>
-              {allTaskStatuses.map((status) => (
-                <option key={status} value={status}>{status}</option>
-              ))}
-            </select>
-            <select
-              value={taskSort}
-              onChange={(e) => setTaskSort(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none bg-white"
-            >
-              <option value="newest">Sort: Newest first</option>
-              <option value="oldest">Sort: Oldest first</option>
-              <option value="title_az">Sort: Title A-Z</option>
-              <option value="title_za">Sort: Title Z-A</option>
-              <option value="progress_desc">Sort: Progress high-low</option>
-              <option value="progress_asc">Sort: Progress low-high</option>
-            </select>
-          </div>
-
-          {filteredSortedTasks.length ? (
-            <div className="space-y-3">
-              {filteredSortedTasks.map(t => {
-                const project = wsProjects.find(p => p.id === t.project_id);
-                return (
-                  <div
-                    key={t.id}
-                    className="p-3 border rounded hover:bg-gray-50 cursor-pointer"
-                    onClick={() => navigate(`/tasks/${t.id}`)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/tasks/${t.id}`); }}
-                  >
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <Link to={`/tasks/${t.id}`} onClick={(e) => e.stopPropagation()} className="font-medium text-indigo-700 hover:underline">{t.title}</Link>
-                        <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-                          <span>Status: {t.status}</span>
-                          {project && (
-                            <Link
-                              to={`/projects/${project.id}`}
-                              onClick={(e) => e.stopPropagation()}
-                              className="flex items-center gap-0.5 text-indigo-500 hover:text-indigo-700"
-                            >
-                              <FolderGit2 className="w-3 h-3" /> {project.name}
-                            </Link>
-                          )}
-                        </div>
-                      </div>
-                      <div className="w-40 bg-gray-200 rounded-full h-2.5">
-                        <div className="bg-indigo-600 h-2.5 rounded-full" style={{ width: `${t.progress}%` }}></div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-gray-500 text-sm">
-              {ws.tasks && ws.tasks.length
-                ? 'No tasks match your current filters.'
-                : 'No tasks bound to this workspace.'}
-            </p>
-          )}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <TaskBoard
+            workspace={name}
+            selectedWorkspace={name}
+            showWorkspaceColumn={false}
+            liveUpdates={liveUpdates}
+            toolbarTarget={taskToolbar}
+          />
         </div>
       )}
 
@@ -642,24 +542,24 @@ const WorkspaceDetails = () => {
         <div className="bg-white p-6 shadow-md rounded-lg">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold flex items-center gap-2">
-              <FolderGit2 className="w-5 h-5 text-indigo-500" /> Projects
+              <FolderGit2 className="w-5 h-5 text-indigo-500" /> {t('workspaceDetails.projects')}
             </h3>
             <Link
               to="/projects"
               className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
             >
-              Manage all projects →
+              {t('workspaceDetails.manageAllProjects')}
             </Link>
           </div>
           {wsProjects.length === 0 ? (
             <div className="text-center py-10 text-gray-400">
               <FolderGit2 className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">No projects in this workspace yet.</p>
+              <p className="text-sm">{t('workspaceDetails.noProjectsInThisWorkspace')}</p>
               <Link
                 to="/projects"
                 className="mt-2 inline-block text-xs text-indigo-600 hover:underline"
               >
-                Create a project →
+                {t('workspaceDetails.createAProject')}
               </Link>
             </div>
           ) : (
@@ -693,16 +593,16 @@ const WorkspaceDetails = () => {
                       )}
                       {project.frontend?.enabled && (
                         <span className="flex items-center gap-0.5 text-xs text-blue-500">
-                          <Globe className="w-3 h-3" /> Frontend
+                          <Globe className="w-3 h-3" /> {t('workspaceDetails.frontend')}
                         </span>
                       )}
                       {project.backend?.enabled && (
                         <span className="flex items-center gap-0.5 text-xs text-green-600">
-                          <Server className="w-3 h-3" /> Backend
+                          <Server className="w-3 h-3" /> {t('workspaceDetails.backend')}
                         </span>
                       )}
                       {project.tasks_count > 0 && (
-                        <span className="text-xs text-indigo-500">{project.tasks_count} task{project.tasks_count !== 1 ? 's' : ''}</span>
+                        <span className="text-xs text-indigo-500">{t('workspaceDetails.taskCount', { count: project.tasks_count })}</span>
                       )}
                     </div>
                   </div>
@@ -717,7 +617,14 @@ const WorkspaceDetails = () => {
       {activeTab === 'progress' && (() => {
         const allTasks = ws?.tasks || [];
         const statusOrder = ['done', 'in_progress', 'ready', 'blocked', 'stopped', 'todo'];
-        const statusLabels = { done: 'Done', in_progress: 'In Progress', ready: 'Ready', blocked: 'Blocked', stopped: 'Stopped', todo: 'To Do' };
+        const statusLabels = {
+          done: t('workspaceDetails.taskStatuses.done'),
+          in_progress: t('workspaceDetails.taskStatuses.in_progress'),
+          ready: t('workspaceDetails.taskStatuses.ready'),
+          blocked: t('workspaceDetails.taskStatuses.blocked'),
+          stopped: t('workspaceDetails.taskStatuses.stopped'),
+          todo: t('workspaceDetails.taskStatuses.todo'),
+        };
         const statusColors = {
           done: { bar: 'bg-green-500', badge: 'bg-green-100 text-green-700' },
           in_progress: { bar: 'bg-yellow-400', badge: 'bg-yellow-100 text-yellow-700' },
@@ -747,15 +654,15 @@ const WorkspaceDetails = () => {
             {/* Summary card */}
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-indigo-500" /> Overall Progress
+                <BarChart2 className="w-4 h-4 text-indigo-500" /> {t('workspaceDetails.overallProgress')}
               </h3>
               {total === 0 ? (
-                <p className="text-sm text-gray-400">No tasks in this workspace yet.</p>
+                <p className="text-sm text-gray-400">{t('workspaceDetails.noTasksInThisWorkspace')}</p>
               ) : (
                 <>
                   <div className="flex items-end justify-between mb-2">
                     <span className="text-3xl font-bold text-gray-900">{pct}%</span>
-                    <span className="text-sm text-gray-500">{doneCnt} / {total} tasks done</span>
+                    <span className="text-sm text-gray-500">{t('workspaceDetails.tasksDone', { done: doneCnt, total })}</span>
                   </div>
                   <div className="w-full bg-gray-100 rounded-full h-3 mb-6">
                     <div className="bg-green-500 h-3 rounded-full transition-all" style={{ width: `${pct}%` }} />
@@ -783,14 +690,14 @@ const WorkspaceDetails = () => {
             {Object.keys(byProject).length > 0 && total > 0 && (
               <div className="bg-white rounded-xl border border-gray-200 p-6">
                 <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                  <FolderGit2 className="w-4 h-4 text-indigo-500" /> Progress by Project
+                  <FolderGit2 className="w-4 h-4 text-indigo-500" /> {t('workspaceDetails.progressByProject')}
                 </h3>
                 <div className="space-y-4">
                   {Object.entries(byProject).map(([projectId, { tasks, name }]) => {
                     const ptotal = tasks.length;
                     const pdone = tasks.filter(t => t.status === 'done').length;
                     const ppct = ptotal > 0 ? Math.round((pdone / ptotal) * 100) : 0;
-                    const label = projectId === '__none__' ? 'No Project' : (name || projectId.slice(0, 8) + '…');
+                    const label = projectId === '__none__' ? t('workspaceDetails.noProject') : (name || projectId.slice(0, 8) + '…');
                     return (
                       <div key={projectId}>
                         <div className="flex items-center justify-between mb-1">
@@ -800,7 +707,7 @@ const WorkspaceDetails = () => {
                               <Link to={`/projects/${projectId}`} className="hover:text-indigo-600">{label}</Link>
                             ) : label}
                           </span>
-                          <span className="text-xs text-gray-500">{pdone}/{ptotal} done · {ppct}%</span>
+                          <span className="text-xs text-gray-500">{t('workspaceDetails.doneOfTotal', { done: pdone, total: ptotal })} · {ppct}%</span>
                         </div>
                         <div className="w-full bg-gray-100 rounded-full h-2">
                           <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${ppct}%` }} />
@@ -839,7 +746,7 @@ const WorkspaceDetails = () => {
               };
               return (
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
-                  <h3 className="text-base font-semibold text-gray-800 mb-4">Activity Log</h3>
+                  <h3 className="text-base font-semibold text-gray-800 mb-4">{t('workspaceDetails.activityLog')}</h3>
                   <div className="space-y-0 max-h-96 overflow-y-auto">
                     {logEntries.map((e, i) => {
                       const style = typeStyle[e.type] || { dot: 'bg-gray-300', text: 'text-gray-600' };
@@ -873,7 +780,7 @@ const WorkspaceDetails = () => {
           <div className="flex items-center justify-between mb-4 shrink-0">
             <h3 className="text-lg font-bold flex items-center">
               <FileText className="w-5 h-5 mr-2" />
-              Files
+              {t('workspaceDetails.files')}
             </h3>
             <input
               ref={fileInputRef}
@@ -889,28 +796,31 @@ const WorkspaceDetails = () => {
               className="inline-flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50"
             >
               <Upload className="w-4 h-4" />
-              {uploading ? 'Uploading…' : 'Upload File'}
+              {uploading ? t('workspaceDetails.uploading') : t('workspaceDetails.uploadFile')}
             </button>
           </div>
           {(files.length || folders.length) ? (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
-              <div className="lg:col-span-4 border border-gray-200 rounded-lg p-2 overflow-y-auto min-h-0">
+              {/* The tree is a picker; the file is the thing being read. Two
+                  of twelve columns is enough for names, and the other ten stop
+                  wrapping every other line of the file beside it. */}
+              <div className="lg:col-span-2 border border-gray-200 rounded-lg p-2 overflow-auto min-h-0">
                 {renderFileNodes(fileTree)}
               </div>
-              <div className="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
+              <div className="lg:col-span-10 border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
                 <div className="px-4 py-2 border-b bg-gray-50 flex items-center justify-between gap-2 shrink-0">
                   <div className="min-w-0">
-                    <div className="text-xs text-gray-500">Selected file</div>
+                    <div className="text-xs text-gray-500">{t('workspaceDetails.selectedFile')}</div>
                     <div className="text-sm text-gray-700 truncate flex items-center gap-2">
                       <span className="truncate">{selectedFilePath || '-'}</span>
                       {selectedFileIsPdf && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-600 shrink-0">
-                          <FileText className="w-2.5 h-2.5" /> PDF
+                          <FileText className="w-2.5 h-2.5" /> {t('workspaceDetails.pdf')}
                         </span>
                       )}
                     </div>
                     {selectedFileSize > 0 && (
-                      <div className="text-xs text-gray-400 mt-0.5">{selectedFileSize} bytes</div>
+                      <div className="text-xs text-gray-400 mt-0.5">{t('workspaceDetails.bytes', { count: selectedFileSize })}</div>
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -921,14 +831,32 @@ const WorkspaceDetails = () => {
                           onClick={() => setPdfViewMode('render')}
                           className={`px-2.5 py-1 transition-colors ${pdfViewMode === 'render' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                         >
-                          Render
+                          {t('workspaceDetails.render')}
                         </button>
                         <button
                           type="button"
                           onClick={() => setPdfViewMode('text')}
                           className={`px-2.5 py-1 transition-colors border-l border-gray-200 ${pdfViewMode === 'text' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                         >
-                          Text
+                          {t('workspaceDetails.text')}
+                        </button>
+                      </div>
+                    )}
+                    {!selectedFileIsPdf && isMarkdownPath(selectedFilePath) && (
+                      <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
+                        <button
+                          type="button"
+                          onClick={() => setMdViewMode('rendered')}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors ${mdViewMode === 'rendered' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                        >
+                          <Eye className="w-3.5 h-3.5" /> {t('workspaceDetails.rendered')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMdViewMode('raw')}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors border-l border-gray-200 ${mdViewMode === 'raw' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                        >
+                          <Code2 className="w-3.5 h-3.5" /> {t('workspaceDetails.raw')}
                         </button>
                       </div>
                     )}
@@ -937,16 +865,16 @@ const WorkspaceDetails = () => {
                       onClick={handleDeleteSelectedFile}
                       disabled={!selectedFilePath || fileDeleting}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      title={selectedFilePath ? 'Delete selected file' : 'Select a file to delete'}
+                      title={selectedFilePath ? t('workspaceDetails.deleteSelectedFile') : t('workspaceDetails.selectFileToDelete')}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      {fileDeleting ? 'Deleting...' : 'Delete'}
+                      {fileDeleting ? t('common.deleting') : t('common.delete')}
                     </button>
                   </div>
                 </div>
                 <div className={`${selectedFileIsPdf && pdfViewMode === 'render' ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
                   {fileContentLoading ? (
-                    <p className="text-sm text-gray-500 p-4">Loading file content...</p>
+                    <p className="text-sm text-gray-500 p-4">{t('workspaceDetails.loadingFileContent')}</p>
                   ) : fileContentError ? (
                     <p className="text-sm text-red-600 p-4">{fileContentError}</p>
                   ) : selectedFilePath && selectedFileIsPdf && pdfViewMode === 'render' ? (
@@ -955,16 +883,18 @@ const WorkspaceDetails = () => {
                       src={getWorkspaceFileRawUrl(name, selectedFilePath)}
                       className="w-full h-full border-0"
                     />
+                  ) : selectedFilePath && isMarkdownPath(selectedFilePath) && mdViewMode === 'rendered' ? (
+                    <MarkdownRenderer content={selectedFileContent} />
                   ) : selectedFilePath ? (
                     <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words">{selectedFileContent}</pre>
                   ) : (
-                    <p className="text-sm text-gray-500">Select a file to preview its content.</p>
+                    <p className="text-sm text-gray-500">{t('workspaceDetails.selectAFileToPreview')}</p>
                   )}
                 </div>
               </div>
             </div>
           ) : (
-            <p className="text-gray-500 text-sm">No files found.</p>
+            <p className="text-gray-500 text-sm">{t('workspaceDetails.noFilesFound')}</p>
           )}
         </div>
       )}
@@ -981,7 +911,7 @@ const WorkspaceDetails = () => {
             <div>
               <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
                 <Users className="w-4 h-4 mr-2" />
-                Authorized Agents in Workspace
+                {t('workspaceDetails.authorizedAgentsInWorkspace')}
               </h4>
               <div className="space-y-3">
                 {ws.metadata?.allowed_agents?.length ? (
@@ -1000,7 +930,7 @@ const WorkspaceDetails = () => {
                               {isSystem && (
                                 <span className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-200 text-indigo-700">
                                   <Lock className="w-2.5 h-2.5" />
-                                  System
+                                  {t('workspaceDetails.system')}
                                 </span>
                               )}
                             </div>
@@ -1010,7 +940,7 @@ const WorkspaceDetails = () => {
                         {isSystem ? (
                           <span
                             className="p-2 text-indigo-200 cursor-not-allowed"
-                            title="System agent — required in every workspace"
+                            title={t('workspaceDetails.systemAgentRequiredInEvery')}
                           >
                             <Lock className="w-4 h-4" />
                           </span>
@@ -1018,7 +948,7 @@ const WorkspaceDetails = () => {
                           <button
                             onClick={() => handleRemoveAgent(agentId)}
                             className="p-2 text-indigo-300 hover:text-red-500 transition-colors"
-                            title="Remove from workspace"
+                            title={t('workspaceDetails.removeFromWorkspace')}
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1027,7 +957,7 @@ const WorkspaceDetails = () => {
                     );
                   })
                 ) : (
-                  <p className="text-gray-500 text-sm italic">No agents authorized for this workspace.</p>
+                  <p className="text-gray-500 text-sm italic">{t('workspaceDetails.noAgentsAuthorizedForThis')}</p>
                 )}
               </div>
             </div>
@@ -1036,7 +966,7 @@ const WorkspaceDetails = () => {
             <div>
               <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
                 <Plus className="w-4 h-4 mr-2" />
-                Available from Marketplace
+                {t('workspaceDetails.availableFromMarketplace')}
               </h4>
               <div className="mb-3 relative">
                 <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -1044,21 +974,21 @@ const WorkspaceDetails = () => {
                   type="text"
                   value={agentSearch}
                   onChange={(e) => setAgentSearch(e.target.value)}
-                  placeholder="Find agent by name, id, domain..."
+                  placeholder={t('workspaceDetails.findAgentByNameId')}
                   className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none"
                 />
               </div>
-              <div className="grid grid-cols-1 gap-3 max-h-80 overflow-y-auto pr-2">
+              <div className="grid grid-cols-1 gap-3">
                 {filteredMarketAgents.length ? (
                   filteredMarketAgents.map(agent => {
                     const isDefaultOnly = agent.default_workspace_only && name !== 'default';
                     const isSystem = agent.system === true;
                     const isDisabled = isDefaultOnly || isSystem;
-                    const disabledLabel = isSystem ? 'System agent — already active' : 'Restricted';
+                    const disabledLabel = isSystem ? t('workspaceDetails.systemAgentActive') : t('workspaceDetails.restricted');
                     const disabledTitle = isSystem
-                      ? 'System agent — included automatically in every workspace'
+                      ? t('workspaceDetails.systemAgentIncluded')
                       : isDefaultOnly
-                        ? 'This agent is restricted to the default workspace'
+                        ? t('workspaceDetails.defaultWorkspaceOnlyTitle')
                         : undefined;
                     return (
                       <div
@@ -1082,7 +1012,7 @@ const WorkspaceDetails = () => {
                               {isDisabled && <Lock className="w-3 h-3 text-gray-400" />}
                             </div>
                             <div className="text-[10px] text-gray-400 line-clamp-1">
-                              {isSystem ? 'System agent — required everywhere' : isDefaultOnly ? 'Default workspace only' : agent.description}
+                              {isSystem ? t('workspaceDetails.systemAgentRequiredEverywhere') : isDefaultOnly ? t('workspaceDetails.defaultWorkspaceOnly') : agent.description}
                             </div>
                           </div>
                         </div>
@@ -1096,17 +1026,56 @@ const WorkspaceDetails = () => {
                               : 'bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-600 hover:text-white'
                           }`}
                         >
-                          {isDisabled ? disabledLabel : 'Add Agent'}
+                          {isDisabled ? disabledLabel : t('workspaceDetails.addAgent')}
                         </button>
                       </div>
                     );
                   })
                 ) : (
                   <p className="text-gray-500 text-sm italic">
-                    {agentSearch.trim() ? 'No marketplace agents match your search.' : 'No marketplace agents available.'}
+                    {agentSearch.trim() ? t('workspaceDetails.noMarketAgentsMatch') : t('workspaceDetails.noMarketAgents')}
                   </p>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Authorized Flows */}
+          <div className="mt-8 pt-6 border-t">
+            <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
+              <Workflow className="w-4 h-4 mr-2" />
+              {t('workspaceDetails.authorizedFlowsInWorkspace')}
+            </h4>
+            <div className="space-y-3">
+              {ws.metadata?.allowed_flows?.length ? (
+                ws.metadata.allowed_flows.map(flowId => {
+                  const flow = allFlows.find(f => f.id === flowId);
+                  return (
+                    <div key={flowId} className="flex items-center justify-between p-3 bg-purple-50 border border-purple-100 rounded-xl">
+                      <div className="flex items-center space-x-3">
+                        <div className="p-2 bg-white rounded-lg text-purple-600 shadow-sm">
+                          <Workflow className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-sm font-bold text-purple-900">{flow?.name || flowId}</div>
+                          <div className="text-[10px] text-purple-400">{flowId}</div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveFlow(flowId)}
+                        className="p-2 text-purple-300 hover:text-red-500 transition-colors"
+                        title={t('workspaceDetails.revokeFlowFromWorkspace')}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-gray-500 text-sm italic">
+                  No flows authorized for this workspace. Add flows from the Marketplace, and any flow becomes assignable to this workspace's tasks.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -1118,7 +1087,7 @@ const WorkspaceDetails = () => {
             <div>
               <h3 className="text-lg font-bold flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-indigo-500" />
-                Workspace Instructions
+                {t('workspaceDetails.workspaceInstructions')}
               </h3>
               <p className="text-sm text-gray-500 mt-0.5">
                 These instructions are prepended to every agent's system prompt when running in this workspace.
@@ -1137,7 +1106,7 @@ const WorkspaceDetails = () => {
               }`}
             >
               {instructionsSaved ? (
-                <><Check className="w-4 h-4" /> Saved</>
+                <><Check className="w-4 h-4" /> {t('workspaceDetails.saved')}</>
               ) : (
                 <><Save className="w-4 h-4" /> {instructionsSaving ? 'Saving…' : 'Save'}</>
               )}
@@ -1151,84 +1120,12 @@ const WorkspaceDetails = () => {
             className="w-full font-mono text-sm border border-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none resize-y leading-relaxed"
           />
           {instructions && instructionsDraft !== instructions && (
-            <p className="text-xs text-amber-600 mt-2">You have unsaved changes.</p>
+            <p className="text-xs text-amber-600 mt-2">{t('workspaceDetails.youHaveUnsavedChanges')}</p>
           )}
         </div>
       )}
 
-      {showTaskModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-lg w-full p-6">
-            <h3 className="text-xl font-bold mb-4">Create Task in {ws.name}</h3>
-            <form onSubmit={handleCreateTask}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-                <input
-                  type="text"
-                  required
-                  value={newTask.title}
-                  onChange={(e) => setNewTask((prev) => ({ ...prev, title: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
-                />
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea
-                  rows="3"
-                  value={newTask.description}
-                  onChange={(e) => setNewTask((prev) => ({ ...prev, description: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500"
-                />
-              </div>
-              {wsProjects.length > 0 && (
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Project (optional)</label>
-                  <select
-                    value={newTask.project_id}
-                    onChange={(e) => setNewTask((prev) => ({ ...prev, project_id: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
-                  >
-                    <option value="">— No project —</option>
-                    {wsProjects.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div className="mb-6 flex items-center">
-                <input
-                  id="workspace_should_decompose"
-                  type="checkbox"
-                  checked={newTask.should_decompose}
-                  onChange={(e) => setNewTask((prev) => ({ ...prev, should_decompose: e.target.checked }))}
-                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                />
-                <label htmlFor="workspace_should_decompose" className="ml-2 text-sm text-gray-700">
-                  Auto decompose into subtasks
-                </label>
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setShowTaskModal(false)}
-                  className="px-4 py-2 text-gray-700 hover:text-gray-900"
-                  disabled={creatingTask}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50"
-                  disabled={creatingTask}
-                >
-                  {creatingTask ? 'Creating...' : 'Create Task'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
+    </PageContainer>
   );
 };
 

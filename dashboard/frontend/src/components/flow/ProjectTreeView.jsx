@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { getWorkspace } from '../../api';
+import { useStream } from '../stream';
+import { useI18n } from '../../i18n';
 
 function ProjectTreeView({ workspace }) {
+  const { t } = useI18n();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
+  const { on } = useStream();
 
   useEffect(() => {
     if (!workspace) return;
@@ -13,7 +17,7 @@ function ProjectTreeView({ workspace }) {
       try {
         const res = await getWorkspace(workspace);
         setTasks(res.data.tasks || []);
-      } catch (e) {
+      } catch {
         // console.error("Failed to fetch project data", e);
       } finally {
         setLoading(false);
@@ -21,9 +25,8 @@ function ProjectTreeView({ workspace }) {
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, [workspace]);
+    return on('app', (ev) => { if (ev.type === 'tasks.changed') fetchData(); });
+  }, [workspace, on]);
 
   const groupedTasks = tasks.reduce((acc, task) => {
     const assignee = task.assigned_agent_type || 'Unassigned';
@@ -33,12 +36,12 @@ function ProjectTreeView({ workspace }) {
   }, {});
 
   if (!workspace) {
-    return <div className="text-gray-500 italic">Select a workspace to see project tree.</div>;
+    return <div className="text-gray-500 italic">{t('flowProjectTreeView.selectAWorkspaceToSee')}</div>;
   }
 
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-medium text-gray-900 border-b pb-2">Project Overview</h3>
+      <h3 className="text-lg font-medium text-gray-900 border-b pb-2">{t('flowProjectTreeView.projectOverview')}</h3>
       <div className="space-y-4">
         {Object.entries(groupedTasks).map(([assignee, assigneeTasks]) => (
           <div key={assignee} className="space-y-2">
@@ -61,7 +64,7 @@ function ProjectTreeView({ workspace }) {
           </div>
         ))}
         {tasks.length === 0 && !loading && (
-          <p className="text-sm text-gray-500 italic">No tasks found in this workspace.</p>
+          <p className="text-sm text-gray-500 italic">{t('flowProjectTreeView.noTasksFoundInThis')}</p>
         )}
       </div>
     </div>

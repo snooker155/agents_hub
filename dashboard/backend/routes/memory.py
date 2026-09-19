@@ -3,8 +3,13 @@ Shared memory related API routes.
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from typing import Optional
+import asyncio
+import json
+
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from memory.store import MemoryStore
@@ -37,6 +42,21 @@ def _mem_dump(mem: SharedMemory) -> dict:
     return mem.model_dump() if hasattr(mem, "model_dump") else mem.dict()
 
 
+def _unlink_graph_mirror(memory_id: UUID, node_type: str, name: str) -> None:
+    """Delete the graph mirror node (`slot`/`note`) that `remember` created for a
+    slot or note. Mirrors the `forget` tool so UI deletes don't leave orphans.
+    Best-effort: a graph problem must not break the slot/note deletion itself.
+    """
+    try:
+        from memory.graph import GraphStore
+        gstore = GraphStore(str(memory_id))
+        node = gstore.get_node(node_type, name)
+        if node is not None:
+            gstore.delete_node(node.id)
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Pool CRUD
 # ---------------------------------------------------------------------------
@@ -64,6 +84,229 @@ async def get_rag_config():
     return get_rag_status()
 
 
+# ── The Memory Agent's chat ──────────────────────────────────────────────────
+#
+# Page-level rather than per-pool, because the agent's pool is resolved from the
+# workspace: a chat pinned to the row you clicked would be lying about which
+# pool the tools actually write to. The prompt names the resolved pool, and the
+# agent is told to say which one it is working with.
+
+MEMORY_AGENT_ID = "memory_extractor"
+MEMORY_CHAT_KIND = "memory"
+
+
+class MemoryChatIn(BaseModel):
+    message: str = ""
+
+
+def _memory_chat_id(workspace: Optional[str], memory_id: Optional[str] = None) -> str:
+    """One conversation per pool, falling back to one per workspace.
+
+    Keyed on the pool because the conversation is *about* that pool: a question
+    asked while pool A is open should not come back under pool B. With no pool
+    open there is nothing to be about yet, so the workspace holds the thread.
+    """
+    if memory_id:
+        return f"pool:{str(memory_id).strip()}"
+    return f"ws:{(workspace or 'default').strip() or 'default'}"
+
+
+def _pool_card(memory_id: Optional[str]) -> List[Dict[str, Any]]:
+    """The pool the page has open, as the prompt wants to see it."""
+    if not memory_id:
+        return []
+    mem = MemoryStore().get(str(memory_id))
+    return [{
+        "memory_id": str(memory_id),
+        "name": getattr(mem, "name", "") if mem else "",
+        "description": getattr(mem, "description", "") if mem else "",
+        "exists": mem is not None,
+        "source": "open on the page",
+    }]
+
+
+def _bound_pools(workspace: Optional[str]) -> List[Dict[str, Any]]:
+    """The pools the agent's tools are bound to when no pool is open.
+
+    This is the record-and-workspace assignment, which is what the agent gets
+    everywhere else in the product.
+    """
+    from agents.registry import get_agent
+    from memory.binding import effective_memory_pools
+
+    # Best effort: an unreadable registry means "no binding to report", not a
+    # failed page. The prompt already handles the empty case by telling the
+    # agent to say so rather than pretend.
+    try:
+        spec = get_agent(MEMORY_AGENT_ID)
+        pool_ids = effective_memory_pools(spec, workspace) if spec else []
+    except Exception:
+        return []
+    store = MemoryStore()
+    out: List[Dict[str, Any]] = []
+    for pool_id in pool_ids:
+        mem = store.get(pool_id)
+        out.append({
+            "memory_id": str(pool_id),
+            "name": getattr(mem, "name", "") if mem else "",
+            "description": getattr(mem, "description", "") if mem else "",
+            "exists": mem is not None,
+        })
+    return out
+
+
+def _memory_chat_prompt(workspace: str, pools: List[Dict[str, Any]],
+                        history: List[dict], user_message: str) -> str:
+    """One turn's prompt: which pool is bound, then the talk."""
+    from chat.entity_chat import transcript_block
+
+    parts = [
+        "You are on the Memory page of this platform. The user is looking at the "
+        "pools in this workspace.",
+        "",
+        f"Workspace: {workspace}",
+        "",
+        "=== The pool(s) your tools are bound to ===",
+        json.dumps(pools, ensure_ascii=False, indent=2),
+        "",
+        "Rules for this conversation:",
+        "- Name the pool you are working with in your first answer. The page "
+        "lists several; your tools read and write the one above, and the user "
+        "cannot tell which from the conversation alone.",
+        "- When a pool is open on the page, your tools are bound to THAT pool "
+        "for this turn, whatever the agent's configured assignment says. The "
+        "question is being asked about what is on screen.",
+        "- A question about what is known is answered by reading. Do not run "
+        "extraction to answer a question: it would store the question.",
+        "- Before proposing an extraction, search for what the pool already "
+        "holds. The same fact stored three ways is how a pool degrades.",
+        "- You cannot open files. If the user points at a document rather than "
+        "pasting it, say so and ask for the text.",
+        "- Editing and deleting existing entries happens on the page, not "
+        "through you. Say that instead of trying.",
+    ]
+    if not pools:
+        parts.insert(6, (
+            "!! No pool is assigned to you in this workspace, so your memory "
+            "tools have nothing to work on. Say exactly that: the user needs to "
+            "assign one from the agent's Memory tab. Do not pretend to read or "
+            "store anything."
+        ))
+    talk = transcript_block(history[:-1])
+    if talk:
+        parts += ["", "=== Conversation so far ===", talk]
+    parts += ["", "=== The user's latest message ===", user_message]
+    return "\n".join(parts)
+
+
+@router.get("/chat")
+async def get_memory_chat(workspace: Optional[str] = Query(None),
+                          memory_id: Optional[str] = Query(None)):
+    """The Memory Agent's transcript for the open pool, plus the replay trace."""
+    from common.entity_chat_store import entity_chat_store
+
+    chat_id = _memory_chat_id(workspace, memory_id)
+    chat_store = entity_chat_store()
+    return {
+        "messages": chat_store.get_messages(MEMORY_CHAT_KIND, chat_id),
+        "trace": chat_store.get_trace(MEMORY_CHAT_KIND, chat_id),
+        # What the session picker needs to reach this chat's history
+        # (routes/entity_chats.py); the browser never builds the key itself.
+        "chat_ref": {"kind": MEMORY_CHAT_KIND, "id": chat_id},
+        "pools": _pool_card(memory_id) or _bound_pools(workspace),
+    }
+
+
+@router.delete("/chat")
+async def clear_memory_chat(workspace: Optional[str] = Query(None),
+                            memory_id: Optional[str] = Query(None)):
+    """Clear the transcript and start a fresh session. No memory is touched."""
+    from common.entity_chat_store import entity_chat_store
+
+    epoch = entity_chat_store().clear(MEMORY_CHAT_KIND,
+                                      _memory_chat_id(workspace, memory_id),
+                                      new_session=True)
+    return {"cleared": True, "session_epoch": epoch}
+
+
+@router.post("/chat")
+async def chat_memory(payload: MemoryChatIn,
+                      workspace: Optional[str] = Query(None),
+                      memory_id: Optional[str] = Query(None)):
+    """Run one turn of the Memory Agent chat (SSE).
+
+    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
+    ``memory`` event so the page can refresh what the pool holds, the final
+    ``message`` and ``done``.
+    """
+    from chat.entity_chat import (
+        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
+        run_entity_chat_turn, spawn_detached, sse,
+    )
+    from common.bootstrap import ensure_system_agent
+
+    if not ensure_system_agent(MEMORY_AGENT_ID):
+        raise HTTPException(status_code=503,
+                            detail=f"The '{MEMORY_AGENT_ID}' agent is not registered")
+    user_message = (payload.message or "").strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    ws = (workspace or "default").strip() or "default"
+    chat_id = _memory_chat_id(workspace, memory_id)
+    pools = _pool_card(memory_id) or _bound_pools(workspace)
+
+    spec = EntityChatSpec(
+        kind=MEMORY_CHAT_KIND,
+        agent_id=MEMORY_AGENT_ID,
+        title=f"{pools[0]['name'] or ws if pools else ws} · memory",
+        workspace=ws,
+        # Bind the agent to the pool the user has open, so the question is
+        # answered from what they are looking at rather than from whatever the
+        # record happens to be assigned. Reaches the agent cache key, so two
+        # pools are two cached agents.
+        agent_overrides={"memory_pool": memory_id} if memory_id else {},
+    )
+
+    async def run_turn(queue: asyncio.Queue):
+        from common.workspace_context import _workspace_ctx
+
+        # The pool binding is resolved per workspace, so this ContextVar decides
+        # which pool the agent's tools write to.
+        _workspace_ctx.set(ws)
+
+        await run_entity_chat_turn(
+            queue, spec, chat_id, user_message,
+            lambda history: _memory_chat_prompt(ws, pools, history, user_message),
+        )
+        await queue.put({"type": "memory", "pools": pools})
+
+    async def event_stream():
+        queue = RecordingQueue()
+        yield sse({"type": "meta", "kind": MEMORY_CHAT_KIND, "id": chat_id})
+        worker = spawn_detached(guarded(run_turn, queue))
+        async for frame in relay_queue(queue):
+            yield frame
+        await worker
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers=SSE_HEADERS)
+
+
+@router.post("/chat/stop")
+async def stop_memory_chat(workspace: Optional[str] = Query(None),
+                           memory_id: Optional[str] = Query(None)):
+    """Stop the in-flight Memory Agent turn for this pool."""
+    from chat.entity_chat import cancel_entity_runs
+
+    cancelled = cancel_entity_runs(MEMORY_CHAT_KIND,
+                                   _memory_chat_id(workspace, memory_id))
+    return {"stopped": cancelled > 0, "cancelled": cancelled}
+
+
+# Declared before the ``/{memory_id}`` routes below: "chat" is a literal path,
+# and a catch-all declared first would read it as a memory id (the same reason
+# ``/rag-config`` sits above them).
 @router.get("/{memory_id}")
 async def get_shared_memory(memory_id: UUID):
     store = MemoryStore()
@@ -157,7 +400,10 @@ async def delete_note(memory_id: UUID, note_id: str):
     if note and note.get("title", "").startswith("journal:"):
         raise HTTPException(status_code=403, detail="Journal entries are read-only")
     mem.notes = [n for n in mem.notes if n.get("id") != note_id]
-    return _mem_dump(_persist_mem(store, mem))
+    result = _mem_dump(_persist_mem(store, mem))
+    if note and note.get("title"):
+        _unlink_graph_mirror(memory_id, "note", note["title"])
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +438,9 @@ async def delete_structured_slot(memory_id: UUID, slot: str):
     if slot not in mem.structured_data:
         raise HTTPException(status_code=404, detail=f"Slot '{slot}' not found")
     del mem.structured_data[slot]
-    return _mem_dump(_persist_mem(store, mem))
+    result = _mem_dump(_persist_mem(store, mem))
+    _unlink_graph_mirror(memory_id, "slot", slot)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +640,20 @@ async def graph_stats(memory_id: UUID):
     return GraphStore(str(memory_id)).stats()
 
 
+@router.post("/{memory_id}/graph/prune")
+async def prune_graph_mirrors(memory_id: UUID, dry_run: bool = False):
+    """Remove `slot`/`note` mirror nodes whose backing slot/note no longer exists.
+
+    Reconciles the graph after slot/note deletes. Typed entity nodes are never
+    touched. Pass `?dry_run=true` to preview what would be removed.
+    """
+    store = MemoryStore()
+    if not store.get(memory_id):
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    from memory.maintenance import prune_orphan_mirrors
+    return prune_orphan_mirrors(str(memory_id), dry_run=dry_run)
+
+
 @router.post("/{memory_id}/graph/link")
 async def graph_link(memory_id: UUID, payload: dict):
     """Create or merge an edge between two entities.
@@ -424,6 +686,45 @@ async def graph_link(memory_id: UUID, payload: dict):
         "target": {**tgt_node.model_dump(), "mode": tgt_mode},
         "edge": {**edge.model_dump(), "mode": edge_mode},
     }
+
+
+@router.post("/{memory_id}/graph/merge-slots")
+async def graph_merge_slots(memory_id: UUID):
+    """Merge generic `slot`-typed mirror nodes into same-name typed entity nodes.
+
+    Cleans up the duplication produced when a slot mirror and an extraction
+    triple created two nodes for the same entity (e.g. ("slot", x) + ("item", x)).
+    Edges are re-pointed and properties combined.
+    """
+    store = MemoryStore()
+    if not store.get(memory_id):
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    from memory.graph import merge_slot_duplicates
+    return merge_slot_duplicates(str(memory_id))
+
+
+@router.post("/{memory_id}/graph/merge-nodes")
+async def graph_merge_nodes(memory_id: UUID, payload: dict):
+    """Merge one node into another (for semantic duplicates the automatic
+    slot-merge can't match by name, e.g. 'team_member_bob' vs 'bob').
+
+    Body: {"keep_id": "<node uuid>", "drop_id": "<node uuid>"}.
+    Properties are combined (keep wins on conflict), edges re-pointed, the
+    dropped node removed.
+    """
+    store = MemoryStore()
+    if not store.get(memory_id):
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    keep_id, drop_id = payload.get("keep_id"), payload.get("drop_id")
+    if not keep_id or not drop_id:
+        raise HTTPException(status_code=400, detail="keep_id and drop_id are required")
+    if str(keep_id) == str(drop_id):
+        raise HTTPException(status_code=400, detail="keep_id and drop_id must differ")
+    from memory.graph import GraphStore
+    kept = GraphStore(str(memory_id)).merge_nodes(keep_id, drop_id)
+    if kept is None:
+        raise HTTPException(status_code=404, detail="One or both nodes not found")
+    return {"kept": kept.model_dump()}
 
 
 @router.delete("/{memory_id}/graph/nodes/{node_id}")

@@ -1,3 +1,17 @@
-typer[all]
+# The CLI's own dependencies — its terminal rendering, and the HTTP client used
+# only when AGENTS_HUB_URL points at a service running elsewhere.
+typer
 rich
 requests
+
+# These are NOT enough on their own. By default the CLI calls the service's
+# functions in this process, so it needs the service installed too:
+#
+#     pip install -r dashboard/backend/requirements.txt -r requirements-agents.txt
+#
+# This file alone covers only the AGENTS_HUB_URL case, where the work happens in
+# a backend somewhere else and the CLI is a thin client over its REST API.
+#
+# Nothing here has to be installed by hand: `./install.sh` does all of it, and
+# `pip install -e ".[backend,agents]"` is the same thing without the venv and
+# the shell hook. See docs/installation.md.

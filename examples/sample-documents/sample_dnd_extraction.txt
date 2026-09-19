@@ -1,0 +1,65 @@
+Campaign: The Sunken Vault of Maro-Tel
+Session 7 — Dungeon Master's notes
+Party: Kaelen (human warlock), Brynna (dwarf artificer), Oski (halfling rogue)
+
+=== ITEMS RECOVERED ===
+
+The Emberglass Wand — a slender wand of fused volcanic glass, warm to the touch.
+It belongs to Kaelen now; he pried it from the vault guardian's hand. The wand can
+channel the Cinder Lance spell three times per day without spending a spell slot,
+but every third casting cracks the glass a little further. Brynna estimates it will
+shatter after roughly twenty more castings unless repaired with mooncopper.
+
+The Tidebound Amulet — a silver disc engraved with a spiral wave, worn by Oski.
+The amulet protects its wearer from the Drowning Whisper curse that permeates the
+lower vault. It does nothing against ordinary drowning, which Oski learned the
+hard way in the flooded antechamber.
+
+The Lantern of Patient Echoes — an iron lantern that burns without fuel. When lit,
+it reveals the invisible script on vault walls, which is the only way to read the
+Warden Glyphs. The lantern dims whenever the Hollow Choir spell is sung nearby;
+the two cannot be used together.
+
+Mooncopper Ingot — a fist-sized bar of pale metal recovered from the forge room.
+Brynna carries it. Mooncopper is the only material that can repair the Emberglass
+Wand, and it is also a required component for casting Stitch the Broken.
+
+=== SPELLS LEARNED OR ENCOUNTERED ===
+
+Cinder Lance — a bolt of compressed flame. Kaelen learned it from the vault
+guardian's spellbook. It is the party's main answer to the ice-wraiths on level
+three, who are immune to ordinary weapons but burn readily.
+
+Drowning Whisper — the curse laid on the lower vault by the priests of Maro-Tel.
+Anyone who hears the whisper begins to inhale water instead of air. The Tidebound
+Amulet blocks it; the spell Stillsong suppresses it for one hour in a small area.
+
+Stillsong — a quiet counter-hymn Brynna transcribed from the Warden Glyphs. It
+suppresses the Drowning Whisper and calms hostile water elementals, but singing it
+exhausts the caster: after each use, Brynna takes a level of fatigue.
+
+Hollow Choir — a forbidden chant inscribed on the sealed door of the inner vault.
+The party has NOT learned it. Reading the Warden Glyphs revealed that the Hollow
+Choir opens the inner vault but extinguishes every light source in the dungeon,
+including the Lantern of Patient Echoes, for a full day.
+
+Stitch the Broken — a mending ritual Brynna knows. It can repair magical items,
+but each repair consumes one mooncopper ingot. The party has exactly one ingot,
+so they must choose: repair the Emberglass Wand now, or keep the ingot in case
+the Tidebound Amulet is damaged in the inner vault.
+
+=== SESSION EVENTS WORTH REMEMBERING ===
+
+- The party decided NOT to learn the Hollow Choir yet. Losing the lantern for a
+  day was judged too risky while ice-wraiths still roam level three. They will
+  return after clearing the level.
+- Oski nearly drowned in the flooded antechamber because the party assumed the
+  Tidebound Amulet protected against all water. It only blocks the curse. Marked
+  as a hard lesson: read item descriptions aloud before relying on them.
+- Brynna successfully cast Stillsong to escort the party past the whisper zone,
+  taking one level of fatigue. She can attempt it again tomorrow.
+
+=== OPEN QUESTIONS FOR NEXT SESSION ===
+
+Spend the mooncopper on the wand, or save it? Kaelen votes wand; Brynna votes save.
+Decision deferred until the ice-wraiths are dealt with.

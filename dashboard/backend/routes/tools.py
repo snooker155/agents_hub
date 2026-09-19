@@ -23,6 +23,10 @@ def _tool_spec_to_dict(spec):
         "description": spec.description,
         "args": {p["name"]: p["type"] for p in spec.parameters},
         "requires_workspace": spec.requires_workspace,
+        # Security capabilities this tool grants (tools/capabilities.py). The
+        # agent editor evaluates blocked combinations client-side from these,
+        # so the warning appears while tools are being picked, not on save.
+        "capabilities": sorted(spec._grants),
         "source": {
             "path": source.get("path"),
             "line": source.get("line"),

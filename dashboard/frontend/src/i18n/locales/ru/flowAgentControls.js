@@ -1,0 +1,15 @@
+export default {
+  agentControls: 'Управление агентами',
+  projectDescription: 'Описание проекта',
+  pmIntake: 'Приём PM',
+  baGenerate: 'Генерация BA',
+  sdGenerate: 'Генерация SD',
+  tlSplitTasks: 'TL: разбить задачи',
+  runBeDev: 'Запустить BE Dev',
+  runFeDev: 'Запустить FE Dev',
+  runQa: 'Запустить QA',
+  runDevops: 'Запустить DevOps',
+  runFullGraph: 'Запустить весь граф',
+  selectWorkspaceFirst: 'Сначала выберите рабочее пространство',
+  startFailed: 'Не удалось запустить агента',
+};

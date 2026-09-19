@@ -1,14 +1,20 @@
-Use this agent when you need a tightly-scoped prompt for another agent or LLM workflow.
+Use this agent when the prompt is going somewhere else: your own API calls, another team's
+application, a template in your repository.
 
 Good fits:
-- "Write a prompt that turns user feedback into structured JSON"
-- "Create a prompt for an agent that summarises GitHub PRs"
+- "Write a system prompt that turns support emails into structured JSON"
+- "Here is a prompt that keeps drifting off-format — fix it and tell me what was wrong"
+- "I need the same prompt for a small local model, it is too vague for it"
 
 Poor fits:
-- Casual chat or general questions — the agent will answer plainly without producing a prompt
-- Anything not asking for a prompt explicitly
+- Changing how an agent *in this product* behaves — use the Agent Creator from that agent's
+  Config tab, which edits the real files rather than handing you text
+- Anything not actually asking for a prompt; it will answer plainly instead
 
 How to invoke:
-- Use phrases like "create a prompt", "write a prompt", "generate a prompt for ..."
-- Describe the task, target audience, and any constraints
-- The final prompt lands in `PROMPT.md` (≤200 words, focused on a single objective)
+- Describe the task, and say which model it will run against if you know
+- Say what the output feeds into; if something parses it, say so, that changes the prompt
+- Say what going wrong looks like. That is usually the most useful sentence you can give it
+
+It returns the prompt in the chat, in a block you can copy whole, with its assumptions listed
+underneath. Ask if you want it saved to a file.

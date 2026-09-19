@@ -1,0 +1,17 @@
+export default {
+  title: 'Page chat',
+  open: 'Open the page chat',
+  openHint: 'Ask about what is on this page',
+  close: 'Close',
+  widen: 'Wider',
+  narrow: 'Narrower',
+  aboutThisPage: 'About this page',
+  pageOwnChat: "This page's own agent",
+  emptyHint: 'Ask about what is on this screen. I can see the records this page is showing.',
+  emptyHintOn: 'Ask about {{page}}. I can see the records this page is showing.',
+  suggestWhatIsHere: 'What am I looking at?',
+  suggestExplain: 'What matters here?',
+  suggestNext: 'What should I do next?',
+  inPanel: 'This chat is open in the side panel.',
+  bringBack: 'Show it here instead',
+};

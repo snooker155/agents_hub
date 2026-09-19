@@ -1,0 +1,617 @@
+{
+  "version": 1,
+  "description": "Documentation corpus for this service. One markdown file per surface or concept, in docs/. This index is what search_docs ranks over; read_doc returns a file's contents.",
+  "docs": [
+    {
+      "id": "agents",
+      "title": "Agents",
+      "summary": "An agent is a definition, not a process: a prompt, a set of tools, a model, and optionally memory. Running it produces a [run](sessions-and-runs.md).",
+      "surface": "Agents",
+      "related": [
+        "chat",
+        "imported-agents",
+        "instances",
+        "marketplace",
+        "memory",
+        "sessions-and-runs",
+        "system-agents",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "What an agent is made of",
+        "Where agents come from",
+        "System vs. custom",
+        "Delegation",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "chat",
+      "title": "Chat",
+      "summary": "The front door. Talk to any agent in the workspace directly; no node, no task, no setup.",
+      "surface": "Chat",
+      "related": [
+        "agents",
+        "flows",
+        "teams",
+        "telegram"
+      ],
+      "headings": [
+        "What you can point it at",
+        "What the agent sees",
+        "Attachments and references",
+        "Slash commands",
+        "Delegation from chat",
+        "Costs and approvals",
+        "Telegram"
+      ]
+    },
+    {
+      "id": "cli",
+      "title": "The CLI",
+      "summary": "`ah` drives the service from a terminal: the same operations as the dashboard, either in this process or over REST against a backend elsewhere.",
+      "surface": "Terminal",
+      "related": [
+        "installation",
+        "workspaces",
+        "projects",
+        "tasks",
+        "nodes"
+      ],
+      "headings": [
+        "Two ways it reaches the service",
+        "Getting the command",
+        "The commands",
+        "Running both servers",
+        "Working in your own directories",
+        "Selecting a workspace",
+        "The shell integration",
+        "Against a containerized backend"
+      ]
+    },
+    {
+      "id": "containers",
+      "title": "Containers",
+      "summary": "Agents can run in-process or in Docker. Container mode isolates a run: its own filesystem view, its own network posture, its own lifetime.",
+      "surface": "Containers",
+      "related": [
+        "nodes",
+        "settings",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "Execution modes",
+        "Images",
+        "The Containers page",
+        "Why it matters beyond isolation",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "costs",
+      "title": "Costs",
+      "summary": "Token and estimated USD spend, broken down by workspace, agent, model or project, with budget caps that are enforced rather than advisory.",
+      "surface": "Costs",
+      "related": [
+        "loops",
+        "models",
+        "playground",
+        "workspaces"
+      ],
+      "headings": [
+        "Where the numbers come from",
+        "Budgets",
+        "What actually costs money",
+        "Reducing it"
+      ]
+    },
+    {
+      "id": "evals",
+      "title": "Evals",
+      "summary": "Eval sets, graders and model sweeps: measure whether a prompt change helped instead of guessing.",
+      "surface": "Evals",
+      "related": [
+        "agents",
+        "costs",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "The pieces",
+        "Graders, cheapest first",
+        "Cost",
+        "The injection audit",
+        "Why bother"
+      ]
+    },
+    {
+      "id": "flows",
+      "title": "Flows",
+      "summary": "A flow is a graph of agents run as one pipeline: nodes do work, edges define order, and the whole thing streams as it goes.",
+      "surface": "Agent Flows",
+      "related": [
+        "agents",
+        "loops",
+        "teams"
+      ],
+      "headings": [
+        "Building one",
+        "Node kinds",
+        "Running",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "imported-agents",
+      "title": "Imported agents",
+      "surface": "Agents",
+      "summary": "An agent that already exists, already works and has its own dependencies does not need rebuilding here. Import it from its git repository: the hub clones it, checks whether it can run, and adds it to the agent list either way.",
+      "related": [
+        "agents",
+        "marketplace",
+        "containers",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "Where it runs",
+        "The contract",
+        "The import flow",
+        "What you give up",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "installation",
+      "title": "Installing and running the service",
+      "summary": "One command installs everything and puts `ah` on your PATH. The rest of the page is that command taken apart: by hand, in Docker, and what to check when it will not start.",
+      "surface": null,
+      "related": [
+        "cli",
+        "containers",
+        "models",
+        "service-health",
+        "settings",
+        "troubleshooting"
+      ],
+      "headings": [
+        "Prerequisites",
+        "Path A: the installer",
+        "Path B: by hand",
+        "Path C: Docker Compose",
+        "Configuration",
+        "Checking it worked",
+        "Where state lives",
+        "Upgrading",
+        "When it will not start"
+      ]
+    },
+    {
+      "id": "instances",
+      "title": "Instances",
+      "summary": "An instance is a live copy of an agent: its own state, its own label, its own history. Where an [agent](agents.md) is a definition and a [node](nodes.md) is a process, an instance is the thing actually doing work.",
+      "surface": "Instances",
+      "related": [
+        "agents",
+        "nodes",
+        "service-health",
+        "sessions-and-runs"
+      ],
+      "headings": [
+        "States",
+        "The timeline",
+        "The inbox"
+      ]
+    },
+    {
+      "id": "loops",
+      "title": "Loops",
+      "summary": "A loop wraps a [flow](flows.md) and re-runs it, feeding back a reviewer's complaints, until an agent judges the result good enough.",
+      "surface": "Loops",
+      "related": [
+        "costs",
+        "flows"
+      ],
+      "headings": [
+        "The exit criterion",
+        "The bounds that stop it",
+        "Running",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "marketplace",
+      "title": "Marketplace",
+      "surface": "Marketplace",
+      "summary": "The catalog of agents, flows and skills published across workspaces: how a thing built in one workspace gets published, cloned and used in another.",
+      "related": [
+        "agents",
+        "skills",
+        "flows",
+        "imported-agents",
+        "system-agents"
+      ],
+      "headings": [
+        "Publishing an agent, a flow or a skill",
+        "Cloning one into your workspace",
+        "When to reach for a published agent",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "memory",
+      "title": "Memory",
+      "summary": "Agents have five complementary memory layers, bound to a pool. The pool is assigned per workspace, so the same agent can carry different knowledge in different workspaces.",
+      "surface": "Memory",
+      "related": [
+        "skills",
+        "tools-and-capabilities",
+        "workspaces"
+      ],
+      "headings": [
+        "The layers",
+        "How agents use it",
+        "Getting knowledge in",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "models",
+      "title": "Models",
+      "summary": "The Models page is the source of truth for which models exist, which are offered, what they cost, and which is default per provider.",
+      "surface": "Models",
+      "related": [
+        "costs",
+        "settings"
+      ],
+      "headings": [
+        "Catalog vs. enabled",
+        "Defaults and overrides",
+        "Pricing",
+        "Context window",
+        "Providers"
+      ]
+    },
+    {
+      "id": "nodes",
+      "title": "Nodes",
+      "summary": "A node is a long-running agent process. It polls for work and executes it, which is what lets a task run without a chat window open.",
+      "surface": "Nodes",
+      "related": [
+        "containers",
+        "instances",
+        "service-health",
+        "sessions-and-runs"
+      ],
+      "headings": [
+        "Two node types",
+        "Starting and stopping",
+        "Reading a node's state",
+        "Exposure"
+      ]
+    },
+    {
+      "id": "overview",
+      "title": "What this service is",
+      "summary": "An agent hub: a place to define AI agents, give them tools and memory, and run them, alone or in groups, against real work in a workspace.",
+      "surface": null,
+      "related": [
+        "cli",
+        "costs",
+        "installation",
+        "system-agents",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "How the objects nest",
+        "Two kinds of agent",
+        "Where work actually happens",
+        "Two things worth knowing early"
+      ]
+    },
+    {
+      "id": "page-chat",
+      "title": "Page chat",
+      "summary": "The button in the corner of every page: a chat about the page you are on, holding the records that page is showing.",
+      "surface": "Everywhere",
+      "related": [
+        "chat",
+        "agents",
+        "system-agents",
+        "sessions-and-runs"
+      ],
+      "headings": [
+        "Two kinds of page",
+        "What the assistant is given",
+        "One thread per page",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "playground",
+      "title": "Playground: worlds and scenarios",
+      "summary": "The playground drops agents into a simulated world and runs it tick by tick, so you can watch behaviour rather than read about it.",
+      "surface": "Playground",
+      "related": [
+        "chat",
+        "costs",
+        "system-agents"
+      ],
+      "headings": [
+        "How a run works",
+        "Designing one",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "projects",
+      "title": "Projects",
+      "summary": "A project is one codebase or one effort inside a workspace. It gives work a folder, a structure graph and a task tree.",
+      "surface": "Projects",
+      "related": [
+        "agents",
+        "tasks",
+        "workspaces"
+      ],
+      "headings": [
+        "What a project adds over a bare workspace",
+        "The usual sequence",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "scheduling",
+      "title": "Scheduling and the Plan page",
+      "summary": "Future work: notifications, agent tasks and flow triggers, plus the inbox showing what fired.",
+      "surface": "Plan",
+      "related": [
+        "service-health",
+        "tasks",
+        "telegram"
+      ],
+      "headings": [
+        "Job kinds",
+        "Recurrence",
+        "Scheduling from a conversation",
+        "The scheduler itself",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "service-health",
+      "title": "Service health and diagnostics",
+      "summary": "Whether the moving parts are alive, and what to do when they are not.",
+      "surface": "Health",
+      "related": [
+        "containers",
+        "installation",
+        "nodes",
+        "sessions-and-runs",
+        "system-agents",
+        "tools-and-capabilities",
+        "troubleshooting",
+        "web-logs"
+      ],
+      "headings": [
+        "The snapshot",
+        "Reading it correctly",
+        "The usual diagnoses",
+        "The Service Agent"
+      ]
+    },
+    {
+      "id": "sessions-and-runs",
+      "title": "Sessions and runs",
+      "summary": "These two records are how everything in the product becomes observable.",
+      "surface": "Sessions",
+      "related": [
+        "costs",
+        "instances",
+        "service-health"
+      ],
+      "headings": [
+        "Run",
+        "Session",
+        "Reading a failure",
+        "Stale runs",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "settings",
+      "title": "Settings",
+      "summary": "Credentials and connection details. What models are offered and which is default lives on the [models](models.md) page, not here.",
+      "surface": "Settings",
+      "related": [
+        "models",
+        "service-health",
+        "workspaces"
+      ],
+      "headings": [
+        "What is here",
+        "Per-workspace overrides",
+        "Reading the health of this"
+      ]
+    },
+    {
+      "id": "skills",
+      "title": "Skills",
+      "summary": "A skill is a reusable procedure an agent can follow: written once, surfaced when it is relevant to the task at hand.",
+      "surface": "Skills Catalog",
+      "related": [
+        "agents",
+        "marketplace",
+        "memory"
+      ],
+      "headings": [
+        "The part that trips everyone up",
+        "How they surface",
+        "Writing one"
+      ]
+    },
+    {
+      "id": "system-agents",
+      "title": "System agents",
+      "summary": "An agent is either **system** (shipped with the product) or **custom** (yours). There is nothing in between.",
+      "surface": "Agents",
+      "related": [
+        "agents",
+        "evals",
+        "marketplace",
+        "service-health",
+        "tools-and-capabilities",
+        "workspaces"
+      ],
+      "headings": [
+        "What being a system agent means",
+        "The roster",
+        "Why the last two are separate"
+      ]
+    },
+    {
+      "id": "tasks",
+      "title": "Tasks",
+      "summary": "A task is tracked work: it has a status, an owner, subtasks, dependencies, and a result that outlives the conversation that produced it.",
+      "surface": "Tasks",
+      "related": [
+        "agents",
+        "chat",
+        "projects",
+        "sessions-and-runs"
+      ],
+      "headings": [
+        "Lifecycle",
+        "Subtasks and decomposition",
+        "Results",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "teams",
+      "title": "Teams",
+      "summary": "A team is a bounded roster of agents that know each other and work over a shared message board.",
+      "surface": "Teams",
+      "related": [
+        "agents",
+        "costs",
+        "flows"
+      ],
+      "headings": [
+        "Modes",
+        "The manifest",
+        "Running",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "telegram",
+      "title": "Telegram",
+      "summary": "A Telegram bot can be bound to this service, so a conversation continues from a phone and notifications arrive where you are.",
+      "surface": "Settings",
+      "related": [
+        "chat",
+        "scheduling",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "What the binding does",
+        "Notifications",
+        "The security consequence"
+      ]
+    },
+    {
+      "id": "tools-and-capabilities",
+      "title": "Tools and capabilities",
+      "summary": "Tools are granted to an agent by name. Nothing is granted by default, including the calculator.",
+      "surface": "Agents",
+      "related": [
+        "agents",
+        "service-health",
+        "system-agents",
+        "web-logs"
+      ],
+      "headings": [
+        "The capability model",
+        "Why capabilities and not tool names",
+        "Consequences you will actually hit",
+        "Group aliases",
+        "Approval gates, which are a different thing"
+      ]
+    },
+    {
+      "id": "troubleshooting",
+      "title": "Troubleshooting",
+      "summary": "Symptoms in the order people hit them: runs that will not start, output that never appears, numbers that look wrong, Docker, and the CLI.",
+      "surface": null,
+      "related": [
+        "service-health",
+        "installation",
+        "costs",
+        "models",
+        "instances",
+        "containers",
+        "cli"
+      ],
+      "headings": [
+        "Nothing runs",
+        "It runs, but nothing appears",
+        "The numbers look wrong",
+        "Docker",
+        "The CLI"
+      ]
+    },
+    {
+      "id": "views",
+      "title": "Views and Studio",
+      "summary": "A view is something an agent built to be looked at: a chart, a graph, a table, a 3D scene, a simulation, a slide deck or a document.",
+      "surface": "Views & Studio",
+      "related": [
+        "agents",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "Getting one",
+        "Studio",
+        "What views can do",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "web-logs",
+      "title": "Web requests",
+      "surface": "Web Requests",
+      "summary": "Every `web_search` and `fetch_url` call an agent made, recorded with the text it was actually handed. The **Web Requests** page is where you read them.",
+      "related": [
+        "tools-and-capabilities",
+        "service-health",
+        "evals",
+        "agents"
+      ],
+      "headings": [
+        "The two questions it answers",
+        "Refusals are logged too",
+        "Reading a flag correctly",
+        "From an agent",
+        "Configuration",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "workspaces",
+      "title": "Workspaces",
+      "summary": "A workspace is the unit of isolation: its own folder on disk, its own roster of agents, its own settings, its own memory pools and its own projects.",
+      "surface": "Workspaces",
+      "related": [
+        "agents",
+        "cli",
+        "costs",
+        "memory",
+        "projects"
+      ],
+      "headings": [
+        "What a workspace holds",
+        "Per-workspace memory",
+        "The default workspace",
+        "Gotchas"
+      ]
+    }
+  ]
+}

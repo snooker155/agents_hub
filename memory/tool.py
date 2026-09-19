@@ -127,10 +127,28 @@ _STOPWORDS = {
 
 
 def _tokenize(query: str) -> list[str]:
-    """Lowercase, split on non-alphanumeric, drop stopwords and 1-char tokens."""
+    """Lowercase, split on non-alphanumeric, drop stopwords and 1-char tokens.
+
+    Each token is expanded with a naive singular form ("spells" → "spell",
+    "entries" → "entry") so plural queries match singular stored names — the
+    stored text is matched by substring, so the singular form covers both.
+    """
     import re
     raw = re.split(r"[^a-z0-9_\-]+", query.lower())
-    return [t for t in raw if t and len(t) > 1 and t not in _STOPWORDS]
+    tokens = [t for t in raw if t and len(t) > 1 and t not in _STOPWORDS]
+    expanded: list[str] = []
+    for t in tokens:
+        expanded.append(t)
+        if t.endswith("ies") and len(t) > 4:
+            expanded.append(t[:-3] + "y")
+        elif t.endswith("es") and len(t) > 3:
+            expanded.append(t[:-2])
+            expanded.append(t[:-1])
+        elif t.endswith("s") and len(t) > 3:
+            expanded.append(t[:-1])
+    # De-dup, preserving order.
+    seen: set[str] = set()
+    return [t for t in expanded if not (t in seen or seen.add(t))]
 
 
 def _search_graph(pool_id: str, query: str, *, exclude: set, limit: int = 8) -> list[dict]:
@@ -140,7 +158,14 @@ def _search_graph(pool_id: str, query: str, *, exclude: set, limit: int = 8) -> 
     token is a substring of its `name`, `type`, or any string-valued property.
     Nodes already surfaced via slot/note bridging are skipped via `exclude`.
     Results are ranked by how many tokens matched, so the best hits come first.
+
+    The generic mirror types `slot` and `note` are excluded: those nodes are
+    bookkeeping mirrors that exist only so `traverse` can reach slots/notes —
+    their content lives in the (authoritative) structured/notes layers that run
+    before graph search. Returning them here only surfaced content-less twins
+    (e.g. a query of "note" matching every node whose *type* is "note").
     """
+    _MIRROR_TYPES = {"slot", "note"}
     try:
         from memory.graph import GraphStore
         gstore = GraphStore(pool_id)
@@ -166,7 +191,8 @@ def _search_graph(pool_id: str, query: str, *, exclude: set, limit: int = 8) -> 
 
         scored = [
             (n, _score(n)) for n in nodes
-            if (n.type.strip().lower(), n.name.strip().lower()) not in exclude
+            if n.type.strip().lower() not in _MIRROR_TYPES
+            and (n.type.strip().lower(), n.name.strip().lower()) not in exclude
         ]
         matched_nodes = [n for n, s in sorted(scored, key=lambda x: -x[1]) if s > 0]
         if not matched_nodes:
@@ -512,15 +538,37 @@ append_journal_tool = StructuredTool.from_function(
 # Journal is written automatically by the chat/run layer (silent_journal_append).
 # ---------------------------------------------------------------------------
 
-def create_memory_tools(pool_id: str) -> list:
+def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, include_episodic_write: bool = True) -> list:
     """Return memory tools bound to pool_id for agents with shared memory.
 
     recall(query)            — cascading read: structured slots → notes → RAG
     remember(...)            — unified write: structured slot or note
     record_episode(...)      — log a discrete event (interaction/task/decision/error/observation)
     recall_episodes(...)     — query past episodes by kind/outcome/keyword/since
+
+    pool_id is the primary pool: all writes (remember, record_episode, link)
+    go there. extra_pool_ids are additional read-only pools — the read tools
+    (recall, recall_episodes, traverse) search them too, primary first.
     """
     from pydantic import BaseModel, Field
+
+    pool_ids: list[str] = []
+    for _pid in (pool_id, *(extra_pool_ids or ())):
+        _pid = str(_pid).strip()
+        if _pid and _pid not in pool_ids:
+            pool_ids.append(_pid)
+    multi = len(pool_ids) > 1
+
+    _pool_names: dict = {}
+
+    def _pool_name(pid: str) -> str:
+        if pid not in _pool_names:
+            try:
+                m = MemoryStore().get(pid)
+                _pool_names[pid] = m.name if m else pid
+            except Exception:
+                return pid
+        return _pool_names[pid]
 
     # -----------------------------------------------------------------------
     # recall — cascading read
@@ -539,9 +587,6 @@ def create_memory_tools(pool_id: str) -> list:
         results: list[dict] = []
         try:
             store = MemoryStore()
-            mem = store.get(pool_id)
-            if not mem:
-                return json.dumps({"ok": False, "error": f"Memory pool not found: {pool_id}"})
 
             q = query.strip().lower()
             tokens = _tokenize(query)
@@ -551,57 +596,139 @@ def create_memory_tools(pool_id: str) -> list:
             def _hit(haystack: str) -> bool:
                 return any(t in haystack for t in match_terms)
 
-            # 1. Structured slots — name match or keyword in serialised data
-            for slot, data in mem.structured_data.items():
-                data_str = json.dumps(data).lower()
-                if slot.lower() == q or _hit(slot.lower()) or _hit(data_str):
-                    results.append({
-                        "source": "structured",
-                        "slot": slot,
-                        "data": data,
-                    })
+            # The trace records the search cascade layer by layer so callers
+            # (and the chat UI) can show WHERE each piece of data came from
+            # and which layers were searched or skipped. With multiple pools
+            # the counts are aggregated; each result carries a `pool` field
+            # for provenance instead.
+            slots_trace = {"layer": "structured_slots", "searched": 0, "hits": 0}
+            notes_trace = {"layer": "notes", "searched": 0, "hits": 0}
+            graph_trace = {"layer": "graph", "hits": 0}
 
-            # 2. Notes — title or content match (skip journal notes)
-            for note in mem.notes:
-                title = note.get("title", "")
-                if title.startswith(JOURNAL_PREFIX):
+            found_pools: list = []   # (pid, mem) for pool ids that resolved
+            missing: list[str] = []
+
+            for pid in pool_ids:
+                mem = store.get(pid)
+                if not mem:
+                    missing.append(pid)
                     continue
-                content = note.get("content", "")
-                if _hit(title.lower()) or _hit(content.lower()):
-                    results.append({
-                        "source": "note",
-                        "title": title,
-                        "content": content,
-                    })
+                found_pools.append((pid, mem))
+                pool_results: list[dict] = []
 
-            # Decorate slot/note results with graph hints so the agent knows
-            # when to follow relations with `traverse`.
-            _annotate_with_graph_hints(pool_id, results)
+                # 1. Structured slots — name match or keyword in serialised data
+                for slot, data in mem.structured_data.items():
+                    data_str = json.dumps(data).lower()
+                    if slot.lower() == q or _hit(slot.lower()) or _hit(data_str):
+                        pool_results.append({
+                            "source": "structured",
+                            "slot": slot,
+                            "data": data,
+                        })
+                slots_trace["searched"] += len(mem.structured_data)
+                slots_trace["hits"] += len(pool_results)
 
-            # 3. Graph search — keyword match over node type/name/properties.
-            # Skip nodes that were already surfaced via the slot/note bridge to
-            # avoid duplicating the same entity.
-            already = {("slot", str(r["slot"]).strip().lower()) for r in results if r.get("source") == "structured"}
-            already |= {("note", str(r["title"]).strip().lower()) for r in results if r.get("source") == "note"}
-            graph_results = _search_graph(pool_id, query, exclude=already, limit=8)
-            if graph_results:
-                results.extend(graph_results)
+                # 2. Notes — title or content match (skip journal notes)
+                n_before = len(pool_results)
+                plain_note_count = 0
+                for note in mem.notes:
+                    title = note.get("title", "")
+                    if title.startswith(JOURNAL_PREFIX):
+                        continue
+                    plain_note_count += 1
+                    content = note.get("content", "")
+                    if _hit(title.lower()) or _hit(content.lower()):
+                        pool_results.append({
+                            "source": "note",
+                            "title": title,
+                            "content": content,
+                        })
+                notes_trace["searched"] += plain_note_count
+                notes_trace["hits"] += len(pool_results) - n_before
 
-            # 4. RAG — only if nothing found in any earlier layer.
-            if not results:
+                # Decorate slot/note results with graph hints so the agent knows
+                # when to follow relations with `traverse`.
+                _annotate_with_graph_hints(pid, pool_results)
+
+                # 3. Graph search — keyword match over node type/name/properties.
+                # Skip nodes that were already surfaced via the slot/note bridge to
+                # avoid duplicating the same entity.
+                already = {("slot", str(r["slot"]).strip().lower()) for r in pool_results if r.get("source") == "structured"}
+                already |= {("note", str(r["title"]).strip().lower()) for r in pool_results if r.get("source") == "note"}
+                graph_results = _search_graph(pid, query, exclude=already, limit=8)
+                if graph_results:
+                    pool_results.extend(graph_results)
+                graph_trace["hits"] += len(graph_results)
+
+                if multi:
+                    for r in pool_results:
+                        r["pool"] = mem.name
+                results.extend(pool_results)
+
+            if not found_pools:
+                return json.dumps({"ok": False, "error": f"Memory pool not found: {', '.join(missing or pool_ids)}"})
+
+            trace: list[dict] = [slots_trace, notes_trace, graph_trace]
+
+            # 4. RAG — only if nothing found in any earlier layer of any pool.
+            if results:
+                trace.append({"layer": "rag", "hits": 0, "skipped": "found in earlier layers"})
+            else:
                 try:
                     from memory.rag_query import search_rag, is_rag_configured
                     if is_rag_configured():
-                        rag_hits = search_rag(query, pool_id, top_k=5)
-                        for hit in rag_hits:
-                            results.append({"source": "rag", **hit})
+                        rag_total = 0
+                        for pid, mem in found_pools:
+                            rag_hits = search_rag(query, pid, top_k=5)
+                            for hit in rag_hits:
+                                entry = {"source": "rag", **hit}
+                                if multi:
+                                    entry["pool"] = mem.name
+                                results.append(entry)
+                            rag_total += len(rag_hits)
+                        trace.append({"layer": "rag", "hits": rag_total})
+                    else:
+                        trace.append({"layer": "rag", "hits": 0, "skipped": "RAG not configured"})
+                except Exception:
+                    trace.append({"layer": "rag", "hits": 0, "skipped": "RAG query failed"})
+
+            base = {"ok": True, "pool": ", ".join(m.name for _, m in found_pools), "query": query, "trace": trace}
+            if missing:
+                base["missing_pools"] = missing
+            if not results:
+                # Tell the caller what IS in the pools so it can re-query with
+                # terms that actually exist (keyword search has no synonyms).
+                available: dict = {}
+                try:
+                    slot_names: list[str] = []
+                    note_titles: list[str] = []
+                    graph_types: set = set()
+                    for pid, mem in found_pools:
+                        slot_names.extend(mem.structured_data.keys())
+                        note_titles.extend(n["title"] for n in mem.notes if not n.get("title", "").startswith(JOURNAL_PREFIX))
+                        from memory.graph import GraphStore
+                        gstats = GraphStore(pid).stats()
+                        graph_types.update((gstats.get("types") or {}).keys())
+                    if slot_names:
+                        available["slots"] = slot_names[:30]
+                    if note_titles:
+                        available["notes"] = note_titles[:20]
+                    if graph_types:
+                        available["graph_types"] = sorted(graph_types)
                 except Exception:
                     pass
+                return json.dumps({
+                    **base,
+                    "found": False,
+                    "results": [],
+                    "note": (
+                        "Nothing found in memory for this query. Keyword search has no synonyms — "
+                        "retry with one of the names/types listed under `available`."
+                    ),
+                    "available": available,
+                })
 
-            if not results:
-                return json.dumps({"ok": True, "found": False, "results": [], "note": "Nothing found in memory."})
-
-            return json.dumps({"ok": True, "found": True, "results": results})
+            return json.dumps({**base, "found": True, "results": results})
 
         except Exception as e:
             return json.dumps({"ok": False, "error": f"recall failed: {e}"})
@@ -617,7 +744,15 @@ def create_memory_tools(pool_id: str) -> list:
             "your answer to relational questions ('what does X use?', 'who owns Y?'). "
             "Direct graph matches come back with `source='graph'` and the same `relations` list. "
             "If a result includes `traverse_hint` and the user wants relations 2+ hops away "
-            "(e.g. 'what does the project's library depend on?'), call `traverse` next."
+            "(e.g. 'what does the project's library depend on?'), call `traverse` next. "
+            "Prefer SHORT, CONCRETE queries (an entity name or category like 'spell') over full "
+            "sentences. On a miss the result includes `available` (existing slot names, note "
+            "titles, graph types) — retry with one of those instead of giving up."
+            + (
+                " Multiple memory pools are attached; all of them are searched and each "
+                "result carries a `pool` field naming its source pool."
+                if multi else ""
+            )
         ),
         func=_recall_impl,
         args_schema=_RecallInput,
@@ -727,8 +862,14 @@ def create_memory_tools(pool_id: str) -> list:
                                 k: v for k, v in slot_data.items()
                                 if isinstance(v, (str, int, float, bool)) or v is None
                             }
-                            node, mode = gstore.upsert_node("slot", slot_name, props)
-                            graph_links.append({"type": "slot", "name": slot_name, "node_id": str(node.id), "mode": mode})
+                            # Attach to an existing same-name entity node when one
+                            # exists, instead of creating a parallel ("slot", ...) twin.
+                            twin = next((n for n in gstore.find_twins(slot_name) if n.type != "slot"), None)
+                            if twin is not None:
+                                node, mode = gstore.upsert_node(twin.type, twin.name, props)
+                            else:
+                                node, mode = gstore.upsert_node("slot", slot_name, props)
+                            graph_links.append({"type": node.type, "name": slot_name, "node_id": str(node.id), "mode": mode})
                         elif entry.get("type") == "note":
                             note_name = entry["title"]
                             node, mode = gstore.upsert_node("note", note_name, {})
@@ -745,18 +886,135 @@ def create_memory_tools(pool_id: str) -> list:
         name="remember",
         description=(
             "Store information in shared memory. "
-            "Slot semantics: a `slot` is a NAMED RECORD (a dict). "
+            "Slot semantics: a `slot` is a NAMED RECORD (a dict) — use slots for structured facts with named fields. "
+            "For free-text content (a note, reminder, draft, idea — anything the user calls a 'note') "
+            "use note_title+note_content instead of a slot. "
             "If the slot already exists, this call MERGES `data` into it — keys you pass are added/updated, untouched keys are preserved. "
             "Pick the SAME slot name when adding fields to an existing record (e.g. extending the `project` slot with a new `priority` field). "
             "Pick a NEW slot name only for an unrelated fact. "
             "Pass `replace=True` to overwrite the whole slot (rare; use only when previous content is wrong). "
             "Simple values can use {\"value\": \"...\"}. "
-            "Use note_title+note_content for free-text notes. Both slot and note can be saved in one call. "
+            "Both slot and note can be saved in one call. "
+            "This tool cannot delete anything — to remove a slot or note, use `forget`. "
             "By default each saved slot/note is also mirrored as a graph node (type='slot' or 'note') "
             "so `link` and `traverse` can reach it. Set `link_to_graph=False` to skip the bridge."
+            + (
+                f" Multiple memory pools are attached; writes always go to the primary pool ({_pool_name(pool_ids[0])})."
+                if multi else ""
+            )
         ),
         func=_remember_impl,
         args_schema=_RememberInput,
+    )
+
+    # -----------------------------------------------------------------------
+    # forget — delete a slot or note (and its graph mirror)
+    # -----------------------------------------------------------------------
+
+    class _ForgetInput(BaseModel):
+        slot: Optional[str] = Field(None, description="Name of the structured slot to delete")
+        note_title: Optional[str] = Field(None, description="Title of the free-text note to delete")
+        unlink_graph: bool = Field(
+            True,
+            description=(
+                "If True (default), also delete the graph mirror node (type='slot' or 'note') "
+                "created by `remember`, along with its edges. Typed entity nodes created via "
+                "`link` are never touched."
+            ),
+        )
+
+    def _forget_impl(
+        slot: Optional[str] = None,
+        note_title: Optional[str] = None,
+        unlink_graph: bool = True,
+    ) -> str:
+        deleted = []
+        errors = []
+        try:
+            store = MemoryStore()
+            mem = store.get(pool_id)
+            if not mem:
+                return json.dumps({"ok": False, "error": f"Memory pool not found: {pool_id}"})
+
+            if slot is None and note_title is None:
+                return json.dumps({"ok": False, "error": "Provide at least one of: slot or note_title"})
+
+            if slot is not None:
+                if slot in mem.structured_data:
+                    del mem.structured_data[slot]
+                    deleted.append({"type": "structured", "slot": slot})
+                else:
+                    errors.append(
+                        f"Slot '{slot}' not found. Existing slots: "
+                        f"{', '.join(mem.structured_data.keys()) or '(none)'}"
+                    )
+
+            if note_title is not None:
+                if note_title.startswith(JOURNAL_PREFIX):
+                    errors.append(
+                        f"Notes titled '{JOURNAL_PREFIX}…' are the auto-managed journal and cannot be deleted"
+                    )
+                else:
+                    before = len(mem.notes)
+                    mem.notes = [n for n in mem.notes if n.get("title") != note_title]
+                    if len(mem.notes) < before:
+                        deleted.append({"type": "note", "title": note_title})
+                    else:
+                        plain = [
+                            n["title"] for n in mem.notes
+                            if not n.get("title", "").startswith(JOURNAL_PREFIX)
+                        ]
+                        errors.append(
+                            f"Note '{note_title}' not found. Existing notes: "
+                            f"{', '.join(plain) or '(none)'}"
+                        )
+
+            if deleted:
+                _persist(store, mem)
+
+            # Remove the graph mirror nodes (only the 'slot'/'note'-typed twins
+            # written by remember's bridge — never typed entity nodes).
+            graph_unlinked: list[dict] = []
+            if unlink_graph and deleted:
+                try:
+                    from memory.graph import GraphStore
+                    gstore = GraphStore(pool_id)
+                    for entry in deleted:
+                        if entry["type"] == "structured":
+                            node = gstore.get_node("slot", entry["slot"])
+                        else:
+                            node = gstore.get_node("note", entry["title"])
+                        if node is not None and gstore.delete_node(node.id):
+                            graph_unlinked.append({"type": node.type, "name": node.name})
+                except Exception as ge:
+                    errors.append(f"graph unlink skipped: {ge}")
+
+            return json.dumps({
+                "ok": bool(deleted),
+                "deleted": deleted,
+                "errors": errors,
+                "graph_unlinked": graph_unlinked,
+            })
+        except Exception as e:
+            return json.dumps({"ok": False, "error": f"forget failed: {e}"})
+
+    forget_tool = StructuredTool.from_function(
+        name="forget",
+        description=(
+            "Delete a structured slot or a free-text note from shared memory. "
+            "Pass `slot` to delete a slot, `note_title` to delete a note, or both in one call. "
+            "Use when the user asks to remove, delete, or forget stored information, or to "
+            "clean up after converting a slot into a note (or vice versa). "
+            "The graph mirror node created by `remember` is removed too (set unlink_graph=False to keep it). "
+            "Journal notes are auto-managed and cannot be deleted. "
+            "Deletion is permanent — when the request is ambiguous, `recall` first to confirm what exists."
+            + (
+                f" Multiple memory pools are attached; deletes only affect the primary pool ({_pool_name(pool_ids[0])})."
+                if multi else ""
+            )
+        ),
+        func=_forget_impl,
+        args_schema=_ForgetInput,
     )
 
     # -----------------------------------------------------------------------
@@ -825,6 +1083,7 @@ def create_memory_tools(pool_id: str) -> list:
             "decisions you made, errors you hit, observations about the work. "
             "Keep `summary` short (1-3 sentences). Episodes are pruned to a small cap, so prefer high-signal kinds "
             "('task', 'decision', 'error') over chatty 'interaction'/'observation' entries."
+            + (" Episodes are recorded in the primary pool." if multi else "")
         ),
         func=_record_episode_impl,
         args_schema=_RecordEpisodeInput,
@@ -858,16 +1117,23 @@ def create_memory_tools(pool_id: str) -> list:
                 except Exception:
                     return json.dumps({"ok": False, "error": f"could not parse `since` as ISO datetime: {since!r}"})
 
-            results = EpisodeStore(pool_id).query(
-                query=query,
-                kind=kind,
-                outcome=outcome,
-                since=since_dt,
-                limit=max(1, min(int(limit), 50)),
-            )
+            capped = max(1, min(int(limit), 50))
+            hits: list[tuple] = []  # (episode, pool_id)
+            for pid in pool_ids:
+                for e in EpisodeStore(pid).query(
+                    query=query,
+                    kind=kind,
+                    outcome=outcome,
+                    since=since_dt,
+                    limit=capped,
+                ):
+                    hits.append((e, pid))
+            # Merge across pools by recency, then trim to the requested limit.
+            hits.sort(key=lambda t: t[0].occurred_at, reverse=True)
+            hits = hits[:capped]
             return json.dumps({
                 "ok": True,
-                "count": len(results),
+                "count": len(hits),
                 "episodes": [
                     {
                         "id": str(e.id),
@@ -879,8 +1145,9 @@ def create_memory_tools(pool_id: str) -> list:
                         "tags": e.tags,
                         "details": e.details,
                         "occurred_at": e.occurred_at.isoformat(),
+                        **({"pool": _pool_name(pid)} if multi else {}),
                     }
-                    for e in results
+                    for e, pid in hits
                 ],
             }, default=str)
         except Exception as e:
@@ -892,6 +1159,7 @@ def create_memory_tools(pool_id: str) -> list:
             "Query past episodic events from shared memory. "
             "Filter by kind, outcome, or time, and/or rank by a keyword query. "
             "Use to answer 'what happened before?' / 'have I tried this?' / 'what failures have I seen?'"
+            + (" All attached pools are searched; each episode carries a `pool` field." if multi else "")
         ),
         func=_recall_episodes_impl,
         args_schema=_RecallEpisodesInput,
@@ -969,6 +1237,7 @@ def create_memory_tools(pool_id: str) -> list:
             "The edge is directed: source -[relation]-> target. "
             "Use for facts that connect things: who owns what, what depends on what, what mentions what. "
             "Pick consistent type and relation names (lowercase, snake_case) — they're matched case-insensitively but stored as given."
+            + (" Edges are written to the primary pool's graph." if multi else "")
         ),
         func=_link_impl,
         args_schema=_LinkInput,
@@ -1000,8 +1269,17 @@ def create_memory_tools(pool_id: str) -> list:
             from memory.graph import GraphStore
             if direction not in ("out", "in", "both"):
                 return json.dumps({"ok": False, "error": "direction must be 'out', 'in', or 'both'"})
-            store = GraphStore(pool_id)
-            start = store.get_node(type=type, name=name)
+            # Start from the first attached pool whose graph has the node;
+            # traversal stays within that pool's graph.
+            store = None
+            start = None
+            start_pid = pool_ids[0]
+            for pid in pool_ids:
+                candidate = GraphStore(pid)
+                node = candidate.get_node(type=type, name=name)
+                if node is not None:
+                    store, start, start_pid = candidate, node, pid
+                    break
             if start is None:
                 return json.dumps({
                     "ok": False,
@@ -1023,7 +1301,10 @@ def create_memory_tools(pool_id: str) -> list:
                     edge_lines.append(f"({src.type}:{src.name}) -[{e.relation}]-> ({tgt.type}:{tgt.name})")
             return json.dumps({
                 "ok": True,
-                "start": {"id": str(start.id), "type": start.type, "name": start.name},
+                "start": {
+                    "id": str(start.id), "type": start.type, "name": start.name,
+                    **({"pool": _pool_name(start_pid)} if multi else {}),
+                },
                 "nodes": [
                     {"id": str(n.id), "type": n.type, "name": n.name, "properties": n.properties}
                     for n in nodes
@@ -1057,14 +1338,19 @@ def create_memory_tools(pool_id: str) -> list:
         args_schema=_TraverseInput,
     )
 
-    return [
+    tools = [
         recall_tool,
         remember_tool,
-        record_episode_tool,
+        forget_tool,
+    ]
+    if include_episodic_write:
+        tools.append(record_episode_tool)
+    tools.extend([
         recall_episodes_tool,
         link_tool,
         traverse_tool,
-    ]
+    ])
+    return tools
 
 
 # ---------------------------------------------------------------------------

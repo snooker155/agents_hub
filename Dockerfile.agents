@@ -8,14 +8,14 @@
 #   docker build -t agents-hub/base:latest -f Dockerfile.agents .
 #
 # Per-agent images are derived from this base by the
-# ContainerManager (agents/container_manager.py).  They just
+# ContainerManager (managers/container_manager.py).  They just
 # set AGENT_ID and CMD; no additional layers are required.
 #
-# At runtime the project root is mounted at /app so that:
-#   • State files (nodes.json, agent_runs.json, logs) are
-#     shared with the host in real time.
-#   • Workspace directories (inside the project root) are
-#     accessible to the agent.
+# At runtime only what the agent needs is mounted, over the
+# source baked into the image:
+#   /app/.agents_hub  ← state, run records, logs
+#   /app/tasks        ← task storage
+#   /workspace        ← the run's workspace, when it has one
 #
 # Security
 # --------
@@ -48,6 +48,18 @@ RUN pip install --no-cache-dir -r /tmp/req-backend.txt
 COPY requirements-agents.txt /tmp/requirements-agents.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-agents.txt
 
+# RAG extras — embeddings and vector stores, used by the memory tools.
+# Torch comes from the CPU-only index first so the image does not carry a CUDA
+# runtime it can never use; the fallback covers architectures that index does
+# not publish.  Build with --build-arg WITH_RAG=false to leave them out.
+ARG WITH_RAG=true
+COPY requirements-rag.txt /tmp/requirements-rag.txt
+RUN if [ "$WITH_RAG" = "true" ]; then \
+        (pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+            || pip install --no-cache-dir torch) \
+        && pip install --no-cache-dir -r /tmp/requirements-rag.txt; \
+    fi
+
 # ---------- project source ----------
 # Copied here so the image is self-contained.
 # In production the live source is volume-mounted over /app,
@@ -67,4 +79,4 @@ RUN groupadd -g 1001 agent \
 USER agent
 
 # Default entrypoint — overridden by per-agent images
-CMD ["python", "-m", "agents.node_runner"]
+CMD ["python", "-m", "runtime.node_run"]

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agents-hub"
+version = "0.1.0"
+description = "Agents Hub — agents, tasks and workspaces, from a terminal or a dashboard"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# Only what the terminal client itself needs. Direct mode (the default) also
+# needs the service's own dependencies, which are extras below rather than
+# requirements here: installing the CLI should not pull a model runtime onto a
+# machine that only ever talks to a backend over AGENTS_HUB_URL.
+dependencies = [
+    "typer",
+    "rich",
+    "requests",
+]
+
+# Read from the requirement files that already exist, so there is one place to
+# edit: pip install -e ".[backend,agents]" for a full in-process service.
+dynamic = ["optional-dependencies"]
+
+[project.scripts]
+# `ah` is the one to type; the long name stays for scripts, and for anyone whose
+# shell already means something else by `ah`.
+ah = "agents_hub:main"
+agents-hub = "agents_hub:main"
+
+[tool.setuptools]
+# One package, and only one. The service's own modules stay out of site-packages
+# because their names are the generic ones — `agents` is the OpenAI SDK, `tasks`
+# and `tools` belong to several distributions — and shadowing in either
+# direction is a debugging session nobody asked for. `cli` is in that set too:
+# `agents_hub.main` puts the checkout on sys.path and imports `cli.main` from
+# there, which is also where the service reads its definitions, seed catalog and
+# state root from.
+#
+# Install it editable (`pip install -e .`): the command then follows the
+# checkout, including `git pull`, instead of freezing a copy of it.
+packages = ["agents_hub"]
+
+[tool.setuptools.dynamic.optional-dependencies]
+backend = { file = ["dashboard/backend/requirements.txt"] }
+agents = { file = ["requirements-agents.txt"] }
+rag = { file = ["requirements-rag.txt"] }

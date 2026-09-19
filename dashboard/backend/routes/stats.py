@@ -5,15 +5,17 @@ from fastapi import APIRouter, HTTPException
 from typing import Optional
 from pathlib import Path
 
-from common import tasks_service
-from agents import registry, run_manager
+from tasks import service as tasks_service
+from agents import registry
+from managers import run_manager
 from models import OrchestratorSettings
 from workspace import create_workspace_folder, get_workspace_metadata, update_workspace_metadata
-from common.orchestrator_context import normalize_workspace_name
+from common.workspace_context import normalize_workspace_name
+from common.paths import AGENTS_HUB_ROOT
 
 
 router = APIRouter(tags=["stats"])
-_DEFAULT_ORCHESTRATOR_SETTINGS = {"enabled": False, "assignment_mode": "manual", "followup_mode": "single", "wait_for_completion": False, "execution_mode": "subprocess"}
+_DEFAULT_ORCHESTRATOR_SETTINGS = {"enabled": False, "assignment_mode": "manual", "followup_mode": "single", "wait_for_completion": False, "execution_mode": "subprocess", "max_retries": 0}
 
 
 @router.get("/api/stats")
@@ -101,15 +103,13 @@ async def get_logs(run_id: str):
     # Fallback search: state logs and workspaces
     log_name = f"agent_run_{run_id}.log"
 
-    state_logs = run_manager.STATE_DIR / "logs" / log_name
+    state_logs = AGENTS_HUB_ROOT / "logs" / log_name
     if state_logs.exists():
         return {"logs": state_logs.read_text(encoding="utf-8")}
 
-    node_runs_root = run_manager.STATE_DIR / "node_runs"
-    if node_runs_root.exists():
-        for candidate in node_runs_root.glob(f"*/{log_name}"):
-            if candidate.exists():
-                return {"logs": candidate.read_text(encoding="utf-8")}
+    run_logs_file = AGENTS_HUB_ROOT / "run_logs" / log_name
+    if run_logs_file.exists():
+        return {"logs": run_logs_file.read_text(encoding="utf-8")}
 
     from workspace import create_workspace_folder
     for t in tasks_service.list_tasks():

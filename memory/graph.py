@@ -26,6 +26,11 @@ def _normalize(s: str) -> str:
     return s.strip().lower()
 
 
+def _canon(s: str) -> str:
+    """Separator-insensitive form for twin detection: 'test_project' == 'test project'."""
+    return " ".join(_normalize(s).replace("_", " ").replace("-", " ").split())
+
+
 class Node(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     type: str
@@ -127,6 +132,19 @@ class GraphStore:
                 return n
         return None
 
+    def find_nodes_by_name(self, name: str, timeout: float = 10.0) -> List[Node]:
+        """All nodes whose normalized name matches, regardless of type."""
+        nm = _normalize(name)
+        nodes, _ = self.load(timeout=timeout)
+        return [n for n in nodes if _normalize(n.name) == nm]
+
+    def find_twins(self, name: str, timeout: float = 10.0) -> List[Node]:
+        """All nodes matching `name` under separator-insensitive comparison
+        ('emberglass_wand' matches 'emberglass wand'), regardless of type."""
+        cn = _canon(name)
+        nodes, _ = self.load(timeout=timeout)
+        return [n for n in nodes if _canon(n.name) == cn]
+
     # ── Write ─────────────────────────────────────────────────────────────────
 
     def upsert_node(
@@ -198,6 +216,46 @@ class GraphStore:
             edges.append(new_edge)
             self._save_unlocked(nodes, edges)
             return new_edge, "created"
+
+    def merge_nodes(self, keep_id: UUID | str, drop_id: UUID | str, timeout: float = 10.0) -> Optional[Node]:
+        """Merge node `drop_id` into node `keep_id` and delete it.
+
+        Properties: keep's values win on conflict; drop fills in missing keys.
+        Edges touching drop are re-pointed to keep; self-loops produced by the
+        re-point are removed and duplicate (source, target, relation) edges are
+        collapsed. Returns the kept node, or None if either id is missing.
+        """
+        kid, did = str(keep_id), str(drop_id)
+        if kid == did:
+            return None
+        with FileLock(str(self.lock_path), timeout=timeout):
+            nodes, edges = self._load_unlocked()
+            by_id = {str(n.id): n for n in nodes}
+            keep, drop = by_id.get(kid), by_id.get(did)
+            if keep is None or drop is None:
+                return None
+
+            keep.properties = {**drop.properties, **keep.properties}
+            keep.touch()
+
+            seen: set[tuple] = set()
+            new_edges: List[Edge] = []
+            for e in edges:
+                sid = kid if str(e.source_id) == did else str(e.source_id)
+                tid = kid if str(e.target_id) == did else str(e.target_id)
+                if sid == tid:
+                    continue  # self-loop created by the re-point
+                key = (sid, tid, _normalize(e.relation))
+                if key in seen:
+                    continue
+                seen.add(key)
+                e.source_id = UUID(sid)
+                e.target_id = UUID(tid)
+                new_edges.append(e)
+
+            new_nodes = [n for n in nodes if str(n.id) != did]
+            self._save_unlocked(new_nodes, new_edges)
+            return keep
 
     def delete_node(self, node_id: UUID | str, timeout: float = 10.0) -> bool:
         """Delete a node and any edges that touch it."""
@@ -333,6 +391,37 @@ class GraphStore:
             "types": types,
             "relations": relations,
         }
+
+
+def merge_slot_duplicates(pool_id: str) -> dict:
+    """Merge generic `slot`-typed mirror nodes into same-name entity nodes.
+
+    For every node of type "slot" that shares its name with a node of any other
+    type (e.g. ("slot", "emberglass_wand") next to ("item", "emberglass_wand")),
+    the slot node is merged into the typed entity node — properties combined,
+    edges re-pointed — and removed. Returns a summary; never raises.
+    """
+    summary: dict = {"merged": [], "errors": []}
+    try:
+        store = GraphStore(pool_id)
+        nodes, _ = store.load()
+        slot_nodes = [n for n in nodes if n.type == "slot"]
+        for sn in slot_nodes:
+            try:
+                twins = [
+                    n for n in store.find_twins(sn.name)
+                    if n.type != "slot" and str(n.id) != str(sn.id)
+                ]
+                if not twins:
+                    continue
+                keep = twins[0]
+                if store.merge_nodes(keep.id, sn.id):
+                    summary["merged"].append({"name": sn.name, "into_type": keep.type})
+            except Exception as e:
+                summary["errors"].append(f"merge failed for slot '{sn.name}': {e}")
+    except Exception as e:
+        summary["errors"].append(f"merge_slot_duplicates crashed: {e}")
+    return summary
 
 
 def _apply_retention(nodes: List[Node], edges: List[Edge]) -> Tuple[List[Node], List[Edge]]:

@@ -7,6 +7,8 @@ This guide walks you through getting Agents Hub running from a fresh clone. Two 
 
 Pick one. They are equivalent for normal use; local is better when you want to iterate on code, Docker is faster to bootstrap.
 
+For the condensed version of this page, including the one-command installer, see [docs/installation.md](./docs/installation.md), which is also served in the app under **Docs** and readable by agents.
+
 ---
 
 ## 1. Prerequisites
@@ -16,7 +18,7 @@ Install these once on your machine:
 | Tool                  | Version    | Used for                                              |
 | --------------------- | ---------- | ----------------------------------------------------- |
 | Python                | 3.11+      | Backend, CLI, agent runners                           |
-| Node.js + npm         | 20+        | Frontend dashboard                                    |
+| Node.js + npm         | 22+        | Frontend dashboard                                    |
 | Git                   | any        | Cloning the repo                                      |
 | Docker + Compose      | any recent | Only required for Path B or Docker agent execution    |
 | An LLM provider key   | —          | OpenAI / Anthropic / Google, or a local Ollama/LM Studio runtime |
@@ -25,7 +27,7 @@ Verify:
 
 ```bash
 python --version    # >= 3.11
-node --version      # >= 20
+node --version      # >= 22
 npm --version
 docker --version    # optional
 ```
@@ -45,9 +47,15 @@ All commands below assume your current directory is the repo root unless noted o
 
 ## 3. Configure the environment
 
-Create a `.env` file in the repository root. The backend auto-loads it on startup.
+Copy the template and fill in the provider you use. The backend auto-loads
+`.env` on startup.
 
-Minimal example (OpenAI):
+```bash
+cp .env.example .env
+```
+
+`.env.example` lists every variable the app reads, with defaults. The minimal
+OpenAI setup is:
 
 ```env
 # --- LLM provider ---
@@ -126,17 +134,30 @@ ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 ## Path A — Local development setup
 
+### A.0 The short way
+
+```bash
+./install.sh --frontend      # venv, service, the `ah` command, shell hook, dashboard deps
+exec $SHELL                  # pick up the shell integration
+ah up                        # backend on :8000 and built dashboard on :5173
+```
+
+Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--cli-only`, `--with-rag`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
+
 ### A.1 Install Python dependencies
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
 
 pip install --upgrade pip
-pip install -r dashboard/backend/requirements.txt
-pip install -r requirements-agents.txt
-pip install -r requirements-cli.txt    # optional, only if you use cli.py
+pip install -e ".[backend,agents]"     # the service, and the `ah` command
+pip install -e ".[rag]"                # optional, RAG extras (pulls in torch)
 ```
+
+The extras read the requirement files in the repository, so they stay in step
+with them. Editable on purpose: the command then follows the checkout, `git
+pull` included, instead of freezing a copy of it.
 
 ### A.2 Install frontend dependencies
 
@@ -167,18 +188,35 @@ npm run dev -- --host 0.0.0.0 --port 5173
 
 Open the dashboard at `http://localhost:5173`.
 
+Or run both from one terminal, with no `cd` into either directory:
+
+```bash
+ah up          # production: no reloader, and the built bundle on :5173
+ah up --dev    # the two development servers above, reload and HMR
+```
+
+Ctrl-C stops both, and if one exits the other is stopped with it.
+
 ### A.5 (Optional) Use the CLI
 
 In a third terminal:
 
 ```bash
 source .venv/bin/activate
-python cli.py server status
-python cli.py agent list
-python cli.py workspace list
+ah config                      # or `python -m cli config` with nothing installed
+ah agent list
+ah workspace list
 ```
 
-The CLI talks to the backend at `http://localhost:8000` by default — override with `AGENTS_HUB_URL` if needed.
+The CLI calls the service's functions in this process by default, so a running backend is not required. Set `AGENTS_HUB_URL` to work against a service the CLI cannot import instead, a backend in a container most often. Full reference: [docs/cli.md](./docs/cli.md).
+
+For commands in every new terminal, plus a `conda activate`-style workspace selection:
+
+```bash
+ah shell-init --install            # adds an `ah` function to your shell startup file
+exec $SHELL
+ah workspace init                  # register the current directory and select it
+```
 
 ---
 
@@ -197,9 +235,52 @@ This starts:
 - Backend on `http://localhost:8000`
 - Frontend on `http://localhost:5173`
 
-`.env` is mounted into the backend automatically (`env_file: .env` in compose), and `AGENT_EXECUTION_MODE=local` is forced inside the container.
+`.env` is passed to the backend automatically (`env_file` in compose) and is
+optional: without one the stack still starts, it just has no provider key.
 
-### B.2 Stop / rebuild
+Both ports can be moved if 8000 or 5173 are taken on your machine, and the
+dashboard follows without a rebuild, since it talks to its own origin and the
+dev server proxies `/api` to the backend:
+
+```bash
+BACKEND_PORT=18000 FRONTEND_PORT=15173 docker compose up
+```
+
+### B.2 Serving the built frontend behind nginx
+
+The default `frontend` service is the Vite dev server, which is what you want
+while editing code. For anything longer-lived there is a second service that
+builds the bundle and serves it from nginx, which also proxies `/api` and
+balances it across however many backends are up:
+
+```bash
+docker compose --profile prod up --build backend frontend-nginx
+```
+
+- Dashboard on `http://localhost:8080` (`WEB_PORT` to move it)
+- The bundle is served with `immutable` caching on the hashed assets and
+  `no-cache` on `index.html`, so a redeploy is picked up on the next load
+- `/api` is proxied unbuffered, so SSE streams and long agent runs still work
+
+To put several backends behind it:
+
+```bash
+docker compose --profile prod up --build --scale backend=3 backend frontend-nginx
+```
+
+Both knobs are environment variables on the `frontend-nginx` service:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BACKEND_SERVERS` | `backend:8000` | Space-separated `host:port` list to balance over (`least_conn`) |
+| `API_ASSET_CACHE_SECONDS` | `30` | Shared cache TTL for generated view assets. `0` disables it |
+
+Nothing else under `/api` is cached: the dashboard reads live state, so a stale
+response would be worse than a slow one. The frontend image is
+`dashboard/frontend/Dockerfile` (`--target dev` for Vite, default target for
+nginx); its config lives in `dashboard/frontend/docker/`.
+
+### B.3 Stop / rebuild
 
 ```bash
 docker compose down               # stop
@@ -209,9 +290,40 @@ docker compose logs -f backend    # tail backend logs
 
 ### Notes / limitations
 
-- Compose mounts the repo at `/app`, so source edits trigger backend reload and frontend HMR.
+- Compose mounts the repo at `/app` for the backend and `dashboard/frontend` for the dev frontend, so source edits trigger backend reload and frontend HMR.
 - The `frontend_node_modules` named volume keeps `node_modules` inside the container — if you want a clean install, run `docker compose down -v`.
-- Docker-managed **agent containers** are not supported by the default compose file (the backend container does not have Docker socket access). For that, run the backend natively (Path A) with `AGENT_EXECUTION_MODE=docker`, or extend the compose file with `/var/run/docker.sock` mounted in.
+- Both frontend services wait for the backend to report healthy (`GET /`) before they start.
+- Docker-managed **agent containers** work from compose: the backend service
+  gets the host Docker socket and a Docker CLI, and `HOST_PROJECT_ROOT` tells it
+  which host path is mounted at `/app` so the bind mounts it hands the daemon
+  resolve correctly. Turn it on with `AGENT_EXECUTION_MODE=docker` in `.env`,
+  then build the agent base image from the Containers page (or
+  `docker build -t agents-hub/base:latest -f Dockerfile.agents .`).
+- That socket mount is real privilege: anything running in the backend container
+  can control the host daemon, which is host root in practice. Drop the
+  `/var/run/docker.sock` line from `docker-compose.yml` if you would rather not
+  grant it; everything except Docker-mode agents keeps working.
+- Backend and agent containers share the `agents-hub` bridge network, so agent
+  nodes are reachable by container name.
+- The CLI calls the service's functions in this process by default, which needs
+  the code and the state directory locally. For a backend in a container, point
+  it at the API instead — `export AGENTS_HUB_URL=http://localhost:8000` — and the
+  same commands work over REST. What does not carry over is paths:
+  `workspace init` / `project add` are then resolved by the backend, so a host
+  path does not exist for it. Bind mount one parent directory into the backend
+  service and pass the in-container path:
+
+  ```yaml
+  volumes:
+    - ~/code:/host/code
+  ```
+
+  ```bash
+  ah workspace init /host/code/myapp
+  ```
+
+  A running container cannot gain new mounts, so mount the parent rather than
+  each project. An unmounted path is refused rather than silently attached.
 
 ---
 
@@ -251,19 +363,29 @@ You can delete `.agents_hub/` to fully reset state — it will be regenerated on
 
 | Symptom                                          | Check                                                                                        |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| Backend fails on import                          | venv activated? `pip install -r dashboard/backend/requirements.txt` + `requirements-agents.txt` |
+| Backend fails on import                          | venv activated? `pip install -e ".[backend,agents]"` again, and read the output                |
 | Backend starts but `/api/agents` is empty        | `.agents_hub/agents.json` missing — restart the backend to re-seed; check filesystem permissions |
 | Frontend loads but API calls fail (CORS / 404)   | Backend on port 8000? `ALLOW_ORIGINS` includes `http://localhost:5173`?                      |
 | Agent chat returns 401 / auth error              | `OPENAI_API_KEY` (or the chosen provider key) is set and the value matches the model         |
 | Agent run fails immediately with "model not found" | `OPENAI_MODEL` / `OLLAMA_MODEL` / `LMSTUDIO_MODEL` matches a model your provider exposes     |
-| Docker compose up but agent containers don't launch | Expected with the default compose — switch to Path A with `AGENT_EXECUTION_MODE=docker` for full Docker agent execution |
+| Docker compose up but agent containers don't launch | `AGENT_EXECUTION_MODE=docker` set? Agent base image built? Is `/var/run/docker.sock` still mounted in `docker-compose.yml`? |
 | LM Studio / Ollama unreachable when backend runs in Docker | `localhost` inside the container = the container itself. Set `LMSTUDIO_BASE_URL` / `OLLAMA_BASE_URL` to `http://host.docker.internal:<port>`. On plain Linux Docker also add `extra_hosts: ["host.docker.internal:host-gateway"]` to the backend service in compose. |
-| `python cli.py` cannot reach the server          | Backend running on port 8000? Set `AGENTS_HUB_URL` if you changed the host/port              |
+| `ah` cannot reach the server                     | Backend running on port 8000? Set `AGENTS_HUB_URL` if you changed the host/port              |
+| `ah: command not found`                          | The venv is not on PATH and the shell hook is not installed: `ah shell-init --install`       |
 
 ---
 
 ## 7. Next steps
 
-- Read [README.md](./README.md) for the full architecture, including the **layered instructions** model (`instructions.md` / `capabilities.md` / `usage.md`) and the **memory subsystems** (shared / episodic / procedural / graph / RAG).
-- See [USAGE_SCENARIOS_AND_SETTINGS.md](./USAGE_SCENARIOS_AND_SETTINGS.md) for runtime tuning options.
-- Browse [examples/](./examples/) for sample flows and standalone agent scripts.
+- [docs/overview.md](./docs/overview.md) is the shortest description of what the
+  service actually is: how workspaces, projects, tasks, agents and runs nest.
+- [docs/cli.md](./docs/cli.md) is the full CLI reference: `ah up`, attaching your
+  own directories, workspace selection and the shell integration.
+- [ARCHITECTURE.md](./ARCHITECTURE.md) has the architecture, including the
+  **layered instructions** model (`instructions.md` / `capabilities.md` /
+  `usage.md`), the **memory subsystems** (shared / episodic / procedural / graph
+  / RAG) and the storage model.
+- [USAGE_SCENARIOS_AND_SETTINGS.md](./USAGE_SCENARIOS_AND_SETTINGS.md) covers
+  runtime tuning options, and [docs/troubleshooting.md](./docs/troubleshooting.md)
+  the symptoms that survive a successful install.
+- [examples/](./examples/) holds sample flows and standalone agent scripts.

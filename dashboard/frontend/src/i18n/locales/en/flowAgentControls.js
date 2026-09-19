@@ -1,0 +1,15 @@
+export default {
+  agentControls: 'Agent Controls',
+  projectDescription: 'Project Description',
+  pmIntake: 'PM Intake',
+  baGenerate: 'BA Generate',
+  sdGenerate: 'SD Generate',
+  tlSplitTasks: 'TL Split Tasks',
+  runBeDev: 'Run BE Dev',
+  runFeDev: 'Run FE Dev',
+  runQa: 'Run QA',
+  runDevops: 'Run DevOps',
+  runFullGraph: 'Run Full Graph',
+  selectWorkspaceFirst: 'Please select a workspace first',
+  startFailed: 'Failed to start agent',
+};

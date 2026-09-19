@@ -1,0 +1,355 @@
+export default {
+  // ── Katalog
+  title: 'Welten',
+  subtitle: 'Bauen Sie die Welt, in der Ihre Agenten handeln: ihre Orte, ihre Dinge, '
+    + 'ihre Werte und die Regeln, wer was mit wem tun darf. Eine Welt ist kein Code, den '
+    + 'Sie schreiben: Sie beschreiben sie, die Engine setzt sie durch.',
+  newWorld: 'Neue Welt',
+  deleteWorld: 'Welt löschen',
+  deleteFailed: 'Welt konnte nicht gelöscht werden',
+  deleteConfirm: 'Diese Welt löschen?',
+  deleteUsedConfirm: 'Diese Welt wird von {{count}} Szenario(s) genutzt. '
+    + 'Sie hätten danach keinen Ort mehr. Trotzdem löschen?',
+  emptyState: 'Noch keine Welten. Beginnen Sie mit einer der fertigen und ändern Sie sie, '
+    + 'oder fangen Sie leer an: Orte zum Wechseln, Gegenstände zum Weitergeben, Objekte mit '
+    + 'eigenem Zustand, Weltwerte, die Ihre Aktionen verändern, und die Aktionen selbst.',
+  runnable: 'Startbereit',
+  usedByCount_one: 'von {{count}} Szenario genutzt',
+  usedByCount_other: 'von {{count}} Szenarien genutzt',
+  locationCount_one: '{{count}} Ort',
+  locationCount_other: '{{count}} Orte',
+  roleCount_one: '{{count}} Rolle',
+  roleCount_other: '{{count}} Rollen',
+  actionCount_one: '{{count}} Aktion',
+  actionCount_other: '{{count}} Aktionen',
+  problemCount_one: '{{count}} offener Punkt',
+  problemCount_other: '{{count}} offene Punkte',
+  yourWorld: 'Ihre Welt',
+
+  // ── Neue Welt
+  startFrom: 'Beginnen mit',
+  blankWorld: 'Leere Welt',
+  blankWorldHint: 'Eine leere Welt. Alles benennen Sie selbst.',
+  templateMeta: '{{locations}} Orte · {{roles}} · {{actions}} Aktionen',
+  nameFromTemplate: 'leer lassen für den Namen der Vorlage',
+  nameRequired: 'Eine Welt braucht einen Namen.',
+  createFailed: 'Welt konnte nicht erstellt werden',
+  create: 'Erstellen',
+  cancel: 'Abbrechen',
+
+  // ── Editor
+  editorSubtitle: 'Alles hier ist eine Welt und ein Speichern. Eine Rolle, die eine Aktion '
+    + 'ausführen darf, und die Aktion selbst sind nicht getrennt wahr.',
+  allWorlds: 'Alle Welten',
+  loadFailed: 'Welt konnte nicht geladen werden',
+  notFound: 'Welt nicht gefunden.',
+  untitled: 'Welt ohne Namen',
+  save: 'Welt speichern',
+  saved: 'Welt gespeichert',
+  savedWithProblems: 'Gespeichert, aber einiges sollte noch korrigiert werden, damit sie gut läuft',
+  saveFailed: 'Welt konnte nicht gespeichert werden',
+  unsaved: 'Diese Welt hat ungespeicherte Änderungen.',
+  discard: 'Änderungen verwerfen',
+  problemsTitle_one: '{{count}} offener Punkt',
+  problemsTitle_other: '{{count}} offene Punkte',
+  remove: 'Entfernen',
+
+  // ── Identität
+  identity: 'Die Welt',
+  identityHint: 'Der Name, unter dem ein Szenario sie wählt, und die Beschreibung, die jede '
+    + 'Figur erhält.',
+  name: 'Name',
+  description: 'Beschreibung',
+  descriptionHint: 'Steht im Prompt jeder Figur: was für ein Ort das ist.',
+  envId: 'Umgebungs-ID',
+  envIdHint: 'Was ein Szenario speichert. Wird hier vergeben und ändert sich nie.',
+  usedBy: 'Szenarien in dieser Welt',
+
+  // ── Orte
+  locations: 'Orte',
+  locationsHint: 'Die einzigen Plätze, an denen jemand sein kann. Eine Figur ist an genau '
+    + 'einem davon und sieht nur, wer dort ist.',
+  addLocation: '+ Ort hinzufügen',
+  noLocations: 'Noch keine Orte, mindestens einer wird gebraucht.',
+  connectsTo: 'Führt zu',
+  connectsToHint: 'leer = zu allen anderen',
+  startingLocation: 'Alle beginnen in',
+  startingLocationHint: 'Sofern die Rolle nichts anderes sagt. Leer verteilt sie zufällig.',
+  timeOfDay: 'Tageszeit',
+  timeOfDayHint: 'Wird jeder Figur angezeigt.',
+  hoursPerTick: 'Stunden pro Tick',
+
+  // ── Gegenstände
+  items: 'Gegenstände',
+  itemsHint: 'Dinge, die den Besitzer wechseln. Ein Gegenstand hat genau einen Besitzer: '
+    + 'Übergeben bewegt ihn, ein Versprechen ist nur eine Nachricht.',
+  addItem: '+ Gegenstand hinzufügen',
+  noItems: 'Keine Gegenstände.',
+  startsIn: 'Beginnt in',
+  heldBy: 'Bei',
+  heldByHint: 'eine Rolle oder ein Figurenname',
+  portable: 'Tragbar',
+
+  // ── Objekte
+  entities: 'Objekte',
+  entitiesHint: 'Inventar der Welt, nicht tragbar: eine Tür, ein Buch, ein Feuer. Jedes hat '
+    + 'einen Zustand, den eine Aktion lesen und ändern kann, und das unterscheidet es von Kulisse.',
+  addEntity: '+ Objekt hinzufügen',
+  noEntities: 'Keine Objekte.',
+  kind: 'Art',
+  standsIn: 'Steht in',
+  state: 'Zustand (schlüssel=wert)',
+  stateExample: 'verschlossen=ja, brennt=nein',
+  statsExample: 'muenzen=20',
+  visible: 'Sichtbar',
+
+  // ── Werte
+  globals: 'Weltwerte',
+  globalsHint: 'Weltweite Parameter: Alarmstufe, Gezeiten, Stunde der Sperrstunde. Jedes '
+    + 'Szenario kann sie anders starten lassen; genau das macht eine Welt mehrfach nutzbar.',
+  addGlobal: '+ Weltwert hinzufügen',
+  noGlobals: 'Keine Weltwerte.',
+  stats: 'Figurenwerte',
+  statsHint: 'Dasselbe pro Figur: Münzen, Gesundheit, Ansehen. Rollen können unterschiedlich '
+    + 'starten, und Aktionen können sie zwischen Figuren verschieben.',
+  addStat: '+ Figurenwert hinzufügen',
+  noStats: 'Keine Figurenwerte.',
+  type: 'Typ',
+  startingValue: 'Startwert',
+  min: 'Min',
+  max: 'Max',
+  public: 'Öffentlich',
+
+  // ── Rollen
+  roles: 'Rollen',
+  rolesHint: 'Die Arten von Figuren, die diese Welt kennt. Der Rollentext eines Szenarios '
+    + 'wird über den Namen zugeordnet, so landet die Besetzung am richtigen Ort mit den '
+    + 'richtigen Rechten.',
+  addRole: '+ Rolle hinzufügen',
+  noRoles: 'Noch keine Rollen, also spielt jede Figur die generische Rolle unten.',
+  genericRole: 'Figuren ohne Rolle',
+  genericRoleHint: 'Was eine Figur bekommt, deren Rolle diese Welt nicht kennt.',
+  startsWith: 'Beginnt mit',
+  mayTake: 'Darf ausführen',
+  mayTakeHint: 'leer = alle Aktionen',
+  mayActOn: 'Darf einwirken auf',
+  mayActOnHint: 'leer = auf jeden · Sprechen wird nie eingeschränkt',
+  startingStats: 'Startwerte',
+
+  // ── Aktionen
+  actions: 'Aktionen',
+  actionsHint: 'Das Einzige, was eine Figur tun kann. Voraussetzungen sind das Veto der Welt '
+    + 'und werden vor jeder Änderung geprüft; Effekte sind das, was sie tut.',
+  addAction: '+ Aktion hinzufügen',
+  noActions: 'Noch keine eigenen Aktionen, es gibt nur die eingebauten.',
+  builtIns: 'Eingebaute Aktionen',
+  builtInsHint: 'Hier zugeschaltet, von der Engine umgesetzt. Abgeschaltet kann es in dieser '
+    + 'Welt niemand.',
+  unnamedAction: '(unbenannte Aktion)',
+  conditionCount_one: '{{count}} Bedingung',
+  conditionCount_other: '{{count}} Bedingungen',
+  effectCount_one: '{{count}} Effekt',
+  effectCount_other: '{{count}} Effekte',
+
+  // ── Aktionsdialog
+  newAction: 'Neue Aktion',
+  actionNameHint: 'Was der Agent als "action" schreibt. Klein, ohne Leerzeichen.',
+  limitedToRoles: 'Nur diese Rollen',
+  limitedToRolesHint: 'Leer = jeder. Wer sie nicht ausführen darf, bekommt sie nie zu sehen.',
+  actionDescriptionHint: 'Das Einzige, was ein Agent vor der Wahl liest. Sagen Sie, was sie '
+    + 'tut und was sie kostet.',
+  arguments: 'Argumente',
+  argumentsHint: 'Was der Agent übergibt. Argumente vom Typ agent, item, location und entity '
+    + 'prüft die Welt, bevor irgendetwas geschieht.',
+  addArgument: '+ Argument hinzufügen',
+  noArguments: 'Keine Argumente.',
+  choices: 'Auswahl',
+  choicesHint: 'leer = freier Text',
+  required: 'Pflicht',
+  onlyIn: 'Nur in',
+  onlyInHint: 'Orte, an denen die Aktion möglich ist. Leer = überall.',
+  targetPresent: 'Das Ziel muss am selben Ort sein',
+  requiresHeldItem: 'Der Gegenstand muss in der Hand der handelnden Figur sein',
+  requiresEntityPresent: 'Das Objekt muss hier sein',
+  conditions: 'Bedingungen',
+  conditionsHint: 'Alle müssen gelten, sonst wird die Aktion abgelehnt und nichts ändert sich.',
+  refusal: 'Was bei Ablehnung gesagt wird',
+  refusalHint: 'Eine Welt nennt den Grund, statt eine Liste von Vergleichen auszugeben.',
+  effects: 'Effekte',
+  effectsHint: 'Werden der Reihe nach angewendet. Jeder Typ liest nur die Felder, die er '
+    + 'braucht, die übrigen sind ausgegraut.',
+  successMessage: 'Was bei Erfolg gesagt wird',
+  successMessageHint: 'Nur die handelnde Figur erfährt es. Leer heißt „<Aktion> done“.',
+  logLine: 'Zeile im Weltprotokoll',
+  logLineHint: 'Was jeder sieht, der den Lauf liest. Leer schreibt die Welt selbst eine '
+    + 'Zeile, zum Beispiel „Wren used search (location: cellar)“.',
+  applyAction: 'Übernehmen',
+
+  // ── Effekte: Was jedes Feld bedeutet, hängt vom Typ des Effekts ab
+  effectField: {
+    unused: 'nicht verwendet',
+    who: 'Wessen / an wen',
+    whoHint: 'actor · arg:…',
+    whoAll: 'An wen',
+    whoAllHint: 'actor · arg:… · * = alle Anwesenden',
+    where: 'Wohin',
+    entity: 'Welches Objekt',
+    global: 'Welcher Weltwert',
+    stat: 'Welcher Figurenwert',
+    item: 'Welcher Gegenstand',
+    stateKey: 'Welcher Zustandsschlüssel',
+    value: 'Neuer Wert',
+    valueHint: 'eine Zahl, ein Wort, ja/nein',
+    amount: 'Ändern um',
+    amountHint: '1 · -2 · {arg.amount}',
+    text: 'Text',
+    textHint: '{actor} hat dich durchsucht',
+  },
+  placeholders: 'Platzhalter',
+  placeholdersInText: 'Im Text: Text eines Effekts, Erfolgsmeldung, Logzeile',
+  placeholdersInTextHint: 'Geschweifte Klammern werden durch das ersetzt, was sie benennen; alles andere bleibt, wie es dasteht.',
+  placeholdersInFields: 'In den Auswahlfeldern: „Wessen / an wen“, „Welcher Gegenstand“, „Wohin“',
+  placeholdersInFieldsHint: 'Hier ohne Klammern, und es wird nichts ausgegeben: Diese Werte sagen, auf wen oder was der Effekt wirkt.',
+  placeholderActor: 'die Figur, die die Aktion ausführt',
+  placeholderArg: 'was der Agent als dieses Argument übergeben hat',
+  placeholderGlobal: 'ein Weltwert, so wie er gerade ist',
+  placeholderStat: 'ein Wert der handelnden Figur',
+  placeholderFieldActor: 'die handelnde Figur selbst, der Effekt trifft sie',
+  placeholderFieldArg: 'wen der Agent in „{{arg}}“ genannt hat, der Effekt trifft diese Person',
+  placeholderNone: 'noch nichts deklariert',
+  placeholderExampleIntro: 'Angenommen, der Agent führt „{{action}}“ mit {{arg}} = cellar aus.',
+  placeholderExampleInText: 'Im Text wird aus „{actor} searched {{token}}“ die Zeile „Wren searched cellar“.',
+  placeholderExampleInField: 'In einem Auswahlfeld meint {{token}} den cellar selbst: Der Effekt wirkt darauf, und im Text erscheint nichts.',
+
+  // ── Gemeinsame Editoren
+  addCondition: '+ Bedingung hinzufügen',
+  noConditions: 'Keine Bedingungen, die Aktion geht immer durch.',
+  scope: 'Betrifft',
+  scopeGlobal: 'Weltwert',
+  scopeStat: 'Figurenwert',
+  scopeEntity: 'Objektzustand',
+  scopeItem: 'wer hält einen Gegenstand',
+  which: 'Welcher',
+  stateKey: 'Zustandsschlüssel',
+  stateKeyHint: 'nur für Objekte',
+  operator: 'Ist',
+  value: 'Wert',
+  addEffect: '+ Effekt hinzufügen',
+  noEffects: 'Keine Effekte, die Aktion ändert nichts.',
+  effect: 'Effekt',
+  target: 'Ziel',
+  whichValue: 'Welcher Wert',
+
+  // ── Regeln
+  rules: 'Regeln',
+  rulesHint: 'Prosa, die jede Figur zu lesen bekommt, eine Regel pro Zeile. Für das, was die '
+    + 'Welt nicht selbst prüfen kann: die Etikette, die Einsätze, wie es hier zugeht. Alles '
+    + 'Prüfbare gehört stattdessen in die Voraussetzungen einer Aktion.',
+  rulesPlaceholder: 'Eine Regel pro Zeile, z. B.:\nDas Wort des Wirts entscheidet jeden Streit im Schankraum.',
+
+  // ── Ziele und Ende
+  objectives: 'Ziele',
+  objectivesHint: 'Werden über den Endzustand bewertet, sodass Läufe dieser Welt vergleichbar '
+    + 'sind. Eine Rolle im Szenario wählt, auf welches Ziel sie spielt.',
+  addObjective: '+ Ziel hinzufügen',
+  noObjectives: 'Keine Ziele, Läufe lassen sich lesen, aber nicht bewerten.',
+  scoredFrom: 'Bewertet nach',
+  sourceStat: 'einem Figurenwert',
+  sourceItems: 'gehaltenen Gegenständen',
+  sourceVisited: 'besuchten Orten',
+  sourceGlobal: 'einem Weltwert',
+  ending: 'Wie die Welt endet',
+  endingHint: 'Jede dieser Bedingungen beendet den Lauf vorzeitig, besser als das Tick-Limit, '
+    + 'weil sie sagt, was geschehen ist.',
+
+  // ── Was die Prüfung gefunden hat, in der Sprache des Lesers.
+  // Der Server meldet einen Code und die Details; die Sätze stehen hier.
+  problems: {
+    name_required: 'Die Welt braucht einen Namen.',
+    no_locations: 'Eine Welt braucht mindestens einen Ort.',
+    duplicate_locations: 'Zwei Orte heißen gleich: {{names}}.',
+    unknown_exit: 'Der Ort „{{location}}“ führt nach „{{exit}}“, das es in dieser Welt nicht gibt.',
+    unknown_starting_location: 'Alle beginnen in „{{location}}“, das es in dieser Welt nicht gibt.',
+    duplicate_item: 'Zwei Gegenstände heißen „{{name}}“, und Gegenstände werden über den Namen angesprochen.',
+    item_no_name: 'Ein Gegenstand hat keinen Namen.',
+    item_unknown_location: 'Der Gegenstand „{{item}}“ beginnt in „{{location}}“, das es in dieser Welt nicht gibt.',
+    entity_no_name: 'Ein Objekt hat keinen Namen.',
+    entity_unknown_location: 'Das Objekt „{{entity}}“ steht in „{{location}}“, das es in dieser Welt nicht gibt.',
+    global_no_name: 'Ein Weltwert hat keinen Namen.',
+    stat_no_name: 'Ein Figurenwert hat keinen Namen.',
+    duplicate_global: 'Zwei Weltwerte heißen „{{name}}“.',
+    duplicate_stat: 'Zwei Figurenwerte heißen „{{name}}“.',
+    duplicate_action: 'Zwei Aktionen heißen „{{name}}“.',
+    action_shadows_builtin: '„{{name}}“ ist eine eingebaute Aktion. Schalten Sie die eingebaute ab oder nennen Sie Ihre anders.',
+    role_no_name: 'Eine Rolle hat keinen Namen.',
+    role_unknown_location: 'Die Rolle „{{role}}“ beginnt in „{{location}}“, das es in dieser Welt nicht gibt.',
+    role_unknown_action: 'Die Rolle „{{role}}“ darf „{{action}}“ ausführen, was in dieser Welt keine Aktion ist.',
+    role_unknown_role: 'Die Rolle „{{role}}“ darf auf „{{other}}“ einwirken, was in dieser Welt keine Rolle ist.',
+    role_unknown_stat: 'Die Rolle „{{role}}“ setzt „{{stat}}“, was in dieser Welt kein Figurenwert ist.',
+    role_unknown_start_item: 'Die Rolle „{{role}}“ startet mit „{{item}}“, was in dieser Welt kein Gegenstand ist.',
+    action_no_name: 'Eine Aktion hat keinen Namen.',
+    action_no_description: 'Die Aktion „{{action}}“ hat keine Beschreibung, und sie ist das Einzige, was ein Agent vor der Wahl liest.',
+    duplicate_arg: 'Die Aktion „{{action}}“ deklariert das Argument „{{name}}“ zweimal.',
+    action_unknown_location: 'Die Aktion „{{action}}“ ist nur in „{{location}}“ möglich, das es in dieser Welt nicht gibt.',
+    action_unknown_role: 'Die Aktion „{{action}}“ ist auf die Rolle „{{role}}“ beschränkt, die es in dieser Welt nicht gibt.',
+    unknown_effect: 'Die Aktion „{{action}}“ hat einen unbekannten Effekt „{{effect}}“.',
+    effect_unknown_global: 'Die Aktion „{{action}}“ ändert den Weltwert „{{name}}“, den diese Welt nicht kennt.',
+    effect_unknown_stat: 'Die Aktion „{{action}}“ ändert den Figurenwert „{{name}}“, den diese Welt nicht kennt.',
+    effect_unknown_entity: 'Die Aktion „{{action}}“ ändert das Objekt „{{name}}“, das es in dieser Welt nicht gibt.',
+    action_condition_unknown_global: 'Die Aktion „{{action}}“ prüft den Weltwert „{{name}}“, den diese Welt nicht kennt.',
+    action_condition_unknown_stat: 'Die Aktion „{{action}}“ prüft den Figurenwert „{{name}}“, den diese Welt nicht kennt.',
+    action_condition_unknown_entity: 'Die Aktion „{{action}}“ prüft das Objekt „{{name}}“, das es in dieser Welt nicht gibt.',
+    action_condition_unknown_item: 'Die Aktion „{{action}}“ prüft, wer „{{name}}“ hält, aber einen solchen Gegenstand gibt es in dieser Welt nicht.',
+    ending_condition_unknown_global: 'Das Ende prüft den Weltwert „{{name}}“, den diese Welt nicht kennt.',
+    ending_condition_unknown_stat: 'Das Ende prüft den Figurenwert „{{name}}“, den diese Welt nicht kennt.',
+    ending_condition_unknown_entity: 'Das Ende prüft das Objekt „{{name}}“, das es in dieser Welt nicht gibt.',
+    ending_condition_unknown_item: 'Das Ende prüft, wer „{{name}}“ hält, aber einen solchen Gegenstand gibt es in dieser Welt nicht.',
+    objective_no_name: 'Ein Ziel hat keinen Namen.',
+    objective_unknown_stat: 'Das Ziel „{{objective}}“ bewertet den Figurenwert „{{name}}“, den diese Welt nicht kennt.',
+    objective_unknown_global: 'Das Ziel „{{objective}}“ bewertet den Weltwert „{{name}}“, den diese Welt nicht kennt.',
+    no_actions: 'Eine Welt ohne Aktionen gibt ihren Figuren nichts zu tun.',
+    one_location: 'Ein Ort: niemand kann irgendwohin. Das ist ein Raum, keine Welt, was in Ordnung ist, wenn alles im Reden liegt.',
+    no_roles: 'Keine Rollen deklariert, also darf jede Figur jede Aktion ausführen. Deklarieren Sie Rollen, um festzulegen, wer was darf.',
+    no_objectives: 'Keine Ziele, also lassen sich Läufe dieser Welt lesen, aber nicht bewerten.',
+    nobody_can_talk: 'Niemand kann sprechen: weder speak_to noch announce ist aktiv.',
+    role_has_no_built_ins: 'Die Rolle „{{role}}“ darf nur {{actions}}. Ihre Liste enthält keine der eingebauten Aktionen dieser Welt, sie kann sich also weder bewegen noch sprechen noch etwas aufheben. Die Liste einer Rolle ist die ganze Liste, keine Ergänzung zu den eingebauten.',
+    unreachable_location: 'Von dort, wo die Figuren starten, führt kein Weg nach „{{location}}“. Was dort liegt, fällt aus dem Lauf, und eine Figur, der man sagt, sie solle hin, versucht es immer weiter.',
+    action_no_effects: 'Die Aktion „{{action}}“ hat keine Effekte: sie gelingt immer und ändert nichts. Eine Figur, die davon einen Fund oder einen Treffer erwartet, wiederholt sie endlos.',
+    held_item_never_checked: 'Die Aktion „{{action}}“ verlangt einen gehaltenen Gegenstand, deklariert aber kein Argument vom Typ item, also wird nie etwas geprüft und die Aktion verweigert nie.',
+    refusal_never_shown: 'Die Aktion „{{action}}“ hat einen Ablehnungstext, aber keine Bedingungen, kann also nie ablehnen, und dieser Text wird nie gezeigt.',
+    entity_state_inert: 'Das Objekt „{{entity}}“ trägt den Zustand „{{name}}“, den keine Aktion liest und keine Aktion ändert. Figuren lesen seine Beschreibung als Hindernis und suchen einen Weg daran vorbei, den es nicht gibt.',
+  },
+
+  // ── Was der Server abgelehnt hat, und warum.
+  errors: {
+    name_required: 'Eine Welt braucht einen Namen.',
+    world_not_found: 'Diese Welt gibt es nicht mehr.',
+    template_not_found: 'Es gibt keine Vorlagenwelt namens „{{template}}“.',
+    world_in_use: 'Diese Welt wird von {{count}} Szenario(s) genutzt: {{names}}. Löschen Sie diese zuerst oder weisen Sie ihnen eine andere Welt zu.',
+  },
+
+  // ── Eine Welt aus einem Satz, und der Chat, der sie weiter bearbeitet.
+  generateWithAi: 'Mit KI erzeugen',
+  generate: 'Erzeugen',
+  generating: 'Der World Builder baut sie…',
+  generateDescribe: 'Beschreiben Sie die Welt',
+  generatePlaceholder: 'Ein Zollhaus am Hafen bei Nacht. Wachen dürfen die Crew '
+    + 'durchsuchen, einander aber nicht, und eine Kiste muss in den Hof, bevor der '
+    + 'Alarm auf fünf steht.',
+  generateHint: 'Sagen Sie, worum gestritten wird, denn daraus ergeben sich Werte, '
+    + 'Aktionen und das Ende.',
+  generateFailed: 'Die Welt konnte nicht erzeugt werden',
+  generateLimitations: 'Der World Builder konnte für diese Anfrage keine Welt entwerfen.',
+  buildChat: 'Bau-Chat',
+  chatHint: 'Beschreiben Sie, was Sie wollen. Der World Builder ändert diese Welt mit '
+    + 'seinen Werkzeugen, und das Formular daneben aktualisiert sich dabei.',
+  changedInChat: 'Der Chat hat diese Welt geändert, während Sie bearbeitet haben. '
+    + 'Ihre Änderungen bleiben erhalten.',
+  discardAndReload: 'Meine verwerfen und neu laden',
+  chatSuggestAddLocation: 'Füge einen Keller hinzu, der nur zur Küche führt',
+  chatSuggestAddItem: 'Gib dem Wirt einen Schlüssel, den sonst niemand hat',
+  chatSuggestAddAction: 'Füge eine Aktion hinzu, mit der eine Wache jemanden durchsucht',
+  chatSuggestRestrict: 'Nur der Hafenmeister soll das Tor öffnen können',
+  chatSuggestEnding: 'Beende den Lauf, wenn der Alarm fünf erreicht',
+  chatSuggestExplain: 'Was kann eine Figur in dieser Welt eigentlich tun?',
+};

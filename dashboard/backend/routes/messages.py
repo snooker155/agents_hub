@@ -11,9 +11,9 @@ from fastapi import APIRouter, HTTPException
 from typing import Optional
 from pathlib import Path
 
-from agents import run_manager
-from agents.run_manager import update_run as update_message_run, load_runs as load_all_runs, save_runs as save_all_runs
-from common import tasks_service
+from managers import run_manager
+from managers.run_manager import update_run as update_message_run
+from tasks import service as tasks_service
 from workspace import create_workspace_folder
 from models import SessionCreate
 
@@ -21,6 +21,7 @@ from models import SessionCreate
 from routes.sessions import (
     _enrich_run,
     _resolve_session_model,
+    _resolve_session_provider,
     _build_context_window_metrics,
     _extract_chat_message_runs,
     _extract_worker_io,
@@ -28,6 +29,7 @@ from routes.sessions import (
     _extract_tools_from_progress,
     _extract_tools_from_log,
     _build_thinking_trace,
+    _parse_reasoning_line,
 )
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
@@ -49,6 +51,13 @@ def _enrich_message(run: dict, tasks_by_id: dict) -> dict:
     return enriched
 
 
+def _enrich_page(runs: list) -> list:
+    """Attach task titles to a page of runs, fetching only the tasks it needs."""
+    task_ids = {str(r.get("task_id")) for r in runs if r.get("task_id")}
+    tasks_by_id = tasks_service.get_tasks(task_ids) if task_ids else {}
+    return [_enrich_message(r, tasks_by_id) for r in runs]
+
+
 @router.get("")
 async def list_messages(
     workspace: Optional[str] = None,
@@ -57,33 +66,35 @@ async def list_messages(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     session_id: Optional[str] = None,
+    instance_id: Optional[str] = None,
     is_flow: Optional[bool] = None,
+    channel: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
 ):
-    """List all individual agent run messages with optional filters."""
-    runs = load_all_runs()
+    """A page of agent run messages, filtered and ordered in SQL.
 
-    all_tasks = tasks_service.list_tasks()
-    tasks_by_id = {str(t.id): t for t in all_tasks}
-
-    enriched = [_enrich_message(r, tasks_by_id) for r in runs]
-
-    if workspace:
-        enriched = [r for r in enriched if r.get("workspace") == workspace]
-    if agent_id:
-        enriched = [r for r in enriched if r.get("agent_id") == agent_id]
-    if status:
-        enriched = [r for r in enriched if r.get("status") == status]
-    if from_date:
-        enriched = [r for r in enriched if (r.get("started_at") or "") >= from_date]
-    if to_date:
-        enriched = [r for r in enriched if (r.get("started_at") or "") <= to_date]
-    if session_id:
-        enriched = [r for r in enriched if r.get("session_id") == session_id]
-    if is_flow is not None:
-        enriched = [r for r in enriched if r.get("is_flow") == is_flow]
-
-    enriched.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-    return enriched
+    Returns ``{items, total, limit, offset}``. Filtering used to happen in
+    Python over every run ever recorded, which a workspace running a thousand
+    agents in parallel turns into a full-table scan on every refresh.
+    """
+    page = run_manager.query_runs(
+        workspace=workspace,
+        agent_id=agent_id,
+        status=status,
+        session_id=session_id,
+        instance_id=instance_id,
+        channel=channel,
+        is_flow=is_flow,
+        flow_agent_ids=sorted(FLOW_AGENT_IDS),
+        from_date=from_date,
+        to_date=to_date,
+        q=q,
+        limit=max(1, min(int(limit), 500)),
+        offset=max(0, int(offset)),
+    )
+    return {**page, "items": _enrich_page(page["items"])}
 
 
 @router.get("/{run_id}")
@@ -93,8 +104,8 @@ async def get_message(run_id: str):
     if not run:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    all_tasks = tasks_service.list_tasks()
-    tasks_by_id = {str(t.id): t for t in all_tasks}
+    task_id = run.get("task_id")
+    tasks_by_id = tasks_service.get_tasks([task_id]) if task_id else {}
     enriched = _enrich_message(run, tasks_by_id)
     if not enriched.get("model"):
         enriched["model"] = _resolve_session_model(enriched)
@@ -136,7 +147,9 @@ async def get_message_insights(run_id: str):
     llm_invoke_responses = []
     input_contexts = []
 
-    rr_process = run.get("process") or {}
+    # Heavy process payload lives in a per-run sidecar (see run_manager); the slim
+    # value on the index record only carries token totals.
+    rr_process = run_manager.get_run_process(run_id) or {}
 
     # File-change artifacts (diffs) captured during chat/flow runs, tagged with
     # the run_id so the UI can rebuild the Artifacts panel on conversation reload.
@@ -146,11 +159,20 @@ async def get_message_insights(run_id: str):
     rr_llm = rr_process.get("llm_invoke_responses") or []
     rr_input_context = rr_process.get("llm_input_context")
     if rr_input_context:
-        input_contexts.append({
+        # New runs store a structured object {system_prompt, history,
+        # user_message, response, llm_invocations}; older runs stored a plain
+        # string. Pass the object through and keep the string under "context"
+        # for backward compatibility with the existing UI fallback.
+        entry = {
             "run_id": run.get("run_id"),
             "agent_id": run.get("agent_id"),
-            "context": str(rr_input_context),
-        })
+        }
+        if isinstance(rr_input_context, dict):
+            entry["structured"] = rr_input_context
+            entry["context"] = rr_input_context.get("user_message") or ""
+        else:
+            entry["context"] = str(rr_input_context)
+        input_contexts.append(entry)
     if isinstance(rr_llm, list):
         for entry in rr_llm:
             llm_invoke_responses.append({
@@ -242,6 +264,14 @@ async def get_message_insights(run_id: str):
 
         # Use stored process thinking for node runs (where print() doesn't reach the log file)
         stored_thinking = list(rr_process.get("thinking") or [])
+        # Native model thoughts captured during the run ([reasoning] lines)
+        stored_reasoning = [
+            r for r in (_parse_reasoning_line(line) for line in stored_thinking) if r
+        ]
+        if not stored_reasoning and log_text:
+            stored_reasoning = [
+                r for r in (_parse_reasoning_line(line) for line in log_text.splitlines()) if r
+            ]
 
         pseudo = {
             "message_id": run.get("run_id"),
@@ -252,6 +282,7 @@ async def get_message_insights(run_id: str):
             "output": out_text,
             "tools": run_tools,
             "thinking": stored_thinking,
+            "reasoning": stored_reasoning,
             "inbound_tokens": run_inbound,
             "outbound_tokens": run_outbound,
             "total_tokens": run_total or (run_inbound + run_outbound),
@@ -280,7 +311,29 @@ async def get_message_insights(run_id: str):
     }
 
     model = _resolve_session_model(run)
-    context_window = _build_context_window_metrics(model, int(token_usage.get("inbound_tokens") or 0))
+    # Context fill is measured by the LARGEST single prompt the run sent, not by
+    # the sum of its prompts. An agent loop resends the whole conversation on
+    # every step, so `inbound_tokens` (30 steps x ~5k here) is a billing figure
+    # and would report a window many times "overfull" while the context never
+    # came close. Prefer the per-call records, fall back to the log's usage
+    # lines, and only then to the total (single-call runs, where they agree).
+    peak_prompt = 0
+    for inv in (rr_process.get("llm_invocations") or []):
+        if isinstance(inv, dict):
+            peak_prompt = max(peak_prompt, int((inv.get("token_usage") or {}).get("inbound_tokens") or 0))
+    if not peak_prompt and log_text:
+        for m in re.findall(r"\[llm_usage\]\s+prompt_tokens=(\d+)", log_text):
+            peak_prompt = max(peak_prompt, int(m))
+    if not peak_prompt:
+        peak_prompt = int(token_usage.get("inbound_tokens") or 0)
+    context_window = _build_context_window_metrics(
+        model, peak_prompt, _resolve_session_provider(run)
+    )
+
+    # Structured response (buttons / keyboard) recorded on the unified payload,
+    # if the agent emitted one — the response JSON connected to this run.
+    response_block = rr_process.get("response") if isinstance(rr_process.get("response"), dict) else None
+    structured_response = (response_block or {}).get("structured")
 
     return {
         "run_id": run_id,
@@ -293,9 +346,13 @@ async def get_message_insights(run_id: str):
         "thinking": thinking,
         "message_runs": message_runs,
         "artifacts": artifacts,
+        # Links to the service entities this run touched (tasks, views, files, …),
+        # resolved when the run finished — see common/entity_links.py.
+        "entities": list(rr_process.get("entities") or []),
         "aggregated_logs": log_text,
         "llm_invoke_responses": llm_invoke_responses,
         "input_contexts": input_contexts,
+        "structured_response": structured_response,
         "token_usage": token_usage,
         "context_window": context_window,
     }
@@ -326,19 +383,17 @@ async def stop_message(run_id: str):
 @router.delete("/{run_id}")
 async def delete_message(run_id: str, delete_log: bool = True):
     """Delete a message record. Running messages must be stopped first."""
-    runs = load_all_runs()
-    idx = next((i for i, r in enumerate(runs) if r.get("run_id") == run_id), None)
-    if idx is None:
+    run = run_manager.get_run_by_id(run_id)
+    if run is None:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    run = runs[idx]
     if run.get("status") == "running":
         raise HTTPException(status_code=400, detail="Stop the running message before deleting it")
 
     log_file = run.get("log_file")
     task_id = run.get("task_id")
-    runs.pop(idx)
-    save_all_runs(runs)
+    # delete_run removes both the run record and its structured payload row.
+    run_manager.delete_run(run_id)
 
     if task_id:
         try:

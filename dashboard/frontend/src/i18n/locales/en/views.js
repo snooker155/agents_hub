@@ -1,0 +1,16 @@
+export default {
+  views: 'Views',
+  description: 'Visualizations produced by agents across all workspaces',
+  searchViews: 'Search views…',
+  allKinds: 'All kinds',
+  loading: 'Loading…',
+  openInStudio: 'Open in Studio',
+  studio: 'Studio',
+  deleteView: 'Delete view',
+  confirmDelete: 'Delete this view?',
+  loadFailed: 'Failed to load views',
+  deleteFailed: 'Failed to delete view',
+  noViewsMatch: 'No views match your filter.',
+  noViewsYet: 'No views yet.',
+  emptyHint: 'Ask an agent (Rich views format, or the create_view tool / the Studio) to visualize something.',
+};

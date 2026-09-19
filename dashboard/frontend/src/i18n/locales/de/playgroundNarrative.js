@@ -1,0 +1,16 @@
+export default {
+  openFromSetup: 'Die Prosa der Welt schreiben',
+  tab: 'Narrativ',
+  title: 'Die Welt, wie sie geschrieben steht',
+  hint: 'Erzählender Text über die Welt: ihre Geschichte, die Regeln, nach denen ihre Bewohner leben, der Ton einer späteren Nacherzählung. Die Figuren lesen ihn nie. Er eröffnet die Chronik jedes Laufs und wird dem Erzähler als Bühnenbild übergeben, dem er nicht widersprechen darf.',
+  placeholder: 'Die Stadt schuldet der Gilde den dritten Winter in Folge, und hier weiß jeder, was das heißt…',
+  emptyPreview: 'Noch nichts geschrieben.',
+  preview: 'Vorschau',
+  save: 'Narrativ speichern',
+  saved: 'Narrativ gespeichert',
+  wordCount_one: '{{count}} Wort',
+  wordCount_other: '{{count}} Wörter',
+  askAgent: 'Den Agenten bitten',
+  askPrompt: 'Schreibe das Narrativ für dieses Szenario: die Geschichte der Welt, die Regeln, nach denen ihre Bewohner leben, die Atmosphäre und den Ton einer späteren Nacherzählung. Halte dich an die tatsächliche Besetzung, die Orte und die Gegenstände dieses Szenarios, erfinde nichts, was ihnen widerspricht, und speichere den Text im Feld narrative.',
+  askPromptExtend: 'Erweitere und überarbeite das Narrativ dieses Szenarios, ohne das bereits Geschriebene und seinen Ton zu verlieren. Vertiefe die Geschichte der Welt, ihre Regeln und ihre Atmosphäre dort, wo sie dünn sind, bleibe bei der tatsächlichen Besetzung, den Orten und den Gegenständen des Szenarios und speichere das Ergebnis im Feld narrative.',
+};

@@ -7,8 +7,9 @@ agent run messages. For example:
 - An agent factory/flow execution creates one session (with is_flow=True).
 - Future multi-step processes can accumulate multiple messages in a session.
 
-Individual agent run details live under /api/messages.
-Session contexts are stored in agents/state/session_contexts.json.
+Individual agent run details live under /api/messages; the live copy of the
+agent behind them lives under /api/instances.
+Session contexts are stored in the ``sessions`` table (``common.db``).
 """
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -23,38 +24,28 @@ import time
 import yaml
 
 from common.config import settings as _global_settings
-from langchain_core.callbacks import BaseCallbackHandler
 
 from uuid import uuid4
 
-from agents import run_manager, registry
-from common import tasks_service
+from agents import registry
+from providers.context_windows import get_model_context_window
+from managers import run_manager
+from tasks import service as tasks_service
 from workspace import create_workspace_folder
 from common.session_service import (
-    load_contexts as _load_contexts,
-    save_contexts as _save_contexts,
+    query_contexts as _session_service_query,
+    session_ids_without_runs as _session_ids_without_runs,
+    delete_context as _delete_context,
     upsert_context as _upsert_context,
     get_context_by_id as _get_context_by_id,
     get_or_create_chat_session,
     add_run_to_session,
     add_event_to_session,
 )
-from models import SessionCreate, SessionContextCreate
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 FLOW_AGENT_IDS = {"flow-graph", "flow-custom-graph", "custom-graph"}
-
-MODEL_CONTEXT_WINDOWS = {
-    "gpt-4o": 128000,
-    "gpt-4o-mini": 128000,
-    "gpt-4.1": 1047576,
-    "gpt-4.1-mini": 1047576,
-    "gpt-4.1-nano": 1047576,
-    "o1": 200000,
-    "o1-mini": 128000,
-    "o3-mini": 200000,
-}
 
 
 def _utc_now_iso() -> str:
@@ -62,187 +53,6 @@ def _utc_now_iso() -> str:
 
 
 # -------------------- Helpers --------------------
-
-def _to_json_safe(value, *, depth: int = 0, max_depth: int = 5):
-    if depth >= max_depth:
-        return str(value)
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, dict):
-        out = {}
-        for k, v in list(value.items())[:200]:
-            out[str(k)] = _to_json_safe(v, depth=depth + 1, max_depth=max_depth)
-        return out
-    if isinstance(value, (list, tuple)):
-        return [_to_json_safe(v, depth=depth + 1, max_depth=max_depth) for v in list(value)[:200]]
-    for meth in ("model_dump", "dict"):
-        fn = getattr(value, meth, None)
-        if callable(fn):
-            try:
-                return _to_json_safe(fn(), depth=depth + 1, max_depth=max_depth)
-            except Exception:
-                pass
-    if hasattr(value, "__dict__"):
-        try:
-            return _to_json_safe(vars(value), depth=depth + 1, max_depth=max_depth)
-        except Exception:
-            pass
-    return str(value)
-
-
-def _tool_payload_oneline(value) -> str:
-    """Render a tool input/output as a compact, single-line readable string.
-
-    Tool args arrive as dicts (or their str() repr) and outputs as JSON-ish
-    strings. Normalize structured payloads into compact valid JSON so the line
-    is readable, but keep it on ONE line — the session log is later re-parsed
-    line-by-line by single-line regexes, so newlines would break extraction.
-    """
-    import ast
-
-    def _compact(obj) -> str:
-        return json.dumps(_to_json_safe(obj), ensure_ascii=False, separators=(", ", ": "))
-
-    if isinstance(value, (dict, list, tuple)):
-        try:
-            return _compact(value)
-        except Exception:
-            return str(value)
-    text = str(value)
-    stripped = text.strip()
-    if (stripped.startswith("{") and stripped.endswith("}")) or (
-        stripped.startswith("[") and stripped.endswith("]")
-    ):
-        for parser in (json.loads, ast.literal_eval):
-            try:
-                return _compact(parser(stripped))
-            except Exception:
-                continue
-    return text
-
-
-def _estimate_tokens(text: str) -> int:
-    if not text:
-        return 0
-    return max(1, int((len(text) + 3) / 4))
-
-
-class _SessionChatCallback(BaseCallbackHandler):
-    def __init__(self, prompt_text: str = ""):
-        self.prompt_text = str(prompt_text or "")
-        self.output_parts: List[str] = []
-        self.prompt_tokens = 0
-        self.completion_tokens = 0
-        self.total_tokens = 0
-        self.tool_calls = 0
-        self.tool_history: List[Dict[str, Any]] = []
-        self.thinking_history: List[str] = []
-        self.llm_invoke_responses: List[Dict[str, Any]] = []
-        self._pending_tool: Optional[Dict[str, Any]] = None
-        self.cancelled: bool = False  # set True to interrupt LLM streaming mid-generation
-
-    def on_llm_start(self, serialized, prompts, **kwargs):
-        model_name = serialized.get("name") if isinstance(serialized, dict) else "unknown"
-        line = f"[llm_start] model={model_name or 'unknown'}"
-        self.thinking_history.append(line)
-        try:
-            if isinstance(prompts, list):
-                self.prompt_text = "\n".join(str(p) for p in prompts if p is not None)
-        except Exception:
-            pass
-
-    def on_llm_new_token(self, token, **kwargs):
-        if self.cancelled:
-            raise InterruptedError("Generation stopped by user")
-        if token:
-            self.output_parts.append(str(token))
-
-    def on_llm_end(self, response, **kwargs):
-        try:
-            self.llm_invoke_responses.append({
-                "response_type": response.__class__.__name__,
-                "llm_output": _to_json_safe(getattr(response, "llm_output", None)),
-                "generations": _to_json_safe(getattr(response, "generations", None)),
-            })
-        except Exception:
-            pass
-
-        usage = {}
-        try:
-            usage = (getattr(response, "llm_output", None) or {}).get("token_usage", {}) or {}
-        except Exception:
-            usage = {}
-        if not usage:
-            try:
-                gens = getattr(response, "generations", []) or []
-                for grp in gens:
-                    for g in grp:
-                        md = getattr(getattr(g, "message", None), "response_metadata", None) or {}
-                        tu = md.get("token_usage") or md.get("usage") or {}
-                        if tu:
-                            usage = tu
-                            break
-                    if usage:
-                        break
-            except Exception:
-                usage = {}
-        if not usage:
-            try:
-                gens = getattr(response, "generations", []) or []
-                for grp in gens:
-                    for g in grp:
-                        um = getattr(getattr(g, "message", None), "usage_metadata", None) or {}
-                        if um:
-                            usage = {
-                                "prompt_tokens": um.get("input_tokens"),
-                                "completion_tokens": um.get("output_tokens"),
-                                "total_tokens": um.get("total_tokens"),
-                            }
-                            break
-                    if usage:
-                        break
-            except Exception:
-                usage = {}
-
-        p = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-        c = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-        t = int(usage.get("total_tokens") or (p + c))
-        estimated = False
-        if p == 0 and c == 0 and t == 0:
-            p = _estimate_tokens(self.prompt_text)
-            c = _estimate_tokens("".join(self.output_parts))
-            t = p + c
-            estimated = True
-
-        self.prompt_tokens += p
-        self.completion_tokens += c
-        self.total_tokens += t
-        self.thinking_history.append(
-            f"[llm_usage] prompt_tokens={p} completion_tokens={c} total_tokens={t}"
-            + (" estimated=true" if estimated else "")
-        )
-
-    def on_tool_start(self, serialized, input_str, **kwargs):
-        self.tool_calls += 1
-        name = serialized.get("name") if isinstance(serialized, dict) else "tool"
-        entry = {
-            "step": self.tool_calls,
-            "tool": str(name or "tool"),
-            "input": str(input_str),
-        }
-        self._pending_tool = entry
-        input_log = _tool_payload_oneline(input_str)[:240]
-        self.thinking_history.append(f"[tool_start] step={entry['step']} tool={entry['tool']} input={input_log}")
-
-    def on_tool_end(self, output, **kwargs):
-        out = str(output)
-        output_log = _tool_payload_oneline(output)[:240]
-        self.thinking_history.append(f"[tool_end] output={output_log}")
-        if self._pending_tool is not None:
-            entry = dict(self._pending_tool)
-            entry["output"] = out
-            self.tool_history.append(entry)
-            self._pending_tool = None
 
 def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
     if not ts:
@@ -319,25 +129,56 @@ def _resolve_session_model(run: dict) -> str:
     return (os.environ.get("OPENAI_MODEL") or _global_settings.model or "gpt-4o").strip()
 
 
-def _get_context_window_tokens(model: str) -> int:
+def _resolve_session_provider(run: dict) -> str:
+    """Provider that actually served the run — the key the model catalog is
+    indexed by, so the context window resolves against the right entry."""
+    provider = run.get("provider")
+    if isinstance(provider, str) and provider.strip():
+        return provider.strip().lower()
+
+    params = run.get("params")
+    if isinstance(params, dict):
+        v = params.get("provider")
+        if isinstance(v, str) and v.strip():
+            return v.strip().lower()
+
+    agent_id = run.get("agent_id")
+    spec = registry.get_agent(agent_id) if agent_id else None
+    if spec and getattr(spec, "provider", None) and str(spec.provider).strip():
+        return str(spec.provider).strip().lower()
+
+    return (_global_settings.default_provider or "openai").strip().lower()
+
+
+def _get_context_window_tokens(model: str, provider: str = "") -> int:
+    """Max input tokens for the model, or 0 when nothing knows it.
+
+    Delegates to the single source of truth (``providers.context_windows``):
+    the Models-page catalog first — user override, else what the backend
+    reported during discovery — then the static per-provider fallback. A local
+    table here would go stale and, worse, silently answer for models it has
+    never heard of.
+    """
     if not model:
-        return 128000
-    m = model.strip().lower()
-    if m in MODEL_CONTEXT_WINDOWS:
-        return MODEL_CONTEXT_WINDOWS[m]
-    for k, v in MODEL_CONTEXT_WINDOWS.items():
-        if m.startswith(f"{k}-"):
-            return v
-    return 128000
+        return 0
+    return get_model_context_window(provider or "", model.strip())
 
 
-def _build_context_window_metrics(model: str, input_tokens: int) -> dict:
-    limit = _get_context_window_tokens(model)
+def _build_context_window_metrics(model: str, input_tokens: int, provider: str = "") -> dict:
+    """Context fill for one run.
+
+    ``input_tokens`` must be the **largest single prompt** the run sent, not the
+    sum of its prompts: an agent loop resends the conversation on every step, so
+    the sum is a billing figure and can exceed the window many times over while
+    the context was never close to full.
+    """
+    limit = _get_context_window_tokens(model, provider)
     used = max(0, int(input_tokens or 0))
-    remaining = max(0, limit - used)
+    remaining = max(0, limit - used) if limit > 0 else 0
     pct = round((used / limit) * 100, 2) if limit > 0 else 0.0
     return {
         "model": model,
+        "provider": provider or "",
         "context_window_tokens": limit,
         "input_tokens_used": used,
         "input_tokens_remaining": remaining,
@@ -346,15 +187,8 @@ def _build_context_window_metrics(model: str, input_tokens: int) -> dict:
 
 
 def _new_unique_run_id() -> str:
-    """Generate a run_id that is not already present in agent_runs state."""
-    try:
-        existing = {str(r.get("run_id")) for r in (run_manager.load_runs() or []) if r.get("run_id")}
-    except Exception:
-        existing = set()
-    rid = str(uuid4())
-    while rid in existing:
-        rid = str(uuid4())
-    return rid
+    """Generate a run_id that is not already present in run state."""
+    return run_manager.new_unique_run_id()
 
 
 def _compute_session_status(runs: List[Dict[str, Any]]) -> str:
@@ -406,29 +240,31 @@ def _enrich_run(run: dict, tasks_by_id: dict) -> dict:
     }
 
 
-def _enrich_context(ctx: Dict[str, Any], runs_by_id: Dict[str, Dict]) -> Dict[str, Any]:
-    """Add dynamic status and message metadata to a session context."""
-    message_ids = ctx.get("message_ids") or []
-    runs = [runs_by_id[rid] for rid in message_ids if rid in runs_by_id]
+def _enrich_context(ctx: Dict[str, Any], stats: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Add dynamic status and message metadata to a session context.
 
-    status = _compute_session_status(runs)
+    ``stats`` is the per-session tally from ``run_manager.session_run_stats``:
+    one grouped query answers status, participants and counts for a whole page,
+    so listing sessions no longer means reading every run record in the
+    database.
+    """
+    tally = stats.get(str(ctx.get("session_id"))) or {}
+    status = tally.get("status", "pending")
 
-    # Derive finished_at: max finished_at of completed messages if all done
     finished_at = ctx.get("finished_at")
-    if not finished_at and runs and status not in ("running", "pending", "awaiting_approval"):
-        times = [r.get("finished_at") for r in runs if r.get("finished_at")]
-        if times:
-            finished_at = max(times)
-
-    # Collect agent participants
-    agents = list({r.get("agent_id") for r in runs if r.get("agent_id")})
+    if not finished_at and status not in ("running", "pending", "awaiting_approval"):
+        finished_at = tally.get("finished_at") or finished_at
 
     return {
         **ctx,
         "status": status,
         "finished_at": finished_at,
-        "agents": agents,
-        "message_count": len(message_ids),
+        "agents": tally.get("agents", []),
+        # Deliberately the number of *referenced* messages, as before — not the
+        # tally's run count. Sessions in older databases carry message_ids whose
+        # runs were since deleted, and quietly renumbering them here would be a
+        # visible change to data the list has always reported this way.
+        "message_count": len(ctx.get("message_ids") or []),
         "event_count": len(ctx.get("events") or []),
     }
 
@@ -443,29 +279,41 @@ async def list_sessions(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     conversation_id: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
 ):
-    """List all session contexts."""
-    contexts = _load_contexts()
-    runs = run_manager.load_runs()
-    runs_by_id = {r["run_id"]: r for r in runs}
+    """A page of session contexts, filtered and ordered in SQL.
 
-    enriched = [_enrich_context(c, runs_by_id) for c in contexts]
-
-    if workspace:
-        enriched = [c for c in enriched if c.get("workspace") == workspace]
+    Returns ``{items, total, limit, offset}``. Only the returned page is
+    enriched, and its status/participants come from one grouped query over the
+    runs table — the list used to parse every session document and every run
+    record in the database on each refresh.
+    """
+    # A session's status is derived from its runs, so it cannot be a column on
+    # the sessions table. Rank the whole set first, then let SQL page the
+    # surviving ids — the tally is one grouped query either way.
+    session_ids = None
     if status:
-        enriched = [c for c in enriched if c.get("status") == status]
-    if is_flow is not None:
-        enriched = [c for c in enriched if bool(c.get("is_flow")) == is_flow]
-    if from_date:
-        enriched = [c for c in enriched if (c.get("created_at") or "") >= from_date]
-    if to_date:
-        enriched = [c for c in enriched if (c.get("created_at") or "") <= to_date]
-    if conversation_id:
-        enriched = [c for c in enriched if c.get("conversation_id") == conversation_id]
+        all_stats = run_manager.session_run_stats()
+        session_ids = [sid for sid, tally in all_stats.items()
+                       if tally.get("status") == status]
+        if status == "pending":
+            # Sessions with no runs at all read as pending and have no tally.
+            session_ids += _session_ids_without_runs()
 
-    enriched.sort(key=lambda c: c.get("created_at") or "", reverse=True)
-    return enriched
+    page = _session_service_query(
+        workspace=workspace,
+        conversation_id=conversation_id,
+        is_flow=is_flow,
+        from_date=from_date,
+        to_date=to_date,
+        session_ids=session_ids,
+        limit=max(1, min(int(limit), 500)),
+        offset=max(0, int(offset)),
+    )
+    stats = run_manager.session_run_stats([c.get("session_id") for c in page["items"]])
+    return {**page, "items": [_enrich_context(c, stats) for c in page["items"]]}
+
 
 @router.get("/{session_id}")
 async def get_session(session_id: str):
@@ -474,9 +322,8 @@ async def get_session(session_id: str):
     if not ctx:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    runs = run_manager.load_runs()
-    runs_by_id = {r["run_id"]: r for r in runs}
-    enriched = _enrich_context(ctx, runs_by_id)
+    stats = run_manager.session_run_stats([session_id])
+    enriched = _enrich_context(ctx, stats)
     enriched["events"] = ctx.get("events") or []
     return enriched
 
@@ -489,252 +336,15 @@ async def get_session_messages(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
     message_ids = ctx.get("message_ids") or []
-    runs = run_manager.load_runs()
-    runs_by_id = {r["run_id"]: r for r in runs}
+    runs_by_id = run_manager.get_runs_by_ids(message_ids)
 
-    all_tasks = tasks_service.list_tasks()
-    tasks_by_id = {str(t.id): t for t in all_tasks}
+    task_ids = {str(r.get("task_id")) for r in runs_by_id.values() if r.get("task_id")}
+    tasks_by_id = tasks_service.get_tasks(task_ids) if task_ids else {}
 
-    result = []
-    for rid in message_ids:
-        r = runs_by_id.get(rid)
-        if r:
-            result.append(_enrich_run(r, tasks_by_id))
-
+    result = [_enrich_run(runs_by_id[rid], tasks_by_id)
+              for rid in message_ids if rid in runs_by_id]
     result.sort(key=lambda r: r.get("started_at") or "")
     return result
-
-
-@router.post("/{session_id}/messages")
-async def add_message_to_session(session_id: str, data: SessionCreate):
-    """Start a new agent run and add it to an existing session."""
-    ctx = _get_context_by_id(session_id)
-    if not ctx:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    spec = registry.get_agent(data.agent_id)
-    if not spec:
-        raise HTTPException(status_code=404, detail=f"Agent '{data.agent_id}' not found")
-
-    ws_name = ctx.get("workspace")
-    if data.workspace:
-        try:
-            p = create_workspace_folder(data.workspace)
-            ws_name = p.name
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to resolve workspace: {e}")
-
-    conv_id = str(ctx.get("conversation_id") or session_id)
-    run_id = _new_unique_run_id()
-    started = _utc_now_iso()
-    message_text = (data.description or data.title or "").strip()
-    title = (data.title or (message_text[:60] + ("…" if len(message_text) > 60 else "")) or "Chat message").strip()
-
-    # Rebuild bounded session history from prior chat message runs so the
-    # model can see previous turns in this session.
-    history_items: List[Dict[str, str]] = []
-    try:
-        all_runs = run_manager.load_runs()
-        runs_by_id = {str(r.get("run_id")): r for r in all_runs}
-        for prev_rid in (ctx.get("message_ids") or []):
-            rr = runs_by_id.get(str(prev_rid))
-            if not rr:
-                continue
-            lp = rr.get("log_file")
-            if not lp:
-                continue
-            p = Path(lp)
-            if not p.exists():
-                continue
-            try:
-                txt = p.read_text(encoding="utf-8", errors="replace")[-200_000:]
-                for mr in _extract_chat_message_runs(txt):
-                    u = str(mr.get("input") or "").strip()
-                    a = str(mr.get("output") or "").strip()
-                    if u:
-                        history_items.append({"role": "user", "content": u})
-                    if a:
-                        history_items.append({"role": "assistant", "content": a})
-            except Exception:
-                continue
-    except Exception:
-        history_items = []
-
-    bounded_history = history_items[-40:]
-    budget = 60_000
-    history_lines: List[str] = []
-    for item in reversed(bounded_history):
-        role = "User" if item.get("role") == "user" else "Assistant"
-        content = str(item.get("content") or "")
-        if len(content) > 4000:
-            content = content[:4000] + "\n...[truncated]"
-        line = f"{role}: {content}"
-        if budget - len(line) < 0:
-            break
-        budget -= len(line)
-        history_lines.insert(0, line)
-
-    full_prompt = message_text
-    if history_lines:
-        full_prompt = "\n".join([
-            "Use the conversation history for context when answering the latest user message.",
-            "",
-            "Conversation history:",
-            *history_lines,
-            "",
-            "Latest user message:",
-            message_text,
-        ])
-    chat_logs_dir = run_manager.STATE_DIR / "chat_logs"
-    chat_logs_dir.mkdir(parents=True, exist_ok=True)
-    log_file = chat_logs_dir / f"chat_{run_id}.log"
-    msg_id = str(uuid4())[:8]
-
-    log_lines = [
-        f"=== Chat message  run_id={run_id} ===",
-        f"Started   : {started}",
-        f"Agent     : {data.agent_id}",
-        f"Workspace : {ws_name or '—'}",
-        f"Conv ID   : {conv_id}",
-        f"Session ID: {session_id}",
-        f"Title     : {title}",
-        "",
-        f"=== Message at {started} id={msg_id} ===",
-    ]
-    if history_lines:
-        log_lines.extend([
-            "--- Conversation history ---",
-            *history_lines,
-            "",
-        ])
-    log_lines.extend([
-        "--- User message ---",
-        message_text,
-        "",
-        "--- Agent response (stream) ---",
-    ])
-    try:
-        log_file.write_text("\n".join(log_lines), encoding="utf-8")
-    except Exception:
-        pass
-
-    run_manager.open_run(
-        run_id,
-        data.agent_id,
-        task_id=conv_id,
-        session_id=session_id,
-        session_type="chat",
-        message_origin="session_direct",
-        workspace=ws_name,
-        title=title,
-        log_file=str(log_file),
-        link_to_session=False,
-    )
-
-    started_perf = time.perf_counter()
-    callback = _SessionChatCallback(prompt_text=full_prompt)
-    final_status = "failed"
-    final_error = None
-    final_output = ""
-    try:
-        from agents.agent_factory import create_agent
-
-        workspace_abs = None
-        if ws_name:
-            try:
-                workspace_abs = str(create_workspace_folder(ws_name))
-            except Exception:
-                workspace_abs = None
-
-        # Propagate session_id into tool calls that run inside the agent thread
-        from common.agent_context import current_session_id as _session_ctx
-        _session_ctx.set(session_id)
-
-        def _run_agent():
-            agent = create_agent(data.agent_id, workspace=workspace_abs, streaming=True)
-            return agent.run(full_prompt, run_id, callbacks=[callback])
-
-        agent_task = asyncio.create_task(asyncio.to_thread(_run_agent))
-
-        # Poll for external stop signal every 0.2s while the agent runs
-        while not agent_task.done():
-            await asyncio.sleep(0.2)
-            current_check = run_manager.get_run_by_id(run_id) or {}
-            if current_check.get("status") == "stop":
-                callback.cancelled = True  # interrupt LLM token streaming in the thread
-                agent_task.cancel()
-                break
-
-        try:
-            result = await agent_task
-            if result.ok:
-                final_output = str(result.agent_output or "").strip()
-                final_status = "completed"
-            else:
-                final_error = str(result.error or "Agent returned no output")
-                final_output = f"Error: {final_error}"
-                final_status = "failed"
-        except (asyncio.CancelledError, InterruptedError):
-            callback.cancelled = True
-            final_status = "stopped"
-            final_error = "stopped by user"
-            final_output = "Stopped by user"
-    except Exception as e:
-        final_error = str(e)
-        final_output = f"Error: {final_error}"
-        final_status = "failed"
-
-    finished = _utc_now_iso()
-    duration_ms = int((time.perf_counter() - started_perf) * 1000)
-    current = run_manager.get_run_by_id(run_id) or {}
-    if current.get("status") == "stop":
-        final_status = "stopped"
-        final_error = "stopped by user"
-        final_output = "Stopped by user"
-    summary_line = (
-        f"[message_summary] id={msg_id} "
-        f"inbound_tokens={callback.prompt_tokens} "
-        f"outbound_tokens={callback.completion_tokens} "
-        f"total_tokens={callback.total_tokens} "
-        f"tool_calls={callback.tool_calls} "
-        f"duration_ms={duration_ms}"
-    )
-    try:
-        merged_lines = list(log_lines)
-        merged_lines.extend(callback.thinking_history)
-        if final_output:
-            merged_lines.append(final_output)
-        merged_lines.append(summary_line)
-        merged_lines.extend(["", f"Finished: {finished}", f"Status  : {final_status}"])
-        log_file.write_text("\n".join(merged_lines), encoding="utf-8")
-    except Exception:
-        pass
-
-    run_manager.update_run(run_id, {
-        "status": final_status,
-        "finished_at": finished,
-        "exit_code": 0 if final_status == "completed" else 1,
-        "error": None if final_status == "completed" else (final_error or "agent error"),
-        "process": {
-            "llm_input_context": callback.prompt_text or full_prompt,
-            "tool_calls": callback.tool_history,
-            "thinking": callback.thinking_history + [summary_line],
-            "llm_invoke_responses": callback.llm_invoke_responses,
-            "token_usage": {
-                "inbound_tokens": callback.prompt_tokens,
-                "outbound_tokens": callback.completion_tokens,
-                "total_tokens": callback.total_tokens,
-            },
-            "duration_ms": duration_ms,
-        },
-    })
-
-    message_ids = list(ctx.get("message_ids") or [])
-    if run_id not in message_ids:
-        message_ids.append(run_id)
-    _upsert_context({**ctx, "message_ids": message_ids, "updated_at": _utc_now_iso()})
-
-    return {"session_id": session_id, "run_id": run_id, "task_id": conv_id}
 
 
 @router.post("/{session_id}/stop")
@@ -793,68 +403,42 @@ async def delete_session(session_id: str, delete_messages: bool = False):
         if run and run.get("status") == "running":
             raise HTTPException(status_code=400, detail="Stop all running messages before deleting the session")
 
-    contexts = _load_contexts()
-    contexts = [c for c in contexts if c.get("session_id") != session_id]
-    _save_contexts(contexts)
+    _delete_context(session_id)
 
     deleted_messages = 0
     if delete_messages:
-        runs = run_manager.load_runs()
-        remaining = []
-        for r in runs:
-            if r.get("run_id") in set(message_ids):
-                log_file = r.get("log_file")
-                if log_file:
-                    try:
-                        p = Path(log_file)
-                        if p.exists():
-                            p.unlink()
-                    except Exception:
-                        pass
+        for rid in message_ids:
+            run = run_manager.get_run_by_id(rid)
+            if not run:
+                continue
+            log_file = run.get("log_file")
+            if log_file:
+                try:
+                    p = Path(log_file)
+                    if p.exists():
+                        p.unlink()
+                except Exception:
+                    pass
+            # delete_run also removes the structured payload row.
+            if run_manager.delete_run(rid):
                 deleted_messages += 1
-            else:
-                remaining.append(r)
-        run_manager.save_runs(remaining)
 
     return {"deleted": True, "session_id": session_id, "deleted_messages": deleted_messages}
 
 
-# -------------------- Session SSE stream --------------------
-
-@router.get("/{session_id}/stream")
-async def session_stream(session_id: str, request: Request):
-    """Persistent SSE stream for a session.
-
-    Clients subscribe here to receive events from ALL runs that belong to
-    this session — including continuation runs spawned as subprocesses after
-    the original HTTP request has already closed.
-
-    Event types: meta, token, tool_start, tool_end, usage, done, heartbeat, session_done
-    """
-    from common.session_broker import broker
-
-    async def _generate():
-        async for event in broker.subscribe(session_id):
-            if await request.is_disconnected():
-                break
-            yield f"data: {json.dumps(event)}\n\n"
-
-    return StreamingResponse(
-        _generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
+# -------------------- Session event publishing --------------------
+#
+# The persistent per-session SSE stream was removed: clients now receive a
+# session's events on channel `<session_id>` of the single multiplexed
+# `/api/stream` connection. Subprocess continuation runs still POST their events
+# to the endpoint below, which fans them out through the broker.
 
 
 @router.post("/{session_id}/events")
 async def publish_session_event(session_id: str, request: Request):
     """Receive a single event from a subprocess and fan it out to SSE subscribers.
 
-    Called by run_agent.py continuation subprocesses that cannot publish
+    Called by agent_run.py continuation subprocesses that cannot publish
     directly to the in-process broker.
     """
     from common.session_broker import broker
@@ -870,6 +454,26 @@ async def publish_session_event(session_id: str, request: Request):
 
 # -------------------- Legacy helpers re-exported for messages.py --------------------
 # These are used by routes/messages.py via import
+
+_REASONING_LINE_RE = re.compile(r"^\[reasoning\]\s+step=(?P<step>\d+)\s+content=(?P<content>.+)$")
+
+
+def _parse_reasoning_line(line: str) -> Optional[dict]:
+    """Decode a ``[reasoning] step=N content=<json>`` log line, or None.
+
+    Older logs carried a chars-count summary instead of content; those fall
+    back to the raw text so they still show up rather than being dropped.
+    """
+    m = _REASONING_LINE_RE.match((line or "").strip())
+    if not m:
+        return None
+    raw = m.group("content")
+    try:
+        content = json.loads(raw)
+    except Exception:
+        content = raw
+    return {"step": int(m.group("step")), "content": str(content), "native": True}
+
 
 def _extract_messages(log_text: str) -> list:
     out = []
@@ -900,7 +504,10 @@ def _extract_messages(log_text: str) -> list:
                 continue
             if (txt.startswith("[llm_start]") or txt.startswith("[llm_usage]") or
                     txt.startswith("[tool_start]") or txt.startswith("[tool_end]") or
-                    txt.startswith("[message_summary]")):
+                    txt.startswith("[tool_call]") or txt.startswith("[tool_error]") or
+                    txt.startswith("[llm_error]") or txt.startswith("[chain_error]") or
+                    txt.startswith("[message_summary]") or txt.startswith("[reasoning]") or
+                    txt.startswith("[artifact]")):
                 continue
             filtered_lines.append(ln)
         assistant_part = "\n".join(filtered_lines).strip()
@@ -945,7 +552,10 @@ def _extract_chat_message_runs(log_text: str) -> list:
                     continue
                 if (txt.startswith("[llm_start]") or txt.startswith("[llm_usage]") or
                         txt.startswith("[tool_start]") or txt.startswith("[tool_end]") or
-                        txt.startswith("[message_summary]")):
+                        txt.startswith("[tool_call]") or txt.startswith("[tool_error]") or
+                        txt.startswith("[llm_error]") or txt.startswith("[chain_error]") or
+                        txt.startswith("[message_summary]") or txt.startswith("[reasoning]") or
+                        txt.startswith("[artifact]")):
                     continue
                 lines.append(ln)
             output = "\n".join(lines).strip()
@@ -966,14 +576,21 @@ def _extract_chat_message_runs(log_text: str) -> list:
                         tools[j]["running"] = False
                         break
         thinking = []
+        reasoning = []
         for ln in body.splitlines():
             s = ln.strip()
-            if s.startswith("[llm_start]"):
+            # Keep markers in chronological (log) order so the invocation steps
+            # show when each tool was called relative to the LLM calls. Tool calls
+            # surface as a single consolidated [tool_call] marker (step/name/
+            # duration); the verbose [tool_start]/[tool_end] lines are skipped.
+            if (s.startswith("[llm_start]") or s.startswith("[llm_usage]") or
+                    s.startswith("[message_summary]") or s.startswith("[tool_call]") or
+                    s.startswith("[reasoning]")):
                 thinking.append(s)
-            elif s.startswith("[llm_usage]"):
-                thinking.append(s)
-            elif s.startswith("[message_summary]"):
-                thinking.append(s)
+            if s.startswith("[reasoning]"):
+                parsed = _parse_reasoning_line(s)
+                if parsed:
+                    reasoning.append(parsed)
         inbound = outbound = total = tool_calls_count = duration_ms = 0
         tool_calls_count = len(tools)
         summary_re = re.search(
@@ -994,6 +611,7 @@ def _extract_chat_message_runs(log_text: str) -> list:
         runs.append({
             "message_id": msg_id, "timestamp": ts, "agent_id": agent_id or None,
             "input": user_input, "output": output, "tools": tools, "thinking": thinking,
+            "reasoning": reasoning,
             "inbound_tokens": inbound, "outbound_tokens": outbound,
             "total_tokens": total or (inbound + outbound),
             "tool_calls": tool_calls_count, "duration_ms": duration_ms,
@@ -1026,11 +644,12 @@ def _related_runs_for_session(run: dict) -> list:
     base_type = str(run.get("session_type") or "")
     if not base_task_id:
         return [run]
-    all_runs = run_manager.load_runs()
     if base_type == "chat":
-        rel = [r for r in all_runs if str(r.get("session_type") or "") == "chat" and str(r.get("task_id") or "") == base_task_id]
+        rel = run_manager.query_runs(task_id=base_task_id, session_type="chat",
+                                     limit=500, ascending=True)["items"]
     else:
-        rel = [r for r in all_runs if str(r.get("session_type") or "") != "chat" and str(r.get("task_id") or "") == base_task_id]
+        rel = run_manager.query_runs(task_id=base_task_id, exclude_session_type="chat",
+                                     limit=500, ascending=True)["items"]
         try:
             from uuid import UUID
             t = tasks_service.get_task(UUID(base_task_id))

@@ -5,62 +5,99 @@ import ReactFlow, {
   MiniMap,
   ReactFlowProvider,
   addEdge,
-  applyEdgeChanges,
-  applyNodeChanges,
   MarkerType,
   useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Link2, WandSparkles } from 'lucide-react';
+import { ChevronDown, ChevronRight, Link2, WandSparkles } from 'lucide-react';
 import FlowNode from './FlowNode';
+import { useI18n } from '../../i18n';
 
 const nodeTypes = {
   flowNode: FlowNode,
 };
 
-// Draggable agent palette — rendered inside the Graph tab of the right panel.
-// Dragging an entry onto the canvas drops a new node (see FlowCanvas handleDrop).
-export function AgentPalette({ availableAgents = [] }) {
-  const handleDragStart = (event, agent) => {
-    event.dataTransfer.setData('application/agent-flow', JSON.stringify(agent));
+// Registry-sourced palette grouped by category. Drags use the same
+// 'application/agent-flow' contract as the canvas drop handler expects. `entitiesByCategory` is the { category: [entity, ...] } map from
+// GET /api/flow-entities.
+const CATEGORY_LABELS = {
+  agent: 'Agents',
+  processor: 'Processors',
+  condition: 'Conditions',
+  transform: 'Transforms',
+};
+
+export function EntityPalette({ entitiesByCategory = {} }) {
+  const { t } = useI18n();
+  // Per-category expand state. Undefined means "use default" (collapsed).
+  const [expanded, setExpanded] = useState({});
+  const toggleCat = (cat) => setExpanded((prev) => ({ ...prev, [cat]: !prev[cat] }));
+
+  const handleDragStart = (event, entity) => {
+    event.dataTransfer.setData('application/agent-flow', JSON.stringify(entity));
     event.dataTransfer.effectAllowed = 'move';
   };
 
+  const cats = Object.keys(entitiesByCategory).sort((a, b) => {
+    const order = ['agent', 'processor', 'condition', 'transform'];
+    const ia = order.indexOf(a); const ib = order.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
+  if (cats.length === 0) {
+    return (
+      <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+        {t('flowFlowCanvas.noEntitiesAvailable')}
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3">
-        <div>
-          <div className="text-sm font-bold text-slate-900">Agents</div>
-          <div className="text-[11px] text-slate-400">Drag onto the canvas to add a node</div>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 px-1">
         <WandSparkles className="h-4 w-4 shrink-0 text-cyan-600" />
+        <div className="text-sm font-bold text-slate-900">{t('flowFlowCanvas.registry')}</div>
+        <div className="text-[11px] text-slate-400">{t('flowFlowCanvas.dragOntoTheCanvasTo')}</div>
       </div>
-      <div className="space-y-1.5">
-        {availableAgents.length === 0 ? (
-          <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-            No agents available in this workspace.
-          </div>
-        ) : (
-          availableAgents.map((agent) => (
+      {cats.map((cat) => {
+        const items = entitiesByCategory[cat];
+        const isOpen = !!expanded[cat];
+        return (
+          <div key={cat} className="space-y-1.5">
             <button
-              key={agent.id}
-              draggable
-              onDragStart={(event) => handleDragStart(event, agent)}
               type="button"
-              className="block w-full cursor-grab rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-left transition hover:border-cyan-300 hover:bg-cyan-50 active:cursor-grabbing"
+              onClick={() => toggleCat(cat)}
+              className="flex w-full items-center gap-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400 transition hover:text-slate-600"
             >
-              <div className="truncate text-sm font-semibold text-slate-900">{agent.name}</div>
-              <div className="truncate text-[11px] text-slate-400">{agent.domain}</div>
+              {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              <span>{CATEGORY_LABELS[cat] || cat}</span>
+              <span className="font-normal text-slate-300">· {items.length}</span>
             </button>
-          ))
-        )}
-      </div>
+            {isOpen
+              ? items.map((entity) => (
+                  <button
+                    key={entity.id}
+                    draggable
+                    onDragStart={(event) => handleDragStart(event, entity)}
+                    type="button"
+                    title={entity.description}
+                    className="block w-full cursor-grab rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-left transition hover:border-cyan-300 hover:bg-cyan-50 active:cursor-grabbing"
+                  >
+                    <div className="truncate text-sm font-semibold text-slate-900">{entity.name}</div>
+                    <div className="truncate text-[11px] text-slate-400">
+                      {entity.group || entity.category}
+                    </div>
+                  </button>
+                ))
+              : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 function FlowCanvasInner({
-  availableAgents,
   nodes,
   edges,
   onEdgesChange,
@@ -71,6 +108,7 @@ function FlowCanvasInner({
   setSelectedNodeId,
   activeNodeId,
 }) {
+  const { t } = useI18n();
   const wrapperRef = useRef(null);
   const reactFlow = useReactFlow();
   const [isOver, setIsOver] = useState(false);
@@ -108,6 +146,11 @@ function FlowCanvasInner({
     });
 
     const nodeId = `${agent.id}-${Date.now()}`;
+    // A dragged item may be a plain agent or a registry entity. Agents keep
+    // agent_id (so the runner's existing path handles them); other categories
+    // carry entity_id + their declared input/output contract.
+    const category = agent.category || 'agent';
+    const isAgent = category === 'agent';
     setNodes((current) =>
       current.concat({
         id: nodeId,
@@ -118,8 +161,13 @@ function FlowCanvasInner({
           node_id: nodeId,
           label: agent.name,
           description: agent.description,
-          agent_id: agent.id,
-          domain: agent.domain,
+          agent_id: isAgent ? agent.id : '',
+          entity_id: isAgent ? '' : agent.id,
+          category,
+          input: agent.inputs || [],
+          output: agent.outputs || [],
+          config: {},
+          domain: agent.domain || category,
           nodeTask: '',
           onRunNode,
         },
@@ -147,8 +195,8 @@ function FlowCanvasInner({
           <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 text-center">
             <Link2 className="h-7 w-7 text-slate-300" />
             <div className="space-y-1">
-              <div className="text-sm font-semibold text-slate-900">Drop agents to start</div>
-              <div className="text-sm text-slate-500">Drag agents from the Graph tab onto the canvas.</div>
+              <div className="text-sm font-semibold text-slate-900">{t('flowFlowCanvas.dropAgentsToStart')}</div>
+              <div className="text-sm text-slate-500">{t('flowFlowCanvas.dragAgentsFromTheGraph')}</div>
             </div>
           </div>
         ) : null}
@@ -185,5 +233,3 @@ export default function FlowCanvas(props) {
     </ReactFlowProvider>
   );
 }
-
-export { applyEdgeChanges, applyNodeChanges };

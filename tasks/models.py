@@ -12,6 +12,7 @@ class TaskStatus(str, Enum):
     pending = "pending"
     in_progress = "in_progress"
     blocked = "blocked"
+    awaiting_input = "awaiting_input"
     stopped = "stopped"
     resolved = "resolved"
     reviewing = "reviewing"
@@ -35,8 +36,19 @@ class AgentState(str, Enum):
 
 class Task(BaseModel):
     id: UUID = Field(default_factory=uuid4, description="Unique task identifier")
+    # Short human-readable key like "DEMO-12" (Jira-style: project prefix + number).
+    # Assigned by the store on creation; the UUID stays the canonical id.
+    key: Optional[str] = Field(default=None, description="Short Jira-style task key, e.g. DEMO-12")
     title: str
     description: str = ""
+
+    # Tasks that must be completed before this one can be executed. A task with
+    # unsatisfied dependencies is kept blocked and is released automatically
+    # when the last dependency completes.
+    depends: List[UUID] = Field(
+        default_factory=list,
+        description="IDs of tasks that must be completed before this task can run",
+    )
 
     status: TaskStatus = Field(default=TaskStatus.todo)
     created_by: CreatedBy = Field(default=CreatedBy.user)
@@ -45,7 +57,16 @@ class Task(BaseModel):
     sequence_id: Optional[str] = None
     order: Optional[int] = None
     blocked_reason: Optional[str] = None
+    # Set when the assigned agent paused the task to ask the user a question
+    # (status == awaiting_input). Shape: {question, choices, agent_id, run_id,
+    # asked_at}. Cleared when the user answers and the task resumes.
+    pending_question: Optional[Dict[str, Any]] = None
     should_decompose: bool = Field(default=False, description="Whether to automatically decompose this task")
+
+    # Number of automatic retries already spent on this task after run failures.
+    # Compared against the workspace's orchestrator ``max_retries`` before
+    # re-dispatching a failed run instead of blocking it (see run_manager).
+    retry_count: int = Field(default=0, description="Automatic retries spent after failed runs")
 
     priority: Optional[str] = Field(default=None, description="Task priority: low, medium, high, critical")
 
@@ -62,6 +83,12 @@ class Task(BaseModel):
     # Project subfolder within the workspace (agents are sandboxed here)
     project: Optional[str] = Field(
         default=None, description="Project subfolder name within the workspace (agents read/write here)"
+    )
+
+    # Origin issue when imported from a git provider (GitHub/GitLab):
+    # {provider, remote_id, number, url, state, labels, synced_at}
+    external_source: Optional[Dict[str, Any]] = Field(
+        default=None, description="Source issue metadata when imported from a git provider"
     )
 
     # Agent assignment and execution control
@@ -103,7 +130,7 @@ class Task(BaseModel):
             return AgentState.pending_approval
         if self.assigned_agent_run_id:
             try:
-                from agents import run_manager
+                from managers import run_manager
                 run = run_manager.get_run_by_id(str(self.assigned_agent_run_id))
                 if run:
                     st = str(run.get("status") or "")

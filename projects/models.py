@@ -33,6 +33,7 @@ class RepoConfig(BaseModel):
     url: Optional[str] = None          # Remote git URL
     branch: Optional[str] = "main"
     local_path: Optional[str] = None   # Path within workspace (relative)
+    remote_id: Optional[str] = None    # Provider repo id ("owner/repo" / path_with_namespace)
 
 
 class FrontendConfig(BaseModel):

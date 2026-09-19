@@ -23,7 +23,8 @@ def _workspace_root(workspace: Optional[Path] = None) -> Path:
         return workspace.resolve()
     if get_swe_config().workspace_root is not None:
         return get_swe_config().workspace_root
-    return Path(settings.workspace_root).resolve()
+    from common.paths import WORKSPACES_ROOT
+    return WORKSPACES_ROOT.resolve()
 
 
 def _resolve_within_workspace(path: str, workspace: Optional[Path] = None) -> Path:

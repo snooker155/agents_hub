@@ -18,8 +18,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agents import registry
-from agents.telegram_runner import TelegramAPI, service as tg_service
-from common import telegram_store
+from connectors.telegram.telegram_runner import TelegramAPI, service as tg_service
+from connectors.telegram import telegram_store
 
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
@@ -72,17 +72,12 @@ class SendRequest(BaseModel):
 
 
 def _flow_name(flow_id: str) -> Optional[str]:
-    """Look up a flow's display name from agents/state/flows.json."""
+    """Look up a flow's display name via flow_store."""
     if not flow_id:
         return None
     try:
-        import json
-        from pathlib import Path
-        flows_file = Path(__file__).resolve().parents[3] / "agents" / "state" / "flows.json"
-        if not flows_file.exists():
-            return None
-        flows = json.loads(flows_file.read_text(encoding="utf-8"))
-        flow = next((f for f in flows if f.get("id") == flow_id), None)
+        from flow import store as flow_store
+        flow = flow_store.get_flow(flow_id)
         return flow.get("name") if flow else None
     except Exception:
         return None

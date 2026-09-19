@@ -1,0 +1,16 @@
+export default {
+  toolInventory: 'Tool Inventory',
+  browseToolsAvailableToAgents: 'Browse tools available to agents in the cluster.',
+  searchTools: 'Search tools...',
+  loadingToolDefinitions: 'Loading tool definitions...',
+  noToolsFound: 'No tools found.',
+  argumentsSchema: 'Arguments Schema',
+  sourceCode: 'Source Code',
+  saving: 'Saving',
+  loadingSource: 'Loading source…',
+  noSourceAvailableForThis: 'No source available for this tool.',
+  selectAToolFromThe: 'Select a tool from the inventory to view its technical specification.',
+  workspace: 'workspace',
+  loadSourceFailed: 'Failed to load tool source',
+  saveSourceFailed: 'Failed to save source',
+};

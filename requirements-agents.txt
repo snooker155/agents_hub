@@ -21,5 +21,8 @@ python-dotenv>=1.0.0
 langfuse>=2.0.0
 tiktoken>=0.7.0
 httpx>=0.27.0
+# HTML -> text for the fetch_url tool. tools/web.py degrades to a regex
+# stripper without it, so this is a quality dependency, not a hard one.
+beautifulsoup4>=4.12.0
 requests>=2.31.0
 pypdf>=4.0.0

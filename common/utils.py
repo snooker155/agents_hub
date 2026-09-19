@@ -8,8 +8,28 @@ TEXT_EXTS = {
     ".sql",".sh",".bat",".ps1",".html",".css"
 }
 
-def ensure_dirs():
-    P = Paths()
+
+class Tee:
+    """Mirror writes to both the original stream and a log file."""
+
+    def __init__(self, stream, log_file):
+        self._stream = stream
+        self._log = log_file
+
+    def write(self, data):
+        self._stream.write(data)
+        self._log.write(data)
+        self._log.flush()
+
+    def flush(self):
+        self._stream.flush()
+        self._log.flush()
+
+    def fileno(self):
+        return self._stream.fileno()
+
+    def isatty(self):
+        return False
 
 def write(path: str, content: str):
     p = pathlib.Path(path); p.parent.mkdir(parents=True, exist_ok=True)

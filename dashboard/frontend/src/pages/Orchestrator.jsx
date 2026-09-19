@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { useLiveRefetch } from '../components/stream';
 import {
   Zap,
   Shield,
@@ -19,6 +20,7 @@ import {
   FolderGit2,
   RefreshCcw,
   Info,
+  RotateCcw,
 } from 'lucide-react';
 import {
   getOrchestratorSettings,
@@ -30,8 +32,10 @@ import {
   getSettings,
   getWorkspace,
 } from '../api';
-import { useWorkspace } from '../components/WorkspaceContext';
+import { useWorkspace } from '../components/workspace';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
 const DOMAIN_COLORS = {
   orchestration: 'bg-indigo-100 text-indigo-700',
   development:   'bg-blue-100 text-blue-700',
@@ -44,6 +48,7 @@ const DOMAIN_COLORS = {
 };
 
 const Orchestrator = () => {
+  const { t } = useI18n();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const [settings, setSettings] = useState({ enabled: false, assignment_mode: 'manual' });
   const [agents, setAgents] = useState([]);
@@ -56,7 +61,7 @@ const Orchestrator = () => {
   const [saving, setSaving] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     const settingsWorkspace = selectedWorkspace || 'default';
     try {
       const [settingsResp, agentsResp, routingResp, projectsResp, nodesResp, globalSettingsResp, wsResp] = await Promise.allSettled([
@@ -82,19 +87,17 @@ const Orchestrator = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedWorkspace, workspaceFilter]);
 
   useEffect(() => {
     fetchData();
-    if (!liveUpdates) return;
-    const interval = setInterval(fetchData, 8000);
-    return () => clearInterval(interval);
-  }, [selectedWorkspace, liveUpdates]);
+  }, [selectedWorkspace, liveUpdates, fetchData]);
+  useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   const handleToggle = async () => {
     const settingsWorkspace = selectedWorkspace || 'default';
     if (!settings.enabled && !hasRunningOrchestratorNode) {
-      alert('Start an orchestrator node first to enable auto-orchestration.');
+      alert(t('orchestrator.startNodeFirst'));
       return;
     }
     setSaving(true);
@@ -103,7 +106,7 @@ const Orchestrator = () => {
       await updateOrchestratorSettings(newSettings, settingsWorkspace);
       setSettings(newSettings);
     } catch {
-      alert('Error updating orchestrator settings');
+      alert(t('orchestrator.errors.settings'));
     } finally {
       setSaving(false);
     }
@@ -118,7 +121,7 @@ const Orchestrator = () => {
       await updateOrchestratorSettings(newSettings, settingsWorkspace);
       setSettings(newSettings);
     } catch {
-      alert('Error updating assignment mode');
+      alert(t('orchestrator.errors.assignmentMode'));
     } finally {
       setSaving(false);
     }
@@ -153,7 +156,7 @@ const Orchestrator = () => {
       await updateOrchestratorSettings(newSettings, settingsWorkspace);
       setSettings(newSettings);
     } catch {
-      alert('Error updating execution mode setting');
+      alert(t('orchestrator.errors.executionMode'));
     } finally {
       setSaving(false);
     }
@@ -173,7 +176,22 @@ const Orchestrator = () => {
       await updateOrchestratorSettings(newSettings, settingsWorkspace);
       setSettings(newSettings);
     } catch {
-      alert('Error updating wait for completion setting');
+      alert(t('orchestrator.errors.waitForCompletion'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMaxRetriesChange = async (value) => {
+    const settingsWorkspace = selectedWorkspace || 'default';
+    const n = Math.max(0, Math.min(10, parseInt(value, 10) || 0));
+    const newSettings = { ...settings, max_retries: n };
+    setSettings(newSettings);  // optimistic
+    setSaving(true);
+    try {
+      await updateOrchestratorSettings(newSettings, settingsWorkspace);
+    } catch {
+      alert(t('orchestrator.errors.retryPolicy'));
     } finally {
       setSaving(false);
     }
@@ -192,23 +210,18 @@ const Orchestrator = () => {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mb-4" />
-        <p className="text-gray-500">Loading orchestrator configuration...</p>
+        <p className="text-gray-500">{t('orchestrator.loadingOrchestratorConfiguration')}</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex justify-between items-start">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800 flex items-center">
-            <Shield className="w-7 h-7 mr-3 text-indigo-600" />
-            Central Orchestrator
-          </h2>
-          <p className="text-gray-500 text-sm">Automated task routing and agent coordination.</p>
-        </div>
-        {projects.length > 0 && (
+    <PageContainer className="space-y-6">
+      <PageHeader
+        icon={Shield}
+        title={t('orchestrator.centralOrchestrator')}
+        description={t('orchestrator.automatedTaskRoutingAndAgent')}
+        actions={projects.length > 0 && (
           <div className="flex items-center gap-2 text-sm">
             <FolderGit2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
             <select
@@ -216,14 +229,14 @@ const Orchestrator = () => {
               onChange={(e) => setSelectedProject(e.target.value)}
               className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
             >
-              <option value="">All projects</option>
+              <option value="">{t('orchestrator.allProjects')}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
           </div>
         )}
-      </div>
+      />
 
       {/* Control panel */}
       {!hasRunningOrchestratorNode && (
@@ -231,10 +244,10 @@ const Orchestrator = () => {
           <div className="min-w-0">
             <p className="text-sm font-semibold text-amber-900 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-              No running orchestrator node
+              {t('orchestrator.noRunningOrchestratorNode')}
             </p>
             <p className="text-xs text-amber-800 mt-1">
-              Auto-orchestration cannot run until an orchestrator agent node is started.
+              {t('orchestrator.autoOrchestrationCannotRunUntil')}
             </p>
           </div>
           <Link
@@ -257,12 +270,12 @@ const Orchestrator = () => {
               </div>
               <div>
                 <h3 className="text-xl font-bold text-gray-900">
-                  Execution Mode: {settings.execution_mode === 'node' ? 'Agent Nodes' : 'Subprocesses'}
+                  {t('orchestrator.executionMode')}: {settings.execution_mode === 'node' ? t('orchestrator.agentNodes') : t('orchestrator.subprocesses')}
                 </h3>
                 <p className="text-gray-500 text-sm max-w-md">
                   {settings.execution_mode === 'node'
-                    ? 'After assignment, tasks wait for a running worker agent node to pick them up and process them.'
-                    : 'After assignment, tasks are immediately executed in a new subprocess. Running worker nodes will stay idle.'
+                    ? t('orchestrator.executionNodeHint')
+                    : t('orchestrator.executionSubprocessHint')
                   }
                 </p>
                 {settings.execution_mode === 'node' && (
@@ -272,7 +285,7 @@ const Orchestrator = () => {
                       : 'bg-gray-50 text-gray-600 border-gray-200'
                   }`}>
                     <Info className="w-3 h-3" />
-                    Agent mode: <span className="font-semibold">{agentMode === 'docker' ? 'Docker containers' : 'Local processes'}</span>
+                    {t('orchestrator.agentModeLabel')} <span className="font-semibold">{agentMode === 'docker' ? t('orchestrator.dockerContainers') : t('orchestrator.localProcesses')}</span>
                   </div>
                 )}
               </div>
@@ -284,7 +297,7 @@ const Orchestrator = () => {
                 settings.execution_mode === 'node' ? 'bg-purple-500' : 'bg-gray-200'
               }`}
             >
-              <span className="sr-only">Toggle Execution Mode</span>
+              <span className="sr-only">{t('orchestrator.toggleExecutionMode')}</span>
               <span
                 className={`inline-block h-8 w-8 transform rounded-full bg-white transition-transform shadow-sm ${
                   settings.execution_mode === 'node' ? 'translate-x-11' : 'translate-x-1'
@@ -301,12 +314,12 @@ const Orchestrator = () => {
               </div>
               <div>
                 <h3 className="text-xl font-bold text-gray-900">
-                  Auto-Orchestration is {settings.enabled ? 'Active' : 'Paused'}
+                  {settings.enabled ? t('orchestrator.autoActive') : t('orchestrator.autoPaused')}
                 </h3>
                 <p className="text-gray-500 text-sm max-w-md">
                   {settings.execution_mode !== 'node'
-                    ? 'Switch to Agent Nodes execution mode to enable auto-orchestration.'
-                    : 'When active, all incoming tasks are automatically analysed and routed to the most suitable specialized agent.'
+                    ? t('orchestrator.switchToNodeMode')
+                    : t('orchestrator.autoHint')
                   }
                 </p>
               </div>
@@ -318,7 +331,7 @@ const Orchestrator = () => {
                 settings.enabled && settings.execution_mode === 'node' ? 'bg-indigo-600' : 'bg-gray-200'
               }`}
             >
-              <span className="sr-only">Toggle Orchestrator</span>
+              <span className="sr-only">{t('orchestrator.toggleOrchestrator')}</span>
               <span
                 className={`inline-block h-8 w-8 transform rounded-full bg-white transition-transform shadow-sm ${
                   settings.enabled && settings.execution_mode === 'node' ? 'translate-x-11' : 'translate-x-1'
@@ -328,7 +341,7 @@ const Orchestrator = () => {
           </div>
           {settings.execution_mode === 'node' && !settings.enabled && !hasRunningOrchestratorNode && (
             <p className="text-xs text-amber-700 -mt-5 mb-6">
-              Enable is blocked until an orchestrator node is running.
+              {t('orchestrator.enableIsBlockedUntilAn')}
             </p>
           )}
 
@@ -340,12 +353,12 @@ const Orchestrator = () => {
               </div>
               <div>
                 <h3 className="text-xl font-bold text-gray-900">
-                  Assignment Mode: {settings.assignment_mode === 'manual' ? 'Manual Approval' : 'Live (Auto-run)'}
+                  {t('orchestrator.assignmentMode')}: {settings.assignment_mode === 'manual' ? t('orchestrator.manualApproval') : t('orchestrator.liveAutoRun')}
                 </h3>
                 <p className="text-gray-500 text-sm max-w-md">
                   {settings.assignment_mode === 'manual'
-                    ? 'Agent assignments wait for your approval before executing. You can approve or reject each assignment in the task board.'
-                    : 'Agent assignments start executing immediately after being assigned.'
+                    ? t('orchestrator.manualHint')
+                    : t('orchestrator.liveHint')
                   }
                 </p>
               </div>
@@ -357,7 +370,7 @@ const Orchestrator = () => {
                 settings.assignment_mode === 'live' ? 'bg-amber-500' : 'bg-gray-200'
               }`}
             >
-              <span className="sr-only">Toggle Assignment Mode</span>
+              <span className="sr-only">{t('orchestrator.toggleAssignmentMode')}</span>
               <span
                 className={`inline-block h-8 w-8 transform rounded-full bg-white transition-transform shadow-sm ${
                   settings.assignment_mode === 'live' ? 'translate-x-11' : 'translate-x-1'
@@ -374,12 +387,12 @@ const Orchestrator = () => {
               </div>
               <div>
                 <h3 className="text-xl font-bold text-gray-900">
-                  Wait for Completion: {settings.wait_for_completion ? 'On' : 'Off'}
+                  {t('orchestrator.waitForCompletion')}: {settings.wait_for_completion ? t('orchestrator.on') : t('orchestrator.off')}
                 </h3>
                 <p className="text-gray-500 text-sm max-w-md">
                   {settings.wait_for_completion
-                    ? 'The orchestrator polls the agent until it finishes, then reports the result.'
-                    : 'The orchestrator starts the agent and stops immediately. You can check back later for results.'
+                    ? t('orchestrator.waitOnHint')
+                    : t('orchestrator.waitOffHint')
                   }
                 </p>
               </div>
@@ -391,7 +404,7 @@ const Orchestrator = () => {
                 settings.wait_for_completion ? 'bg-indigo-500' : 'bg-gray-200'
               }`}
             >
-              <span className="sr-only">Toggle Wait for Completion</span>
+              <span className="sr-only">{t('orchestrator.toggleWaitForCompletion')}</span>
               <span
                 className={`inline-block h-8 w-8 transform rounded-full bg-white transition-transform shadow-sm ${
                   settings.wait_for_completion ? 'translate-x-11' : 'translate-x-1'
@@ -408,12 +421,12 @@ const Orchestrator = () => {
               </div>
               <div>
                 <h3 className="text-xl font-bold text-gray-900">
-                  Follow-up Mode: {settings.followup_mode === 'continuous' ? 'Continuous' : 'Single Run'}
+                  {t('orchestrator.followUpMode')}: {settings.followup_mode === 'continuous' ? t('orchestrator.continuous') : t('orchestrator.singleRun')}
                 </h3>
                 <p className="text-gray-500 text-sm max-w-md">
                   {settings.followup_mode === 'continuous'
-                    ? 'After an agent finishes, the orchestrator is automatically re-invoked to chain the next step, assign a reviewer, or mark the task done.'
-                    : 'The orchestrator runs once per task and stops. Follow-up steps (review, finalise) must be triggered manually.'
+                    ? t('orchestrator.followUpContinuousHint')
+                    : t('orchestrator.followUpSingleHint')
                   }
                 </p>
               </div>
@@ -425,7 +438,7 @@ const Orchestrator = () => {
                 settings.followup_mode === 'continuous' ? 'bg-indigo-500' : 'bg-gray-200'
               }`}
             >
-              <span className="sr-only">Toggle Follow-up Mode</span>
+              <span className="sr-only">{t('orchestrator.toggleFollowUpMode')}</span>
               <span
                 className={`inline-block h-8 w-8 transform rounded-full bg-white transition-transform shadow-sm ${
                   settings.followup_mode === 'continuous' ? 'translate-x-11' : 'translate-x-1'
@@ -434,26 +447,53 @@ const Orchestrator = () => {
             </button>
           </div>
 
+          {/* Retry policy */}
+          <div className="flex items-center justify-between mb-8 pb-8 border-b border-gray-50">
+            <div className="flex items-center space-x-4">
+              <div className={`p-4 rounded-2xl ${settings.max_retries > 0 ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-50 text-gray-400'}`}>
+                <RotateCcw className="w-8 h-8" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">
+                  {t('orchestrator.retryPolicy')}: {settings.max_retries > 0 ? t('orchestrator.upTo', { count: settings.max_retries }) : t('orchestrator.off2')}
+                </h3>
+                <p className="text-gray-500 text-sm max-w-md">
+                  {settings.max_retries > 0
+                    ? t('orchestrator.retryOnHint')
+                    : t('orchestrator.retryOffHint')
+                  }
+                </p>
+              </div>
+            </div>
+            <input
+              type="number"
+              min="0"
+              max="10"
+              value={settings.max_retries ?? 0}
+              onChange={(e) => handleMaxRetriesChange(e.target.value)}
+              disabled={saving}
+              className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-lg font-semibold text-center focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+            />
+          </div>
+
           {/* Compatibility callout */}
           {(() => {
             return (
               <div className="mb-8 pb-8 border-b border-gray-50 space-y-3">
-                {false && null /* conflict warning removed: toggles are now mutually exclusive */}
-
                 <div className="flex items-start gap-3 bg-gray-50 border border-gray-100 rounded-xl p-4">
                   <Info className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
                   <div className="w-full">
-                    <p className="text-xs font-semibold text-gray-600 mb-2">Recommended mode combinations</p>
+                    <p className="text-xs font-semibold text-gray-600 mb-2">{t('orchestrator.recommendedModeCombinations')}</p>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className={`rounded-lg p-3 border ${!settings.wait_for_completion && settings.followup_mode === 'continuous' ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100'}`}>
-                        <p className="font-semibold text-gray-700 mb-1">Fire &amp; Chain</p>
-                        <p className="text-gray-500">Wait for Completion <span className="font-medium text-gray-700">off</span> + Follow-up <span className="font-medium text-gray-700">Continuous</span></p>
-                        <p className="text-gray-400 mt-1">Orchestrator starts the agent and exits. A new orchestrator session is automatically triggered when the worker finishes to chain the next step.</p>
+                        <p className="font-semibold text-gray-700 mb-1">{t('orchestrator.fireAndChain')}</p>
+                        <p className="text-gray-500">{t('orchestrator.waitForCompletion')} <span className="font-medium text-gray-700">{t('orchestrator.off')}</span> {t('orchestrator.followUp')} <span className="font-medium text-gray-700">{t('orchestrator.continuous')}</span></p>
+                        <p className="text-gray-400 mt-1">{t('orchestrator.orchestratorStartsTheAgentAnd')}</p>
                       </div>
                       <div className={`rounded-lg p-3 border ${settings.wait_for_completion && settings.followup_mode !== 'continuous' ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100'}`}>
-                        <p className="font-semibold text-gray-700 mb-1">Poll &amp; Report</p>
-                        <p className="text-gray-500">Wait for Completion <span className="font-medium text-gray-700">on</span> + Follow-up <span className="font-medium text-gray-700">Single</span></p>
-                        <p className="text-gray-400 mt-1">Orchestrator stays in session, polls until the worker finishes, then reports the orchestration summary. No automatic chaining.</p>
+                        <p className="font-semibold text-gray-700 mb-1">{t('orchestrator.pollAndReport')}</p>
+                        <p className="text-gray-500">{t('orchestrator.waitForCompletion')} <span className="font-medium text-gray-700">{t('orchestrator.on')}</span> {t('orchestrator.followUp')} <span className="font-medium text-gray-700">{t('orchestrator.single')}</span></p>
+                        <p className="text-gray-400 mt-1">{t('orchestrator.orchestratorStaysInSessionPolls')}</p>
                       </div>
                     </div>
                   </div>
@@ -467,14 +507,14 @@ const Orchestrator = () => {
             <div className="space-y-6">
               <h4 className="font-bold text-gray-800 flex items-center text-sm">
                 <Workflow className="w-4 h-4 mr-2 text-indigo-500" />
-                Orchestration Logic
+                {t('orchestrator.orchestrationLogic')}
               </h4>
               <ul className="space-y-3">
                 {[
-                  'Analyses task title & description to identify required skills.',
-                  'Checks agent availability and domain capability match.',
-                  'Triggers the decomposer for complex, high-level goals.',
-                  'Routes subtasks to the most appropriate specialized agent.',
+                  t('orchestrator.logic.analyse'),
+                  t('orchestrator.logic.availability'),
+                  t('orchestrator.logic.decomposer'),
+                  t('orchestrator.logic.route'),
                 ].map(text => (
                   <li key={text} className="flex items-start">
                     <CheckCircle2 className="w-4 h-4 text-green-500 mr-3 mt-0.5 flex-shrink-0" />
@@ -487,25 +527,25 @@ const Orchestrator = () => {
             <div className="bg-indigo-50 rounded-2xl p-6 border border-indigo-100">
               <h4 className="font-bold text-indigo-900 mb-4 flex items-center text-sm">
                 <Cpu className="w-4 h-4 mr-2" />
-                Cluster Status
+                {t('orchestrator.clusterStatus')}
               </h4>
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-indigo-700">Available Agents</span>
+                  <span className="text-indigo-700">{t('orchestrator.availableAgents')}</span>
                   <span className="font-bold text-indigo-900">{agents.length}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-indigo-700">Healthy Nodes</span>
+                  <span className="text-indigo-700">{t('orchestrator.healthyNodes')}</span>
                   <span className="font-bold text-indigo-900">
                     {agents.filter(a => a.status !== 'offline').length}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-indigo-700">Tasks Routed</span>
+                  <span className="text-indigo-700">{t('orchestrator.tasksRouted')}</span>
                   <span className="font-bold text-indigo-900">{routingEvents.length}</span>
                 </div>
                 <div className="mt-3 pt-3 border-t border-indigo-200">
-                  <div className="text-[10px] uppercase font-bold text-indigo-400 mb-2">Connected Agents</div>
+                  <div className="text-[10px] uppercase font-bold text-indigo-400 mb-2">{t('orchestrator.connectedAgents')}</div>
                   <div className="flex flex-wrap gap-1.5">
                     {agents.slice(0, 6).map(a => (
                       <Link
@@ -517,7 +557,7 @@ const Orchestrator = () => {
                       </Link>
                     ))}
                     {agents.length > 6 && (
-                      <span className="text-[10px] text-indigo-400 self-center">+{agents.length - 6} more</span>
+                      <span className="text-[10px] text-indigo-400 self-center">{t('orchestrator.moreCount', { count: agents.length - 6 })}</span>
                     )}
                   </div>
                 </div>
@@ -544,15 +584,15 @@ const Orchestrator = () => {
             className="text-xs text-gray-400 hover:text-indigo-600 flex items-center gap-1 transition-colors"
           >
             <RefreshCw className="w-3 h-3" />
-            Refresh
+            {t('orchestrator.refresh')}
           </button>
         </div>
 
         {routingEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-gray-300">
             <Network className="w-12 h-12 mb-3" />
-            <p className="text-sm font-medium text-gray-400">No routing decisions recorded yet</p>
-            <p className="text-xs text-gray-400 mt-1">Create a task to see orchestrator routing in action</p>
+            <p className="text-sm font-medium text-gray-400">{t('orchestrator.noRoutingDecisionsRecordedYet')}</p>
+            <p className="text-xs text-gray-400 mt-1">{t('orchestrator.createATaskToSee')}</p>
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
@@ -573,7 +613,7 @@ const Orchestrator = () => {
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <div className="flex-shrink-0">
-                          <div className="p-1.5 bg-indigo-50 rounded-lg" title="Routed by orchestrator">
+                          <div className="p-1.5 bg-indigo-50 rounded-lg" title={t('orchestrator.routedByOrchestrator')}>
                             <Layers className="w-3.5 h-3.5 text-indigo-500" />
                           </div>
                         </div>
@@ -629,43 +669,43 @@ const Orchestrator = () => {
                         {/* Routing reason */}
                         <div>
                           <div className="text-[10px] uppercase font-bold text-gray-400 mb-1.5 tracking-wider">
-                            Routing Reason
+                            {t('orchestrator.routingReason')}
                           </div>
                           <p className="text-sm text-gray-600 leading-relaxed bg-white rounded-lg p-3 border border-gray-100">
                             {entry.reason
                               ? entry.reason
-                              : <span className="italic text-gray-300">No routing reason recorded</span>}
+                              : <span className="italic text-gray-300">{t('orchestrator.noRoutingReasonRecorded')}</span>}
                           </p>
                           <div className="mt-2 flex items-center gap-2 text-xs text-gray-400">
                             <Layers className="w-3 h-3 text-indigo-400" />
-                            <span>Orchestrator reasoning</span>
+                            <span>{t('orchestrator.orchestratorReasoning')}</span>
                           </div>
                         </div>
 
                         {/* Assignment details */}
                         <div>
                           <div className="text-[10px] uppercase font-bold text-gray-400 mb-1.5 tracking-wider">
-                            Assignment Details
+                            {t('orchestrator.assignmentDetails')}
                           </div>
                           <div className="bg-white rounded-lg p-3 border border-gray-100 space-y-2">
-                            <DetailRow label="Task ID" value={<span className="text-[11px]">{entry.task_id}</span>} />
-                            <DetailRow label="Agent" value={
+                            <DetailRow label={t('orchestrator.taskId')} value={<span className="text-[11px]">{entry.task_id}</span>} />
+                            <DetailRow label={t('orchestrator.agent')} value={
                               <Link to={`/agents/${entry.agent_id}`} className="text-indigo-600 hover:underline font-medium">
                                 {entry.agent_id}
                               </Link>
                             } />
                             {agentSpec?.domain && (
-                              <DetailRow label="Domain" value={
+                              <DetailRow label={t('orchestrator.domain')} value={
                                 <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${domainColor}`}>
                                   {agentSpec.domain}
                                 </span>
                               } />
                             )}
                             {agentSpec?.type && (
-                              <DetailRow label="Agent Type" value={agentSpec.type} />
+                              <DetailRow label={t('orchestrator.agentType')} value={agentSpec.type} />
                             )}
                             {entry.workspace && (
-                              <DetailRow label="Workspace" value={
+                              <DetailRow label={t('orchestrator.workspace')} value={
                                 <Link to={`/workspaces/${entry.workspace}`} className="text-indigo-600 hover:underline">
                                   {entry.workspace}
                                 </Link>
@@ -691,7 +731,7 @@ const Orchestrator = () => {
           </div>
         )}
       </div>
-    </div>
+    </PageContainer>
   );
 };
 

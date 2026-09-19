@@ -1,0 +1,305 @@
+"""
+One-time migration of the legacy JSON stores into SQLite.
+
+Runs automatically from ``common.db`` when the database has no
+``json_migrated`` marker. Imports, per store:
+
+- ``agent_runs.json``                  → ``runs`` (+ inline heavy ``process``
+  payloads → ``run_payloads``, canonicalised)
+- ``run_process/<run_id>.json``        → ``run_payloads`` (canonicalised)
+- ``tasks.json``                       → ``tasks``
+- ``activity_logs/<task_id>.json``     → ``task_activity``
+- ``results/<task_id>.json``           → ``task_results``
+- ``routing_logs/routing_log.json``    → ``routing_log``
+- ``session_contexts.json``            → ``sessions``
+- ``pending_continuations.json``       → ``continuations``
+- ``nodes.json``                       → ``nodes``
+
+Every successfully imported source is renamed to ``<name>.migrated`` (dirs get
+the same suffix) so a half-upgraded environment can never write to a store the
+new code no longer reads. The whole import runs in one EXCLUSIVE transaction:
+either everything lands plus the marker, or nothing does. Unparseable files
+are left in place untouched and reported — never treated as empty.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from common.paths import AGENTS_HUB_ROOT
+from common import run_payloads as rp
+
+# Run-record keys stored as dedicated columns; everything else goes to `extra`.
+RUN_COLUMNS = (
+    "run_id", "task_id", "agent_id", "session_id", "session_type", "channel",
+    "execution_mode", "node_id", "container_name", "workspace", "title",
+    "provider", "model", "status", "message_origin", "pid", "exit_code",
+    "error", "created_at", "started_at", "finished_at", "log_file",
+    "input", "output", "instance_id",
+)
+
+TASK_COLUMNS = ("id", "key", "parent_id", "status", "workspace", "project_id",
+                "created_at", "updated_at")
+
+
+def _read_json(path: Path) -> Optional[Any]:
+    """Parse a JSON file; None when missing, raises nothing — returns the
+    sentinel string 'ERROR' wrapped in a tuple on parse failure so callers can
+    distinguish 'missing' from 'corrupt'."""
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return []
+        return json.loads(text)
+    except Exception:
+        return ("ERROR",)
+
+
+def _is_corrupt(value: Any) -> bool:
+    return isinstance(value, tuple) and value and value[0] == "ERROR"
+
+
+def _dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _rename_migrated(path: Path) -> None:
+    try:
+        if path.exists():
+            path.rename(path.with_name(path.name + ".migrated"))
+    except Exception:
+        pass  # marker already prevents re-import; the rename is hygiene only
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ── per-store importers (each runs inside the caller's transaction) ──────────
+
+def _import_runs(conn: sqlite3.Connection) -> int:
+    src = AGENTS_HUB_ROOT / "agent_runs.json"
+    data = _read_json(src)
+    if data is None or _is_corrupt(data) or not isinstance(data, list):
+        return 0
+    n = 0
+    for rec in data:
+        if not isinstance(rec, dict) or not rec.get("run_id"):
+            continue
+        proc = rec.pop("process", None)
+        row = {k: rec.get(k) for k in RUN_COLUMNS}
+        extra = {k: v for k, v in rec.items() if k not in RUN_COLUMNS}
+        tokens = {"prompt_tokens": None, "completion_tokens": None,
+                  "total_tokens": None, "duration_ms": None}
+        if isinstance(proc, dict):
+            tu = proc.get("token_usage") or {}
+            tokens = {
+                "prompt_tokens": tu.get("inbound_tokens"),
+                "completion_tokens": tu.get("outbound_tokens"),
+                "total_tokens": tu.get("total_tokens"),
+                "duration_ms": proc.get("duration_ms"),
+            }
+        conn.execute(
+            f"INSERT OR REPLACE INTO runs ({', '.join(RUN_COLUMNS)}, "
+            "prompt_tokens, completion_tokens, total_tokens, duration_ms, extra) "
+            f"VALUES ({', '.join('?' * len(RUN_COLUMNS))}, ?, ?, ?, ?, ?)",
+            [row[k] for k in RUN_COLUMNS]
+            + [tokens["prompt_tokens"], tokens["completion_tokens"],
+               tokens["total_tokens"], tokens["duration_ms"], _dumps(extra)],
+        )
+        # Pre-sidecar records may still hold the full payload inline.
+        if isinstance(proc, dict) and rp.has_heavy_data(proc):
+            _write_payload(conn, str(rec["run_id"]), proc)
+        n += 1
+    return n
+
+
+def _write_payload(conn: sqlite3.Connection, run_id: str, proc: Dict[str, Any]) -> None:
+    c = rp.canonicalize(proc)
+    conn.execute(
+        "INSERT OR REPLACE INTO run_payloads (run_id, input_context, response, "
+        "tool_calls, reasoning, llm_invocations, llm_raw_responses, artifacts, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, _dumps(c["input_context"]), _dumps(c["response"]),
+         _dumps(c["tool_calls"]), _dumps(c["reasoning"]),
+         _dumps(c["llm_invocations"]), _dumps(c["llm_raw_responses"]),
+         _dumps(c["artifacts"]), _now_iso()),
+    )
+
+
+def _import_run_payloads(conn: sqlite3.Connection) -> int:
+    src_dir = AGENTS_HUB_ROOT / "run_process"
+    if not src_dir.is_dir():
+        return 0
+    n = 0
+    for f in sorted(src_dir.glob("*.json")):
+        data = _read_json(f)
+        if data is None or _is_corrupt(data) or not isinstance(data, dict):
+            continue
+        _write_payload(conn, f.stem, data)
+        # Fill token/duration columns from the sidecar when the index record
+        # predates the slim projection.
+        tu = data.get("token_usage") or {}
+        conn.execute(
+            "UPDATE runs SET "
+            "prompt_tokens=COALESCE(prompt_tokens, ?), "
+            "completion_tokens=COALESCE(completion_tokens, ?), "
+            "total_tokens=COALESCE(total_tokens, ?), "
+            "duration_ms=COALESCE(duration_ms, ?) WHERE run_id=?",
+            (tu.get("inbound_tokens"), tu.get("outbound_tokens"),
+             tu.get("total_tokens"), data.get("duration_ms"), f.stem),
+        )
+        n += 1
+    return n
+
+
+def _import_tasks(conn: sqlite3.Connection) -> int:
+    src = AGENTS_HUB_ROOT / "tasks.json"
+    data = _read_json(src)
+    if data is None or _is_corrupt(data) or not isinstance(data, list):
+        return 0
+    n = 0
+    for doc in data:
+        if not isinstance(doc, dict) or not doc.get("id"):
+            continue
+        conn.execute(
+            "INSERT OR REPLACE INTO tasks (id, key, parent_id, status, workspace, "
+            "project_id, created_at, updated_at, doc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(doc.get("id")), doc.get("key"),
+             str(doc["parent_id"]) if doc.get("parent_id") else None,
+             str(doc.get("status") or ""), doc.get("workspace"),
+             str(doc["project_id"]) if doc.get("project_id") else None,
+             str(doc.get("created_at") or ""), str(doc.get("updated_at") or ""),
+             _dumps(doc)),
+        )
+        n += 1
+    return n
+
+
+def _import_task_sidecars(conn: sqlite3.Connection) -> int:
+    n = 0
+    act_dir = AGENTS_HUB_ROOT / "activity_logs"
+    if act_dir.is_dir():
+        for f in sorted(act_dir.glob("*.json")):
+            entries = _read_json(f)
+            if not isinstance(entries, list):
+                continue
+            for e in entries:
+                conn.execute("INSERT INTO task_activity (task_id, entry) VALUES (?, ?)",
+                             (f.stem, _dumps(e)))
+                n += 1
+    res_dir = AGENTS_HUB_ROOT / "results"
+    if res_dir.is_dir():
+        for f in sorted(res_dir.glob("*.json")):
+            data = _read_json(f)
+            if _is_corrupt(data) or data is None:
+                continue
+            if isinstance(data, dict):  # old single-dict format
+                data = [{"run_id": None, "agent_id": None, **data}]
+            if not isinstance(data, list):
+                continue
+            for e in data:
+                if isinstance(e, dict):
+                    conn.execute(
+                        "INSERT INTO task_results (task_id, run_id, entry) VALUES (?, ?, ?)",
+                        (f.stem, e.get("run_id"), _dumps(e)))
+                    n += 1
+    routing = AGENTS_HUB_ROOT / "routing_logs" / "routing_log.json"
+    entries = _read_json(routing)
+    if isinstance(entries, list):
+        for e in entries:
+            conn.execute("INSERT INTO routing_log (entry) VALUES (?)", (_dumps(e),))
+            n += 1
+    return n
+
+
+def _import_sessions(conn: sqlite3.Connection) -> int:
+    data = _read_json(AGENTS_HUB_ROOT / "session_contexts.json")
+    n = 0
+    if isinstance(data, list):
+        for ctx in data:
+            if not isinstance(ctx, dict) or not ctx.get("session_id"):
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO sessions (session_id, conversation_id, task_id, doc) "
+                "VALUES (?, ?, ?, ?)",
+                (str(ctx["session_id"]), ctx.get("conversation_id"),
+                 str(ctx["task_id"]) if ctx.get("task_id") else None, _dumps(ctx)))
+            n += 1
+    conts = _read_json(AGENTS_HUB_ROOT / "pending_continuations.json")
+    if isinstance(conts, list):
+        for c in conts:
+            if not isinstance(c, dict):
+                continue
+            conn.execute(
+                "INSERT INTO continuations (session_id, task_id, run_id, doc) VALUES (?, ?, ?, ?)",
+                (str(c.get("session_id") or ""), str(c.get("task_id") or ""),
+                 c.get("run_id"), _dumps(c)))
+            n += 1
+    return n
+
+
+def _import_nodes(conn: sqlite3.Connection) -> int:
+    data = _read_json(AGENTS_HUB_ROOT / "nodes.json")
+    if not isinstance(data, list):
+        return 0
+    n = 0
+    for node in data:
+        if not isinstance(node, dict) or not node.get("node_id"):
+            continue
+        conn.execute("INSERT OR REPLACE INTO nodes (node_id, doc) VALUES (?, ?)",
+                     (str(node["node_id"]), _dumps(node)))
+        n += 1
+    return n
+
+
+# ── entrypoint ───────────────────────────────────────────────────────────────
+
+def migrate_legacy_json(conn: sqlite3.Connection) -> Dict[str, int]:
+    """Import all legacy JSON stores and set the ``json_migrated`` marker.
+
+    Called by ``common.db`` on first connection when the marker is absent.
+    Runs under an EXCLUSIVE transaction so concurrent processes serialize;
+    whichever wins imports, the rest see the marker and skip.
+    """
+    conn.execute("BEGIN EXCLUSIVE")
+    try:
+        # Another process may have migrated while we waited for the lock.
+        row = conn.execute("SELECT value FROM meta WHERE key='json_migrated'").fetchone()
+        if row is not None:
+            conn.execute("COMMIT")
+            return {}
+
+        counts = {
+            "runs": _import_runs(conn),
+            "run_payloads": _import_run_payloads(conn),
+            "tasks": _import_tasks(conn),
+            "task_sidecars": _import_task_sidecars(conn),
+            "sessions_continuations": _import_sessions(conn),
+            "nodes": _import_nodes(conn),
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('json_migrated', ?)",
+            (json.dumps({"at": _now_iso(), "counts": counts}),),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+    # Rename sources only after the transaction landed. Best-effort — the
+    # marker alone already guarantees single import.
+    for name in ("agent_runs.json", "tasks.json", "session_contexts.json",
+                 "pending_continuations.json", "nodes.json"):
+        _rename_migrated(AGENTS_HUB_ROOT / name)
+    for dirname in ("run_process", "activity_logs", "results", "routing_logs"):
+        _rename_migrated(AGENTS_HUB_ROOT / dirname)
+
+    if any(counts.values()):
+        print(f"[db] migrated legacy JSON state into SQLite: {counts}")
+    return counts

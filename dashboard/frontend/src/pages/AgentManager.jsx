@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useWorkspace } from '../components/WorkspaceContext';
+import { useWorkspace } from '../components/workspace';
+import { useLiveRefetch } from '../components/stream';
 import {
   Copy,
   Play,
+  Radio,
   Box,
   Shield,
   Server,
@@ -20,6 +22,10 @@ import {
   Sparkles,
   GripVertical,
   Lock,
+  Download,
+  AlertTriangle,
+  CheckCircle2,
+  Users,
 } from 'lucide-react';
 import {
   getAgents,
@@ -34,18 +40,25 @@ import {
   getAgentModel,
   removeAgentFromWorkspace,
   addAgentToWorkspace,
+  getInstancesSummary,
 } from '../api';
+import ImportAgentModal from '../components/ImportAgentModal';
 
+import { PageContainer, PageHeader } from '../components/PageLayout';
+import { useI18n } from '../i18n';
 const AgentManager = () => {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const [agents, setAgents] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [nodes, setNodes] = useState([]);
+  // Live copies per agent — a node is a carrier that *can* run this agent; an
+  // instance is a copy that actually is. The card shows both.
+  const [instanceCounts, setInstanceCounts] = useState({});
   const [loading, setLoading] = useState(true);
-  const [showCloneModal, setShowCloneModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
-  const [showConnectModal, setShowConnectModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardType, setWizardType] = useState('custom'); // 'custom' | 'remote' | 'clone'
@@ -55,15 +68,25 @@ const AgentManager = () => {
     agent_url: '', original_id: '',
   });
   const [availableTools, setAvailableTools] = useState([]);
-  const [cloneData, setCloneData] = useState({ original_id: '', new_id: '', new_name: '' });
   const [assignData, setAssignData] = useState({ task_id: '', agent_id: '' });
-  const [connectData, setConnectData] = useState({ id: '', name: '', description: '', domain: 'general', agent_url: '', capacity: 1 });
-  const [healthData, setHealthData] = useState({});
   const [startingNode, setStartingNode] = useState(null);
   const [wsCapacitiesPerAgent, setWsCapacitiesPerAgent] = useState({});
   const [agentOrder, setAgentOrder] = useState([]);
-  const [dragIdx, setDragIdx] = useState(null);
-  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [dragId, setDragId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  // The system agents are the hub's own staff — the orchestrator, the
+  // builders, the Visualizer. They are in every workspace and cannot be
+  // deleted, so once a fleet has a few agents of its own they are mostly
+  // noise on this page. The choice sticks, because it is about how someone
+  // works rather than about what they are looking at right now.
+  const [showSystem, setShowSystem] = useState(
+    () => localStorage.getItem('agents_show_system') !== 'false',
+  );
+
+  const toggleSystem = (next) => {
+    setShowSystem(next);
+    localStorage.setItem('agents_show_system', next ? 'true' : 'false');
+  };
 
   // Creator chat state
   const [creatorInput, setCreatorInput] = useState('');
@@ -73,16 +96,16 @@ const AgentManager = () => {
   const [creatorError, setCreatorError] = useState('');
   const [creatorModelInfo, setCreatorModelInfo] = useState(null);
 
-  const fetchTools = async () => {
+  const fetchTools = useCallback(async () => {
     try {
       const res = await getAgentTools();
       setAvailableTools(res.data?.all || []);
     } catch {
-      // ignore
+      /* the tool list stays as it was */
     }
-  };
+  }, []);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [agentsResp, tasksResp, nodesResp] = await Promise.all([getAgents(workspaceFilter), getTasks(workspaceFilter), getNodes(workspaceFilter)]);
       // Show all agents including orchestrator and decomposer
@@ -104,15 +127,23 @@ const AgentManager = () => {
       console.error('Error fetching data:', error);
       setLoading(false);
     }
-  };
+  }, [workspaceFilter]);
+
+  const fetchInstanceCounts = useCallback(() => {
+    getInstancesSummary({ workspace: workspaceFilter })
+      .then(r => setInstanceCounts(r.data?.by_agent || {}))
+      .catch(() => setInstanceCounts({}));
+  }, [workspaceFilter]);
 
   useEffect(() => {
     fetchData();
     fetchTools();
-    if (!liveUpdates) return;
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, [selectedWorkspace, liveUpdates]);
+    fetchInstanceCounts();
+  }, [selectedWorkspace, liveUpdates, fetchData, fetchTools, fetchInstanceCounts]);
+  useLiveRefetch(fetchData, { type: 'agents.changed', enabled: liveUpdates });
+  // One grouped count query per change, not one per agent card.
+  useLiveRefetch(fetchInstanceCounts, { type: 'instances.delta', enabled: liveUpdates });
+  useLiveRefetch(fetchInstanceCounts, { type: 'instances.changed', enabled: liveUpdates });
 
   // Sync agent order with fetched agents, restoring saved order from localStorage
   useEffect(() => {
@@ -127,37 +158,40 @@ const AgentManager = () => {
         const filtered = savedOrder.filter(id => knownIds.has(id));
         const newIds = order.filter(id => !filtered.includes(id));
         order = [...filtered, ...newIds];
-      } catch { /* ignore */ }
+      } catch { /* a corrupt saved order falls back to the default */ }
     }
     setAgentOrder(order);
   }, [agents, selectedWorkspace]);
 
-  const handleDragStart = (idx) => setDragIdx(idx);
+  const handleDragStart = (id) => setDragId(id);
 
-  const handleDragOver = (e, idx) => {
+  const handleDragOver = (e, id) => {
     e.preventDefault();
-    setDragOverIdx(idx);
+    setDragOverId(id);
   };
 
-  const handleDrop = (idx) => {
-    if (dragIdx === null || dragIdx === idx) {
-      setDragIdx(null);
-      setDragOverIdx(null);
+  // By id rather than by position: the grid can be showing a subset of the
+  // stored order (system agents hidden), so a card's index in it is not its
+  // index in the order being rewritten.
+  const handleDrop = (targetId) => {
+    if (dragId === null || dragId === targetId) {
+      setDragId(null);
+      setDragOverId(null);
       return;
     }
-    const newOrder = [...agentOrder];
-    const [moved] = newOrder.splice(dragIdx, 1);
-    newOrder.splice(idx, 0, moved);
+    const newOrder = agentOrder.filter((id) => id !== dragId);
+    const at = newOrder.indexOf(targetId);
+    newOrder.splice(at === -1 ? newOrder.length : at, 0, dragId);
     setAgentOrder(newOrder);
     const key = `agent_order_${selectedWorkspace || 'default'}`;
     localStorage.setItem(key, JSON.stringify(newOrder));
-    setDragIdx(null);
-    setDragOverIdx(null);
+    setDragId(null);
+    setDragOverId(null);
   };
 
   const handleDragEnd = () => {
-    setDragIdx(null);
-    setDragOverIdx(null);
+    setDragId(null);
+    setDragOverId(null);
   };
 
   const openWizard = () => {
@@ -208,7 +242,7 @@ const AgentManager = () => {
 
       if (!response.ok || !response.body) {
         const detail = await response.text();
-        throw new Error(detail || 'Failed to contact Agent Creator');
+        throw new Error(detail || t('agentManager.creatorFailed'));
       }
 
       const decoder = new TextDecoder();
@@ -236,7 +270,7 @@ const AgentManager = () => {
       setCreatorDone(true);
       fetchData();
     } catch (err) {
-      setCreatorError(err.message || 'Failed to create agent');
+      setCreatorError(err.message || t('agentManager.createFailed'));
     } finally {
       setCreatorStreaming(false);
     }
@@ -269,7 +303,7 @@ const AgentManager = () => {
       closeWizard();
       fetchData();
     } catch (error) {
-      alert('Error: ' + (error.response?.data?.detail || error.message));
+      alert(`${t('common.error')}: ` + (error.response?.data?.detail || error.message));
     }
   };
 
@@ -289,15 +323,15 @@ const AgentManager = () => {
       setShowAssignModal(false);
       fetchData();
     } catch (error) {
-      alert('Error assigning task: ' + (error.response?.data?.detail || error.message));
+      alert(`${t('agentManager.assignTaskError')}: ` + (error.response?.data?.detail || error.message));
     }
   };
 
   const handleDisconnect = async (id) => {
     const isDefault = !selectedWorkspace || selectedWorkspace === 'default';
     const confirmMsg = isDefault
-      ? 'Delete this agent from the system?'
-      : 'Remove this agent from the current workspace?';
+      ? t('agentManager.confirmDeleteSystem')
+      : t('agentManager.confirmRemoveWorkspace');
     if (!confirm(confirmMsg)) return;
     try {
       if (isDefault) {
@@ -307,9 +341,21 @@ const AgentManager = () => {
       }
       fetchData();
     } catch (error) {
-      alert('Error: ' + (error.response?.data?.detail || error.message));
+      alert(`${t('common.error')}: ` + (error.response?.data?.detail || error.message));
     }
   };
+
+  // The grid's contents: the saved order, minus what the filter hides.
+  const orderedAgents = useMemo(() => (
+    agentOrder.length > 0
+      ? agentOrder.map((id) => agents.find((a) => a.id === id)).filter(Boolean)
+      : agents
+  ), [agentOrder, agents]);
+  const visibleAgents = useMemo(
+    () => (showSystem ? orderedAgents : orderedAgents.filter((a) => !a.system)),
+    [orderedAgents, showSystem],
+  );
+  const systemCount = useMemo(() => agents.filter((a) => a.system).length, [agents]);
 
   const getAgentMetrics = (agent) => {
     const assignedTasks = tasks.filter(t => t.assigned_agent_type === agent.id);
@@ -332,6 +378,8 @@ const AgentManager = () => {
   const getRunningNodeCount = (agentId) =>
     nodes.filter(n => n.agent_id === agentId && (n.status === 'running' || n.status === 'starting')).length;
 
+  const getLiveInstanceCount = (agentId) => instanceCounts[agentId]?.live || 0;
+
   const handleStartNode = async (agentId) => {
     setStartingNode(agentId);
     try {
@@ -339,59 +387,86 @@ const AgentManager = () => {
       await startNode({ agent_id: agentId, workspace: ws });
       navigate('/nodes');
     } catch (err) {
-      alert('Failed to start node: ' + (err.response?.data?.detail || err.message));
+      alert(`${t('agentManager.startNodeError')}: ` + (err.response?.data?.detail || err.message));
     } finally {
       setStartingNode(null);
     }
   };
 
   return (
-    <div className="space-y-8">
-      {/* Header / Sub-Navbar */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800 flex items-center">
-            <Shield className="w-6 h-6 mr-2 text-indigo-600" />
-            Agent Cluster Manager
-          </h2>
-          <p className="text-gray-500 text-sm">Orchestrate your fleet of specialized AI nodes.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={openWizard}
-              className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-indigo-700 transition-all shadow-md text-sm font-bold"
-            >
-              <Wand2 className="w-4 h-4 mr-2" />
-              Create Agent
-            </button>
-        </div>
-      </div>
+    <PageContainer className="space-y-6">
+      <PageHeader
+        icon={Users}
+        title={t('agentManager.agents')}
+        description={t('agentManager.orchestrateYourFleetOfSpecialized')}
+        actions={<>
+          <label
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 cursor-pointer select-none"
+            title={t('agentManager.showSystemAgentsHint')}
+          >
+            <input
+              type="checkbox"
+              checked={showSystem}
+              onChange={(e) => toggleSystem(e.target.checked)}
+              className="w-3.5 h-3.5 accent-indigo-600 cursor-pointer"
+            />
+            {t('agentManager.showSystemAgents')}
+            {systemCount > 0 && <span className="text-gray-400">({systemCount})</span>}
+          </label>
+          <button
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center gap-2 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 text-sm font-medium transition-colors"
+            title={t('agentManager.importAnAgentThatAlready')}
+          >
+            <Download className="w-4 h-4" /> {t('agentManager.importFromRepo')}
+          </button>
+          <button
+            onClick={openWizard}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors"
+          >
+            <Wand2 className="w-4 h-4" /> {t('agentManager.createAgent')}
+          </button>
+        </>}
+      />
 
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
            <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mb-4" />
-           <p className="text-gray-500 font-medium">Scanning cluster for agent nodes...</p>
+           <p className="text-gray-500 font-medium">{t('agentManager.scanningClusterForAgentNodes')}</p>
+        </div>
+      ) : visibleAgents.length === 0 && orderedAgents.length > 0 ? (
+        // Every agent here is a system one and the filter is off: say so, or
+        // the page reads as an empty fleet.
+        <div className="py-16 text-center bg-white rounded-xl border border-dashed border-gray-200">
+          <p className="text-sm text-gray-500">{t('agentManager.allHiddenBySystemFilter')}</p>
+          <button
+            onClick={() => toggleSystem(true)}
+            className="mt-2 text-sm font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            {t('agentManager.showSystemAgents')}
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-          {(agentOrder.length > 0 ? agentOrder.map(id => agents.find(a => a.id === id)).filter(Boolean) : agents).map((agent, idx) => {
+          {visibleAgents.map((agent) => {
             const metrics = getAgentMetrics(agent);
             const isHealthy = true;
             const nodeCount = getRunningNodeCount(agent.id);
+            const liveInstances = getLiveInstanceCount(agent.id);
             const isDefaultWs = !selectedWorkspace || selectedWorkspace === 'default';
             const agentWsCaps = wsCapacitiesPerAgent[agent.id] || {};
             const wsSessionCap = isDefaultWs ? Infinity : (agentWsCaps[selectedWorkspace] ?? 1);
             const nodesAtCap = !isDefaultWs && nodeCount >= wsSessionCap;
-            const isDragging = dragIdx === idx;
-            const isDragOver = dragOverIdx === idx && dragIdx !== idx;
+            const isDragging = dragId === agent.id;
+            const isDragOver = dragOverId === agent.id && dragId !== agent.id;
 
             return (
               <div
                 key={agent.id}
                 draggable
-                onDragStart={() => handleDragStart(idx)}
-                onDragOver={(e) => handleDragOver(e, idx)}
-                onDrop={() => handleDrop(idx)}
+                onDragStart={() => handleDragStart(agent.id)}
+                onDragOver={(e) => handleDragOver(e, agent.id)}
+                onDrop={() => handleDrop(agent.id)}
                 onDragEnd={handleDragEnd}
                 className={`bg-white rounded-lg border p-4 shadow-sm transition-all ${isDragging ? 'opacity-40 scale-95' : 'hover:shadow-md'} ${isDragOver ? 'border-indigo-400 shadow-md ring-2 ring-indigo-200' : 'border-gray-100'}`}
               >
@@ -405,13 +480,33 @@ const AgentManager = () => {
                       <Link to={`/agents/${agent.id}`} className="text-sm font-semibold text-gray-900 hover:text-indigo-600 truncate block">
                         {agent.name}
                       </Link>
-                      <div className="text-[11px] text-gray-400 truncate">{agent.id}</div>
+                      <div className="text-[11px] text-gray-400 truncate flex items-center gap-1">
+                        {agent.id}
+                        {agent.definition_id && agent.definition_id !== agent.id && (
+                          <span
+                            className="inline-flex items-center text-[9px] bg-indigo-50 text-indigo-500 px-1 py-0.5 rounded uppercase font-semibold"
+                            title={`Shares the "${agent.definition_id}" definition (prompt/tools)`}
+                          >
+                            <Copy className="w-2.5 h-2.5 mr-0.5" />
+                            {agent.definition_id}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-gray-500 truncate mt-1">
-                        {agent.description || 'No description provided'}
+                        {agent.description || t('agentManager.noDescription')}
                       </div>
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1">
+                    {agent.system && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded uppercase font-semibold"
+                        title={t('agentManager.systemBadgeHint')}
+                      >
+                        <Lock className="w-2.5 h-2.5" />
+                        {t('agentManager.systemBadge')}
+                      </span>
+                    )}
                     <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded uppercase font-semibold">
                       {agent.domain}
                     </span>
@@ -419,10 +514,18 @@ const AgentManager = () => {
                       nodeCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                     }`}>
                       <Activity className={`w-3 h-3 ${nodeCount > 0 ? 'animate-pulse' : ''}`} />
-                      {nodeCount > 0 ? `${nodeCount} running` : 'No nodes'}
+                      {nodeCount > 0 ? t('agentManager.runningCount', { count: nodeCount }) : t('agentManager.noNodes')}
+                    </Link>
+                    <Link to="/instances" className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${
+                      liveInstances > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'
+                    }`} title={t('agentManager.instancesHint')}>
+                      <Radio className={`w-3 h-3 ${liveInstances > 0 ? 'animate-pulse' : ''}`} />
+                      {t('agentManager.instancesCount', { count: liveInstances })}
                     </Link>
                   </div>
                 </div>
+
+                <ImportedAgentStatus agent={agent} />
 
                 {(() => {
                   const totalCap = wsSessionCap === Infinity
@@ -436,32 +539,32 @@ const AgentManager = () => {
                         {/* Nodes card */}
                         <div className={`border rounded-lg px-2 py-2 ${nodesAtCap ? 'bg-orange-50 border-orange-300' : nodeCount > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'}`}>
                           <div className="flex items-center justify-between">
-                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${nodesAtCap ? 'text-orange-500' : nodeCount > 0 ? 'text-indigo-500' : 'text-gray-400'}`}>Nodes</div>
-                            {nodesAtCap && <span className="text-[9px] font-bold text-white bg-orange-500 px-1 py-0.5 rounded leading-none animate-pulse">FULL</span>}
+                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${nodesAtCap ? 'text-orange-500' : nodeCount > 0 ? 'text-indigo-500' : 'text-gray-400'}`}>{t('agentManager.nodes')}</div>
+                            {nodesAtCap && <span className="text-[9px] font-bold text-white bg-orange-500 px-1 py-0.5 rounded leading-none animate-pulse">{t('agentManager.full')}</span>}
                           </div>
                           <div className={`text-sm font-semibold ${nodesAtCap ? 'text-orange-900' : nodeCount > 0 ? 'text-indigo-900' : 'text-gray-500'}`}>{nodeCount}/{isDefaultWs ? '∞' : wsSessionCap}</div>
-                          <div className={`text-[10px] mt-0.5 ${nodesAtCap ? 'text-orange-600' : nodeCount > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>running</div>
+                          <div className={`text-[10px] mt-0.5 ${nodesAtCap ? 'text-orange-600' : nodeCount > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{t('agentManager.running')}</div>
                         </div>
 
                         {/* Sessions card */}
                         <div className={`border rounded-lg px-2 py-2 ${atCap ? 'bg-red-50 border-red-300' : 'bg-green-50 border-green-100'}`}>
                           <div className="flex items-center justify-between">
-                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${atCap ? 'text-red-500' : 'text-green-500'}`}>Sessions</div>
-                            {atCap && <span className="text-[9px] font-bold text-white bg-red-500 px-1 py-0.5 rounded leading-none animate-pulse">FULL</span>}
+                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${atCap ? 'text-red-500' : 'text-green-500'}`}>{t('agentManager.sessions')}</div>
+                            {atCap && <span className="text-[9px] font-bold text-white bg-red-500 px-1 py-0.5 rounded leading-none animate-pulse">{t('agentManager.full')}</span>}
                           </div>
                           <div className={`text-sm font-semibold ${atCap ? 'text-red-900' : 'text-green-900'}`}>
                             {metrics.used}/{nodeCount > 0 ? totalCap : '—'}
                           </div>
                           <div className={`text-[10px] mt-0.5 ${atCap ? 'text-red-600 font-semibold' : 'text-green-700'}`}>
-                            {nodeCount === 0 ? 'no nodes' : atCap ? 'At capacity' : `Load ${sessionLoad}%`}
+                            {nodeCount === 0 ? t('agentManager.noNodesLower') : atCap ? t('agentManager.atCapacity') : t('agentManager.load', { pct: sessionLoad })}
                           </div>
                         </div>
 
                         {/* Running tasks card */}
                         <div className="bg-amber-50 border border-amber-100 rounded-lg px-2 py-2">
-                          <div className="text-[10px] uppercase tracking-wider text-amber-500 font-semibold">Tasks</div>
+                          <div className="text-[10px] uppercase tracking-wider text-amber-500 font-semibold">{t('agentManager.tasks')}</div>
                           <div className="text-sm font-semibold text-amber-900">{metrics.runningTasks}</div>
-                          <div className="text-[10px] text-amber-600 mt-0.5">{metrics.assignedTasks} assigned</div>
+                          <div className="text-[10px] text-amber-600 mt-0.5">{t('agentManager.assignedCount', { count: metrics.assignedTasks })}</div>
                         </div>
                       </div>
 
@@ -473,8 +576,8 @@ const AgentManager = () => {
                         />
                       </div>
                       <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
-                        <span>{nodeCount > 0 ? `Load ${sessionLoad}%` : 'No nodes running'}</span>
-                        <span>{metrics.runningTasks} running / {metrics.assignedTasks} assigned</span>
+                        <span>{nodeCount > 0 ? t('agentManager.load', { pct: sessionLoad }) : t('agentManager.noNodesRunning')}</span>
+                        <span>{t('agentManager.runningAssigned', { running: metrics.runningTasks, assigned: metrics.assignedTasks })}</span>
                       </div>
                     </div>
                   );
@@ -495,18 +598,18 @@ const AgentManager = () => {
                   <button
                     onClick={() => handleStartNode(agent.id)}
                     disabled={startingNode === agent.id || nodesAtCap}
-                    title={nodesAtCap ? 'Node limit reached for this workspace' : undefined}
+                    title={nodesAtCap ? t('agentManager.nodeLimitReached') : undefined}
                     className="flex-1 inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {startingNode === agent.id
                       ? <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin" />
                       : <Play className="w-3.5 h-3.5 mr-1" />}
-                    Start
+                    {t('common.start')}
                   </button>
                   {agent.system ? (
                     <span
                       className="p-1.5 border border-gray-100 text-gray-300 rounded cursor-not-allowed bg-gray-50"
-                      title="System agent — required in every workspace"
+                      title={t('agentManager.systemAgentRequiredInEvery')}
                     >
                       <Lock className="w-4 h-4" />
                     </span>
@@ -514,7 +617,7 @@ const AgentManager = () => {
                     <button
                       onClick={() => handleDisconnect(agent.id)}
                       className="p-1.5 border border-gray-200 text-gray-500 rounded hover:bg-red-50 hover:text-red-600 transition-colors"
-                      title={!selectedWorkspace || selectedWorkspace === 'default' ? 'Delete Agent' : 'Remove from Workspace'}
+                      title={!selectedWorkspace || selectedWorkspace === 'default' ? t('agentManager.deleteAgent') : t('agentManager.removeFromWorkspace')}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -526,133 +629,12 @@ const AgentManager = () => {
         </div>
       )}
 
-      {/* Modals remain similarly structured but with updated fields for domain/description */}
-
-      {/* Clone Agent Modal */}
-      {showCloneModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
-            <h3 className="text-xl font-bold mb-4 flex items-center">
-                <Copy className="w-5 h-5 mr-2 text-indigo-600" />
-                Clone Agent Node
-            </h3>
-            <form onSubmit={handleClone}>
-              <div className="space-y-4 mb-6">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Source Agent</label>
-                  <select
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                    value={cloneData.original_id}
-                    onChange={(e) => setCloneData({ ...cloneData, original_id: e.target.value })}
-                  >
-                    {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">New Node ID</label>
-                  <input
-                    type="text" required
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                    value={cloneData.new_id}
-                    onChange={(e) => setCloneData({ ...cloneData, new_id: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Display Name</label>
-                  <input
-                    type="text" required
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                    value={cloneData.new_name}
-                    onChange={(e) => setCloneData({ ...cloneData, new_name: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button type="button" onClick={() => setShowCloneModal(false)} className="px-4 py-2 text-gray-500 text-sm font-medium">Cancel</button>
-                <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 font-bold shadow-md">Deploy Clone</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Connect Remote Agent Modal */}
-      {showConnectModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl">
-            <h3 className="text-xl font-bold mb-4 flex items-center">
-                <Server className="w-5 h-5 mr-2 text-emerald-600" />
-                Connect External Node
-            </h3>
-            <form onSubmit={handleConnect}>
-              <div className="space-y-4 mb-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">ID</label>
-                    <input
-                      type="text" required className="w-full border rounded px-3 py-2 text-sm"
-                      value={connectData.id}
-                      onChange={(e) => setConnectData({ ...connectData, id: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Domain</label>
-                    <input
-                      type="text" required className="w-full border rounded px-3 py-2 text-sm"
-                      value={connectData.domain}
-                      onChange={(e) => setConnectData({ ...connectData, domain: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Display Name</label>
-                  <input
-                    type="text" required className="w-full border rounded px-3 py-2 text-sm"
-                    value={connectData.name}
-                    onChange={(e) => setConnectData({ ...connectData, name: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description</label>
-                  <textarea
-                    className="w-full border rounded px-3 py-2 text-sm" rows="2"
-                    value={connectData.description}
-                    onChange={(e) => setConnectData({ ...connectData, description: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Agent Endpoint URL</label>
-                  <input
-                    type="url" required className="w-full border rounded px-3 py-2 text-sm"
-                    value={connectData.agent_url}
-                    onChange={(e) => setConnectData({ ...connectData, agent_url: e.target.value })}
-                    placeholder="https://agent-service.internal/api"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Capacity Slots</label>
-                  <input
-                    type="number" min="1" required className="w-full border rounded px-3 py-2 text-sm"
-                    value={connectData.capacity}
-                    onChange={(e) => setConnectData({ ...connectData, capacity: parseInt(e.target.value) })}
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button type="button" onClick={() => setShowConnectModal(false)} className="px-4 py-2 text-sm text-gray-500">Cancel</button>
-                <button type="submit" className="bg-emerald-600 text-white px-6 py-2 rounded-md font-bold shadow-md">Establish Connection</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Agent Creation Wizard */}
       {showWizard && (() => {
         const STEPS =
-          wizardType === 'creator' ? ['Type', 'Launch'] :
-          wizardType === 'clone'   ? ['Type', 'Source', 'Identity', 'Review'] :
-                                     ['Type', 'Identity', 'Capabilities', 'Review'];
+          wizardType === 'creator' ? [t('agentManager.steps.type'), t('agentManager.steps.launch')] :
+          wizardType === 'clone'   ? [t('agentManager.steps.type'), t('agentManager.steps.source'), t('agentManager.steps.identity'), t('agentManager.steps.review')] :
+                                     [t('agentManager.steps.type'), t('agentManager.steps.identity'), t('agentManager.steps.capabilities'), t('agentManager.steps.review')];
         const totalSteps = STEPS.length;
         const isLastStep = wizardStep === totalSteps;
 
@@ -668,7 +650,7 @@ const AgentManager = () => {
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-xl font-bold flex items-center text-gray-900">
                     <Wand2 className="w-5 h-5 mr-2 text-indigo-600" />
-                    Create Agent
+                    {t('agentManager.createAgent')}
                   </h3>
                   <button onClick={closeWizard} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
                 </div>
@@ -703,10 +685,10 @@ const AgentManager = () => {
                 {/* Step 1 — Type selection */}
                 {wizardStep === 1 && (
                   <div className="space-y-3">
-                    <p className="text-sm text-gray-500">Choose how you want to create the agent:</p>
+                    <p className="text-sm text-gray-500">{t('agentManager.chooseHowYouWantTo')}</p>
                     {[
-                      { value: 'creator', icon: Sparkles, label: 'Use Agent Creator', desc: 'Let the built-in Agent Creator AI guide you through designing and provisioning an agent via chat.' },
-                      { value: 'custom', icon: Box, label: 'Custom Agent', desc: 'Manually define a system prompt and tools. Runs locally using the LangChain runtime.' },
+                      { value: 'creator', icon: Sparkles, label: t('agentManager.useAgentCreator'), desc: t('agentManager.useAgentCreatorDesc') },
+                      { value: 'custom', icon: Box, label: t('agentManager.customAgent'), desc: t('agentManager.customAgentDesc') },
                     ].map(({ value, icon: Icon, label, desc }) => (
                       <button
                         key={value}
@@ -734,11 +716,11 @@ const AgentManager = () => {
                     <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
                       <Sparkles className="w-4 h-4 text-indigo-400 flex-shrink-0" />
                       <div className="min-w-0">
-                        <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-0.5">Model</div>
+                        <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-0.5">{t('agentManager.model')}</div>
                         <div className="text-sm text-gray-700 font-medium truncate">
                           {creatorModelInfo?.provider && creatorModelInfo.provider !== 'inherit'
                             ? `${creatorModelInfo.provider}${creatorModelInfo.model ? ` / ${creatorModelInfo.model}` : ''}`
-                            : 'Inherits global settings'}
+                            : t('agentManager.inheritsGlobal')}
                         </div>
                       </div>
                     </div>
@@ -752,7 +734,7 @@ const AgentManager = () => {
                           </label>
                           <textarea
                             rows={5}
-                            placeholder="e.g. A code reviewer that reads Python files, checks for bugs and style issues, and writes a summary report."
+                            placeholder={t('agentManager.eGACodeReviewer')}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 resize-none"
                             value={creatorInput}
                             onChange={e => setCreatorInput(e.target.value)}
@@ -760,12 +742,12 @@ const AgentManager = () => {
                         </div>
 
                         <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 space-y-1.5">
-                          <p className="text-xs font-semibold text-indigo-700">What the Agent Creator can do:</p>
+                          <p className="text-xs font-semibold text-indigo-700">{t('agentManager.whatTheAgentCreatorCan')}</p>
                           <ul className="list-disc list-inside text-xs text-indigo-600 space-y-0.5">
-                            <li>Design a system prompt tailored to your requirements</li>
-                            <li>Select the right tools from the available set</li>
-                            <li>Register the new agent directly in the system</li>
-                            <li>List or inspect existing agents on request</li>
+                            <li>{t('agentManager.designASystemPromptTailored')}</li>
+                            <li>{t('agentManager.selectTheRightToolsFrom')}</li>
+                            <li>{t('agentManager.registerTheNewAgentDirectly')}</li>
+                            <li>{t('agentManager.listOrInspectExistingAgents')}</li>
                           </ul>
                         </div>
                       </>
@@ -775,7 +757,7 @@ const AgentManager = () => {
                     {(creatorStreaming || creatorOutput) && (
                       <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
                         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
-                          <span>Agent Creator</span>
+                          <span>{t('agentManager.agentCreator')}</span>
                           {creatorStreaming && <RefreshCw className="w-3 h-3 animate-spin text-indigo-400" />}
                           {creatorDone && <Check className="w-3 h-3 text-green-500" />}
                         </div>
@@ -795,14 +777,14 @@ const AgentManager = () => {
                     {/* Success */}
                     {creatorDone && (
                       <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700">
-                        Done — check the agent list for your new agent.
+                        {t('agentManager.doneCheckTheAgentList')}
                       </div>
                     )}
 
                     <p className="text-xs text-gray-400">
-                      Agent Creator runs in {selectedWorkspace && selectedWorkspace !== 'default'
+                      {t('agentManager.creatorRunsIn')} {selectedWorkspace && selectedWorkspace !== 'default'
                         ? <span className="font-semibold text-gray-500">{selectedWorkspace}</span>
-                        : 'the default workspace'}.
+                        : t('agentManager.theDefaultWorkspace')}.
                     </p>
                   </div>
                 )}
@@ -811,13 +793,13 @@ const AgentManager = () => {
                 {wizardStep === 2 && wizardType === 'clone' && (
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Source Agent</label>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.sourceAgent')}</label>
                       <select
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
                         value={wizardData.original_id}
                         onChange={e => setWizardData(d => ({ ...d, original_id: e.target.value }))}
                       >
-                        <option value="">-- Select agent to clone --</option>
+                        <option value="">{t('agentManager.selectAgentToClone')}</option>
                         {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.id})</option>)}
                       </select>
                     </div>
@@ -829,17 +811,17 @@ const AgentManager = () => {
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Agent ID <span className="text-red-500">*</span></label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.agentId')} <span className="text-red-500">*</span></label>
                         <input
-                          type="text" required placeholder="e.g. code_reviewer"
+                          type="text" required placeholder={t('agentManager.eGCodeReviewer')}
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
                           value={wizardData.id}
                           onChange={e => setWizardData(d => ({ ...d, id: e.target.value.replace(/\s/g, '_').toLowerCase() }))}
                         />
-                        <p className="text-[10px] text-gray-400 mt-1">Lowercase, no spaces</p>
+                        <p className="text-[10px] text-gray-400 mt-1">{t('agentManager.lowercaseNoSpaces')}</p>
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Domain</label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.domain')}</label>
                         <select
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
                           value={wizardData.domain}
@@ -850,25 +832,25 @@ const AgentManager = () => {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Display Name <span className="text-red-500">*</span></label>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.displayName')} <span className="text-red-500">*</span></label>
                       <input
-                        type="text" required placeholder="e.g. Code Reviewer"
+                        type="text" required placeholder={t('agentManager.eGCodeReviewer2')}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
                         value={wizardData.name}
                         onChange={e => setWizardData(d => ({ ...d, name: e.target.value }))}
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description</label>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.description')}</label>
                       <textarea
-                        rows="2" placeholder="What does this agent do?"
+                        rows="2" placeholder={t('agentManager.whatDoesThisAgentDo')}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
                         value={wizardData.description}
                         onChange={e => setWizardData(d => ({ ...d, description: e.target.value }))}
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Capacity Slots</label>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.capacitySlots')}</label>
                       <input
                         type="number" min="1"
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
@@ -885,22 +867,22 @@ const AgentManager = () => {
                     {wizardType === 'custom' && (
                       <>
                         <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">System Prompt <span className="text-red-500">*</span></label>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.systemPrompt')} <span className="text-red-500">*</span></label>
                           <textarea
-                            rows="5" placeholder="You are a specialized agent for..."
+                            rows="5" placeholder={t('agentManager.youAreASpecializedAgent')}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
                             value={wizardData.system_prompt}
                             onChange={e => setWizardData(d => ({ ...d, system_prompt: e.target.value }))}
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Tools</label>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{t('agentManager.tools')}</label>
                           <select
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-white"
                             value=""
                             onChange={e => { if (e.target.value) toggleWizardTool(e.target.value); }}
                           >
-                            <option value="">— Add a tool —</option>
+                            <option value="">{t('agentManager.addATool')}</option>
                             {toolList.filter(t => !wizardData.tools.includes(t.name)).map(t => (
                               <option key={t.name} value={t.name}>{t.name}{t.description ? ` — ${t.description}` : ''}</option>
                             ))}
@@ -920,7 +902,7 @@ const AgentManager = () => {
                     )}
                     {wizardType === 'remote' && (
                       <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Agent Endpoint URL <span className="text-red-500">*</span></label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.agentEndpointUrl')} <span className="text-red-500">*</span></label>
                         <input
                           type="url" required placeholder="https://agent-service.internal/api"
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
@@ -935,27 +917,27 @@ const AgentManager = () => {
                 {/* Last step — Review (not shown for creator, which has its own output panel) */}
                 {isLastStep && wizardType !== 'creator' && (
                   <div className="space-y-3">
-                    <p className="text-sm text-gray-500">Review your agent before creating it:</p>
+                    <p className="text-sm text-gray-500">{t('agentManager.reviewYourAgentBeforeCreating')}</p>
                     <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
-                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">Type</span><span className="font-semibold capitalize text-gray-800">{wizardType}</span></div>
+                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.type')}</span><span className="font-semibold capitalize text-gray-800">{wizardType}</span></div>
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">ID</span><span className=" text-gray-800">{wizardData.id || wizardData.original_id}</span></div>
-                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">Name</span><span className="text-gray-800">{wizardData.name}</span></div>
-                      {wizardData.description && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">Description</span><span className="text-gray-700">{wizardData.description}</span></div>}
-                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">Domain</span><span className="text-gray-800">{wizardData.domain}</span></div>
-                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">Capacity</span><span className="text-gray-800">{wizardData.capacity} slot{wizardData.capacity !== 1 ? 's' : ''}</span></div>
+                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.name')}</span><span className="text-gray-800">{wizardData.name}</span></div>
+                      {wizardData.description && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.description')}</span><span className="text-gray-700">{wizardData.description}</span></div>}
+                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.domain')}</span><span className="text-gray-800">{wizardData.domain}</span></div>
+                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.capacity')}</span><span className="text-gray-800">{t('agentManager.slotCount', { count: wizardData.capacity })}</span></div>
                       {wizardType === 'custom' && wizardData.tools.length > 0 && (
                         <div className="flex gap-2">
-                          <span className="text-gray-400 w-24 flex-shrink-0">Tools</span>
+                          <span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.tools')}</span>
                           <div className="flex flex-wrap gap-1">
                             {wizardData.tools.map(t => <span key={t} className="text-[11px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">{t}</span>)}
                           </div>
                         </div>
                       )}
                       {wizardType === 'remote' && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">URL</span><span className=" text-gray-700 break-all">{wizardData.agent_url}</span></div>}
-                      {wizardType === 'clone' && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">Source</span><span className=" text-gray-800">{wizardData.original_id}</span></div>}
+                      {wizardType === 'clone' && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.source')}</span><span className=" text-gray-800">{wizardData.original_id}</span></div>}
                       {wizardType === 'custom' && wizardData.system_prompt && (
                         <div className="flex gap-2 flex-col">
-                          <span className="text-gray-400">System Prompt</span>
+                          <span className="text-gray-400">{t('agentManager.systemPrompt')}</span>
                           <p className="text-gray-700 text-xs bg-white border border-gray-200 rounded-lg p-2 whitespace-pre-wrap max-h-24 overflow-y-auto">{wizardData.system_prompt}</p>
                         </div>
                       )}
@@ -971,7 +953,7 @@ const AgentManager = () => {
                   onClick={wizardStep === 1 ? closeWizard : wizardBack}
                   className="flex items-center gap-1.5 px-4 py-2 text-sm text-gray-500 hover:text-gray-700 font-medium"
                 >
-                  {wizardStep === 1 ? 'Cancel' : <><ChevronLeft className="w-4 h-4" />Back</>}
+                  {wizardStep === 1 ? 'Cancel' : <><ChevronLeft className="w-4 h-4" />{t('agentManager.back')}</>}
                 </button>
                 <button
                   type="button"
@@ -990,12 +972,12 @@ const AgentManager = () => {
                   {isLastStep
                     ? wizardType === 'creator'
                       ? creatorDone
-                        ? 'Close'
+                        ? t('common.close')
                         : creatorStreaming
-                          ? <><RefreshCw className="w-4 h-4 animate-spin" />Creating…</>
-                          : <><Sparkles className="w-4 h-4" />Create Agent</>
-                      : 'Create Agent'
-                    : <>Next<ChevronRight className="w-4 h-4" /></>
+                          ? <><RefreshCw className="w-4 h-4 animate-spin" />{t('agentManager.creating')}</>
+                          : <><Sparkles className="w-4 h-4" />{t('agentManager.createAgent')}</>
+                      : t('agentManager.createAgent')
+                    : <>{t('common.next')}<ChevronRight className="w-4 h-4" /></>
                   }
                 </button>
               </div>
@@ -1010,29 +992,91 @@ const AgentManager = () => {
           <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl">
             <h3 className="text-xl font-bold mb-4 flex items-center">
                 <Play className="w-5 h-5 mr-2 text-indigo-600" />
-                Schedule Task on Node
+                {t('agentManager.scheduleTaskOnNode')}
             </h3>
             <form onSubmit={handleAssign}>
               <div className="mb-6">
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Select Target Task</label>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{t('agentManager.selectTargetTask')}</label>
                 <select
                   className="w-full border border-gray-300 rounded-md px-3 py-3 text-sm focus:ring-2 focus:ring-indigo-500"
                   value={assignData.task_id}
                   onChange={(e) => setAssignData({ ...assignData, task_id: e.target.value })}
                   required
                 >
-                  <option value="">-- Choose Task --</option>
+                  <option value="">{t('agentManager.chooseTask')}</option>
                   {tasks.filter(t => t.agent_state !== 'running').map(t => (
                     <option key={t.id} value={t.id}>{t.title} ({t.id.slice(0,8)})</option>
                   ))}
                 </select>
               </div>
               <div className="flex justify-end space-x-3">
-                <button type="button" onClick={() => setShowAssignModal(false)} className="px-4 py-2 text-sm text-gray-500">Cancel</button>
-                <button type="submit" disabled={!assignData.task_id} className="bg-indigo-600 text-white px-6 py-2 rounded-md font-bold shadow-md disabled:opacity-50">Start Execution</button>
+                <button type="button" onClick={() => setShowAssignModal(false)} className="px-4 py-2 text-sm text-gray-500">{t('agentManager.cancel')}</button>
+                <button type="submit" disabled={!assignData.task_id} className="bg-indigo-600 text-white px-6 py-2 rounded-md font-bold shadow-md disabled:opacity-50">{t('agentManager.startExecution')}</button>
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Import an agent that already lives in its own repository */}
+      {showImportModal && (
+        <ImportAgentModal
+          workspace={selectedWorkspace}
+          onClose={() => setShowImportModal(false)}
+          onDone={() => fetchData()}
+        />
+      )}
+    </PageContainer>
+  );
+};
+
+/**
+ * Readiness strip for an agent imported from a repository.
+ *
+ * Renders nothing for ordinary agents. For an imported one it states, on the
+ * card itself, whether the agent can run — and when it cannot, exactly what is
+ * missing. That is the whole point of registering an unready agent instead of
+ * refusing the import: the to-do list has to live where the agent is.
+ */
+const ImportedAgentStatus = ({ agent }) => {
+  const { t } = useI18n();
+  if (!agent.remote) return null;
+  const readiness = agent.remote.readiness || {};
+  const blocking = readiness.blocking || [];
+  const ready = !!readiness.runnable;
+
+  return (
+    <div
+      className={`mb-3 rounded-lg border px-2.5 py-2 ${
+        ready ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-200'
+      }`}
+    >
+      <div className="flex items-center gap-1.5">
+        {ready ? (
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+        ) : (
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+        )}
+        <span
+          className={`text-[10px] uppercase tracking-wider font-bold ${
+            ready ? 'text-emerald-700' : 'text-amber-700'
+          }`}
+        >
+          {t('agentManager.importedAgent')} · {ready ? t('agentManager.ready') : t('agentManager.needsSetup')}
+        </span>
+      </div>
+      {!ready && blocking.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {blocking.map((c) => (
+            <li key={c.id} className="text-[11px] text-amber-900 leading-snug">
+              <span className="font-semibold">{c.label}:</span> {c.detail}
+            </li>
+          ))}
+        </ul>
+      )}
+      {agent.remote.url && (
+        <div className="text-[10px] text-gray-500 truncate mt-1" title={agent.remote.url}>
+          {agent.remote.url}
         </div>
       )}
     </div>

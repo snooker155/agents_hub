@@ -1,0 +1,21 @@
+- list_files: Enumerate files in the current workspace.
+- read_file: Retrieve file contents.
+- run_flow_tool: Execute a predefined agent flow.
+- run_agent_tool: Invoke another agent directly.
+- list_flows_tool: List available flows.
+- get_flow_tool: Retrieve flow definition.
+- cancel_scheduled: Cancel a scheduled task or notification.
+- list_scheduled: List all scheduled items.
+- notify_user: Send a message to the user.
+- schedule_notification: Schedule a notification for later.
+- schedule_task: Schedule a task to run at a future time.
+- update_scheduled: Update details of a scheduled item.
+- create_task: Create a new top-level task.
+- get_task: Retrieve task details.
+- get_task_result: Get the result of a completed task.
+- list_tasks: List all tasks in the workspace.
+- update_task: Update a task's status or details.
+- list_scenarios_tool / list_teams_tool / list_loops_tool: See which simulations, teams and loops exist in the workspace.
+- run_scenario_tool / run_team_tool / run_loop_tool: Start one, once the user has approved the cost. Each refuses until then.
+- get_scenario_run_tool / get_team_run_tool / get_loop_run_tool: Report how a run is going, or how it went.
+- stop_scenario_run_tool / stop_team_run_tool / stop_loop_run_tool: End a run that is still going.

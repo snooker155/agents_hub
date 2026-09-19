@@ -1,16 +1,29 @@
 """
 Agent-related API routes.
-"""
-from fastapi import APIRouter, HTTPException
-from typing import List, Optional
-from pathlib import Path
 
-from agents import registry, run_manager
+Includes the agent's own definition chat (``/{agent_id}/definition/chat``),
+where the Agent Creator edits an agent's instructions, capabilities and usage in
+place while the user watches the files change beside the conversation.
+"""
+import asyncio
+import json
+import re
+import dataclasses
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from typing import Any, Dict, List, Optional
+from pathlib import Path
+from pydantic import BaseModel
+
+from agents import registry
+from managers import run_manager
 from agents.agent_factory import get_factory
 from agents import prompt_assembly
 from tools.registry import get_all_tools
-from models import AgentCreateCustom, AgentMemoryUpdate, AgentToolsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentSkillCreate, AgentSharingUpdate
-from workspace import SYSTEM_AGENT_IDS, get_workspace_metadata, update_workspace_metadata, create_workspace_folder
+from agents.capability_guard import CapabilityViolation
+from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate
+from workspace import system_agent_ids, get_workspace_metadata, update_workspace_metadata, create_workspace_folder
 
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -43,7 +56,7 @@ def _agent_visible_in_workspace(agent: dict, workspace: Optional[str]) -> bool:
     - Agents with no owner_workspace (legacy / globally available) are visible
       everywhere.
     """
-    if agent.get("system") or agent.get("id") in SYSTEM_AGENT_IDS:
+    if agent.get("system") or agent.get("id") in system_agent_ids():
         return True
     if agent.get("shared"):
         return True
@@ -51,6 +64,29 @@ def _agent_visible_in_workspace(agent: dict, workspace: Optional[str]) -> bool:
     if not owner:
         return True
     return owner == (workspace or "default")
+
+
+def _apply_workspace_memory(agent: dict, workspace: str, mem_overrides: dict) -> None:
+    """Patch an agent dict's memory fields with the workspace-effective assignment.
+
+    The record-level assignment applies only in the agent's home workspace
+    (owner_workspace, or 'default'); elsewhere the workspace metadata override
+    applies — absent means no shared memory there.
+    """
+    home = agent.get("owner_workspace") or "default"
+    if workspace == home:
+        return
+    entry = mem_overrides.get(agent.get("id"))
+    if isinstance(entry, dict):
+        agent["memory_type"] = entry.get("memory_type") or "none"
+        agent["memory_data"] = entry.get("memory_data")
+    else:
+        agent["memory_type"] = "none"
+        agent["memory_data"] = None
+
+
+def _workspace_memory_overrides(workspace: str) -> dict:
+    return get_workspace_metadata(workspace).get("agent_memory_overrides") or {}
 
 
 @router.get("")
@@ -72,7 +108,7 @@ async def list_agents(workspace: Optional[str] = None):
             all_agents.append(fa)
 
     # Filter by workspace
-    from workspace import SYSTEM_AGENT_IDS as _SYS_IDS
+    _SYS_IDS = system_agent_ids()
 
     # Workspace-ownership visibility: a workspace-owned agent that is not shared
     # only appears in its owning workspace. Applies to every workspace,
@@ -97,9 +133,13 @@ async def list_agents(workspace: Optional[str] = None):
         all_agents = [a for a in all_agents if not a.get("default_workspace_only", False)]
 
     # Annotate each agent with whether it has a running node in the requested workspace
-    # and flag system agents that cannot be removed.
-    from agents.node_manager import get_running_nodes_for_agent
+    # and flag system agents that cannot be removed. Memory assignments are
+    # per-workspace, so patch them to the requesting workspace's view.
+    from managers.node_manager import get_running_nodes_for_agent
+    _ws = (workspace or "default").strip() or "default"
+    _mem_overrides = _workspace_memory_overrides(_ws)
     for agent in all_agents:
+        _apply_workspace_memory(agent, _ws, _mem_overrides)
         running_nodes = get_running_nodes_for_agent(agent["id"])
         if workspace and workspace != "default":
             running_nodes = [n for n in running_nodes if n.get("workspace") == workspace]
@@ -120,8 +160,13 @@ async def list_tools():
     def tool_spec_to_dict(spec):
         return {
             "name": spec.id,
+            "label": spec.name,
+            "category": spec.category,
             "description": spec.description,
-            "args": {p["name"]: p["type"] for p in spec.parameters}
+            "args": {p["name"]: p["type"] for p in spec.parameters},
+            # Security capabilities this tool grants — the agent editor uses
+            # these to explain a blocked combination (see tools/capabilities.py).
+            "capabilities": sorted(spec._grants),
         }
     
     registry_tools_dicts = [tool_spec_to_dict(t) for t in all_registry_tools]
@@ -134,6 +179,21 @@ async def list_tools():
     }
 
 
+@router.post("/capability-check")
+async def capability_check(data: AgentToolsUpdate):
+    """Classify a tool set and report any blocked capability combination.
+
+    Lets the agent editor show the violation *while* the tools are being picked,
+    with the offending capabilities and the tools that granted them named,
+    instead of only failing on save with a generic error.
+    """
+    from tools.capabilities import explain
+    from agents.capability_guard import guard_mode
+    result = explain(list(data.tools))
+    result["mode"] = guard_mode()
+    return result
+
+
 @router.get("/{agent_id}")
 async def get_agent_details(agent_id: str, workspace: Optional[str] = None):
     from workspace import is_system_agent
@@ -143,6 +203,8 @@ async def get_agent_details(agent_id: str, workspace: Optional[str] = None):
     data = spec.to_dict()
     data["system"] = is_system_agent(agent_id)
     data["is_default_chat_agent"] = agent_id == _get_workspace_default_chat_agent(workspace)
+    ws = (workspace or "default").strip() or "default"
+    _apply_workspace_memory(data, ws, _workspace_memory_overrides(ws))
     return data
 
 
@@ -160,16 +222,19 @@ async def get_agent_definition(agent_id: str):
 
     factory = get_factory()
     defs_dir = factory.definitions_dir
-    folder = prompt_assembly.agent_dir(agent_id, definitions_dir=defs_dir)
+    # The prompt may live in a shared definition folder (definition_id) rather
+    # than under the agent's own id.
+    def_id = spec.def_id()
+    folder = prompt_assembly.agent_dir(def_id, definitions_dir=defs_dir)
 
-    instructions = prompt_assembly.read_instructions(agent_id, definitions_dir=defs_dir)
-    capabilities = prompt_assembly.read_capabilities(agent_id, definitions_dir=defs_dir)
-    usage = prompt_assembly.read_usage(agent_id, definitions_dir=defs_dir)
+    instructions = prompt_assembly.read_instructions(def_id, definitions_dir=defs_dir)
+    capabilities = prompt_assembly.read_capabilities(def_id, definitions_dir=defs_dir)
+    usage = prompt_assembly.read_usage(def_id, definitions_dir=defs_dir)
 
     # Assembled prompt only when instructions exist
     assembled = ""
     if instructions:
-        assembled = prompt_assembly.assemble_prompt(agent_id, definitions_dir=defs_dir)
+        assembled = prompt_assembly.assemble_prompt(def_id, definitions_dir=defs_dir)
 
     return {
         "agent_id": spec.id,
@@ -182,7 +247,7 @@ async def get_agent_definition(agent_id: str):
     }
 
 
-class AgentInstructionsUpdate(__import__("pydantic").BaseModel):
+class AgentInstructionsUpdate(BaseModel):
     instructions: Optional[str] = None
     capabilities: Optional[str] = None
     usage: Optional[str] = None
@@ -201,26 +266,40 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
 
     factory = get_factory()
     defs_dir = factory.definitions_dir
+    # Edits target the shared definition folder; when this agent shares its
+    # definition with others, the change applies to all of them (expected).
+    def_id = spec.def_id()
 
     if data.instructions is not None:
         if data.instructions.strip():
-            prompt_assembly.write_instructions(agent_id, data.instructions, definitions_dir=defs_dir)
+            prompt_assembly.write_instructions(def_id, data.instructions, definitions_dir=defs_dir)
         else:
             raise HTTPException(status_code=400, detail="instructions.md cannot be empty")
     if data.capabilities is not None:
-        path = prompt_assembly.agent_dir(agent_id, defs_dir) / prompt_assembly.CAPABILITIES_FILE
+        path = prompt_assembly.agent_dir(def_id, defs_dir) / prompt_assembly.CAPABILITIES_FILE
         if data.capabilities.strip():
-            prompt_assembly.write_capabilities(agent_id, data.capabilities, definitions_dir=defs_dir)
+            prompt_assembly.write_capabilities(def_id, data.capabilities, definitions_dir=defs_dir)
         elif path.exists():
             path.unlink()
     if data.usage is not None:
-        path = prompt_assembly.agent_dir(agent_id, defs_dir) / prompt_assembly.USAGE_FILE
+        path = prompt_assembly.agent_dir(def_id, defs_dir) / prompt_assembly.USAGE_FILE
         if data.usage.strip():
-            prompt_assembly.write_usage(agent_id, data.usage, definitions_dir=defs_dir)
+            prompt_assembly.write_usage(def_id, data.usage, definitions_dir=defs_dir)
         elif path.exists():
             path.unlink()
 
     return await get_agent_definition(agent_id)
+
+
+@router.put("/{agent_id}/description")
+async def update_agent_description(agent_id: str, data: AgentDescriptionUpdate):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    new_spec = dataclasses.replace(spec, description=data.description.strip())
+    registry.add_agent(new_spec)
+    return {"description": new_spec.description}
 
 
 @router.get("/{agent_id}/workspace-capacities")
@@ -240,24 +319,33 @@ async def get_agent_workspace_capacities(agent_id: str):
 
 
 @router.get("/{agent_id}/history")
-async def get_agent_history(agent_id: str):
+async def get_agent_history(agent_id: str, workspace: Optional[str] = None):
     runs = run_manager.load_runs()
     agent_runs = [r for r in runs if r.get("agent_id") == agent_id]
+    # Scope to the active workspace; the default workspace sees every workspace.
+    if workspace and workspace != "default":
+        agent_runs = [r for r in agent_runs if r.get("workspace") == workspace]
     # Sort by started_at desc
     agent_runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return agent_runs
 
 
 @router.get("/{agent_id}/logs")
-async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: int = 100):
+async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: int = 100,
+                         workspace: Optional[str] = None):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    from agents import node_manager
+    from managers import node_manager
+
+    # Scope to the active workspace; the default workspace sees every workspace.
+    ws_scoped = bool(workspace and workspace != "default")
 
     runs = run_manager.load_runs()
     agent_runs = [r for r in runs if r.get("agent_id") == agent_id]
+    if ws_scoped:
+        agent_runs = [r for r in agent_runs if r.get("workspace") == workspace]
     if node_id:
         agent_runs = [r for r in agent_runs if str(r.get("node_id") or "") == str(node_id)]
     agent_runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
@@ -269,6 +357,8 @@ async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: in
         r["log_exists"] = bool(lp and Path(lp).exists())
 
     nodes = [n for n in node_manager.list_nodes() if n.get("agent_id") == agent_id]
+    if ws_scoped:
+        nodes = [n for n in nodes if n.get("workspace") == workspace]
     if node_id:
         nodes = [n for n in nodes if str(n.get("node_id") or "") == str(node_id)]
     nodes.sort(key=lambda n: n.get("started_at") or "", reverse=True)
@@ -292,80 +382,103 @@ async def delete_agent(agent_id: str):
             status_code=403,
             detail=f"Agent '{agent_id}' is a system agent and cannot be deleted.",
         )
+    # Resolve the definition folder before removing the record so we can decide
+    # whether deleting it would orphan sibling records sharing the same folder.
+    spec = registry.get_agent(agent_id)
+    def_id = spec.def_id() if spec else agent_id
+
     found = registry.remove_agent(agent_id)
     if not found:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Only delete the shared definition folder when no remaining record uses it.
+    # This prevents one workspace's delete from breaking another's agent.
     factory = get_factory()
-    prompt_assembly.delete_definition(agent_id, definitions_dir=factory.definitions_dir)
+    still_in_use = any(s.def_id() == def_id for s in registry.list_agents())
+    if not still_in_use:
+        prompt_assembly.delete_definition(def_id, definitions_dir=factory.definitions_dir)
+
+    # An imported agent also owns a clone under the state root; deleting the
+    # record without it would leave the repository behind forever.
+    if spec is not None and spec.is_remote():
+        from agents.importer import cleanup as cleanup_import
+        cleanup_import(agent_id)
     return {"message": f"Agent {agent_id} deleted"}
 
 
 @router.post("/{agent_id}/memory")
 async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
+    """Set the agent's memory assignment for a workspace.
+
+    Memory is per-workspace: in the agent's home workspace the assignment is
+    stored on the record; in any other workspace it is stored as that
+    workspace's metadata override, so instances of a shared agent stay
+    independent across workspaces.
+    """
+    from memory.binding import home_workspace
+
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=data.memory_type,
-        memory_data=data.memory_data,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-    )
-    registry.add_agent(new_spec)
-    return new_spec.to_dict()
+    memory_data = data.memory_data
+    if data.memory_type == "shared":
+        # Accept a single pool id or a list (primary first); normalize to a
+        # deduped list, collapsed back to a plain string for a single pool so
+        # legacy single-pool records keep their shape.
+        raw = memory_data if isinstance(memory_data, (list, tuple)) else [memory_data]
+        pools = []
+        for p in raw:
+            pid = str(p or "").strip()
+            if pid and pid not in pools:
+                pools.append(pid)
+        if not pools:
+            raise HTTPException(status_code=400, detail="At least one memory pool id is required for shared memory")
+        memory_data = pools[0] if len(pools) == 1 else pools
+
+    ws = (data.workspace or "default").strip() or "default"
+    if ws == home_workspace(spec):
+        new_spec = dataclasses.replace(spec, memory_type=data.memory_type, memory_data=memory_data)
+        registry.add_agent(new_spec)
+        return new_spec.to_dict()
+
+    create_workspace_folder(ws)
+    overrides = dict(_workspace_memory_overrides(ws))
+    if data.memory_type and data.memory_type != "none":
+        overrides[agent_id] = {"memory_type": data.memory_type, "memory_data": memory_data}
+    else:
+        overrides.pop(agent_id, None)
+    update_workspace_metadata(ws, {"agent_memory_overrides": overrides})
+
+    result = spec.to_dict()
+    result["memory_type"] = data.memory_type
+    result["memory_data"] = memory_data if data.memory_type != "none" else None
+    return result
 
 
 @router.delete("/{agent_id}/memory")
-async def erase_agent_memory(agent_id: str):
+async def erase_agent_memory(agent_id: str, workspace: Optional[str] = None):
+    """Remove the agent's memory assignment for a workspace (see update)."""
+    from memory.binding import home_workspace
+
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type="none",
-        memory_data=None,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-    )
-    registry.add_agent(new_spec)
-    return new_spec.to_dict()
+    ws = (workspace or "default").strip() or "default"
+    if ws == home_workspace(spec):
+        new_spec = dataclasses.replace(spec, memory_type="none", memory_data=None)
+        registry.add_agent(new_spec)
+        return new_spec.to_dict()
+
+    overrides = dict(_workspace_memory_overrides(ws))
+    overrides.pop(agent_id, None)
+    update_workspace_metadata(ws, {"agent_memory_overrides": overrides})
+
+    result = spec.to_dict()
+    result["memory_type"] = "none"
+    result["memory_data"] = None
+    return result
 
 
 @router.post("/{agent_id}/skills-config")
@@ -377,6 +490,7 @@ async def update_agent_skills_config(agent_id: str, data: AgentSkillsConfigUpdat
 
     new_spec = registry.AgentSpec(
         id=spec.id,
+        definition_id=spec.definition_id,
         name=spec.name,
         type=spec.type,
         entrypoint=spec.entrypoint,
@@ -399,9 +513,126 @@ async def update_agent_skills_config(agent_id: str, data: AgentSkillsConfigUpdat
         api_key=spec.api_key,
         verbose=spec.verbose,
         streaming=spec.streaming,
+        response_format=spec.response_format,
+        clarify_gate=spec.clarify_gate,
+        allow_self_delegation=spec.allow_self_delegation,
     )
     registry.add_agent(new_spec)
     return new_spec.to_dict()
+
+
+@router.get("/{agent_id}/episodic-config")
+async def get_agent_episodic_config(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    # Tri-state setting plus the effective decision for this agent's provider.
+    from agents.agent_factory import resolve_episodic_write, _factory
+    try:
+        provider, _m, _u, _k = _factory._resolve_model_config(spec.to_dict(), None)
+    except Exception:
+        provider = spec.provider
+    return {
+        "episodic_write_enabled": spec.episodic_write_enabled,  # null = auto
+        "effective": resolve_episodic_write(spec.episodic_write_enabled, provider),
+        "provider": provider,
+    }
+
+
+@router.post("/{agent_id}/episodic-config")
+async def update_agent_episodic_config(agent_id: str, data: AgentEpisodicConfigUpdate):
+    """Set the episodic write tool (record_episode) mode: auto (null) / on / off."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    new_spec = dataclasses.replace(spec, episodic_write_enabled=data.episodic_write_enabled)
+    registry.add_agent(new_spec)
+    from agents.agent_factory import resolve_episodic_write, _factory
+    try:
+        provider, _m, _u, _k = _factory._resolve_model_config(new_spec.to_dict(), None)
+    except Exception:
+        provider = new_spec.provider
+    return {
+        "episodic_write_enabled": new_spec.episodic_write_enabled,
+        "effective": resolve_episodic_write(new_spec.episodic_write_enabled, provider),
+        "provider": provider,
+    }
+
+
+@router.get("/{agent_id}/response-format")
+async def get_agent_response_format(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"response_format": spec.response_format or "none"}
+
+
+@router.post("/{agent_id}/response-format")
+async def update_agent_response_format(agent_id: str, data: AgentResponseFormatUpdate):
+    """Set the structured response format the agent may emit (none/buttons/telegram).
+
+    When not "none", agent_factory injects a system-prompt snippet teaching the
+    <<<ui>>> block convention so the agent can produce buttons / a Telegram
+    inline keyboard.
+    """
+    from agents.agent_response import RESPONSE_FORMAT_CHOICES
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    fmt = data.response_format or "none"
+    if fmt not in RESPONSE_FORMAT_CHOICES:
+        raise HTTPException(status_code=400, detail=f"Invalid response_format '{fmt}'")
+    new_spec = dataclasses.replace(spec, response_format=fmt)
+    registry.add_agent(new_spec)
+    return {"response_format": new_spec.response_format}
+
+
+@router.get("/{agent_id}/clarify-gate")
+async def get_agent_clarify_gate(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"clarify_gate": bool(spec.clarify_gate)}
+
+
+@router.post("/{agent_id}/clarify-gate")
+async def update_agent_clarify_gate(agent_id: str, data: AgentClarifyGateUpdate):
+    """Toggle the chat clarification gate.
+
+    When enabled, agent_factory injects a system-prompt snippet telling the agent
+    to gather missing requirements (ask concise questions and stop) before
+    executing, rather than acting on assumptions.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    new_spec = dataclasses.replace(spec, clarify_gate=bool(data.clarify_gate))
+    registry.add_agent(new_spec)
+    return {"clarify_gate": bool(new_spec.clarify_gate)}
+
+
+@router.get("/{agent_id}/self-delegation")
+async def get_agent_self_delegation(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"allow_self_delegation": bool(spec.allow_self_delegation)}
+
+
+@router.post("/{agent_id}/self-delegation")
+async def update_agent_self_delegation(agent_id: str, data: AgentSelfDelegationUpdate):
+    """Toggle whether the agent may delegate to itself.
+
+    When enabled, the agent may target its own id in run_agent_tool (and
+    assign_agent_tool); the self-block in tools._delegation_blocked is lifted for
+    this agent. Off by default because a self-run recurses the same agent.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    new_spec = dataclasses.replace(spec, allow_self_delegation=bool(data.allow_self_delegation))
+    registry.add_agent(new_spec)
+    return {"allow_self_delegation": bool(new_spec.allow_self_delegation)}
 
 
 @router.get("/{agent_id}/skills")
@@ -418,6 +649,8 @@ async def list_agent_skills(agent_id: str, workspace: str):
             "steps": p.steps,
             "tags": p.tags,
             "source": p.source,
+            "shared": bool(p.shared),
+            "origin_skill_id": p.origin_skill_id,
             "success_rate": p.success_rate,
             "use_count": p.use_count,
             "created_at": p.created_at.isoformat(),
@@ -482,31 +715,44 @@ async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=list(data.tools),
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        reasoning=spec.reasoning,
-    )
+    # dataclasses.replace rather than a field-by-field rebuild: the rebuild
+    # silently dropped every field added to AgentSpec after it was written
+    # (capability_override, delegates, ...), which for the capability guard
+    # would mean editing a grandfathered agent's tools revoked its override.
+    new_spec = dataclasses.replace(spec, tools=list(data.tools))
+    try:
+        registry.add_agent(new_spec)
+    except CapabilityViolation as e:
+        # 409, not 400: the request is well-formed, the resulting *state* is
+        # refused. Carries the structured violation so the editor can name the
+        # offending capabilities and the tools that granted them.
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "capability_violation", **e.violation.to_dict()},
+        )
+    return new_spec.to_dict()
+
+
+@router.get("/{agent_id}/delegates")
+async def get_agent_delegates(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"delegates": list(spec.delegates or [])}
+
+
+@router.post("/{agent_id}/delegates")
+async def update_agent_delegates(agent_id: str, data: AgentDelegatesUpdate):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    # Normalize: strip, dedupe, drop blanks. Empty list = no restriction.
+    cleaned: list[str] = []
+    for d in data.delegates:
+        did = str(d).strip()
+        if did and did not in cleaned:
+            cleaned.append(did)
+    new_spec = dataclasses.replace(spec, delegates=cleaned)
     registry.add_agent(new_spec)
     return new_spec.to_dict()
 
@@ -516,14 +762,8 @@ async def get_agent_reasoning(agent_id: str):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    r = spec.reasoning or {}
-    tools = set(spec.tools or [])
-    return {
-        "think_enabled": bool(r.get("think_enabled", "think" in tools)),
-        "think_mode": r.get("think_mode", "standard"),
-        "plan_enabled": bool(r.get("plan_enabled", "plan" in tools)),
-        "plan_format": r.get("plan_format", "structured"),
-    }
+    from reasoning import resolve_reasoning
+    return resolve_reasoning(spec.reasoning, spec.tools)
 
 
 @router.post("/{agent_id}/reasoning")
@@ -537,6 +777,8 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
         current["think_enabled"] = data.think_enabled
     if data.think_mode is not None:
         current["think_mode"] = data.think_mode
+    if data.thinking_level is not None:
+        current["thinking_level"] = data.thinking_level
     if data.plan_enabled is not None:
         current["plan_enabled"] = data.plan_enabled
     if data.plan_format is not None:
@@ -544,6 +786,7 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
 
     new_spec = registry.AgentSpec(
         id=spec.id,
+        definition_id=spec.definition_id,
         name=spec.name,
         type=spec.type,
         entrypoint=spec.entrypoint,
@@ -572,15 +815,13 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
         is_default_chat_agent=spec.is_default_chat_agent,
         skills_enabled=spec.skills_enabled,
         reasoning=current,
+        response_format=spec.response_format,
+        clarify_gate=spec.clarify_gate,
+        allow_self_delegation=spec.allow_self_delegation,
     )
     registry.add_agent(new_spec)
-    _tools = set(spec.tools or [])
-    return {
-        "think_enabled": bool(current.get("think_enabled", "think" in _tools)),
-        "think_mode": current.get("think_mode", "standard"),
-        "plan_enabled": bool(current.get("plan_enabled", "plan" in _tools)),
-        "plan_format": current.get("plan_format", "structured"),
-    }
+    from reasoning import resolve_reasoning
+    return resolve_reasoning(current, spec.tools)
 
 
 @router.get("/{agent_id}/model")
@@ -647,6 +888,7 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
 
     new_spec = registry.AgentSpec(
         id=spec.id,
+        definition_id=spec.definition_id,
         name=spec.name,
         type=spec.type,
         entrypoint=spec.entrypoint,
@@ -668,6 +910,9 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
         api_key=new_api_key,
         verbose=spec.verbose,
         streaming=spec.streaming,
+        response_format=spec.response_format,
+        clarify_gate=spec.clarify_gate,
+        allow_self_delegation=spec.allow_self_delegation,
     )
     registry.add_agent(new_spec)
     return {
@@ -698,7 +943,7 @@ async def set_default_chat_agent(agent_id: str, workspace: Optional[str] = None)
     ws_name = _workspace_for_chat_default(workspace)
     metadata = get_workspace_metadata(ws_name)
     allowed = metadata.get("allowed_agents")
-    if allowed is not None and agent_id not in allowed and agent_id not in SYSTEM_AGENT_IDS:
+    if allowed is not None and agent_id not in allowed and agent_id not in system_agent_ids():
         raise HTTPException(
             status_code=400,
             detail=f"Agent '{agent_id}' is not available in workspace '{ws_name}'",
@@ -727,13 +972,23 @@ async def create_custom_agent(data: AgentCreateCustom):
     if registry.get_agent(data.id) is not None:
         raise HTTPException(status_code=400, detail=f"Agent '{data.id}' already exists")
 
-    if not data.system_prompt or not data.system_prompt.strip():
-        raise HTTPException(status_code=400, detail="system_prompt is required")
-
     factory = get_factory()
-    prompt_assembly.write_instructions(
-        data.id, data.system_prompt, definitions_dir=factory.definitions_dir
-    )
+
+    # When definition_id is supplied, reuse an existing shared definition folder
+    # instead of authoring a new one (system_prompt is ignored).
+    definition_id = (data.definition_id or "").strip() or None
+    if definition_id:
+        if not prompt_assembly.has_definition(definition_id, definitions_dir=factory.definitions_dir):
+            raise HTTPException(
+                status_code=400,
+                detail=f"definition '{definition_id}' does not exist",
+            )
+    else:
+        if not data.system_prompt or not data.system_prompt.strip():
+            raise HTTPException(status_code=400, detail="system_prompt is required")
+        prompt_assembly.write_instructions(
+            data.id, data.system_prompt, definitions_dir=factory.definitions_dir
+        )
 
     # Agents created inside a (non-default) workspace are owned by — and only
     # visible in — that workspace until they are explicitly shared.
@@ -743,6 +998,7 @@ async def create_custom_agent(data: AgentCreateCustom):
 
     spec = registry.AgentSpec(
         id=data.id,
+        definition_id=definition_id,
         name=data.name,
         description=data.description,
         domain=data.domain,
@@ -754,6 +1010,11 @@ async def create_custom_agent(data: AgentCreateCustom):
     )
     try:
         registry.add_agent(spec)
+    except CapabilityViolation as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "capability_violation", **e.violation.to_dict()},
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -774,6 +1035,68 @@ async def create_custom_agent(data: AgentCreateCustom):
     return spec.to_dict()
 
 
+@router.post("/{agent_id}/clone-to-workspace")
+async def clone_agent_to_workspace(agent_id: str, data: AgentCloneToWorkspace):
+    """Create a workspace-scoped copy of an agent that shares its definition.
+
+    The new record copies all of the source agent's settings (model, memory,
+    tools, etc.) but is bound to ``data.workspace`` via ``owner_workspace`` and
+    points at the same definition folder via ``definition_id`` — so editing the
+    prompt is shared, while model/memory settings can diverge per workspace.
+    """
+    source = registry.get_agent(agent_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    workspace = (data.workspace or "").strip()
+    if not workspace:
+        raise HTTPException(status_code=400, detail="workspace is required")
+
+    def_id = source.def_id()
+
+    new_id = (data.new_id or "").strip()
+    if not new_id:
+        new_id = f"{def_id}@{workspace}"
+    # Keep ids filesystem/registry friendly, matching the create wizard's slug style.
+    new_id = re.sub(r"\s+", "_", new_id).lower()
+
+    if registry.get_agent(new_id) is not None:
+        raise HTTPException(status_code=400, detail=f"Agent '{new_id}' already exists")
+
+    owner_workspace = workspace if workspace != "default" else None
+
+    # Copy every setting from the source, overriding only identity/ownership.
+    # definition_id is set explicitly so the new record reuses the shared folder
+    # (no write_instructions). shared=False keeps the copy scoped to its workspace.
+    new_spec = dataclasses.replace(
+        source,
+        id=new_id,
+        definition_id=def_id,
+        owner_workspace=owner_workspace,
+        shared=False,
+        is_default_chat_agent=False,
+    )
+    try:
+        registry.add_agent(new_spec)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Make the copy visible in its workspace immediately.
+    if owner_workspace:
+        try:
+            create_workspace_folder(owner_workspace)
+            metadata = get_workspace_metadata(owner_workspace)
+            allowed = list(metadata.get("allowed_agents") or [])
+            if new_id not in allowed:
+                allowed.append(new_id)
+                update_workspace_metadata(owner_workspace, {"allowed_agents": allowed})
+        except Exception:
+            # Best-effort; the record itself is created and owner_workspace is set.
+            pass
+
+    return new_spec.to_dict()
+
+
 @router.post("/{agent_id}/sharing")
 async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
     """Expose or un-expose an agent across workspaces.
@@ -788,6 +1111,7 @@ async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
 
     new_spec = registry.AgentSpec(
         id=spec.id,
+        definition_id=spec.definition_id,
         name=spec.name,
         type=spec.type,
         entrypoint=spec.entrypoint,
@@ -816,6 +1140,240 @@ async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
         is_default_chat_agent=spec.is_default_chat_agent,
         skills_enabled=spec.skills_enabled,
         reasoning=spec.reasoning,
+        response_format=spec.response_format,
+        clarify_gate=spec.clarify_gate,
+        allow_self_delegation=spec.allow_self_delegation,
     )
     registry.add_agent(new_spec)
     return new_spec.to_dict()
+
+
+# ── The definition chat ──────────────────────────────────────────────────────
+#
+# Same shape as the loop, team, scenario and world build chats, with one
+# difference in kind: the entity under edit is an agent's own definition. That
+# makes the warning below load-bearing — an agent editing a *system* agent is
+# detaching it from the shipped seed, and the user should hear that before it
+# happens rather than discover it at the next upgrade.
+
+DEFINITION_AGENT_ID = "agent_creator"
+DEFINITION_CHAT_KIND = "agentdef"
+
+
+class DefinitionChatIn(BaseModel):
+    message: str = ""
+
+
+def _definition_state(agent_id: str) -> Dict[str, Any]:
+    """What the agent is editing: the record's editable fields plus the three
+    markdown files that become the system prompt."""
+    spec = registry.get_agent(agent_id)
+    if spec is None:
+        return {}
+    return {
+        "agent_id": spec.id,
+        "name": spec.name,
+        "description": spec.description,
+        "domain": spec.domain,
+        "system": spec.system,
+        "user_modified": spec.user_modified,
+        "tools": list(spec.tools or []),
+        "delegates": list(spec.delegates or []),
+        "provider": spec.provider,
+        "model": spec.model,
+        "temperature": spec.temperature,
+        "reasoning": dict(spec.reasoning or {}),
+        "skills_enabled": spec.skills_enabled,
+        "instructions": prompt_assembly.read_instructions(spec.def_id()),
+        "capabilities": prompt_assembly.read_capabilities(spec.def_id()),
+        "usage": prompt_assembly.read_usage(spec.def_id()),
+    }
+
+
+def _tool_catalog() -> List[Dict[str, str]]:
+    """Every tool that could be granted, with what it costs in capability terms.
+
+    The capability flags are in here because the guard will refuse a bad
+    combination at save time, and an agent that knows why beforehand can propose
+    a workable set instead of discovering the refusal.
+    """
+    return [
+        {"id": t.id, "name": t.name, "category": t.category,
+         "description": t.description,
+         "grants": ", ".join(sorted(t._grants)) or "nothing"}
+        for t in get_all_tools()
+    ]
+
+
+def _definition_chat_prompt(agent_id: str, history: List[dict], user_message: str) -> str:
+    """One turn's prompt: the agent under edit, the tools it could hold, the talk."""
+    from chat.entity_chat import transcript_block
+
+    state = _definition_state(agent_id)
+    parts = [
+        "You are editing ONE agent's definition in this platform. The user is "
+        "looking at its page: every change you make with modify_agent_tool "
+        "appears in the panels beside this chat.",
+        "",
+        f"Agent under edit: {state.get('name')} (agent_id: {agent_id})",
+        "",
+        "=== Current definition ===",
+        json.dumps(state, ensure_ascii=False, indent=2),
+        "",
+        "=== Tools that could be granted ===",
+        json.dumps(_tool_catalog(), ensure_ascii=False, indent=2),
+        "",
+        "Rules for this conversation:",
+        f"- Apply every change to agent_id '{agent_id}' with modify_agent_tool. "
+        "Never create a second agent unless the user explicitly asks for one.",
+        "- `system_prompt` APPENDS to instructions.md by default. For a rewrite "
+        "pass replace_system_prompt=true. Know which one you are doing and say so.",
+        "- instructions.md, capabilities.md and usage.md are all concatenated "
+        "into the system prompt. So capabilities.md must describe tools the "
+        "agent actually holds: a tool named there that it does not have is a "
+        "promise the runtime cannot keep, and the agent will try the call and "
+        "fail. If you change the tool list, update capabilities.md in the same "
+        "turn.",
+        "- Granting tools can be refused. An agent that can read private data, "
+        "ingest untrusted text AND send data outside is blocked outright. Check "
+        "the grants column above before proposing a set, and if the job really "
+        "needs all three, propose splitting it across two agents instead.",
+        "- When the user only asks a question, answer it without changing anything.",
+        "- Finish with one short paragraph: what you changed and what the agent "
+        "will now do differently.",
+    ]
+    if state.get("system") and not state.get("user_modified"):
+        parts.insert(4, (
+            "!! This is a SYSTEM agent. It ships with the product and is kept in "
+            "sync with what the product ships. The first edit marks it as the "
+            "operator's and it stops receiving those updates, permanently. Say "
+            "this plainly and get a clear yes before your first modify call in "
+            "this conversation. A question about the agent is not a yes."
+        ))
+    talk = transcript_block(history[:-1])
+    if talk:
+        parts += ["", "=== Conversation so far ===", talk]
+    parts += ["", "=== The user's latest message ===", user_message]
+    return "\n".join(parts)
+
+
+@router.get("/{agent_id}/definition/chat")
+async def get_definition_chat(agent_id: str):
+    """The definition chat for one agent: transcript plus the rich replay trace."""
+    from common.entity_chat_store import entity_chat_store
+
+    if registry.get_agent(agent_id) is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    chat_store = entity_chat_store()
+    return {
+        "messages": chat_store.get_messages(DEFINITION_CHAT_KIND, agent_id),
+        "trace": chat_store.get_trace(DEFINITION_CHAT_KIND, agent_id),
+        # What the session picker needs to reach this chat's history
+        # (routes/entity_chats.py); the browser never builds the key itself.
+        "chat_ref": {"kind": DEFINITION_CHAT_KIND, "id": agent_id},
+    }
+
+
+@router.delete("/{agent_id}/definition/chat")
+async def clear_definition_chat(agent_id: str):
+    """Clear the transcript and start a fresh session. The agent is untouched."""
+    from common.entity_chat_store import entity_chat_store
+
+    if registry.get_agent(agent_id) is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    epoch = entity_chat_store().clear(DEFINITION_CHAT_KIND, agent_id, new_session=True)
+    return {"cleared": True, "session_epoch": epoch}
+
+
+@router.post("/{agent_id}/definition/chat")
+async def chat_definition(agent_id: str, payload: DefinitionChatIn,
+                          workspace: Optional[str] = None):
+    """Run one turn of the agent definition chat (SSE).
+
+    Streams the editor's ``tool_*`` / ``thinking`` / ``token`` events, then an
+    ``agentdef`` event carrying the definition as it stands after the turn, the
+    final ``message`` and ``done``.
+    """
+    from chat.entity_chat import (
+        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
+        run_entity_chat_turn, spawn_detached, sse,
+    )
+    from common.bootstrap import ensure_system_agent
+
+    spec = registry.get_agent(agent_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if not ensure_system_agent(DEFINITION_AGENT_ID):
+        raise HTTPException(status_code=503,
+                            detail=f"The '{DEFINITION_AGENT_ID}' agent is not registered")
+    user_message = (payload.message or "").strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    before = _definition_state(agent_id)
+
+    def _summarize() -> str:
+        after = _definition_state(agent_id)
+        if not after:
+            return "The agent is gone."
+        if after == before:
+            return ""
+        bits = []
+        if after["instructions"] != before["instructions"]:
+            bits.append("rewrote its instructions")
+        if after["capabilities"] != before["capabilities"]:
+            bits.append("updated what it says it can do")
+        if after["usage"] != before["usage"]:
+            bits.append("updated when to use it")
+        if after["tools"] != before["tools"]:
+            was, now = len(before["tools"]), len(after["tools"])
+            bits.append(f"changed its tools ({was} → {now})")
+        if after["model"] != before["model"] or after["provider"] != before["provider"]:
+            bits.append("changed its model")
+        if after["description"] != before["description"]:
+            bits.append("rewrote its description")
+        return ("Done — " + ", ".join(bits) + ".") if bits else "Done — the agent was updated."
+
+    chat_spec = EntityChatSpec(
+        kind=DEFINITION_CHAT_KIND,
+        agent_id=DEFINITION_AGENT_ID,
+        title=f"{spec.name} · definition",
+        workspace=workspace,
+    )
+
+    async def run_turn(queue: asyncio.Queue):
+        from common.workspace_context import _workspace_ctx
+
+        if workspace:
+            _workspace_ctx.set(workspace)
+
+        await run_entity_chat_turn(
+            queue, chat_spec, agent_id, user_message,
+            lambda history: _definition_chat_prompt(agent_id, history, user_message),
+            summarize=_summarize,
+        )
+        after = registry.get_agent(agent_id)
+        if after:
+            await queue.put({"type": "agentdef", "agent": _definition_state(agent_id)})
+
+    async def event_stream():
+        queue = RecordingQueue()
+        yield sse({"type": "meta", "kind": DEFINITION_CHAT_KIND, "id": agent_id})
+        worker = spawn_detached(guarded(run_turn, queue))
+        async for frame in relay_queue(queue):
+            yield frame
+        await worker
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers=SSE_HEADERS)
+
+
+@router.post("/{agent_id}/definition/chat/stop")
+async def stop_definition_chat(agent_id: str):
+    """Stop the in-flight definition edit for this agent."""
+    from chat.entity_chat import cancel_entity_runs
+
+    if registry.get_agent(agent_id) is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    cancelled = cancel_entity_runs(DEFINITION_CHAT_KIND, agent_id)
+    return {"stopped": cancelled > 0, "cancelled": cancelled}

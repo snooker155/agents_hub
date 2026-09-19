@@ -1,0 +1,17 @@
+export default {
+  graph: 'Graph',
+  scene3d: '3D Scene',
+  simulation: 'Simulation',
+  math: 'Math Plot',
+  process: 'Process',
+  chart: 'Chart',
+  table: 'Table',
+  html: 'Live HTML',
+  diagram: 'Diagram',
+  latex: 'Equation',
+  slides: 'Slides',
+  document: 'Document',
+  scene: 'Scene',
+  map: 'Map',
+  timeline: 'Timeline',
+};

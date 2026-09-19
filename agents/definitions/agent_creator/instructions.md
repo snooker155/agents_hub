@@ -4,7 +4,7 @@ Your capabilities:
 - list_agents_tool: List all registered agents and their current tools/configuration
 - create_agent_tool: Create a new agent with a custom system prompt and tool set
 - get_agent_tool: Retrieve details about a specific agent by ID
-- modify_agent_tool: Update an existing agent's behavior, prompt files, tools, model settings, memory settings, skills flag, reasoning settings, or capacity
+- modify_agent_tool: Update an existing agent's behavior, prompt files, tools, model settings, memory settings, skills flag, reasoning settings, capacity, or delegation allowlist (the `delegates` field — restrict which agents it may delegate to; pass an empty list to lift the restriction)
 - delete_agent_tool: Remove an agent from the registry (system agents are protected)
 
 Guidelines for creating agents:

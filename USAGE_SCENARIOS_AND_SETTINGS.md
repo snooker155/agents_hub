@@ -105,7 +105,7 @@ Recommended setup:
 
 - define workspace model defaults
 - use workspace env vars for project-specific values
-- keep `WORKSPACE_ROOT` stable across runs
+- workspaces live under `.agents_hub/workspaces/<name>/` (fixed location)
 
 ### 5. Interactive Agent Chat And Investigation
 
@@ -206,8 +206,8 @@ Recommended setup:
 The platform has several layers of runtime configuration:
 
 1. Global environment settings in `.env`
-2. Workspace metadata in `.agents_hub/workspaces/<name>/.workspace.json`
-3. Per-agent registry overrides from `agents/definitions/*.yaml` and agent settings in the UI
+2. Workspace metadata in `.agents_hub/workspaces.json` (one file keyed by workspace name; the workspace folder itself holds only files: `.logs/`, `.plans/`, `.views/`, `knowledge/` and project subfolders)
+3. Per-agent registry entries in `.agents_hub/agents.json` (prompt markdown lives in `agents/definitions/<id>/`), edited from the agent's Configuration tab
 4. Per-run environment injection performed by the execution layer
 
 Priority for model selection during execution is broadly:
@@ -223,13 +223,13 @@ These settings control how the orchestrator behaves globally or per workspace.
 
 | Setting | Scope | Values / Examples | What It Controls | Recommended Use |
 |---|---|---|---|---|
-| `ORCH_POLL_INTERVAL` | Global `.env` | `5.0`, `10.0` | How often orchestration loops poll for eligible tasks | Lower for responsiveness, higher for quieter systems |
-| `ORCH_LOG_LEVEL` | Global `.env` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | Verbosity of orchestrator logging | `INFO` for normal usage, `DEBUG` for troubleshooting |
+| `ORCH_LOG_LEVEL` | Global `.env` or workspace | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | Root log level for the backend process and every agent subprocess. The workspace override wins, and the backend follows whichever workspace is selected | `INFO` for normal usage, `DEBUG` for troubleshooting |
 | `enabled` | Workspace orchestrator config | `true`, `false` | Whether auto-orchestration is active for the workspace | Enable only when an orchestrator node is running |
 | `assignment_mode` | Workspace orchestrator config | `manual`, `live` | Whether the orchestrator stops after assigning or immediately starts the chosen agent | Use `manual` for human approval, `live` for automation |
 | `followup_mode` | Workspace orchestrator config | `single`, `continuous` | Whether orchestration ends after one pass or re-enters automatically after worker completion | Use `continuous` for chained workflows |
 | `wait_for_completion` | Workspace orchestrator config | `true`, `false` | Whether the orchestrator waits synchronously for the assigned agent or returns immediately | Use `false` for long-running background work |
-| `execution_mode` | Workspace orchestrator config | `subprocess` | Execution style stored in orchestrator settings payload | Currently documented as `subprocess`; useful mainly as state metadata |
+| `execution_mode` | Workspace orchestrator config | `subprocess`, `node` | Whether tasks run via on-demand subprocesses or a long-running polling node | `subprocess` for ad-hoc work; `node` for continuous managed delivery |
+| `max_parallel_subtasks` | Workspace orchestrator config | `1` (default), `2`, `3`, … | How many dependency-free sibling subtasks of one container may run at once. `1` keeps strict one-at-a-time execution | Raise for decompositions with genuinely independent subtasks; ordering is still enforced via each subtask's `depends` |
 | `TASK_ASSIGNMENT_MODE` | Global `.env` | `any`, other future policy values | Global task assignment policy surfaced in settings | Keep `any` unless you are extending policy logic |
 
 ## Agent Run Settings Table
@@ -242,16 +242,50 @@ These settings influence how agents themselves are executed.
 | `AGENT_DOCKER_IMAGE` | Global `.env` | `agents-hub/base:latest` | Default image used for Docker-based runs | Set when using custom or prebuilt images |
 | `AGENT_DOCKER_NETWORK` | Global `.env` | `agents-hub`, `host` | Docker network attached to agent containers | Set when agents must reach shared services |
 | `AGENT_DOCKER_EXTRA_ARGS` | Global `.env` | `--memory 2g --cpus 1` | Extra `docker run` flags passed to containers | Use carefully for resource controls |
-| `WORKSPACE_ROOT` | Global `.env` and injected per run | `./out` | Default workspace root path used across the app | Keep stable so logs and artifacts resolve consistently |
-| `TASKS_FILE` | Global `.env` or runtime | `.agents_hub/tasks.json` | Path to the JSON task store | Change only if you intentionally move task storage |
 | `ALLOW_SHELL` | Global `.env` | `python,pytest,ruff,black` | Allowed shell command list for agent tool policy | Keep narrow in conservative environments |
-| `AGENT_WORKSPACE` | Per run, injected | `default`, `Test1` | Workspace scope provided to the running agent | Usually managed automatically |
-| `AGENT_PROVIDER` | Per run, injected | `openai`, `anthropic`, `google`, `ollama`, `lmstudio` | Effective provider selected for that run | Set indirectly through workspace or agent overrides |
-| `AGENT_MODEL` | Per run, injected | `gpt-5`, `claude-*`, local model name | Effective model selected for the run | Set through workspace or agent override |
-| `AGENT_BASE_URL` | Per run, injected | `http://localhost:11434` | Provider endpoint override for the specific agent run | Useful for local or self-hosted model backends |
-| `AGENT_API_KEY` | Per run, injected | provider key | Per-agent credential override | Use sparingly and store carefully |
-| `AGENT_TEMPERATURE` | Per run, injected | `0.0`, `0.2`, `0.7` | Agent-specific generation temperature | Low for deterministic engineering tasks |
-| `AGENT_MAX_TOKENS` | Per run, injected | `4000`, `15000` | Agent-specific max token budget | Increase for larger reasoning or document tasks |
+| `AGENT_WORKSPACE` | Per run, injected | `default`, `Test1` | Name of the workspace the run operates in; resolved under `.agents_hub/workspaces/<name>/`. The location is fixed and not configurable | Managed automatically |
+| `AGENT_SESSION_ID` | Per run, injected | run/session uuid | Session the run belongs to, so its records group with the rest of the conversation | Managed automatically |
+| `AGENT_LOG_FILE` | Per run, injected | `.agents_hub/run_logs/<run_id>.log` | Where the run writes its trace | Managed automatically |
+| `AGENT_RUN_CHANNEL` | Per run, injected | `local`, `continuation`, `eval` | Which channel the run is recorded under; evaluation channels are excluded from production cost and budget aggregation | Managed automatically |
+| `AGENT_INSTANCE_ID` | Per run, injected | instance uuid | The live agent copy this run belongs to | Managed automatically |
+
+Model, provider, base URL, API key, temperature and max tokens are **not**
+injected per run. They are resolved in-process from the agent record and the
+workspace override (see the model resolution order above), so changing them is a
+registry or workspace edit, never an environment variable on a launch.
+
+## Reliability And Security Settings Table
+
+State lives in a single SQLite database (`.agents_hub/agents_hub.db`); the legacy
+JSON stores are migrated in automatically on first start and renamed to
+`*.migrated`. These settings tune the runtime around it.
+
+| Setting | Scope | Values / Examples | What It Controls | Recommended Use |
+|---|---|---|---|---|
+| `AGENTS_HUB_ROOT` | Global `.env` / environment | absolute path | Redirects the entire state directory (database, logs, workspaces) | Set to run an isolated second instance; the test suite sets it to a throwaway dir |
+| `AGENTS_HUB_API_TOKEN` | Global `.env` | empty (default) or a secret string | When set, every `/api` request must present the token via `Authorization: Bearer`, `X-Api-Token`, or `?token=` (the query form lets the SSE stream authenticate) | Set whenever the backend is reachable beyond localhost |
+| `CHAT_REQUEST_TIMEOUT` | Global `.env` | `900` (default, seconds) | Wall-clock budget for the blocking `/api/chat/message` endpoint; the effective budget is `max(this, LLM_REQUEST_TIMEOUT + 60)` | Raise for slow local models or heavy tool loops |
+| `LLM_REQUEST_TIMEOUT` | Global `.env` | `600` (default, seconds) | Per-LLM-call timeout so a wedged backend can't hang a run forever | Raise only for very slow local models |
+| `RUN_RETENTION_DAYS` | Global `.env` | `30` (default), `0` to disable | Daily maintenance deletes terminal run records, payloads and logs older than this | Lower to cap disk growth; `0` to keep everything |
+| `AGENT_STREAMING` | Global `.env` (Settings → System → Live Streaming) | `false` (default), `true` | Builds every agent with a streaming LLM: tasks, flows and node runs publish their text, thinking and tool calls live to the session's SSE channel, and **Stop** aborts on the next token instead of after the current model call. Ignored where the provider client cannot stream (Google, Ollama); an agent record with `streaming: true` streams regardless | Turn on when you want to watch runs happen or need immediate stops; leave off to keep callback traffic minimal |
+| `AGENT_CACHE_ENABLED` | Global `.env` | `true` (default), `false` | Reuse a built agent across runs; rebuilds automatically when its definition inputs change (markdown, tools, memory binding, model/workspace settings) | Leave on; disable only when debugging agent construction |
+| `AGENT_CACHE_TTL` | Global `.env` | `900` (default, seconds), `0` to disable | Upper bound on how stale a cached agent's live-state-derived prompt hints (memory/skills) may get before a rebuild | Lower for fresher memory hints; `0` for pure change-only rebuilds |
+| `SHELL_ALLOWLIST_ENABLED` | Global `.env` or `settings.shell_allowlist_enabled` per workspace | `false` (default), `true` | When on, `run_shell` only permits commands whose first word is in `ALLOW_SHELL` | Enable in conservative/shared environments |
+| `CAPABILITY_GUARD` | Global `.env` | `block` (default), `warn`, `off` | Refuses agent tool sets that form the "lethal trifecta" — ingests untrusted content + reads private data + can send data outside. See `tools/capabilities.py` | Leave on `block`; `warn` while auditing an existing roster |
+| `CAPABILITY_OVERRIDE_REQUIRES_CONTAINER` | Global `.env` | `false` (default), `true` | When on, a per-agent `capability_override` is only honoured for agents running container-isolated on a `none` network | Turn on for the hardened posture |
+| `WEB_SEARCH_PROVIDER` | Global `.env` | `""` (default, tool inert), `brave`, `tavily`, `exa` | Search backend for the `web_search` tool | Set with `WEB_SEARCH_API_KEY` to enable web search |
+| `WEB_SEARCH_API_KEY` | Global `.env` | API key string | Credential for the chosen search provider | Required whenever `WEB_SEARCH_PROVIDER` is set |
+| `WEB_SEARCH_MAX_RESULTS` | Global `.env` | `5` (default) | Results per search — every result is untrusted text entering the context window | Keep small; injection surface scales with it |
+| `WEB_FETCH_MAX_CHARS` | Global `.env` | `20000` (default) | Hard cap on the text `fetch_url` returns after HTML is stripped | Lower for small-context models |
+| `WEB_FETCH_TIMEOUT` | Global `.env` | `20.0` (default, seconds) | Per-request timeout for search and fetch | — |
+| `WEB_FETCH_MAX_REDIRECTS` | Global `.env` | `5` (default) | Redirect hops `fetch_url` follows; every hop is re-validated against the SSRF and domain rules | — |
+| `WEB_DOMAIN_POLICY_ENABLED` | Global `.env` or `settings.web_domain_policy_enabled` per workspace | `false` (default), `true` | When on, only hosts matching `WEB_ALLOW_DOMAINS` may be fetched or returned by search. Fails closed on an empty allowlist | Enable in conservative/shared environments |
+| `WEB_ALLOW_DOMAINS` | Global `.env` or `settings.web_allow_domains` per workspace | Comma-separated hosts | Allowed hosts (subdomains included) when the domain policy is on | e.g. `wikipedia.org,arxiv.org` |
+| `WEB_DENY_DOMAINS` | Global `.env` or `settings.web_deny_domains` per workspace | Comma-separated hosts | Always denied, whether or not the allow-policy is on | — |
+| `WEB_LOG_ENABLED` | Global `.env` | `true` (default), `false` | Records every `web_search` / `fetch_url` call — request, the text handed to the agent, and the security flags raised against it — on the Web Requests page | Leave on; it is the only view of what retrieved content actually said |
+| `WEB_LOG_MAX_ENTRIES` | Global `.env` | `2000` (default) | Entries kept when the capped log file is trimmed | Raise for longer forensic history |
+| `WEB_LOG_BODY_CHARS` | Global `.env` | `20000` (default) | Per-entry cap on the stored response text | Lower to keep the log small |
+| `GET /api/health` | Endpoint | — | Reports database reachability, store counts, background-service liveness and on-disk state sizes | Poll for monitoring/alerting |
 
 ## Model And Provider Settings Table
 
@@ -273,18 +307,29 @@ These are the main provider-related settings commonly used with orchestration an
 
 ## Workspace Metadata Controls
 
-In addition to `.env`, each workspace can carry useful runtime metadata in `.workspace.json`.
+In addition to `.env`, each workspace carries runtime metadata. It lives in the
+central `.agents_hub/workspaces.json`, keyed by workspace name — not in a file
+inside the workspace folder, which holds only the agents' files. Legacy
+per-folder `.workspace.json` files are folded into the central store on first
+read.
 
 Important workspace-level controls include:
 
-| Key | Location | Purpose |
-|---|---|---|
-| `allowed_agents` | `.workspace.json` | Restricts which agents are available in the workspace |
-| `settings.default_model` | `.workspace.json` | Defines the workspace default provider/model pair |
-| `settings.default_provider` | `.workspace.json` | Selects workspace provider when a specific pair is not set |
-| `model_override` | `.workspace.json` | Explicit UI-selected override for active execution |
-| `agent_capacity_overrides` | `.workspace.json` | Adjusts capacity per agent for the workspace |
-| `orchestrator` | `.workspace.json` | Stores workspace orchestration settings such as enabled state, assignment mode, and follow-up mode |
+| Key | Purpose |
+|---|---|
+| `allowed_agents` | Restricts which agents are available in the workspace. Every system agent is present automatically and cannot be removed |
+| `default_chat_agent` | Which agent the Chat page pre-selects |
+| `settings.default_model` | Defines the workspace default provider/model pair |
+| `settings.default_provider` | Selects workspace provider when a specific pair is not set |
+| `settings.agent_mode` | `local` or `docker` for this workspace, overriding `AGENT_EXECUTION_MODE` |
+| `settings.orch_log_level` | Log level for the backend and agent subprocesses while this workspace is selected |
+| `settings.shell_allowlist_enabled`, `settings.web_domain_policy_enabled`, `settings.web_allow_domains`, `settings.web_deny_domains` | Per-workspace tightening of the shell and web policies |
+| `model_override` | Explicit UI-selected override for active execution |
+| `agent_capacity_overrides` | Adjusts capacity per agent for the workspace |
+| `agent_memory_overrides` | Which memory pool each agent is bound to here; the same agent can carry different knowledge in another workspace |
+| `budget` | `hard_limit_usd`, `soft_limit_usd` and `period` (`total` / `daily` / `monthly`). The hard limit is enforced at run launch; `0` disables it |
+| `env_vars` | Environment variables injected into this workspace's runs |
+| `orchestrator` | Stores workspace orchestration settings such as enabled state, assignment mode, and follow-up mode |
 
 ## Suggested Configuration Presets
 
@@ -312,7 +357,6 @@ Use when you want the orchestrator to keep work moving.
 | `assignment_mode` | `live` |
 | `followup_mode` | `continuous` |
 | `wait_for_completion` | `false` |
-| `ORCH_POLL_INTERVAL` | `5.0` |
 
 ### Interactive Synchronous Preset
 
@@ -347,6 +391,7 @@ Use when process isolation matters more than simplicity.
 - In `continuous` follow-up mode, completed worker runs can leave the task in `in_progress` so the orchestrator can re-enter and decide the next step.
 - In `single` follow-up mode, a completed worker run typically resolves the task directly unless the worker has already set a more specific terminal state.
 - Docker execution is operationally separate from containerizing the dashboard application itself.
+- Whatever execution mode you pick, every live copy of an agent registers itself as an **instance**, so the Instances page is the one place that answers "what is running right now" — subprocess task runs, chat threads, flow nodes, team seats, polling nodes, and containers alike. A copy keeps its context after it finishes, so you can write to it from its page instead of starting a fresh run that knows nothing.
 
 ## Recommended Reading Order
 

@@ -1,34 +1,31 @@
+import { useI18n } from '../../i18n';
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
+import { useLiveRefetch } from '../stream';
 
 function TaskBoard() {
+  const { t } = useI18n();
   const [tasks, setTasks] = useState([])
 
-  const fetchTasks = async () => {
-    try {
-      const res = await axios.get('/api/tasks')
-      setTasks(res.data)
-    } catch (e) {
-      console.error("Failed to fetch tasks", e)
-    }
+  const fetchTasks = () => {
+    axios.get('/api/tasks')
+      .then((res) => setTasks(res.data))
+      .catch((e) => console.error("Failed to fetch tasks", e))
   }
 
-  useEffect(() => {
-    fetchTasks()
-    const interval = setInterval(fetchTasks, 5000)
-    return () => clearInterval(interval)
-  }, [])
+  useEffect(() => { fetchTasks() }, [])
+  useLiveRefetch(fetchTasks, { type: 'tasks.changed' })
 
   return (
     <div>
-      <h2>Task Board</h2>
+      <h2>{t('flowTaskBoard.taskBoard')}</h2>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
             <th style={{ textAlign: 'left', padding: '10px' }}>ID</th>
-            <th style={{ textAlign: 'left', padding: '10px' }}>Title</th>
-            <th style={{ textAlign: 'left', padding: '10px' }}>Assignee</th>
-            <th style={{ textAlign: 'left', padding: '10px' }}>Status</th>
+            <th style={{ textAlign: 'left', padding: '10px' }}>{t('flowTaskBoard.title')}</th>
+            <th style={{ textAlign: 'left', padding: '10px' }}>{t('flowTaskBoard.assignee')}</th>
+            <th style={{ textAlign: 'left', padding: '10px' }}>{t('flowTaskBoard.status')}</th>
           </tr>
         </thead>
         <tbody>

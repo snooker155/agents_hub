@@ -1,0 +1,15 @@
+export default {
+  agentControls: 'Agentensteuerung',
+  projectDescription: 'Projektbeschreibung',
+  pmIntake: 'PM-Aufnahme',
+  baGenerate: 'BA generieren',
+  sdGenerate: 'SD generieren',
+  tlSplitTasks: 'TL Aufgaben aufteilen',
+  runBeDev: 'BE-Dev ausführen',
+  runFeDev: 'FE-Dev ausführen',
+  runQa: 'QA ausführen',
+  runDevops: 'DevOps ausführen',
+  runFullGraph: 'Gesamten Graphen ausführen',
+  selectWorkspaceFirst: 'Bitte wählen Sie zuerst einen Workspace',
+  startFailed: 'Agent konnte nicht gestartet werden',
+};

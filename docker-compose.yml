@@ -15,22 +15,41 @@ services:
       - "8000"
       - --reload
     env_file:
-      - .env
+      # Optional so a fresh clone comes up without one; copy .env.example to
+      # .env to supply provider keys.
+      - path: .env
+        required: false
     environment:
       PYTHONPATH: /app
-      AGENT_EXECUTION_MODE: local
-      ALLOW_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      # The host path mounted at /app. Bind mounts for agent containers are
+      # resolved by the daemon, which knows nothing about this container's
+      # filesystem, so managers/container_manager.py rebases paths onto this.
+      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:-$PWD}
+      # Nothing else is pinned here on purpose: values set in this block
+      # override .env, so AGENT_EXECUTION_MODE (local | docker), ALLOW_ORIGINS
+      # and the provider settings all stay where you edit them, in .env.
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - .:/app
+      # Lets this container drive the host daemon to build agent images and run
+      # agent containers. Drop this line to forbid that outright: with it
+      # mounted, anything running in this container has host-root-equivalent
+      # access to the daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app
+    extra_hosts:
+      # So LM Studio / Ollama on the host stay reachable on plain Linux Docker
+      # too, where this alias is not provided for us.
+      - "host.docker.internal:host-gateway"
 
+  # Dev frontend: Vite with HMR against the bind-mounted source. Default
+  # service, so `docker compose up` stays the iterate-on-code setup.
   frontend:
     build:
-      context: .
+      context: ./dashboard/frontend
       dockerfile: Dockerfile
-      target: frontend
+      target: dev
     command:
       - npm
       - run
@@ -41,15 +60,43 @@ services:
       - --port
       - "5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:5173"
     volumes:
-      - .:/app
-      - frontend_node_modules:/app/dashboard/frontend/node_modules
-    working_dir: /app/dashboard/frontend
+      - ./dashboard/frontend:/app
+      - frontend_node_modules:/app/node_modules
+    working_dir: /app
     environment:
       CHOKIDAR_USEPOLLING: "true"
+      # The dev server proxies /api here, so the browser only ever talks to
+      # its own origin and the published backend port can be anything.
+      VITE_API_PROXY: http://backend:8000
+
+  # Production frontend: the built bundle behind nginx, which also proxies
+  # /api and balances it over however many backend replicas are up.
+  #   docker compose --profile prod up --build
+  #   docker compose --profile prod up --build --scale backend=3
+  # Not in the default set, so it never races the dev server for a port.
+  frontend-nginx:
+    profiles: ["prod"]
+    build:
+      context: ./dashboard/frontend
+      dockerfile: Dockerfile
+      target: nginx
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    environment:
+      # Space-separated host:port list. With `--scale backend=N` compose gives
+      # every replica the same `backend` DNS name, so one entry is still
+      # correct; name replicas explicitly to pin the set instead.
+      BACKEND_SERVERS: ${BACKEND_SERVERS:-backend:8000}
+      # Shared cache TTL for generated view assets. 0 turns it off.
+      API_ASSET_CACHE_SECONDS: ${API_ASSET_CACHE_SECONDS:-30}
 
 volumes:
   frontend_node_modules:
