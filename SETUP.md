@@ -137,12 +137,12 @@ ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ### A.0 The short way
 
 ```bash
-./install.sh --frontend      # venv, service, the `ah` command, shell hook, dashboard deps
+./install.sh                 # venv, service, the `ah` command, shell hook, dashboard deps
 exec $SHELL                  # pick up the shell integration
 ah up                        # backend on :8000 and built dashboard on :5173
 ```
 
-Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--cli-only`, `--with-rag`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
+Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--no-frontend` (skip the npm install), `--cli-only`, `--with-rag`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
 
 ### A.1 Install Python dependencies
 

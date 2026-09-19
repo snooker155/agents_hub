@@ -149,6 +149,7 @@ agents_hub/
 ├── cli/
 │   ├── main.py              # Terminal entry point: every command, and its rendering
 │   └── backend.py           # The operations it calls — in-process, or over REST
+├── agents_hub/              # Installable wrapper: gives the `ah` / `agents-hub` commands, imports cli.main from the checkout
 ├── install.sh               # Venv, service, the `ah` command, the shell hook
 ├── Dockerfile               # Backend app container
 ├── Dockerfile.agents        # Base image for agent containers

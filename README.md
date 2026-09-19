@@ -15,7 +15,7 @@ every run is recorded with its prompt, tool calls, tokens and cost.
 ```bash
 git clone <repo-url> agents_hub
 cd agents_hub
-./install.sh --frontend         # venv, service, the `ah` command, the shell hook
+./install.sh                    # venv, service, dashboard, the `ah` command, the shell hook
 ```
 
 Put a provider key in the `.env` the installer created, then, in a new terminal:
@@ -103,7 +103,6 @@ does all of it from a terminal.
 | [Architecture](./ARCHITECTURE.md) | Runtime layers, folder structure, storage model, API surface, security posture |
 | [Usage scenarios and runtime settings](./USAGE_SCENARIOS_AND_SETTINGS.md) | Every knob, and when to turn it |
 | [Examples](./examples/README.md) | Worked examples, including an importable Aider agent |
-| [Feature backlog](./FEATURE_BACKLOG.md) | What is planned |
 
 The `docs/` corpus is not only for reading here. It is served in the app under
 **Docs**, and agents read it through the `search_docs` and `read_doc` tools, so

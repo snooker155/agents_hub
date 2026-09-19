@@ -18,7 +18,7 @@ shape.
 ```bash
 git clone <repo-url> agents_hub
 cd agents_hub
-./install.sh --frontend
+./install.sh
 ```
 
 It creates `.venv`, installs the service and the `ah` command editable, copies
@@ -27,9 +27,10 @@ packages, and writes the shell integration into your startup file. It is safe to
 re-run: an existing `.env` is never overwritten, and the shell block is rewritten
 in place rather than appended again.
 
-Flags: `--cli-only` (client only, for use with `AGENTS_HUB_URL`), `--with-rag`
-(adds the RAG extras, which pull in torch), `--no-venv`, `--no-shell`,
-`--venv PATH`, `--python PATH`.
+Flags: `--no-frontend` (the service without the dashboard's npm packages),
+`--cli-only` (client only, for use with `AGENTS_HUB_URL`, and no dashboard
+either), `--with-rag` (adds the RAG extras, which pull in torch),
+`--no-venv`, `--no-shell`, `--venv PATH`, `--python PATH`.
 
 Then, in a new terminal:
 

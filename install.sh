@@ -6,10 +6,10 @@
 # Safe to re-run. It never overwrites a .env you already have, and the shell
 # block it adds is rewritten in place rather than appended again.
 #
-#   ./install.sh                  # service + agents, venv in .venv, shell hook
+#   ./install.sh                  # service + agents + dashboard, venv in .venv, shell hook
+#   ./install.sh --no-frontend    # backend only, no npm install
 #   ./install.sh --cli-only       # just the terminal client (for AGENTS_HUB_URL)
 #   ./install.sh --with-rag       # add the RAG extras (pulls in torch)
-#   ./install.sh --frontend       # also npm install the dashboard
 #   ./install.sh --no-venv        # install into the environment already active
 #   ./install.sh --no-shell       # skip the shell integration
 #
@@ -21,7 +21,9 @@ VENV=".venv"
 EXTRAS="backend,agents"
 USE_VENV=1
 DO_SHELL=1
-DO_FRONTEND=0
+# -1 until the flags are read: the dashboard is installed unless it was turned
+# off, or unless --cli-only means there is no service here to serve it.
+DO_FRONTEND=-1
 PYTHON="${PYTHON:-python3}"
 
 say()  { printf '\033[1m==>\033[0m %s\n' "$1"; }
@@ -30,18 +32,27 @@ die()  { printf '\033[31m==>\033[0m %s\n' "$1" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --cli-only)  EXTRAS="" ;;
-        --with-rag)  EXTRAS="${EXTRAS:+$EXTRAS,}rag" ;;
-        --frontend)  DO_FRONTEND=1 ;;
-        --no-venv)   USE_VENV=0 ;;
-        --no-shell)  DO_SHELL=0 ;;
-        --venv)      shift; VENV="${1:?--venv needs a path}" ;;
-        --python)    shift; PYTHON="${1:?--python needs an interpreter}" ;;
-        -h|--help)   sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *)           die "Unknown option: $1 (try --help)" ;;
+        --cli-only)    EXTRAS="" ;;
+        --with-rag)    EXTRAS="${EXTRAS:+$EXTRAS,}rag" ;;
+        # The dashboard is the default; --frontend stays accepted so the older
+        # command line keeps working, and to force it alongside --cli-only.
+        --frontend)    DO_FRONTEND=1 ;;
+        --no-frontend) DO_FRONTEND=0 ;;
+        --no-venv)     USE_VENV=0 ;;
+        --no-shell)    DO_SHELL=0 ;;
+        --venv)        shift; VENV="${1:?--venv needs a path}" ;;
+        --python)      shift; PYTHON="${1:?--python needs an interpreter}" ;;
+        -h|--help)     sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)             die "Unknown option: $1 (try --help)" ;;
     esac
     shift
 done
+
+if [ "$DO_FRONTEND" -eq -1 ]; then
+    # --cli-only installs a client that talks to a backend elsewhere; the
+    # dashboard is served by that backend, not by this machine.
+    if [ -n "$EXTRAS" ]; then DO_FRONTEND=1; else DO_FRONTEND=0; fi
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Python
@@ -98,7 +109,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. The dashboard, on request
+# 4. The dashboard
 # ---------------------------------------------------------------------------
 
 if [ "$DO_FRONTEND" -eq 1 ]; then
@@ -106,7 +117,7 @@ if [ "$DO_FRONTEND" -eq 1 ]; then
         say "Installing dashboard dependencies"
         (cd dashboard/frontend && npm install)
     else
-        warn "No npm on PATH, so the dashboard was skipped. Install Node 22+ and re-run with --frontend."
+        warn "No npm on PATH, so the dashboard was skipped. Install Node 22+ and re-run, or pass --no-frontend to skip it on purpose."
     fi
 fi
 
