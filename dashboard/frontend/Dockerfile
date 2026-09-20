@@ -2,11 +2,16 @@
 #
 # Four stages, two of them useful as targets:
 #
-#   --target dev      Vite dev server with HMR. What docker-compose runs by
-#                     default, with this directory bind-mounted over /app.
 #   (default)         nginx serving the production bundle: gzip, immutable
 #                     asset caching, and /api load-balanced across one or more
-#                     backend replicas. See docker/nginx.conf.
+#                     backend replicas. See docker/nginx.conf. This is the one
+#                     docker-compose builds, and the only frontend it runs.
+#   --target dev      Vite dev server with HMR, for a container-based iterate
+#                     loop. Not wired into docker-compose: the usual HMR setup
+#                     is `npm run dev` on the host. Build and run it by hand:
+#                       docker build --target dev -t hub-frontend-dev .
+#                       docker run --rm -p 5173:5173 -v "$PWD":/app \
+#                         -v /app/node_modules hub-frontend-dev
 #
 # The backend image lives in the repository root Dockerfile; nothing here
 # needs Python, so this context stays limited to the frontend.

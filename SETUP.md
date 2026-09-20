@@ -233,29 +233,27 @@ docker compose up --build
 This starts:
 
 - Backend on `http://localhost:8000`
-- Frontend on `http://localhost:5173`
+- Dashboard on `http://localhost:8080`
 
 `.env` is passed to the backend automatically (`env_file` in compose) and is
 optional: without one the stack still starts, it just has no provider key.
 
-Both ports can be moved if 8000 or 5173 are taken on your machine, and the
-dashboard follows without a rebuild, since it talks to its own origin and the
-dev server proxies `/api` to the backend:
+Both ports can be moved if 8000 or 8080 are taken on your machine, and the
+dashboard follows without a rebuild, since it talks to its own origin and nginx
+proxies `/api` to the backend:
 
 ```bash
-BACKEND_PORT=18000 FRONTEND_PORT=15173 docker compose up
+BACKEND_PORT=18000 WEB_PORT=18080 docker compose up
 ```
 
-### B.2 Serving the built frontend behind nginx
+### B.2 The frontend service
 
-The default `frontend` service is the Vite dev server, which is what you want
-while editing code. For anything longer-lived there is a second service that
-builds the bundle and serves it from nginx, which also proxies `/api` and
-balances it across however many backends are up:
-
-```bash
-docker compose --profile prod up --build backend frontend-nginx
-```
+Compose runs one frontend, and it is the built bundle behind nginx: the same
+server also proxies `/api` and balances it across however many backends are up.
+There is no Vite service in compose. While editing frontend code, run the dev
+server on the host instead (Path A) and let it proxy `/api` to the backend on
+`:8000`; a change that has to be seen in the container needs
+`docker compose up --build frontend`.
 
 - Dashboard on `http://localhost:8080` (`WEB_PORT` to move it)
 - The bundle is served with `immutable` caching on the hashed assets and
@@ -265,10 +263,10 @@ docker compose --profile prod up --build backend frontend-nginx
 To put several backends behind it:
 
 ```bash
-docker compose --profile prod up --build --scale backend=3 backend frontend-nginx
+docker compose up --build --scale backend=3
 ```
 
-Both knobs are environment variables on the `frontend-nginx` service:
+Both knobs are environment variables on the `frontend` service:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -277,22 +275,22 @@ Both knobs are environment variables on the `frontend-nginx` service:
 
 Nothing else under `/api` is cached: the dashboard reads live state, so a stale
 response would be worse than a slow one. The frontend image is
-`dashboard/frontend/Dockerfile` (`--target dev` for Vite, default target for
-nginx); its config lives in `dashboard/frontend/docker/`.
+`dashboard/frontend/Dockerfile`, whose default target is this nginx one; its
+config lives in `dashboard/frontend/docker/`. The file keeps a `--target dev`
+stage for a hand-run Vite container, but compose does not use it.
 
 ### B.3 Stop / rebuild
 
 ```bash
 docker compose down               # stop
-docker compose up --build         # rebuild after dependency changes
+docker compose up --build         # rebuild after source or dependency changes
 docker compose logs -f backend    # tail backend logs
 ```
 
 ### Notes / limitations
 
-- Compose mounts the repo at `/app` for the backend and `dashboard/frontend` for the dev frontend, so frontend edits arrive over HMR. The backend runs without a reloader: `docker compose restart backend` after a source change.
-- The `frontend_node_modules` named volume keeps `node_modules` inside the container — if you want a clean install, run `docker compose down -v`.
-- Both frontend services wait for the backend to report healthy (`GET /`) before they start.
+- Compose mounts the repo at `/app` for the backend, which runs without a reloader: `docker compose restart backend` after a source change. The frontend has no mount at all; its bundle is baked into the image, so frontend changes need `docker compose up --build frontend`.
+- The frontend waits for the backend to report healthy (`GET /`) before it starts.
 - Docker-managed **agent containers** work from compose: the backend service
   gets the host Docker socket and a Docker CLI, and `HOST_PROJECT_ROOT` tells it
   which host path is mounted at `/app` so the bind mounts it hands the daemon
@@ -331,7 +329,7 @@ docker compose logs -f backend    # tail backend logs
 
 Once both services are up:
 
-1. Visit `http://localhost:5173`.
+1. Visit `http://localhost:5173` (Path A) or `http://localhost:8080` (Docker Compose).
 2. Open the **Agent Manager** page — you should see the built-in agents listed (`orchestrator`, `swe_agent`, `pm_agent`, `qa_agent`, `devops_agent`, …). Each agent's prompt is assembled from its `agents/definitions/<agent_id>/instructions.md` (plus optional `capabilities.md` and `usage.md`).
 3. Create a **workspace** from the Workspaces page.
 4. Open the **Chat** page, pick an agent, send a test message ("hello, who are you?"). A successful reply confirms the provider key, model, and registry are all wired up correctly.

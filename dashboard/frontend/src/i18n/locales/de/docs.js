@@ -18,6 +18,7 @@ export default {
   orWithDocker: 'Oder mit Docker',
   backendHttpLocalhost8000Frontend: 'Backend → http://localhost:8000 · Frontend → http://localhost:5173',
   httpLocalhost8000: 'http://localhost:8000',
+  dockerDashboard8080: 'Dashboard → http://localhost:8080. nginx liefert das gebaute Bundle aus und proxyt /api ans Backend, sodass der Browser nur mit einem Origin spricht.',
   httpLocalhost8410: 'http://localhost:8410',
   aHandfulOfObjectsMake: 'Das gesamte System besteht aus einer Handvoll Objekte. Zu verstehen, wie sie ineinander verschachtelt sind, ist der größte Teil der Lernkurve.',
   workspaces: 'Arbeitsbereiche',
@@ -324,7 +325,7 @@ export default {
     },
     dockerCompose: {
       q: 'Docker Compose startet, aber die Agenten-Container laufen nicht',
-      a: 'Beim Standard-Compose erwartet: Der Stack ist auf sichere lokale Agentenausführung ausgelegt. Docker-verwaltete Agentenausführung erfordert zusätzliche Verdrahtung von Docker-Socket und -Netzwerk auf dem Host.',
+      a: 'Meist liegt es nicht an der Verdrahtung: Compose hängt /var/run/docker.sock bereits ins Backend ein und bringt dort eine Docker-CLI mit. Prüfen Sie die beiden standardmäßig ausgeschalteten Dinge: AGENT_EXECUTION_MODE=docker in der .env (Standard ist local, danach das Backend neu starten) und das Agenten-Basisimage, das auf der Container-Seite gebaut wird.',
     },
     budgetExceeded: {
       q: 'Ein Lauf startete nicht — das Budget sei überschritten',
@@ -666,7 +667,7 @@ export default {
   },
   containersDoc: {
     lead: '`AGENT_EXECUTION_MODE=local` (Standard) führt Agenten als Subprozesse auf dem Host aus — einfach, schnell und für die meiste lokale Arbeit passend. `docker` führt jeden Agenten stattdessen in einem verwalteten Container aus, was Sie wollen, wenn ein Agent Shell-Zugriff oder ein nicht vertrauenswürdiges Repository bekommt.',
-    callout: 'Der Standard-`docker compose`-Stack ist auf sichere lokale Ausführung ausgelegt und verdrahtet den Docker-Socket des Hosts nicht ins Backend. Docker-verwaltete *Agenten*-Ausführung braucht genau diese Verdrahtung; ohne sie listet die Container-Seite nichts.',
+    callout: 'Compose verdrahtet das bereits: Der Backend-Dienst bekommt den Docker-Socket des Hosts und eine Docker-CLI, und `HOST_PROJECT_ROOT` sagt ihm, welcher Host-Pfad unter `/app` eingehängt ist, damit die Bind-Mounts, die er dem Daemon übergibt, korrekt auflösen. Standardmäßig aus ist nur der Modus selbst: Setzen Sie `AGENT_EXECUTION_MODE=docker`, starten Sie das Backend neu und bauen Sie dann das Agenten-Basisimage auf dieser Seite. Bedenken Sie aber, was der Socket gewährt: Alles im Backend-Container kann den Host-Daemon steuern, entfernen Sie dieses Mount also aus `docker-compose.yml`, wenn das nicht sein soll.',
   },
   connectorsDoc: {
     lead: 'Zwei Integrationen reichen über das Dashboard hinaus. Beide werden in den [Einstellungen](/settings) konfiguriert, und beide speichern ihre Tokens write-only — ein Token lässt sich ersetzen oder löschen, aber nie zurücklesen.',
@@ -696,7 +697,7 @@ export default {
     byHandBody: '`pip install -e .` allein installiert nur den Terminal-Client und seine drei Abhängigkeiten. Die Extras lesen die Requirement-Dateien im Repository, deshalb bleiben `[backend]`, `[agents]` und `[rag]` mit ihnen im Gleichschritt. Editierbar ist Absicht: der Befehl folgt der Arbeitskopie, `git pull` eingeschlossen, statt eine Kopie einzufrieren. Beide Server starten auch direkt:',
     byHandNoInstall: 'Ganz ohne Installation ist `python -m cli` aus der Arbeitskopie dasselbe Programm wie `ah`.',
     dockerTitle: 'Mit Docker',
-    dockerBody: 'Backend auf `:8000`, Dashboard auf `:5173`. `.env` ist hier optional: der Stack kommt auch ohne Provider-Schlüssel hoch, und die trägt man in den [Einstellungen](/settings) nach. `BACKEND_PORT` und `FRONTEND_PORT` verschieben die veröffentlichten Ports, und das Dashboard folgt ihnen, weil es mit seinem eigenen Origin spricht. Für einen längerlebigen Betrieb enthält dieselbe Datei das gebaute Frontend hinter nginx, das auch `/api` proxyt und über die dahinterliegenden Backends verteilt:',
+    dockerBody: 'Backend auf `:8000`, Dashboard auf `:8080`. `.env` ist hier optional: der Stack kommt auch ohne Provider-Schlüssel hoch, und die trägt man in den [Einstellungen](/settings) nach. `BACKEND_PORT` und `WEB_PORT` verschieben die veröffentlichten Ports, und das Dashboard folgt ihnen, weil es mit seinem eigenen Origin spricht. Das Dashboard ist das gebaute Bundle hinter nginx, das auch `/api` proxyt und über die dahinterliegenden Backends verteilt, mehr davon sind also ein Flag:',
     configTitle: 'Konfiguration',
     configBody: '`.env` wird beim Start gelesen, und `.env.example` listet jede Variable mit ihrem Standardwert. Das meiste lässt sich danach im Dashboard ändern, und die Aufteilung lohnt sich einmal zu lernen: [Einstellungen](/settings) halten die Zugangsdaten, [Modelle](/models) den Katalog, also welche Modelle angeboten werden, was jedes kostet und welches pro Provider der Standard ist.',
     verifyTitle: 'Prüfen, ob es lief',

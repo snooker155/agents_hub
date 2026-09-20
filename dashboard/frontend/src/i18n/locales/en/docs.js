@@ -18,6 +18,7 @@ export default {
   orWithDocker: 'Or with Docker',
   backendHttpLocalhost8000Frontend: 'Backend → http://localhost:8000 · Frontend → http://localhost:5173',
   httpLocalhost8000: 'http://localhost:8000',
+  dockerDashboard8080: 'Dashboard → http://localhost:8080. nginx serves the built bundle and proxies /api to the backend, so the browser only ever talks to one origin.',
   httpLocalhost8410: 'http://localhost:8410',
   aHandfulOfObjectsMake: 'A handful of objects make up the whole system. Understanding how they nest is most of the learning curve.',
   workspaces: 'Workspaces',
@@ -324,7 +325,7 @@ export default {
     },
     dockerCompose: {
       q: 'Docker compose starts but agent containers don\'t work',
-      a: 'Expected with the default compose: the stack is configured for safe local agent execution. Docker-managed agent execution needs extra host Docker socket/network wiring.',
+      a: 'Usually it is not the wiring: compose already mounts /var/run/docker.sock into the backend and ships a Docker CLI there. Check the two things that are off by default instead: AGENT_EXECUTION_MODE=docker in .env (the default is local, and the backend has to be restarted afterwards), and the agent base image, which is built from the Containers page.',
     },
     budgetExceeded: {
       q: 'A run refused to start, saying the budget is exceeded',
@@ -666,7 +667,7 @@ export default {
   },
   containersDoc: {
     lead: '`AGENT_EXECUTION_MODE=local` (the default) runs agents as subprocesses on the host — simple, fast, and what most local work wants. `docker` runs each agent inside a managed container instead, which is what you want when an agent gets shell access or an untrusted repository.',
-    callout: 'The default `docker compose` stack is configured for safe local execution and does not wire the host Docker socket into the backend. Docker-managed *agent* execution needs that extra wiring; without it the Containers page will list nothing.',
+    callout: 'Compose already wires this up: the backend service gets the host Docker socket and a Docker CLI, and `HOST_PROJECT_ROOT` tells it which host path is mounted at `/app`, so the bind mounts it hands the daemon resolve correctly. What is off by default is the mode itself: set `AGENT_EXECUTION_MODE=docker`, restart the backend, then build the agent base image from this page. Mind what the socket grants, though: anything running in the backend container can drive the host daemon, so drop that mount from `docker-compose.yml` to forbid it outright.',
   },
   connectorsDoc: {
     lead: 'Two integrations reach outside the dashboard. Both are configured from [Settings](/settings) and both store their tokens write-only — you can replace or clear a token, never read it back.',
@@ -696,7 +697,7 @@ export default {
     byHandBody: '`pip install -e .` alone installs only the terminal client and its three dependencies; the extras read the requirement files in the repository, so `[backend]`, `[agents]` and `[rag]` stay in step with them. Editable is deliberate: the command follows the checkout, `git pull` included, instead of freezing a copy. The two servers also start directly:',
     byHandNoInstall: 'With nothing installed at all, `python -m cli` from the checkout is the same program as `ah`.',
     dockerTitle: 'With Docker',
-    dockerBody: 'Backend on `:8000`, dashboard on `:5173`. `.env` is optional here: the stack comes up without provider keys and you add them from [Settings](/settings). `BACKEND_PORT` and `FRONTEND_PORT` move the published ports, and the dashboard follows them because it talks to its own origin. For a longer-lived deployment the same file has the frontend built and served by nginx, which also proxies `/api` and balances it across the backends behind it:',
+    dockerBody: 'Backend on `:8000`, dashboard on `:8080`. `.env` is optional here: the stack comes up without provider keys and you add them from [Settings](/settings). `BACKEND_PORT` and `WEB_PORT` move the published ports, and the dashboard follows them because it talks to its own origin. The dashboard is the built bundle behind nginx, which also proxies `/api` and balances it across the backends behind it, so running more of them is one flag:',
     configTitle: 'Configuration',
     configBody: '`.env` is read on startup, and `.env.example` lists every variable with its default. Most of it is editable from the dashboard afterwards, and the split is worth learning once: [Settings](/settings) holds credentials, while [Models](/models) holds the catalog, meaning which models are offered, what each costs, and the default per provider.',
     verifyTitle: 'Checking it worked',

@@ -215,6 +215,7 @@ npm run dev -- --host 0.0.0.0 --port 5173`}</CodeBlock>
       <P>{t('docs.backendHttpLocalhost8000Frontend')}</P>
       <H3>{t('docs.orWithDocker')}</H3>
       <CodeBlock label={t('docs.terminal')}>{`docker compose up --build`}</CodeBlock>
+      <P>{t('docs.dockerDashboard8080')}</P>
 
       <H2>{t('docs.configureAProvider')}</H2>
       <P><Rich>{t('docs.start.providersLead')}</Rich></P>
@@ -1189,7 +1190,7 @@ cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173`}</CodeBlock>
       <H3>{t('docs.installDoc.dockerTitle')}</H3>
       <CodeBlock label={t('docs.terminal')}>{`docker compose up --build`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.dockerBody')}</Rich></P>
-      <CodeBlock label={t('docs.terminal')}>{`docker compose --profile prod up --build backend frontend-nginx`}</CodeBlock>
+      <CodeBlock label={t('docs.terminal')}>{`docker compose up --build --scale backend=3`}</CodeBlock>
 
       <H3>{t('docs.installDoc.configTitle')}</H3>
       <CodeBlock label=".env">{`DEFAULT_PROVIDER=openai

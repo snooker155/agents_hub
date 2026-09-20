@@ -64,7 +64,8 @@ is stopped too.
 
 There is no `--workers`: the backend starts singletons of its own (plan
 scheduler, run watchdog, Telegram poller) and a second worker would run a second
-copy of each. Scaling out is the compose `prod` profile's job.
+copy of each. Scaling out is compose's job: `docker compose up --scale backend=3`,
+where nginx balances `/api` across the replicas.
 
 ## Working in your own directories
 

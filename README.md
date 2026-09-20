@@ -33,9 +33,39 @@ ah workspace init               # registers this directory in place, nothing is 
 ah agent run swe_agent "fix the failing test"
 ```
 
-Docker instead of a local install: `docker compose up --build`. The long form of
+Docker instead of a local install: `docker compose up --build`, which publishes
+the dashboard on `:8080`. The long form of
 all three, including what to check when it will not start, is in
 [docs/installation.md](./docs/installation.md).
+
+## What it looks like
+
+<table>
+<tr>
+<td width="50%"><a href="site/public/screenshots/chat.png"><img src="site/public/screenshots/chat.png" alt="The Chat page, with the agent, flow and team switcher, the workspace and the model in use"></a></td>
+<td width="50%"><a href="site/public/screenshots/agents.png"><img src="site/public/screenshots/agents.png" alt="The Agents page, a grid of agent cards with their tools, nodes, sessions and tasks"></a></td>
+</tr>
+<tr>
+<td><b>Chat.</b> Talk to any agent, flow or team. The header carries the workspace, the project and the model the next message will actually use.</td>
+<td><b>Agents.</b> Every agent is a folder of layered markdown. Tools are granted by name, and each card shows what its agent holds and what it is running.</td>
+</tr>
+<tr>
+<td><a href="site/public/screenshots/tasks.png"><img src="site/public/screenshots/tasks.png" alt="The Tasks page as a list, with status, assigned agent, blocked flag and subtask progress"></a></td>
+<td><a href="site/public/screenshots/flows.png"><img src="site/public/screenshots/flows.png" alt="The flow editor, with a two node DAG on the canvas, the task list and the shared state panel"></a></td>
+</tr>
+<tr>
+<td><b>Tasks.</b> Work that outlives a conversation: subtasks, dependencies, the agent on it, and a result you can come back to. Also a kanban board.</td>
+<td><b>Flows.</b> A DAG of agents, edited on a canvas. The right panel holds the shared state the nodes read and write, the left one runs it against a task.</td>
+</tr>
+<tr>
+<td><a href="site/public/screenshots/teams.png"><img src="site/public/screenshots/teams.png" alt="A team page, with the roster of three agents and the shared message board they work"></a></td>
+<td><a href="site/public/screenshots/playground.png"><img src="site/public/screenshots/playground.png" alt="A Playground scenario running, with agent thoughts, speak_to calls and the world state"></a></td>
+</tr>
+<tr>
+<td><b>Teams.</b> A roster over one shared board. Every member posts to it, so the board is both the work and the record of how it went.</td>
+<td><b>Playground.</b> Agents acting in a simulated world, tick by tick, with the thought behind each move, the action it took and the state that changed.</td>
+</tr>
+</table>
 
 ## What it does
 

@@ -67,20 +67,23 @@ cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 ## Path C: Docker Compose
 
 ```bash
-docker compose up --build              # backend :8000, dashboard :5173
+docker compose up --build              # backend :8000, dashboard :8080
 ```
 
 `.env` is optional here; the stack comes up without provider keys and you add
-them from Settings. `BACKEND_PORT` and `FRONTEND_PORT` move the published ports,
-and the dashboard follows them because it talks to its own origin.
+them from Settings. `BACKEND_PORT` and `WEB_PORT` move the published ports, and
+the dashboard follows them because it talks to its own origin.
 
-For a longer-lived deployment the same file has the frontend built and served by
-nginx, which also proxies `/api` and balances it across the backends behind it:
+The dashboard is the built bundle behind nginx, which also proxies `/api` and
+balances it across the backends behind it, so more backends is one flag:
 
 ```bash
-docker compose --profile prod up --build backend frontend-nginx
-docker compose --profile prod up --build --scale backend=3 backend frontend-nginx
+docker compose up --build --scale backend=3
 ```
+
+Compose has no Vite service: for an HMR loop while editing frontend code, run
+`npm run dev` on the host as above, and rebuild the image (`docker compose up
+--build frontend`) when the change has to land in the container.
 
 ## Configuration
 
@@ -107,9 +110,10 @@ ah config                               # which service the CLI is talking to
 ah agent list                           # the seeded system agents
 ```
 
-Open `http://localhost:5173`, pick an agent in Chat, and send something. A reply
-means the provider key, the model catalog and the run pipeline all work. If the
-run fails instead, [service-health](service-health.md) says which part did.
+Open `http://localhost:5173` (`http://localhost:8080` under Compose), pick an
+agent in Chat, and send something. A reply means the provider key, the model
+catalog and the run pipeline all work. If the run fails instead,
+[service-health](service-health.md) says which part did.
 
 ## Where state lives
 

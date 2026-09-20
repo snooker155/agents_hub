@@ -49,6 +49,85 @@ features:
     linkText: "The CLI"
 ---
 
+## What it looks like
+
+<div class="shot-grid">
+
+<div class="shot">
+
+[![The Chat page, with the agent, flow and team switcher, the workspace and the model in use](/screenshots/chat.png)](/screenshots/chat.png)
+
+**Chat.** Talk to any agent, flow or team. The header carries the workspace, the
+project and the model the next message will actually use.
+
+</div>
+
+<div class="shot">
+
+[![The Agents page, a grid of agent cards with their tools, nodes, sessions and tasks](/screenshots/agents.png)](/screenshots/agents.png)
+
+**Agents.** Every agent is a folder of layered markdown. Tools are granted by
+name, and each card shows what its agent holds and what it is currently running.
+
+</div>
+
+<div class="shot">
+
+[![The Tasks page as a list, with status, assigned agent, blocked flag and subtask progress](/screenshots/tasks.png)](/screenshots/tasks.png)
+
+**Tasks.** Work that outlives a conversation: subtasks, dependencies, the agent
+on it, and a result you can come back to. Also a kanban board.
+
+</div>
+
+<div class="shot">
+
+[![The flow editor, with a two node DAG on the canvas, the task list and the shared state panel](/screenshots/flows.png)](/screenshots/flows.png)
+
+**Flows.** A DAG of agents, edited on a canvas. The right panel holds the shared
+state the nodes read and write, the left one runs it against a task.
+
+</div>
+
+<div class="shot">
+
+[![A team page, with the roster of three agents and the shared message board they work](/screenshots/teams.png)](/screenshots/teams.png)
+
+**Teams.** A roster over one shared board. Every member posts to it, so the
+board is both the work and the record of how it went.
+
+</div>
+
+<div class="shot">
+
+[![A Playground scenario running, with agent thoughts, speak_to calls and the world state](/screenshots/playground.png)](/screenshots/playground.png)
+
+**Playground.** Agents acting in a simulated world, tick by tick, with the
+thought behind each move, the action it took and the state that changed.
+
+</div>
+
+</div>
+
+<style scoped>
+.shot-grid {
+  display: grid;
+  gap: 2.5rem 2rem;
+  margin: 2rem 0 3rem;
+}
+@media (min-width: 860px) {
+  .shot-grid { grid-template-columns: 1fr 1fr; }
+}
+.shot-grid img {
+  width: 100%;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+}
+.shot-grid p { font-size: 0.95rem; line-height: 1.6; color: var(--vp-c-text-2); }
+.shot-grid p:has(img) { margin: 0 0 0.75rem; }
+.shot-grid a { display: block; }
+</style>
+
 ## Install and run
 
 ```bash
@@ -72,7 +151,8 @@ ah workspace init               # registers this directory in place, nothing is 
 ah agent run swe_agent "fix the failing test"
 ```
 
-Docker instead of a local install: `docker compose up --build`. The long form of
+Docker instead of a local install: `docker compose up --build`, which publishes
+the dashboard on `:8080`. The long form of
 all three, including what to check when it will not start, is in
 [Installing and running the service](/guide/installation).
 
