@@ -26,13 +26,6 @@ projects.json
 */results/
 coverage/
 
-# Development-only documents: internal planning and design notes, not part of
-# what is needed to run the service. The shipped docs are README.md, SETUP.md,
-# USAGE_SCENARIOS_AND_SETTINGS.md and docs/.
-FEATURE_BACKLOG.md
-SYSTEM_AGENTS_PLAN.md
-VIEWS_ARCHITECTURE.md
-
 # Public site (site/). The guide is copied out of docs/ at build time by
 # site/scripts/sync-docs.mjs, so it is generated, not source. node_modules/ and
 # dist/ are already covered by the patterns above.
