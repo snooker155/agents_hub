@@ -88,31 +88,40 @@ async def stream_message_sse(request: ChatRequest):
 
     The caller passes its SSE ``client_id``; we subscribe that client to
     ``chat:{conversation_id}`` synchronously *before* starting the run so no early
-    events are missed, then pump the pipeline into the broker on a background task.
+    events are missed, then drive the pipeline on a background task.
+
+    The publishing itself is not done here: every pipeline puts its events on the
+    conversation's channel already (``chat.broadcast``), which is what lets a
+    second tab, another device or the run's own page follow the same turn. This
+    endpoint only has to subscribe the caller and keep the run going after the
+    POST has returned.
     """
+    from chat.broadcast import channel_for
     from common.session_broker import broker
 
     conv = request.conversation_id or str(uuid.uuid4())
-    channel = f"chat:{conv}"
-    client_id = request.client_id
-    if client_id:
-        broker.add_channel(client_id, channel)
+    request.conversation_id = conv
+    channel = channel_for(conv)
+    # Subscribing here as well as in the browser covers the gap between the POST
+    # and the client's own channel request. It is never unsubscribed from this
+    # side: the browser holds the channel for as long as the conversation is
+    # open, and dropping it at the end of one turn would cut that off.
+    if request.client_id:
+        broker.add_channel(request.client_id, channel)
 
     pipeline = _pipeline_for(request)
 
-    async def pump():
+    async def drive():
+        # The events reach the browser through the broadcaster; draining the
+        # generator here is what makes the turn run at all.
         try:
-            async for event in pipeline:
-                await broker.apublish(channel, event)
-        except Exception as e:  # surface a terminal error event to the client
-            await broker.apublish(channel, {"type": "done", "ok": False, "error": str(e)})
-        finally:
-            # Sentinel so the client knows the run is over and can unsubscribe.
-            await broker.apublish(channel, {"type": "chat_stream_end"})
-            if client_id:
-                broker.remove_channel(client_id, channel)
+            async for _event in pipeline:
+                pass
+        except Exception:
+            # The broadcaster has already published the terminal error event.
+            pass
 
-    task = asyncio.create_task(pump())
+    task = asyncio.create_task(drive())
     _PUMP_TASKS.add(task)
     task.add_done_callback(_PUMP_TASKS.discard)
     return {"channel": channel, "conversation_id": conv}

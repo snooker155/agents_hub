@@ -1,6 +1,10 @@
 export default {
   chat: 'Chat',
   chats: 'Chats',
+  notSaved: 'Not saved',
+  liveElsewhere: 'Being answered now',
+  liveFromSource: 'Being answered now, from {{source}}',
+  notSavedHint: 'This conversation could not be saved to the server. It is kept in this tab until the connection is back.',
   build: 'Build',
   newChat: 'New chat',
   newConversation: 'New conversation',

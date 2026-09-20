@@ -42,12 +42,12 @@ all three, including what to check when it will not start, is in
 
 <table>
 <tr>
-<td width="50%"><a href="site/public/screenshots/chat.png"><img src="site/public/screenshots/chat.png" alt="The Chat page, with the agent, flow and team switcher, the workspace and the model in use"></a></td>
 <td width="50%"><a href="site/public/screenshots/agents.png"><img src="site/public/screenshots/agents.png" alt="The Agents page, a grid of agent cards with their tools, nodes, sessions and tasks"></a></td>
+<td width="50%"><a href="site/public/screenshots/chat.png"><img src="site/public/screenshots/chat.png" alt="The Chat page, with the agent, flow and team switcher, the workspace and the model in use"></a></td>
 </tr>
 <tr>
-<td><b>Chat.</b> Talk to any agent, flow or team. The header carries the workspace, the project and the model the next message will actually use.</td>
 <td><b>Agents.</b> Every agent is a folder of layered markdown. Tools are granted by name, and each card shows what its agent holds and what it is running.</td>
+<td><b>Chat.</b> Talk to any agent, flow or team. The header carries the workspace, the project and the model the next message will actually use.</td>
 </tr>
 <tr>
 <td><a href="site/public/screenshots/tasks.png"><img src="site/public/screenshots/tasks.png" alt="The Tasks page as a list, with status, assigned agent, blocked flag and subtask progress"></a></td>

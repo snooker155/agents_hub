@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
-import { useChannel } from '../components/stream';
+import { useChannel, useStream } from '../components/stream';
 import ViewCard from '../views/ViewCard';
 import { getAgents, getMessageInsights, getWorkspace, getProjects, getAgentDefinition, stopMessage, getTelegramBindings, sendTelegramMessage, listFlows, getTeams, getSessions, getSessionMessages, streamChat, getContextKinds } from '../api';
 import ContextMeter from '../components/ContextMeter';
@@ -36,17 +36,24 @@ import {
   Link2,
   ArrowUpRight,
   Upload,
+  Radio,
 } from 'lucide-react';
 import ContextEntityPicker from '../components/ContextEntityPicker';
 import ProcessGraph, { TokenPill } from '../components/ProcessGraph';
 import { SKILL_TOOL, shortText, fmtDurationMs } from '../components/processUtils';
 import { SlotData } from '../components/SlotValue';
 import { useI18n, translate, LANGUAGES } from '../i18n';
+import { useConversationStore } from '../components/chatStore';
+import { useLiveChatTurn } from '../components/chatLiveTurn';
 
 // ---------------------------------------------------------------------------
-// Local storage persistence
+// Page-local preferences
 // ---------------------------------------------------------------------------
-const STORAGE_KEY = 'agent_hub_chats_v1';
+// The conversations themselves are not here: they are service records, stored
+// server-side and reached through `useConversationStore` (components/chatStore.js).
+// What stays in the browser is what is true of this browser only — whether a
+// panel is open, which view mode was last used.
+//
 // Whether the agent-process panel is open. Persisted so navigating away from the
 // Chat page and back (which unmounts/remounts this component) keeps it open.
 const PROCESS_OPEN_KEY = 'agent_hub_chat_process_open';
@@ -58,23 +65,6 @@ const MAX_ATTACHMENT_COUNT = 6;
 // thousands of characters, so the composer caps them the way it caps files.
 // Mirrors chat/references.py's MAX_REFERENCES.
 const MAX_REFERENCE_COUNT = 10;
-
-function loadConversations() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-// Per-message fields that are large and only needed for the live in-session view
-// (the Build-view timeline + the running-tool indicator). They accumulate every
-// streamed token, reasoning step, and tool input/output, so persisting them blows
-// the localStorage quota — once setItem throws, the newest conversation silently
-// fails to save and vanishes on reload. They are reconstructable from server-side
-// run logs (the Build view falls back to plain `content` for reloaded messages),
-// so strip them before persisting.
-const TRANSIENT_MSG_FIELDS = ['timeline', 'running_tool', 'thinking_live'];
 
 // Live reasoning is a ticker showing only the tail, so the buffer never needs to
 // grow past a few screens' worth; capping it keeps a long chain-of-thought from
@@ -88,7 +78,7 @@ function appendLiveThought(prev, delta) {
 
 // Merge one streamed `artifact` event into a message's file list. Metadata only
 // (the diff body lives in the session-scoped `artifacts` map, which is far too
-// large to persist per message). Last write per path wins, but a file keeps the
+// large to store per message). Last write per path wins, but a file keeps the
 // position it was first touched at, so the list reads in execution order.
 function mergeMessageFile(files, event) {
   const list = files || [];
@@ -105,37 +95,6 @@ function mergeMessageFile(files, event) {
   if (next[idx].op === 'add' && entry.op === 'modify') entry.op = 'add';
   next[idx] = entry;
   return next;
-}
-
-function stripForStorage(convs) {
-  return convs.map((c) => ({
-    ...c,
-    messages: (c.messages || []).map((m) => {
-      const copy = { ...m };
-      for (const f of TRANSIENT_MSG_FIELDS) delete copy[f];
-      return copy;
-    }),
-  }));
-}
-
-function saveConversations(convs) {
-  const slim = stripForStorage(convs);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
-    return;
-  } catch {
-    // Quota still exceeded after stripping transient data: drop the oldest
-    // conversations (the list is newest-first) until it fits, so recent chats
-    // persist instead of the whole write being lost.
-    const trimmed = [...slim];
-    while (trimmed.length > 1) {
-      trimmed.pop();
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
-        return;
-      } catch { /* storage unavailable */ }
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1649,6 +1608,9 @@ export default function Chat() {
   const { convId: urlConvId } = useParams();
   const navigate = useNavigate();
   const { selectedWorkspace } = useWorkspace();
+  // This tab's id on the shared SSE stream: sent with a turn so the
+  // broadcast can name its author, and with a save for the same reason.
+  const { clientId } = useStream();
   const [agents, setAgents] = useState([]);
   const [workspaceAllowedAgentIds, setWorkspaceAllowedAgentIds] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState('');
@@ -1665,8 +1627,18 @@ export default function Chat() {
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState('');
 
-  const [conversations, setConversations] = useState(() => loadConversations());
   const [currentConvId, setCurrentConvId] = useState(urlConvId || null);
+  // Whether a turn is being sent from this tab. Declared here because both the
+  // conversation store and the live-turn mirror below are steered by it.
+  const [loading, setLoading] = useState(false);
+  // The conversation list is server state, not browser state: the store loads
+  // it, fetches the open chat's transcript, and writes changes back. What this
+  // page sees is the array it has always mutated.
+  // `paused` while a turn is running here: a reload triggered by someone else's
+  // save would drop the turn this tab is in the middle of writing.
+  const {
+    conversations, setConversations, removeConversation, syncError,
+  } = useConversationStore(currentConvId, { paused: loading });
   const [telegramBindings, setTelegramBindings] = useState([]);
   const [telegramSending, setTelegramSending] = useState(false);
   const [telegramError, setTelegramError] = useState('');
@@ -1683,7 +1655,6 @@ export default function Chat() {
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [pickerKind, setPickerKind] = useState(null);
   const [contextKinds, setContextKinds] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [processOpen, setProcessOpen] = useState(() => {
     try { return localStorage.getItem(PROCESS_OPEN_KEY) === '1'; } catch { return false; }
   });
@@ -1785,9 +1756,46 @@ export default function Chat() {
     }
     return ids;
   }, [currentConv]);
+
+  // A turn someone else is running in this same conversation — another tab,
+  // another device, Telegram, an agent writing to its own inbox. It is mirrored
+  // live and never saved: the tab that ran it writes the transcript, and this
+  // mirror steps aside as soon as that lands (hence the run ids above).
+  // `muted` while this tab is the one sending: it renders its own stream and
+  // would otherwise draw every token twice.
+  const liveTurn = useLiveChatTurn(currentConvId, {
+    muted: loading,
+    resolvedRunIds: conversationRunIds,
+  });
+  const liveMessages = useMemo(() => {
+    if (!liveTurn) return [];
+    const bubbles = [];
+    if ((liveTurn.user || '').trim()) {
+      bubbles.push({ id: 'live-user', role: 'user', content: liveTurn.user });
+    }
+    bubbles.push({
+      id: 'live-agent',
+      role: 'agent',
+      agent_id: liveTurn.agentId || selectedAgent,
+      content: liveTurn.text,
+      reasoning: liveTurn.thinking,
+      thinking_live: liveTurn.thinkingLive,
+      running_tool: liveTurn.tools.find((x) => x.output === null && x.error === null)?.tool || null,
+      error: liveTurn.status === 'failed',
+      run_id: liveTurn.runId,
+    });
+    return bubbles;
+  }, [liveTurn, selectedAgent]);
+  // What the feed renders: the stored transcript, plus the mirrored turn while
+  // one is in flight. The mirror is appended here and nowhere else, so nothing
+  // downstream of `messages` (persistence, context fill, run ids) ever sees it.
+  const renderedMessages = useMemo(
+    () => (liveMessages.length ? [...messages, ...liveMessages] : messages),
+    [messages, liveMessages],
+  );
   // Build-view timelines for reloaded messages. The live `msg.timeline` (tool
-  // calls + thoughts) is stripped before persisting (TRANSIENT_MSG_FIELDS), so a
-  // conversation reopened from storage has none. Reconstruct it per run_id from
+  // calls + thoughts) is not stored with the chat (TRANSIENT_MSG_FIELDS in
+  // components/chatStore.js), so a conversation reopened from the store has none. Reconstruct it per run_id from
   // the server-fetched process insights — same reasoning+tools merge the Process
   // graph uses — so the Build view shows tools and thoughts again, not just the
   // final text. Keyed by run_id; consumed only in build view.
@@ -1881,8 +1889,8 @@ export default function Chat() {
     }
   }, [selectedWorkspace, currentConvId, telegramBindings, conversations, navigate]);
 
-  // ---- persist ----
-  useEffect(() => { saveConversations(conversations); }, [conversations]);
+  // Persistence lives in useConversationStore: changes to `conversations` are
+  // debounced into `PUT /api/chats/{id}` rather than rewritten into localStorage.
 
   // ---- load agents ----
   useEffect(() => {
@@ -1979,7 +1987,7 @@ export default function Chat() {
     })();
 
     return () => { cancelled = true; };
-  }, [currentTelegramBinding, bindingWorkspaceKey]);
+  }, [currentTelegramBinding, bindingWorkspaceKey, setConversations]);
 
 
   // ---- load projects for selected workspace ----
@@ -2433,9 +2441,9 @@ export default function Chat() {
     const conv = conversations.find((c) => c.id === id);
     const label = conv?.title || t('chat.thisConversation');
     if (!window.confirm(t('chat.confirmDeleteConversation', { label }))) return;
-    setConversations((prev) => prev.filter((c) => c.id !== id));
+    removeConversation(id);
     if (currentConvId === id) navigate('/chat');
-  }, [conversations, currentConvId, navigate, t]);
+  }, [conversations, currentConvId, navigate, removeConversation, t]);
 
   // ---- slash command selection ----
   const selectCommand = useCallback(async (cmd) => {
@@ -2507,7 +2515,7 @@ export default function Chat() {
     }
     setInput(cmd.template);
     setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [agents, allCommands, currentConvId, selectedAgent, t]);
+  }, [agents, allCommands, currentConvId, selectedAgent, setConversations, t]);
 
   // ---- send message ----
   const sendMessage = useCallback(async (overrideText) => {
@@ -2665,6 +2673,7 @@ export default function Chat() {
           project_id: convRecord?.project_id || null,
           conversation_id: convId,
           conversation_title: convTitle,
+          client_id: clientId,
           history: historyPayload,
           attachments: pendingAttachments.map((a) => ({
             filename: a.filename,
@@ -3301,7 +3310,7 @@ export default function Chat() {
         ),
       );
     }
-  }, [input, pendingAttachments, pendingReferences, targetMode, loading, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, conversations, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData]);
+  }, [input, pendingAttachments, pendingReferences, targetMode, loading, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, conversations, setConversations, clientId, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData]);
 
   // Build view: clicking a file chip in the transcript scrolls the always-open
   // Artifacts panel to that file's diff.
@@ -3356,7 +3365,7 @@ export default function Chat() {
     } finally {
       setTelegramSending(false);
     }
-  }, [currentTelegramBinding, telegramReplyAllowed, input, t]);
+  }, [currentTelegramBinding, telegramReplyAllowed, input, setConversations, t]);
 
   const handleKeyDown = (e) => {
     if (commandMenuOpen && commandSuggestions.length > 0) {
@@ -3413,6 +3422,17 @@ export default function Chat() {
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
             <MessageSquare className="w-3 h-3" /> {t('chat.chats')}
+            {/* Chats are stored on the server; when that write keeps failing the
+                conversation only exists in this tab, and saying so is the
+                difference between a delay and silent loss. */}
+            {syncError && (
+              <span
+                className="ml-auto flex items-center gap-1 normal-case tracking-normal text-amber-600"
+                title={t('chat.notSavedHint')}
+              >
+                <AlertCircle className="w-3 h-3" /> {t('chat.notSaved')}
+              </span>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
           {visibleConversations.length === 0 && (
@@ -3819,10 +3839,21 @@ export default function Chat() {
               </div>
             )}
 
-            {messages.map((msg, idx) => {
+            {renderedMessages.map((msg, idx) => {
               const msgAgentName = msg.role !== 'user'
                 ? (msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
                 : undefined;
+              // The mirrored turn is labelled: it is being written somewhere
+              // else, so an answer appearing on its own is explained rather
+              // than surprising.
+              const liveLabel = msg.id === liveMessages[0]?.id ? (
+                <div key="live-label" className="flex items-center gap-1.5 mb-2 text-[11px] font-medium text-indigo-500">
+                  <Radio className="w-3 h-3 animate-pulse" />
+                  {liveTurn?.source && liveTurn.source !== 'chat'
+                    ? t('chat.liveFromSource', { source: liveTurn.source })
+                    : t('chat.liveElsewhere')}
+                </div>
+              ) : null;
               if (viewMode === 'build') {
                 // Reloaded messages lost their live timeline; fall back to the
                 // server-reconstructed one (tools + thoughts) keyed by run_id.
@@ -3833,23 +3864,30 @@ export default function Chat() {
                   ? { ...msg, timeline: reconstructed }
                   : msg;
                 return (
-                  <BuildMessage
-                    key={msg.id}
-                    msg={buildMsg}
-                    agentName={msgAgentName}
-                    onJumpArtifact={jumpToArtifact}
-                  />
+                  <React.Fragment key={msg.id}>
+                    {liveLabel}
+                    <BuildMessage
+                      msg={buildMsg}
+                      agentName={msgAgentName}
+                      onJumpArtifact={jumpToArtifact}
+                    />
+                  </React.Fragment>
                 );
               }
               return (
-                <MessageBubble
-                  key={msg.id}
-                  msg={msg}
-                  isStreaming={loading && idx === messages.length - 1 && msg.role === 'agent'}
-                  agentName={msgAgentName}
-                  artifactsByPath={artifacts}
-                  onAction={sendMessage}
-                />
+                <React.Fragment key={msg.id}>
+                  {liveLabel}
+                  <MessageBubble
+                    msg={msg}
+                    isStreaming={
+                      (loading && idx === renderedMessages.length - 1 && msg.role === 'agent')
+                      || (msg.id === 'live-agent' && liveTurn?.status === 'running')
+                    }
+                    agentName={msgAgentName}
+                    artifactsByPath={artifacts}
+                    onAction={sendMessage}
+                  />
+                </React.Fragment>
               );
             })}
 

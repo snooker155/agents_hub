@@ -1,4 +1,5 @@
 export default {
+  liveGeneration: 'Генерация прямо сейчас',
   messageDetails: 'Детали запуска',
   messages: 'Запуски',
   backToMessages: 'К запускам',

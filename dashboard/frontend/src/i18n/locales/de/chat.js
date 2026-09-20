@@ -1,6 +1,10 @@
 export default {
   chat: 'Chat',
   chats: 'Chats',
+  notSaved: 'Nicht gespeichert',
+  liveElsewhere: 'Wird gerade beantwortet',
+  liveFromSource: 'Wird gerade beantwortet, aus {{source}}',
+  notSavedHint: 'Diese Unterhaltung konnte nicht auf dem Server gespeichert werden. Sie bleibt in diesem Tab, bis die Verbindung zurück ist.',
   build: 'Build',
   newChat: 'Neuer Chat',
   newConversation: 'Neue Unterhaltung',

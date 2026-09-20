@@ -86,6 +86,23 @@ export const streamChat = async ({ body, onEvent, signal }) => {
  */
 export const startChatOverSSE = (body) => api.post('/chat/stream-sse', body);
 
+// Stored conversations. The Chat page used to keep its history in localStorage,
+// which tied a chat to one browser profile and capped it at the storage quota;
+// it is a service record now, so the list comes from the server. Listing omits
+// transcripts — a chat's messages arrive when it is opened.
+export const listChats = (params) => api.get('/chats', { params });
+export const getChat = (chatId) => api.get(`/chats/${chatId}`);
+// The client id travels with a save so the server can name the writer when it
+// announces it: every other tab with this chat open reloads, the writer does not.
+export const saveChat = (chat, clientId) => api.put(`/chats/${chat.id}`, chat, {
+  headers: clientId ? { 'X-Client-Id': clientId } : undefined,
+});
+export const deleteChat = (chatId) => api.delete(`/chats/${chatId}`);
+export const importChats = (chats) => api.post('/chats/import', { chats });
+// The turn a conversation is in the middle of, for a page that arrived after it
+// started: what has been generated so far, to continue from on the live channel.
+export const getChatLive = (chatId) => api.get(`/chats/${chatId}/live`);
+
 // Context references — what the chat composer can attach besides a file. The
 // kind catalog and the per-kind candidate lists both come from the server so the
 // picker always offers exactly what the prompt builder can render.
@@ -359,6 +376,9 @@ export const getMessages = (params) => api.get('/messages', { params });
 export const createMessage = (data) => api.post('/messages', data);
 export const getMessage = (runId) => api.get(`/messages/${runId}`);
 export const getMessageLogs = (runId) => api.get(`/messages/${runId}/logs`);
+// The live tail of a run still in progress: what a finished run answers from
+// its log and payloads, a running one can only answer from here.
+export const getMessageLive = (runId) => api.get(`/messages/${runId}/live`);
 export const getMessageInsights = (runId) => api.get(`/messages/${runId}/insights`);
 export const stopMessage = (runId) => api.post(`/messages/${runId}/stop`);
 export const deleteMessage = (runId, params) => api.delete(`/messages/${runId}`, { params });

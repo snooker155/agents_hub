@@ -516,6 +516,32 @@ CREATE TABLE IF NOT EXISTS instance_inbox (
     error        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_inbox_pending ON instance_inbox(instance_id, delivered_at);
+
+-- One row per conversation on the main Chat page. The transcript used to live
+-- in the browser's localStorage, which made a chat a property of one browser
+-- profile: invisible to every other device, wiped with the site data, and
+-- silently trimmed once the quota was hit. A chat is a first-class record of
+-- what the service was asked to do, so it is stored here beside the runs it
+-- produced. ``doc`` holds the whole conversation (metadata + message bubbles)
+-- the way the UI renders it; the columns are what the list query filters and
+-- orders by, kept in sync with the doc on every write.
+CREATE TABLE IF NOT EXISTS chats (
+    chat_id       TEXT PRIMARY KEY,
+    title         TEXT,
+    workspace     TEXT,
+    project_id    TEXT,
+    agent_id      TEXT,
+    flow_id       TEXT,
+    team_id       TEXT,
+    target_mode   TEXT,
+    origin        TEXT,       -- NULL/web for the dashboard, "telegram" for a bound thread
+    message_count INTEGER DEFAULT 0,
+    created_at    TEXT,
+    updated_at    TEXT,
+    doc           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chats_ws      ON chats(workspace, updated_at DESC);
 """
 
 

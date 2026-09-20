@@ -206,12 +206,18 @@ class ChatStreamCallback(BaseCallbackHandler):
         log_lines: list[str],
         log_file: Path,
         session_id: str | None = None,
+        run_id: str | None = None,
     ):
         self.loop = loop
         self.queue = queue
         self.log_lines = log_lines
         self.log_file = log_file
         self.session_id = session_id
+        # Stamped onto every event. The session channel carries the events of
+        # every run on that session, so without it a viewer cannot tell which
+        # run a token belongs to — which is exactly what a run's own page needs
+        # in order to show only its own generation.
+        self.run_id = run_id
         self._step = 0
         self.prompt_tokens = 0
         self.completion_tokens = 0
@@ -282,6 +288,8 @@ class ChatStreamCallback(BaseCallbackHandler):
             raise InterruptedError("Run stopped by user")
 
     def _emit(self, payload: dict):
+        if self.run_id:
+            payload.setdefault("run_id", self.run_id)
         # Forward to the local SSE queue for the active HTTP response.
         self.loop.call_soon_threadsafe(self.queue.put_nowait, payload)
         # Also publish to the session broker so /api/sessions/{id}/stream

@@ -55,19 +55,19 @@ features:
 
 <div class="shot">
 
-[![The Chat page, with the agent, flow and team switcher, the workspace and the model in use](/screenshots/chat.png)](/screenshots/chat.png)
+[![The Agents page, a grid of agent cards with their tools, nodes, sessions and tasks](/screenshots/agents.png)](/screenshots/agents.png)
 
-**Chat.** Talk to any agent, flow or team. The header carries the workspace, the
-project and the model the next message will actually use.
+**Agents.** Every agent is a folder of layered markdown. Tools are granted by
+name, and each card shows what its agent holds and what it is currently running.
 
 </div>
 
 <div class="shot">
 
-[![The Agents page, a grid of agent cards with their tools, nodes, sessions and tasks](/screenshots/agents.png)](/screenshots/agents.png)
+[![The Chat page, with the agent, flow and team switcher, the workspace and the model in use](/screenshots/chat.png)](/screenshots/chat.png)
 
-**Agents.** Every agent is a folder of layered markdown. Tools are granted by
-name, and each card shows what its agent holds and what it is currently running.
+**Chat.** Talk to any agent, flow or team. The header carries the workspace, the
+project and the model the next message will actually use.
 
 </div>
 
@@ -110,22 +110,43 @@ thought behind each move, the action it took and the state that changed.
 </div>
 
 <style scoped>
+/* Alternating rows: the screenshot on one side, its caption on the other, and
+   the sides swap every row. The shots are kept well under full width, since at
+   full width the dense dashboard is more wall than illustration. */
 .shot-grid {
   display: grid;
-  gap: 2.5rem 2rem;
-  margin: 2rem 0 3rem;
+  gap: 4rem;
+  margin: 2rem 0 3.5rem;
 }
-@media (min-width: 860px) {
-  .shot-grid { grid-template-columns: 1fr 1fr; }
+.shot {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 2.5rem;
+  align-items: center;
 }
-.shot-grid img {
+/* Every second row puts the image on the right, and takes the wider column
+   with it, so every shot renders at the same size. */
+.shot:nth-child(even) { grid-template-columns: 0.9fr 1.1fr; }
+.shot:nth-child(even) > p:has(img) { order: 2; }
+.shot img {
   width: 100%;
   border: 1px solid var(--vp-c-divider);
   border-radius: 10px;
+  box-shadow: 0 1px 12px rgb(0 0 0 / 6%);
 }
-.shot-grid p { font-size: 0.95rem; line-height: 1.6; color: var(--vp-c-text-2); }
-.shot-grid p:has(img) { margin: 0 0 0.75rem; }
+.shot-grid p { font-size: 0.95rem; line-height: 1.7; color: var(--vp-c-text-2); }
+.shot-grid p:has(img) { margin: 0; }
 .shot-grid a { display: block; }
+
+@media (max-width: 860px) {
+  .shot-grid { gap: 3rem; }
+  .shot,
+  .shot:nth-child(even) {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .shot:nth-child(even) > p:has(img) { order: 0; }
+}
 </style>
 
 ## Install and run

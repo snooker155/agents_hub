@@ -324,6 +324,7 @@ State is split between a SQLite database and files on disk, along one line: anyt
 | Group | Tables |
 | --- | --- |
 | Execution | `runs`, `run_payloads`, `sessions`, `continuations`, `instances`, `instance_inbox`, `nodes`, `routing_log` |
+| Conversation | `chats` |
 | Tasks | `tasks`, `task_activity`, `task_results` |
 | Views | `views`, `view_ops` |
 | Evals | `eval_sets`, `eval_runs`, `eval_results` |
@@ -332,6 +333,8 @@ State is split between a SQLite database and files on disk, along one line: anyt
 | Teams | `teams`, `team_runs`, `team_messages` |
 
 The first connection in any process ensures the schema and runs a one-time migration from the legacy JSON stores (`common/db_migrate.py`), leaving the originals behind as `*.migrated` — so any entrypoint, backend or CLI, may touch the stores first.
+
+`chats` is the newest of these and arrived the same way the others did. The Chat page kept its conversations in the browser's `localStorage`, which made the record the service exists to produce the one thing it did not store: bound to a single browser profile, erased with the site data, and trimmed oldest-first once the ~5 MB quota was reached. A conversation is now a row (`common/chat_store.py`, `/api/chats`), holding the transcript as the UI renders it, beside the `runs` its turns produced. The browser keeps only what is true of that browser — which panel is open, which view mode was last used — and a profile still holding the old key hands it over once, additively, on first load.
 
 **Files** — under `.agents_hub/` unless noted:
 
@@ -358,7 +361,7 @@ The backend is organized by route domains, registered in `dashboard/backend/main
 | Work | `tasks`, `plan`, `flows`, `flow-entities`, `loops`, `teams` |
 | Measurement | `stats`, `models`, `costs`, `evals`, `playground`, `runs/{id}/replay` |
 | Knowledge | `shared-memory`, `web-logs`, `views` |
-| Environment | `workspaces`, `projects`, `tools`, `sessions`, `messages`, `instances`, `chat`, `nodes`, `containers` |
+| Environment | `workspaces`, `projects`, `tools`, `sessions`, `messages`, `instances`, `chat`, `chats`, `nodes`, `containers` |
 | Integration | `external`, `telegram`, `git`, `settings`, `stream`, `health` |
 
 The root endpoint (`GET /`) returns the API banner and the domains it serves. Most application endpoints live under `/api/*`.
@@ -373,6 +376,10 @@ curl http://localhost:8000/api/health  # DB reachability, row counts, background
 `/api/health` is what to read when something feels stuck: it reports the liveness of every background service — the plan scheduler, the run watchdog, the Telegram poller, the external-state publisher — instead of making you infer it from logs.
 
 **Live updates.** The dashboard holds a single `EventSource` onto `/api/stream`, and everything that moves is a channel on it: chat tokens, flow nodes, team boards, loop iterations, simulation ticks, view frames. Nothing needs polling to discover that the backend went away.
+
+**A turn belongs to its conversation, not to the window that asked for it.** Every chat pipeline publishes its events to `chat:<conversation_id>` (`chat/broadcast.py`), so the same conversation open in a second tab or on another device mirrors the generation as it happens, and a turn started from Telegram or from an agent's inbox shows up in the chat page rather than appearing complete at the end. Each event names the client that started the turn, which is how that tab recognises its own echo and does not render every token twice. The mirror is never saved: the tab that ran the turn writes the transcript, and a save announces itself on the same channel so the others reload rather than drift. If that tab is gone when the run finishes, the server writes the turn itself, so closing a window mid-answer no longer loses it.
+
+**Catching up.** A broadcast only carries what comes next, so `common/live_runs.py` keeps a short-term tail of each run in flight: the text so far, the thinking and tool steps behind it, dropped shortly after the run ends. It is what `GET /api/chats/{id}/live` and `GET /api/messages/{run_id}/live` answer, so a page opened mid-answer starts from the middle of the answer rather than the middle of a word. This is what makes a running run's own page show its generation instead of an empty log.
 
 ## Agent Execution Modes
 

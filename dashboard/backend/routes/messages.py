@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Optional
 from pathlib import Path
 
+from common import live_runs
 from managers import run_manager
 from managers.run_manager import update_run as update_message_run
 from tasks import service as tasks_service
@@ -128,6 +129,23 @@ async def get_message_logs(run_id: str):
         return {"logs": content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{run_id}/live")
+async def get_message_live(run_id: str):
+    """What this run has produced so far, for a run that is still going.
+
+    A finished run answers from its record: the log, the payloads, the process
+    graph. A running one has none of that yet, and its events are a broadcast
+    nobody kept — so opening the page of a run in progress used to show a status
+    badge and an empty log until it ended. This returns the live tail held in
+    :mod:`common.live_runs`, which the page then continues from the session
+    channel.
+
+    ``{"turn": null}`` when nothing live is known: the run is over, or it was
+    never one of the kinds that report (see the module docstring there).
+    """
+    return {"turn": live_runs.by_run(run_id)}
 
 
 @router.get("/{run_id}/insights")

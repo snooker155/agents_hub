@@ -45,7 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
-from routes import agent_import, agents, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances
+from routes import agent_import, agents, chats, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances
 from routes import settings as settings_router
 from routes import models as models_router
 
@@ -330,6 +330,9 @@ app.include_router(instances.router)
 
 # Chat domain: direct in-process agent conversation
 app.include_router(chat.router)
+
+# The conversations themselves: stored server-side, not in the browser
+app.include_router(chats.router)
 
 # What the chat composer can attach besides a file: the entity picker's catalog
 app.include_router(context_refs.router)

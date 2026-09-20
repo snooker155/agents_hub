@@ -217,7 +217,7 @@ function FlowCanvasInner({
             style: { stroke: '#0891b2', strokeWidth: 2 },
           }}
         >
-          <MiniMap pannable zoomable className="!rounded-2xl !border !border-slate-200 !bg-white" />
+          <MiniMap pannable zoomable className="flow-minimap" />
           <Background gap={24} color="#cbd5e1" />
           <Controls className="!shadow-none" />
         </ReactFlow>

@@ -27,24 +27,53 @@ const MAX_TEXT = 40000;
 const clip = (text) => (text.length > MAX_TEXT ? text.slice(text.length - MAX_TEXT) : text);
 
 /**
+ * One run's live state, rebuilt from the catch-up snapshot the server keeps
+ * (`common.live_runs`). A page that opens while a run is half-way through
+ * starts from this rather than from the middle of the broadcast.
+ */
+function seedRuns(seed) {
+  if (!seed || !seed.run_id) return [];
+  return [{
+    run_id: String(seed.run_id),
+    agent_id: seed.agent_id || '',
+    text: clip(String(seed.text || '')),
+    thinking: (seed.thinking || []).map((entry) => String(entry?.content ?? entry ?? '')),
+    tools: (seed.tools || []).map((tool) => ({ ...tool })),
+    errors: seed.error ? [String(seed.error)] : [],
+    done: seed.status !== 'running',
+    ok: seed.status === 'finished',
+    usage: seed.usage || null,
+    duration_ms: seed.duration_ms ?? null,
+    started_at: seed.started_at ? seed.started_at * 1000 : Date.now(),
+  }];
+}
+
+/**
  * Subscribe to `sessionId` and accumulate its runs.
  * Returns `{ runs, activeCount }`; `runs` is oldest-first.
  *
  * The runs are stored together with the session they belong to, so switching
  * sessions drops the previous one's blocks without an effect that resets state
  * (which would render the stale list for a frame before clearing it).
+ *
+ * `runId` narrows the panel to one run, for a page that is about that run and
+ * not about everything its session happens to be doing. `seed` is where the
+ * accumulation starts, so what streamed before the page opened is not lost; the
+ * caller is expected to have it in hand before mounting, since events arriving
+ * before a seed could not be told apart from the text already in it.
  */
-function useLiveRunStream(sessionId) {
-  const [state, setState] = useState({ sessionId, runs: [] });
-  const runs = state.sessionId === sessionId ? state.runs : [];
+function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
+  const key = `${sessionId || ''}|${runId || ''}`;
+  const [state, setState] = useState(() => ({ sessionId: key, runs: seedRuns(seed) }));
+  const runs = state.sessionId === key ? state.runs : seedRuns(seed);
 
   const upsert = useCallback((runId, mutate) => {
     if (!runId) return;
     setState((prev) => {
-      const list = prev.sessionId === sessionId ? prev.runs : [];
+      const list = prev.sessionId === key ? prev.runs : [];
       const idx = list.findIndex((r) => r.run_id === runId);
       if (idx === -1) {
-        return { sessionId, runs: [...list, mutate({
+        return { sessionId: key, runs: [...list, mutate({
           run_id: runId, agent_id: '', text: '', thinking: [], tools: [],
           errors: [], done: false, ok: null, usage: null, duration_ms: null,
           started_at: Date.now(),
@@ -52,32 +81,35 @@ function useLiveRunStream(sessionId) {
       }
       const next = [...list];
       next[idx] = mutate(next[idx]);
-      return { sessionId, runs: next };
+      return { sessionId: key, runs: next };
     });
-  }, [sessionId]);
+  }, [key]);
 
   useChannel(sessionId || null, useCallback((ev) => {
     if (!ev || !ev.type || ev.type === 'heartbeat') return;
-    const runId = ev.run_id;
+    const eventRunId = ev.run_id;
+    // A session channel carries every run on that session; a panel about one
+    // run wants only its own.
+    if (runId && String(eventRunId || '') !== String(runId)) return;
 
     switch (ev.type) {
       case 'meta':
-        upsert(runId, (r) => ({ ...r, agent_id: ev.agent_id || r.agent_id }));
+        upsert(eventRunId, (r) => ({ ...r, agent_id: ev.agent_id || r.agent_id }));
         break;
       case 'token':
-        upsert(runId, (r) => ({ ...r, text: clip(r.text + (ev.token || '')) }));
+        upsert(eventRunId, (r) => ({ ...r, text: clip(r.text + (ev.token || '')) }));
         break;
       case 'thinking':
-        upsert(runId, (r) => ({ ...r, thinking: [...r.thinking, String(ev.message || '')] }));
+        upsert(eventRunId, (r) => ({ ...r, thinking: [...r.thinking, String(ev.message || ev.content || '')] }));
         break;
       case 'tool_start':
-        upsert(runId, (r) => ({
+        upsert(eventRunId, (r) => ({
           ...r,
           tools: [...r.tools, { step: ev.step, tool: ev.tool, input: ev.input || '', output: null, error: null }],
         }));
         break;
       case 'tool_end':
-        upsert(runId, (r) => {
+        upsert(eventRunId, (r) => {
           if (!r.tools.length) return r;
           const tools = [...r.tools];
           tools[tools.length - 1] = { ...tools[tools.length - 1], output: ev.output || '' };
@@ -85,7 +117,7 @@ function useLiveRunStream(sessionId) {
         });
         break;
       case 'tool_error':
-        upsert(runId, (r) => {
+        upsert(eventRunId, (r) => {
           if (!r.tools.length) return { ...r, errors: [...r.errors, String(ev.error || '')] };
           const tools = [...r.tools];
           tools[tools.length - 1] = { ...tools[tools.length - 1], error: String(ev.error || '') };
@@ -93,10 +125,10 @@ function useLiveRunStream(sessionId) {
         });
         break;
       case 'error':
-        upsert(runId, (r) => ({ ...r, errors: [...r.errors, String(ev.error || '')] }));
+        upsert(eventRunId, (r) => ({ ...r, errors: [...r.errors, String(ev.error || '')] }));
         break;
       case 'done':
-        upsert(runId, (r) => ({
+        upsert(eventRunId, (r) => ({
           ...r,
           // The streamed text is what the user watched appear; fall back to the
           // final response only when nothing streamed (streaming off, or a run
@@ -111,7 +143,7 @@ function useLiveRunStream(sessionId) {
       default:
         break;
     }
-  }, [upsert]));
+  }, [upsert, runId]));
 
   return { runs, activeCount: runs.filter((r) => !r.done).length };
 }
@@ -213,9 +245,10 @@ function RunBlock({ run }) {
  * events yet, so it can be dropped above existing content without leaving an
  * empty box on pages where nothing is running.
  */
-export default function LiveRunStream({ sessionId, title, className = '' }) {
+export default function LiveRunStream({ sessionId, runId = null, seed = null,
+                                       title, className = '' }) {
   const { t } = useI18n();
-  const { runs, activeCount } = useLiveRunStream(sessionId);
+  const { runs, activeCount } = useLiveRunStream(sessionId, { runId, seed });
   const heading = title ?? t('liveRunStream.liveOutput');
   const endRef = useRef(null);
 

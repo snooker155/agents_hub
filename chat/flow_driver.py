@@ -179,7 +179,8 @@ def build_chat_driver(
 
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
-        callback = ChatStreamCallback(loop, queue, log_lines, log_file, session_id=session_id)
+        callback = ChatStreamCallback(loop, queue, log_lines, log_file,
+                                      session_id=session_id, run_id=run_id)
         node_started_ts = time.perf_counter()
 
         async def _run_node_agent():

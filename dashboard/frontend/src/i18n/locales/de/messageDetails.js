@@ -1,4 +1,5 @@
 export default {
+  liveGeneration: 'Wird gerade generiert',
   messageDetails: 'Laufdetails',
   messages: 'Läufe',
   backToMessages: 'Zurück zu den Läufen',

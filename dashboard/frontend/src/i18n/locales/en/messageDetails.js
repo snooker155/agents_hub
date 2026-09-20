@@ -1,4 +1,5 @@
 export default {
+  liveGeneration: 'Generating now',
   messageDetails: 'Run Details',
   messages: 'Runs',
   backToMessages: 'Back to runs',

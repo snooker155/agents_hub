@@ -448,6 +448,12 @@ async def publish_session_event(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
     if not isinstance(event, dict):
         raise HTTPException(status_code=400, detail="Event must be a JSON object")
+    # Keep a live tail of the run as well as fanning it out, so a page opened
+    # mid-run can catch up on what it missed instead of joining a broadcast
+    # already in progress (common.live_runs).
+    from common import live_runs
+
+    live_runs.record_run_event(event, session_id=session_id)
     await broker.apublish(session_id, event)
     return {"ok": True}
 

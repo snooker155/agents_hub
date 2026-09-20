@@ -49,10 +49,11 @@ from .runs import (
     load_flow_definition,
     create_chat_run,
 )
+from .broadcast import broadcast_turn
 from .streaming import StreamDriveResult, drive_streaming_run
 
 
-async def run_chat_pipeline(request: ChatRequest):
+async def _run_chat_pipeline(request: ChatRequest):
     """
     Drive the full chat run lifecycle and yield events as dicts.
 
@@ -95,7 +96,8 @@ async def run_chat_pipeline(request: ChatRequest):
 
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
-    callback = ChatStreamCallback(loop, queue, log_lines, log_file, session_id=session_id)
+    callback = ChatStreamCallback(loop, queue, log_lines, log_file,
+                                  session_id=session_id, run_id=run_id)
     message_started = time.perf_counter()
 
     async def _run_agent_async():
@@ -270,7 +272,7 @@ async def run_chat_pipeline(request: ChatRequest):
         yield {"type": "done", "ok": False, "response": f"Error: {e}", "error": str(e), "run_id": run_id}
 
 
-async def run_chat_flow_pipeline(request: ChatRequest):
+async def _run_chat_flow_pipeline(request: ChatRequest):
     """
     Drive a multi-agent flow conversation in-process and yield SSE events.
 
@@ -467,7 +469,7 @@ async def run_chat_flow_pipeline(request: ChatRequest):
         }
 
 
-async def run_chat_team_pipeline(request: ChatRequest):
+async def _run_chat_team_pipeline(request: ChatRequest):
     """
     Hand a chat message to a team and stream the conversation it produces.
 
@@ -591,3 +593,29 @@ async def run_chat_team_pipeline(request: ChatRequest):
         "stop_reason": run.stop_reason, "total_cost": run.total_cost,
         "duration_ms": duration_ms,
     }
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
+# Every consumer — the web routes, the Telegram adapter, an instance delivery,
+# the CLI — goes through these, so a turn started anywhere is visible to anyone
+# with that conversation open. The wrapper only passes events along on their way
+# out (see chat.broadcast); the generators above are unchanged by it.
+
+async def run_chat_pipeline(request: ChatRequest):
+    """One agent, streamed to its caller and to the conversation's channel."""
+    async for event in broadcast_turn(request, _run_chat_pipeline(request)):
+        yield event
+
+
+async def run_chat_flow_pipeline(request: ChatRequest):
+    """A flow's DAG, same treatment: one bubble per node, seen by every viewer."""
+    async for event in broadcast_turn(request, _run_chat_flow_pipeline(request)):
+        yield event
+
+
+async def run_chat_team_pipeline(request: ChatRequest):
+    """A team's conversation, streamed as it is said."""
+    async for event in broadcast_turn(request, _run_chat_team_pipeline(request)):
+        yield event

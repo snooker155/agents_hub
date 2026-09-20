@@ -2,7 +2,9 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical } from 'lucide-react';
 
-import { getMessage, getMessageLogs, getMessageInsights, stopMessage, replayRun, getEvalSets, createEvalSet, addEvalCase } from '../api';
+import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun, getEvalSets, createEvalSet, addEvalCase } from '../api';
+import LiveRunStream from '../components/LiveRunStream';
+import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
 import MessageProcessFlow from '../components/MessageProcessFlow';
 
@@ -275,6 +277,8 @@ export default function MessageDetails() {
   const [logs, setLogs] = useState('');
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('insights');
+  // What this run has produced so far, when it is still producing it.
+  const [liveTurn, setLiveTurn] = useState(null);
   const [stopping, setStopping] = useState(false);
   const [replayOpen, setReplayOpen] = useState(false);
   const [replaying, setReplaying] = useState(false);
@@ -297,14 +301,19 @@ export default function MessageDetails() {
     setLoading(true);
     setError('');
     try {
-      const [msgRes, insightsRes, logsRes] = await Promise.all([
+      // The live tail is fetched with everything else, not after it: the panel
+      // below must have what already streamed *before* it subscribes, or the
+      // text it shows starts in the middle of a word (see components/LiveRunStream).
+      const [msgRes, insightsRes, logsRes, liveRes] = await Promise.all([
         getMessage(runId),
         getMessageInsights(runId),
         getMessageLogs(runId),
+        getMessageLive(runId).catch(() => ({ data: { turn: null } })),
       ]);
       setMessage(msgRes.data || null);
       setInsights(insightsRes.data || { tools: [], thinking: [] });
       setLogs(logsRes.data?.logs || '');
+      setLiveTurn(liveRes.data?.turn || null);
     } catch (err) {
       setError(err.response?.data?.detail || t('messageDetails.loadFailed'));
     } finally {
@@ -313,6 +322,15 @@ export default function MessageDetails() {
   }, [runId, t]);
 
   useEffect(() => { load(); }, [load]);
+
+  // While the run is going, the panel above is the page's live half. When it
+  // ends, the record is what should be read, so the page reloads and the panel
+  // gives way to the tabs rather than sitting there as a second copy.
+  const isLive = message?.status === 'running' || liveTurn?.status === 'running';
+  useChannel(isLive && message?.session_id ? message.session_id : null, (ev) => {
+    if (!ev || String(ev.run_id || '') !== String(runId)) return;
+    if (ev.type === 'done' || ev.type === 'session_done') load();
+  });
 
   const handleStop = async () => {
     setStopping(true);
@@ -716,6 +734,24 @@ export default function MessageDetails() {
         )}
       </div>
       </div>
+
+      {/* Generation, as it happens.
+
+          A finished run answers from its record — the log, the payloads, the
+          process graph. A running one has none of that yet, so this page used to
+          show a spinning badge and an empty log until the run ended. The panel
+          starts from the server's live tail and follows the run's session
+          channel from there, and the page reloads itself once the run is over so
+          the record takes over from the stream. */}
+      {isLive && message?.session_id && (
+        <LiveRunStream
+          sessionId={message.session_id}
+          runId={runId}
+          seed={liveTurn}
+          title={t('messageDetails.liveGeneration')}
+          className="mb-4 shrink-0"
+        />
+      )}
 
       {/* Tabs + content */}
       <div className="flex-1 min-h-0 flex flex-col">

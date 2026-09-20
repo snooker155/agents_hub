@@ -22,7 +22,7 @@ from common.paths import AGENTS_HUB_ROOT, DB_FILE
 
 # Core stores whose row counts say how much state has accumulated.
 _COUNTED_TABLES = (
-    "runs", "run_payloads", "tasks", "sessions", "nodes",
+    "runs", "run_payloads", "tasks", "sessions", "chats", "nodes",
     "continuations", "task_activity",
 )
 

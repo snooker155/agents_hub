@@ -79,6 +79,13 @@ html.dark body {
   border-radius: 16px;
 }
 
+/* The minimap's own colors, so the dark rules below are not fighting an
+   inline utility class. */
+.react-flow__minimap.flow-minimap {
+  background-color: #fff;
+  border: 1px solid #e2e8f0;
+}
+
 html.dark .react-flow__background {
   background-color: var(--surface-sunken);
 }
@@ -95,6 +102,7 @@ html.dark .react-flow__controls-button:hover {
 
 html.dark .react-flow__minimap {
   background-color: var(--surface-sunken);
+  border-color: var(--border-default);
 }
 
 html.dark .react-flow__edge-text {
