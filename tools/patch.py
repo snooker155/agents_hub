@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import io
 import os
 import re
 import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Workspace root is the provided "workspace" argument (resolved) or
 # current working directory if None.
 
 # Centralized config for sandbox policies
-from common.config import get_swe_config, update_swe_config
+from common.config import get_swe_config
 
 
 from .filesystem import _resolve_within_workspace, _workspace_root

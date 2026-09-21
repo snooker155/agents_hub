@@ -103,7 +103,7 @@ def _set_status(node_id: str, status: str, exit_code: int | None = None, error: 
 
 # ── Orchestrator loop ─────────────────────────────────────────────────────────
 
-def run_orchestrator_loop(node_id: str, workspace: str | None) -> None:
+def run_orchestrator_loop(node_id: str, workspace: str | None, agent_id: str = "orchestrator") -> None:
     """Continuously poll for unassigned user tasks and run the orchestrator on each."""
     from common.workspace_context import normalize_workspace_name, task_in_workspace
     node_workspace = normalize_workspace_name(workspace) or "default"

@@ -99,6 +99,7 @@ def main() -> None:
 
     flow_id = args.flow_id
     run_id = args.run_id or str(uuid4())
+    task_id = args.task_id
 
     from flow import store as flow_store
     flow = flow_store.get_flow(flow_id)
@@ -151,7 +152,6 @@ def main() -> None:
     run_desc = (args.desc or "").strip()
     parts = [flow_desc] + ([run_desc] if run_desc and run_desc != flow_desc else [])
     shared_context = "\n\n".join(p for p in parts if p)
-    task_id = args.task_id
     if task_id:
         shared_context = build_task_instruction(task_id, shared_context)
 
