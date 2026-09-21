@@ -1,5 +1,7 @@
 tasks.json
 *.lock
+# The pinned Python resolution is meant to be committed; see its header.
+!requirements.lock
 .env
 .agents_hub/
 orchestrator/state/

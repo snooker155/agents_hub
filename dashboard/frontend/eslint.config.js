@@ -32,4 +32,12 @@ export default defineConfig([
       }],
     },
   },
+  {
+    // The config file itself runs under Node, not the browser, so it reads
+    // `process.env` — give it Node's globals instead of disabling the rule.
+    files: ['vite.config.js'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 ])

@@ -19,13 +19,23 @@ export default function InlineEdit({ value, onSave, multiline = false, className
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  // What `draft` was last derived from, so a change is noticed without an
+  // effect: this is state derived from a prop during render (the pattern
+  // React recommends over an effect for "adjust state when a prop changes"),
+  // and calling setState here re-renders immediately with the new draft
+  // instead of committing a stale one first.
+  const [syncedValue, setSyncedValue] = useState(value);
   const ref = useRef(null);
 
-  useEffect(() => { if (editing) ref.current?.focus(); }, [editing]);
   // The stored value can change under an editor that is not open — another tab,
   // a chat that edits the same entity — and the next click should start from
   // what is stored rather than from what was there when the page loaded.
-  useEffect(() => { if (!editing) setDraft(value); }, [value, editing]);
+  if (!editing && value !== syncedValue) {
+    setSyncedValue(value);
+    setDraft(value);
+  }
+
+  useEffect(() => { if (editing) ref.current?.focus(); }, [editing]);
 
   const commit = async () => {
     if (draft !== value) await onSave(draft);

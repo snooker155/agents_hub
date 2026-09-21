@@ -1,8 +1,8 @@
-fastapi
-uvicorn
-pydantic
-python-dotenv
-filelock
-PyYAML
-python-multipart
-pypdf
+fastapi>=0.135,<1.0.0
+uvicorn>=0.41
+pydantic>=2.11,<3.0.0
+python-dotenv>=1.2
+filelock>=3.25
+PyYAML>=6.0
+python-multipart>=0.0.22
+pypdf>=6.7

@@ -46,3 +46,23 @@ packages = ["agents_hub"]
 backend = { file = ["dashboard/backend/requirements.txt"] }
 agents = { file = ["requirements-agents.txt"] }
 rag = { file = ["requirements-rag.txt"] }
+
+[tool.ruff]
+target-version = "py310"
+# Generated/vendored/build output, and the frontend (its own ESLint config
+# covers it) — none of this is code we lint with ruff.
+exclude = ["node_modules", "chroma_db", "site", "dashboard/frontend", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = [
+    # E402 (module-import-not-at-top): a large share of the hits are entrypoints
+    # and scripts that deliberately manipulate sys.path before importing local
+    # modules. Baseline ignore for now; revisit once those entrypoints are
+    # restructured to not need it.
+    "E402",
+    # E741 (ambiguous variable name, e.g. `l`/`I`/`O`): pre-existing short names
+    # throughout the codebase, mostly loop variables and math-y code. Baseline
+    # ignore for now; revisit as a separate rename pass.
+    "E741",
+]

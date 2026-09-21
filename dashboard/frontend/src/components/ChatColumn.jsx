@@ -26,6 +26,13 @@ import { usePageChatPanel } from './pageChat/pageChat';
  * follows the page content and everything scrolls the ordinary way.
  */
 
+// This hook and `FILL_COLUMN` below live beside the components because eight
+// pages import all four names together from this one module as the chat
+// column "kit" (hook, toggle, fill props, column). Splitting them into a
+// separate file would be the properly-scoped fix for Fast Refresh, but it
+// would ripple into every one of those pages' imports, so it is left as a
+// deliberate, commented exception rather than done piecemeal here.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useChatColumn(defaultOpen = true) {
   const [open, setOpen] = useState(defaultOpen);
   // The floating panel hosts this same conversation when it is open — same
@@ -92,6 +99,7 @@ export function ChatToggle({ open, onToggle, label, className = '' }) {
  * `min-h-0` it refuses to shrink on a long one and pushes the composer out the
  * bottom; `mt-auto` holds the composer down in the first case.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- see the note above `useChatColumn`.
 export const FILL_COLUMN = {
   heightClass: 'min-h-0 max-h-none',
   className: 'flex-1 min-h-0',
