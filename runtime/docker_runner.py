@@ -66,7 +66,14 @@ def start_run_container(
     cwd: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Start a detached container for a one-shot agent run."""
+    """Start a detached, sandboxed container for a one-shot agent run.
+
+    Unlike a node container (long-lived, keeps today's permissive mounts), a
+    run container gets the hardened profile: resource limits, a read-only
+    root filesystem, a scrubbed environment, and agents.json /
+    custom_providers.json pinned read-only. See
+    managers.container_manager.build_run_command and docs/containers.md.
+    """
     name = container_name_for_run(run_id)
     return start_container(
         container_name=name,
@@ -74,4 +81,5 @@ def start_run_container(
         cmd=inner_cmd,
         workspace=cwd,
         env=env,
+        hardened=True,
     )

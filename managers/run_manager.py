@@ -1644,7 +1644,14 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
         _mark_task_stopped()
         return True
 
-    if rec.get("execution_mode") == "docker" and rec.get("container_name"):
+    # container_name, not execution_mode, is what identifies a container-hosted
+    # run here: the container's own agent_run.py calls open_run() on startup,
+    # which unconditionally records AGENT_EXECUTION_MODE from its own env —
+    # forced to "local" inside every container so an agent never tries to
+    # nest containers of its own — so execution_mode flips back to "local"
+    # moments after this record was created. container_name is never set for
+    # anything but a container-hosted run, so it alone is the stable signal.
+    if rec.get("container_name"):
         from .container_manager import stop_container
         sent = stop_container(rec["container_name"])
         if sent:
@@ -1745,7 +1752,9 @@ def get_status(task_id: str, run_id: Optional[str] = None) -> Optional[Dict[str,
     """
     rec = get_run_by_id(run_id)
     if rec:
-        if rec.get("execution_mode") == "docker" and rec.get("container_name"):
+        # See the comment in _stop_run_record: container_name, not
+        # execution_mode, is the reliable signal for a container-hosted run.
+        if rec.get("container_name"):
             from .container_manager import container_running
             if not container_running(rec["container_name"]):
                 rec = _update_run(rec["run_id"], {

@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
 from common.paths import AGENTS_HUB_ROOT
-from managers.run_manager import preopen_run, _utc_now_iso, _update_run
+from managers.run_manager import preopen_run, _utc_now_iso, _update_run, finalize_task_from_run
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -140,18 +140,17 @@ def start_run(
 
     # agent_run.py's CLI: positional `agent` and optional positional `action`,
     # plus --desc/--task-id/--run-id/--workspace flags. The session id is passed
-    # via AGENT_SESSION_ID in the env (see _build_env), not as a flag.
-    args = [
-        sys.executable,
-        str(PROJECT_ROOT / "runtime" / "agent_run.py"),
-        agent_id,
-    ]
+    # via AGENT_SESSION_ID in the env (see _build_env), not as a flag. Built once
+    # and shared by both launch modes below — only the interpreter/module
+    # prefix differs (a script path locally, "-m runtime.agent_run" in Docker,
+    # the same module form node_manager already uses for node_run).
+    cli_args = [agent_id]
 
     action = params.get("action") or ""
     if action:
-        args.append(action)
+        cli_args.append(action)
 
-    args += [
+    cli_args += [
         "--workspace", str(ws_path),
         "--task-id", str(task_id),
         "--run-id", run_id,
@@ -159,7 +158,7 @@ def start_run(
 
     desc = params.get("description") or ""
     if desc:
-        args.extend(["--desc", desc])
+        cli_args.extend(["--desc", desc])
 
     # Continuing a paused run rather than starting one. Passed as flags like
     # everything else the subprocess needs to know, so nothing has to be read
@@ -167,10 +166,30 @@ def start_run(
     resume = params.get("resume") or {}
     if resume.get("run_id"):
         import json as _json
-        args.extend(["--resume-run", str(resume["run_id"]),
-                     "--resume-value", _json.dumps(resume.get("value"))])
+        cli_args.extend(["--resume-run", str(resume["run_id"]),
+                         "--resume-value", _json.dumps(resume.get("value"))])
         if resume.get("key"):
-            args.extend(["--resume-key", str(resume["key"])])
+            cli_args.extend(["--resume-key", str(resume["key"])])
+
+    # Execution mode resolution mirrors node_manager.start_node exactly: a
+    # workspace's own override (Settings → workspace → agent_mode) wins over
+    # the global setting, both read live so a Settings-page change reaches the
+    # next run without a restart.
+    from common.config import agent_execution_mode
+    _ws_agent_mode: Optional[str] = None
+    if ws_name:
+        try:
+            from workspace import get_workspace_metadata
+            _ws_agent_mode = (get_workspace_metadata(ws_name).get("settings") or {}).get("agent_mode") or None
+        except Exception:
+            pass
+    execution_mode = _ws_agent_mode or agent_execution_mode()
+
+    if execution_mode == "docker":
+        _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id)
+        return run_id, session_id
+
+    args = [sys.executable, str(PROJECT_ROOT / "runtime" / "agent_run.py")] + cli_args
 
     with open(log_file, "w", encoding="utf-8") as lf:
         lf.write(
@@ -201,6 +220,87 @@ def start_run(
     instance_registry.ensure_instance(
         agent_id, instance_id=instance_id, workspace=ws_name, pid=proc.pid, state="active")
     return run_id, session_id
+
+
+def _start_run_in_docker(
+    run_id: str,
+    agent_id: str,
+    cli_args: list,
+    ws_name: str,
+    ws_path: Path,
+    env: Dict[str, str],
+    log_file: Path,
+    instance_id: Optional[str],
+) -> None:
+    """Launch a task run in a sandboxed container instead of a subprocess.
+
+    Mirrors node_manager.start_node's Docker branch: the module form
+    ("-m runtime.agent_run"), not a script path, so container_manager's path
+    translation only ever has to deal with arguments, never the interpreter
+    line (a bare host script path would not exist inside the container).
+
+    On success the run record gets execution_mode="docker" and a
+    container_name instead of a pid. On failure the run is closed as failed
+    and control returns normally — the operator chose Docker, so this never
+    silently falls back to a local subprocess.
+    """
+    from instances import registry as instance_registry
+    from managers.container_manager import CONTAINER_STATE_DIR
+    from runtime import docker_runner
+
+    inner_cmd = [sys.executable, "-m", "runtime.agent_run"] + cli_args
+
+    # AGENT_LOG_FILE in `env` is the *host* path agent_launcher just created,
+    # meant for the Popen stdout redirection the local branch uses below —
+    # there is no equivalent redirection for a detached container. Point it
+    # instead at that same file's container-mounted path, so open_run() (which
+    # agent_run.py calls on startup) records a log_file the dashboard can
+    # open. agent_run.py does not tee its own stdout into it in Docker mode —
+    # that tee only activates when AGENT_LOG_FILE is unset (the bare-CLI
+    # case) — so the file itself stays just the header written below; full
+    # run output lives in `docker logs <container_name>`. See
+    # docs/containers.md for this as a documented gap rather than a bug.
+    docker_env = dict(env)
+    docker_env["AGENT_LOG_FILE"] = f"{CONTAINER_STATE_DIR}/run_logs/{log_file.name}"
+
+    with open(log_file, "w", encoding="utf-8") as lf:
+        lf.write(
+            f"--- Run started at {_utc_now_iso()} ---\n"
+            f"Agent ID : {agent_id}\n"
+        )
+        lf.write(f"Command (in container): {inner_cmd}\nWorkspace: {str(ws_path)}\n\n")
+
+    result = docker_runner.start_run_container(
+        run_id, agent_id, inner_cmd, cwd=str(ws_path), env=docker_env,
+    )
+
+    if not result.get("success"):
+        error = f"Failed to start Docker container: {result.get('error') or 'unknown error'}"
+        _update_run(run_id, {
+            "status": "failed",
+            "finished_at": _utc_now_iso(),
+            "exit_code": 1,
+            "error": error,
+        })
+        if instance_id:
+            instance_registry.mark_failed(instance_id, error)
+        try:
+            finalize_task_from_run(run_id, "failed", 1)
+        except Exception:
+            pass
+        return
+
+    container_name = result.get("container_name")
+    _update_run(run_id, {
+        "execution_mode": "docker",
+        "container_name": container_name,
+        "status": "running",
+        "started_at": _utc_now_iso(),
+    })
+    if instance_id:
+        instance_registry.ensure_instance(
+            agent_id, instance_id=instance_id, workspace=ws_name,
+            container_name=container_name, state="active")
 
 
 def _build_env(ws_name: str, session_id: str, log_file: str,

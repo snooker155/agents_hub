@@ -91,6 +91,17 @@ BASE_IMAGE = "agents-hub/base:latest"
 IMAGE_PREFIX = "agents-hub"
 LABEL_MANAGED = "agents-hub.managed=true"
 
+# Mount points inside every agent container (nodes and runs alike).
+CONTAINER_STATE_DIR = "/app/.agents_hub"
+CONTAINER_TASKS_DIR = "/app/tasks"
+CONTAINER_WORKSPACE_DIR = "/workspace"
+
+# Resource limits for one-shot *run* containers only (nodes are unaffected —
+# they keep calling start_container with hardened=False, the default).
+DEFAULT_RUN_MEMORY = "2g"
+DEFAULT_RUN_CPUS = "2"
+DEFAULT_RUN_PIDS_LIMIT = 512
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -184,6 +195,38 @@ def _env_flags(env: Optional[Dict[str, str]] = None) -> List[str]:
     # Security: never pass Docker-related env vars
     flags = [f for f in flags if "DOCKER" not in f]
     return flags
+
+
+# A run container is a different case from a node container: agent_run.py
+# reads most of its own bookkeeping (workspace name, session id, log file,
+# instance id, the relay token) straight out of os.environ the same way for a
+# subprocess or a container, so a run needs close to the full environment a
+# local subprocess would get — not just the provider-key allowlist above.
+# What it must never see is anything that describes *this host* rather than
+# the run: Docker's own control variables, the HOST_PROJECT_ROOT bind-mount
+# translation, the host's SSH agent socket, and interpreter/venv paths that
+# are meaningless inside the image (the image bakes its own Python, HOME and
+# PATH). AGENTS_HUB_API_TOKEN is deliberately kept — the run's relay calls
+# back over HTTP and need it to authenticate.
+_HOST_ONLY_EXACT = {"HOST_PROJECT_ROOT", "SSH_AUTH_SOCK", "HOME", "PATH"}
+_HOST_ONLY_PREFIXES = ("DOCKER_", "npm_", "VIRTUAL_ENV", "CONDA_")
+
+
+def container_env(env: Dict[str, str]) -> Dict[str, str]:
+    """Return ``env`` minus variables that only make sense on the host.
+
+    Denylist, not allowlist: a run container needs almost everything a local
+    subprocess run gets, so this drops the handful of host-only variables
+    instead of re-deriving the whole environment a run needs.
+    """
+    out: Dict[str, str] = {}
+    for key, value in env.items():
+        if key in _HOST_ONLY_EXACT:
+            continue
+        if any(key.startswith(p) for p in _HOST_ONLY_PREFIXES):
+            continue
+        out[key] = value
+    return out
 
 
 # ── Network management ────────────────────────────────────────────────────────
@@ -395,6 +438,97 @@ def image_tag_for_agent(agent_id: str) -> str:
 
 # ── Container management ──────────────────────────────────────────────────────
 
+def build_run_command(
+    *,
+    container_name: str,
+    agent_id: str,
+    image: str,
+    network: str,
+    translated_cmd: List[str],
+    state_dir: str,
+    tasks_dir: str,
+    workspace: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+    extra_args: Optional[str] = None,
+    memory: Optional[str] = None,
+    cpus: Optional[str] = None,
+    pids_limit: Optional[int] = None,
+    agents_file: Optional[str] = None,
+    custom_providers_file: Optional[str] = None,
+) -> List[str]:
+    """Build the ``docker run`` argv for a sandboxed, one-shot run container.
+
+    Pure: takes the image tag and network name as plain strings (callers
+    resolve those against the daemon separately) and does no I/O of its own
+    beyond reading the two live-settings memory/cpu defaults, so tests can
+    assert on the produced command line without a Docker daemon.
+
+    Security posture, on top of what a node container already gets (no Docker
+    socket, no --privileged, its own bridge network):
+      --cap-drop ALL / --security-opt no-new-privileges — no Linux
+        capabilities and no privilege escalation via setuid binaries.
+      --read-only + --tmpfs /tmp — the image's own filesystem cannot be
+        written to; only /tmp, the state dir and the workspace are writable.
+      --memory / --cpus / --pids-limit — a single run cannot exhaust the host.
+      agents_file / custom_providers_file, when given, are re-mounted
+        read-only *inside* the read-write state dir mount, so a run can still
+        write its own logs and run records there but cannot edit agent
+        definitions or provider credentials. The shared SQLite database
+        underneath is not similarly pinned — see docs/containers.md.
+    """
+    from common.config import live_setting
+    mem = memory or live_setting("AGENT_DOCKER_MEMORY", DEFAULT_RUN_MEMORY)
+    cpu = cpus or live_setting("AGENT_DOCKER_CPUS", DEFAULT_RUN_CPUS)
+    pids = pids_limit or DEFAULT_RUN_PIDS_LIMIT
+
+    docker_cmd = [
+        "docker", "run",
+        "--detach",
+        "--rm",
+        "--name", container_name,
+        "--network", network,
+        "--label", LABEL_MANAGED,
+        "--label", f"agents-hub.agent-id={agent_id}",
+        "--label", "agents-hub.container-type=run",
+        "--memory", str(mem),
+        "--cpus", str(cpu),
+        "--pids-limit", str(pids),
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--read-only",
+        "--tmpfs", "/tmp",
+        "-v", f"{_host_path(state_dir)}:{CONTAINER_STATE_DIR}",
+        "-v", f"{_host_path(tasks_dir)}:{CONTAINER_TASKS_DIR}",
+    ]
+
+    if agents_file:
+        docker_cmd += ["-v", f"{_host_path(agents_file)}:{CONTAINER_STATE_DIR}/agents.json:ro"]
+    if custom_providers_file:
+        docker_cmd += ["-v", f"{_host_path(custom_providers_file)}:{CONTAINER_STATE_DIR}/custom_providers.json:ro"]
+
+    docker_cmd += ["-w", "/app"]
+
+    if workspace:
+        docker_cmd.extend(["-v", f"{_host_path(workspace)}:{CONTAINER_WORKSPACE_DIR}"])
+
+    # Same host-service reachability as a node container (Ollama, LM Studio).
+    docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
+
+    merged_env = container_env(dict(env or {}))
+    merged_env["AGENT_EXECUTION_MODE"] = "local"
+    merged_env = _point_local_models_at_the_host(merged_env)
+    for key, value in merged_env.items():
+        if value:
+            docker_cmd.extend(["-e", f"{key}={value}"])
+
+    if extra_args:
+        docker_cmd.extend(shlex.split(extra_args))
+
+    docker_cmd.append(image)
+    docker_cmd.extend(translated_cmd)
+    return docker_cmd
+
+
 def container_name_for_node(node_id: str) -> str:
     return f"agents-hub-node-{node_id.replace('-', '')[:12]}"
 
@@ -426,6 +560,11 @@ def start_container(
     http_expose: bool = False,
     http_port: int = 8080,
     http_host_port: Optional[int] = None,
+    *,
+    hardened: bool = False,
+    memory: Optional[str] = None,
+    cpus: Optional[str] = None,
+    pids_limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Start a detached container for an agent.
 
@@ -441,6 +580,15 @@ def start_container(
     When http_expose=True the container port http_port is published to
     http_host_port on the host (defaults to the same port number).
 
+    ``hardened`` (used only by start_run_container, one-shot task runs — nodes
+    keep the default, unchanged shape above) additionally applies: a scrubbed
+    environment (container_env, not the provider-key allowlist), --memory /
+    --cpus / --pids-limit, --cap-drop ALL, --security-opt no-new-privileges,
+    a --read-only root with --tmpfs /tmp, and agents.json/custom_providers.json
+    re-mounted read-only on top of the (still read-write) state directory. See
+    docs/containers.md for the full mount table and the remaining gap (the
+    shared SQLite database is still mounted read-write).
+
     Returns: {success, container_id, container_name, image, error,
               http_url (if http_expose)}
     """
@@ -453,56 +601,82 @@ def start_container(
     state_dir = str(AGENTS_HUB_ROOT)
     tasks_dir = str(PROJECT_ROOT / "tasks")
     path_mappings = {
-        state_dir: "/app/.agents_hub",
-        tasks_dir: "/app/tasks",
+        state_dir: CONTAINER_STATE_DIR,
+        tasks_dir: CONTAINER_TASKS_DIR,
     }
     if workspace:
-        path_mappings[str(Path(workspace).resolve())] = "/workspace"
+        path_mappings[str(Path(workspace).resolve())] = CONTAINER_WORKSPACE_DIR
 
     translated_cmd = _translate_paths(cmd, path_mappings)
 
-    docker_cmd = [
-        "docker", "run",
-        "--detach",
-        "--rm",
-        "--name", container_name,
-        "--network", network,
-        "--label", LABEL_MANAGED,
-        "--label", f"agents-hub.agent-id={agent_id}",
-        # Mount only what the agent needs
-        "-v", f"{_host_path(state_dir)}:/app/.agents_hub",
-        "-v", f"{_host_path(tasks_dir)}:/app/tasks",
-        "-w", "/app",
-    ]
-
-    # Mount workspace if provided
-    if workspace:
-        docker_cmd.extend(["-v", f"{_host_path(workspace)}:/workspace"])
-
-    # Publish HTTP port when the agent exposes an HTTP server
-    if http_expose:
-        resolved_host_port = http_host_port if http_host_port is not None else http_port
-        docker_cmd.extend(["-p", f"{resolved_host_port}:{http_port}"])
-
-    # Allow containers to reach host services (e.g. Ollama, LM Studio) via
-    # host.docker.internal.  On Linux the gateway alias must be added explicitly;
-    # on macOS/Windows it is provided by Docker Desktop automatically.
-    docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
-
-    # Forward env vars; force local execution mode inside container
-    merged_env = dict(os.environ if env is None else env)
-    merged_env["AGENT_EXECUTION_MODE"] = "local"
-    merged_env = _point_local_models_at_the_host(merged_env)
-    docker_cmd.extend(_env_flags(merged_env))
-
-    # Extra user-configured docker flags, same live resolution as the image
     from common.config import live_setting
     extra = extra_args or live_setting("AGENT_DOCKER_EXTRA_ARGS")
-    if extra:
-        docker_cmd.extend(shlex.split(extra))
 
-    docker_cmd.append(image)
-    docker_cmd.extend(translated_cmd)
+    if hardened:
+        # agents.json / custom_providers.json ride read-write inside the state
+        # dir mount above; only pin them back to read-only when they already
+        # exist — bind-mounting a path docker has to invent turns a file mount
+        # into an empty directory, which is a confusing way to fail.
+        agents_file = AGENTS_HUB_ROOT / "agents.json"
+        custom_providers_file = AGENTS_HUB_ROOT / "custom_providers.json"
+        docker_cmd = build_run_command(
+            container_name=container_name,
+            agent_id=agent_id,
+            image=image,
+            network=network,
+            translated_cmd=translated_cmd,
+            state_dir=state_dir,
+            tasks_dir=tasks_dir,
+            workspace=workspace,
+            env=env,
+            extra_args=extra,
+            memory=memory,
+            cpus=cpus,
+            pids_limit=pids_limit,
+            agents_file=str(agents_file) if agents_file.exists() else None,
+            custom_providers_file=str(custom_providers_file) if custom_providers_file.exists() else None,
+        )
+    else:
+        docker_cmd = [
+            "docker", "run",
+            "--detach",
+            "--rm",
+            "--name", container_name,
+            "--network", network,
+            "--label", LABEL_MANAGED,
+            "--label", f"agents-hub.agent-id={agent_id}",
+            # Mount only what the agent needs
+            "-v", f"{_host_path(state_dir)}:{CONTAINER_STATE_DIR}",
+            "-v", f"{_host_path(tasks_dir)}:{CONTAINER_TASKS_DIR}",
+            "-w", "/app",
+        ]
+
+        # Mount workspace if provided
+        if workspace:
+            docker_cmd.extend(["-v", f"{_host_path(workspace)}:{CONTAINER_WORKSPACE_DIR}"])
+
+        # Publish HTTP port when the agent exposes an HTTP server
+        if http_expose:
+            resolved_host_port = http_host_port if http_host_port is not None else http_port
+            docker_cmd.extend(["-p", f"{resolved_host_port}:{http_port}"])
+
+        # Allow containers to reach host services (e.g. Ollama, LM Studio) via
+        # host.docker.internal.  On Linux the gateway alias must be added explicitly;
+        # on macOS/Windows it is provided by Docker Desktop automatically.
+        docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
+
+        # Forward env vars; force local execution mode inside container
+        merged_env = dict(os.environ if env is None else env)
+        merged_env["AGENT_EXECUTION_MODE"] = "local"
+        merged_env = _point_local_models_at_the_host(merged_env)
+        docker_cmd.extend(_env_flags(merged_env))
+
+        # Extra user-configured docker flags, same live resolution as the image
+        if extra:
+            docker_cmd.extend(shlex.split(extra))
+
+        docker_cmd.append(image)
+        docker_cmd.extend(translated_cmd)
 
     try:
         result = _run(docker_cmd, timeout=30)

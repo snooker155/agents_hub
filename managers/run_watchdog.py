@@ -185,10 +185,22 @@ def sweep_once() -> int:
                 closed += 1
 
         elif status == "running":
-            pid = int(rec.get("pid") or 0)
-            if pid > 0 and not rm._pid_exists(pid):
-                _fail_run(rec, "Run process died without finalizing (crash or external kill).")
-                closed += 1
+            container_name = rec.get("container_name")
+            if container_name:
+                # A container-hosted run: liveness is the container, not a
+                # pid — the container's own agent_run.py runs with a pid that
+                # only means something inside its own namespace. See the
+                # comment on run_manager._stop_run_record for why
+                # container_name (not execution_mode) is what identifies one.
+                from managers.container_manager import container_running
+                if not container_running(container_name):
+                    _fail_run(rec, "Run container exited without finalizing (crash or external kill).")
+                    closed += 1
+            else:
+                pid = int(rec.get("pid") or 0)
+                if pid > 0 and not rm._pid_exists(pid):
+                    _fail_run(rec, "Run process died without finalizing (crash or external kill).")
+                    closed += 1
 
     closed += _sweep_instances()
     return closed

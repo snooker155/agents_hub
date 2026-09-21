@@ -71,12 +71,25 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 # Containers must NOT try to launch further containers
 ENV AGENT_EXECUTION_MODE=local
+# A one-shot run container mounts the root filesystem read-only (see
+# managers/container_manager.py build_run_command); /home/agent below then
+# reads fine but cannot be written to. /tmp is the one place every container
+# (hardened or not) can always write, so HOME lives there instead — the
+# entrypoint below creates it, since a read-only container's tmpfs starts
+# empty and nothing baked into the image at that path would survive it.
+ENV HOME=/tmp/agent-home
 
 # ---------- security: non-root user ----------
 RUN groupadd -g 1001 agent \
     && useradd -u 1001 -g agent -m agent --shell /bin/bash \
     && chown -R agent:agent /app
 USER agent
+
+# Creates $HOME (on tmpfs when the container is read-only, on the writable
+# layer otherwise) before handing off to the real command — no package added,
+# /bin/sh ships with the base image. "--" separates the entrypoint's own
+# argv from "$@", which is CMD or whatever `docker run <image> ...` appended.
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p \"$HOME\" && exec \"$@\"", "--"]
 
 # Default entrypoint — overridden by per-agent images
 CMD ["python", "-m", "runtime.node_run"]
