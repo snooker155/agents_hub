@@ -39,7 +39,7 @@ def _persist_mem(store: MemoryStore, mem: SharedMemory) -> SharedMemory:
 
 
 def _mem_dump(mem: SharedMemory) -> dict:
-    return mem.model_dump() if hasattr(mem, "model_dump") else mem.dict()
+    return mem.model_dump()
 
 
 def _unlink_graph_mirror(memory_id: UUID, node_type: str, name: str) -> None:

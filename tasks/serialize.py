@@ -12,7 +12,7 @@ from typing import Any, Dict
 
 def task_to_dict(task: Any) -> Dict[str, Any]:
     """Convert task object to dictionary."""
-    data = task.model_dump() if hasattr(task, "model_dump") else task.dict()
+    data = task.model_dump()
     data["id"] = str(data["id"])
     if data.get("parent_id"):
         data["parent_id"] = str(data["parent_id"])

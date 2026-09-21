@@ -12,24 +12,18 @@ from filelock import FileLock
 from .models import SharedMemory
 from common.paths import SHARED_MEMORY_FILE
 
-try:  # pydantic v1
-    from pydantic.json import pydantic_encoder as _pydantic_encoder  # type: ignore
-except Exception:  # pydantic v2 or other
-    _pydantic_encoder = None  # type: ignore
+from pydantic_core import to_jsonable_python as _pydantic_encoder
 
 
 def _model_to_dict(obj) -> dict:
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    return obj.dict()  # type: ignore[attr-defined]
+    return obj.model_dump()
 
 
 def _json_default(o):
-    if _pydantic_encoder is not None:
-        try:
-            return _pydantic_encoder(o)
-        except Exception:
-            pass
+    try:
+        return _pydantic_encoder(o)
+    except Exception:
+        pass
     if isinstance(o, Enum):
         return o.value
     if isinstance(o, datetime):

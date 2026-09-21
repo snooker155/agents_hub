@@ -4,7 +4,7 @@ import os
 from typing import Tuple, List, Optional, Union, Literal
 from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from dataclasses import dataclass, field
 
 DEFAULT_IGNORE: List[str] = [
@@ -78,8 +78,8 @@ class Settings(BaseSettings):
     Merges logic from original tasks/config.py and common/config.py.
     """
     # Core LLM settings
-    default_provider: str = Field(default="lmstudio", env="DEFAULT_PROVIDER")
-    openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    default_provider: str = Field(default="lmstudio")
+    openai_api_key: Optional[str] = Field(default=None)
     model: str = Field(default="gpt-4o",
                        validation_alias=AliasChoices("OPENAI_MODEL", "model"))
     temperature: float = Field(default=0.0,
@@ -103,13 +103,13 @@ class Settings(BaseSettings):
     chat_request_timeout: int = Field(default=900,
                                       validation_alias=AliasChoices("CHAT_REQUEST_TIMEOUT", "chat_request_timeout"))
     # Other cloud providers
-    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
-    google_api_key: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
+    anthropic_api_key: Optional[str] = Field(default=None)
+    google_api_key: Optional[str] = Field(default=None)
     # Local models
-    ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
-    ollama_model: str = Field(default="", env="OLLAMA_MODEL")
-    lmstudio_base_url: str = Field(default="http://localhost:1234", env="LMSTUDIO_BASE_URL")
-    lmstudio_model: str = Field(default="", env="LMSTUDIO_MODEL")
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    ollama_model: str = Field(default="")
+    lmstudio_base_url: str = Field(default="http://localhost:1234")
+    lmstudio_model: str = Field(default="")
 
     # Application settings
     mode_full: bool = True          # full (extensions/validations) or simple
@@ -121,13 +121,12 @@ class Settings(BaseSettings):
     # Policies / safety
     allow_shell: Tuple[str, ...] = Field(
         default_factory=lambda: tuple(("python,pytest,ruff,black").split(",")),
-        env="ALLOW_SHELL",
     )
 
     # Orchestration logging level, applied by common.logging_config at process
     # start. (ORCH_POLL_INTERVAL used to live here too; nothing polls, so it went.)
     orch_log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-        default="INFO", env="ORCH_LOG_LEVEL"
+        default="INFO"
     )
 
     # Tasks storage is fixed at .agents_hub/tasks.json (see common.paths) — not configurable.
@@ -147,11 +146,11 @@ class Settings(BaseSettings):
             return "local"
         return v
     # Docker image to use when agent_mode = "docker"
-    agent_docker_image: str = Field(default="", env="AGENT_DOCKER_IMAGE")
+    agent_docker_image: str = Field(default="")
     # Optional Docker network (e.g. "host" or a named bridge network)
-    agent_docker_network: str = Field(default="", env="AGENT_DOCKER_NETWORK")
+    agent_docker_network: str = Field(default="")
     # Extra flags passed verbatim to `docker run` (e.g. "--memory 2g --cpus 1")
-    agent_docker_extra_args: str = Field(default="", env="AGENT_DOCKER_EXTRA_ARGS")
+    agent_docker_extra_args: str = Field(default="")
 
     # ── Security ──────────────────────────────────────────────────────────────
     # Optional bearer token. When set, every /api request must carry
@@ -303,11 +302,12 @@ class Settings(BaseSettings):
     agent_cache_ttl: int = Field(
         default=900, validation_alias=AliasChoices("AGENT_CACHE_TTL", "agent_cache_ttl"))
 
-    class Config:
-        case_sensitive = False
-        env_file = str(Path(__file__).resolve().parents[1] / ".env")
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        case_sensitive=False,
+        env_file=str(Path(__file__).resolve().parents[1] / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 # Global settings instance
 settings = Settings()
@@ -327,7 +327,7 @@ class Paths:
 class Models:
     """Helper for role-based model names (defaults to main model)."""
     def __init__(self):
-        m = settings.model
+        self.main = settings.model
 
 
 def read_dot_env() -> dict:

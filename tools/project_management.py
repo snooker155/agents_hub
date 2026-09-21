@@ -63,7 +63,7 @@ def _store():
 def _simplify(project, *, tasks_count: Optional[int] = None) -> Dict[str, Any]:
     from workspace import project_folder_name
 
-    d = project.model_dump() if hasattr(project, "model_dump") else project.dict()
+    d = project.model_dump()
     # ``model_dump`` keeps the enum objects, and ``str()`` on one reads
     # "ProjectStatus.active" — the member name, not the value the API speaks.
     def _enum(value: Any, default: str) -> str:

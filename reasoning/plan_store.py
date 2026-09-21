@@ -55,7 +55,7 @@ class SavePlanInput(BaseModel):
     title: str = Field(..., min_length=1, description="Short title for the plan")
     steps: List[str] = Field(
         ...,
-        min_items=1,
+        min_length=1,
         description="Ordered list of step descriptions. Each becomes a trackable step.",
     )
     description: str = Field("", description="Optional context or goal for the plan")

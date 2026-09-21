@@ -18,9 +18,7 @@ M = TypeVar("M", bound=BaseModel)
 
 
 def _model_to_dict(obj: BaseModel) -> dict:
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    return obj.dict()  # type: ignore[attr-defined]
+    return obj.model_dump()
 
 
 def _json_default(o):
@@ -110,9 +108,7 @@ class _JsonStore:
 
     # ------------- internals -------------
     def _parse(self, data: dict) -> M:
-        if hasattr(self.model, "model_validate"):
-            return self.model.model_validate(data)  # type: ignore[attr-defined]
-        return self.model.parse_obj(data)  # type: ignore[attr-defined]
+        return self.model.model_validate(data)
 
     def _load_unlocked(self) -> List[M]:
         try:

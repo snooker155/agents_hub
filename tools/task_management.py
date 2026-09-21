@@ -9,7 +9,7 @@ import json
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from langchain_core.tools import tool
 from common.entity_sink import record_entity
 from common.workspace_context import (
@@ -70,7 +70,7 @@ def _uuid_from_str(value: Optional[str]) -> Optional[UUID]:
 
 def _task_to_dict(t: Task) -> Dict[str, Any]:
     """Convert Task to dict with normalized enums and UUIDs."""
-    data = t.model_dump() if hasattr(t, "model_dump") else t.dict()
+    data = t.model_dump()
     
     # Normalize enums
     if isinstance(data.get("status"), TaskStatus):
@@ -166,13 +166,15 @@ class CreateTaskInput(BaseModel):
         description="Task IDs or keys (e.g. DEMO-12) that must be completed before this task can run",
     )
 
-    @validator("parent_id")
+    @field_validator("parent_id")
+    @classmethod
     def _validate_parent(cls, v):
         if v is None or v == "":
             return None
         return str(_uuid_from_str(v))
 
-    @validator("depends")
+    @field_validator("depends")
+    @classmethod
     def _validate_depends(cls, v):
         if v is None:
             return None
@@ -236,11 +238,13 @@ class AddSubtaskInput(BaseModel):
         description="Task IDs or keys of subtasks that must be completed before this one",
     )
 
-    @validator("parent_id")
+    @field_validator("parent_id")
+    @classmethod
     def _valid_uuid(cls, v):
         return str(_uuid_from_str(v))
 
-    @validator("depends")
+    @field_validator("depends")
+    @classmethod
     def _validate_depends(cls, v):
         if v is None:
             return None
@@ -272,7 +276,8 @@ def add_subtask(parent_id: str, title: str, description: str = "", depends: Opti
 class IdInput(BaseModel):
     id: str = Field(..., description="UUID or key (e.g. DEMO-12) of the task")
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_uuid(cls, v):
         return str(_uuid_from_str(v))
 
@@ -374,17 +379,20 @@ class UpdateTaskInput(BaseModel):
         description="Replace the task's dependency list with these task IDs or keys (empty list clears it)",
     )
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_id(cls, v):
         return str(_uuid_from_str(v))
 
-    @validator("parent_id")
+    @field_validator("parent_id")
+    @classmethod
     def _valid_parent(cls, v):
         if v is None:
             return v
         return str(_uuid_from_str(v))
 
-    @validator("depends")
+    @field_validator("depends")
+    @classmethod
     def _valid_depends(cls, v):
         if v is None:
             return None
@@ -481,7 +489,8 @@ def update_task(
 class StopTaskInput(BaseModel):
     id: str
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_id(cls, v):
         return str(_uuid_from_str(v))
 
@@ -513,7 +522,8 @@ class BlockTaskInput(BaseModel):
     id: str
     reason: str = Field(..., min_length=1)
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_id(cls, v):
         return str(_uuid_from_str(v))
 
@@ -547,11 +557,13 @@ class SetDependenciesInput(BaseModel):
         ..., description="Task IDs or keys this task must wait for (empty list clears all dependencies)"
     )
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_id(cls, v):
         return str(_uuid_from_str(v))
 
-    @validator("depends")
+    @field_validator("depends")
+    @classmethod
     def _valid_depends(cls, v):
         return [str(_uuid_from_str(s)) for s in v]
 
@@ -587,11 +599,12 @@ def set_task_dependencies(id: str, depends: List[str]) -> str:
 
 
 class CreateSequenceInput(BaseModel):
-    task_ids: List[str] = Field(..., min_items=1, description="List of UUIDs")
+    task_ids: List[str] = Field(..., min_length=1, description="List of UUIDs")
     sequence_id: Optional[str] = None
     start_order: int = Field(1, ge=0)
 
-    @validator("task_ids")
+    @field_validator("task_ids")
+    @classmethod
     def _validate_ids(cls, v):
         if not v:
             raise ValueError("task_ids must not be empty")

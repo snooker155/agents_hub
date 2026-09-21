@@ -4,26 +4,19 @@ import json
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 from uuid import UUID
 
 from pydantic import BaseModel
 from .models import Task, TaskStatus, CreatedBy
-from memory.models import SharedMemory
 from memory.store import MemoryStore  # noqa: F401 — re-exported for backward compatibility
-from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE, AGENTS_HUB_ROOT
+from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
 from common import db
 
-# Try to import pydantic v1 encoder; provide fallback for v2 or missing
-try:  # pydantic v1
-    from pydantic.json import pydantic_encoder as _pydantic_encoder  # type: ignore
-except Exception:  # pydantic v2 or other
-    _pydantic_encoder = None  # type: ignore
+from pydantic_core import to_jsonable_python as _pydantic_encoder
 
 def _model_to_dict(obj: BaseModel) -> dict:
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    return obj.dict()  # type: ignore[attr-defined]
+    return obj.model_dump()
 
 def _parse_task(data: dict) -> Task:
     # Remove legacy persisted field; agent_state is now derived at runtime
@@ -50,17 +43,13 @@ def _parse_task(data: dict) -> Task:
     if not isinstance(data.get("depends"), list):
         data["depends"] = []
 
-    if hasattr(Task, "model_validate"):
-        return Task.model_validate(data)  # type: ignore[attr-defined]
-    return Task.parse_obj(data)  # type: ignore[attr-defined]
+    return Task.model_validate(data)
 
 def _json_default(o):
-    # Prefer pydantic v1 encoder if available
-    if _pydantic_encoder is not None:
-        try:
-            return _pydantic_encoder(o)
-        except Exception:
-            pass
+    try:
+        return _pydantic_encoder(o)
+    except Exception:
+        pass
     # Fallbacks
     if isinstance(o, Enum):
         return o.value

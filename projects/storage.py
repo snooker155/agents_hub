@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional
 from uuid import UUID
 
 from filelock import FileLock
@@ -15,9 +15,7 @@ from common.paths import PROJECTS_FILE
 
 
 def _model_to_dict(obj: BaseModel) -> dict:
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    return obj.dict()  # type: ignore[attr-defined]
+    return obj.model_dump()
 
 
 def _json_default(o):
@@ -35,9 +33,7 @@ def _parse_project(data: dict) -> Project:
     data.setdefault("frontend", {})
     data.setdefault("backend", {})
     data.setdefault("tags", [])
-    if hasattr(Project, "model_validate"):
-        return Project.model_validate(data)
-    return Project.parse_obj(data)  # type: ignore[attr-defined]
+    return Project.model_validate(data)
 
 
 class ProjectStore:
