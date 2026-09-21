@@ -177,11 +177,13 @@ class Settings(BaseSettings):
     )
     # Hardened posture. When true, a per-agent ``capability_override`` is only
     # honoured at build time for agents that run container-isolated on a
-    # no-network container. Off by default so in-process agents that were
-    # explicitly granted an override keep working; turn it on to require real
-    # isolation behind every override.
+    # no-network container. On by default now that the run sandbox exists:
+    # an override with no real isolation behind it is not a deliberate,
+    # bounded exception, it is the guard turned off. Set to false only for a
+    # deployment that runs every agent in-process and still needs an override
+    # to work everywhere.
     capability_override_requires_container: bool = Field(
-        default=False,
+        default=True,
         validation_alias=AliasChoices(
             "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER", "capability_override_requires_container"
         ),

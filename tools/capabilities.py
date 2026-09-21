@@ -11,6 +11,11 @@ alone is already the whole trifecta (``curl`` = ingest + exfiltrate, ``cat`` /
 ``>`` = private read/write), so a rule that only fires when three *named* tools
 co-occur does nothing against the single most dangerous tool.
 
+A tool's own grant is only half the picture, though: an agent that holds none
+of the three but can delegate to one that does effectively holds all three.
+``DELEGATING_TOOLS`` and ``effective_capabilities`` cover that — see the
+"Delegation" section below.
+
 The module is deliberately pure and dependency-free at import time: it never
 imports the tool registry at module level, so it can be unit-tested in
 isolation and can never fail open because of an import cycle.
@@ -19,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, Iterable, List, Optional, Set
+from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +149,19 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # Proxies a caller-supplied upstream URL through the view server.
     "view_serve": frozenset({CAN_EXFILTRATE}),
 
+    # ── agent and job reads ──────────────────────────────────────────────────
+    # get_agent_tool returns instructions.md, capabilities.md and usage.md in
+    # full — an agent's system prompt is operator-authored private content in
+    # exactly the sense a task description is, so reading it carries the same
+    # grant as get_task. list_agents_tool, by contrast, returns only id, name
+    # and description, so it stays in REVIEWED_NO_GRANT.
+    "get_agent_tool": frozenset({READS_PRIVATE}),
+    # A scheduled job carries a title and message the operator or an agent
+    # wrote for later delivery — the same class of authored content a task's
+    # title and description carry, so list_scheduled is read under the same
+    # grant as list_tasks.
+    "list_scheduled": frozenset({READS_PRIVATE}),
+
     # ── geometry engine ──────────────────────────────────────────────────────
     # The mesh_* tools drive a local Blender through a fixed command whitelist.
     # They grant nothing, and the reasoning is worth writing down because "it
@@ -176,6 +194,151 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     "write_structured_memory", "append_journal", "remember", "record_episode",
     # skills
     "get_skill", "create_skill",
+
+    # ── filesystem writes ────────────────────────────────────────────────────
+    # write_file, create_file and apply_unified_diff all return only the
+    # workspace-relative path(s) touched (apply_unified_diff also echoes the
+    # op per path); delete_file returns the path it removed. None of them read
+    # existing file content back into the caller's context, so unlike
+    # read_file/list_files/search_text they grant nothing.
+    "write_file", "delete_file", "apply_unified_diff", "create_file",
+
+    # ── memory writes / derivations ──────────────────────────────────────────
+    # write_memory persists into a pool, like write_structured_memory above.
+    # extract_from_text distills text the caller already supplied into a
+    # reviewable proposal without touching the memory store; save_extraction
+    # then persists that already-seen proposal. Neither reads anything the
+    # caller did not already hand it.
+    "write_memory", "extract_from_text", "save_extraction",
+
+    # ── human-in-the-loop ─────────────────────────────────────────────────────
+    # ask_user's return value is the question it was given, tagged so the
+    # runner ends the turn — not the user's answer. The answer re-enters
+    # context later as ordinary conversation history, over the same trusted
+    # surface the rest of the run happens on, not through this tool's result.
+    "ask_user",
+
+    # ── task writes ───────────────────────────────────────────────────────────
+    # These persist into the task store, like create_task; whatever they echo
+    # back is content the calling agent already supplied or already had.
+    "create_task", "add_subtask", "update_task", "set_task_dependencies",
+
+    # ── pure computation / control flow ──────────────────────────────────────
+    # think is a scratchpad that returns its own input unchanged. calculator
+    # evaluates an expression the caller supplied. Neither touches a store, the
+    # network or another agent.
+    "think", "calculator",
+
+    # ── agent coordination: task-based delegation and status ────────────────
+    # assign_agent_tool and start_agent_tool set up and kick off a task-bound
+    # agent run but return only confirmation, not the run's output — the
+    # output is read later through get_task_result, which already carries its
+    # own grant. get_agent_status_tool and stop_agent_tool report/change run
+    # state (booleans, status strings), never run content. list_flows_tool
+    # lists flow ids/names for the user to pick from, not a flow's graph
+    # (that is get_flow_tool, itself configuration — see below).
+    "assign_agent_tool", "start_agent_tool", "get_agent_status_tool",
+    "stop_agent_tool", "list_flows_tool",
+    # reject_assignment_tool clears a pending assignment and resets task
+    # status; same shape as stop_agent_tool, control only.
+    "reject_assignment_tool",
+
+    # ── agent management: writes and structural listing ──────────────────────
+    # list_agents_tool returns id/name/description only, never a system prompt
+    # (that is get_agent_tool, classified above). create_agent_tool and
+    # delete_agent_tool report what was created/removed; modify_agent_tool
+    # echoes back the fields the caller supplied or merged. See
+    # ``effective_capabilities`` for why create/modify granting nothing extra
+    # still holds once delegation is considered.
+    "list_agents_tool", "create_agent_tool", "modify_agent_tool", "delete_agent_tool",
+
+    # ── schedule management: writes ──────────────────────────────────────────
+    # schedule_task creates a job from caller-supplied fields; cancel_scheduled
+    # and update_scheduled report/change a job the caller named by id. Reading
+    # the roster (list_scheduled) is classified above.
+    "schedule_task", "cancel_scheduled", "update_scheduled",
+
+    # ── flow / world / scenario / team / loop management ─────────────────────
+    # All of these are configuration the operator authored *for* the agents —
+    # a graph of nodes and edges, a simulated place, an environment plus a
+    # cast, a roster, an exit criterion — never operator data in the sense a
+    # task, a project record or an agent's instructions are. Reading, writing,
+    # deleting and validating any of them grants nothing.
+    "create_flow_tool", "get_flow_tool", "modify_flow_tool", "delete_flow_tool",
+    "validate_flow_tool",
+    "list_worlds_tool", "list_world_templates_tool", "get_world_tool",
+    "create_world_tool", "modify_world_tool", "validate_world_tool",
+    "delete_world_tool",
+    "list_environments_tool", "list_scenarios_tool", "create_scenario_tool",
+    "get_scenario_tool", "modify_scenario_tool", "delete_scenario_tool",
+    "validate_scenario_tool",
+    "list_teams_tool", "create_team_tool", "get_team_tool", "modify_team_tool",
+    "delete_team_tool",
+    "list_loops_tool", "create_loop_tool", "get_loop_tool", "modify_loop_tool",
+    "delete_loop_tool", "validate_loop_tool",
+
+    # ── project management: writes ───────────────────────────────────────────
+    # list_projects_tool / get_project_tool are classified READS_PRIVATE
+    # (CAPABILITY_GRANTS above) because a project record names a real repo and
+    # an on-disk path. These writes echo back only what the caller supplied or
+    # merged, the same reasoning as modify_agent_tool.
+    "create_project_tool", "modify_project_tool", "delete_project_tool",
+
+    # ── entity runs: stopping ────────────────────────────────────────────────
+    # stop_*_run_tool just interrupts a run in progress; the approval gate
+    # governs the spend/interruption, not this table. Starting one
+    # (run_scenario_tool / run_team_tool / run_loop_tool) is a delegation edge
+    # instead — see DELEGATING_TOOLS below, which is where their real
+    # capability lives (the run's content is read back later through
+    # get_scenario_run_tool / get_team_run_tool / get_loop_run_tool, already
+    # classified READS_PRIVATE above).
+    "stop_scenario_run_tool", "stop_team_run_tool", "stop_loop_run_tool",
+
+    # ── visualization / views / geometry-adjacent scene tools ───────────────
+    # Every view_*, graph_*, scene_*, slides_*, document_*, sim_configure,
+    # math_plot and view_compute tool operates on a view the agent itself is
+    # authoring, rendered through the hub's own view server — not a stored
+    # user document, not an external destination. view_get reads back only
+    # element ids, control values and a live user's control changes, which is
+    # the same trusted, same-session surface ask_user's answer arrives over,
+    # not attacker-controllable or private stored content. view_add_asset
+    # binds a workspace file into a view and returns an ``asset://`` ref, never
+    # the file's content. (view_serve is the one exception — it proxies an
+    # upstream URL and is classified CAN_EXFILTRATE above.)
+    "create_view", "view_apply_ops", "view_get", "view_add_control",
+    "view_remove_control", "view_revert", "view_snapshot", "view_link",
+    "graph_add_node", "graph_add_edge",
+    "graph_remove", "graph_set_layout", "scene_environment", "scene_camera",
+    "scene_light", "view_add_asset", "suggest_view", "view_set_timeline",
+    "sim_configure", "math_plot", "view_annotate", "slides_add",
+    "document_set", "view_compute", "view_serve_stop",
+
+    # ── evals: building and running ──────────────────────────────────────────
+    # list_evals_tool and list_graders_tool are structural metadata (counts,
+    # names, which graders cost money). create_eval_tool, modify_eval_tool,
+    # add_eval_case_tool and remove_eval_case_tool build a dataset from fields
+    # the caller supplies. estimate_eval_tool and run_eval_tool project or
+    # spend against that dataset; writing into the product's own store is not
+    # exfiltration, and the spend is the approval gate's job. list_eval_runs_tool
+    # returns only status and aggregate score, never the cases or the matrix
+    # (that is get_eval_run_tool, classified READS_PRIVATE + INGESTS_UNTRUSTED
+    # above, since a result can carry whatever the agent under test pulled in).
+    "list_evals_tool", "list_graders_tool", "create_eval_tool", "modify_eval_tool",
+    "add_eval_case_tool", "remove_eval_case_tool", "estimate_eval_tool",
+    "run_eval_tool", "list_eval_runs_tool",
+
+    # ── documentation ─────────────────────────────────────────────────────────
+    # Read-only over files the product ships — public by construction, so
+    # neither private data nor untrusted input.
+    "search_docs", "read_doc",
+
+    # ── service ops: pure metadata and destructive actions ───────────────────
+    # service_health, list_containers, list_nodes and costs_summary are counts,
+    # statuses and totals, not content. stop_run, stop_node, restart_node,
+    # stop_container and prune_run_logs stop and delete, which the approval
+    # gate governs, not data.
+    "service_health", "list_containers", "list_nodes", "costs_summary",
+    "stop_run", "stop_node", "restart_node", "stop_container", "prune_run_logs",
 })
 
 # Reviewed and classified, but outside the catalog.
@@ -213,6 +376,201 @@ ALIAS_GRANTS: Dict[str, FrozenSet[str]] = {
     # Modelling operations on a local engine: see the mesh_* entries above.
     "geometry": frozenset(),
 }
+
+
+# ── Delegation ────────────────────────────────────────────────────────────────
+#
+# A tool set's *own* grants (above) are only half the picture. An agent that
+# holds none of the three capabilities but can call ``run_agent_tool`` on an
+# agent that holds all three effectively holds all three: it can ask that
+# agent to do the reading/ingesting/sending on its behalf. These tools are the
+# edges of that delegation graph — calling one hands the request (and, for the
+# poll/wait tools, the eventual result) to another agent, whose own tool set
+# is not visible in the caller's tool list at all.
+#
+# They are deliberately NOT given a grant in ``CAPABILITY_GRANTS``: a bare
+# ``run_agent_tool`` grants nothing *on its own* (there is nothing to read,
+# ingest or send without a target), and folding its real effect into a static
+# per-tool grant would either overclaim for a caller with a harmless
+# delegation allowlist or underclaim for one with none. Instead
+# ``effective_capabilities`` below walks the graph these tools open and unions
+# in what is actually reachable.
+DELEGATING_TOOLS: FrozenSet[str] = frozenset({
+    "run_agent_tool", "wait_for_agent_tool", "run_flow_tool",
+    "run_team_tool", "run_loop_tool", "run_scenario_tool",
+})
+
+# create_agent_tool / modify_agent_tool are NOT in DELEGATING_TOOLS. They can
+# hand another agent an arbitrary tool list, which looks like the same shape —
+# but whatever they create or change is itself re-validated by the save-time
+# guard (``agents.registry.add_agent`` -> ``check_agent_tools``) before it can
+# be persisted. An agent holding create/modify can therefore only ever reach a
+# tool set the guard would already have accepted on its own; there is no
+# additional reach for this graph to add on top of that.
+
+
+def _delegates_of(agent_id: str) -> Optional[List[str]]:
+    """Delegation allowlist of a registered agent, or ``None`` for "no restriction".
+
+    Mirrors ``tools.langchain_tools._caller_delegates``: a non-empty
+    ``AgentSpec.delegates`` restricts reachability to exactly that list; an
+    empty list, a missing field, or an agent record that does not exist yet
+    (the save-time check for a brand-new agent, before its first write) all
+    mean unrestricted — the agent can reach every agent in the registry.
+    Never raises: a lookup failure is treated the same as "not found".
+    """
+    try:
+        from agents.registry import get_agent  # lazy: avoid an import cycle
+        spec = get_agent(agent_id)
+    except Exception:
+        return None
+    if spec is None:
+        return None
+    allow = list(getattr(spec, "delegates", None) or [])
+    return allow or None
+
+
+def _all_agent_ids() -> List[str]:
+    """Every agent id currently in the registry. Lazy import, never fatal."""
+    try:
+        from agents.registry import list_agents  # lazy: avoid an import cycle
+        return [spec.id for spec in list_agents()]
+    except Exception:
+        return []
+
+
+def _delegation_targets(agent_id: str) -> List[str]:
+    allow = _delegates_of(agent_id)
+    return allow if allow is not None else _all_agent_ids()
+
+
+def _walk_delegation_graph(
+    agent_id: str,
+    tools: Sequence[str],
+    *,
+    resolve_agent_tools,
+    depth: int,
+) -> tuple:
+    """Shared traversal behind ``effective_capabilities`` / ``effective_capability_sources``.
+
+    Returns ``(capabilities, sources)`` where ``sources`` follows the same
+    shape as ``capability_sources`` — a capability mapped to the labels that
+    granted it — except a label reached through delegation reads
+    ``"via <tool> -> <agent id>: <tool ids>"`` instead of a bare tool id, so a
+    violation can name the path rather than just the fact of reachability.
+
+    Breadth-first, cycle-safe (a ``visited`` set seeded with ``agent_id``) and
+    depth-limited (at most ``depth`` delegation hops from the root).
+    """
+    tools = list(tools or [])
+    caps: Set[str] = set(capabilities_of(tools))
+    sources: Dict[str, List[str]] = capability_sources(tools)
+
+    if not any(t in DELEGATING_TOOLS for t in tools):
+        return caps, sources
+
+    visited: Set[str] = {agent_id}
+    frontier: List[tuple] = [(agent_id, tools, "")]
+    hops = 0
+    while frontier and hops < max(0, int(depth)):
+        hops += 1
+        next_frontier: List[tuple] = []
+        for aid, atools, prefix in frontier:
+            delegating_tool = next((t for t in atools if t in DELEGATING_TOOLS), None)
+            if delegating_tool is None:
+                continue
+            for target_id in _delegation_targets(aid):
+                if target_id in visited:
+                    continue
+                visited.add(target_id)
+                target_tools = list(resolve_agent_tools(target_id) or [])
+                hop = f"via {delegating_tool} -> {target_id}"
+                path = f"{prefix} -> {hop}" if prefix else hop
+                for cap in capabilities_of(target_tools):
+                    granting = sorted(t for t in target_tools if cap in grants_of(t))
+                    label = f"{path}: {', '.join(granting) or '?'}"
+                    caps.add(cap)
+                    sources.setdefault(cap, [])
+                    if label not in sources[cap]:
+                        sources[cap].append(label)
+                next_frontier.append((target_id, target_tools, path))
+        frontier = next_frontier
+    return caps, sources
+
+
+def effective_capabilities(
+    agent_id: str,
+    tools: Iterable[str],
+    *,
+    resolve_agent_tools,
+    depth: int = 4,
+) -> Set[str]:
+    """The capabilities this agent's tool set grants, directly or by delegation.
+
+    An agent that cannot itself exfiltrate but can ``run_agent_tool`` an agent
+    that can, effectively can — the trifecta composes across the delegation
+    graph, not just within one tool list. This is the agent's own grants
+    (``capabilities_of(tools)``) unioned with the grants of every agent
+    reachable by following a tool in ``DELEGATING_TOOLS``.
+
+    Reachability: if ``agent_id`` (or an agent reached from it) has a non-empty
+    ``AgentSpec.delegates`` allowlist, only the ids on that list are reachable
+    from it. If the list is empty, absent, or the record does not exist yet,
+    it is unrestricted and every agent currently in the registry is reachable
+    — see ``_delegates_of``. ``create_agent_tool`` / ``modify_agent_tool`` add
+    no reach beyond that: see the comment above ``DELEGATING_TOOLS``.
+
+    ``resolve_agent_tools(agent_id) -> Sequence[str]`` looks up another
+    agent's current tool list — the caller wires this to
+    ``agents.registry.get_agent(id).tools`` with a lazy import, so this module
+    stays import-cycle-free and unit-testable with a fake resolver. The walk
+    is cycle-safe and stops after ``depth`` delegation hops (default 4).
+    """
+    caps, _ = _walk_delegation_graph(agent_id, tools, resolve_agent_tools=resolve_agent_tools, depth=depth)
+    return caps
+
+
+def effective_capability_sources(
+    agent_id: str,
+    tools: Iterable[str],
+    *,
+    resolve_agent_tools,
+    depth: int = 4,
+) -> Dict[str, List[str]]:
+    """``effective_capabilities``, but with each capability's source path.
+
+    A direct grant is labelled with the granting tool id, exactly like
+    ``capability_sources``. A grant that only exists through delegation is
+    labelled ``"via <delegating tool> -> <agent id>: <tool ids>"`` (chained
+    with ``" -> "`` across multiple hops), so a :class:`Violation` can point at
+    the actual path instead of just the fact that it exists.
+    """
+    _, sources = _walk_delegation_graph(agent_id, tools, resolve_agent_tools=resolve_agent_tools, depth=depth)
+    return sources
+
+
+def check_effective_combination(
+    capabilities: Iterable[str],
+    sources: Dict[str, List[str]],
+) -> Optional["Violation"]:
+    """Like :func:`check_combination`, but over an already-computed capability
+    set and source map — the delegation-aware pair from
+    ``effective_capabilities`` / ``effective_capability_sources`` — rather
+    than a raw tool list. Shares the rule-matching logic with
+    ``check_combination`` so the two never drift.
+    """
+    caps = set(capabilities)
+    rule = _matching_rule(caps)
+    if rule is None:
+        return None
+    return Violation(
+        rule_id=rule.id,
+        title=rule.title,
+        explanation=rule.explanation,
+        capabilities=rule.capabilities,
+        sources={c: s for c, s in sources.items() if c in rule.capabilities},
+        severity=rule.severity,
+    )
 
 
 # ── Channel-level ingest ──────────────────────────────────────────────────────
@@ -389,6 +747,21 @@ def capability_sources(
     return sources
 
 
+def _matching_rule(caps: Set[str]) -> Optional[Rule]:
+    """The blocked combination a capability set forms, or None.
+
+    A blocking rule always wins over a warning one, so a set that forms both
+    the trifecta and the pair reports the trifecta. Shared by
+    ``check_combination`` and ``check_effective_combination`` so the two rule
+    checks — over a raw tool list and over a delegation-expanded set — can
+    never drift apart.
+    """
+    matched = [r for r in BLOCKED_COMBINATIONS if r.capabilities <= caps]
+    if not matched:
+        return None
+    return next((r for r in matched if r.severity == "block"), matched[0])
+
+
 def check_combination(
     tool_ids: Iterable[str],
     extra_capabilities: Optional[Dict[str, str]] = None,
@@ -401,12 +774,9 @@ def check_combination(
     """
     tool_ids = list(tool_ids or [])
     caps = capabilities_of(tool_ids) | set(extra_capabilities or {})
-    matched = [r for r in BLOCKED_COMBINATIONS if r.capabilities <= caps]
-    if not matched:
+    rule = _matching_rule(caps)
+    if rule is None:
         return None
-    # A blocking rule always wins over a warning one, so a tool set that forms
-    # both the trifecta and the pair reports the trifecta.
-    rule = next((r for r in matched if r.severity == "block"), matched[0])
     all_sources = capability_sources(tool_ids, extra_capabilities)
     return Violation(
         rule_id=rule.id,
@@ -432,9 +802,11 @@ def explain(tool_ids: Iterable[str]) -> Dict[str, object]:
 __all__ = [
     "INGESTS_UNTRUSTED", "READS_PRIVATE", "CAN_EXFILTRATE", "CAPABILITIES",
     "CAPABILITY_LABELS", "CAPABILITY_GRANTS", "CAPABILITY_GRANTS_EXTRA",
-    "REVIEWED_NO_GRANT", "ALIAS_GRANTS",
+    "REVIEWED_NO_GRANT", "ALIAS_GRANTS", "DELEGATING_TOOLS",
     "UNTRUSTED_CHANNELS", "channel_capabilities",
     "BLOCKED_COMBINATIONS", "Rule", "Violation",
     "grants_of", "capabilities_of", "capability_sources",
     "check_combination", "explain",
+    "effective_capabilities", "effective_capability_sources",
+    "check_effective_combination",
 ]
