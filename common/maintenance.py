@@ -3,7 +3,9 @@ Periodic state maintenance: run retention and orphan-file pruning.
 
 `.agents_hub` grows without bound — run records, per-run structured payloads,
 run logs and process sidecars accumulate forever. This module trims terminal
-run records older than ``run_retention_days`` and deletes the on-disk log/
+run records older than ``run_retention_days``, trims each external connection
+back to its own run cap (``connections.retention``, a count rather than an age,
+because a reporting graph outgrows an age limit), and deletes the on-disk log/
 sidecar files left behind by any deleted or long-gone run.
 
 It is invoked once a day by the plan scheduler (see ``plans.scheduler``), guarded
@@ -128,6 +130,23 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     pruned_runs = prune_old_runs(settings.run_retention_days)
     pruned_files = prune_orphan_files()
     summary = {"pruned_runs": pruned_runs, "pruned_files": pruned_files}
+    # Connections are capped by run *count*, not by age: a graph reporting a few
+    # hundred runs an hour outgrows a day-based limit long before the limit
+    # notices. Isolated like the views pass below, so a connection store that
+    # cannot be read never blocks run and file pruning.
+    try:
+        from connections.retention import prune_all
+        summary.update(prune_all())
+    except Exception:
+        log.exception("connection retention failed")
+    # OTLP traces whose root never arrived, on a connection that has since gone
+    # quiet. A connection still exporting clears its own on its next request;
+    # this is the backstop for the one that stopped exporting altogether.
+    try:
+        from connections.otel import flush_idle
+        summary.update(flush_idle())
+    except Exception:
+        log.exception("otel trace flush failed")
     # Views retention: bound long op logs and drop orphan view dirs. Isolated so
     # a views failure never blocks run/file pruning.
     try:
@@ -135,9 +154,12 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
         summary.update(run_view_maintenance())
     except Exception:
         log.exception("view maintenance failed")
-    if pruned_runs or pruned_files or summary.get("pruned_view_dirs"):
-        log.info("maintenance: pruned %d run(s), %d orphan file(s), %d view dir(s)",
-                 pruned_runs, pruned_files, summary.get("pruned_view_dirs", 0))
+    if pruned_runs or pruned_files or summary.get("pruned_view_dirs") \
+            or summary.get("pruned_connection_runs"):
+        log.info("maintenance: pruned %d run(s), %d connection run(s), %d orphan file(s), "
+                 "%d view dir(s)",
+                 pruned_runs, summary.get("pruned_connection_runs", 0), pruned_files,
+                 summary.get("pruned_view_dirs", 0))
     return summary
 
 

@@ -253,6 +253,14 @@ class Settings(BaseSettings):
     # finished more than this many days ago. 0 disables run retention.
     run_retention_days: int = Field(default=30,
                                     validation_alias=AliasChoices("RUN_RETENTION_DAYS", "run_retention_days"))
+    # How many runs a *connection* keeps, newest first. A day-based limit is the
+    # wrong instrument for a production graph reporting hundreds of runs an
+    # hour: thirty days of that is a quarter of a million rows before anything
+    # is pruned. A count cap is what bounds it. A connection may override this;
+    # 0 disables the cap for every connection that has not set its own.
+    connection_retention_runs: int = Field(
+        default=2000,
+        validation_alias=AliasChoices("CONNECTION_RETENTION_RUNS", "connection_retention_runs"))
 
     # ── Awaiting-input escalation ─────────────────────────────────────────────
     # Tasks parked by ``ask_user`` (status=awaiting_input) otherwise wait forever.

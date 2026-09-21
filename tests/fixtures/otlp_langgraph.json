@@ -1,0 +1,342 @@
+{
+ "resourceSpans": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "telemetry.sdk.language",
+      "value": {
+       "stringValue": "python"
+      }
+     },
+     {
+      "key": "telemetry.sdk.name",
+      "value": {
+       "stringValue": "opentelemetry"
+      }
+     },
+     {
+      "key": "telemetry.sdk.version",
+      "value": {
+       "stringValue": "1.40.0"
+      }
+     },
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "billing-graph"
+      }
+     }
+    ]
+   },
+   "scopeSpans": [
+    {
+     "scope": {
+      "name": "openinference.instrumentation.langchain",
+      "version": "0.1.51"
+     },
+     "spans": [
+      {
+       "traceId": "aBUlT8m/JYaF7W52JZUJIw==",
+       "spanId": "gzOC9uxLQj0=",
+       "parentSpanId": "y23oPsLYUvI=",
+       "name": "plan",
+       "kind": "SPAN_KIND_INTERNAL",
+       "startTimeUnixNano": "1789947735230974976",
+       "endTimeUnixNano": "1789947735256180992",
+       "attributes": [
+        {
+         "key": "input.value",
+         "value": {
+          "stringValue": "widget"
+         }
+        },
+        {
+         "key": "output.value",
+         "value": {
+          "stringValue": "plan for widget"
+         }
+        },
+        {
+         "key": "metadata",
+         "value": {
+          "stringValue": "{\"langgraph_step\": 1, \"langgraph_node\": \"plan\", \"langgraph_triggers\": [\"branch:to:plan\"], \"langgraph_path\": [\"__pregel_pull\", \"plan\"], \"langgraph_checkpoint_ns\": \"plan:173490a8-fb8d-2659-f78d-7980dd013b28\"}"
+         }
+        },
+        {
+         "key": "openinference.span.kind",
+         "value": {
+          "stringValue": "CHAIN"
+         }
+        }
+       ],
+       "status": {
+        "code": "STATUS_CODE_OK"
+       },
+       "flags": 256
+      },
+      {
+       "traceId": "aBUlT8m/JYaF7W52JZUJIw==",
+       "spanId": "EluV3vMa+7k=",
+       "parentSpanId": "8eYmedgmpVc=",
+       "name": "lookup_price",
+       "kind": "SPAN_KIND_INTERNAL",
+       "startTimeUnixNano": "1789947735256824064",
+       "endTimeUnixNano": "1789947735280910080",
+       "attributes": [
+        {
+         "key": "input.value",
+         "value": {
+          "stringValue": "{'sku': 'widget'}"
+         }
+        },
+        {
+         "key": "output.value",
+         "value": {
+          "stringValue": "widget: 42.00"
+         }
+        },
+        {
+         "key": "tool.name",
+         "value": {
+          "stringValue": "lookup_price"
+         }
+        },
+        {
+         "key": "tool.description",
+         "value": {
+          "stringValue": "Look up a price."
+         }
+        },
+        {
+         "key": "metadata",
+         "value": {
+          "stringValue": "{\"langgraph_step\": 2, \"langgraph_node\": \"price\", \"langgraph_triggers\": [\"branch:to:price\"], \"langgraph_path\": [\"__pregel_pull\", \"price\"], \"langgraph_checkpoint_ns\": \"price:c61226f2-6b1b-4586-47b9-fd09c95eb6ec\", \"checkpoint_ns\": \"price:c61226f2-6b1b-4586-47b9-fd09c95eb6ec\"}"
+         }
+        },
+        {
+         "key": "openinference.span.kind",
+         "value": {
+          "stringValue": "TOOL"
+         }
+        }
+       ],
+       "status": {
+        "code": "STATUS_CODE_OK"
+       },
+       "flags": 256
+      },
+      {
+       "traceId": "aBUlT8m/JYaF7W52JZUJIw==",
+       "spanId": "8eYmedgmpVc=",
+       "parentSpanId": "y23oPsLYUvI=",
+       "name": "price",
+       "kind": "SPAN_KIND_INTERNAL",
+       "startTimeUnixNano": "1789947735256598016",
+       "endTimeUnixNano": "1789947735281063168",
+       "attributes": [
+        {
+         "key": "input.value",
+         "value": {
+          "stringValue": "{\"topic\": \"widget\", \"plan\": \"plan for widget\"}"
+         }
+        },
+        {
+         "key": "input.mime_type",
+         "value": {
+          "stringValue": "application/json"
+         }
+        },
+        {
+         "key": "output.value",
+         "value": {
+          "stringValue": "widget: 42.00"
+         }
+        },
+        {
+         "key": "metadata",
+         "value": {
+          "stringValue": "{\"langgraph_step\": 2, \"langgraph_node\": \"price\", \"langgraph_triggers\": [\"branch:to:price\"], \"langgraph_path\": [\"__pregel_pull\", \"price\"], \"langgraph_checkpoint_ns\": \"price:c61226f2-6b1b-4586-47b9-fd09c95eb6ec\"}"
+         }
+        },
+        {
+         "key": "openinference.span.kind",
+         "value": {
+          "stringValue": "CHAIN"
+         }
+        }
+       ],
+       "status": {
+        "code": "STATUS_CODE_OK"
+       },
+       "flags": 256
+      },
+      {
+       "traceId": "aBUlT8m/JYaF7W52JZUJIw==",
+       "spanId": "y23oPsLYUvI=",
+       "name": "LangGraph",
+       "kind": "SPAN_KIND_INTERNAL",
+       "startTimeUnixNano": "1789947735228931840",
+       "endTimeUnixNano": "1789947735281250048",
+       "attributes": [
+        {
+         "key": "input.value",
+         "value": {
+          "stringValue": "widget"
+         }
+        },
+        {
+         "key": "output.value",
+         "value": {
+          "stringValue": "{\"topic\": \"widget\", \"plan\": \"plan for widget\", \"price\": \"widget: 42.00\"}"
+         }
+        },
+        {
+         "key": "output.mime_type",
+         "value": {
+          "stringValue": "application/json"
+         }
+        },
+        {
+         "key": "openinference.span.kind",
+         "value": {
+          "stringValue": "CHAIN"
+         }
+        }
+       ],
+       "status": {
+        "code": "STATUS_CODE_OK"
+       },
+       "flags": 256
+      },
+      {
+       "traceId": "0PM2d3cyafZ+4DARTepF1Q==",
+       "spanId": "A7/k9qRA294=",
+       "parentSpanId": "WwZwx9v0dDE=",
+       "name": "boom",
+       "kind": "SPAN_KIND_INTERNAL",
+       "startTimeUnixNano": "1789947735282212864",
+       "endTimeUnixNano": "1789947735286147072",
+       "attributes": [
+        {
+         "key": "input.value",
+         "value": {
+          "stringValue": "bad"
+         }
+        },
+        {
+         "key": "metadata",
+         "value": {
+          "stringValue": "{\"langgraph_step\": 1, \"langgraph_node\": \"boom\", \"langgraph_triggers\": [\"branch:to:boom\"], \"langgraph_path\": [\"__pregel_pull\", \"boom\"], \"langgraph_checkpoint_ns\": \"boom:3193058a-c86e-f3bd-12b5-7459191ae266\"}"
+         }
+        },
+        {
+         "key": "openinference.span.kind",
+         "value": {
+          "stringValue": "CHAIN"
+         }
+        }
+       ],
+       "events": [
+        {
+         "timeUnixNano": "1789947735285834000",
+         "name": "exception",
+         "attributes": [
+          {
+           "key": "exception.type",
+           "value": {
+            "stringValue": "RuntimeError"
+           }
+          },
+          {
+           "key": "exception.message",
+           "value": {
+            "stringValue": "no such sku"
+           }
+          },
+          {
+           "key": "exception.stacktrace",
+           "value": {
+            "stringValue": "Traceback (most recent call last):\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/_internal/_runnable.py\", line 656, in invoke\n    input = context.run(step.invoke, input, config, **kwargs)\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/_internal/_runnable.py\", line 400, in invoke\n    ret = self.func(*args, **kwargs)\n  File \"/private/tmp/claude-503/-Users-A46727843-Work-AgenticAI-agents-hub/95437093-f018-4304-a4c1-b3ded082b254/scratchpad/otel/capture_fixture.py\", line 45, in boom\n    raise RuntimeError(\"no such sku\")\nRuntimeError: no such sku\n"
+           }
+          },
+          {
+           "key": "exception.escaped",
+           "value": {
+            "stringValue": "False"
+           }
+          }
+         ]
+        }
+       ],
+       "status": {
+        "message": "RuntimeError('no such sku')Traceback (most recent call last):\n\n\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/_internal/_runnable.py\", line 656, in invoke\n    input = context.run(step.invoke, input, config, **kwargs)\n\n\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/_internal/_runnable.py\", line 400, in invoke\n    ret = self.func(*args, **kwargs)\n\n\n  File \"/private/tmp/claude-503/-Users-A46727843-Work-AgenticAI-agents-hub/95437093-f018-4304-a4c1-b3ded082b254/scratchpad/otel/capture_fixture.py\", line 45, in boom\n    raise RuntimeError(\"no such sku\")\n\n\nRuntimeError: no such sku",
+        "code": "STATUS_CODE_ERROR"
+       },
+       "flags": 256
+      },
+      {
+       "traceId": "0PM2d3cyafZ+4DARTepF1Q==",
+       "spanId": "WwZwx9v0dDE=",
+       "name": "LangGraph",
+       "kind": "SPAN_KIND_INTERNAL",
+       "startTimeUnixNano": "1789947735281812992",
+       "endTimeUnixNano": "1789947735289990912",
+       "attributes": [
+        {
+         "key": "input.value",
+         "value": {
+          "stringValue": "bad"
+         }
+        },
+        {
+         "key": "openinference.span.kind",
+         "value": {
+          "stringValue": "CHAIN"
+         }
+        }
+       ],
+       "events": [
+        {
+         "timeUnixNano": "1789947735289186000",
+         "name": "exception",
+         "attributes": [
+          {
+           "key": "exception.type",
+           "value": {
+            "stringValue": "RuntimeError"
+           }
+          },
+          {
+           "key": "exception.message",
+           "value": {
+            "stringValue": "no such sku"
+           }
+          },
+          {
+           "key": "exception.stacktrace",
+           "value": {
+            "stringValue": "Traceback (most recent call last):\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/pregel/main.py\", line 2679, in stream\n    for _ in runner.tick(\n             ~~~~~~~~~~~^\n        [t for t in loop.tasks.values() if not t.writes],\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<2 lines>...\n        schedule_task=loop.accept_push,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ):\n    ^\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/pregel/_runner.py\", line 167, in tick\n    run_with_retry(\n    ~~~~~~~~~~~~~~^\n        t,\n        ^^\n    ...<10 lines>...\n        },\n        ^^\n    )\n    ^\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/pregel/_retry.py\", line 42, in run_with_retry\n    return task.proc.invoke(task.input, config)\n           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/_internal/_runnable.py\", line 656, in invoke\n    input = context.run(step.invoke, input, config, **kwargs)\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/_internal/_runnable.py\", line 400, in invoke\n    ret = self.func(*args, **kwargs)\n  File \"/private/tmp/claude-503/-Users-A46727843-Work-AgenticAI-agents-hub/95437093-f018-4304-a4c1-b3ded082b254/scratchpad/otel/capture_fixture.py\", line 45, in boom\n    raise RuntimeError(\"no such sku\")\nRuntimeError: no such sku\nDuring task with name 'boom' and id '3193058a-c86e-f3bd-12b5-7459191ae266'\n"
+           }
+          },
+          {
+           "key": "exception.escaped",
+           "value": {
+            "stringValue": "False"
+           }
+          }
+         ]
+        }
+       ],
+       "status": {
+        "message": "RuntimeError('no such sku')Traceback (most recent call last):\n\n\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/pregel/main.py\", line 2679, in stream\n    for _ in runner.tick(\n             ~~~~~~~~~~~^\n        [t for t in loop.tasks.values() if not t.writes],\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<2 lines>...\n        schedule_task=loop.accept_push,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ):\n    ^\n\n\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/pregel/_runner.py\", line 167, in tick\n    run_with_retry(\n    ~~~~~~~~~~~~~~^\n        t,\n        ^^\n    ...<10 lines>...\n        },\n        ^^\n    )\n    ^\n\n\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/pregel/_retry.py\", line 42, in run_with_retry\n    return task.proc.invoke(task.input, config)\n           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\n\n\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/_internal/_runnable.py\", line 656, in invoke\n    input = context.run(step.invoke, input, config, **kwargs)\n\n\n  File \"/opt/homebrew/Caskroom/miniforge/base/envs/telekom/lib/python3.13/site-packages/langgraph/_internal/_runnable.py\", line 400, in invoke\n    ret = self.func(*args, **kwargs)\n\n\n  File \"/private/tmp/claude-503/-Users-A46727843-Work-AgenticAI-agents-hub/95437093-f018-4304-a4c1-b3ded082b254/scratchpad/otel/capture_fixture.py\", line 45, in boom\n    raise RuntimeError(\"no such sku\")\n\n\nRuntimeError: no such sku\n\n\nDuring task with name 'boom' and id '3193058a-c86e-f3bd-12b5-7459191ae266'",
+        "code": "STATUS_CODE_ERROR"
+       },
+       "flags": 256
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

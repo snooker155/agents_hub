@@ -45,7 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
-from routes import agent_import, agents, chats, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances
+from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances
 from routes import settings as settings_router
 from routes import models as models_router
 
@@ -264,6 +264,13 @@ app.include_router(agents.router)
 
 # Agent import domain: bringing an agent in from its own git repository
 app.include_router(agent_import.router)
+
+# Connections domain: external agents that run on their own trigger and report
+# here. Two routers on purpose — one manages connections and is operator-
+# authenticated, the other is authenticated by a connection's own token and can
+# only report runs. See EXTERNAL_CONNECTIONS.md.
+app.include_router(connections_router.router)
+app.include_router(ingest_router.router)
 
 # Marketplace domain: catalog of agents published across workspaces
 app.include_router(marketplace.router)
