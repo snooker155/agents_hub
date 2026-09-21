@@ -64,7 +64,7 @@ def materialize_attachments(request: ChatRequest) -> None:
         if total > max_total_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"Total attachment size exceeds 5 MB.",
+                detail="Total attachment size exceeds 5 MB.",
             )
 
         if att.store_to_workspace:

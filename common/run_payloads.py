@@ -39,7 +39,7 @@ response text and ``llm_invocations`` embedded), ``thinking``,
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 # Keys of the canonical payload that carry "heavy" data. A payload containing
 # none of these (e.g. only token_usage/duration_ms) is a stats-only update and

@@ -216,8 +216,6 @@ def stub_run(monkeypatch):
 
 
 def _seed_loop(**kw):
-    from flow import store as flow_store
-    import loops.runner as runner
     loop = store.save_loop(Loop(name="L", flow_id="f", exit_criterion="c", **kw))
     # The runner loads the flow itself; a minimal stand-in is enough because the
     # execution of it is stubbed.

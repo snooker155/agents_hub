@@ -621,7 +621,7 @@ def test_timeline_annotations_survive_revert():
 # ── Phase 4: publishing (slides / document) ───────────────────────────────────
 
 def test_slides_and_document_kinds():
-    from views.models import validate_spec, ViewValidationError
+    from views.models import validate_spec
     assert {"slides", "document"} <= set(SUPPORTED_KINDS)
     assert validate_spec("document", {"markdown": "# Hi", "title": "T"})["title"] == "T"
     assert "slides" in validate_spec("slides", {"slides": {}})
@@ -803,7 +803,8 @@ def test_run_compute_budget_caps_frames():
 
 
 def test_view_compute_tool_sets_fidelity_and_streams():
-    import json, time
+    import json
+    import time
     from views.store import create_live_view, get_view, list_clips
     from tools.views import view_compute
     vid = create_live_view("simulation", "N").view_id
@@ -877,7 +878,7 @@ def test_asset_binding_through_symlinked_root(tmp_path, monkeypatch):
     link.symlink_to(real, target_is_directory=True)
     monkeypatch.setattr(paths, "VIEWS_ROOT", link)
 
-    from views.store import create_live_view, add_asset, get_view
+    from views.store import create_live_view, add_asset
     src = tmp_path / "wood.png"
     src.write_bytes(b"\x89PNGfake")
     vid = create_live_view("scene3d", "S").view_id
@@ -973,7 +974,8 @@ def test_nn_trace_frames_and_determinism():
     a = create_runtime("nn_trace", {"layers": [6, 8, 3], "seed": 11})
     b = create_runtime("nn_trace", {"layers": [6, 8, 3], "seed": 11})
     for _ in range(3):
-        a.step(0.01); b.step(0.01)
+        a.step(0.01)
+        b.step(0.01)
     fa, fb = a.frame(), b.frame()
     assert fa["shape"] == [3, 8] and len(fa["values"]) == 24
     assert fa["values"] == fb["values"]                      # seeded → deterministic
@@ -1013,7 +1015,8 @@ def test_view_serve_launch_gated_off_by_default():
 
 
 def test_view_serve_launch_and_stop(monkeypatch, tmp_path):
-    import json, sys as _sys
+    import json
+    import sys as _sys
     import common.paths as paths
     from common.config import settings
     from views.store import create_live_view, get_view
@@ -1051,7 +1054,8 @@ def test_view_serve_launch_validation(monkeypatch, tmp_path):
 
 
 def test_delete_view_kills_launched_service(monkeypatch, tmp_path):
-    import json, sys as _sys
+    import json
+    import sys as _sys
     import common.paths as paths
     from common.config import settings
     from views.store import create_live_view, delete_view

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from agents import registry
-from memory.procedural import Procedure, ProcedureStore, all_procedures, find_procedure
+from memory.procedural import Procedure, ProcedureStore, find_procedure
 from models import SkillCreate, SkillInstall, SkillSharingUpdate, SkillUpdate
 from workspace import get_workspace_metadata, is_system_agent
 

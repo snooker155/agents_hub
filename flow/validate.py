@@ -19,7 +19,7 @@ nodes silently mid-flight.
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from flow import registry as flow_registry
 from flow import dispatch as flow_dispatch

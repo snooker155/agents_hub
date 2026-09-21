@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Any, Iterable, List, Literal, Optional, Sequence
 from uuid import UUID, uuid4
 

@@ -419,7 +419,6 @@ def test_editing_a_system_agent_marks_it_user_modified():
 def test_bootstrap_writes_are_not_user_edits():
     """Bootstrap registers missing system agents itself; those records must not
     come out pre-marked, or they would never track the seed again."""
-    import dataclasses
 
     from agents.registry import add_agent, get_agent
 

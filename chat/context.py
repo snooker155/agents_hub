@@ -6,7 +6,6 @@ runs against: bounded conversation history, attachment blocks, and workspace
 resolution. Shared by both the single-agent and flow chat pipelines.
 """
 import re
-from pathlib import Path
 
 from chat.models import ChatRequest
 from chat.references import build_reference_lines

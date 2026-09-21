@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from common import db
 from playground.models import (
-    AgentDecision, ActionResult, Role, Scenario, SimRun, TickRecord, utc_iso,
+    Scenario, SimRun, TickRecord, utc_iso,
 )
 from playground.worlds import WorldSpec
 

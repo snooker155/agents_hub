@@ -12,7 +12,7 @@ import pytest
 from teams import control, store
 from teams.models import BROADCAST, DONE_TOKEN, Team, TeamMember, TeamMessage, TeamRun
 from teams.prompts import (
-    board_block, leader_turn_prompt, member_turn_prompt, parse_leader_plan,
+    board_block, parse_leader_plan,
     parse_member_reply, roster_block, team_system_prompt,
 )
 from teams.runner import Turn, run_team, stop_run

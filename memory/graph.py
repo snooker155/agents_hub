@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, List, Literal, Optional, Tuple
+from typing import Any, List, Literal, Optional, Tuple
 from uuid import UUID, uuid4
 
 from filelock import FileLock

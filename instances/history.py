@@ -13,7 +13,7 @@ module turns that journal back into the alternating transcript that
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from common import db
 from managers.run_manager import get_run_process

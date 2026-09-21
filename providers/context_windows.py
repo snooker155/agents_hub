@@ -22,7 +22,6 @@ reads the catalog first and falls back to (3). Returns 0 when unknown.
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from common.paths import MODELS_FILE
 

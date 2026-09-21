@@ -1389,7 +1389,8 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
 
 def _trigger_session_continuation(cont: dict, finished_status: str) -> None:
     """Spawn the orchestrator as a background subprocess to continue the session."""
-    import subprocess, sys
+    import subprocess
+    import sys
     from pathlib import Path as _Path
 
     task_id = cont.get("task_id")

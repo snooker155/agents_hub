@@ -13,7 +13,7 @@ makes agents disagree, and disagreement is what makes a market.
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from playground.environments import register
 from playground.environments.base import Environment

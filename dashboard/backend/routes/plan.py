@@ -4,13 +4,11 @@ user notification inbox.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from plans import JobKind, JobStatus, Recurrence

@@ -1235,7 +1235,7 @@ async def chat_scenario(scenario_id: str, payload: ScenarioChatIn):
     """
     from chat.entity_chat import (
         EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        register_entity_run, run_entity_chat_turn, spawn_detached, sse,
+        run_entity_chat_turn, spawn_detached, sse,
     )
 
     scenario = store.get_scenario(scenario_id)

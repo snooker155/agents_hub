@@ -1,4 +1,6 @@
-import json, pathlib, subprocess, textwrap, os
+import json
+import pathlib
+import subprocess
 from typing import Any, Dict, List, Tuple
 from common.config import Paths
 import fnmatch
@@ -32,8 +34,10 @@ class Tee:
         return False
 
 def write(path: str, content: str):
-    p = pathlib.Path(path); p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8"); return str(p)
+    p = pathlib.Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding="utf-8")
+    return str(p)
 
 def read(path: str, default: str=""):
     p = pathlib.Path(path)
@@ -44,7 +48,8 @@ def save_json(path: str, obj: Any):
 
 def load_json(path: str, default: Any=None):
     p = pathlib.Path(path)
-    if not p.exists(): return default
+    if not p.exists():
+        return default
     return json.loads(p.read_text(encoding="utf-8"))
 
 def run_cmd(cmd: List[str], cwd: str | None=None, timeout: int=30) -> Tuple[int,str]:
@@ -66,7 +71,9 @@ def append_log_json(event: Dict[str,Any], json_path=None):
     if json_path is None:
         json_path = Paths().logs + "/interaction_log.json"
     data = load_json(json_path, default=[])
-    data.append(event); save_json(json_path, data); return data
+    data.append(event)
+    save_json(json_path, data)
+    return data
 
 def is_text_path(path: pathlib.Path) -> bool:
     if path.suffix.lower() in TEXT_EXTS:

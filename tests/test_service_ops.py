@@ -19,11 +19,7 @@ from tools.service_ops import (
     SERVICE_OPS_TOOLS,
     SERVICE_READ_TOOLS,
     _tail,
-    costs_summary,
     list_containers,
-    list_instances,
-    list_nodes,
-    list_runs,
     prune_run_logs,
     run_log,
     search_errors,
@@ -76,7 +72,6 @@ def test_approved_action_on_a_missing_target_reports_not_found():
 
 def test_prune_reports_what_it_removed(tmp_path, monkeypatch):
     import common.paths as paths
-    import tools.service_ops as ops
 
     logs = tmp_path / "run_logs"
     logs.mkdir()

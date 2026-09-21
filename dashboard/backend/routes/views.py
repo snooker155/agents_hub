@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse

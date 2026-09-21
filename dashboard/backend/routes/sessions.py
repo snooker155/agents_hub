@@ -12,20 +12,16 @@ agent behind them lives under /api/instances.
 Session contexts are stored in the ``sessions`` table (``common.db``).
 """
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 from datetime import datetime, timezone
-import asyncio
 import json
 import os
 import re
-import time
 import yaml
 
 from common.config import settings as _global_settings
 
-from uuid import uuid4
 
 from agents import registry
 from providers.context_windows import get_model_context_window
@@ -36,11 +32,7 @@ from common.session_service import (
     query_contexts as _session_service_query,
     session_ids_without_runs as _session_ids_without_runs,
     delete_context as _delete_context,
-    upsert_context as _upsert_context,
     get_context_by_id as _get_context_by_id,
-    get_or_create_chat_session,
-    add_run_to_session,
-    add_event_to_session,
 )
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])

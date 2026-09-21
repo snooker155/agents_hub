@@ -24,7 +24,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 # Hard ceilings a loop definition can never exceed. An unbounded loop of LLM
 # calls is the single most expensive mistake this feature makes possible, so

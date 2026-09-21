@@ -72,7 +72,6 @@ import os
 import shlex
 import socket
 import subprocess
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional

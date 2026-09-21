@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import fnmatch
 import io
-import os
 import re
 from pathlib import Path
 from typing import Iterable, List, Dict, Any, Optional
 
 # Centralized settings for sandbox and limits
-from common.config import get_swe_config, settings
+from common.config import get_swe_config
 
 
 def _workspace_root(workspace: Optional[Path] = None) -> Path:
@@ -150,7 +149,8 @@ def write_file(path: str, content: str, create_dirs: bool = True, workspace: Opt
     try:
         tmp_dir = abs_path.parent
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        import tempfile, os as _os
+        import tempfile
+        import os as _os
         fd, tmp_name = tempfile.mkstemp(prefix=".tmp_write_", dir=str(tmp_dir))
         _os.close(fd)
         tmp_path = Path(tmp_name)

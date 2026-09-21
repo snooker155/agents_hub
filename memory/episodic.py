@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, List, Literal, Optional, Sequence
+from typing import Any, Iterable, List, Literal, Optional
 from uuid import UUID, uuid4
 
 from filelock import FileLock

@@ -343,7 +343,7 @@ async def test_local_model(data: TestLocalModelRequest):
     except httpx.ConnectError:
         return {"ok": False, "error": f"Could not connect to {base}. Is the server running?"}
     except httpx.TimeoutException:
-        return {"ok": False, "error": f"Connection timed out after 5 s."}
+        return {"ok": False, "error": "Connection timed out after 5 s."}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

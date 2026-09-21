@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from typing import Optional
 from uuid import UUID
-import json
 import threading
 import mimetypes
 from uuid import uuid4

@@ -15,8 +15,6 @@ from common import live_runs
 from managers import run_manager
 from managers.run_manager import update_run as update_message_run
 from tasks import service as tasks_service
-from workspace import create_workspace_folder
-from models import SessionCreate
 
 # Re-use all helper logic from sessions module
 from routes.sessions import (

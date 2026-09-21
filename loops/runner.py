@@ -33,7 +33,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from loops import store
-from loops.evaluator import evaluate, resolve_evaluator
+from loops.evaluator import evaluate
 from loops.models import (
     Iteration, Loop, LoopRun, MAX_ITERATIONS_CAP, MAX_WALL_SECONDS_CAP,
     Verdict, utc_iso,

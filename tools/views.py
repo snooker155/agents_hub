@@ -32,7 +32,6 @@ from views.store import (
     get_view as _get_view,
     revert_to as _revert_to,
     add_asset as _add_asset,
-    view_asset_path as _view_asset_path,
     save_checkpoint as _save_checkpoint,
     checkpoint_seq as _checkpoint_seq,
     list_checkpoints as _list_checkpoints,

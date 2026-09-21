@@ -13,7 +13,6 @@ mostly its prompt: that is where the rules the agent must not break are written.
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 

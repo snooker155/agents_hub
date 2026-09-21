@@ -28,11 +28,10 @@ combined with an outbound channel. See ``tools/capabilities.py``.
 from __future__ import annotations
 
 import json
-import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field

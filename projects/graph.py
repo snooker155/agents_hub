@@ -18,7 +18,6 @@ result is meant to seed an editable canvas, not replace one.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -486,7 +485,6 @@ def layered_layout(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], *,
         return nodes
     ids = [n["id"] for n in nodes]
     id_set = set(ids)
-    node_by_id = {n["id"]: n for n in nodes}
     adj: Dict[str, List[str]] = {i: [] for i in ids}
     radj: Dict[str, List[str]] = {i: [] for i in ids}
     for e in edges:

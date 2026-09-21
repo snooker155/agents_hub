@@ -10,7 +10,6 @@ calling `extract_and_persist` directly.
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 from typing import Any, Optional

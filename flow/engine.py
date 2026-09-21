@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 
 # ── DAG helpers (moved here from runtime/flow_run.py so both adapters share them) ───────

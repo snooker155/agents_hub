@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from tools.docs_tool import DOCS_DIR, INDEX_FILE, _index, _stem, read_doc, search_docs
+from tools.docs_tool import DOCS_DIR, _index, _stem, read_doc, search_docs
 
 
 def _call(tool, **kwargs) -> dict:

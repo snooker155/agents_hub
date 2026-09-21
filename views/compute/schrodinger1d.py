@@ -25,7 +25,8 @@ class Schrodinger1D:
         self.hbar = 1.0
         self.m = float(params.get("mass", 1.0))
         # initial gaussian packet
-        x0 = float(params.get("x0", -5.0)); k0 = float(params.get("k0", 3.0))
+        x0 = float(params.get("x0", -5.0))
+        k0 = float(params.get("k0", 3.0))
         sigma = float(params.get("sigma", 1.0))
         self.psi = np.exp(-((self.x - x0) ** 2) / (2 * sigma ** 2)) * np.exp(1j * k0 * self.x)
         self.psi /= np.sqrt(np.sum(np.abs(self.psi) ** 2) * self.dx)
@@ -38,7 +39,8 @@ class Schrodinger1D:
         kind = str(params.get("potential", "barrier"))
         V = np.zeros(self.n)
         if kind == "barrier":
-            h = float(params.get("barrier_height", 4.0)); w = float(params.get("barrier_width", 0.5))
+            h = float(params.get("barrier_height", 4.0))
+            w = float(params.get("barrier_width", 0.5))
             V[np.abs(self.x) < w] = h
         elif kind == "well":
             V[np.abs(self.x) < 1.0] = -float(params.get("well_depth", 4.0))

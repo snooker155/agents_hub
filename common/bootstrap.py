@@ -22,7 +22,6 @@ deliberate exception (the last bullet):
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
 
 from common.paths import (
     AGENTS_FILE,

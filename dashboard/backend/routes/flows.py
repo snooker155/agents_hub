@@ -439,8 +439,6 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
     flow-run record is marked stopped, its orchestrator process is killed, its
     in-flight node runs are stopped, and its task is stopped.
     """
-    from managers import run_manager
-    from common.paths import AGENTS_HUB_ROOT
     from flow.launcher import _set_flow_running
     from flow import run_store
     from datetime import datetime, timezone
@@ -450,7 +448,8 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
         # Per-run log file keyed by the entry's run_group (the flow_run_id).
         run_store.append_flow_log(flow_id, entry.get("run_group") or "", entry)
 
-    now = lambda: datetime.now(timezone.utc).isoformat()
+    def now() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
     active = run_store.get_active_flow_runs(flow_id)
     if flow_run_id:
