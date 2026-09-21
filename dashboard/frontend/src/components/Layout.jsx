@@ -46,6 +46,8 @@ import {
   UsersRound,
   GraduationCap,
   Globe,
+  Share2,
+  Link2,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -291,6 +293,20 @@ const Layout = ({ children }) => {
         { name: t('nav.messages'), path: '/messages', icon: ScrollText },
         { name: t('nav.views'), path: '/views', icon: Images },
         { name: t('nav.studio'), path: '/studio', icon: Shapes },
+      ],
+    },
+    {
+      // Attaching something that is not defined in here. Its own group rather
+      // than a row inside Infrastructure: someone looking for "how do I connect
+      // what we already have" is not looking under agents and containers, and
+      // this is the answer to that question.
+      label: t('nav.groups.connect'),
+      items: [
+        // Two directions, one question. The names carry the difference and
+        // each page states it in a line: something of yours runs elsewhere and
+        // reports in, or this service reaches out to a system you use.
+        { name: t('nav.connections'), path: '/connections', icon: Share2 },
+        { name: t('nav.connectors'), path: '/connectors', icon: Link2 },
       ],
     },
     {

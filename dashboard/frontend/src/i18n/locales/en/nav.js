@@ -5,6 +5,7 @@ export default {
     infrastructure: 'Infrastructure',
     tools: 'Tools',
     system: 'System',
+    connect: 'Connect',
   },
   chat: 'Chat',
   dashboard: 'Dashboard',
@@ -40,4 +41,6 @@ export default {
   comingSoonTitle: 'Coming soon',
   comingSoonItem: '{{name}} — coming soon',
   health: 'Status',
+  connections: 'Connections',
+  connectors: 'Connectors',
 };

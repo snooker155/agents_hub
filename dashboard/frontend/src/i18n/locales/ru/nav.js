@@ -5,6 +5,7 @@ export default {
     infrastructure: 'Инфраструктура',
     tools: 'Инструменты',
     system: 'Система',
+    connect: 'Подключение',
   },
   chat: 'Чат',
   dashboard: 'Дашборд',
@@ -40,4 +41,6 @@ export default {
   comingSoonTitle: 'Скоро будет',
   comingSoonItem: '{{name}} — скоро',
   health: 'Статус',
+  connections: 'Подключения',
+  connectors: 'Коннекторы',
 };

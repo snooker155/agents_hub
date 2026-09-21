@@ -3,6 +3,9 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import TaskManager from './pages/TaskManager';
 import AgentManager from './pages/AgentManager';
+import ConnectionDetail from './pages/ConnectionDetail';
+import Connections from './pages/Connections';
+import Connectors from './pages/Connectors';
 import AgentDetails from './pages/AgentDetails';
 import TaskDetails from './pages/TaskDetails';
 import WorkspaceManager from './pages/WorkspaceManager';
@@ -88,6 +91,9 @@ function App() {
             <Route path="/sessions/:sessionId" element={<SessionDetails />} />
             <Route path="/messages" element={<Messages />} />
             <Route path="/messages/:runId" element={<MessageDetails />} />
+            <Route path="/connections" element={<Connections />} />
+            <Route path="/connections/:connectionId" element={<ConnectionDetail />} />
+            <Route path="/connectors" element={<Connectors />} />
             <Route path="/instances" element={<Instances />} />
             <Route path="/instances/:instanceId" element={<InstanceDetail />} />
             <Route path="/nodes" element={<Nodes />} />
