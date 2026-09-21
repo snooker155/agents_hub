@@ -23,6 +23,12 @@ connection in a process ensures the schema exists and runs the one-time legacy
 JSON migration (see :mod:`common.db_migrate`) under an exclusive transaction,
 so it is safe for any entrypoint — backend, ``runtime/agent_run.py``,
 ``runtime/node_run.py``, the CLI — to touch the stores first.
+
+That startup sequence (post-hoc column ALTERs, schema creation, the
+``schema_version`` bump and the legacy-JSON import) all run inside one
+``BEGIN IMMEDIATE`` transaction, so two processes racing to open the same
+fresh-or-stale database serialize instead of one seeing a column that isn't
+there yet while the other is mid-``ALTER TABLE``.
 """
 from __future__ import annotations
 
@@ -557,6 +563,14 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+# Bumped whenever _ADDED_COLUMNS (or any other startup migration folded into
+# _ensure_ready) grows a new entry. A fresh database is stamped with this value
+# immediately; an existing one is upgraded to it — see _ensure_ready. Kept at 1
+# for now: it names the column-backfill migrations below, not every schema
+# change ever made (CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+# additions are self-idempotent and need no version bump).
+SCHEMA_VERSION = 1
+
 # Columns added to a table *after* it first shipped. ``_SCHEMA`` only ever runs
 # CREATE TABLE IF NOT EXISTS, so a new column in the CREATE body reaches fresh
 # databases only; existing ones need an explicit ALTER. Add an entry here in the
@@ -599,9 +613,13 @@ _ADDED_COLUMN_BACKFILL: dict[str, list[str]] = {
 def _ensure_columns(conn: sqlite3.Connection) -> None:
     """Add post-hoc columns to pre-existing tables (idempotent).
 
-    Runs *before* ``_SCHEMA`` so the indexes declared there can reference the
-    new columns. Tables that do not exist yet are skipped — a fresh database
-    gets them from the CREATE TABLE body instead.
+    Runs *before* the rest of ``_SCHEMA`` so the indexes declared there can
+    reference the new columns. Tables that do not exist yet are skipped — a
+    fresh database gets them from the CREATE TABLE body instead. Called by
+    ``_ensure_ready`` inside its ``BEGIN IMMEDIATE`` transaction, so the
+    table_info check and the ALTER it guards are no longer a check-then-act
+    race between processes; the ``duplicate column`` catch below is
+    belt-and-braces only (e.g. a schema hand-edited outside this code path).
     """
     for table, columns in _ADDED_COLUMNS.items():
         exists = conn.execute(
@@ -612,31 +630,114 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         present = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         added = False
         for column, decl in columns.items():
-            if column not in present:
+            if column in present:
+                continue
+            try:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
-                added = True
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+                continue  # already there — nothing to backfill for this column
+            added = True
         if added:
             for statement in _ADDED_COLUMN_BACKFILL.get(table, []):
                 conn.execute(statement)
 
 
+def _schema_statements() -> list[str]:
+    """Split ``_SCHEMA`` into individual statements, comments stripped.
+
+    ``conn.executescript()`` cannot be used from inside ``_ensure_ready``: the
+    sqlite3 module always issues an implicit COMMIT before running a script,
+    which would close the exclusive transaction that makes column ALTERs,
+    table creation, the version bump and the JSON migration land atomically.
+    Executing each statement individually keeps everything inside that one
+    transaction. ``_SCHEMA`` only ever uses ``--`` line comments (no block
+    comments, no string literal contains ``--``), so stripping from the first
+    ``--`` to end of line on every line before splitting on ``;`` is exact.
+    """
+    lines = []
+    for line in _SCHEMA.split("\n"):
+        idx = line.find("--")
+        if idx != -1:
+            line = line[:idx]
+        lines.append(line)
+    return [s.strip() for s in "\n".join(lines).split(";") if s.strip()]
+
+
 def _ensure_ready(conn: sqlite3.Connection) -> None:
-    """Create the schema and run the one-time JSON migration, exactly once per
-    process (and effectively once per machine thanks to the meta marker)."""
+    """Create/upgrade the schema and run the one-time JSON migration, exactly
+    once per process.
+
+    Everything here runs inside a single ``BEGIN IMMEDIATE`` transaction:
+    the ``schema_version`` read, the post-hoc column ALTERs (only when the
+    stored version is behind), schema creation and the legacy-JSON import.
+    Two processes opening the same database at once now serialize on
+    SQLite's own write lock instead of both reading "column missing" from
+    ``PRAGMA table_info`` and both trying to ALTER it in — the defect this
+    replaces (see tests/test_db_schema.py).
+    """
     global _schema_ready
     if _schema_ready:
         return
     with _schema_lock:
         if _schema_ready:
             return
-        _ensure_columns(conn)
-        conn.executescript(_SCHEMA)
-        # Legacy JSON migration — guarded by a meta marker so concurrent
-        # processes and restarts never import twice.
-        row = conn.execute("SELECT value FROM meta WHERE key='json_migrated'").fetchone()
-        if row is None:
+
+        conn.execute("BEGIN IMMEDIATE")
+        migrated: Optional[dict] = None
+        try:
+            # Needed before the version read below; also in _SCHEMA (harmless
+            # to create twice, both are IF NOT EXISTS).
+            conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+
+            row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            try:
+                stored_version = int(row["value"]) if row and row["value"] is not None else 0
+            except (TypeError, ValueError):
+                stored_version = 0
+
+            if stored_version > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"This state directory's schema_version ({stored_version}) is "
+                    f"newer than what this build of Agents Hub understands "
+                    f"(SCHEMA_VERSION={SCHEMA_VERSION}). It was written by a newer "
+                    "version of the app — upgrade before opening it, or point "
+                    "AGENTS_HUB_ROOT at a different directory."
+                )
+
+            if stored_version < SCHEMA_VERSION:
+                _ensure_columns(conn)
+
+            for statement in _schema_statements():
+                conn.execute(statement)
+
+            if stored_version < SCHEMA_VERSION:
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
+                    (str(SCHEMA_VERSION),),
+                )
+
+            # Legacy JSON migration — guarded by a meta marker so concurrent
+            # processes and restarts never import twice. Runs in this same
+            # transaction: either the schema/version bump and the import land
+            # together, or (on any error) neither does.
+            row = conn.execute("SELECT value FROM meta WHERE key='json_migrated'").fetchone()
+            if row is None:
+                from common import db_migrate
+                migrated = db_migrate.migrate_legacy_json(conn)
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
+
+        if migrated is not None:
             from common import db_migrate
-            db_migrate.migrate_legacy_json(conn)
+            db_migrate.rename_migrated_sources()
+            if any(migrated.values()):
+                print(f"[db] migrated legacy JSON state into SQLite: {migrated}")
+
         _schema_ready = True
 
 

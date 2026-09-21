@@ -17,9 +17,14 @@ Runs automatically from ``common.db`` when the database has no
 
 Every successfully imported source is renamed to ``<name>.migrated`` (dirs get
 the same suffix) so a half-upgraded environment can never write to a store the
-new code no longer reads. The whole import runs in one EXCLUSIVE transaction:
-either everything lands plus the marker, or nothing does. Unparseable files
-are left in place untouched and reported — never treated as empty.
+new code no longer reads — done by :func:`rename_migrated_sources`, called by
+``common.db`` only after its transaction commits. The import itself
+(:func:`migrate_legacy_json`) does not manage its own transaction: it runs
+inside the caller's already-open ``BEGIN IMMEDIATE`` (see
+``common.db._ensure_ready``), so it lands atomically with the schema creation
+and version bump — either everything commits together, or (on any exception)
+the caller rolls back all of it. Unparseable files are left in place untouched
+and reported — never treated as empty.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from common.paths import AGENTS_HUB_ROOT
 from common import run_payloads as rp
@@ -260,46 +265,49 @@ def _import_nodes(conn: sqlite3.Connection) -> int:
 
 # ── entrypoint ───────────────────────────────────────────────────────────────
 
-def migrate_legacy_json(conn: sqlite3.Connection) -> Dict[str, int]:
+def migrate_legacy_json(conn: sqlite3.Connection) -> Optional[Dict[str, int]]:
     """Import all legacy JSON stores and set the ``json_migrated`` marker.
 
-    Called by ``common.db`` on first connection when the marker is absent.
-    Runs under an EXCLUSIVE transaction so concurrent processes serialize;
-    whichever wins imports, the rest see the marker and skip.
+    Called by ``common.db._ensure_ready`` while it already holds the startup
+    ``BEGIN IMMEDIATE`` transaction — this function does not begin, commit or
+    roll back anything itself; an exception here propagates to the caller,
+    which rolls back the whole startup transaction (schema + version bump +
+    this import) together.
+
+    Returns ``None`` when another process already migrated (the marker was
+    already set — nothing to rename), or the per-store import counts when
+    this call performed the import (the caller renames the sources after its
+    commit lands, via :func:`rename_migrated_sources`).
     """
-    conn.execute("BEGIN EXCLUSIVE")
-    try:
-        # Another process may have migrated while we waited for the lock.
-        row = conn.execute("SELECT value FROM meta WHERE key='json_migrated'").fetchone()
-        if row is not None:
-            conn.execute("COMMIT")
-            return {}
+    row = conn.execute("SELECT value FROM meta WHERE key='json_migrated'").fetchone()
+    if row is not None:
+        return None
 
-        counts = {
-            "runs": _import_runs(conn),
-            "run_payloads": _import_run_payloads(conn),
-            "tasks": _import_tasks(conn),
-            "task_sidecars": _import_task_sidecars(conn),
-            "sessions_continuations": _import_sessions(conn),
-            "nodes": _import_nodes(conn),
-        }
-        conn.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('json_migrated', ?)",
-            (json.dumps({"at": _now_iso(), "counts": counts}),),
-        )
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
+    counts = {
+        "runs": _import_runs(conn),
+        "run_payloads": _import_run_payloads(conn),
+        "tasks": _import_tasks(conn),
+        "task_sidecars": _import_task_sidecars(conn),
+        "sessions_continuations": _import_sessions(conn),
+        "nodes": _import_nodes(conn),
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('json_migrated', ?)",
+        (json.dumps({"at": _now_iso(), "counts": counts}),),
+    )
+    return counts
 
-    # Rename sources only after the transaction landed. Best-effort — the
-    # marker alone already guarantees single import.
+
+def rename_migrated_sources() -> None:
+    """Best-effort hygiene: rename imported legacy JSON sources to
+    ``*.migrated`` so a half-upgraded environment never writes to a store the
+    new code no longer reads. Safe to call unconditionally and repeatedly —
+    the ``json_migrated`` marker alone already guarantees a single import.
+    Called by ``common.db`` only after the transaction holding the import
+    has committed.
+    """
     for name in ("agent_runs.json", "tasks.json", "session_contexts.json",
                  "pending_continuations.json", "nodes.json"):
         _rename_migrated(AGENTS_HUB_ROOT / name)
     for dirname in ("run_process", "activity_logs", "results", "routing_logs"):
         _rename_migrated(AGENTS_HUB_ROOT / dirname)
-
-    if any(counts.values()):
-        print(f"[db] migrated legacy JSON state into SQLite: {counts}")
-    return counts
