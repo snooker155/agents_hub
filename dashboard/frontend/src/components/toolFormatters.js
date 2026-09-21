@@ -135,7 +135,7 @@ const FORMATTERS = {
   // Memory.
   read_memory: (a) => a.note_title ?? a.kv_key ?? a.memory_id ?? '',
   write_memory: (a) => a.note_title ?? a.kv_key ?? a.memory_id ?? '',
-  search_memory_semantic: (a) => a.query ?? '',
+  search_memory: (a) => a.query ?? '',
   read_structured_memory: (a) => a.slot ?? a.memory_id ?? '',
   write_structured_memory: (a) => a.slot ?? '',
   recall: (a) => a.query ?? '',

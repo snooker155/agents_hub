@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-from pathlib import Path
 from pydantic import BaseModel, Field, SerializeAsAny
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder

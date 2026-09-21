@@ -342,7 +342,12 @@ def _search_memory_impl(query: str, memory_id: str, top_k: int = 5) -> str:
 
 
 search_memory_tool = StructuredTool.from_function(
-    name="search_memory_semantic",
+    # Named for the tool catalog entry that grants it (``tools/registry.py``)
+    # and for the capability keyed on that same id in ``tools/capabilities.py``.
+    # The factory resolves a grant by matching this name, so a tool whose name
+    # differs from its catalog id can be granted, reasoned about by the guard,
+    # and then silently never handed to the agent.
+    name="search_memory",
     description=(
         "Semantic (vector) search over a shared memory pool. "
         "Embeds the query and returns the most relevant text chunks by similarity. "
