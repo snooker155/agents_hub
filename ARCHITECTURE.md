@@ -383,12 +383,28 @@ curl http://localhost:8000/api/health  # DB reachability, row counts, background
 
 ## Agent Execution Modes
 
-The application supports two main execution models:
+The application supports two main execution models, resolved live (workspace
+override, then the global setting) so a change on the Settings page applies to
+the next node or run without a restart — never frozen at process start:
 
 - `local`
-  Agents run as local subprocesses on the host machine.
+  Agents run as local subprocesses on the host machine: `managers/node_manager.py`
+  for persistent nodes, `agents/agent_launcher.py` for one-shot task runs.
 - `docker`
-  Agents run inside managed Docker containers using the container tooling in `managers/container_manager.py`. The Containers page builds the shared base image and per-agent images on top of it, previews the generated Dockerfile, and lists, logs, stops, and removes containers.
+  Agents run inside managed Docker containers using the container tooling in
+  `managers/container_manager.py`, for both surfaces above — a node via
+  `start_node_container`, a task run via `runtime/docker_runner.start_run_container`.
+  Task runs additionally get a hardened profile on top of what a node
+  container has (resource limits, a read-only root filesystem, a scrubbed
+  environment); see [docs/containers.md](docs/containers.md) for the full
+  mount table and the one documented gap (the shared SQLite database is still
+  mounted read-write). The Containers page builds the shared base image and
+  per-agent images on top of it, previews the generated Dockerfile, and lists,
+  logs, stops, and removes containers.
+
+A run record's `execution_mode` and `container_name` fields track which mode a
+given run used; `container_name` is what `run_manager`/`run_watchdog` key
+stop and liveness checks off, not `execution_mode` (see docs/containers.md).
 
 Related environment variables:
 
@@ -396,6 +412,8 @@ Related environment variables:
 - `AGENT_DOCKER_IMAGE`
 - `AGENT_DOCKER_NETWORK`
 - `AGENT_DOCKER_EXTRA_ARGS`
+- `AGENT_DOCKER_MEMORY` (run containers only, default `2g`)
+- `AGENT_DOCKER_CPUS` (run containers only, default `2`)
 
 ## Security Posture
 
@@ -404,6 +422,7 @@ The hub runs locally by default and its guardrails reflect that, but several are
 - **Optional API token.** `AGENTS_HUB_API_TOKEN` turns on authorization for every `/api` request. Unset means unauthenticated, which is fine on `localhost` and not fine anywhere else.
 - **Capability guard.** `tools/capabilities.py` classifies tools, and `agents/capability_guard.py` refuses tool sets that compose into a data-exfiltration primitive — enforced at save time (the bad combination never reaches a runtime) and again at build time, since memory pools, skills, and reasoning tools all append to the list.
 - **In-loop guards.** Tool-repetition limits and a context-window guard intercept an agent's own loop (`agents/callbacks/guards.py`). These do *not* apply to imported remote agents, whose loop lives in another process.
+- **Tool hooks and approval.** A workspace can run its own code around every tool call (`PreToolUse` / `PostToolUse`, configured in `<workspace>/.hooks.json`, executed with a scrubbed environment) and can require a human yes before a destructive call happens: the task parks in `awaiting_approval` with the call on it and resumes once the operator answers. Both are off until configured. See `agents/hooks.py`, `tools/approval.py` and `docs/hooks.md`.
 - **Untrusted web content.** Retrieved pages are wrapped and labeled as data, and every call is logged with the exact text handed to the agent plus flags for injection phrasing, hidden instructions, credential-shaped strings, and exfiltration-shaped requests. Flags are signals for review, not verdicts — blocking is done by the SSRF guard, the domain policy, and the capability model.
 - **Isolation.** `AGENT_EXECUTION_MODE=docker` runs agents in managed containers; `CAPABILITY_OVERRIDE_REQUIRES_CONTAINER=true` additionally requires real isolation behind any per-agent capability override.
 
