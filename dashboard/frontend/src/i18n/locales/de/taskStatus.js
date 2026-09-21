@@ -5,6 +5,7 @@ export default {
   in_progress: 'In Arbeit',
   blocked: 'Blockiert',
   awaiting_input: 'Wartet auf Eingabe',
+  awaiting_approval: 'Wartet auf Freigabe',
   stopped: 'Gestoppt',
   resolved: 'Gelöst',
   reviewing: 'In Prüfung',

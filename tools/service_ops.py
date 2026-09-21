@@ -59,14 +59,14 @@ def _json_err(message: str, *, code: str = "bad_request",
 
 
 def _approval_required(action: str, target: str, effect: str) -> str:
-    """Refusal that carries what the user is being asked to approve."""
-    return _json_err(
-        f"{action} needs the user's approval. It would {effect}. Tell the user "
-        f"exactly this, and only call again with user_approved=True once they "
-        f"have agreed.",
-        code="approval_required",
-        extra={"action": action, "target": target, "effect": effect},
-    )
+    """Refusal that carries what the user is being asked to approve.
+
+    The wording lives in ``tools/approval.py`` so this advisory refusal and the
+    enforcing gate (agents/hooks.py) say the same thing to the agent: the gate
+    reuses it verbatim in chat, where there is no task to park a call on.
+    """
+    from tools.approval import approval_required_text
+    return approval_required_text(action, target, effect)
 
 
 def _tail(text: str, lines: int) -> Dict[str, Any]:

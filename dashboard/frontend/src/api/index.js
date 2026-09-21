@@ -260,6 +260,9 @@ export const approveAssignment = (taskId) => api.post(`/tasks/${taskId}/approve-
 export const rejectAssignment = (taskId) => api.post(`/tasks/${taskId}/reject-assignment`);
 export const stopAgent = (taskId) => api.post(`/tasks/${taskId}/stop-agent`);
 export const answerTask = (taskId, answer) => api.post(`/tasks/${taskId}/answer`, { answer });
+// The decision on a tool call a task is parked on (status awaiting_approval).
+export const approveTaskCall = (taskId, approved, note = '') =>
+  api.post(`/tasks/${taskId}/approve`, { approved, note });
 export const getAgentStatus = (taskId) => api.get(`/tasks/${taskId}/agent-status`);
 export const getAgentWorkspaceCapacities = (agentId) => api.get(`/agents/${encodeURIComponent(agentId)}/workspace-capacities`);
 export const setDefaultChatAgent = (agentId, workspace) =>

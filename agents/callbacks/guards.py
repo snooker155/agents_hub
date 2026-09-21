@@ -9,6 +9,9 @@ runner catches the exception and turns it into the appropriate AgentResult.
   same tool is called too many times in a row.
 - ``AskUserGuard`` (+ ``AskUserSignal``) — pauses a run when the agent calls
   the ``ask_user`` tool.
+- ``ApprovalSignal`` — pauses a run when a tool call needs a human's approval
+  before it may happen (raised by the gate in ``agents/hooks.py``, not by a
+  callback).
 - ``ContextWindowGuard`` (+ ``ContextWindowExceededError``) — stops a run once
   its prompt exceeds the model's context window.
 """
@@ -128,6 +131,37 @@ class AskUserGuard(BaseCallbackHandler):
                 str(data.get("question") or ""),
                 data.get("choices") or [],
             )
+
+
+class ApprovalSignal(RuntimeError):
+    """Raised to pause a run when a tool call needs the user's approval.
+
+    Modelled on ``AskUserSignal``: the run ends cleanly carrying what the user
+    has to decide about, so the runner can park the task, show the call, and
+    resume once answered. Unlike AskUserSignal it is raised from *inside the
+    tool wrapper* rather than from a callback, because the decision has to
+    happen before the call runs, not after it produced output.
+
+    ``payload`` is the pending-approval record the task stores:
+    ``{tool, input, reason, run_id, agent_id, hook, fingerprint}``.
+    """
+
+    def __init__(self, payload: dict) -> None:
+        tool = str((payload or {}).get("tool") or "tool")
+        super().__init__(f"Approval required before calling `{tool}`")
+        self.payload = dict(payload or {})
+
+    @property
+    def tool(self) -> str:
+        return str(self.payload.get("tool") or "")
+
+    @property
+    def tool_input(self) -> Any:
+        return self.payload.get("input")
+
+    @property
+    def reason(self) -> str:
+        return str(self.payload.get("reason") or "")
 
 
 class ContextWindowExceededError(RuntimeError):

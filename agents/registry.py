@@ -162,6 +162,12 @@ class AgentSpec:
     # settings.capability_override_requires_container the override is only
     # honoured at build time for container-isolated, no-network runs.
     capability_override: bool = False
+    # Per-agent tweaks to the tool-approval gate (tools/approval.py). Both are
+    # empty by default, so the agent follows the shared NEEDS_APPROVAL list:
+    # ``approval_tools`` adds tool ids that this agent may not call unapproved,
+    # ``approval_exempt`` removes ones it may, and the exemption wins.
+    approval_tools: List[str] = field(default_factory=list)
+    approval_exempt: List[str] = field(default_factory=list)
     # External-agent descriptor — empty for built-in agents. When ``type`` is
     # "remote" this holds everything needed to reach the agent over HTTP
     # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
@@ -297,6 +303,11 @@ class AgentSpec:
         # Only write delegates when restricted, to keep unrestricted records clean.
         if self.delegates:
             d["delegates"] = list(self.delegates)
+        # Only write the approval overrides when set, to keep default records clean.
+        if self.approval_tools:
+            d["approval_tools"] = list(self.approval_tools)
+        if self.approval_exempt:
+            d["approval_exempt"] = list(self.approval_exempt)
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
@@ -469,6 +480,19 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
             if did and did not in delegates:
                 delegates.append(did)
 
+    def _id_list(raw: Any) -> List[str]:
+        """A clean, de-duplicated list of tool ids from whatever JSON holds."""
+        out: List[str] = []
+        if isinstance(raw, (list, tuple)):
+            for item in raw:
+                value = str(item).strip()
+                if value and value not in out:
+                    out.append(value)
+        return out
+
+    approval_tools = _id_list(ad.get("approval_tools"))
+    approval_exempt = _id_list(ad.get("approval_exempt"))
+
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
 
@@ -515,6 +539,8 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         allow_self_delegation=allow_self_delegation,
         capability_override=capability_override,
         delegates=delegates,
+        approval_tools=approval_tools,
+        approval_exempt=approval_exempt,
         remote=remote,
     )
 

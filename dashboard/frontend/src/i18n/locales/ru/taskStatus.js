@@ -5,6 +5,7 @@ export default {
   in_progress: 'В работе',
   blocked: 'Заблокировано',
   awaiting_input: 'Ждёт ответа',
+  awaiting_approval: 'Ждёт подтверждения',
   stopped: 'Остановлено',
   resolved: 'Решено',
   reviewing: 'На проверке',

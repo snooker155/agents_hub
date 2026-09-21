@@ -5,7 +5,7 @@ import { useLiveRefetch } from './stream';
 import {
   Plus, CheckCircle, Clock, AlertCircle, StopCircle, Loader,
   ExternalLink, Trash2, List, Columns, UserPlus, ChevronRight,
-  GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle
+  GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle, ShieldQuestion
 } from 'lucide-react';
 import { getTasks, deleteTask, getAgents, assignAgent, approveAssignment, rejectAssignment, updateTask, listFlows, runFlow, getProjects } from '../api';
 import CreateTaskModal from './CreateTaskModal';
@@ -17,6 +17,7 @@ const STATUS_CONFIG = {
   ready:       { bg: 'bg-blue-100',   text: 'text-blue-700',   icon: CheckCircle,  },
   pending:     { bg: 'bg-amber-100',  text: 'text-amber-700',  icon: Clock,        },
   awaiting_input: { bg: 'bg-amber-100', text: 'text-amber-700', icon: HelpCircle, },
+  awaiting_approval: { bg: 'bg-amber-100', text: 'text-amber-700', icon: ShieldQuestion, },
   in_progress: { bg: 'bg-yellow-100', text: 'text-yellow-700', icon: Loader,       },
   blocked:     { bg: 'bg-red-100',    text: 'text-red-700',    icon: AlertCircle,  },
   stopped:     { bg: 'bg-gray-100',   text: 'text-gray-500',   icon: StopCircle,   },
@@ -41,11 +42,12 @@ const KANBAN_COLUMNS = [
     dotColor: 'bg-blue-500', dropBorder: 'border-blue-300',
   },
   {
-    // Anything needing a human: assignment approval (pending) or an answer to the
-    // agent's question (awaiting_input). Not droppable — these are entered/left by
-    // the system or via the task's own actions, not by dragging.
+    // Anything needing a human: assignment approval (pending), an answer to the
+    // agent's question (awaiting_input), or a yes/no on a tool call it wants to
+    // make (awaiting_approval). Not droppable — these are entered/left by the
+    // system or via the task's own actions, not by dragging.
     id: 'waiting_approval', labelKey: 'taskBoard.columns.waiting', targetStatus: 'pending',
-    statuses: ['pending', 'awaiting_input'],
+    statuses: ['pending', 'awaiting_input', 'awaiting_approval'],
     headerBg: 'bg-amber-50', headerText: 'text-amber-700',
     dotColor: 'bg-amber-500', dropBorder: 'border-amber-300',
     droppable: false,
@@ -644,7 +646,7 @@ export default function TaskBoard({
 
   const getColumnTasks = (column) => tasksForKanban.filter((t) => {
     // Human-interaction statuses live only in the Waiting column.
-    if (t.status === 'pending' || t.status === 'awaiting_input') return column.id === 'waiting_approval';
+    if (t.status === 'pending' || t.status === 'awaiting_input' || t.status === 'awaiting_approval') return column.id === 'waiting_approval';
     return column.statuses.includes(t.status);
   });
 

@@ -7,13 +7,13 @@ import {
   Play, Pause, Square, Split, Trash2, Folder, FolderOpen, Plus, Check, X,
   User, UserPlus, Flag, GitBranch, Layers, ExternalLink, Loader,
   ChevronDown, ChevronRight, ThumbsUp, ThumbsDown, History, FileText, Eye, Code2, HelpCircle,
-  CheckSquare,
+  CheckSquare, ShieldQuestion,
 } from 'lucide-react';
 import {
   getTask, getAgents, assignAgent, approveAssignment, rejectAssignment, stopAgent, getMessageLogs,
   runDecomposer, getTaskExecutionLog, deleteTask, updateTask, createTask, getProjects,
   getTaskActivityLog, getTaskResult, getSettings, getTaskFileContent, getTaskFileRawUrl,
-  answerTask, pauseTaskContainer, resumeTaskContainer, getMessageInsights,
+  answerTask, approveTaskCall, pauseTaskContainer, resumeTaskContainer, getMessageInsights,
 } from '../api';
 import api from '../api';
 import MarkdownRenderer from '../components/MarkdownRenderer';
@@ -83,6 +83,7 @@ const ALL_STATUSES = [
   { value: 'in_progress', bg: 'bg-yellow-100',  text: 'text-yellow-700', dot: 'bg-yellow-500' },
   { value: 'blocked',     bg: 'bg-red-100',     text: 'text-red-700',    dot: 'bg-red-500' },
   { value: 'awaiting_input', bg: 'bg-amber-100', text: 'text-amber-700',  dot: 'bg-amber-500', readonly: true },
+  { value: 'awaiting_approval', bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500', readonly: true },
   { value: 'stopped',     bg: 'bg-gray-100',    text: 'text-gray-500',   dot: 'bg-gray-400' },
   { value: 'resolved',    bg: 'bg-purple-100',  text: 'text-purple-700', dot: 'bg-purple-500' },
   { value: 'reviewing',   bg: 'bg-cyan-100',    text: 'text-cyan-700',   dot: 'bg-cyan-500',  readonly: true },
@@ -531,6 +532,8 @@ const TaskDetails = () => {
 
   const [answerDraft, setAnswerDraft] = useState('');
   const [answerSubmitting, setAnswerSubmitting] = useState(false);
+  const [approvalNote, setApprovalNote] = useState('');
+  const [approvalSubmitting, setApprovalSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('execution');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null); // null = parent task, subtask obj otherwise
@@ -888,6 +891,23 @@ const TaskDetails = () => {
     }
   };
 
+  // Decide on the tool call the agent stopped for. Approving records that exact
+  // call (tool + arguments) as allowed once and resumes the agent; denying
+  // resumes it with the refusal and the note, so it can pick another route.
+  const handleApprovalDecision = async (approved) => {
+    setApprovalSubmitting(true);
+    try {
+      const resp = await approveTaskCall(id, approved, approvalNote.trim());
+      if (resp.data?.run_id) setActiveRunId(resp.data.run_id);
+      setApprovalNote('');
+      fetchData();
+    } catch (err) {
+      alert(`${t('taskDetails.errors.submitApproval')}: ` + (err.response?.data?.detail || err.message));
+    } finally {
+      setApprovalSubmitting(false);
+    }
+  };
+
   const handleApproveAssignment = async () => {
     try { await approveAssignment(id); fetchData(); }
     catch (err) { alert(`${t('taskDetails.errors.approve')}: ` + (err.response?.data?.detail || err.message)); }
@@ -1176,6 +1196,51 @@ const TaskDetails = () => {
                 className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
               >
                 {answerSubmitting ? t('taskDetails.sending') : t('taskDetails.sendAndResume')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Awaiting approval — the agent stopped before a tool call that needs a human yes */}
+        {task.status === 'awaiting_approval' && (
+          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
+              <ShieldQuestion className="w-4 h-4" /> {t('taskDetails.theAgentNeedsApproval')}
+            </p>
+            <p className="text-sm text-amber-900 mt-1">
+              <code className="px-1.5 py-0.5 rounded bg-amber-100 font-mono text-xs">
+                {task.pending_approval?.tool || '—'}
+              </code>
+            </p>
+            {task.pending_approval?.reason && (
+              <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap">{task.pending_approval.reason}</p>
+            )}
+            <pre className="mt-2 p-2 bg-white border border-amber-200 rounded text-xs text-gray-800 overflow-x-auto">
+              {JSON.stringify(task.pending_approval?.input ?? {}, null, 2)}
+            </pre>
+            <div className="flex items-center gap-2 mt-3">
+              <input
+                type="text"
+                value={approvalNote}
+                onChange={(e) => setApprovalNote(e.target.value)}
+                placeholder={t('taskDetails.approvalNotePlaceholder')}
+                className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+              />
+              <button
+                type="button"
+                disabled={approvalSubmitting}
+                onClick={() => handleApprovalDecision(true)}
+                className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
+              >
+                {approvalSubmitting ? t('taskDetails.sending') : t('taskDetails.approveCall')}
+              </button>
+              <button
+                type="button"
+                disabled={approvalSubmitting}
+                onClick={() => handleApprovalDecision(false)}
+                className="px-4 py-2 rounded-lg border border-amber-300 bg-white text-amber-800 text-sm font-semibold hover:bg-amber-100 disabled:opacity-50"
+              >
+                {t('taskDetails.denyCall')}
               </button>
             </div>
           </div>

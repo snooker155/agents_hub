@@ -540,6 +540,7 @@ _SUBTASK_ACTIVE = {
     TaskStatus.pending,
     TaskStatus.in_progress,
     TaskStatus.awaiting_input,
+    TaskStatus.awaiting_approval,
     TaskStatus.reviewing,
     TaskStatus.resolved,
     TaskStatus.reviewed,
@@ -914,6 +915,127 @@ def block_task(task_id: UUID, reason: str, *, store: TaskStore = default_store) 
     return update_task(task_id, store=store, status=TaskStatus.blocked, blocked_reason=reason)
 
 
+# -------------------- Tool-call approval --------------------
+#
+# A task parks here when its agent tried to make a tool call that needs a human
+# yes (see tools/approval.py for which calls, agents/hooks.py for the gate).
+# Deliberately separate from ``park_task_awaiting_input``: that one lives in
+# run_manager because it has to resolve the task from a run record, while these
+# are called with the task in hand, from the runner and from the approve route.
+
+
+def park_task_awaiting_approval(
+    task_id: UUID,
+    pending: Dict[str, Any],
+    *,
+    run_id: str = "",
+    agent_id: str = "",
+    store: TaskStore = default_store,
+) -> Optional[Task]:
+    """Pause a task on a tool call that is waiting for the user's decision.
+
+    Like the ask_user park, this does NOT run the completion path: the task is
+    paused, not resolved, so a session continuation waiting on it stays pending
+    until the operator answers and the resumed run finishes. The agent
+    assignment is kept so the resume path knows who to re-run.
+    """
+    tid = _uuid_from_str(task_id)
+    record = {
+        "tool": str((pending or {}).get("tool") or ""),
+        "input": (pending or {}).get("input"),
+        "reason": str((pending or {}).get("reason") or ""),
+        "fingerprint": str((pending or {}).get("fingerprint") or ""),
+        "hook": str((pending or {}).get("hook") or ""),
+        "run_id": str((pending or {}).get("run_id") or run_id or ""),
+        "agent_id": str((pending or {}).get("agent_id") or agent_id or ""),
+        "asked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    updated = update_task(
+        tid, store=store,
+        status=TaskStatus.awaiting_approval,
+        pending_approval=record,
+    )
+    try:
+        append_task_activity_log(
+            tid, "awaiting_approval",
+            f"Agent wants to call {record['tool']}",
+            run_id=record["run_id"], agent_id=record["agent_id"],
+        )
+    except Exception:
+        pass
+    # Surface it the same way a question is surfaced: a call nobody is told
+    # about is a task that silently stops.
+    try:
+        from plans import service as _plan_service
+        current = get_task(tid, store=store)
+        _plan_service.create_notification(
+            title="A task needs your approval",
+            body=f"The agent wants to call {record['tool']}. {record['reason']}".strip(),
+            severity="warning",
+            source={"origin": "agent", "task_id": str(tid)},
+            workspace=str(getattr(current, "workspace", "") or "") or None,
+            channels=["dashboard"],
+        )
+    except Exception:
+        pass
+    return updated
+
+
+def approve_tool_call(
+    task_id: UUID,
+    tool: str,
+    fingerprint: str,
+    *,
+    note: str = "",
+    store: TaskStore = default_store,
+) -> Optional[Task]:
+    """Record that the user approved one specific tool call on this task.
+
+    The fingerprint covers the tool *and its arguments*, so approving does not
+    hand the agent the tool: the resumed run may repeat that exact call, once.
+    """
+    tid = _uuid_from_str(task_id)
+    task = store.get(tid)
+    if task is None:
+        return None
+    approved = list(getattr(task, "approved_calls", None) or [])
+    approved.append({
+        "tool": str(tool or ""),
+        "fingerprint": str(fingerprint or ""),
+        "note": str(note or ""),
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return store.update(tid, approved_calls=approved)
+
+
+def consume_approved_call(
+    task_id: UUID | str,
+    fingerprint: str,
+    *,
+    store: TaskStore = default_store,
+) -> bool:
+    """Spend one approval for *fingerprint*. True when there was one to spend.
+
+    Called from the gate inside the agent subprocess, so it removes the entry
+    before the call runs: a second attempt at the same call is gated again
+    rather than riding on the first approval.
+    """
+    try:
+        tid = _uuid_from_str(task_id)
+    except ValueError:
+        return False
+    task = store.get(tid)
+    if task is None:
+        return False
+    approved = list(getattr(task, "approved_calls", None) or [])
+    for i, entry in enumerate(approved):
+        if str(entry.get("fingerprint") or "") == str(fingerprint or ""):
+            approved.pop(i)
+            store.update(tid, approved_calls=approved)
+            return True
+    return False
+
+
 def create_sequence(
     task_ids: Sequence[UUID],
     *,
@@ -1144,6 +1266,9 @@ __all__ = [
     "add_subtask",
     "stop_task",
     "block_task",
+    "park_task_awaiting_approval",
+    "approve_tool_call",
+    "consume_approved_call",
     "set_dependencies",
     "find_task_by_key",
     "get_subtasks",

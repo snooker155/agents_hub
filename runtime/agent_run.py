@@ -90,6 +90,21 @@ def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", proc
                 park_task_awaiting_input(run_id, getattr(result, "pending_question", None) or {}, agent_id=agent_id)
             return
 
+        # The agent stopped on a tool call that needs the user's approval. Same
+        # shape as the ask_user park above — persist what it said, park the task,
+        # no finalize — but the payload is the call itself, so the user can see
+        # exactly what would run before letting it (see agents/hooks.py).
+        if getattr(result, "status", "") == "awaiting_approval":
+            if task_id:
+                persist_task_result(task_id, run_id, result.agent_output or "", agent_id=agent_id)
+                from tasks.service import park_task_awaiting_approval
+                park_task_awaiting_approval(
+                    task_id,
+                    getattr(result, "pending_approval", None) or {},
+                    run_id=run_id, agent_id=agent_id,
+                )
+            return
+
         if result.ok and task_id:
             persist_task_result(task_id, run_id, result.agent_output or "", agent_id=agent_id)
 
@@ -157,6 +172,10 @@ def main():
     # When invoked via CLI without a --run-id, generate one so the run is
     # always tracked regardless of how agent_run.py was invoked.
     run_id = args.run_id or str(uuid4())
+    # Published so anything running deeper in the process can name this run
+    # without being handed it — the tool hooks put it in the payload they send
+    # to operator hook commands (agents/hooks.py).
+    os.environ["AGENT_RUN_ID"] = run_id
 
     # Register the run record early so the dashboard sees pid + log_file
     # immediately, before the (potentially slow) agent build below.

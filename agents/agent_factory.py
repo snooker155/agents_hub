@@ -830,6 +830,15 @@ class AgentFactory:
                 + _clarify_prompt
             )
 
+        # Human in the loop at the level of a single tool call: every action tool
+        # is wrapped so the workspace's PreToolUse/PostToolUse hooks run around it
+        # and a call that needs approval parks the task instead of happening (see
+        # agents/hooks.py). Wrapped here, after every tool has been resolved, so
+        # nothing appended above escapes the gate. Returns the list unchanged when
+        # the workspace configures neither hooks nor the approval gate.
+        from agents.hooks import guard_action_tools
+        tools = guard_action_tools(tools, agent_id=agent_id, spec=_spec, workspace=workspace)
+
         # Capability guard, defence in depth. The record was already checked at
         # save time, but everything above this point may have *appended* tools
         # (memory pools, skills, clarify-gate ask_user, the project graph reader,

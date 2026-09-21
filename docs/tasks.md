@@ -21,6 +21,10 @@ created → assigned → running → done
   silently.
 - **Dependencies** hold a task until the ones it names are done. A sequence is
   just dependencies laid out in a line.
+- **Pausing** is not failing. A task waits in `awaiting_input` when its agent
+  asked you a question, and in `awaiting_approval` when it stopped in front of a
+  tool call that needs your yes (see [hooks](hooks.md)). Both are answered from
+  the task page, and both resume the agent where it left off.
 
 ## Subtasks and decomposition
 
@@ -42,4 +46,4 @@ the conversation.
   purpose: tracked work goes through assign and start, so it stays visible.
 - A task's workspace is fixed at creation and decides where its files land.
 
-Related: [projects](projects.md), [agents](agents.md), [sessions-and-runs](sessions-and-runs.md).
+Related: [projects](projects.md), [agents](agents.md), [hooks](hooks.md), [sessions-and-runs](sessions-and-runs.md).

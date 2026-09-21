@@ -3,8 +3,10 @@ Task-related API routes.
 """
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from typing import Optional
 from uuid import UUID
+import json
 import threading
 import mimetypes
 from uuid import uuid4
@@ -648,6 +650,101 @@ async def answer_task(task_id: UUID, payload: TaskAnswer):
                 pass
         updated = tasks_service.get_task(task_id)
         return {"task": task_to_dict(updated), "run_id": run_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TaskApproval(BaseModel):
+    """The operator's decision on a tool call a task is parked on.
+
+    Lives here rather than in dashboard/backend/models.py because it is the only
+    route that speaks it, and a request body of two fields does not earn a place
+    in the shared model module.
+    """
+    approved: bool = True
+    note: str = ""
+
+
+@router.post("/{task_id}/approve")
+async def approve_task_call(task_id: UUID, payload: TaskApproval):
+    """Approve or deny the tool call a task is parked on, and resume it.
+
+    Mirrors ``/answer``: the agent that stopped is re-run with a resume
+    instruction, the session continuation is re-pointed at the new run, and the
+    decision is recorded on the session. The difference is what approval *does*
+    to the next run: the approved call is recorded on the task by fingerprint
+    (tool + arguments), and the gate spends that entry when the agent repeats
+    exactly that call. Telling the agent it may proceed is not enough on its
+    own — the gate would stop it again — and an approval that covered the whole
+    tool would let the resumed run do more than the operator agreed to.
+    """
+    t = tasks_service.get_task(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if t.status != TaskStatus.awaiting_approval:
+        raise HTTPException(status_code=400, detail="Task is not awaiting approval")
+
+    pending = getattr(t, "pending_approval", None) or {}
+    agent_id = pending.get("agent_id") or t.assigned_agent_type
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    tool = str(pending.get("tool") or "")
+    note = (payload.note or "").strip()
+    call_text = json.dumps(pending.get("input"), ensure_ascii=False, default=str)
+
+    fingerprint = ""
+    if payload.approved:
+        from tools.approval import call_fingerprint
+        fingerprint = str(pending.get("fingerprint") or "") or call_fingerprint(tool, pending.get("input"))
+        resume_desc = (
+            f"You stopped this task to ask for approval to call `{tool}` with:\n{call_text}\n\n"
+            "The user approved it. Make that exact call now, with the same "
+            "arguments, then continue the task."
+            + (f'\nThe user added: "{note}"' if note else "")
+        )
+    else:
+        resume_desc = (
+            f"You stopped this task to ask for approval to call `{tool}` with:\n{call_text}\n\n"
+            "The user refused it"
+            + (f' and said: "{note}"' if note else "")
+            + ". Do not make that call. Continue the task another way, or explain "
+            "why it cannot be finished without it and stop."
+        )
+
+    params = {"description": resume_desc}
+    try:
+        run_id, session_id = agent_launcher.start_run(str(task_id), agent_id, params)
+        # Only once the resumed run exists: an approval recorded for a launch
+        # that failed would sit on the task waiting to be spent by some later run.
+        if payload.approved:
+            tasks_service.approve_tool_call(task_id, tool, fingerprint, note=note)
+        tasks_service.assign_agent(task_id, agent_id, params, run_id=run_id)
+        tasks_service.update_task(task_id, status=TaskStatus.in_progress, pending_approval=None)
+        # The task resumes under a fresh run; re-point any run-bound session
+        # continuation at it so it still fires when the resumed run finishes.
+        try:
+            from common.session_service import rebind_continuations_to_run
+            rebind_continuations_to_run(str(task_id), run_id)
+        except Exception:
+            pass
+        if session_id:
+            try:
+                add_event_to_session(session_id, {
+                    "type": "tool_approval",
+                    "agent_id": agent_id,
+                    "timestamp": run_manager.utc_now_iso(),
+                    "description": (
+                        f"User {'approved' if payload.approved else 'denied'} the call to {tool}"
+                        + (f": {note}" if note else "")
+                    ),
+                })
+            except Exception:
+                pass
+        updated = tasks_service.get_task(task_id)
+        return {"task": task_to_dict(updated), "run_id": run_id, "approved": payload.approved}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

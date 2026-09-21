@@ -13,6 +13,7 @@ class TaskStatus(str, Enum):
     in_progress = "in_progress"
     blocked = "blocked"
     awaiting_input = "awaiting_input"
+    awaiting_approval = "awaiting_approval"
     stopped = "stopped"
     resolved = "resolved"
     reviewing = "reviewing"
@@ -61,6 +62,16 @@ class Task(BaseModel):
     # (status == awaiting_input). Shape: {question, choices, agent_id, run_id,
     # asked_at}. Cleared when the user answers and the task resumes.
     pending_question: Optional[Dict[str, Any]] = None
+    # Set when the assigned agent stopped on a tool call that needs a human's
+    # approval (status == awaiting_approval). Shape: {tool, input, reason,
+    # run_id, agent_id, hook, fingerprint, asked_at}. Cleared when the operator
+    # approves or denies and the task resumes. See agents/hooks.py.
+    pending_approval: Optional[Dict[str, Any]] = None
+    # Tool calls the user approved but that have not been made yet: one entry
+    # per approval, {tool, fingerprint, note, approved_at}. The resumed run
+    # consumes the matching entry when it repeats the call, so an approval is
+    # good for exactly that call, once, and not for the tool in general.
+    approved_calls: List[Dict[str, Any]] = Field(default_factory=list)
     should_decompose: bool = Field(default=False, description="Whether to automatically decompose this task")
 
     # Number of automatic retries already spent on this task after run failures.
