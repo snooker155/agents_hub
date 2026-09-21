@@ -50,7 +50,18 @@ RUN if [ "$WITH_RAG" = "true" ]; then \
         && pip install --no-cache-dir -r /tmp/requirements-rag.txt; \
     fi
 
+# ---------- security: non-root user ----------
+# Root is only needed for apt-get and pip install above. The docker CLI is
+# still usable from here: docker-compose.yml adds this user to the socket's
+# host group via group_add, so the backend can keep driving the daemon
+# without running as root itself.
+RUN groupadd -g 1000 hub \
+    && useradd -u 1000 -g hub -m hub --shell /bin/bash
+
 COPY . /app
+RUN chown -R hub:hub /app
+
+USER hub
 
 EXPOSE 8000
 

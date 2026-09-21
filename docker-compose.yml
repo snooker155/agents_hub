@@ -39,6 +39,37 @@ services:
       # mounted, anything running in this container has host-root-equivalent
       # access to the daemon.
       - /var/run/docker.sock:/var/run/docker.sock
+      # ---- Named volume for .agents_hub: opt-in only, read this first ----
+      # It is tempting to replace the whole-repo bind mount above with a named
+      # volume for just the state directory, so state does not sit inside the
+      # checkout on the host. Do NOT do this: managers/container_manager.py
+      # bind-mounts .agents_hub/workspaces/<name> (and .agents_hub itself, and
+      # tasks/) into each agent container, and it resolves the host side of
+      # that mount by rebasing the in-container path onto HOST_PROJECT_ROOT
+      # (see the env var above), i.e. it assumes .agents_hub lives at a real
+      # path under the repo checkout on the host. A named volume's data lives
+      # in Docker's own volume storage instead, so that rebased path would not
+      # exist on the host, and every agent container's workspace/state mount
+      # would silently point at an empty directory instead of the backend's
+      # actual state. If you still want state off the host checkout, the
+      # correct opt-in change is to also point AGENTS_HUB_ROOT (see
+      # common/paths.py) at a host directory outside the repo and mount that
+      # directory here and as HOST_PROJECT_ROOT's sibling, e.g.:
+      #   environment:
+      #     AGENTS_HUB_ROOT: /data/agents_hub
+      #   volumes:
+      #     - ${AGENTS_HUB_DATA_DIR:-./.agents_hub}:/data/agents_hub
+      # keeping it a bind mount (not a named volume) so the rebasing above
+      # still finds a real host path.
+    # The image runs as a non-root user (hub, uid 1000), so it needs to be in
+    # the socket's group to use the mounted /var/run/docker.sock above. Find
+    # the group id with `stat -c %g /var/run/docker.sock` on the host (often
+    # 999 or 998; on macOS with Docker Desktop it is usually 0, i.e. root,
+    # in which case this line is unnecessary) and set DOCKER_GID in .env if it
+    # differs from the default below. Harmless to leave in place when the
+    # socket line above is removed: it just adds an unused supplementary group.
+    group_add:
+      - "${DOCKER_GID:-999}"
     working_dir: /app
     extra_hosts:
       # So LM Studio / Ollama on the host stay reachable on plain Linux Docker
