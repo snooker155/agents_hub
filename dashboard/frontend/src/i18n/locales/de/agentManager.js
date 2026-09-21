@@ -95,4 +95,6 @@ export default {
   showSystemAgents: 'Systemagenten',
   showSystemAgentsHint: 'Die mit dem Produkt ausgelieferten Agenten neben den eigenen anzeigen.',
   allHiddenBySystemFilter: 'Alle Agenten hier werden mit dem Produkt ausgeliefert, und Systemagenten sind ausgeblendet.',
+  connectExternal: 'Externes verbinden',
+  connectExternalHint: 'Einen Agenten anhängen, der anderswo läuft und hierher meldet',
 };

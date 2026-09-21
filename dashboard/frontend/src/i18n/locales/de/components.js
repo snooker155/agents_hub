@@ -16,4 +16,12 @@ export default {
     clickToEdit: 'Zum Bearbeiten klicken',
     clickToAdd: 'Zum Hinzufügen klicken…',
   },
+  runOrigin: {
+    external: 'Extern',
+    imported: 'importiert',
+    partial: 'unvollständig',
+    externalHint: 'Von der Verbindung {{connection}} gemeldet; dieser Hub hat sie nicht ausgeführt, daher gibt es kein eigenes Log und keinen Live-Stream.',
+    importedHint: 'Aus OpenTelemetry-Spans aufgezeichnet, nachdem der Lauf beendet war; eine Live-Ansicht dazu gibt es nicht.',
+    partialHint: 'Der Root-Span ist nie eingetroffen, daher können Eingabe, Antwort und Ergebnis fehlen.',
+  },
 };

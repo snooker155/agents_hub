@@ -54,4 +54,5 @@ export default {
   cannotFullyImplementWithAvailable: 'Cannot fully implement with available agents',
   reasoning: 'Reasoning',
   cancel: 'Cancel',
+  mirrorExternal: 'Mirror an external graph',
 };

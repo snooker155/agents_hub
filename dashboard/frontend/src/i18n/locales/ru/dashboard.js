@@ -4,6 +4,8 @@ export default {
   clusterHealthy: 'Кластер в порядке',
   clusterDegraded: 'Кластер деградировал',
   stats: {
+    connections: 'Подключения',
+    connectionsSub: 'прислано запусков: {{runs}}',
     tasks: 'Задачи',
     tasksSub: 'готово: {{done}} · {{rate}}%',
     activeSessions: 'Активные сессии',

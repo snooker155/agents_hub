@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ChevronDown, ChevronUp, Download, Factory, GitBranch, Globe, Loader2, Plus, RefreshCw, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Download, Factory, GitBranch, Globe, Loader2, Plus, RefreshCw, Share2, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { createFlow, deleteFlow, exportFlow, generateFlow, importFlow, listFlows, testLocalModel, updateFlowSharing } from '../api';
 import { useWorkspace } from '../components/workspace';
 
@@ -326,6 +326,17 @@ const AgentFlows = () => {
             onChange={handleFilePicked}
             className="hidden"
           />
+          {/* The phrase a LangGraph user searches for. It leads out of flows on
+              purpose: a graph that runs elsewhere is mirrored, not executed
+              here, and offering it as a flow would come with a Run button that
+              cannot work. */}
+          <Link
+            to="/connections"
+            className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+          >
+            <Share2 className="w-4 h-4" />
+            {t('agentFlows.mirrorExternal')}
+          </Link>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-all hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"

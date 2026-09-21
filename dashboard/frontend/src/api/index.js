@@ -189,6 +189,38 @@ export const getAgentImportDetails = (agentId) =>
 // environment and rewrites the agent's generated documentation.
 export const refreshAgentTopology = (agentId) =>
   api.post(`/agent-import/${encodeURIComponent(agentId)}/topology`);
+
+// ── Connections: external agents that run on their own trigger and report in ─
+// The opposite direction from an imported agent. These endpoints manage the
+// connection and its credential; the reporting itself goes to /api/ingest,
+// authenticated by that credential rather than by the dashboard's.
+// The token is returned by create and rotate only, and never again.
+// Every single-connection call carries the workspace it is made from. A
+// connection belonging to another workspace answers 404, so this is what keeps
+// one team's page from acting on another's connection by accident — see
+// routes/connections._visible_or_404 for what that boundary is and is not.
+const inWorkspace = (workspace) => ({ params: workspace ? { workspace } : {} });
+
+export const listConnections = (workspace) => api.get('/connections', inWorkspace(workspace));
+export const createConnection = (data) => api.post('/connections', data);
+export const getConnection = (id, workspace) =>
+  api.get(`/connections/${encodeURIComponent(id)}`, inWorkspace(workspace));
+export const updateConnection = (id, data, workspace) =>
+  api.patch(`/connections/${encodeURIComponent(id)}`, data, inWorkspace(workspace));
+export const rotateConnectionToken = (id, workspace) =>
+  api.post(`/connections/${encodeURIComponent(id)}/rotate`, null, inWorkspace(workspace));
+export const deleteConnection = (id, workspace) =>
+  api.delete(`/connections/${encodeURIComponent(id)}`, inWorkspace(workspace));
+// Trim a connection's history back to its cap now, rather than waiting for the
+// daily maintenance pass that normally does it.
+export const pruneConnection = (id, workspace) =>
+  api.post(`/connections/${encodeURIComponent(id)}/prune`, null, inWorkspace(workspace));
+// Answer a reported run that stopped to ask a question. The client is not told:
+// it is polling for this, because nothing here calls out to an agent that
+// reports in.
+export const answerConnectionRun = (id, runId, data, workspace) =>
+  api.post(`/connections/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/answer`,
+           data, inWorkspace(workspace));
 export const updateTask = (taskId, data) => api.patch(`/tasks/${taskId}`, data);
 export const assignAgent = (taskId, data) => api.post(`/tasks/${taskId}/assign`, data);
 export const approveAssignment = (taskId) => api.post(`/tasks/${taskId}/approve-assignment`);

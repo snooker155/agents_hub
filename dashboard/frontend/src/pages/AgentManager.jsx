@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Users,
+  Share2,
 } from 'lucide-react';
 import {
   getAgents,
@@ -420,6 +421,16 @@ const AgentManager = () => {
           >
             <Download className="w-4 h-4" /> {t('agentManager.importFromRepo')}
           </button>
+          {/* The other direction, and it belongs here because this is where
+              someone stands when they think "the agent I want is not in this
+              list, and it is not going to move into it either". */}
+          <Link
+            to="/connections"
+            className="flex items-center gap-2 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 text-sm font-medium transition-colors"
+            title={t('agentManager.connectExternalHint')}
+          >
+            <Share2 className="w-4 h-4" /> {t('agentManager.connectExternal')}
+          </Link>
           <button
             onClick={openWizard}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors"

@@ -9,6 +9,7 @@ import { TokenPill } from '../components/ProcessGraph';
 import MessageProcessFlow from '../components/MessageProcessFlow';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { ExternalRunBadge } from '../components/RunOriginBadges';
 import { useI18n } from '../i18n';
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -452,11 +453,17 @@ export default function MessageDetails() {
         title={t('messageDetails.messageDetails')}
         backTo="/messages"
         backLabel={t('messageDetails.messages')}
-        badges={message?.is_flow && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">
-            <Workflow className="w-3.5 h-3.5" /> {t('messageDetails.flow2')}
-          </span>
-        )}
+        badges={<>
+          {message?.is_flow && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">
+              <Workflow className="w-3.5 h-3.5" /> {t('messageDetails.flow2')}
+            </span>
+          )}
+          {/* Here rather than only in the list: this is the page where the
+              missing log, the missing live stream and the missing stop button
+              are all visible at once, and where the reason belongs. */}
+          <ExternalRunBadge run={message} className="!text-xs !px-2 !py-0.5" />
+        </>}
         actions={<>
           {message?.session_id && (
             <button

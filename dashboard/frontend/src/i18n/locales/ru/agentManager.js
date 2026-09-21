@@ -97,4 +97,6 @@ export default {
   showSystemAgents: 'Системные агенты',
   showSystemAgentsHint: 'Показывать агентов, поставляемых с сервисом, вместе с вашими.',
   allHiddenBySystemFilter: 'Здесь все агенты поставляются с сервисом, а системные скрыты.',
+  connectExternal: 'Подключить внешнее',
+  connectExternalHint: 'Подключить агента, который работает в другом месте и отчитывается сюда',
 };

@@ -4,6 +4,8 @@ export default {
   clusterHealthy: 'Cluster in Ordnung',
   clusterDegraded: 'Cluster beeinträchtigt',
   stats: {
+    connections: 'Verbindungen',
+    connectionsSub: '{{runs}} gemeldete Läufe',
     tasks: 'Aufgaben',
     tasksSub: '{{done}} erledigt · {{rate}}%',
     activeSessions: 'Aktive Sitzungen',

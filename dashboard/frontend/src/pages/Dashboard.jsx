@@ -23,6 +23,7 @@ import {
   HardDrive,
   Gauge,
   LayoutDashboard,
+  Share2,
 } from 'lucide-react';
 import {
   getStats,
@@ -32,11 +33,13 @@ import {
   getNodes,
   listFlows,
   getSystemHealth,
+  listConnections,
 } from '../api';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { ExternalRunBadge } from '../components/RunOriginBadges';
 const Dashboard = () => {
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const { t } = useI18n();
@@ -47,6 +50,7 @@ const Dashboard = () => {
   const [nodes, setNodes] = useState([]);
   const [flows, setFlows] = useState([]);
   const [health, setHealth] = useState(null);
+  const [connections, setConnections] = useState([]);
   const [loading, setLoading] = useState(true);
   const fetchData = useCallback(() => (
     Promise.allSettled([
@@ -57,8 +61,10 @@ const Dashboard = () => {
       getNodes(workspaceFilter),
       listFlows(workspaceFilter),
       getSystemHealth(),
+      listConnections(workspaceFilter),
     ])
-      .then(([statsResp, agentsResp, runsResp, memResp, nodesResp, flowsResp, healthResp]) => {
+      .then(([statsResp, agentsResp, runsResp, memResp, nodesResp, flowsResp, healthResp,
+              connectionsResp]) => {
         // Each panel stands on its own: one failed endpoint must not blank the page.
         if (statsResp.status === 'fulfilled') setStats(statsResp.value.data);
         if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
@@ -67,6 +73,9 @@ const Dashboard = () => {
         if (nodesResp.status === 'fulfilled') setNodes(nodesResp.value.data);
         if (flowsResp.status === 'fulfilled') setFlows(flowsResp.value.data);
         if (healthResp.status === 'fulfilled') setHealth(healthResp.value.data);
+        if (connectionsResp.status === 'fulfilled') {
+          setConnections(connectionsResp.value.data.connections || []);
+        }
       })
       .catch((error) => console.error('Error fetching dashboard data:', error))
       .finally(() => setLoading(false))
@@ -159,6 +168,23 @@ const Dashboard = () => {
           subtext={t('dashboard.stats.customPipelines')}
           to="/flows"
         />
+        {/* Only when something is attached. An install used purely to watch
+            external agents would otherwise have a front page about parts of the
+            product it does not use; one that has none should not be told about
+            a feature it has not asked for. */}
+        {connections.length > 0 && (
+          <StatCard
+            title={t('dashboard.stats.connections')}
+            value={connections.length}
+            icon={Share2}
+            color="bg-teal-500"
+            subtext={t('dashboard.stats.connectionsSub', {
+              runs: connections.reduce((acc, c) => acc + ((c.stats || {}).runs || 0), 0),
+            })}
+            to="/connections"
+            pulse={connections.some((c) => (c.stats || {}).running > 0)}
+          />
+        )}
         <StatCard
           title={t('dashboard.stats.nodes')}
           value={`${activeNodes.length}/${nodes.length}`}
@@ -382,7 +408,12 @@ const Dashboard = () => {
                 return (
                   <tr key={run.run_id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-3.5">
-                      <div className="font-medium text-gray-900 text-sm">{run.agent_id}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900 text-sm">{run.agent_id}</span>
+                        {/* The agent column of an external run names a
+                            connection, not an agent of this hub. */}
+                        <ExternalRunBadge run={run} />
+                      </div>
                       <div className="text-[10px] text-gray-400">{run.run_id.slice(0, 12)}…</div>
                     </td>
                     <td className="px-6 py-3.5 text-xs text-gray-500">

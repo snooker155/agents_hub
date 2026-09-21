@@ -30,6 +30,8 @@ import {
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { ExternalRunBadge } from '../components/RunOriginBadges';
+import { isExternalRun } from '../components/runOrigin';
 import { useI18n, statusLabel } from '../i18n';
 import DateInput from '../components/DateInput';
 // ---- helpers ----------------------------------------------------------------
@@ -86,7 +88,11 @@ function ChannelBadge({ channel }) {
   );
 }
 
-function TypeBadge({ isFlow }) {
+// What kind of run this is, which for an external one is the answer to a
+// different question than Flow/Standalone: it was not run here at all.
+function TypeBadge({ run }) {
+  if (isExternalRun(run)) return <ExternalRunBadge run={run} />;
+  const isFlow = run?.is_flow;
   const Icon = isFlow ? Workflow : Terminal;
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
@@ -531,7 +537,7 @@ export default function Messages() {
 
                   <div className="md:self-center md:flex md:justify-center">
                     <div className="md:hidden text-[11px] uppercase tracking-wide text-gray-400 mb-1">{t('messages.type')}</div>
-                    <TypeBadge isFlow={msg.is_flow} />
+                    <TypeBadge run={msg} />
                   </div>
 
                   {isDefaultWorkspace && (

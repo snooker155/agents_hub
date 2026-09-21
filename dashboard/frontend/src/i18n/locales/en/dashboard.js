@@ -4,6 +4,8 @@ export default {
   clusterHealthy: 'Cluster Healthy',
   clusterDegraded: 'Cluster Degraded',
   stats: {
+    connections: 'Connections',
+    connectionsSub: '{{runs}} runs reported',
     tasks: 'Tasks',
     tasksSub: '{{done}} done · {{rate}}%',
     activeSessions: 'Active Sessions',
