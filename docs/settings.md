@@ -10,13 +10,12 @@ lives on the [models](models.md) page, not here.
 - **Local models** — Ollama and LM Studio, which need a running local server
   rather than a key.
 - **API auth** — a token that protects this service's own API.
-- **Connectors** — Telegram, GitHub/GitLab, and **Blender**: the geometry engine
-  agents model 3D objects with. Point it at an installed Blender (the usual
-  install locations are found automatically), cap how many engines may run at
-  once, and see the ones running right now, including those started by agent
-  processes. Agents never run Blender Python; they call a fixed set of geometry
-  operations. See [views](views.md).
 - Environment variables, per workspace.
+
+Connectors are **not** here any more. Telegram, GitHub/GitLab and Blender moved
+to Connect → Connectors ([connectors](connectors.md)), because a connector is
+something you attach rather than a credential you set. Old `/settings/telegram`
+links redirect there.
 
 ## Per-workspace overrides
 

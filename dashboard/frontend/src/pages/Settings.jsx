@@ -2,23 +2,16 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Activity, Wrench, Database,
-  CheckCircle, AlertCircle, Wifi, Lock, Save,
-  Send, Trash2, MessageSquare, GitBranch, Server, X, Boxes, Power,
-  ScrollText, Settings as SettingsIcon,
+  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import {
   getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides,
-  getTelegramConfig, updateTelegramConfig, testTelegramToken,
-  getTelegramStatus, getTelegramBindings, deleteTelegramBinding,
-  getGitConfig, updateGitConfig, testGitConnection,
-  getBlenderConfig, updateBlenderConfig, testBlenderBinary,
-  getBlenderDaemons, stopBlenderDaemon, stopAllBlenderDaemons,
   updateSettings,
 } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { SectionCard, inputCls } from '../components/settingsUi';
 import { useI18n } from '../i18n';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
 
@@ -29,8 +22,12 @@ const api = axios.create({ baseURL: 'http://localhost:8000' });
 // model settings and connectors sitting side by side for no reason.
 //
 // `workspaceScoped` marks the sections whose fields are workspace overrides
-// (written by the page's Save button). The connector sections save themselves
-// through their own endpoints, so the Save button stays out of their way.
+// (written by the page's Save button).
+//
+// Telegram, Git and Blender used to be a group here. They are connectors —
+// things you attach — and they now live under Connect → Connectors, which is
+// where someone looks for them. A pointer at the foot of this page's sidebar
+// takes anyone who looks here first.
 const GROUPS = [
   {
     key: 'models',
@@ -38,14 +35,6 @@ const GROUPS = [
       { id: 'providers',     key: 'providers',     icon: Key,    workspaceScoped: true },
       { id: 'local',         key: 'local',         icon: Cpu,    workspaceScoped: true },
       { id: 'custom',        key: 'custom',        icon: Server },
-    ],
-  },
-  {
-    key: 'connectors',
-    items: [
-      { id: 'telegram',      key: 'telegram',      icon: Send },
-      { id: 'git',           key: 'git',           icon: GitBranch },
-      { id: 'blender',       key: 'blender',       icon: Boxes },
     ],
   },
   {
@@ -60,6 +49,11 @@ const GROUPS = [
 ];
 
 const SECTIONS = GROUPS.flatMap((group) => group.items);
+
+// Sections that used to live here and are now their own page. Links and
+// bookmarks to them are out in the world, and falling back to the first section
+// would answer them by quietly showing something else.
+const MOVED_TO_CONNECTORS = ['telegram', 'git', 'blender'];
 
 // Brand names stay as they are; only the descriptive rows carry a key.
 const VECTOR_DBS = [
@@ -99,7 +93,6 @@ const INSTALL_HINTS = {
   google: 'pip install google-generativeai',
 };
 
-const inputCls = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none";
 
 // ── Source badge — shows where a setting value comes from ─────────────────────
 
@@ -127,736 +120,9 @@ function SourceBadge({ fieldName, wsOverrides, envDefinedFields = [] }) {
   return null;
 }
 
-// ── Telegram tab ─────────────────────────────────────────────────────────────
-
-function TelegramTab() {
-  const { t } = useI18n();
-  const [loading, setLoading] = useState(true);
-  const [config, setConfig] = useState({ enabled: false, has_token: false, bot_username: null, running: false });
-  const [status, setStatus] = useState({});
-  const [bindings, setBindings] = useState([]);
-  const [tokenInput, setTokenInput] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-  const [error, setError] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [cfgResp, statusResp, bindingsResp] = await Promise.all([
-        getTelegramConfig(),
-        getTelegramStatus(),
-        getTelegramBindings(),
-      ]);
-      setConfig(cfgResp.data);
-      setStatus(statusResp.data);
-      setBindings(bindingsResp.data || []);
-    } catch (e) {
-      setError(`${t('settings.errors.telegramLoad')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
-
-  useEffect(() => { load(); }, [load]);
-
-  // Poll status every 5s so the running flag and last_poll/last_error stay fresh.
-  useEffect(() => {
-    const id = setInterval(async () => {
-      try {
-        const { data } = await getTelegramStatus();
-        setStatus(data);
-        setConfig((c) => ({ ...c, running: data.running, bot_username: data.bot_username }));
-      } catch { /* a failed poll just waits for the next tick */ }
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-
-  const handleSave = async ({ enabled, clear_token } = {}) => {
-    setSaving(true);
-    setError('');
-    setTestResult(null);
-    try {
-      const payload = {};
-      if (tokenInput.trim()) payload.bot_token = tokenInput.trim();
-      if (clear_token) payload.clear_token = true;
-      if (enabled !== undefined) payload.enabled = enabled;
-      const { data } = await updateTelegramConfig(payload);
-      setConfig(data);
-      setTokenInput('');
-      // Refresh status + bindings after a save (poller may have just started/stopped).
-      const [statusResp, bindingsResp] = await Promise.all([
-        getTelegramStatus(),
-        getTelegramBindings(),
-      ]);
-      setStatus(statusResp.data);
-      setBindings(bindingsResp.data || []);
-    } catch (e) {
-      setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const { data } = await testTelegramToken();
-      setTestResult(data);
-    } catch (e) {
-      setTestResult({ ok: false, error: e.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleDeleteBinding = async (chatId) => {
-    if (!window.confirm(t('settings.confirmRemoveBinding', { chatId }))) return;
-    try {
-      await deleteTelegramBinding(chatId);
-      setBindings((bs) => bs.filter((b) => b.chat_id !== chatId));
-    } catch (e) {
-      setError(`${t('settings.errors.removeBinding')}: ` + (e.response?.data?.detail || e.message));
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-5">
-      {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
-
-      <SectionCard title={t('settings.telegramBot')}>
-        <p className="text-sm text-gray-600">
-          {t('settings.telegram.introBefore')} <code className="text-xs bg-gray-100 rounded px-1">/agent &lt;id&gt;</code>{t('settings.telegram.introAfter')}
-        </p>
-
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <label className="text-sm font-medium text-gray-700">
-              {t('settings.telegram.botToken')} {config.has_token && <span className="text-gray-400 font-normal">({t('settings.currentlySet')})</span>}
-            </label>
-          </div>
-          <input
-            type="password"
-            value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-            placeholder={config.has_token ? t('settings.keepExistingToken') : t('settings.telegram.pasteBotToken')}
-            className={inputCls}
-            autoComplete="new-password"
-          />
-          <div className="flex flex-wrap items-center gap-2 mt-2">
-            <button
-              type="button"
-              onClick={() => handleSave({})}
-              disabled={saving || !tokenInput.trim()}
-              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-            >
-              {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-              {t('settings.saveToken')}
-            </button>
-            <button
-              type="button"
-              onClick={handleTest}
-              disabled={testing || !config.has_token}
-              className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50"
-            >
-              {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-              {t('settings.testConnection')}
-            </button>
-            {config.has_token && (
-              <button
-                type="button"
-                onClick={() => handleSave({ clear_token: true, enabled: false })}
-                disabled={saving}
-                className="flex items-center gap-1.5 border border-red-200 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> {t('settings.clearToken')}
-              </button>
-            )}
-          </div>
-          {testResult && (
-            <div className={`mt-2 text-sm rounded-lg px-3 py-2 ${testResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
-              {testResult.ok
-                ? <>{t('settings.connectedAs')} <strong>@{testResult.bot?.username}</strong> (id {testResult.bot?.id})</>
-                : <>{t('settings.testFailed')}: {testResult.error}</>}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-3 pt-2 border-t border-gray-100">
-          <div>
-            <label className="text-sm font-medium text-gray-700">{t('settings.pollingEnabled')}</label>
-            <p className="text-xs text-gray-500">{t('settings.whenOnTheBackendLong')}</p>
-          </div>
-          <label className="inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              className="sr-only peer"
-              checked={config.enabled}
-              disabled={saving || !config.has_token}
-              onChange={(e) => handleSave({ enabled: e.target.checked })}
-            />
-            <span className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-disabled:opacity-50 relative transition-colors">
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${config.enabled ? 'translate-x-5' : ''}`} />
-            </span>
-          </label>
-        </div>
-      </SectionCard>
-
-      <SectionCard title={t('settings.pollerStatus')}>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${status.running ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-            <span className="text-gray-700">{status.running ? t('settings.running') : t('settings.stopped')}</span>
-          </div>
-          <div className="text-gray-700">
-            {t('settings.telegram.bot')}: <strong>{status.bot_username ? `@${status.bot_username}` : '—'}</strong>
-          </div>
-          <div className="text-gray-700">
-            {t('settings.telegram.lastPoll')}: <span className="text-gray-500">{status.last_poll ? new Date(status.last_poll).toLocaleString() : '—'}</span>
-          </div>
-          <div className="text-gray-700">
-            {t('settings.telegram.lastError')}: <span className="text-red-600">{status.last_error || '—'}</span>
-          </div>
-        </div>
-      </SectionCard>
-
-      <SectionCard title={`${t('settings.telegram.chatBindings')} (${bindings.length})`}>
-        <p className="text-sm text-gray-600">
-          {t('settings.telegram.bindingsBefore')} <code className="text-xs bg-gray-100 rounded px-1">/agent &lt;id&gt;</code> {t('settings.telegram.bindingsAfter')}
-        </p>
-        {bindings.length === 0 ? (
-          <div className="text-sm text-gray-500 flex items-center gap-2 py-3">
-            <MessageSquare className="w-4 h-4" /> {t('settings.noBindingsYet')}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 uppercase">
-                  <th className="py-2 pr-3">{t('settings.chat')}</th>
-                  <th className="py-2 pr-3">{t('settings.target')}</th>
-                  <th className="py-2 pr-3">{t('settings.workspace')}</th>
-                  <th className="py-2 pr-3">{t('settings.lastMessage')}</th>
-                  <th className="py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {bindings.map((b) => (
-                  <tr key={b.chat_id} className="border-t border-gray-100">
-                    <td className="py-2 pr-3 font-mono text-xs text-gray-700">
-                      {b.title || b.chat_id}
-                      <div className="text-[10px] text-gray-400">{b.chat_id}</div>
-                    </td>
-                    <td className="py-2 pr-3 text-gray-800">
-                      {b.flow_id ? (
-                        <>
-                          <span className="inline-flex items-center gap-1">
-                            <span className="text-[10px] font-medium bg-indigo-100 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded">{t('settings.flow')}</span>
-                            {b.flow_name || b.flow_id}
-                          </span>
-                          <div className="text-[10px] text-gray-400">{b.flow_id}</div>
-                        </>
-                      ) : b.agent_id ? (
-                        <>
-                          {b.agent_name || b.agent_id}
-                          <div className="text-[10px] text-gray-400">{b.agent_id}</div>
-                        </>
-                      ) : (
-                        <span className="text-gray-400 italic">{t('settings.notSet')}</span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-3 text-gray-700">{b.workspace || '—'}</td>
-                    <td className="py-2 pr-3 text-xs text-gray-500">
-                      {b.last_message_at ? new Date(b.last_message_at).toLocaleString() : '—'}
-                    </td>
-                    <td className="py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteBinding(b.chat_id)}
-                        className="inline-flex items-center gap-1 text-xs text-red-600 hover:bg-red-50 border border-red-200 rounded-md px-2 py-1"
-                      >
-                        <Trash2 className="w-3 h-3" /> {t('settings.remove')}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </SectionCard>
-    </div>
-  );
-}
 
 
-// ── Git connectors tab (GitHub / GitLab) ─────────────────────────────────────
 
-function GitProviderSection({ provider, label, hint, config, onSaved }) {
-  const { t } = useI18n();
-  const [tokenInput, setTokenInput] = useState('');
-  const [baseUrl, setBaseUrl] = useState(config.base_url || '');
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-  const [error, setError] = useState('');
-
-  const isGitlab = provider === 'gitlab';
-
-  const handleSave = async ({ clear_token } = {}) => {
-    setSaving(true);
-    setError('');
-    setTestResult(null);
-    try {
-      const payload = { provider };
-      if (clear_token) payload.clear_token = true;
-      else if (tokenInput.trim()) payload.token = tokenInput.trim();
-      if (isGitlab && baseUrl.trim()) payload.base_url = baseUrl.trim();
-      const { data } = await updateGitConfig(payload);
-      setTokenInput('');
-      onSaved(data);
-    } catch (e) {
-      setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const { data } = await testGitConnection(provider);
-      setTestResult(data);
-    } catch (e) {
-      setTestResult({ ok: false, error: e.response?.data?.detail || e.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <SectionCard title={label}>
-      <p className="text-sm text-gray-600">{hint}</p>
-      {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
-
-      {isGitlab && (
-        <div>
-          <label className="text-sm font-medium text-gray-700 mb-1 block">{t('settings.baseUrl')}</label>
-          <p className="text-xs text-gray-500 mb-1">{t('settings.changeForSelfHostedGitlab')}</p>
-          <input
-            type="text"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://gitlab.com"
-            className={inputCls}
-          />
-        </div>
-      )}
-
-      <div>
-        <label className="text-sm font-medium text-gray-700 mb-1 block">
-          {t('settings.git.personalAccessToken')} {config.has_token && <span className="text-gray-400 font-normal">({t('settings.currentlySet')})</span>}
-        </label>
-        <input
-          type="password"
-          value={tokenInput}
-          onChange={(e) => setTokenInput(e.target.value)}
-          placeholder={config.has_token ? t('settings.keepExistingToken') : t('settings.git.pasteToken', { provider: label })}
-          className={inputCls}
-          autoComplete="new-password"
-        />
-        <div className="flex flex-wrap items-center gap-2 mt-2">
-          <button
-            type="button"
-            onClick={() => handleSave({})}
-            disabled={saving || (!tokenInput.trim() && !isGitlab)}
-            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-          >
-            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            {t('common.save')}
-          </button>
-          <button
-            type="button"
-            onClick={handleTest}
-            disabled={testing || !config.has_token}
-            className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50"
-          >
-            {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-            {t('settings.testConnection')}
-          </button>
-          {config.has_token && (
-            <button
-              type="button"
-              onClick={() => handleSave({ clear_token: true })}
-              disabled={saving}
-              className="flex items-center gap-1.5 border border-red-200 text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-            >
-              <Trash2 className="w-3.5 h-3.5" /> {t('settings.clearToken')}
-            </button>
-          )}
-        </div>
-        {testResult && (
-          <div className={`mt-2 text-sm rounded-lg px-3 py-2 ${testResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
-            {testResult.ok
-              ? <>{t('settings.connectedAs')} <strong>{testResult.login}</strong></>
-              : <>{t('settings.testFailed')}: {testResult.error}</>}
-          </div>
-        )}
-      </div>
-    </SectionCard>
-  );
-}
-
-function GitTab() {
-  const { t } = useI18n();
-  const [loading, setLoading] = useState(true);
-  const [config, setConfig] = useState({ github: { has_token: false }, gitlab: { has_token: false, base_url: 'https://gitlab.com' } });
-  const [error, setError] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await getGitConfig();
-      setConfig(data);
-    } catch (e) {
-      setError(`${t('settings.errors.gitLoad')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
-
-  useEffect(() => { load(); }, [load]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-5">
-      {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
-      <GitProviderSection
-        provider="github"
-        label={t('settings.github')}
-        hint={t('settings.usedToBrowseYourRepos')}
-        config={config.github || {}}
-        onSaved={setConfig}
-      />
-      <GitProviderSection
-        provider="gitlab"
-        label={t('settings.gitlab')}
-        hint={t('settings.usedToBrowseYourProjects')}
-        config={config.gitlab || {}}
-        onSaved={setConfig}
-      />
-    </div>
-  );
-}
-
-
-// ── Blender tab ──────────────────────────────────────────────────────────────
-// Two things an operator needs from a geometry engine: whether one can run at
-// all on this machine, and what is running right now. The daemon list is read
-// from the cross-process registry, so it shows the engines agents started in
-// their own processes, not only the ones the backend happens to have spawned.
-
-function humanBytes(n) {
-  if (!n) return '—';
-  return `${Math.round(n / 1e6)} MB`;
-}
-
-function humanAge(seconds) {
-  if (seconds == null) return '—';
-  if (seconds < 90) return `${Math.round(seconds)}s`;
-  if (seconds < 5400) return `${Math.round(seconds / 60)}m`;
-  return `${(seconds / 3600).toFixed(1)}h`;
-}
-
-function BlenderTab() {
-  const { t } = useI18n();
-  const [config, setConfig] = useState(null);
-  const [daemons, setDaemons] = useState({ daemons: [], running: 0, max_daemons: 0 });
-  const [pathInput, setPathInput] = useState('');
-  const [probe, setProbe] = useState(null);
-  const [testing, setTesting] = useState(false);
-  const [busy, setBusy] = useState('');
-  const [error, setError] = useState('');
-
-  const loadConfig = useCallback(async () => {
-    try {
-      const { data } = await getBlenderConfig();
-      setConfig(data);
-      setPathInput(data.binary_path || '');
-    } catch (e) {
-      setError(`${t('settings.blender.loadFailed')}: ` + (e.response?.data?.detail || e.message));
-    }
-  }, [t]);
-
-  const loadDaemons = useCallback(async () => {
-    try {
-      const { data } = await getBlenderDaemons();
-      setDaemons(data);
-    } catch { /* the engines list is a live view; a failed poll is not an error state */ }
-  }, []);
-
-  useEffect(() => { loadConfig(); }, [loadConfig]);
-  useEffect(() => {
-    loadDaemons();
-    const timer = setInterval(loadDaemons, 5000);
-    return () => clearInterval(timer);
-  }, [loadDaemons]);
-
-  const save = async (patch) => {
-    setBusy('save');
-    setError('');
-    try {
-      const { data } = await updateBlenderConfig(patch);
-      setConfig(data);
-      setPathInput(data.binary_path || '');
-      setProbe(null);
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const test = async () => {
-    setTesting(true);
-    try {
-      const { data } = await testBlenderBinary(pathInput.trim());
-      setProbe(data);
-    } catch (e) {
-      setProbe({ ok: false, error: e.response?.data?.detail || e.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const stopOne = async (key) => {
-    setBusy(key);
-    try {
-      await stopBlenderDaemon(key);
-      await loadDaemons();
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message);
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const stopAll = async () => {
-    setBusy('all');
-    try {
-      await stopAllBlenderDaemons();
-      await loadDaemons();
-    } finally {
-      setBusy('');
-    }
-  };
-
-  if (!config) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
-      </div>
-    );
-  }
-
-  const availability = config.availability || {};
-  const numberField = (key, label, hint) => (
-    <div>
-      <label className="text-sm font-medium text-gray-700">{label}</label>
-      <input
-        type="number"
-        value={config[key] ?? ''}
-        onChange={(e) => setConfig({ ...config, [key]: e.target.value })}
-        onBlur={(e) => {
-          const value = parseInt(e.target.value, 10);
-          if (Number.isFinite(value) && value !== 0) save({ [key]: value });
-        }}
-        className={inputCls}
-      />
-      <p className="text-xs text-gray-500 mt-1">{hint}</p>
-    </div>
-  );
-
-  return (
-    <div className="space-y-5">
-      {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
-
-      <SectionCard title={t('settings.blender.title')}>
-        <p className="text-sm text-gray-600">{t('settings.blender.intro')}</p>
-
-        <div className="flex items-center gap-3">
-          {availability.available ? (
-            <span className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              {availability.version || t('settings.available')}
-            </span>
-          ) : (
-            <span className="flex items-center gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-              {availability.reason || t('settings.blender.unavailable')}
-            </span>
-          )}
-          <label className="flex items-center gap-2 text-sm text-gray-700 ml-auto">
-            <input
-              type="checkbox"
-              checked={!!config.enabled}
-              onChange={(e) => save({ enabled: e.target.checked })}
-            />
-            {t('settings.blender.enabled')}
-          </label>
-        </div>
-
-        <div>
-          <label className="text-sm font-medium text-gray-700">{t('settings.blender.binaryPath')}</label>
-          <div className="flex gap-2 mt-1">
-            <input
-              type="text"
-              value={pathInput}
-              onChange={(e) => setPathInput(e.target.value)}
-              placeholder={config.discovered_binary || '/path/to/blender'}
-              className={inputCls}
-            />
-            <button
-              type="button"
-              onClick={test}
-              disabled={testing}
-              className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50 whitespace-nowrap"
-            >
-              {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-              {t('settings.blender.test')}
-            </button>
-            <button
-              type="button"
-              onClick={() => save({ binary_path: pathInput.trim() })}
-              disabled={busy === 'save'}
-              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-            >
-              <Save className="w-3.5 h-3.5" />
-              {t('common.save')}
-            </button>
-          </div>
-          <p className="text-xs text-gray-500 mt-1">
-            {config.discovered_binary
-              ? t('settings.blender.discovered', { path: config.discovered_binary })
-              : t('settings.blender.notDiscovered')}
-          </p>
-          {probe && (
-            <p className={`text-xs mt-1 ${probe.ok ? 'text-green-700' : 'text-red-600'}`}>
-              {probe.ok ? `${probe.version} · ${probe.path}` : probe.error}
-            </p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          {numberField('max_daemons', t('settings.blender.maxDaemons'), t('settings.blender.maxDaemonsHint'))}
-          {numberField('idle_timeout_s', t('settings.blender.idleTimeout'), t('settings.blender.idleTimeoutHint'))}
-          {numberField('command_timeout_s', t('settings.blender.commandTimeout'), t('settings.blender.commandTimeoutHint'))}
-        </div>
-      </SectionCard>
-
-      <SectionCard title={t('settings.blender.engines')}>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-600">
-            {t('settings.blender.engineCount', { running: daemons.running, max: daemons.max_daemons })}
-          </span>
-          {daemons.daemons?.length > 0 && (
-            <button
-              type="button"
-              onClick={stopAll}
-              disabled={busy === 'all'}
-              className="ml-auto flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-            >
-              <Power className="w-3.5 h-3.5" />
-              {t('settings.blender.stopAll')}
-            </button>
-          )}
-        </div>
-
-        {daemons.daemons?.length === 0 ? (
-          <p className="text-sm text-gray-500">{t('settings.blender.noEngines')}</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-gray-400">
-                  <th className="py-2 pr-4">{t('settings.blender.colScene')}</th>
-                  <th className="py-2 pr-4">{t('settings.blender.colObjects')}</th>
-                  <th className="py-2 pr-4">PID</th>
-                  <th className="py-2 pr-4">{t('settings.blender.colCommands')}</th>
-                  <th className="py-2 pr-4">{t('settings.blender.colUptime')}</th>
-                  <th className="py-2 pr-4">{t('settings.blender.colMemory')}</th>
-                  <th className="py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {daemons.daemons.map((d) => (
-                  <tr key={d.key} className="border-t border-gray-100">
-                    <td className="py-2 pr-4 font-mono text-xs text-gray-700">{d.key}</td>
-                    <td className="py-2 pr-4 text-gray-600">
-                      {d.busy ? <span className="text-amber-600">{t('settings.blender.working')}</span>
-                        : ((d.objects || []).join(', ') || '—')}
-                    </td>
-                    <td className="py-2 pr-4 text-gray-500">{d.pid}</td>
-                    <td className="py-2 pr-4 text-gray-500">{d.commands ?? '—'}</td>
-                    <td className="py-2 pr-4 text-gray-500">{humanAge(d.uptime_s)}</td>
-                    <td className="py-2 pr-4 text-gray-500">{humanBytes(d.rss_bytes)}</td>
-                    <td className="py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => stopOne(d.key)}
-                        disabled={busy === d.key}
-                        className="text-xs text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
-                      >
-                        {t('settings.blender.stop')}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="text-xs text-gray-500">{t('settings.blender.enginesHint')}</p>
-      </SectionCard>
-    </div>
-  );
-}
-
-
-function SectionCard({ title, actions, children }) {
-  return (
-    <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5">
-      {/* The title row carries the card's own controls (a provider's status
-          badge and its Test button). They used to be the first child of the
-          body, which put them on a line of their own under the heading. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <h2 className="text-base font-semibold text-gray-800">{title}</h2>
-        {actions}
-      </div>
-      {children}
-    </section>
-  );
-}
 
 function ProviderStatusBadge({ status, testing }) {
   const { t } = useI18n();
@@ -1102,6 +368,12 @@ export default function Settings() {
   const { section } = useParams();
   const navigate = useNavigate();
   const active = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
+
+  useEffect(() => {
+    if (section && MOVED_TO_CONNECTORS.includes(section)) {
+      navigate('/connectors', { replace: true });
+    }
+  }, [section, navigate]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1350,6 +622,16 @@ export default function Settings() {
                 })}
               </div>
             ))}
+            {/* Where the connector tabs went. Someone who has configured
+                Telegram here before will come back here first, and a dead end
+                is a worse answer than a pointer. */}
+            <Link
+              to="/connectors"
+              className="mx-1 mt-2 block rounded-lg border border-dashed border-gray-200 px-3 py-2 text-[11px] leading-snug text-gray-500 hover:border-indigo-200 hover:text-indigo-600"
+            >
+              <Link2 className="mb-1 h-3.5 w-3.5" />
+              {t('settings.connectorsMoved')}
+            </Link>
           </div>
         </nav>
 

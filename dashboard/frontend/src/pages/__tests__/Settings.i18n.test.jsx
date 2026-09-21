@@ -12,6 +12,12 @@ import { I18nProvider } from '../../i18n';
 
 const ok = (data) => Promise.resolve({ data });
 
+/** Stands in for the page a redirect should land on. */
+function Landed({ onRender }) {
+  onRender();
+  return <div>connectors</div>;
+}
+
 vi.mock('axios', () => ({
   default: {
     create: () => ({
@@ -51,9 +57,10 @@ vi.mock('../../api', () => ({
   updateSettings: () => ok({}),
 }));
 
+// telegram / git / blender are not here any more: they are the Connectors page
+// now, and Connectors.i18n.test.jsx carries the same coverage for them.
 const SECTIONS = [
   'providers', 'local', 'custom',
-  'telegram', 'git', 'blender',
   'execution', 'rag', 'observability', 'logging',
 ];
 
@@ -102,10 +109,31 @@ describe('Settings', () => {
     await waitFor(() => expect(scoped.container.textContent).toMatch(/Save "default" settings/));
     scoped.unmount();
 
-    const connector = renderAt('/settings/telegram');
-    await waitFor(() => expect(connector.container.textContent.length).toBeGreaterThan(200));
-    expect(connector.container.textContent).not.toMatch(/Save "default" settings/);
-    connector.unmount();
+    // Custom backends save through their own endpoints, like the connectors
+    // that used to stand here before they became their own page.
+    const unscoped = renderAt('/settings/custom');
+    await waitFor(() => expect(unscoped.container.textContent.length).toBeGreaterThan(200));
+    expect(unscoped.container.textContent).not.toMatch(/Save "default" settings/);
+    unscoped.unmount();
+  });
+
+  it('sends an old connector link to the page the connectors moved to', async () => {
+    // These URLs are in bookmarks and in older docs. Falling back to the first
+    // section would answer them by showing provider keys instead.
+    const seen = [];
+    const { unmount } = render(
+      <I18nProvider>
+        <MemoryRouter initialEntries={['/settings/telegram']}>
+          <Routes>
+            <Route path="/settings/:section" element={<Settings />} />
+            <Route path="/connectors" element={<Landed onRender={() => seen.push('connectors')} />} />
+          </Routes>
+        </MemoryRouter>
+      </I18nProvider>,
+    );
+
+    await waitFor(() => expect(seen).toContain('connectors'));
+    unmount();
   });
 
   it('falls back to the first section when the URL names none', async () => {

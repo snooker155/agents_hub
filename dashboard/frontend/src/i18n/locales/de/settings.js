@@ -229,4 +229,5 @@ export default {
     intro: 'Der Level, mit dem der Backend-Prozess und jeder Agenten-Subprozess loggen. Eine Workspace-Überschreibung hat Vorrang vor dem globalen Wert aus .env.',
     hint: 'Das Speichern wendet den Level sofort auf das laufende Backend an. Agentenprozesse übernehmen ihn beim nächsten Start.',
   },
+  connectorsMoved: 'Telegram, GitHub/GitLab und Blender sind jetzt unter Verbinden → Konnektoren.',
 };

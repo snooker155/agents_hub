@@ -229,4 +229,5 @@ export default {
     intro: 'The level the backend process and every agent subprocess log at. A workspace override wins over the global .env value.',
     hint: 'Saving applies it to the running backend straight away. Agent processes pick it up when they next start.',
   },
+  connectorsMoved: 'Telegram, GitHub/GitLab and Blender moved to Connect → Connectors.',
 };
