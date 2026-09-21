@@ -198,6 +198,19 @@ async def _api_token_guard(request, call_next):
 
 app.add_middleware(BaseHTTPMiddleware, dispatch=_api_token_guard)
 
+
+# A workspace name taken from a request that is not one ordinary path
+# component (see workspace.storage.create_workspace_folder). Every route that
+# touches a workspace by name goes through that function, so one handler
+# turns the refusal into a 400 instead of each route repeating the check.
+from workspace import InvalidWorkspaceName as _InvalidWorkspaceName
+
+
+@app.exception_handler(_InvalidWorkspaceName)
+async def _invalid_workspace_name(request, exc):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
 # ============================================================================
 # CORS Configuration
 # ============================================================================

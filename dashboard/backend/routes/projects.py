@@ -8,17 +8,20 @@ A project:
   - Can have a frontend (with live preview via iframe)
   - Can have a backend (with Swagger docs + request proxy)
 """
+import ipaddress
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 # Ensure project root is on sys.path
 _project_root = Path(__file__).resolve().parents[3]
@@ -32,7 +35,8 @@ from workspace import get_workspace_folder, resolve_project_root, project_folder
 from models import ProjectCreate, ProjectAttach, ProjectUpdate, ProjectApiRequest, ProjectImportFromRepo, ProjectConnectRepo, ProjectGraphSave, ProjectGraphChat, ProjectTasksChat
 from projects.models import Project, RepoConfig
 from projects.storage import ProjectStore
-from common.paths import PROJECTS_FILE
+from common.paths import PROJECTS_FILE, PROJECT_ROOT, AGENTS_HUB_ROOT
+from common.hostnet import host_service_url
 from connectors.git import git_ops
 from connectors.git.git_ops import GitOpsError
 from connectors.git.providers import get_provider, GitProviderError
@@ -56,6 +60,83 @@ def _task_to_dict(task) -> dict:
     if data.get("parent_id"):
         data["parent_id"] = str(data["parent_id"])
     return data
+
+
+# ─────────────────────────── Attach allowlist ────────────────────────────
+#
+# POST /attach symlinks an arbitrary directory into a workspace. Without a
+# check, any directory the backend process can read (/etc, $HOME, ...) could
+# be exposed this way, whether the caller is a dashboard user or an agent
+# using the api tool.
+
+
+def _attach_allowed_roots() -> list[Path]:
+    """Directories a project may be attached from.
+
+    ``AGENTS_HUB_ATTACH_ROOTS`` (os.pathsep separated absolute directories)
+    replaces the default entirely when set. Unset, the default is the user's
+    home directory plus this service's own repo and state roots — enough for
+    the common "attach my project" case without allowing the whole filesystem.
+    """
+    raw = (os.environ.get("AGENTS_HUB_ATTACH_ROOTS") or "").strip()
+    if raw:
+        return [Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip()]
+    return [Path.home().resolve(), PROJECT_ROOT.resolve(), AGENTS_HUB_ROOT.resolve()]
+
+
+def _check_attach_allowed(target: Path) -> None:
+    """Reject an attach target outside the configured allowlist.
+
+    Not a general sandbox: a permissively configured ``AGENTS_HUB_ATTACH_ROOTS``,
+    or a root that itself holds sensitive data (e.g. the home directory), still
+    lets that data be attached. It only closes the "any readable path" case.
+    """
+    target = target.resolve()
+    for root in _attach_allowed_roots():
+        if target == root or root in target.parents:
+            return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"{target} is outside the allowed attach roots. Set the "
+            "AGENTS_HUB_ATTACH_ROOTS environment variable to allow it."
+        ),
+    )
+
+
+# ─────────────────────────── API-request guardrails ──────────────────────
+#
+# POST /{project_id}/api-request proxies an HTTP request to whatever base_url
+# it is given. These checks are deliberately minimal, not full SSRF
+# prevention (no protection against DNS rebinding, redirects to an internal
+# host, IPv6 link-local forms, etc.) — only the scheme and the well-known
+# cloud metadata address are rejected.
+
+_BLOCKED_API_HOSTNAMES = {"metadata.google.internal"}
+_METADATA_NETWORK = ipaddress.ip_network("169.254.0.0/16")
+
+
+def _validated_api_base_url(base: str) -> str:
+    """Validate a proxied backend base URL and rewrite its host for containers.
+
+    Rejects non-http(s) schemes and the cloud metadata address/hostname, then
+    runs the result through host_service_url() so a backend running inside a
+    container reaches the Docker host's localhost the same way every other
+    outbound call in this codebase does.
+    """
+    parsed = urlparse(base)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="base_url must use the http or https scheme")
+    host = (parsed.hostname or "").lower()
+    if host in _BLOCKED_API_HOSTNAMES:
+        raise HTTPException(status_code=400, detail="Requests to cloud metadata addresses are not allowed")
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        addr = None
+    if addr is not None and addr in _METADATA_NETWORK:
+        raise HTTPException(status_code=400, detail="Requests to cloud metadata addresses are not allowed")
+    return host_service_url(base)
 
 
 # ─────────────────────────── CRUD ────────────────────────────
@@ -1499,6 +1580,7 @@ async def attach_project(payload: ProjectAttach):
         raise HTTPException(status_code=400, detail=f"No such directory: {target}")
     if not target.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {target}")
+    _check_attach_allowed(target)
 
     # The folder name has to survive project_folder_name() unchanged, otherwise
     # the link, the project's derived folder and repo.local_path would disagree.
@@ -1672,6 +1754,7 @@ async def proxy_api_request(project_id: str, payload: ProjectApiRequest):
     base = payload.base_url or backend.base_url or (f"http://localhost:{backend.port}" if backend.port else None)
     if not base:
         raise HTTPException(status_code=400, detail="No backend URL configured. Set base_url in the API tab.")
+    base = _validated_api_base_url(base)
     url = f"{base}{payload.path}"
 
     try:

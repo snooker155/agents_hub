@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from typing import Optional
 from pathlib import Path
 import mimetypes
+import os
 import shutil
 
 from tasks import service as tasks_service
@@ -26,19 +27,56 @@ from workspace import (
     get_workspace_instructions,
     set_workspace_instructions,
 )
+from workspace import storage as _workspace_storage
 from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
 
+def _is_safe_workspace_name(name: str) -> bool:
+    """Whether a caller-supplied name is safe to hand to create_workspace_folder.
+
+    A workspace name must be a single, ordinary path component: no "..", no
+    ".", no embedded separator and no absolute path — anything else would make
+    ``WORKSPACES_ROOT / name`` land somewhere other than a direct child of the
+    workspaces root, and ``create_workspace_folder`` mkdirs it unconditionally.
+    """
+    if not name or name in (".", ".."):
+        return False
+    candidate = Path(name)
+    return candidate.name == name and not candidate.is_absolute()
+
+
+def _is_direct_workspace_entry(name: str) -> bool:
+    """Whether ``name`` names an entry directly inside ``WORKSPACES_ROOT``.
+
+    ``WORKSPACES_ROOT / name`` can *exist* on disk without ``name`` actually
+    being a workspace: a name of ".." lexically walks up to the workspaces
+    root's own parent (``AGENTS_HUB_ROOT``), which — once the service has run
+    at all — always exists, so an existence check alone would pass with no
+    workspace folder ever having been created there. Comparing the *lexical*
+    join (``os.path.normpath``, which collapses ".."/"." without following
+    symlinks) against the root catches that, while a genuinely attached
+    workspace still passes: its entry is a symlink that lives directly in the
+    root even though it legitimately *resolves* somewhere else entirely.
+    """
+    root = _workspace_storage.WORKSPACES_ROOT.resolve()
+    entry = Path(os.path.normpath(str(root / name)))
+    return entry.parent == root
+
+
 def _ensure_writable_workspace(name: str) -> None:
     """Verify the workspace exists before writes; auto-create 'default' on demand.
 
     Re-runs bootstrap so a missing default workspace is seeded from `bootstrap/`.
-    For any other name, raises 404 instead of silently writing nowhere.
+    For any other name, raises 404 instead of silently writing nowhere — and,
+    same as `_require_workspace_folder` below, a name that only looks like it
+    exists by lexically escaping the workspaces root (see
+    `_is_direct_workspace_entry`) is treated as not existing, not as a green
+    light to delete or overwrite files outside it.
     """
-    if get_workspace_folder(name):
+    if get_workspace_folder(name) and _is_direct_workspace_entry(name):
         return
     if name == "default":
         ensure_initial_state()
@@ -47,6 +85,22 @@ def _ensure_writable_workspace(name: str) -> None:
         create_workspace_folder(name)
         return
     raise HTTPException(status_code=404, detail=f"Workspace '{name}' does not exist")
+
+
+def _require_workspace_folder(name: str) -> Path:
+    """Look up an existing workspace for a read-only route, creating nothing.
+
+    A read route must never resolve a caller-supplied name with
+    ``create_workspace_folder``: that function mkdirs
+    ``WORKSPACES_ROOT / name`` unconditionally, so a name such as
+    "../../etc" walks the folder creation (and any later join under it)
+    outside the workspaces root. Looking the workspace up instead means an
+    unknown or traversal-shaped name simply 404s, and nothing is created.
+    """
+    folder = get_workspace_folder(name)
+    if folder is None or not _is_direct_workspace_entry(name):
+        raise HTTPException(status_code=404, detail=f"Workspace '{name}' does not exist")
+    return folder
 
 
 def task_to_dict(task):
@@ -103,6 +157,8 @@ async def list_workspaces():
 
 @router.post("")
 async def create_workspace(payload: WorkspaceCreate):
+    if payload.name and not _is_safe_workspace_name(payload.name):
+        raise HTTPException(status_code=400, detail=f"'{payload.name}' is not a valid workspace name")
     try:
         p = create_workspace_folder(payload.name)
         # Let live listeners (e.g. the header workspace picker) refresh their list.
@@ -140,7 +196,7 @@ async def attach_workspace(payload: WorkspaceAttach):
 
 @router.get("/{name}")
 async def get_workspace(name: str):
-    root = create_workspace_folder(name)
+    root = _require_workspace_folder(name)
     all_tasks = tasks_service.list_tasks()
     ws_tasks = [t for t in all_tasks if (t.workspace or "").strip() == root.name and not t.parent_id]
     tasks_info = []
@@ -178,7 +234,7 @@ async def delete_workspace(name: str):
 
 @router.get("/{name}/files")
 async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
-    root = create_workspace_folder(name)
+    root = _require_workspace_folder(name)
     pattern = glob or "**/*"
     files = []
     directories = []
@@ -203,7 +259,7 @@ async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
 
 @router.get("/{name}/file-content")
 async def get_workspace_file_content(name: str, path: str):
-    root = create_workspace_folder(name).resolve()
+    root = _require_workspace_folder(name).resolve()
     rel_path = (path or "").strip()
     if not rel_path:
         raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
@@ -276,7 +332,7 @@ def _extract_pdf_preview(candidate: Path) -> str:
 @router.get("/{name}/file-raw")
 async def get_workspace_file_raw(name: str, path: str):
     """Serve a workspace file's raw bytes (e.g. for in-browser PDF rendering)."""
-    root = create_workspace_folder(name).resolve()
+    root = _require_workspace_folder(name).resolve()
     rel_path = (path or "").strip()
     if not rel_path:
         raise HTTPException(status_code=400, detail="Query parameter 'path' is required")

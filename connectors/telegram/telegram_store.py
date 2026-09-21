@@ -7,6 +7,7 @@ State lives in `.agents_hub/telegram.json`:
         "bot_token": "<secret, never returned to the UI>",
         "enabled": false,
         "update_offset": 0,
+        "allowed_chat_ids": [],
         "bindings": [
             {
                 "chat_id": 123456,
@@ -22,16 +23,26 @@ State lives in `.agents_hub/telegram.json`:
 
 A binding targets either an agent (`agent_id`) or a flow (`flow_id`) — never
 both. The token is write-only from the API perspective — callers see only
-`has_token: bool`. Bindings are created/updated by the polling adapter when
-a Telegram user issues `/agent <id>` or `/flow <id>`, and may be removed via
-the REST API.
+`has_token: bool`.
+
+`allowed_chat_ids` is the gate on who the bot will talk to at all: an empty
+list rejects every chat once a token is configured (the safe default — the
+operator opts specific chats in, rather than the bot answering anyone who
+finds it). The polling adapter drops any update from a chat_id not on this
+list before it reaches command handling.
+
+The `workspace` field of a binding can only be set through the REST API (the
+dashboard), never from an inbound Telegram command — a chat that isn't
+already bound to a workspace by an operator is told to ask them, instead of
+being able to bind itself. Once a binding has a workspace, `/agent <id>` and
+`/flow <id>` from the chat still pick a target within it, and bindings may be
+removed via the REST API.
 """
 from __future__ import annotations
 
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 
 from filelock import FileLock
@@ -52,6 +63,9 @@ def _default_state() -> dict[str, Any]:
         "bot_token": "",
         "enabled": False,
         "update_offset": 0,
+        # Chat ids allowed to talk to the bot. Empty means "reject everyone" once
+        # a token is configured — an operator must add chat ids explicitly.
+        "allowed_chat_ids": [],
         "bindings": [],
     }
 
@@ -71,6 +85,8 @@ def _load_unlocked() -> dict[str, Any]:
     out.update({k: v for k, v in data.items() if k in out})
     if not isinstance(out.get("bindings"), list):
         out["bindings"] = []
+    if not isinstance(out.get("allowed_chat_ids"), list):
+        out["allowed_chat_ids"] = []
     return out
 
 
@@ -113,6 +129,41 @@ def set_enabled(enabled: bool) -> None:
         data = _load_unlocked()
         data["enabled"] = bool(enabled)
         _save_unlocked(data)
+
+
+def get_allowed_chat_ids() -> list[int]:
+    """Chat ids the bot will process updates from. Empty = reject everyone."""
+    raw = load().get("allowed_chat_ids") or []
+    out = []
+    for v in raw:
+        try:
+            out.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def set_allowed_chat_ids(chat_ids: list[int]) -> None:
+    """Replace the chat id allowlist."""
+    cleaned = []
+    for v in chat_ids or []:
+        try:
+            cleaned.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    with FileLock(str(_TG_LOCK), timeout=5.0):
+        data = _load_unlocked()
+        data["allowed_chat_ids"] = cleaned
+        _save_unlocked(data)
+
+
+def is_chat_allowed(chat_id: int) -> bool:
+    """Whether a chat may talk to the bot. An empty allowlist allows no one."""
+    try:
+        chat_id = int(chat_id)
+    except (TypeError, ValueError):
+        return False
+    return chat_id in set(get_allowed_chat_ids())
 
 
 def get_update_offset() -> int:

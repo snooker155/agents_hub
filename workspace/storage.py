@@ -154,6 +154,22 @@ def ensure_workspaces_dir() -> Path:
     return ensure_workspaces_root()
 
 
+class InvalidWorkspaceName(ValueError):
+    """A caller-supplied workspace name that is not a single path component."""
+
+
+def is_valid_workspace_name(name: str) -> bool:
+    """True when ``name`` is a single ordinary path component.
+
+    No "." or "..", no separators, no absolute path: ``WORKSPACES_ROOT / name``
+    must land on a direct child of the workspaces root.
+    """
+    if not name or name in (".", ".."):
+        return False
+    candidate = Path(name)
+    return candidate.name == name and not candidate.is_absolute()
+
+
 def create_workspace_folder(name: Optional[str] = None) -> Path:
     """
     Create a new workspace folder in the workspaces directory and initialize metadata.
@@ -169,6 +185,14 @@ def create_workspace_folder(name: Optional[str] = None) -> Path:
 
     if name is None:
         name = str(uuid.uuid4())[:8]
+
+    # Every caller passes a bare workspace name, and several of them take it
+    # straight from a request. The mkdir below is unconditional, so a name
+    # like "../../etc" would create (and later serve from) a directory
+    # outside the workspaces root. Refuse anything that is not one ordinary
+    # path component here, once, rather than at each of the thirty callers.
+    if not is_valid_workspace_name(name):
+        raise InvalidWorkspaceName(f"Invalid workspace name: {name!r}")
 
     workspace_path = WORKSPACES_ROOT / name
     workspace_path.mkdir(parents=True, exist_ok=True)
@@ -434,6 +458,8 @@ def get_workspace_folder(name: str) -> Optional[Path]:
     Returns:
         Path to the workspace folder if it exists, None otherwise.
     """
+    if not is_valid_workspace_name(name):
+        return None
     workspace_path = WORKSPACES_ROOT / name
     if workspace_path.exists() and workspace_path.is_dir():
         return workspace_path.resolve()
