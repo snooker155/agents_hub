@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
-from typing import Tuple, List, Optional, Union, Literal
+from typing import Annotated, Tuple, List, Optional, Union, Literal
 from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
 from dataclasses import dataclass, field
 
 DEFAULT_IGNORE: List[str] = [
@@ -119,10 +120,31 @@ class Settings(BaseSettings):
     # location is fixed, not configurable, so there is no workspace_root setting.
 
     # Policies / safety
-    allow_shell: Tuple[str, ...] = Field(
+    allow_shell: Annotated[Tuple[str, ...], NoDecode] = Field(
         default_factory=lambda: tuple(("python,pytest,ruff,black").split(",")),
-        env="ALLOW_SHELL",
+        validation_alias=AliasChoices("ALLOW_SHELL", "allow_shell"),
     )
+
+    # pydantic-settings JSON-decodes env values for tuple/list fields, so a
+    # plain ``ALLOW_SHELL=python,pytest`` would blow up with a SettingsError
+    # before any validator ran. ``NoDecode`` on those fields hands us the raw
+    # string instead, and this splits the shapes a .env actually carries:
+    # comma- or whitespace-separated, or a JSON array for anyone who prefers it.
+    @field_validator("allow_shell", "web_allow_domains", "web_deny_domains",
+                     mode="before")
+    @classmethod
+    def _split_str_list(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        text = v.strip()
+        if not text:
+            return ()
+        if text.startswith("["):
+            try:
+                return tuple(json.loads(text))
+            except ValueError:
+                pass
+        return tuple(part for part in text.replace(",", " ").split() if part)
 
     # Orchestration logging level, applied by common.logging_config at process
     # start. (ORCH_POLL_INTERVAL used to live here too; nothing polls, so it went.)
@@ -225,11 +247,11 @@ class Settings(BaseSettings):
     web_domain_policy_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices("WEB_DOMAIN_POLICY_ENABLED", "web_domain_policy_enabled"))
-    web_allow_domains: Tuple[str, ...] = Field(
+    web_allow_domains: Annotated[Tuple[str, ...], NoDecode] = Field(
         default_factory=tuple,
         validation_alias=AliasChoices("WEB_ALLOW_DOMAINS", "web_allow_domains"))
     # Denied always, whether or not the allow-policy is on.
-    web_deny_domains: Tuple[str, ...] = Field(
+    web_deny_domains: Annotated[Tuple[str, ...], NoDecode] = Field(
         default_factory=tuple,
         validation_alias=AliasChoices("WEB_DENY_DOMAINS", "web_deny_domains"))
 
