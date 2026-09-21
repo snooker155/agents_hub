@@ -1,0 +1,49 @@
+{
+  "schema": "agents-hub/agent-manifest@1",
+  "id": "langgraph-agent",
+  "name": "LangGraph Agent",
+  "description": "A LangGraph graph served over the Agents Hub HTTP contract. The graph stays in its own repository and is not modified: the adapter loads it by AGENTHUB_GRAPH, translates LangGraph's own stream events into hub frames, and continues a graph that stopped to ask a person.",
+  "domain": "External",
+  "runtime": {
+    "kind": "http",
+    "port": 8420,
+    "run_path": "/run",
+    "stream_path": "/run/stream",
+    "health_path": "/health",
+    "graph_path": "/graph",
+    "resume_path": "/resume",
+    "timeout": 900,
+    "docker": {
+      "dockerfile": "Dockerfile.agenthub",
+      "context": "."
+    },
+    "env": [
+      {
+        "name": "AGENTHUB_GRAPH",
+        "required": true,
+        "description": "The graph to serve, as module:attribute, the same spelling langgraph.json uses. Example: my_project.agent:graph. Bundled: demo_graph:graph, or approval_graph:graph for one that stops to ask a person."
+      },
+      {
+        "name": "AGENTHUB_INPUT_KEY",
+        "required": false,
+        "description": "State key the prompt enters through. Defaults to 'messages', which suits any graph built on add_messages. A graph with a custom state names its own key and receives the prompt as that key's string value."
+      },
+      {
+        "name": "AGENTHUB_OUTPUT_KEY",
+        "required": false,
+        "description": "State key the answer is read from. Defaults to the input key, which is right for message graphs."
+      },
+      {
+        "name": "OPENAI_API_KEY",
+        "required": false,
+        "description": "Only what the graph itself needs. The hub never supplies the graph's model access; the graph keeps its own."
+      }
+    ]
+  },
+  "capabilities": {
+    "tools": [
+      "whatever the graph binds to its own nodes"
+    ]
+  },
+  "docs": "README.md"
+}

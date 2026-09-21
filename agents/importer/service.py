@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 from agents import prompt_assembly, registry
 from agents.importer import checks, clone
 from agents.importer.manifest import AgentManifest, parse_manifest
-from agents.remote_agent import DEFAULT_HEALTH_PATH, DEFAULT_RUN_PATH, normalize_base_url
+from agents.remote_agent import DEFAULT_HEALTH_PATH, DEFAULT_RUN_PATH, RemoteAgent, normalize_base_url
 
 # ``entrypoint`` is required on every registry record and must be an importable
 # "module:attr". For remote agents it documents the adapter that will run them
@@ -90,7 +90,42 @@ def _descriptor(
     # streaming on in RemoteAgent.
     if manifest.stream_path:
         descriptor["stream_path"] = manifest.stream_path
+    # Same opt-in rule: only an agent that says it can describe its own shape is
+    # ever asked for it.
+    if manifest.graph_path:
+        descriptor["graph_path"] = manifest.graph_path
+    # Same opt-in rule again: an agent that cannot be continued simply never
+    # declares this, and the hub never tries.
+    if manifest.resume_path:
+        descriptor["resume_path"] = manifest.resume_path
     return descriptor
+
+
+def refresh_topology(agent_id: str, descriptor: Dict[str, Any]) -> Dict[str, Any]:
+    """Fetch the remote's graph and store it on the descriptor, in place.
+
+    Called at registration and at every re-check, which are the two moments the
+    operator has just changed something about the service. Not called per run:
+    a graph's shape changes when its repository is redeployed, not between
+    requests, and fetching it on the hot path would add a round trip to work
+    that is already waiting on a model.
+
+    A failure is recorded rather than raised. The panel then shows why there is
+    no picture, which is more useful than an agent that refuses to import
+    because its topology endpoint was briefly down.
+    """
+    if not descriptor.get("graph_path") or not descriptor.get("url"):
+        return descriptor
+    agent = RemoteAgent(agent_id, agent_id, descriptor)
+    topology = agent.fetch_topology()
+    topology["fetched_at"] = _now_iso()
+    descriptor["topology"] = topology
+    return descriptor
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _definition_markdown(manifest: AgentManifest, descriptor: Dict[str, Any]) -> tuple[str, str, str]:
@@ -120,6 +155,8 @@ answer like any other run.
 - Endpoint: `POST {descriptor.get('url') or '<not configured>'}{descriptor.get('run_path')}`
 - Health: `GET {descriptor.get('url') or '<not configured>'}{descriptor.get('health_path')}`
 - Streaming: {f"`POST {descriptor.get('url') or '<not configured>'}{descriptor['stream_path']}`" if descriptor.get('stream_path') else 'not declared'}
+- Graph: {f"`GET {descriptor.get('url') or '<not configured>'}{descriptor['graph_path']}`" if descriptor.get('graph_path') else 'not declared'}
+- Resume: {f"`POST {descriptor.get('url') or '<not configured>'}{descriptor['resume_path']}`" if descriptor.get('resume_path') else 'not declared'}
 
 {manifest.description}
 
@@ -259,6 +296,7 @@ def register(
         workspace=workspace, remote=descriptor,
     )
     descriptor["readiness"] = report.to_dict()
+    refresh_topology(agent_id, descriptor)
 
     instructions, capabilities, usage = _definition_markdown(manifest, descriptor)
     prompt_assembly.write_instructions(agent_id, instructions)
@@ -329,6 +367,7 @@ def recheck(agent_id: str, *, url: Optional[str] = None, workspace: Optional[str
         stored = descriptor["manifest"]
         manifest.run_path = stored.get("run_path") or DEFAULT_RUN_PATH
         manifest.health_path = stored.get("health_path") or DEFAULT_HEALTH_PATH
+        manifest.graph_path = stored.get("graph_path") or ""
 
     report = checks.evaluate(
         repo_dir, manifest,
@@ -339,6 +378,11 @@ def recheck(agent_id: str, *, url: Optional[str] = None, workspace: Optional[str
         remote=descriptor,
     )
     descriptor["readiness"] = report.to_dict()
+    # A re-check is usually "I have just started the service", which is exactly
+    # when the graph became fetchable for the first time.
+    if manifest.graph_path and not descriptor.get("graph_path"):
+        descriptor["graph_path"] = manifest.graph_path
+    refresh_topology(agent_id, descriptor)
 
     # The generated definition quotes the endpoint, so a re-check that moved it
     # would otherwise leave the agent's own page describing the old address.
@@ -350,7 +394,12 @@ def recheck(agent_id: str, *, url: Optional[str] = None, workspace: Optional[str
 
     import dataclasses
     registry.add_agent(dataclasses.replace(spec, remote=descriptor))
-    return {"report": report.to_dict(), "runnable": report.runnable, "url": descriptor.get("url") or ""}
+    return {
+        "report": report.to_dict(),
+        "runnable": report.runnable,
+        "url": descriptor.get("url") or "",
+        "topology": descriptor.get("topology"),
+    }
 
 
 def cleanup(agent_id: str) -> bool:

@@ -1,0 +1,19 @@
+{
+  "name": "langgraph-agenthub-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Serve a LangGraph.js graph over the Agents Hub HTTP contract, without changing the graph",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node adapter.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.4.0",
+    "zod": "^3.25.0"
+  }
+}

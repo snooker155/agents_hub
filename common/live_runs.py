@@ -223,6 +223,13 @@ def _apply(turn: Dict[str, Any], event: Dict[str, Any]) -> None:
         label = event.get("label") or event.get("agent_id") or event.get("node_id")
         if label:
             turn["thinking"] = (turn["thinking"] + [{"kind": "node", "content": str(label)}])[-MAX_THINKING:]
+    elif kind == "graph_node_start":
+        # A node of an external agent's *own* graph, not of a hub flow. Folded
+        # into the same trail so a tab that opens mid-run catches up on the path
+        # the run has taken, rather than joining an empty picture.
+        node = event.get("node")
+        if node:
+            turn["thinking"] = (turn["thinking"] + [{"kind": "node", "content": str(node)}])[-MAX_THINKING:]
     elif kind == "team_message":
         # A team answers as a conversation; the live view shows it as it is said.
         who = event.get("sender") or event.get("agent_id") or ""

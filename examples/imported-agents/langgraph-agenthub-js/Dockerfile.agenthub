@@ -1,0 +1,20 @@
+# The adapter plus the graph it serves. A real integration copies the graph's own
+# repository in and installs its dependencies; the demo graphs ship here.
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY package.json ./
+# No lockfile is committed for an example. A real integration has one and uses
+# `npm ci`, which is the difference between a reproducible image and a hopeful one.
+RUN npm install --omit=dev --no-audit --no-fund
+
+COPY adapter.js demo_graph.js approval_graph.js ./
+
+# Point this at your own graph and mount or COPY its code beside the adapter:
+#   ENV AGENTHUB_GRAPH=./src/agent.js:graph
+ENV AGENTHUB_GRAPH=./demo_graph.js:graph \
+    NODE_ENV=production
+
+EXPOSE 8421
+CMD ["node", "adapter.js"]

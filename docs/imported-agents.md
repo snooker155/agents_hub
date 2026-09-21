@@ -7,6 +7,10 @@ checks whether it can run, and adds it to the agent list either way.
 Distinct from the [marketplace](marketplace.md), which shares definitions built
 *in* this product. An imported agent's behaviour stays in its own repository.
 
+Distinct too from a [connection](connections.md), which is the same idea with
+the direction reversed: there the external agent runs on its own trigger and
+reports in, and the hub never calls it.
+
 ## Where it runs
 
 Outside this process. The hub never imports the agent's Python, so its
@@ -28,6 +32,12 @@ HTTP endpoint:
   (`token`, `thinking`, `tool_start`, `tool_end`, `usage`, `done`). The agent's
   tokens then appear in the chat bubble live, exactly like a built-in agent's,
   because the frames are translated onto the same event vocabulary.
+- **`GET <graph_path>`** — optional. An agent that is internally a graph
+  publishes its own shape here, and the hub draws it. See
+  [the shape of an agent](#the-shape-of-an-agent).
+- **`POST <resume_path>`** — optional. An agent that stops to ask a person
+  declares this and is *continued* through it. See
+  [pausing to ask](#pausing-to-ask).
 - **Packaging** — a Dockerfile named in the manifest, or an already-running
   service whose URL you give at import time.
 - **`runtime.env`** — what the agent needs (model keys, tokens). Required
@@ -37,6 +47,63 @@ An agent with no manifest is still importable: the readiness report names each
 missing piece, and the agent is registered in a "needs setup" state so the gaps
 stay visible where the agent is rather than in a dismissed dialog.
 
+## The shape of an agent
+
+Some imported agents are a graph inside: a LangGraph flow, a crew, a state
+machine. Rendering one as a single box that lights up loses the only thing worth
+watching, which is where in the graph a run currently is and which branch it
+took.
+
+Two optional pieces cover that, and an agent that declares neither is unchanged:
+
+- **Node frames on the stream.** `{"type": "node_start", "node": "triage"}` and
+  `{"type": "node_end", "node": "triage", "ok": true, "next": "pricing"}`. They
+  render as steps inside the agent's own reply, not as separate bubbles: the
+  answer still comes from one agent. `next` is the branch actually taken, which
+  is the question a conditional edge raises.
+- **`runtime.graph_path`.** A `GET` returning `{framework, nodes, edges}`, which
+  the agent page draws as a read-only mirror. It is fetched at import and at
+  every re-check, not per run: a graph's shape changes when its repository is
+  redeployed, not between requests.
+
+The mirror is deliberately not the [flow](flows.md) canvas. A flow is something
+this hub executes against agents it owns; a mirrored graph is a picture of
+something it does not run, so it has no Run button and no editing.
+
+Node identity is the remote's business. The hub draws what it is told, bounds
+it, and drops edges pointing at nodes that were never declared rather than
+inventing them.
+
+## Pausing to ask
+
+An imported agent may stop and wait for a person. It ends its stream with an
+`interrupt` frame instead of `done`:
+
+```json
+{"type": "interrupt", "question": "Approve this plan?",
+ "choices": ["approve", "reject"], "key": "i-7", "node": "approve"}
+```
+
+The run is then recorded as `awaiting_input` with the question on it, which is
+the same state, and the same task page, an agent of this hub's own reaches by
+calling `ask_user`. Answering it posts to `<resume_path>`:
+
+```json
+{"run_id": "the run that paused", "value": "approve", "key": "i-7"}
+```
+
+and the agent streams whatever it does next, pausing again if it needs to.
+
+**Why not just re-run it with the answer?** That is how this hub resumes its own
+agents, and it is right for them: they keep nothing between runs, so replaying
+the conversation *is* the resume. An imported agent that suspended onto a
+checkpointer is the other case. It has somewhere to come back to, and starting
+it again from the top is a different execution that merely reads the same way.
+An agent that declares no `resume_path` is re-run, exactly as before.
+
+The bundled example ships a graph that does this
+(`approval_graph.py`; serve it with `AGENTHUB_GRAPH=approval_graph:graph`).
+
 ## The import flow
 
 1. **Check repository** — clone and analyse. Nothing is registered yet.
@@ -45,10 +112,20 @@ stay visible where the agent is rather than in a dismissed dialog.
 4. **Re-check** — re-run the checks after filling a gap in, for example once the
    service is up at the endpoint you supplied.
 
-A worked example ships with the product under
-`examples/imported-agents/aider-agenthub`: a three-file adapter that makes
+Two worked examples ship with the product. Under
+`examples/imported-agents/aider-agenthub`, a three-file adapter that makes
 [Aider](https://github.com/Aider-AI/aider) importable without changing aider
-itself.
+itself. Under `examples/imported-agents/langgraph-agenthub`, an adapter for a
+LangGraph graph: it loads whichever compiled graph `AGENTHUB_GRAPH` names, in
+the `module:attribute` spelling `langgraph.json` already uses, and translates
+LangGraph's own stream events into the frames above. A team with a working graph
+integrates by setting one environment variable, with no diff in the graph.
+
+`examples/imported-agents/langgraph-agenthub-js` is the same adapter for a
+LangGraph.js graph, serving the same contract and reporting the same frames, so
+a graph looks the same here whichever runtime it runs on. Its own README lists
+the four places the JS event stream differs from the Python one, which is the
+part worth reading before writing an adapter of your own.
 
 ## What you give up
 
@@ -60,6 +137,9 @@ its internals:
   for normally; one that does not leaves the cost columns at zero.
 - **No hub tools.** The imported agent uses its own tool layer. The tool list in
   its manifest is documentation, not a grant.
+- **The graph is a report, not an instrumented truth.** The hub draws the shape
+  the agent describes and the nodes it announces. An agent that under-reports
+  its nodes looks simpler than it is.
 - **In-run guards do not apply.** Tool-repetition limits, the context-window
   guard and the [capability guard](tools-and-capabilities.md) work by
   intercepting an agent's own loop. A remote agent's safety is its repository's

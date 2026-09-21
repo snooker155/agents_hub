@@ -184,6 +184,11 @@ export const recheckImportedAgent = (agentId, data) =>
   api.post(`/agent-import/${encodeURIComponent(agentId)}/recheck`, data || {});
 export const getAgentImportDetails = (agentId) =>
   api.get(`/agent-import/${encodeURIComponent(agentId)}`);
+// Re-fetch an imported agent's own graph. Separate from recheck: this is one
+// GET against the agent's service, where a recheck also re-probes the
+// environment and rewrites the agent's generated documentation.
+export const refreshAgentTopology = (agentId) =>
+  api.post(`/agent-import/${encodeURIComponent(agentId)}/topology`);
 export const updateTask = (taskId, data) => api.patch(`/tasks/${taskId}`, data);
 export const assignAgent = (taskId, data) => api.post(`/tasks/${taskId}/assign`, data);
 export const approveAssignment = (taskId) => api.post(`/tasks/${taskId}/approve-assignment`);

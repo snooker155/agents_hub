@@ -195,4 +195,6 @@ export default {
     new: 'Start a new conversation',
     config: 'Show configuration for the current agent',
   },
+  graphNodeNext: 'The branch taken out of this node',
+  agentGraph: 'Agent graph',
 };

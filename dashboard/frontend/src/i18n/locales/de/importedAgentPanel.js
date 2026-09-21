@@ -13,4 +13,8 @@ export default {
   notSet: '<nicht gesetzt>',
   notDeclared: 'nicht deklariert — Läufe liefern eine einzige Antwort',
   serviceUrl: 'Dienst-URL',
+  graphEndpoint: 'Graph-Endpunkt',
+  graphTitle: 'Eigener Graph',
+  refreshGraph: 'Aktualisieren',
+  graphIsAMirror: 'Ein schreibgeschützter Spiegel des Graphen, den dieser Agent meldet. Der Hub führt ihn nicht aus, der Agent tut es.',
 };

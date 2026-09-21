@@ -74,6 +74,8 @@ EXAMPLE_MANIFEST = {
         "port": 8410,
         "run_path": "/run",
         "stream_path": "/run/stream",
+        "graph_path": "/graph",
+        "resume_path": "/resume",
         "health_path": "/health",
         "timeout": 900,
         "docker": {"dockerfile": "Dockerfile.agenthub"},
@@ -117,10 +119,41 @@ async def get_requirements():
                     {"type": "tool_start", "name": "string", "input": "string"},
                     {"type": "tool_end", "name": "string", "output": "string"},
                     {"type": "usage", "prompt_tokens": "int", "completion_tokens": "int"},
+                    {"type": "node_start", "node": "string", "depth": "int"},
+                    {"type": "node_end", "node": "string", "ok": "boolean", "next": "string|null"},
+                    {"type": "interrupt", "question": "string", "choices": ["string"],
+                     "key": "string", "node": "string"},
                     {"type": "done", "ok": "boolean", "output": "string", "error": "string|null"},
                 ],
             },
             "health": {"method": "GET", "path": "<health_path>", "response": "any 2xx/3xx status"},
+            # Optional, and what an agent that can *pause* declares. It ends a
+            # run with an `interrupt` frame instead of `done`; the hub parks the
+            # run with the question on it, and posts the answer back here when a
+            # person gives one. Without this an agent can ask, but can only be
+            # restarted rather than continued — which for anything holding state
+            # between the question and the answer is not the same thing.
+            "resume": {
+                "method": "POST",
+                "path": "<resume_path>",
+                "required": False,
+                "request": {"run_id": "the run that paused", "value": "the answer",
+                            "key": "string"},
+                "response": "the same frames a run replies with",
+            },
+            # Optional, and only meaningful for an agent that is internally a
+            # graph: it publishes its own shape and the hub draws it, rather
+            # than rendering the agent as one box that lights up.
+            "graph": {
+                "method": "GET",
+                "path": "<graph_path>",
+                "required": False,
+                "response": {
+                    "framework": "string",
+                    "nodes": [{"id": "string", "label": "string", "kind": "node|terminal|subgraph"}],
+                    "edges": [{"source": "string", "target": "string", "conditional": "boolean"}],
+                },
+            },
         },
     }
 
@@ -189,6 +222,34 @@ async def recheck_imported_agent(agent_id: str, data: RecheckRequest):
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
 
 
+@router.post("/{agent_id}/topology")
+async def refresh_topology(agent_id: str):
+    """Re-fetch the agent's own graph from its service.
+
+    Separate from ``/recheck`` because the two answer different questions and
+    cost different things: re-checking probes the environment and rewrites the
+    agent's documentation, while this is one GET. The button next to a stale
+    picture should not rewrite the agent page as a side effect.
+    """
+    import dataclasses
+
+    spec = registry.get_agent(agent_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if not spec.is_remote():
+        raise HTTPException(status_code=400, detail=f"Agent '{agent_id}' is not an imported agent")
+
+    descriptor = dict(spec.remote or {})
+    if not descriptor.get("graph_path"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Agent '{agent_id}' declares no graph_path, so it has no topology to fetch",
+        )
+    import_service.refresh_topology(agent_id, descriptor)
+    registry.add_agent(dataclasses.replace(spec, remote=descriptor))
+    return {"agent_id": agent_id, "topology": descriptor.get("topology")}
+
+
 @router.get("/{agent_id}")
 async def get_import_details(agent_id: str):
     """Return the stored import descriptor and last readiness report."""
@@ -202,5 +263,6 @@ async def get_import_details(agent_id: str):
         "agent_id": spec.id,
         "name": spec.name,
         "remote": remote,
+        "topology": remote.get("topology") or {},
         "readiness": remote.get("readiness") or {},
     }

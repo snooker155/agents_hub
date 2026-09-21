@@ -152,6 +152,17 @@ class AgentManifest:
     # Optional. When set, runs stream from this endpoint instead of awaiting a
     # single POST; empty means the agent does not stream.
     stream_path: str = ""
+    # Optional. An agent that is internally a graph (LangGraph, and anything
+    # else that knows its own shape) may publish that shape here, and the hub
+    # draws it instead of rendering the agent as one opaque box. Empty means the
+    # agent has no shape to show, which is true of most agents.
+    graph_path: str = ""
+    # Optional. An agent that can be *continued* declares this: the hub posts
+    # the human's answer here, and the agent picks its own work back up where it
+    # stopped. Without it a paused agent can be asked a question and told the
+    # answer, but only by being run again from the start — which for a graph
+    # with a checkpointer is not the same thing at all.
+    resume_path: str = ""
     port: Optional[int] = None
     timeout: Optional[int] = None
     auth_token_env: str = ""
@@ -179,6 +190,8 @@ class AgentManifest:
             "run_path": self.run_path,
             "health_path": self.health_path,
             "stream_path": self.stream_path,
+            "graph_path": self.graph_path,
+            "resume_path": self.resume_path,
             "port": self.port,
             "timeout": self.timeout,
             "auth_token_env": self.auth_token_env,
@@ -281,6 +294,13 @@ def parse_manifest(repo_dir: Path) -> AgentManifest:
     # guessing a path would cost a failed request on every single run.
     raw_stream = _as_str(runtime.get("stream_path"))
     manifest.stream_path = _normalize_path(raw_stream, "") if raw_stream else ""
+    # Same rule as stream_path: no default. An undeclared graph endpoint means
+    # "this agent is not a graph", and probing a guessed path would spend a
+    # failed request on every import to learn nothing.
+    raw_graph = _as_str(runtime.get("graph_path"))
+    manifest.graph_path = _normalize_path(raw_graph, "") if raw_graph else ""
+    raw_resume = _as_str(runtime.get("resume_path"))
+    manifest.resume_path = _normalize_path(raw_resume, "") if raw_resume else ""
     manifest.port = _as_int(runtime.get("port"))
     manifest.timeout = _as_int(runtime.get("timeout"))
     manifest.auth_token_env = _as_str(runtime.get("auth_token_env"))

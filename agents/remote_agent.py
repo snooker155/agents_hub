@@ -19,6 +19,8 @@ The wire contract is deliberately tiny — one required endpoint::
     POST <url><run_path>
         {"prompt": str, "run_id": str | null, "workspace": str | null}
     ->  {"ok": bool, "output": str, "error": str | null, "steps": [...]}
+        or, for an agent that stopped to ask:
+        {"ok": true, "interrupt": {"question": str, "choices": [...], "key": str}}
 
     GET  <url><health_path>          # optional, used by the readiness check
 
@@ -35,7 +37,17 @@ streamed rather than awaited::
         {"type": "tool_start", "name": "...", "input": "..."}
         {"type": "tool_end",   "name": "...", "output": "..."}
         {"type": "usage",      "prompt_tokens": N, "completion_tokens": N}
+        {"type": "node_start", "node": "...", "depth": 0}
+        {"type": "node_end",   "node": "...", "ok": true, "next": "..."}
         {"type": "done",       "ok": true, "output": "...", "error": null}
+
+``node_start``/``node_end`` are for a remote that is internally a graph. They
+are optional, and an agent that is one straight line simply never sends them.
+They are translated to ``graph_node_start``/``graph_node_end`` rather than
+forwarded under their own names, because ``node_start`` already means "a node of
+a *hub flow* started" on the chat stream, and a remote agent's internal nodes
+are not flow nodes: conflating them would have a remote agent's steps open flow
+bubbles in the chat of a conversation that is not running a flow.
 
 Those frames are translated onto the vocabulary the chat UI already renders and
 pushed through the same emitter a delegated local agent uses
@@ -43,6 +55,22 @@ pushed through the same emitter a delegated local agent uses
 agent's tokens appear in the chat bubble exactly like a built-in agent's. The
 ``usage`` frame is credited to the run's token counters — the remote is the only
 party that can know them, since the model call happens in its process.
+
+A remote that can *pause* declares ``runtime.resume_path`` as well. It then ends
+a run with an ``interrupt`` frame instead of ``done``, and the hub records the
+run as ``awaiting_input`` with the question on it — the same state, and the same
+surfaces, an agent of this hub's own reaches through ``ask_user``. When the
+person answers, :meth:`RemoteAgent.resume` posts the answer to ``resume_path``
+and streams whatever the agent does next::
+
+    POST <url><resume_path>
+        {"run_id": str, "value": Any, "key": str}
+    ->  the same frames a run replies with
+
+Re-running the agent with the answer in its prompt, which is how this hub
+resumes its own agents, is wrong for a remote one: an agent that suspended with
+its state on a checkpointer has somewhere to come back to, and starting it again
+from the top is a different execution with the same words in it.
 
 Streaming is used only when both halves are present: the remote declared the
 endpoint *and* something on this side is listening. Otherwise the single-shot
@@ -62,6 +90,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from agents.agent_base import AgentBase, AgentResult, ToolResult
+from common.agent_frames import FrameTranslator
 
 
 # Defaults for descriptor keys a manifest may omit.
@@ -72,7 +101,18 @@ DEFAULT_HEALTH_PATH = "/health"
 # because probing a path an agent never implemented would cost a failed request
 # on every run.
 SUGGESTED_STREAM_PATH = "/run/stream"
+# Suggested path for the optional topology endpoint, on the same opt-in terms.
+SUGGESTED_GRAPH_PATH = "/graph"
+# Suggested path for the optional resume endpoint, on the same opt-in terms.
+SUGGESTED_RESUME_PATH = "/resume"
 DEFAULT_TIMEOUT = 600
+
+# Ceilings on a fetched topology. The picture is drawn in a browser and comes
+# from a service this hub does not control, so a graph too large to render, or a
+# hostile one, is truncated rather than shipped to the frontend whole.
+MAX_TOPOLOGY_NODES = 300
+MAX_TOPOLOGY_EDGES = 900
+MAX_TOPOLOGY_LABEL = 120
 DEFAULT_AUTH_HEADER = "Authorization"
 
 
@@ -160,6 +200,69 @@ def _extract_steps(payload: Any) -> List[ToolResult]:
     return steps
 
 
+def _clip_label(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return text if len(text) <= MAX_TOPOLOGY_LABEL else text[:MAX_TOPOLOGY_LABEL] + "…"
+
+
+def normalize_topology(payload: Any) -> Dict[str, Any]:
+    """Coerce a remote's ``/graph`` answer into the shape the canvas draws.
+
+    The remote is asked to normalise its own framework's format (the bundled
+    LangGraph adapter does), so this is not a second translation layer: it is
+    the boundary check. Whatever a foreign service returns lands in a browser,
+    so the shape is enforced, the labels are clipped and the size is capped
+    here rather than trusted.
+
+    Edges to nodes that were never declared are dropped instead of drawn, since
+    a renderer given a dangling edge either crashes or invents a node.
+    """
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "topology endpoint did not return a JSON object",
+                "nodes": [], "edges": []}
+    if payload.get("ok") is False:
+        return {"ok": False, "error": str(payload.get("error") or "the agent reported no topology"),
+                "nodes": [], "edges": []}
+
+    nodes: List[Dict[str, Any]] = []
+    seen = set()
+    for raw in (payload.get("nodes") or [])[:MAX_TOPOLOGY_NODES]:
+        if not isinstance(raw, dict):
+            continue
+        node_id = str(raw.get("id") or "").strip()
+        if not node_id or node_id in seen:
+            continue
+        seen.add(node_id)
+        kind = str(raw.get("kind") or "node").strip() or "node"
+        nodes.append({
+            "id": node_id,
+            "label": _clip_label(raw.get("label") or node_id),
+            "kind": kind if kind in ("node", "terminal", "subgraph") else "node",
+        })
+
+    edges: List[Dict[str, Any]] = []
+    for raw in (payload.get("edges") or [])[:MAX_TOPOLOGY_EDGES]:
+        if not isinstance(raw, dict):
+            continue
+        source, target = str(raw.get("source") or ""), str(raw.get("target") or "")
+        if source not in seen or target not in seen:
+            continue
+        edges.append({
+            "source": source,
+            "target": target,
+            "label": _clip_label(raw["label"]) if raw.get("label") else None,
+            "conditional": bool(raw.get("conditional")),
+        })
+
+    return {
+        "ok": bool(nodes),
+        "framework": _clip_label(payload.get("framework") or "") or "unknown",
+        "nodes": nodes,
+        "edges": edges,
+        "error": None if nodes else "the topology endpoint declared no nodes",
+    }
+
+
 def _parse_stream_line(line: str) -> Optional[Dict[str, Any]]:
     """Decode one line of the remote's stream, tolerating both wire formats.
 
@@ -186,21 +289,35 @@ def _parse_stream_line(line: str) -> Optional[Dict[str, Any]]:
 
 
 class _StreamState:
-    """Accumulator for one streamed run: the text so far, steps, and usage.
+    """One streamed run: the shared translation, plus where its events go.
 
-    Holds the emitter and the usage sinks so ``_handle_stream_event`` stays a
-    pure translation step, and so a broken listener can never abort a run that
-    is otherwise progressing fine.
+    The translation itself lives in :mod:`common.agent_frames`, shared with the
+    push path (``/api/ingest``) so a run renders the same whether the hub called
+    the agent or the agent called the hub. What is local to this direction is
+    the emitter and the token counters: a pulled run is being watched by a chat
+    session right now, and its usage is credited to the callbacks that session
+    reads its cost off.
     """
 
     def __init__(self, emitter: Optional[Any], usage_sinks: List[Any]):
         self._emitter = emitter
         self._usage_sinks = usage_sinks
-        self.text_parts: List[str] = []
-        self.steps: List[ToolResult] = []
-        self.done: Optional[Dict[str, Any]] = None
-        self.pending_tool: Optional[str] = None
-        self.step = 0
+        self.translator = FrameTranslator()
+
+    @property
+    def text_parts(self) -> List[str]:
+        return self.translator.text_parts
+
+    @property
+    def done(self) -> Optional[Dict[str, Any]]:
+        return self.translator.done
+
+    @property
+    def steps(self) -> List[ToolResult]:
+        return [
+            ToolResult(name=s["name"], args=s["args"], output=s["output"])
+            for s in self.translator.steps
+        ]
 
     def emit(self, payload: Dict[str, Any]) -> None:
         """Forward one event, swallowing listener errors.
@@ -215,28 +332,24 @@ class _StreamState:
         except Exception:
             pass
 
-    def credit_usage(self, usage: Dict[str, Any]) -> None:
+    def handle(self, frame: Dict[str, Any]) -> None:
+        """Translate one frame from the remote and forward what it produced."""
+        for event in self.translator.feed(frame):
+            if event.get("type") == "usage":
+                self._credit(event)
+            self.emit(event)
+
+    def _credit(self, usage: Dict[str, Any]) -> None:
         """Add remote-reported token usage to the run's counters.
 
         The remote is the only party that can know these numbers — the model
         call happened in its process — so when it reports them they are credited
         exactly like a local call's, and the run's cost stops reading as zero.
         """
-        try:
-            prompt = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-            completion = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-        except (TypeError, ValueError):
-            return
-        try:
-            total = int(usage.get("total_tokens") or (prompt + completion))
-        except (TypeError, ValueError):
-            total = prompt + completion
-        if not (prompt or completion or total):
-            return
-        # A remote that reports cache reads gets them credited too, so its runs
-        # are priced on the same split as local ones.
-        from agents.callbacks.run_statistics import cached_input_tokens
-        cached = min(cached_input_tokens(usage), prompt)
+        prompt = int(usage.get("prompt_tokens") or 0)
+        completion = int(usage.get("completion_tokens") or 0)
+        total = int(usage.get("total_tokens") or (prompt + completion))
+        cached = int(usage.get("cached_tokens") or 0)
         for sink in self._usage_sinks:
             try:
                 sink.prompt_tokens += prompt
@@ -245,14 +358,6 @@ class _StreamState:
                 sink.cached_prompt_tokens = getattr(sink, "cached_prompt_tokens", 0) + cached
             except Exception:
                 continue
-        self.emit({
-            "type": "usage",
-            "prompt_tokens": prompt,
-            "completion_tokens": completion,
-            "total_tokens": total,
-            "cached_tokens": cached,
-            "remote": True,
-        })
 
 
 class RemoteAgent(AgentBase):
@@ -306,6 +411,30 @@ class RemoteAgent(AgentBase):
         return f"{self.base_url_remote}{path if path.startswith('/') else '/' + path}"
 
     @property
+    def graph_url(self) -> str:
+        path = self.remote.get("graph_path") or ""
+        if not path:
+            return ""
+        return f"{self.base_url_remote}{path if path.startswith('/') else '/' + path}"
+
+    @property
+    def resume_url(self) -> str:
+        path = self.remote.get("resume_path") or ""
+        if not path:
+            return ""
+        return f"{self.base_url_remote}{path if path.startswith('/') else '/' + path}"
+
+    @property
+    def supports_resume(self) -> bool:
+        """Whether a paused run of this agent can be continued where it stopped."""
+        return bool(self.base_url_remote and self.remote.get("resume_path"))
+
+    @property
+    def supports_topology(self) -> bool:
+        """Whether the remote can describe its own shape."""
+        return bool(self.base_url_remote and self.remote.get("graph_path"))
+
+    @property
     def supports_streaming(self) -> bool:
         """Whether the remote declared a streaming endpoint.
 
@@ -356,6 +485,34 @@ class RemoteAgent(AgentBase):
         except Exception as exc:  # noqa: BLE001 - any transport error is "not reachable"
             return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
 
+    def fetch_topology(self, timeout: int = 10) -> Dict[str, Any]:
+        """Ask the remote for its own shape, normalised and bounded.
+
+        Never raises, for the same reason ``check_health`` does not: an agent
+        whose service is down must still import, and a missing picture is a
+        blank panel with a reason on it, not a failed page.
+        """
+        import httpx
+
+        if not self.supports_topology:
+            return {"ok": False, "error": "this agent declares no graph_path",
+                    "nodes": [], "edges": []}
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.get(self.graph_url, headers=resolve_auth_header(self.remote))
+        except Exception as exc:  # noqa: BLE001 - unreachable is a reason, not a crash
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "nodes": [], "edges": []}
+
+        if resp.status_code >= 400:
+            return {"ok": False, "error": f"HTTP {resp.status_code} from {self.graph_url}",
+                    "nodes": [], "edges": []}
+        try:
+            payload = resp.json()
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": f"{self.graph_url} did not return JSON",
+                    "nodes": [], "edges": []}
+        return normalize_topology(payload)
+
     # ── streaming plumbing ──────────────────────────────────────────────────
 
     @staticmethod
@@ -402,70 +559,6 @@ class RemoteAgent(AgentBase):
                 sinks.append(cb)
         return sinks
 
-    def _handle_stream_event(self, event: Dict[str, Any], state: "_StreamState") -> None:
-        """Translate one event from the remote onto this hub's event vocabulary.
-
-        The remote speaks a small, stable vocabulary (token / thinking /
-        tool_start / tool_end / tool_error / usage / done). Mapping happens here
-        rather than in the remote so an imported agent never has to know how
-        this hub's UI names things.
-        """
-        kind = str(event.get("type") or "").strip()
-
-        if kind == "token":
-            token = event.get("token")
-            if isinstance(token, str) and token:
-                state.text_parts.append(token)
-                state.emit({"type": "token", "token": token})
-            return
-
-        if kind in ("thinking", "progress", "log"):
-            message = str(event.get("message") or event.get("text") or "").strip()
-            if message:
-                state.emit({"type": "thinking", "message": message})
-            return
-
-        if kind == "tool_start":
-            state.step += 1
-            name = str(event.get("name") or event.get("tool") or "tool")
-            state.pending_tool = name
-            state.emit({
-                "type": "tool_start",
-                "step": state.step,
-                "tool": name,
-                "input": str(event.get("input") if event.get("input") is not None else ""),
-            })
-            return
-
-        if kind == "tool_end":
-            name = str(event.get("name") or event.get("tool") or state.pending_tool or "")
-            output = str(event.get("output") if event.get("output") is not None else "")
-            args = event.get("args") if isinstance(event.get("args"), dict) else {}
-            state.steps.append(ToolResult(name=name, args=args, output=output))
-            state.pending_tool = None
-            state.emit({"type": "tool_end", "output": output})
-            return
-
-        if kind == "tool_error":
-            name = str(event.get("name") or event.get("tool") or state.pending_tool or "")
-            state.pending_tool = None
-            state.emit({"type": "tool_error", "tool": name, "error": str(event.get("error") or "")})
-            return
-
-        if kind == "usage":
-            state.credit_usage(event)
-            return
-
-        if kind in ("done", "final", "result"):
-            state.done = event
-            if isinstance(event.get("usage"), dict):
-                state.credit_usage(event["usage"])
-            return
-
-        if kind == "error":
-            state.done = {"ok": False, "error": str(event.get("error") or "remote agent reported an error")}
-            return
-
     def _stream_result(self, state: "_StreamState") -> AgentResult:
         """Turn a completed stream into an AgentResult.
 
@@ -484,6 +577,20 @@ class RemoteAgent(AgentBase):
             if not result.steps and state.steps:
                 result.steps = state.steps
             return result
+
+        pending = state.translator.interrupt
+        if pending is not None:
+            # The agent stopped to ask, which is neither an answer nor a
+            # failure. ``awaiting_input`` is the hub's own word for it, so the
+            # task runner parks this run exactly as it parks a local agent that
+            # called ask_user, and one set of surfaces serves both.
+            return AgentResult(
+                ok=True,
+                status="awaiting_input",
+                agent_output=pending.get("question") or "".join(state.text_parts).strip(),
+                pending_question=dict(pending),
+                steps=state.steps,
+            )
 
         text = "".join(state.text_parts).strip()
         if text:
@@ -542,6 +649,28 @@ class RemoteAgent(AgentBase):
                 status="error",
                 error=f"Remote agent returned HTTP {status_code}: {(text or '').strip()[:2000]}",
             )
+
+        # A pause reported without a stream. The streaming path learns this from
+        # an ``interrupt`` frame, but streaming needs a listener on this side,
+        # and a run nobody is watching must still be able to stop and ask: a
+        # graph left suspended while its run reads "completed" is the worst of
+        # both, because nothing will ever answer it.
+        if isinstance(payload, dict):
+            pending = payload.get("interrupt") or payload.get("pending_question")
+            if isinstance(pending, dict) and pending:
+                question = str(pending.get("question") or "").strip()
+                return AgentResult(
+                    ok=True,
+                    status="awaiting_input",
+                    agent_output=question or _extract_output(payload),
+                    pending_question={
+                        "question": question,
+                        "choices": [str(c) for c in (pending.get("choices") or [])],
+                        "key": str(pending.get("key") or ""),
+                        "node": str(pending.get("node") or ""),
+                    },
+                    steps=_extract_steps(payload),
+                )
 
         # A remote may report failure in-band with HTTP 200; honour that.
         if isinstance(payload, dict) and payload.get("ok") is False:
@@ -615,7 +744,7 @@ class RemoteAgent(AgentBase):
                         for line in resp.iter_lines():
                             event = _parse_stream_line(line)
                             if event is not None:
-                                self._handle_stream_event(event, state)
+                                state.handle(event)
             except Exception as exc:  # noqa: BLE001
                 # Partial output is still worth keeping: a stream that dies
                 # halfway has usually already shown the user real work.
@@ -635,6 +764,53 @@ class RemoteAgent(AgentBase):
             return self._unreachable(exc, self.run_url)
 
         return self._map_response(resp.status_code, self._payload_of(resp), resp.text)
+
+    def resume(self, run_id: str, value: Any, *, key: str = "", **kwargs) -> AgentResult:
+        """Continue a run this agent paused, with the answer it was waiting for.
+
+        Streams the continuation when both halves are there, exactly like a
+        run: what comes back is the agent working, and the same frames describe
+        it. A remote that pauses again simply sends another ``interrupt``, and
+        the result says ``awaiting_input`` a second time.
+        """
+        import httpx
+
+        if not self.supports_resume:
+            return AgentResult(
+                ok=False, status="error",
+                error=(
+                    f"Agent '{self.agent_id}' declares no resume_path, so a paused run "
+                    f"cannot be continued. Add runtime.resume_path to its manifest."
+                ),
+            )
+
+        callbacks = kwargs.get("callbacks")
+        emitter = self._resolve_emitter(callbacks)
+        sinks = self._usage_sinks(callbacks)
+        headers = {"Content-Type": "application/json", **resolve_auth_header(self.remote)}
+        body = {"run_id": run_id, "value": value, "key": key,
+                "workspace": kwargs.get("workspace", self.workspace)}
+
+        state = _StreamState(emitter, sinks)
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream("POST", self.resume_url, json=body, headers=headers) as resp:
+                    if resp.status_code >= 400:
+                        resp.read()
+                        return self._map_response(resp.status_code, None, resp.text)
+                    for line in resp.iter_lines():
+                        event = _parse_stream_line(line)
+                        if event is not None:
+                            state.handle(event)
+        except Exception as exc:  # noqa: BLE001
+            if state.text_parts:
+                return AgentResult(
+                    ok=False, status="error", steps=state.steps,
+                    agent_output="".join(state.text_parts),
+                    error=f"Remote agent resume failed: {type(exc).__name__}: {exc}",
+                )
+            return self._unreachable(exc, self.resume_url)
+        return self._stream_result(state)
 
     async def arun(self, instruction: str, **kwargs) -> AgentResult:
         """Async counterpart of :meth:`run`.
@@ -666,7 +842,7 @@ class RemoteAgent(AgentBase):
                         async for line in resp.aiter_lines():
                             event = _parse_stream_line(line)
                             if event is not None:
-                                self._handle_stream_event(event, state)
+                                state.handle(event)
             except Exception as exc:  # noqa: BLE001
                 if state.text_parts:
                     return AgentResult(
@@ -690,9 +866,12 @@ __all__ = [
     "RemoteAgent",
     "RemoteAgentError",
     "normalize_base_url",
+    "normalize_topology",
     "resolve_auth_header",
     "DEFAULT_RUN_PATH",
     "DEFAULT_HEALTH_PATH",
     "DEFAULT_TIMEOUT",
     "SUGGESTED_STREAM_PATH",
+    "SUGGESTED_GRAPH_PATH",
+    "SUGGESTED_RESUME_PATH",
 ]

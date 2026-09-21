@@ -40,6 +40,8 @@ import {
 } from 'lucide-react';
 import ContextEntityPicker from '../components/ContextEntityPicker';
 import ProcessGraph, { TokenPill } from '../components/ProcessGraph';
+import GraphMirror from '../components/GraphMirror';
+import { EMPTY_GRAPH_RUN, reduceGraphRun } from '../components/graphRun';
 import { SKILL_TOOL, shortText, fmtDurationMs } from '../components/processUtils';
 import { SlotData } from '../components/SlotValue';
 import { useI18n, translate, LANGUAGES } from '../i18n';
@@ -316,6 +318,43 @@ const REASONING_META = {
     title: 'text-indigo-700',
   },
 };
+
+// One node of an imported agent's own graph, as it runs.
+//
+// An imported agent that is internally a graph (a LangGraph flow, say) reports
+// `graph_node_start` / `graph_node_end` through its stream. Those are *its*
+// nodes, not this hub's flow nodes, so they render as a step inside the one
+// bubble rather than opening a bubble each the way flow nodes do: the answer
+// still comes from one agent, and splitting it would misrepresent what ran.
+function GraphNodeStep({ entry }) {
+  const { t } = useI18n();
+  const failed = entry.ok === false;
+  const dot = entry.running
+    ? 'bg-indigo-400 animate-pulse'
+    : failed ? 'bg-red-500' : 'bg-emerald-500';
+  return (
+    <div
+      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 ${
+        failed ? 'bg-red-50 border-red-200' : 'bg-indigo-50/60 border-indigo-100'
+      }`}
+      // Subgraph nodes are indented so a nested graph does not read as a flat
+      // list that matches no picture of itself.
+      style={entry.depth ? { marginLeft: Math.min(entry.depth, 4) * 12 } : undefined}
+    >
+      <Workflow className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
+      <span className="text-xs font-semibold text-indigo-900 truncate">{entry.node}</span>
+      {entry.next && (
+        <span className="text-[11px] text-gray-400 truncate" title={t('chat.graphNodeNext')}>
+          → {entry.next}
+        </span>
+      )}
+      {failed && entry.error && (
+        <span className="text-[11px] text-red-600 truncate flex-1">{entry.error}</span>
+      )}
+    </div>
+  );
+}
 
 function ReasoningStep({ step, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -802,7 +841,7 @@ function FlowDropdown({ flows, value, onChange }) {
   );
 }
 
-function ProcessPanelContent({ processInsights }) {
+function ProcessPanelContent({ processInsights, topology = null, graphRun = null }) {
   const { t } = useI18n();
   const graphKey = (processInsights?.message_runs || [])
     .map((mr, idx) => `${mr?.run_id || mr?.message_id || idx}`)
@@ -828,6 +867,26 @@ function ProcessPanelContent({ processInsights }) {
           />
         )}
       </div>
+      {/* An imported agent that is a graph inside: its own shape, with the node
+          it is in right now lit and the ones it has been through marked. The
+          hub does not run this graph, so there is nothing to click — the value
+          is seeing which branch a live run took. */}
+      {topology?.nodes?.length > 0 && (
+        <div className="border border-gray-100 rounded-lg p-3">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Workflow className="w-3.5 h-3.5 text-indigo-500" />
+            <span className="text-xs font-semibold text-gray-700">{t('chat.agentGraph')}</span>
+            {graphRun?.active && (
+              <span className="text-[11px] text-indigo-600 font-medium truncate">{graphRun.active}</span>
+            )}
+          </div>
+          <GraphMirror
+            topology={topology}
+            activeNode={graphRun?.active || null}
+            visitedNodes={graphRun?.visited || []}
+          />
+        </div>
+      )}
       <ProcessGraph key={graphKey} messageRuns={processInsights.message_runs || []} />
     </div>
   );
@@ -1093,6 +1152,7 @@ function DelegationCard({ entry }) {
           ) : (
             nested.map((e, i) => {
               if (e.type === 'reasoning') return <ReasoningStep key={i} step={e} />;
+              if (e.type === 'graph_node') return <GraphNodeStep key={i} entry={e} />;
               if (e.type === 'delegation') return <DelegationCard key={i} entry={e} />;
               if (e.type === 'tool') {
                 if (EXTRACTION_TOOLS.includes(e.tool)) return <ExtractionToolCard key={i} entry={e} />;
@@ -1573,6 +1633,9 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
             if (entry.type === 'reasoning') {
               return <ReasoningStep key={i} step={entry} />;
             }
+            if (entry.type === 'graph_node') {
+              return <GraphNodeStep key={i} entry={entry} />;
+            }
             if (entry.type === 'delegation') {
               return <DelegationCard key={i} entry={entry} />;
             }
@@ -1669,6 +1732,10 @@ export default function Chat() {
   const [activeRunId, setActiveRunId] = useState(null);
   const [processLoading, setProcessLoading] = useState(false);
   const [processError, setProcessError] = useState('');
+  // Where the current turn is inside an imported agent's own graph, folded by
+  // components/graphRun.js. Lights the mirror while the run is in flight; the
+  // record of the path is the timeline stored with the message.
+  const [graphRun, setGraphRun] = useState(EMPTY_GRAPH_RUN);
   const [processInsights, setProcessInsights] = useState({
     messages: [],
     tools: [],
@@ -1837,6 +1904,12 @@ export default function Chat() {
       : t('chat.placeholders.noAgent');
   })();
   const _agentObj = agents.find((a) => a.id === selectedAgent) || {};
+  // Present only for an imported agent that publishes its own shape; every
+  // other agent leaves the mirror out of the panel entirely.
+  const agentTopology = _agentObj.remote?.topology || null;
+  // The highlight belongs to the run being watched, not to the page: switching
+  // agent or conversation leaves a lit node that nothing is running in.
+  useEffect(() => { setGraphRun(EMPTY_GRAPH_RUN); }, [selectedAgent, currentConvId]);
   // provider/model are top-level fields on AgentSpec
   const agentProvider = _agentObj.provider || 'inherit';
   const agentModel = _agentObj.model || '';
@@ -2532,6 +2605,10 @@ export default function Chat() {
     if ((!text && !hasAttachments && !hasReferences) || loading) return;
     if (!targetId(targetMode, { selectedAgent, selectedFlow, selectedTeam })) return;
 
+    // Each turn walks the graph again: carrying the previous turn's path over
+    // would show a route this run never took.
+    setGraphRun(EMPTY_GRAPH_RUN);
+
     // Handle special client-side slash commands
     if (text === '/clear') { selectCommand({ name: '/clear' }); return; }
     if (text === '/new') { selectCommand({ name: '/new' }); return; }
@@ -3034,6 +3111,55 @@ export default function Chat() {
                         }
                       : m
                   ),
+                },
+              ),
+            );
+          } else if (event.type === 'graph_node_start') {
+            setGraphRun((prev) => reduceGraphRun(prev, event));
+            // An imported agent walking its own graph. One timeline step per
+            // node, in the current bubble: the agent is still one agent, and the
+            // nodes are how it got to the answer.
+            const tgt = targetMsgId();
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id !== convId ? c : {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === tgt
+                      ? {
+                          ...m,
+                          timeline: [
+                            ...(m.timeline || []),
+                            { type: 'graph_node', node: event.node, depth: event.depth || 0, running: true, ok: null },
+                          ],
+                        }
+                      : m
+                  ),
+                },
+              ),
+            );
+          } else if (event.type === 'graph_node_end') {
+            setGraphRun((prev) => reduceGraphRun(prev, event));
+            const tgt = targetMsgId();
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id !== convId ? c : {
+                  ...c,
+                  messages: c.messages.map((m) => {
+                    if (m.id !== tgt || !m.timeline) return m;
+                    const tl = [...m.timeline];
+                    // Last running entry with this name: a graph with a loop
+                    // enters the same node more than once, and resolving the
+                    // first would leave later passes looking unfinished.
+                    for (let i = tl.length - 1; i >= 0; i -= 1) {
+                      if (tl[i].type === 'graph_node' && tl[i].running
+                          && (!event.node || tl[i].node === event.node)) {
+                        tl[i] = { ...tl[i], running: false, ok: event.ok !== false, error: event.error || '', next: event.next || null };
+                        break;
+                      }
+                    }
+                    return { ...m, timeline: tl };
+                  }),
                 },
               ),
             );
@@ -3765,6 +3891,16 @@ export default function Chat() {
                 <>
                   <FileText className="w-3.5 h-3.5" />
                   {t('chat.showProcess')}
+                  {/* The panel is closed by default, so an agent whose graph is
+                      being walked right now would otherwise be drawing itself
+                      where nobody is looking. The node's name on the button is
+                      both the notice and the invitation. */}
+                  {agentTopology?.nodes?.length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-indigo-600">
+                      <Workflow className="w-3.5 h-3.5" />
+                      {graphRun.active && <span className="max-w-[90px] truncate">{graphRun.active}</span>}
+                    </span>
+                  )}
                 </>
               )}
             </button>
@@ -4209,6 +4345,8 @@ export default function Chat() {
             ) : (
               <ProcessPanelContent
                 processInsights={processInsights}
+                topology={agentTopology}
+                graphRun={graphRun}
               />
             )}
           </div>

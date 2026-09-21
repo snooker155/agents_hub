@@ -61,6 +61,21 @@ describe('reduceLiveTurn', () => {
     expect(turn.tools).toEqual([{ step: 1, tool: 'shell', input: 'ls', output: 'a.txt', error: null }]);
   });
 
+  it('mirrors the path an imported agent took through its own graph', () => {
+    // These are the remote agent's internal nodes, not hub flow nodes: they
+    // belong in the one turn's trail, and must not be mistaken for a flow.
+    let turn = reduceLiveTurn(null, { type: 'turn_start', message: 'go' });
+    turn = reduceLiveTurn(turn, { type: 'graph_node_start', node: 'triage' });
+    turn = reduceLiveTurn(turn, { type: 'graph_node_end', node: 'triage', ok: true, next: 'answer' });
+    turn = reduceLiveTurn(turn, { type: 'graph_node_start', node: 'answer' });
+
+    expect(turn.thinking).toEqual([
+      { kind: 'node', content: 'triage' },
+      { kind: 'node', content: 'answer' },
+    ]);
+    expect(turn.status).toBe('running');
+  });
+
   it('prefers the final response over the streamed tokens', () => {
     // Streamed text accumulates every LLM turn, including re-statements; the
     // done event carries the de-duplicated answer.

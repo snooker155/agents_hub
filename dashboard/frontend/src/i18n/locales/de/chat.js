@@ -195,4 +195,6 @@ export default {
     new: 'Neue Unterhaltung beginnen',
     config: 'Konfiguration des aktuellen Agenten anzeigen',
   },
+  graphNodeNext: 'Der Zweig, der aus diesem Knoten genommen wurde',
+  agentGraph: 'Agentengraph',
 };

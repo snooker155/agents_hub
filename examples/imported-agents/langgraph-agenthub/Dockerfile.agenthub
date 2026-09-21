@@ -1,0 +1,18 @@
+# The adapter plus the graph it serves. A real integration copies the graph's
+# own repository in and installs its requirements; the demo graph ships here.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY adapter.py demo_graph.py approval_graph.py ./
+
+# Point this at your own graph and mount or COPY its code beside the adapter:
+#   ENV AGENTHUB_GRAPH=my_project.agent:graph
+ENV AGENTHUB_GRAPH=demo_graph:graph \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8420
+CMD ["uvicorn", "adapter:app", "--host", "0.0.0.0", "--port", "8420"]

@@ -1,0 +1,12 @@
+# The adapter itself. The graph's own dependencies are the graph's business and
+# are installed from its repository, not from here.
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+langgraph>=0.2.0
+langchain-core>=0.3.0
+
+# Only for the bundled demo graph, and only when you want it to talk to a real
+# model instead of its offline fake. A real graph brings its own provider
+# package, whichever one it uses.
+# langchain-openai>=0.3.0

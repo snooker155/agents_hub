@@ -13,4 +13,8 @@ export default {
   notSet: '<not set>',
   notDeclared: 'not declared — runs return in one response',
   serviceUrl: 'Service URL',
+  graphEndpoint: 'Graph endpoint',
+  graphTitle: 'Its own graph',
+  refreshGraph: 'Refresh',
+  graphIsAMirror: 'A read-only mirror of the graph this agent reports. The hub does not run it; the agent does.',
 };

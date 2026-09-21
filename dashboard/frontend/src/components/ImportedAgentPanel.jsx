@@ -8,10 +8,12 @@ import {
   Loader,
   RefreshCw,
   Server,
+  Workflow,
   X,
 } from 'lucide-react';
-import { recheckImportedAgent } from '../api';
+import { recheckImportedAgent, refreshAgentTopology } from '../api';
 import { useI18n } from '../i18n';
+import GraphMirror from './GraphMirror';
 
 /**
  * The imported-agent panel on an agent's page.
@@ -28,6 +30,8 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
   const [readiness, setReadiness] = useState(remote?.readiness || null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState('');
+  const [topology, setTopology] = useState(remote?.topology || null);
+  const [fetchingGraph, setFetchingGraph] = useState(false);
 
   if (!remote) return null;
 
@@ -42,11 +46,27 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
         workspace: workspace || undefined,
       });
       setReadiness(data.report);
+      // A re-check re-fetches the graph too, so the picture cannot keep showing
+      // the shape of a service the agent no longer points at.
+      if (data.topology) setTopology(data.topology);
       onUpdated?.();
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
     } finally {
       setChecking(false);
+    }
+  };
+
+  const reloadGraph = async () => {
+    setFetchingGraph(true);
+    setError('');
+    try {
+      const { data } = await refreshAgentTopology(agent.id);
+      setTopology(data.topology);
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message);
+    } finally {
+      setFetchingGraph(false);
     }
   };
 
@@ -102,6 +122,14 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
           </dd>
         </div>
         <div>
+          <dt className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('importedAgentPanel.graphEndpoint')}</dt>
+          <dd className="text-gray-700 break-all">
+            {remote.graph_path
+              ? `GET ${(remote.url || t('importedAgentPanel.notSet')) + remote.graph_path}`
+              : t('importedAgentPanel.notDeclared')}
+          </dd>
+        </div>
+        <div>
           <dt className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('importedAgentPanel.streaming')}</dt>
           <dd className="text-gray-700 break-all">
             {remote.stream_path
@@ -135,6 +163,37 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
         </div>
         {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
       </div>
+
+      {/* The agent's own graph, when it publishes one. Read-only by design: this
+          is a picture of something this hub does not execute. */}
+      {remote.graph_path && (
+        <div className="mb-5 border border-gray-100 rounded-lg p-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Workflow className="w-4 h-4 text-indigo-500" />
+              {t('importedAgentPanel.graphTitle')}
+              {topology?.framework && topology.framework !== 'unknown' && (
+                <span className="text-[10px] uppercase tracking-wider font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                  {topology.framework}
+                </span>
+              )}
+            </h4>
+            <button
+              onClick={reloadGraph}
+              disabled={fetchingGraph}
+              className="text-xs text-indigo-600 font-semibold flex items-center gap-1.5 hover:text-indigo-700 disabled:opacity-50"
+            >
+              {fetchingGraph ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              {t('importedAgentPanel.refreshGraph')}
+            </button>
+          </div>
+          <GraphMirror topology={topology} />
+          <p className="text-[11px] text-gray-400 mt-3">
+            {t('importedAgentPanel.graphIsAMirror')}
+            {topology?.fetched_at && ` · ${new Date(topology.fetched_at).toLocaleString()}`}
+          </p>
+        </div>
+      )}
 
       {/* Verdict */}
       {readiness && (

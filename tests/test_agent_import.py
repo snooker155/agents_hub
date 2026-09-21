@@ -19,18 +19,23 @@ from agents import registry
 from agents.importer import checks, clone
 from agents.importer import service as import_service
 from agents.importer.manifest import parse_manifest
-from agents.remote_agent import RemoteAgent, resolve_auth_header
+from agents.remote_agent import RemoteAgent, normalize_topology, resolve_auth_header
 
-EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "imported-agents" / "aider-agenthub"
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "imported-agents"
+EXAMPLE_DIR = EXAMPLES / "aider-agenthub"
+# The second bundled example: an agent that is internally a graph and says so.
+GRAPH_EXAMPLE_DIR = EXAMPLES / "langgraph-agenthub"
+# The same adapter for LangGraph.js. Its behaviour is covered by its own test
+# suite, in Node; what belongs here is that the hub reads its manifest the same
+# way, since that is this side's half of the contract.
+JS_GRAPH_EXAMPLE_DIR = EXAMPLES / "langgraph-agenthub-js"
 
 
 # ── fixtures ────────────────────────────────────────────────────────────────
 
-@pytest.fixture
-def example_repo(tmp_path):
-    """The bundled example, turned into a standalone git repo we can clone."""
-    dest = tmp_path / "aider-agenthub-src"
-    shutil.copytree(EXAMPLE_DIR, dest)
+def _as_repo(source: Path, dest: Path) -> Path:
+    """Copy a bundled example and git init it, so the importer can clone it."""
+    shutil.copytree(source, dest, ignore=shutil.ignore_patterns("__pycache__"))
     subprocess.run(["git", "init", "--quiet"], cwd=dest, check=True)
     subprocess.run(["git", "add", "-A"], cwd=dest, check=True)
     subprocess.run(
@@ -39,6 +44,24 @@ def example_repo(tmp_path):
         cwd=dest, check=True,
     )
     return dest
+
+
+@pytest.fixture
+def example_repo(tmp_path):
+    """The bundled example, turned into a standalone git repo we can clone."""
+    return _as_repo(EXAMPLE_DIR, tmp_path / "aider-agenthub-src")
+
+
+@pytest.fixture
+def graph_example_repo(tmp_path):
+    """The bundled LangGraph example, which declares a graph endpoint."""
+    return _as_repo(GRAPH_EXAMPLE_DIR, tmp_path / "langgraph-agenthub-src")
+
+
+@pytest.fixture
+def js_graph_example_repo(tmp_path):
+    """The bundled LangGraph.js example, which declares the same contract."""
+    return _as_repo(JS_GRAPH_EXAMPLE_DIR, tmp_path / "langgraph-agenthub-js-src")
 
 
 @pytest.fixture(autouse=True)
@@ -90,9 +113,20 @@ class _StubHandler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # keep pytest output clean
         pass
 
+    # Answer for GET /graph, set per test. The default is a two-node graph with
+    # one conditional edge, which is the smallest shape worth drawing.
+    topology = {
+        "ok": True,
+        "framework": "langgraph",
+        "nodes": [{"id": "triage", "label": "triage"}, {"id": "answer", "label": "answer"}],
+        "edges": [{"source": "triage", "target": "answer", "conditional": True}],
+    }
+
     def do_GET(self):
         if self.path == "/health":
             self._send(200, {"status": "ok"})
+        elif self.path == "/graph":
+            self._send(200, type(self).topology)
         else:
             self._send(404, {"error": "not found"})
 
@@ -103,9 +137,23 @@ class _StubHandler(BaseHTTPRequestHandler):
         {"type": "done", "ok": True, "output": "patched api/users.py"},
     ]
 
+    # Frames returned by /resume, set per test.
+    resume_frames = [
+        {"type": "token", "token": "continuing"},
+        {"type": "done", "ok": True, "output": "finished after the answer"},
+    ]
+    # Bodies the stub was asked to resume with, so a test can check what the hub
+    # actually sent rather than only what came back.
+    resumed = []
+
     def do_POST(self):
         if self.path == "/run/stream":
             self._send_stream()
+            return
+        if self.path == "/resume":
+            length = int(self.headers.get("Content-Length") or 0)
+            type(self).resumed.append(json.loads(self.rfile.read(length) or b"{}"))
+            self._send_stream(frames=type(self).resume_frames, read_body=False)
             return
         if self.path != "/run":
             self._send(404, {"error": "not found"})
@@ -116,13 +164,14 @@ class _StubHandler(BaseHTTPRequestHandler):
         payload["echo_prompt"] = body.get("prompt")
         self._send(type(self).status, payload)
 
-    def _send_stream(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        self.rfile.read(length)
+    def _send_stream(self, frames=None, read_body=True):
+        if read_body:
+            length = int(self.headers.get("Content-Length") or 0)
+            self.rfile.read(length)
         self.send_response(type(self).status)
         self.send_header("Content-Type", "application/x-ndjson")
         self.end_headers()
-        for frame in type(self).stream_frames:
+        for frame in (frames if frames is not None else type(self).stream_frames):
             self.wfile.write((json.dumps(frame) + "\n").encode())
             self.wfile.flush()
 
@@ -153,6 +202,17 @@ def stub_agent_service():
             {"type": "token", "token": "api/users.py"},
             {"type": "done", "ok": True, "output": "patched api/users.py"},
         ]
+        _StubHandler.resume_frames = [
+            {"type": "token", "token": "continuing"},
+            {"type": "done", "ok": True, "output": "finished after the answer"},
+        ]
+        _StubHandler.resumed = []
+        _StubHandler.topology = {
+            "ok": True,
+            "framework": "langgraph",
+            "nodes": [{"id": "triage", "label": "triage"}, {"id": "answer", "label": "answer"}],
+            "edges": [{"source": "triage", "target": "answer", "conditional": True}],
+        }
 
 
 # ── manifest ────────────────────────────────────────────────────────────────
@@ -867,3 +927,246 @@ def test_delegation_emitter_is_used_when_no_callback_carries_one(stub_agent_serv
 
     assert "".join(e["token"] for e in seen if e.get("type") == "token") == "reading api/users.py"
     assert result.agent_output == "patched api/users.py"
+
+
+# ── agents that are graphs ──────────────────────────────────────────────────
+#
+# An imported agent may be a graph internally (LangGraph, and anything else that
+# knows its own shape). Two things follow: it narrates node boundaries while it
+# runs, and it can hand over its topology so the hub draws it instead of showing
+# one opaque box.
+
+
+def _graph_agent(url):
+    return RemoteAgent(
+        agent_id="graph", name="Graph",
+        remote={"url": url, "stream_path": "/run/stream", "graph_path": "/graph"},
+    )
+
+
+def test_node_frames_are_not_forwarded_as_flow_node_events(stub_agent_service):
+    """A remote's own nodes must not masquerade as hub flow nodes.
+
+    ``node_start`` on the chat stream already means "a node of a flow this hub is
+    running started", and the chat opens a bubble per flow node. Forwarding a
+    remote agent's internal nodes under that name would split one agent's answer
+    into flow bubbles in a conversation that is running no flow at all.
+    """
+    url, handler = stub_agent_service
+    handler.stream_frames = [
+        {"type": "node_start", "node": "triage"},
+        {"type": "token", "token": "thinking"},
+        {"type": "node_end", "node": "triage", "ok": True, "next": "answer"},
+        {"type": "done", "ok": True, "output": "answered"},
+    ]
+    listener = _RecordingEmitter()
+
+    _graph_agent(url).run("go", callbacks=[listener])
+
+    kinds = [e["type"] for e in listener.events]
+    assert kinds == ["graph_node_start", "token", "graph_node_end"]
+    assert "node_start" not in kinds
+
+
+def test_node_end_reports_the_branch_that_was_taken(stub_agent_service):
+    """On a conditional edge, which way the run went is the whole question."""
+    url, handler = stub_agent_service
+    handler.stream_frames = [
+        {"type": "node_start", "node": "triage", "depth": 0},
+        {"type": "node_end", "node": "triage", "ok": True, "next": "pricing"},
+        {"type": "done", "ok": True, "output": "ok"},
+    ]
+    listener = _RecordingEmitter()
+
+    _graph_agent(url).run("go", callbacks=[listener])
+
+    end = listener.events[-1]
+    assert end["node"] == "triage"
+    assert end["next"] == "pricing"
+    assert end["ok"] is True
+
+
+def test_a_node_entered_twice_resolves_once_per_pass(stub_agent_service):
+    """An agent loop revisits nodes; each visit has to close on its own."""
+    url, handler = stub_agent_service
+    handler.stream_frames = [
+        {"type": "node_start", "node": "critic"},
+        {"type": "node_end", "node": "critic", "ok": True},
+        {"type": "node_start", "node": "critic"},
+        {"type": "node_end", "node": "critic", "ok": False, "error": "gave up"},
+        {"type": "done", "ok": True, "output": "ok"},
+    ]
+    listener = _RecordingEmitter()
+
+    _graph_agent(url).run("go", callbacks=[listener])
+
+    ends = [e for e in listener.events if e["type"] == "graph_node_end"]
+    assert [e["ok"] for e in ends] == [True, False]
+    assert ends[1]["error"] == "gave up"
+
+
+def test_a_failed_node_does_not_fail_the_run_by_itself(stub_agent_service):
+    """The ``done`` frame stays the single authority on a run's outcome."""
+    url, handler = stub_agent_service
+    handler.stream_frames = [
+        {"type": "node_start", "node": "fetch"},
+        {"type": "node_end", "node": "fetch", "ok": False, "error": "timeout"},
+        {"type": "token", "token": "recovered"},
+        {"type": "done", "ok": True, "output": "answered from cache"},
+    ]
+    listener = _RecordingEmitter()
+
+    result = _graph_agent(url).run("go", callbacks=[listener])
+
+    assert result.ok is True
+    assert result.agent_output == "answered from cache"
+
+
+def test_node_frames_without_a_name_are_ignored(stub_agent_service):
+    """A nameless node is nothing to draw, and must not break a good run."""
+    url, handler = stub_agent_service
+    handler.stream_frames = [
+        {"type": "node_start"},
+        {"type": "done", "ok": True, "output": "fine"},
+    ]
+    listener = _RecordingEmitter()
+
+    result = _graph_agent(url).run("go", callbacks=[listener])
+
+    assert listener.events == []
+    assert result.ok is True
+
+
+# ── topology ────────────────────────────────────────────────────────────────
+
+def test_topology_is_fetched_and_normalised(stub_agent_service):
+    url, _ = stub_agent_service
+
+    topology = _graph_agent(url).fetch_topology()
+
+    assert topology["ok"] is True
+    assert topology["framework"] == "langgraph"
+    assert [n["id"] for n in topology["nodes"]] == ["triage", "answer"]
+    assert topology["edges"][0]["conditional"] is True
+
+
+def test_topology_is_opt_in(stub_agent_service):
+    """No ``graph_path`` means no probe: most agents are not graphs."""
+    url, _ = stub_agent_service
+    agent = RemoteAgent(agent_id="plain", name="Plain", remote={"url": url})
+
+    assert agent.supports_topology is False
+    assert agent.fetch_topology()["ok"] is False
+
+
+def test_an_unreachable_topology_is_a_reason_not_a_crash():
+    agent = RemoteAgent(
+        agent_id="graph", name="Graph",
+        remote={"url": "http://127.0.0.1:9", "graph_path": "/graph"},
+    )
+
+    topology = agent.fetch_topology(timeout=1)
+
+    assert topology["ok"] is False
+    assert topology["nodes"] == []
+    assert topology["error"]
+
+
+def test_dangling_edges_are_dropped_rather_than_drawn():
+    """A renderer handed an edge to a node that does not exist invents one."""
+    topology = normalize_topology({
+        "framework": "langgraph",
+        "nodes": [{"id": "a"}, {"id": "b"}],
+        "edges": [{"source": "a", "target": "b"}, {"source": "a", "target": "ghost"}],
+    })
+
+    assert [(e["source"], e["target"]) for e in topology["edges"]] == [("a", "b")]
+
+
+def test_a_topology_is_bounded_before_it_reaches_a_browser():
+    from agents.remote_agent import MAX_TOPOLOGY_LABEL, MAX_TOPOLOGY_NODES
+
+    topology = normalize_topology({
+        "nodes": [{"id": f"n{i}", "label": "x" * 500} for i in range(MAX_TOPOLOGY_NODES + 50)],
+        "edges": [],
+    })
+
+    assert len(topology["nodes"]) == MAX_TOPOLOGY_NODES
+    assert len(topology["nodes"][0]["label"]) <= MAX_TOPOLOGY_LABEL + 1
+
+
+def test_a_topology_with_no_nodes_is_not_ok():
+    """Better a stated reason than an empty canvas that looks like a bug."""
+    topology = normalize_topology({"nodes": [], "edges": []})
+
+    assert topology["ok"] is False
+    assert topology["error"]
+
+
+# ── the manifest side ───────────────────────────────────────────────────────
+
+def test_the_bundled_langgraph_example_declares_its_graph(graph_example_repo):
+    manifest = parse_manifest(graph_example_repo)
+
+    assert manifest.problems == []
+    assert manifest.graph_path == "/graph"
+    assert manifest.stream_path == "/run/stream"
+
+
+def test_the_bundled_js_example_declares_the_same_contract(js_graph_example_repo):
+    """The JavaScript adapter is a different runtime, not a different contract."""
+    manifest = parse_manifest(js_graph_example_repo)
+
+    assert manifest.problems == []
+    assert manifest.graph_path == "/graph"
+    assert manifest.stream_path == "/run/stream"
+    assert manifest.resume_path == "/resume"
+    # A distinct id, so both examples can be imported into one hub and compared
+    # side by side, which is the whole point of having two.
+    assert manifest.id == "langgraph-agent-js"
+    assert manifest.id != parse_manifest(GRAPH_EXAMPLE_DIR).id
+    # The graph is named the same way on both sides, and it is required on both:
+    # an adapter serving some other graph than the one that was meant is the
+    # failure this check exists to prevent.
+    required = {e.name for e in manifest.env if e.required}
+    assert required == {"AGENTHUB_GRAPH"}
+    assert manifest.dockerfile == "Dockerfile.agenthub"
+
+
+def test_graph_path_reaches_the_descriptor_and_the_topology_is_stored(
+    graph_example_repo, stub_agent_service, monkeypatch,
+):
+    url, _ = stub_agent_service
+    monkeypatch.setenv("AGENTHUB_GRAPH", "demo_graph:graph")
+
+    inspected = import_service.inspect(str(graph_example_repo), url=url)
+    import_service.register(
+        inspected["token"], repo_url=str(graph_example_repo),
+        agent_id="langgraph-agent", url=url,
+    )
+
+    remote = registry.get_agent("langgraph-agent").remote
+    assert remote["graph_path"] == "/graph"
+    # Registration is also when the picture is first fetched, so the agent page
+    # has something to show without a second click.
+    assert [n["id"] for n in remote["topology"]["nodes"]] == ["triage", "answer"]
+
+
+def test_the_graph_check_is_absent_for_agents_that_are_not_graphs(tmp_path):
+    """An agent with no graph should not carry a permanent "no graph" warning."""
+    (tmp_path / "agent-hub.json").write_text(json.dumps({
+        "schema": "agents-hub/agent-manifest@1",
+        "id": "plain", "name": "Plain",
+        "runtime": {"kind": "http", "run_path": "/run"},
+    }))
+
+    assert checks.check_graph(parse_manifest(tmp_path)) is None
+
+
+def test_the_graph_check_is_a_note_when_declared(graph_example_repo):
+    check = checks.check_graph(parse_manifest(graph_example_repo))
+
+    assert check is not None
+    assert check.ok is True
+    assert check.required is False, "a graph endpoint is a bonus, never a blocker"
+

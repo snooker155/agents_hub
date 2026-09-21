@@ -278,6 +278,8 @@ html.dark {
 :where(html) .text-purple-600,
 :where(html) .text-violet-600 { color: #2a4fbd; }
 :where(html) .fill-indigo-100 { fill: #dbe6ff; }
+:where(html) .fill-indigo-50 { fill: #eef3ff; }
+:where(html) .fill-indigo-500 { fill: #3f66d8; }
 :where(html) .focus-visible\:ring-indigo-500:focus-visible,
 :where(html) .focus\:ring-indigo-500:focus,
 :where(html) .focus\:ring-purple-500:focus,
@@ -316,6 +318,7 @@ html.dark {
 :where(html) .text-indigo-700,
 :where(html) .text-purple-700,
 :where(html) .text-violet-700 { color: #21409c; }
+:where(html) .hover\:bg-indigo-50\/20:hover { background-color: rgba(238, 243, 255, 0.20); }
 :where(html) .hover\:text-indigo-800:hover,
 :where(html) .text-fuchsia-800,
 :where(html) .text-indigo-800,
@@ -358,6 +361,8 @@ html.dark {
 :where(html) .ring-indigo-950,
 :where(html) .ring-purple-950,
 :where(html) .ring-violet-950 { --tw-ring-color: #101c40; }
+:where(html) .stroke-indigo-300 { stroke: #93b0f5; }
+:where(html) .stroke-indigo-600 { stroke: #2a4fbd; }
 :where(html) .text-fuchsia-100,
 :where(html) .text-indigo-100,
 :where(html) .text-purple-100,
@@ -978,6 +983,11 @@ html.dark {
 :where(html.dark) .text-indigo-600,
 :where(html.dark) .text-purple-600,
 :where(html.dark) .text-violet-600 { color: #8fb2ff; }
+:where(html.dark) .fill-amber-800 { fill: #fcd34d; }
+:where(html.dark) .fill-gray-300 { fill: #8e9bb1; }
+:where(html.dark) .fill-gray-400 { fill: #8b98ae; }
+:where(html.dark) .fill-gray-700 { fill: #ccd5e3; }
+:where(html.dark) .fill-indigo-500 { fill: #8cb0ff; }
 :where(html.dark) .focus-visible\:ring-indigo-500:focus-visible,
 :where(html.dark) .focus\:ring-indigo-500:focus,
 :where(html.dark) .focus\:ring-purple-500:focus,
@@ -1009,6 +1019,7 @@ html.dark {
 :where(html.dark) .text-purple-500,
 :where(html.dark) .text-violet-500 { color: #8cb0ff; }
 :where(html.dark) .hover\:bg-gray-100\/70:hover { background-color: rgba(24, 34, 58, 0.70); }
+:where(html.dark) .hover\:bg-indigo-50\/20:hover { background-color: rgba(63, 102, 216, 0.032); }
 :where(html.dark) .hover\:text-amber-600:hover,
 :where(html.dark) .text-amber-500,
 :where(html.dark) .text-amber-600 { color: #fbbf24; }
@@ -1223,6 +1234,10 @@ html.dark {
 :where(html.dark) .ring-yellow-200 { --tw-ring-color: rgba(234, 179, 8, 0.36); }
 :where(html.dark) .ring-yellow-300 { --tw-ring-color: rgba(234, 179, 8, 0.46); }
 :where(html.dark) .ring-yellow-50 { --tw-ring-color: rgba(234, 179, 8, 0.18); }
+:where(html.dark) .stroke-amber-500 { stroke: #fbbf24; }
+:where(html.dark) .stroke-gray-300 { stroke: #8e9bb1; }
+:where(html.dark) .stroke-indigo-300 { stroke: #a8c4ff; }
+:where(html.dark) .stroke-indigo-600 { stroke: #8fb2ff; }
 :where(html.dark) .text-blue-700,
 :where(html.dark) .text-blue-800,
 :where(html.dark) .text-blue-900,

@@ -23,7 +23,7 @@ Each example lives in its own directory and includes a dedicated `README.md` wit
 | 7 | `07_docker_isolated_agent_runs` | Execute agents in Docker-managed containers |
 | 8 | `08_local_model_lab` | Run the system with Ollama or LM Studio |
 | 9 | `09_thinking_capability_check` | Verify an agent's think/plan reasoning capabilities |
-| — | `imported-agents` | Make an external agent importable: a worked [Aider](https://github.com/Aider-AI/aider) adapter with its manifest, HTTP server and Dockerfile |
+| — | `imported-agents` | Make external code importable without changing it: an [Aider](https://github.com/Aider-AI/aider) adapter, and LangGraph adapters for Python and JavaScript that serve any compiled graph named by an env var |
 | — | `sample-documents` | Input files for the RAG, memory-extraction and structured-extraction walkthroughs |
 
 `imported-agents` is not a numbered walkthrough: it is a reference

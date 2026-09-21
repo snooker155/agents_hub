@@ -261,6 +261,37 @@ def check_streaming(manifest: AgentManifest) -> ReadinessCheck:
     )
 
 
+def check_graph(manifest: AgentManifest) -> Optional[ReadinessCheck]:
+    """Whether the agent publishes its own topology. Absent for most agents.
+
+    Returns None rather than a failed check when nothing is declared, because
+    most agents are not graphs and have no shape to show. Telling every imported
+    agent that it "has no graph" would add a permanent warning to the report
+    that nobody can act on, which is how a readiness report stops being read.
+    """
+    if not manifest.graph_path:
+        return None
+    return ReadinessCheck(
+        id="graph", label="Graph topology", ok=True, required=False,
+        detail=f"GET {manifest.graph_path} — the hub draws this agent's own graph",
+    )
+
+
+def check_resume(manifest: AgentManifest) -> Optional[ReadinessCheck]:
+    """Whether this agent can be continued after it pauses. Absent for most.
+
+    None rather than a failed check when nothing is declared, for the same
+    reason as the graph check: an agent that never pauses has nothing to resume,
+    and a permanent warning nobody can act on is how a report stops being read.
+    """
+    if not manifest.resume_path:
+        return None
+    return ReadinessCheck(
+        id="resume", label="Resumable", ok=True, required=False,
+        detail=f"POST {manifest.resume_path} — a paused run continues where it stopped",
+    )
+
+
 def check_env(manifest: AgentManifest, workspace: Optional[str] = None) -> ReadinessCheck:
     required = [e for e in manifest.env if e.required]
     if not required:
@@ -345,6 +376,12 @@ def evaluate(
         check_packaging(repo_dir, manifest, url),
         check_streaming(manifest),
     ]
+    graph = check_graph(manifest)
+    if graph is not None:
+        checks.append(graph)
+    resume = check_resume(manifest)
+    if resume is not None:
+        checks.append(resume)
     if probe_health:
         checks.append(check_health(url, manifest, remote))
     return ReadinessReport(checks=checks, checked_at=_now())
@@ -362,5 +399,7 @@ __all__ = [
     "check_packaging",
     "check_env",
     "check_streaming",
+    "check_graph",
+    "check_resume",
     "check_health",
 ]

@@ -120,6 +120,17 @@ export function reduceLiveTurn(turn, event) {
         ...t,
         thinking: [...t.thinking, { kind: 'node', content: event.label || event.agent_id || event.node_id || '' }],
       };
+    // A node of an *imported agent's own* graph, not of a hub flow. The mirror
+    // shows the path through the graph in the same trail; the tab that owns the
+    // turn renders it as timeline steps (Chat.jsx), which is the authored
+    // version this one steps aside for.
+    case 'graph_node_start':
+      return {
+        ...t,
+        thinking: [...t.thinking, { kind: 'node', content: event.node || '' }],
+      };
+    case 'graph_node_end':
+      return t;
     case 'team_message': {
       // A team answers as a conversation; the mirror shows it as it is said.
       const who = event.sender || event.agent_id || '';
