@@ -67,7 +67,22 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
 
     # Propagate workspace to agent tools (e.g. list_tasks) via a context var
     # that is thread-safe and copied into asyncio.to_thread's execution context.
-    apply_workspace_ctx(request, workspace_abs)
+    ws_name = apply_workspace_ctx(request, workspace_abs)
+
+    # The launcher, evals and loops all refuse to start a run once a workspace's
+    # hard budget cap is met (common.budget.check_budget); chat was the one
+    # surface that could still spend past it turn after turn. Gate here, before
+    # the agent is built or invoked, using the same resolved workspace name the
+    # run record and journal already use.
+    from common.budget import check_budget, BudgetExceededError
+    try:
+        check_budget(ws_name)
+    except BudgetExceededError as e:
+        finished = utc_iso()
+        _write_log(log_file, log_lines + [f"(budget: {e})", "", f"Finished: {finished}"])
+        update_run(run_id, {"status": "failed", "finished_at": finished,
+                            "exit_code": 1, "error": str(e)})
+        raise ChatSendError(str(e), status=402)
 
     def _run_agent():
         # Timed call + stats go through the shared invocation core (same path as

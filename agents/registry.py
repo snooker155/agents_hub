@@ -29,6 +29,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import json
+import os
+from filelock import FileLock
 from common.paths import AGENTS_FILE
 
 
@@ -339,6 +341,24 @@ def _config_path() -> Path:
     return AGENTS_FILE
 
 
+# add_agent/remove_agent run from the dashboard process as well as agent
+# subprocesses (create_agent_tool / modify_agent_tool in
+# tools/langchain_tools.py), so the read-modify-write must be serialized
+# across processes, not just threads. Same lock-file-next-to-target
+# convention as common/user_context.py and workspace/storage.py.
+_REGISTRY_LOCK_PATH = str(AGENTS_FILE) + ".lock"
+
+
+def _write_registry(path: Path, data: Dict[str, Any]) -> None:
+    """Write agents.json via temp file + os.replace so a crash never leaves
+    a truncated or half-written file behind for readers to trip over."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
 def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
     if ":" not in entrypoint:
         raise ValueError(
@@ -616,27 +636,27 @@ def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
         spec = _dc.replace(spec, user_modified=True)
 
     path = _config_path()
-    try:
-        data = _load_file_raw(path)
-    except FileNotFoundError:
-        data = {"agents": []}
+    with FileLock(_REGISTRY_LOCK_PATH, timeout=10.0):
+        try:
+            data = _load_file_raw(path)
+        except FileNotFoundError:
+            data = {"agents": []}
 
-    if not isinstance(data, dict) or "agents" not in data:
-        data = {"agents": []}
+        if not isinstance(data, dict) or "agents" not in data:
+            data = {"agents": []}
 
-    # Check for duplicates (update if exists)
-    found = False
-    for i, a in enumerate(data["agents"]):
-        if a.get("id") == spec.id:
-            data["agents"][i] = spec.to_dict()
-            found = True
-            break
+        # Check for duplicates (update if exists)
+        found = False
+        for i, a in enumerate(data["agents"]):
+            if a.get("id") == spec.id:
+                data["agents"][i] = spec.to_dict()
+                found = True
+                break
 
-    if not found:
-        data["agents"].append(spec.to_dict())
+        if not found:
+            data["agents"].append(spec.to_dict())
 
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        _write_registry(path, data)
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
@@ -646,22 +666,22 @@ def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
 def remove_agent(agent_id: str) -> bool:
     """Remove an agent from agents.json by id. Returns True if found and removed."""
     path = _config_path()
-    try:
-        data = _load_file_raw(path)
-    except FileNotFoundError:
-        return False
+    with FileLock(_REGISTRY_LOCK_PATH, timeout=10.0):
+        try:
+            data = _load_file_raw(path)
+        except FileNotFoundError:
+            return False
 
-    if not isinstance(data, dict) or "agents" not in data:
-        return False
+        if not isinstance(data, dict) or "agents" not in data:
+            return False
 
-    original_len = len(data["agents"])
-    data["agents"] = [a for a in data["agents"] if a.get("id") != agent_id]
+        original_len = len(data["agents"])
+        data["agents"] = [a for a in data["agents"] if a.get("id") != agent_id]
 
-    if len(data["agents"]) == original_len:
-        return False  # not found
+        if len(data["agents"]) == original_len:
+            return False  # not found
 
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        _write_registry(path, data)
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
