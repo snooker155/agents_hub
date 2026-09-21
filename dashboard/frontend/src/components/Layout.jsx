@@ -48,6 +48,7 @@ import {
   Globe,
   Share2,
   Link2,
+  Plug,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -307,6 +308,10 @@ const Layout = ({ children }) => {
         // reports in, or this service reaches out to a system you use.
         { name: t('nav.connections'), path: '/connections', icon: Share2 },
         { name: t('nav.connectors'), path: '/connectors', icon: Link2 },
+        // A third way in, and the one that is not an integration this product
+        // wrote: an MCP server hands over tools nobody here has seen, which is
+        // why attaching one asks for a capability declaration. See docs/mcp.md.
+        { name: t('nav.mcp'), path: '/mcp', icon: Plug },
       ],
     },
     {

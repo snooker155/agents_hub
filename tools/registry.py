@@ -521,6 +521,32 @@ def get_tools_by_category(category: str) -> List[ToolSpec]:
     return [t for t in _catalog() if t.category == category]
 
 
+def list_mcp_tool_specs(workspace: Optional[str] = None) -> List[ToolSpec]:
+    """Catalog entries for the MCP tools attached to one workspace.
+
+    A second list beside the catalog, never folded into it. The catalog is
+    static and every id in it is classified in ``tools/capabilities.py`` — a
+    property the classification test asserts — while these are defined on
+    somebody else's server, differ per workspace and can change between two
+    calls. Merging them would make that assertion unstateable and would make
+    ``TOOL_CATALOG`` depend on which workspace happened to be active.
+
+    Their capabilities still resolve through the same ``grants_of`` the catalog
+    uses: an MCP id is answered from its server's configuration (see
+    ``tools.capabilities.mcp_grants``), so ``ToolSpec.to_dict`` reports the
+    operator's declared grants for these exactly as it does for built-ins.
+
+    Never raises: the agent editor asking what is attached must not fail
+    because a server is unreachable or the package is not installed.
+    """
+    try:
+        from mcp_client.client import mcp_tool_specs
+        return mcp_tool_specs(workspace)
+    except Exception:
+        logger.exception("tool catalog: failed to list MCP tools for workspace %r", workspace)
+        return []
+
+
 def get_tool_by_id(tool_id: str) -> Optional[ToolSpec]:
     """Get a specific tool by ID."""
     for t in _catalog():
@@ -538,4 +564,5 @@ __all__ = [
     "get_all_tools",
     "get_tools_by_category",
     "get_tool_by_id",
+    "list_mcp_tool_specs",
 ]

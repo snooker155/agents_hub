@@ -781,7 +781,7 @@ const AgentDetails = () => {
   useEffect(() => {
     const fetchTools = async () => {
       try {
-        const resp = await getTools();
+        const resp = await getTools(selectedWorkspace);
         const list = resp.data?.all || [];
         const meta = {};
         const ids = [];
@@ -804,7 +804,8 @@ const AgentDetails = () => {
       }
     };
     fetchTools();
-  }, []);
+    // MCP servers are attached per workspace, so the list changes with it.
+  }, [selectedWorkspace]);
 
   // Load the delegation allowlist and the set of agents available to delegate to.
   useEffect(() => {

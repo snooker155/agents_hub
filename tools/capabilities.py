@@ -378,6 +378,72 @@ ALIAS_GRANTS: Dict[str, FrozenSet[str]] = {
 }
 
 
+# ── External MCP servers ──────────────────────────────────────────────────────
+#
+# An MCP server is a collection of tools defined somewhere else, attached per
+# workspace (see mcp_client/). Its tools cannot appear in the tables above:
+# they are not in this repository, they differ per workspace, and a remote
+# server is free to rename them between two agent builds.
+#
+# They are still classified, just from a different source. The operator ticks
+# the three capabilities once per server when attaching it, and every tool from
+# that server inherits them. Per server rather than per tool because a per-tool
+# claim would have to be derived from the tool's own name or description, and a
+# server that calls its exfiltration endpoint ``get_weather`` would then classify
+# itself. The one party who can make an honest claim is the person who attached
+# the server.
+
+MCP_TOOL_PREFIX = "mcp__"
+MCP_ALIAS_PREFIX = "mcp:"
+
+
+def _mcp_server_of(tool_id: str) -> Optional[str]:
+    """The server id behind an MCP tool id or group alias, else ``None``.
+
+    ``mcp__<server>__<tool>`` names one tool, ``mcp:<server>`` names the whole
+    server the way ``filesystem`` names the filesystem group. Server ids are
+    validated (``mcp_client.store.validate_id``) to contain no double
+    underscore, so this split has exactly one reading.
+    """
+    text = str(tool_id or "")
+    if text.startswith(MCP_ALIAS_PREFIX):
+        return text[len(MCP_ALIAS_PREFIX):].strip().lower() or None
+    if text.startswith(MCP_TOOL_PREFIX):
+        server, sep, tool = text[len(MCP_TOOL_PREFIX):].partition("__")
+        if sep and server and tool:
+            return server.strip().lower()
+    return None
+
+
+def mcp_grants(tool_id: str) -> Optional[FrozenSet[str]]:
+    """Capabilities an MCP tool id or alias grants, or ``None`` if it is neither.
+
+    ``None`` and ``frozenset()`` mean different things here: the first says
+    "this is not an MCP id, keep looking", the second says "it is, and its
+    server grants nothing". A server that is not configured in the active
+    workspace also reads as granting nothing, and that is accurate rather than
+    lenient: with no configuration there is no server to connect to, so the
+    agent gets no tool from it either (``mcp_client.client.expand_ids``).
+
+    The lookup is lazy and defensive by design — this module must stay
+    importable without the MCP package, and a capability check must never be
+    the thing that raises.
+    """
+    server = _mcp_server_of(tool_id)
+    if server is None:
+        return None
+    try:
+        from common.workspace_context import resolve_active_workspace
+        from mcp_client.store import server_capabilities
+        return server_capabilities(resolve_active_workspace(), server)
+    except Exception:
+        log.warning(
+            "capability model: could not read the configuration of MCP server %r "
+            "— treating it as granting nothing.", server,
+        )
+        return frozenset()
+
+
 # ── Delegation ────────────────────────────────────────────────────────────────
 #
 # A tool set's *own* grants (above) are only half the picture. An agent that
@@ -698,6 +764,12 @@ def grants_of(tool_id: str) -> FrozenSet[str]:
         return ALIAS_GRANTS[tool_id]
     if tool_id in REVIEWED_NO_GRANT:
         return frozenset()
+    # An MCP tool is classified by its server's configuration rather than by a
+    # table in this file — see ``mcp_grants``. Checked before the unknown-tool
+    # warning below, which would otherwise fire for every external tool.
+    external = mcp_grants(tool_id)
+    if external is not None:
+        return external
     if not _is_known_tool(tool_id):
         log.warning(
             "capability model: unknown tool id %r — treating as granting nothing. "
@@ -803,6 +875,7 @@ __all__ = [
     "INGESTS_UNTRUSTED", "READS_PRIVATE", "CAN_EXFILTRATE", "CAPABILITIES",
     "CAPABILITY_LABELS", "CAPABILITY_GRANTS", "CAPABILITY_GRANTS_EXTRA",
     "REVIEWED_NO_GRANT", "ALIAS_GRANTS", "DELEGATING_TOOLS",
+    "MCP_TOOL_PREFIX", "MCP_ALIAS_PREFIX", "mcp_grants",
     "UNTRUSTED_CHANNELS", "channel_capabilities",
     "BLOCKED_COMBINATIONS", "Rule", "Violation",
     "grants_of", "capabilities_of", "capability_sources",

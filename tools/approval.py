@@ -100,7 +100,46 @@ def needs_approval(tool_id: str, agent_spec: Any = None) -> bool:
     exempt = {str(x) for x in (getattr(agent_spec, "approval_exempt", None) or [])}
     if name in exempt:
         return False
-    return name in NEEDS_APPROVAL or name in extra
+    return name in NEEDS_APPROVAL or name in extra or _mcp_needs_approval(name)
+
+
+def _mcp_needs_approval(tool_id: str) -> bool:
+    """True when this MCP tool's server says calls to it need a human yes.
+
+    The list above cannot name these: the tools live on somebody else's server,
+    they differ per workspace, and their ids are only known once a server is
+    attached. So the claim is made where the server is configured — ``approval``
+    is ``"none"``, ``"all"``, or the names of the tools to gate — and read back
+    here, which keeps one gate rather than two.
+
+    The stored list may name a tool either way round: ``search`` as the remote
+    server calls it, or ``mcp__tickets__search`` as the hub does. Both are the
+    same tool, and an operator reading either the page or an agent record should
+    not have to know which spelling this file wanted.
+    """
+    if not tool_id.startswith("mcp__"):
+        return False
+    try:
+        from common.workspace_context import resolve_active_workspace
+        from mcp_client.client import split_tool_id
+        from mcp_client.store import get_server
+
+        split = split_tool_id(tool_id)
+        if split is None:
+            return False
+        server_id, remote_name = split
+        record = get_server(resolve_active_workspace(), server_id)
+        if record is None:
+            return False
+        approval = record.get("approval")
+        if isinstance(approval, (list, tuple, set)):
+            return tool_id in approval or remote_name in approval
+        return str(approval or "none").strip().lower() == "all"
+    except Exception:
+        # Same failure posture as ``approval_gate_enabled``: an unreadable
+        # config must not make every tool call look gated, which would stop the
+        # run outright.
+        return False
 
 
 def workspace_name(value: Optional[str] = None) -> Optional[str]:

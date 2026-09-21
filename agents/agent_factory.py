@@ -830,6 +830,17 @@ class AgentFactory:
                 + _clarify_prompt
             )
 
+        # Tools from the external MCP servers this record asks for, by group
+        # alias (`mcp:<server>`) or by individual id (`mcp__<server>__<tool>`).
+        # Resolved here rather than in _create_tools because they are per
+        # workspace and involve a network round trip, and appended *before* the
+        # guard below on purpose: a tool defined on somebody else's server is
+        # the last one that should run outside the workspace's hooks and the
+        # approval gate. A server that will not connect is skipped with its
+        # error recorded on its own entry, never failing the build.
+        from mcp_client import append_mcp_tools
+        tools = append_mcp_tools(tools, tool_list, workspace)
+
         # Human in the loop at the level of a single tool call: every action tool
         # is wrapped so the workspace's PreToolUse/PostToolUse hooks run around it
         # and a call that needs approval parks the task instead of happening (see

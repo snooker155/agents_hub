@@ -254,6 +254,27 @@ export const pruneConnection = (id, workspace) =>
 export const answerConnectionRun = (id, runId, data, workspace) =>
   api.post(`/connections/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/answer`,
            data, inWorkspace(workspace));
+
+// ── MCP servers: tool collections somebody else runs ─────────────────────────
+// Configured per workspace, so every call carries one. Credentials in headers
+// and env arrive masked (last four characters) and may be sent straight back:
+// the backend reads the masked form as "unchanged" rather than overwriting the
+// stored value, which is what lets a form be saved without holding the secret.
+// Only testMcpServer and listMcpServerTools actually connect to a server.
+export const listMcpServers = (workspace) => api.get('/mcp/servers', inWorkspace(workspace));
+export const createMcpServer = (data, workspace) =>
+  api.post('/mcp/servers', data, inWorkspace(workspace));
+export const updateMcpServer = (id, data, workspace) =>
+  api.patch(`/mcp/servers/${encodeURIComponent(id)}`, data, inWorkspace(workspace));
+export const deleteMcpServer = (id, workspace) =>
+  api.delete(`/mcp/servers/${encodeURIComponent(id)}`, inWorkspace(workspace));
+// Connect now and report every tool the server offers, including the ones the
+// allowlist would filter out: the point of the button is to help write it.
+export const testMcpServer = (id, workspace) =>
+  api.post(`/mcp/servers/${encodeURIComponent(id)}/test`, null, inWorkspace(workspace));
+export const listMcpServerTools = (id, workspace, refresh = false) =>
+  api.get(`/mcp/servers/${encodeURIComponent(id)}/tools`,
+          { params: { ...(workspace ? { workspace } : {}), ...(refresh ? { refresh: true } : {}) } });
 export const updateTask = (taskId, data) => api.patch(`/tasks/${taskId}`, data);
 export const assignAgent = (taskId, data) => api.post(`/tasks/${taskId}/assign`, data);
 export const approveAssignment = (taskId) => api.post(`/tasks/${taskId}/approve-assignment`);
@@ -322,7 +343,8 @@ export const getOrchestratorRoutingLog = (workspace) =>
 // Stats & Manifests
 export const getStats = (workspace) => api.get('/stats', { params: { workspace } });
 export const applyAgentManifest = (data) => api.post('/agents/apply', data);
-export const getTools = () => api.get('/tools');
+// With a workspace the MCP servers attached to it are listed as well.
+export const getTools = (workspace) => api.get('/tools', inWorkspace(workspace));
 export const getToolSource = (toolId) => api.get(`/tools/${encodeURIComponent(toolId)}/source`);
 export const updateToolSource = (toolId, data) => api.put(`/tools/${encodeURIComponent(toolId)}/source`, data);
 export const getRuns = (workspace) => api.get('/runs', { params: workspace ? { workspace } : {} });

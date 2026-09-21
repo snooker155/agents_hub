@@ -45,7 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
-from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances
+from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router
 from routes import settings as settings_router
 from routes import models as models_router
 
@@ -284,6 +284,11 @@ app.include_router(agent_import.router)
 # only report runs. See EXTERNAL_CONNECTIONS.md.
 app.include_router(connections_router.router)
 app.include_router(ingest_router.router)
+
+# MCP domain: external MCP servers attached per workspace as a group of tools.
+# Beside the connectors in the sidebar, and the same direction: this hub reaches
+# out to a server somebody else runs. See docs/mcp.md.
+app.include_router(mcp_router.router)
 
 # Marketplace domain: catalog of agents published across workspaces
 app.include_router(marketplace.router)

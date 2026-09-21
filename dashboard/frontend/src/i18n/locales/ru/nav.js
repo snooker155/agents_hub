@@ -43,4 +43,5 @@ export default {
   health: 'Статус',
   connections: 'Подключения',
   connectors: 'Коннекторы',
+  mcp: 'MCP-серверы',
 };

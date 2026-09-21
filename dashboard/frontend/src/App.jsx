@@ -6,6 +6,7 @@ import AgentManager from './pages/AgentManager';
 import ConnectionDetail from './pages/ConnectionDetail';
 import Connections from './pages/Connections';
 import Connectors from './pages/Connectors';
+import Mcp from './pages/Mcp';
 import AgentDetails from './pages/AgentDetails';
 import TaskDetails from './pages/TaskDetails';
 import WorkspaceManager from './pages/WorkspaceManager';
@@ -94,6 +95,7 @@ function App() {
             <Route path="/connections" element={<Connections />} />
             <Route path="/connections/:connectionId" element={<ConnectionDetail />} />
             <Route path="/connectors" element={<Connectors />} />
+            <Route path="/mcp" element={<Mcp />} />
             <Route path="/instances" element={<Instances />} />
             <Route path="/instances/:instanceId" element={<InstanceDetail />} />
             <Route path="/nodes" element={<Nodes />} />

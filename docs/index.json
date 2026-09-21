@@ -103,7 +103,8 @@
         "telegram",
         "projects",
         "views",
-        "settings"
+        "settings",
+        "mcp"
       ],
       "headings": [
         "Telegram",
@@ -297,6 +298,29 @@
         "Publishing an agent, a flow or a skill",
         "Cloning one into your workspace",
         "When to reach for a published agent",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "mcp",
+      "title": "MCP servers",
+      "surface": "MCP servers",
+      "summary": "Attach an external Model Context Protocol server as a group of tools: per workspace, classified by the capabilities its operator declares, and gated by the same hooks and approvals the built-in tools use.",
+      "related": [
+        "connectors",
+        "connections",
+        "tools-and-capabilities",
+        "hooks",
+        "agents",
+        "workspaces"
+      ],
+      "headings": [
+        "Attaching one",
+        "The id scheme",
+        "Capabilities",
+        "Approval",
+        "Security notes",
+        "How it behaves at runtime",
         "Gotchas"
       ]
     },
@@ -594,7 +618,8 @@
         "hooks",
         "service-health",
         "system-agents",
-        "web-logs"
+        "web-logs",
+        "mcp"
       ],
       "headings": [
         "The capability model",
