@@ -93,6 +93,16 @@ and project, with budgets enforced at run launch rather than displayed. The
 **web request log** keeps every page an agent fetched, with the text it actually
 received.
 
+**Watch what runs elsewhere.** An agent that already runs in production, on its
+own triggers, can report into the hub instead of being driven by it: create a
+connection, point the LangGraph tracer at it (`clients/agents-hub-langgraph` for
+Python, `clients/agents-hub-langgraph-js` for TypeScript: one callback, no change
+to the graph), and its runs, costs and the path each one took through the graph
+land here like any other run. A team that already exports OpenTelemetry traces
+needs no library at all — two environment variables add this hub as a second
+exporter. The hub starts nothing and only watches. See
+[docs/connections.md](./docs/connections.md).
+
 **Operate it.** A React dashboard on a single server-sent event stream, a page
 for every live copy of an agent with a mailbox you can write to, a model catalog
 with per-model pricing and four-tier resolution, Telegram and GitHub/GitLab

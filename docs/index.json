@@ -70,6 +70,49 @@
       ]
     },
     {
+      "id": "connections",
+      "title": "Connections",
+      "surface": "Connections",
+      "summary": "An agent that already runs in production, on its own triggers, reporting what it does into this hub. The hub starts nothing and only watches.",
+      "related": [
+        "imported-agents",
+        "sessions-and-runs",
+        "costs",
+        "agents",
+        "connectors"
+      ],
+      "headings": [
+        "Where it lives",
+        "Creating one",
+        "Where a connection lives",
+        "Reporting a run",
+        "From LangGraph, in one line",
+        "When a graph stops to ask",
+        "What you get",
+        "Limits",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "connectors",
+      "title": "Connectors",
+      "surface": "Connectors",
+      "summary": "Services this hub reaches out to: a Telegram bot, a GitHub or GitLab account, a local Blender install. The other direction from connections.",
+      "related": [
+        "connections",
+        "telegram",
+        "projects",
+        "views",
+        "settings"
+      ],
+      "headings": [
+        "Telegram",
+        "GitHub and GitLab",
+        "Blender",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "containers",
       "title": "Containers",
       "summary": "Agents can run in-process or in Docker. Container mode isolates a run: its own filesystem view, its own network posture, its own lifetime.",
@@ -149,11 +192,15 @@
         "agents",
         "marketplace",
         "containers",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "flows",
+        "connections"
       ],
       "headings": [
         "Where it runs",
         "The contract",
+        "The shape of an agent",
+        "Pausing to ask",
         "The import flow",
         "What you give up",
         "Gotchas"
@@ -423,7 +470,8 @@
       "related": [
         "models",
         "service-health",
-        "workspaces"
+        "workspaces",
+        "connectors"
       ],
       "headings": [
         "What is here",
@@ -509,7 +557,8 @@
       "related": [
         "chat",
         "scheduling",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "connectors"
       ],
       "headings": [
         "What the binding does",
