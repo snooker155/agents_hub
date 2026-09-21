@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agents-hub-langgraph"
+version = "0.1.0"
+description = "Report a LangGraph graph's runs to an Agents Hub, without changing the graph"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+# langchain-core only: anyone using LangGraph already has it, and the HTTP
+# transport is stdlib urllib on purpose. A monitoring package that drags new
+# dependencies into a production image is one nobody installs.
+dependencies = ["langchain-core>=0.2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "langgraph>=0.2"]
+
+[tool.setuptools.packages.find]
+include = ["agents_hub_langgraph*"]
