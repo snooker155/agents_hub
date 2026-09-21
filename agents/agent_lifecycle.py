@@ -40,6 +40,7 @@ def run_agent_lifecycle(
     extra_callbacks: Sequence[Any] = (),
     catch_invoke_exceptions: bool = True,
     run_id: Optional[str] = None,
+    resume: Optional[dict] = None,
     after_build: Optional[Callable[[Any], None]] = None,
     on_build_error: Callable[[str], Any],
     on_success: Callable[[Any, AgentInvocation], Any],
@@ -70,6 +71,7 @@ def run_agent_lifecycle(
 
     invocation = invoke_agent(
         agent, prompt,
+        resume=resume,
         stats=stats,
         extra_callbacks=extra_callbacks,
         catch_exceptions=catch_invoke_exceptions,

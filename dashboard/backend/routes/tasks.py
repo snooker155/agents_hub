@@ -607,6 +607,25 @@ async def answer_task(task_id: UUID, payload: TaskAnswer):
     )
     params = {"description": resume_desc}
 
+    # An imported agent that declares a resume endpoint is *continued* rather
+    # than re-run. The difference matters for anything holding state between the
+    # question and the answer — a graph suspended on a checkpointer comes back
+    # to where it stopped, while a fresh run with the answer in its prompt is a
+    # different execution that merely reads the same way. Every other agent
+    # keeps nothing between runs, so replaying the conversation is the resume,
+    # and that path is untouched.
+    spec = registry.get_agent(agent_id)
+    paused_run = str(pending.get("run_id") or "")
+    if spec is not None and spec.is_remote() and (spec.remote or {}).get("resume_path") and paused_run:
+        params = {
+            "description": f'The user answered: "{answer}"',
+            "resume": {
+                "run_id": paused_run,
+                "value": answer,
+                "key": str(pending.get("key") or ""),
+            },
+        }
+
     try:
         run_id, session_id = agent_launcher.start_run(str(task_id), agent_id, params)
         tasks_service.assign_agent(task_id, agent_id, params, run_id=run_id)

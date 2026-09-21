@@ -112,6 +112,13 @@ def main():
     ap.add_argument("--run-id", help="Optional run ID to update lifecycle state for")
     ap.add_argument("--workspace", help="Path to workspace")
     ap.add_argument("-v", "--verbose", action="store_true")
+    # Continuing a run the agent itself paused, rather than starting one. Only
+    # an imported agent that declares runtime.resume_path can do this; for every
+    # other agent the answer is folded into a fresh prompt instead, because they
+    # keep nothing between runs for a resume to come back to.
+    ap.add_argument("--resume-run", help="Run id the remote agent paused, to continue")
+    ap.add_argument("--resume-value", help="The answer, JSON-encoded")
+    ap.add_argument("--resume-key", help="The agent's own id for the question, when it gave one")
 
     args = ap.parse_args()
 
@@ -259,8 +266,21 @@ def main():
         print(f"Agent failed: {error_msg}")
         sys.exit(1)
 
+    resume = None
+    if args.resume_run:
+        import json
+
+        try:
+            value = json.loads(args.resume_value) if args.resume_value else None
+        except (TypeError, ValueError):
+            # A value that will not decode is still an answer someone typed;
+            # sending the raw text beats failing the resume.
+            value = args.resume_value
+        resume = {"run_id": args.resume_run, "value": value, "key": args.resume_key or ""}
+
     run_agent_lifecycle(
         agent_id, ws, instruction,
+        resume=resume,
         overrides=agent_overrides,
         extra_callbacks=_extra_callbacks,
         after_build=_after_build,

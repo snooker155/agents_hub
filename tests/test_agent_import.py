@@ -1170,3 +1170,208 @@ def test_the_graph_check_is_a_note_when_declared(graph_example_repo):
     assert check.ok is True
     assert check.required is False, "a graph endpoint is a bonus, never a blocker"
 
+
+# ── agents that pause ───────────────────────────────────────────────────────
+#
+# An imported agent may stop to ask a person. The hub already has a word for
+# that state — ``awaiting_input``, which its own agents reach through ask_user —
+# so a remote one reports into the same state and the same surfaces. What is new
+# is the way back: an agent that suspended onto a checkpointer has somewhere to
+# return to, and running it again with the answer in its prompt is a different
+# execution that merely reads the same way.
+
+
+def _resumable_agent(url):
+    return RemoteAgent(
+        agent_id="approver", name="Approver",
+        remote={"url": url, "stream_path": "/run/stream", "resume_path": "/resume"},
+    )
+
+
+def test_a_stream_that_ends_in_an_interrupt_is_a_paused_run(stub_agent_service):
+    url, handler = stub_agent_service
+    handler.stream_frames = [
+        {"type": "node_start", "node": "approve"},
+        {"type": "node_end", "node": "approve", "status": "interrupted"},
+        {"type": "interrupt", "question": "Approve this plan?",
+         "choices": ["approve", "reject"], "key": "i-7", "node": "approve"},
+    ]
+    listener = _RecordingEmitter()
+
+    result = _resumable_agent(url).run("do it", callbacks=[listener])
+
+    # The hub's own word for it, so the task runner parks this exactly as it
+    # parks a local agent that called ask_user.
+    assert result.status == "awaiting_input"
+    assert result.ok is True
+    assert result.pending_question["question"] == "Approve this plan?"
+    assert result.pending_question["choices"] == ["approve", "reject"]
+    assert result.agent_output == "Approve this plan?", "plain surfaces show the question"
+    assert "awaiting_input" in [e["type"] for e in listener.events]
+
+
+def test_resume_sends_the_answer_to_the_paused_run(stub_agent_service):
+    url, handler = stub_agent_service
+    agent = _resumable_agent(url)
+
+    result = agent.resume("run-42", "approve", key="i-7")
+
+    assert handler.resumed[-1] == {
+        "run_id": "run-42", "value": "approve", "key": "i-7", "workspace": None,
+    }
+    assert result.ok is True
+    assert result.agent_output == "finished after the answer"
+
+
+def test_an_agent_can_pause_again_on_the_way(stub_agent_service):
+    """An approval flow with two approvals is an ordinary thing."""
+    url, handler = stub_agent_service
+    handler.resume_frames = [
+        {"type": "interrupt", "question": "And deploy to production?", "choices": ["yes"]},
+    ]
+
+    result = _resumable_agent(url).resume("run-42", "approve")
+
+    assert result.status == "awaiting_input"
+    assert result.pending_question["question"] == "And deploy to production?"
+
+
+def test_resuming_an_agent_that_cannot_be_continued_says_so(stub_agent_service):
+    url, _ = stub_agent_service
+    agent = RemoteAgent(agent_id="plain", name="Plain",
+                        remote={"url": url, "stream_path": "/run/stream"})
+
+    result = agent.resume("run-42", "yes")
+
+    assert result.ok is False
+    assert agent.supports_resume is False
+    assert "resume_path" in result.error
+
+
+def test_a_resume_that_cannot_reach_the_agent_is_a_failed_run_not_a_crash():
+    agent = RemoteAgent(agent_id="approver", name="Approver",
+                        remote={"url": "http://127.0.0.1:9", "resume_path": "/resume"})
+
+    result = agent.resume("run-42", "yes")
+
+    assert result.ok is False
+    assert "Could not reach" in result.error
+
+
+def test_the_bundled_example_declares_that_it_can_be_resumed(graph_example_repo):
+    manifest = parse_manifest(graph_example_repo)
+
+    assert manifest.resume_path == "/resume"
+    check = checks.check_resume(manifest)
+    assert check is not None and check.ok is True and check.required is False
+
+
+def test_resume_path_reaches_the_descriptor(graph_example_repo, stub_agent_service):
+    url, _ = stub_agent_service
+    inspected = import_service.inspect(str(graph_example_repo), url=url)
+    import_service.register(inspected["token"], repo_url=str(graph_example_repo),
+                            agent_id="langgraph-agent", url=url)
+
+    assert registry.get_agent("langgraph-agent").remote["resume_path"] == "/resume"
+
+
+def test_an_agent_that_never_pauses_carries_no_resume_check(tmp_path):
+    (tmp_path / "agent-hub.json").write_text(json.dumps({
+        "schema": "agents-hub/agent-manifest@1",
+        "id": "plain", "name": "Plain",
+        "runtime": {"kind": "http", "run_path": "/run"},
+    }))
+
+    assert checks.check_resume(parse_manifest(tmp_path)) is None
+
+
+def test_answering_a_task_continues_a_remote_agent_instead_of_restarting_it(
+    example_repo, stub_agent_service, monkeypatch, no_env,
+):
+    """The difference the resume endpoint exists for.
+
+    This hub resumes its own agents by running them again with the answer in the
+    prompt, which is correct for an agent that keeps nothing between runs. An
+    imported agent that suspended onto a checkpointer is the other case: it has
+    somewhere to come back to, and a fresh run would be a different execution
+    that merely reads the same way.
+    """
+    from uuid import uuid4
+
+    from tasks import service as tasks_service
+
+    url, _ = stub_agent_service
+    inspected = import_service.inspect(str(example_repo), url=url)
+    import_service.register(inspected["token"], repo_url=str(example_repo),
+                            agent_id="aider", url=url)
+    spec = registry.get_agent("aider")
+    import dataclasses
+    registry.add_agent(dataclasses.replace(
+        spec, remote={**spec.remote, "resume_path": "/resume"}))
+
+    task = tasks_service.create_task(title="Ship it", description="ship the release")
+    paused_run = str(uuid4())
+    tasks_service.update_task(
+        task.id,
+        status=tasks_service.TaskStatus.awaiting_input,
+        assigned_agent_type="aider",
+        pending_question={
+            "question": "Approve this plan?", "choices": ["approve", "reject"],
+            "agent_id": "aider", "run_id": paused_run, "key": "i-7",
+        },
+    )
+
+    launched = {}
+
+    def _capture(task_id, agent_id, params=None, run_id=None):
+        launched["params"] = params or {}
+        return ("new-run", "session-1")
+
+    import agents.agent_launcher as launcher
+    monkeypatch.setattr(launcher, "start_run", _capture)
+    import sys
+    from pathlib import Path as _Path
+
+    backend = str(_Path(__file__).resolve().parents[1] / "dashboard" / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import tasks as task_routes
+
+    app = FastAPI()
+    app.include_router(task_routes.router)
+    client = TestClient(app)
+
+    resp = client.post(f"/api/tasks/{task.id}/answer", json={"answer": "approve"})
+
+    assert resp.status_code == 200
+    resume = launched["params"].get("resume")
+    assert resume == {"run_id": paused_run, "value": "approve", "key": "i-7"}, (
+        "the answer must continue the run that paused, not start a new one")
+    # And the re-run prompt, which would restart the graph, is not what carries
+    # the answer any more.
+    assert "You previously paused" not in (launched["params"].get("description") or "")
+
+
+def test_a_pause_is_reported_even_when_nobody_is_streaming(stub_agent_service):
+    """Streaming needs a listener on this side; a pause must not.
+
+    A run nobody is watching still has to be able to stop and ask. Reported as
+    finished instead, the graph would sit suspended with nothing that will ever
+    answer it, and the run record would say it completed.
+    """
+    url, handler = stub_agent_service
+    handler.reply = {
+        "ok": True,
+        "interrupt": {"question": "Approve this plan?", "choices": ["approve", "reject"],
+                      "key": "i-7", "node": "approve"},
+        "output": "Approve this plan?",
+    }
+    agent = _resumable_agent(url)
+
+    result = agent.run("do it")  # no callbacks: the single-shot POST path
+
+    assert result.status == "awaiting_input"
+    assert result.pending_question["choices"] == ["approve", "reject"]
+    assert result.pending_question["key"] == "i-7"

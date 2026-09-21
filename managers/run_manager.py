@@ -1068,6 +1068,14 @@ def park_task_awaiting_input(run_id: str, question: Dict[str, Any], agent_id: st
             "run_id": run_id,
             "asked_at": _utc_now_iso(),
         }
+        # An imported agent that suspended keeps its own handle on the question
+        # and knows which node it stopped in. Both are its to interpret, and the
+        # resume call hands them straight back, so they travel with the question
+        # rather than being dropped here.
+        for extra in ("key", "node"):
+            value = (question or {}).get(extra)
+            if value:
+                pending[extra] = str(value)
         _ts.update_task(tid, status=_ts.TaskStatus.awaiting_input, pending_question=pending)
         try:
             _ts.append_task_activity_log(tid, "awaiting_input", f"Agent asked: {q_text}", run_id=run_id, agent_id=pending["agent_id"])

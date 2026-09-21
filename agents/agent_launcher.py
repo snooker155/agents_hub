@@ -161,6 +161,17 @@ def start_run(
     if desc:
         args.extend(["--desc", desc])
 
+    # Continuing a paused run rather than starting one. Passed as flags like
+    # everything else the subprocess needs to know, so nothing has to be read
+    # back out of the task record on the other side.
+    resume = params.get("resume") or {}
+    if resume.get("run_id"):
+        import json as _json
+        args.extend(["--resume-run", str(resume["run_id"]),
+                     "--resume-value", _json.dumps(resume.get("value"))])
+        if resume.get("key"):
+            args.extend(["--resume-key", str(resume["key"])])
+
     with open(log_file, "w", encoding="utf-8") as lf:
         lf.write(
             f"--- Run started at {_utc_now_iso()} ---\n"

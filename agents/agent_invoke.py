@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from agents.callbacks import RunStatsCallback
 
@@ -49,6 +49,7 @@ def invoke_agent(
     extra_callbacks: Sequence[Any] = (),
     catch_exceptions: bool = True,
     run_id: Optional[str] = None,
+    resume: Optional[Dict[str, Any]] = None,
 ) -> AgentInvocation:
     """Run ``agent.run(prompt, ...)`` timed, with a stats callback attached.
 
@@ -61,6 +62,14 @@ def invoke_agent(
       implementations take ``(self, instruction, **kwargs)``, so a positional
       second argument raises TypeError — which is what it used to do, breaking
       every caller that passed run_id (evals, replay, the lifecycle helper).
+
+    - ``resume``: ``{"run_id", "value", "key"}`` to continue a run the agent
+      paused, instead of starting a new one. Only an agent that implements
+      ``resume`` can do this — an imported one that declares ``resume_path``.
+      Everything else is re-run with the answer folded into the prompt, which is
+      how this hub has always resumed its own agents: they keep no state between
+      runs, so replaying the conversation *is* the resume. An agent that
+      suspended onto a checkpointer is the case that needs the other path.
 
     Returns an ``AgentInvocation`` with the result, duration, process dict, and
     the stats callback.
@@ -76,7 +85,15 @@ def invoke_agent(
 
     t0 = time.perf_counter()
     try:
-        if run_id is not None:
+        resumable = resume and callable(getattr(agent, "resume", None))
+        if resumable:
+            result = agent.resume(
+                str(resume.get("run_id") or ""),
+                resume.get("value"),
+                key=str(resume.get("key") or ""),
+                callbacks=callbacks,
+            )
+        elif run_id is not None:
             result = agent.run(prompt, run_id=run_id, callbacks=callbacks)
         else:
             result = agent.run(prompt, callbacks=callbacks)
