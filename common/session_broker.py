@@ -238,10 +238,12 @@ def _relay_notify(resource: str, meta: dict, *, delta: bool = False,
             _relay_timers.pop(key, None)
         try:
             import requests
+            from common.auth import auth_headers
             port = os.environ.get("DASHBOARD_PORT", "8000")
             requests.post(
                 f"http://localhost:{port}/api/stream/notify",
                 json={"resource": resource, "meta": meta, "delta": delta},
+                headers=auth_headers(),
                 timeout=1.0,
             )
         except Exception:

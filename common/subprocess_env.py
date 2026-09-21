@@ -30,6 +30,15 @@ def base_subprocess_env(workspace_name: str) -> Dict[str, str]:
     env["AGENT_WORKSPACE"] = workspace_name
     if settings.openai_api_key:
         env["OPENAI_API_KEY"] = settings.openai_api_key
+    # The token that gates /api requests (see common/auth.py). A plain
+    # os.environ.copy() already carries it when it was exported as a real
+    # environment variable, but pydantic-settings also accepts it from .env
+    # without ever writing it back to os.environ — so a token configured only
+    # that way would silently fail to reach the subprocess, and every relay
+    # POST it makes (SessionPublishCallback, session_broker._relay_notify)
+    # would get a 401. Set it explicitly, the same way as OPENAI_API_KEY above.
+    if settings.api_token:
+        env["AGENTS_HUB_API_TOKEN"] = settings.api_token
     return env
 
 

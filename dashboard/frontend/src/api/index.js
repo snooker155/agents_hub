@@ -10,6 +10,39 @@ const api = axios.create({
   baseURL: `${API_ORIGIN}/api`,
 });
 
+// Optional operator token (see common/auth.py). Off by default: an unconfigured
+// backend accepts every request and this stays a no-op. There is no Settings
+// field for it yet, so it is set from the browser console with
+// `localStorage.setItem('agents_hub_api_token', '<token>')`, or baked into the
+// build with VITE_API_TOKEN when the same token should ship with every build.
+// localStorage wins so a token can be set (or rotated) without a rebuild.
+export const getApiToken = () => {
+  try {
+    const stored = window.localStorage.getItem('agents_hub_api_token');
+    if (stored) return stored;
+  } catch {
+    // Privacy mode or no localStorage: fall through to the build-time value.
+  }
+  return import.meta.env.VITE_API_TOKEN ?? '';
+};
+
+// Headers a fetch() call outside the `api` instance needs to authenticate.
+// Every streaming endpoint below opens its own fetch (a long-lived response
+// body axios cannot hand back incrementally), so each has to attach this
+// itself rather than riding the interceptor below.
+const authFetchHeaders = () => {
+  const token = getApiToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+api.interceptors.request.use((config) => {
+  const token = getApiToken();
+  if (token) {
+    config.headers = { ...config.headers, Authorization: `Bearer ${token}` };
+  }
+  return config;
+});
+
 // System health snapshot: DB reachability + store counts, background-service
 // liveness, on-disk state sizes, and agent build-cache hit/miss stats.
 //
@@ -64,7 +97,7 @@ const consumeSSE = async (response, onEvent) => {
 export const streamChat = async ({ body, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
     body: JSON.stringify(body),
   });
@@ -559,7 +592,7 @@ export const stopProjectGraphChat = (id) => api.post(`/projects/${id}/graph/chat
 export const streamProjectGraphChat = async ({ projectId, view, message, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api/projects/${projectId}/graph/chat?view=${encodeURIComponent(view)}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
     body: JSON.stringify({ message }),
   });
@@ -589,7 +622,7 @@ export const streamProjectGraphChat = async ({ projectId, view, message, onEvent
 export const streamEntityChat = async ({ path, message, body = null, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
     body: JSON.stringify({ ...(body || {}), message }),
   });
@@ -632,7 +665,7 @@ export const clearProjectTasksChat = (id) => api.delete(`/projects/${id}/tasks/c
 export const streamProjectTasksGenerate = async ({ projectId, message, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api/projects/${projectId}/tasks/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     body: JSON.stringify({ message: message || null }),
     signal,
   });
@@ -788,7 +821,7 @@ export const generateScenario = (data) => api.post('/playground/scenarios/genera
 export const streamGenerateScenario = async ({ body, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api/playground/scenarios/generate/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
     body: JSON.stringify(body),
   });

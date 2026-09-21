@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { StreamContext } from './stream';
-import { API_ORIGIN } from '../api';
+import { API_ORIGIN, getApiToken } from '../api';
 
 /*
  * Single multiplexed SSE connection for the whole dashboard.
@@ -16,9 +16,13 @@ import { API_ORIGIN } from '../api';
 
 function postChannels(clientId, add, remove) {
   if (!clientId) return;
+  const token = getApiToken();
   fetch(`${API_ORIGIN}/api/stream/${clientId}/channels`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ add, remove }),
   }).catch(() => {});
 }
@@ -56,7 +60,12 @@ export function StreamProvider({ children }) {
 
     const connect = () => {
       if (closed) return;
-      es = new EventSource(`${API_ORIGIN}/api/stream`);
+      // EventSource cannot set request headers, so an operator token (when
+      // configured, see common/auth.py) has to travel as a query parameter —
+      // the one form the backend's auth guard accepts besides a header.
+      const token = getApiToken();
+      const url = `${API_ORIGIN}/api/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+      es = new EventSource(url);
       es.onmessage = (e) => {
         let ev;
         try { ev = JSON.parse(e.data); } catch { return; }

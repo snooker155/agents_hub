@@ -11,7 +11,8 @@ set headers) authenticate the SSE stream.
 """
 from __future__ import annotations
 
-from typing import Optional
+import os
+from typing import Dict, Optional
 
 
 def extract_bearer(auth_header: Optional[str]) -> Optional[str]:
@@ -19,6 +20,24 @@ def extract_bearer(auth_header: Optional[str]) -> Optional[str]:
     if auth_header and auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
     return None
+
+
+def auth_headers() -> Dict[str, str]:
+    """Headers a same-machine relay should attach to authenticate as the operator.
+
+    Reads ``AGENTS_HUB_API_TOKEN`` straight from the environment rather than
+    importing ``common.config``: the callers (``agents/callbacks/streaming.py``,
+    ``common/session_broker.py``) post from a background thread or a bare
+    subprocess and should not pull in the settings/pydantic import graph just to
+    decide whether to add one header. ``common.subprocess_env.base_subprocess_env``
+    is what guarantees this variable actually reaches those processes even when
+    the token was only ever configured via ``.env`` (see its docstring).
+
+    Empty when no token is configured, matching ``is_authorized``'s open-by-default
+    behaviour, so an unconfigured deployment posts exactly as it did before.
+    """
+    token = os.environ.get("AGENTS_HUB_API_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 # Prefixes that carry their own credential and must not be gated on the

@@ -195,10 +195,14 @@ def _publish_notification(n: Notification) -> None:
     except Exception:
         pass
     try:
+        import os
         import requests
+        from common.auth import auth_headers
+        port = os.environ.get("DASHBOARD_PORT", "8000")
         requests.post(
-            "http://localhost:8000/api/plan/notifications/publish",
+            f"http://localhost:{port}/api/plan/notifications/publish",
             json=payload,
+            headers=auth_headers(),
             timeout=2,
         )
     except Exception:
@@ -236,7 +240,7 @@ def delete_notification(notification_id: UUID | str) -> int:
 
 
 def notification_to_dict(n: Notification) -> Dict[str, Any]:
-    data = n.model_dump() if hasattr(n, "model_dump") else n.dict()
+    data = n.model_dump()
     data["id"] = str(data["id"])
     if data.get("created_at") is not None:
         try:
@@ -247,7 +251,7 @@ def notification_to_dict(n: Notification) -> Dict[str, Any]:
 
 
 def job_to_dict(job: ScheduledJob) -> Dict[str, Any]:
-    data = job.model_dump() if hasattr(job, "model_dump") else job.dict()
+    data = job.model_dump()
     data["id"] = str(data["id"])
     for key in ("kind", "status", "recurrence"):
         if hasattr(data.get(key), "value"):

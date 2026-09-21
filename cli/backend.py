@@ -327,10 +327,11 @@ class HttpBackend:
 
     def _request(self, method: str, path: str, *, params=None, json=None, timeout=None):
         import requests
+        from common.auth import auth_headers
         try:
             r = requests.request(
                 method, f"{self.base_url}{path}",
-                params=params, json=json,
+                params=params, json=json, headers=auth_headers(),
                 timeout=self.API_TIMEOUT if timeout is None else timeout,
             )
             r.raise_for_status()

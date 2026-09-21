@@ -67,7 +67,8 @@ class SessionPublishCallback(BaseCallbackHandler):
         """Raw POST of one event. Never flushes — used by the flush path itself."""
         try:
             import requests as _req
-            _req.post(self._url, json=event, timeout=2)
+            from common.auth import auth_headers
+            _req.post(self._url, json=event, headers=auth_headers(), timeout=2)
         except Exception:
             pass
 
