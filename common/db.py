@@ -145,6 +145,23 @@ CREATE TABLE IF NOT EXISTS flow_runs (
 CREATE INDEX IF NOT EXISTS idx_flow_runs_flow   ON flow_runs(flow_id);
 CREATE INDEX IF NOT EXISTS idx_flow_runs_status ON flow_runs(status);
 
+-- Registry version history: a snapshot of an agent's record and its three
+-- markdown definition files, taken every time the stored definition is about
+-- to change (see agents.versions.snapshot_if_changed). Lets the dashboard
+-- list what changed over time, diff any two versions, and roll back.
+CREATE TABLE IF NOT EXISTS agent_versions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id        TEXT,
+    version         INTEGER,
+    hash            TEXT,
+    created_at      TEXT,
+    actor           TEXT,
+    spec_json       TEXT,
+    definition_json TEXT,
+    note            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id, version DESC);
+
 CREATE TABLE IF NOT EXISTS tasks (
     id         TEXT PRIMARY KEY,
     key        TEXT,
@@ -294,7 +311,8 @@ CREATE TABLE IF NOT EXISTS eval_results (
     duration_ms      INTEGER,
     inbound_tokens   INTEGER,
     outbound_tokens  INTEGER,
-    cost             REAL
+    cost             REAL,
+    attempt          INTEGER  -- 1-based repeat number within its (case, config)
 );
 CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(eval_run_id);
 
@@ -598,7 +616,8 @@ def _connect() -> sqlite3.Connection:
 # EXISTS / CREATE INDEX IF NOT EXISTS additions are self-idempotent and need no
 # version bump).
 #   2 — the `flow_runs` table, and the import of flow_runs.json into it.
-SCHEMA_VERSION = 2
+#   3 — the `agent_versions` table (registry definition history).
+SCHEMA_VERSION = 3
 
 # Columns added to a table *after* it first shipped. ``_SCHEMA`` only ever runs
 # CREATE TABLE IF NOT EXISTS, so a new column in the CREATE body reaches fresh
@@ -622,6 +641,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "sim_runs": {"activation": "TEXT", "stop_reason": "TEXT", "config": "TEXT",
                  "story": "TEXT"},
     "sim_ticks": {"idle": "TEXT"},
+    # Repeats/variance: which attempt (1-based) a result is, within its
+    # (case, config) pair. Pre-existing rows are all attempt 1.
+    "eval_results": {"attempt": "INTEGER"},
 }
 
 # Statements that fill a freshly added column from data already in the row.
@@ -635,6 +657,9 @@ _ADDED_COLUMN_BACKFILL: dict[str, list[str]] = {
         "WHERE created_at IS NULL",
         "UPDATE sessions SET is_flow = CASE WHEN json_extract(doc, '$.is_flow') "
         "IN (1, 'true') THEN 1 ELSE 0 END WHERE is_flow IS NULL",
+    ],
+    "eval_results": [
+        "UPDATE eval_results SET attempt = 1 WHERE attempt IS NULL",
     ],
 }
 

@@ -32,6 +32,17 @@ published from other workspaces, ready to clone, and an agent that already lives
 in its own git repository can be [imported](imported-agents.md) and run behind an
 HTTP contract without its code ever entering this process.
 
+## The example roster
+
+`examples/agents/` holds prompts that ship with the repository for reference
+but are not seeded: a waterfall delivery team, an event-planning crew, two
+interactive-fiction helpers, and a three-stage job-search pipeline, grouped by
+theme, plus a `misc/` set. None of them sit under `agents/definitions/` — a
+folder there is only ever read for an id `bootstrap/agents.json` already
+seeds or one an operator has imported, so an unconnected folder was dead
+weight rather than a working agent. See `examples/agents/README.md` for what
+each set demonstrates and the two API calls that bring one into a running hub.
+
 ## System vs. custom
 
 Every agent is exactly one of the two. System agents ship with the product and
@@ -39,6 +50,34 @@ are present in every workspace; custom agents are yours. The Agents page marks
 system agents explicitly, and their Tools and Configuration tabs carry a warning
 because editing either changes what the product is built on. See
 [system-agents](system-agents.md).
+
+## Versions
+
+An agent's definition has a fingerprint: a sha256 hash over its tools, model,
+provider, reasoning settings, memory binding, capability override, approval
+lists, delegates, and the text of `instructions.md`, `capabilities.md` and
+`usage.md`. It is stable across processes, so the same definition always hashes
+the same way regardless of dict or JSON key order.
+
+Every [run](sessions-and-runs.md) records this hash as `definition_hash`. A run
+never fails because the hash could not be computed; it is simply left off the
+record.
+
+The registry keeps a history of an agent's past definitions. Right before a
+change replaces the stored record, or the dashboard's definition editor
+rewrites one of the three markdown files, the state about to be overwritten is
+snapshotted, unless it is already identical to the latest snapshot or the
+incoming write changes nothing. The Config tab's Version History section lists
+each snapshot with a summary of what changed since the one before it: tools
+added or removed, a model change, which markdown files were touched.
+
+From there, any version can be diffed against the current state or another
+version, shown as a unified diff per part (spec, instructions, capabilities,
+usage). Rollback restores a version's record and markdown files, going through
+the same `add_agent` path a normal edit takes, so the capability guard still
+runs and a blocked tool combination is refused the same way. Rolling back a
+system agent marks it as user modified, the same as any other edit, so
+bootstrap sync leaves it alone afterward.
 
 ## Delegation
 

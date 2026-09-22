@@ -20,6 +20,7 @@ from agents import registry
 from managers import run_manager
 from agents.agent_factory import get_factory
 from agents import prompt_assembly
+from agents import versions as agent_versions
 from tools.registry import get_all_tools
 from agents.capability_guard import CapabilityViolation
 from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate
@@ -270,6 +271,25 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
     # definition with others, the change applies to all of them (expected).
     def_id = spec.def_id()
 
+    # Capture the state this edit is about to replace, the same way
+    # registry.add_agent does for a structured-field edit — this route never
+    # calls add_agent (it only touches the markdown files), so it has to
+    # snapshot on its own before writing. Passing the prospective content
+    # (unset fields fall back to what is on disk now) lets the snapshot skip
+    # a no-op save instead of padding history with an unchanged entry.
+    agent_versions.snapshot_if_changed(
+        agent_id,
+        next_definition={
+            "instructions": data.instructions if data.instructions is not None
+                else prompt_assembly.read_instructions(def_id, definitions_dir=defs_dir),
+            "capabilities": data.capabilities if data.capabilities is not None
+                else prompt_assembly.read_capabilities(def_id, definitions_dir=defs_dir),
+            "usage": data.usage if data.usage is not None
+                else prompt_assembly.read_usage(def_id, definitions_dir=defs_dir),
+        },
+        actor="dashboard", note="definition edit",
+    )
+
     if data.instructions is not None:
         if data.instructions.strip():
             prompt_assembly.write_instructions(def_id, data.instructions, definitions_dir=defs_dir)
@@ -289,6 +309,68 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
             path.unlink()
 
     return await get_agent_definition(agent_id)
+
+
+@router.get("/{agent_id}/versions")
+async def list_agent_versions(agent_id: str):
+    """Version history: one entry per stored snapshot, oldest first, each
+    with a summary of what changed relative to the entry before it."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"agent_id": agent_id, "versions": agent_versions.list_versions(agent_id)}
+
+
+@router.get("/{agent_id}/versions/{version}/diff")
+async def diff_agent_version(agent_id: str, version: int, against: str = "current"):
+    """Unified diff (per part: spec / instructions / capabilities / usage)
+    between a stored version and either the current live state or another
+    stored version (``against=current`` or ``against=<version number>``)."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    from_entry = agent_versions.get_version_row(agent_id, version)
+    if from_entry is None:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+
+    if against == "current":
+        to_entry = agent_versions.current_snapshot(agent_id)
+    else:
+        try:
+            to_version = int(against)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="against must be 'current' or a version number")
+        to_entry = agent_versions.get_version_row(agent_id, to_version)
+        if to_entry is None:
+            raise HTTPException(status_code=404, detail=f"Version {to_version} not found")
+
+    return {
+        "agent_id": agent_id,
+        "from": version,
+        "against": against,
+        "diff": agent_versions.diff_entries(from_entry, to_entry),
+    }
+
+
+@router.post("/{agent_id}/versions/{version}/rollback")
+async def rollback_agent_version(agent_id: str, version: int):
+    """Restore a historical version as the agent's current state.
+
+    Goes through ``registry.add_agent`` (via ``agent_versions.rollback_to``),
+    so a tool combination the capability guard would now block is refused the
+    same way a normal edit is.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        restored = agent_versions.rollback_to(agent_id, version, actor="dashboard")
+    except CapabilityViolation as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"agent_id": agent_id, "restored_to": version, "agent": restored}
 
 
 @router.put("/{agent_id}/description")

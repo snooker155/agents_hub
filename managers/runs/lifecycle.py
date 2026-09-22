@@ -9,6 +9,7 @@ which this module calls; reactions on the owning task belong to
 """
 from __future__ import annotations
 
+import logging
 import os
 import signal
 from pathlib import Path
@@ -21,9 +22,28 @@ from common.paths import AGENTS_HUB_ROOT
 from .notifications import _notify_task_run_started
 from .store import _row_to_record, _update_run, _upsert_run, _utc_now_iso
 
+log = logging.getLogger(__name__)
+
 HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parents[1]
 RUN_LOGS_DIR = AGENTS_HUB_ROOT / "run_logs"
+
+
+def _definition_hash_for(agent_id: Optional[str]) -> Optional[str]:
+    """Best-effort definition fingerprint for a run record.
+
+    A run must never fail because the registry, a definition file, or the
+    hashing itself is unavailable — any failure here just means the run
+    record carries no ``definition_hash`` (logged, not raised).
+    """
+    if not agent_id:
+        return None
+    try:
+        from agents.versions import definition_fingerprint
+        return definition_fingerprint(agent_id)["hash"]
+    except Exception:
+        log.warning("could not compute definition_hash for agent '%s'", agent_id, exc_info=True)
+        return None
 
 
 def run_log_path(run_id: str) -> Path:
@@ -85,6 +105,10 @@ def preopen_run(
     }
     if log_file is not None:
         record["log_file"] = str(log_file)
+    if "definition_hash" not in record:
+        dh = _definition_hash_for(agent_id)
+        if dh:
+            record["definition_hash"] = dh
     _upsert_run(record)
     if link_to_session and session_id:
         try:
@@ -139,6 +163,10 @@ def open_run(
         record["title"] = title
     if message_origin is not None:
         record["message_origin"] = message_origin
+    if "definition_hash" not in record:
+        dh = _definition_hash_for(agent_id)
+        if dh:
+            record["definition_hash"] = dh
     _upsert_run(record)
     if link_to_session and session_id:
         try:

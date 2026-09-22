@@ -29,9 +29,12 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import json
+import logging
 import os
 from filelock import FileLock
 from common.paths import AGENTS_FILE
+
+log = logging.getLogger(__name__)
 
 
 # -------------------- Data models --------------------
@@ -634,7 +637,13 @@ def system_agent_ids() -> List[str]:
     return [spec.id for spec in specs if spec.system]
 
 
-def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
+def add_agent(
+    spec: AgentSpec,
+    *,
+    user_edit: bool = True,
+    actor: Optional[str] = None,
+    note: Optional[str] = None,
+) -> None:
     """Persist a new agent spec to agents.json.
 
     Save time is the capability guard's chokepoint: every write path (dashboard
@@ -643,6 +652,10 @@ def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
     Raises ``CapabilityViolation`` (a ``ValueError``) when it does — the routes'
     existing ValueError handlers turn that into a 400 with the offending
     capabilities named.
+
+    ``actor``/``note`` are attributed to the version-history snapshot this call
+    may take (see below); both are optional and go unused when nothing needs
+    snapshotting.
     """
     from agents.capability_guard import enforce_agent_tools
 
@@ -660,6 +673,18 @@ def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
     if user_edit and spec.system and not spec.user_modified:
         import dataclasses as _dc
         spec = _dc.replace(spec, user_modified=True)
+
+    # Snapshot whatever is currently on disk into version history before this
+    # call replaces it, so history never has a gap. Only fires when the agent
+    # already exists and its stored definition differs from the last snapshot
+    # on file; best-effort, never blocks a legitimate write (see
+    # agents.versions.snapshot_if_changed).
+    if _prev is not None:
+        try:
+            from agents.versions import snapshot_if_changed
+            snapshot_if_changed(spec.id, next_spec=spec, actor=actor, note=note)
+        except Exception:
+            log.warning("could not snapshot version history for '%s'", spec.id, exc_info=True)
 
     path = _config_path()
     with FileLock(_REGISTRY_LOCK_PATH, timeout=10.0):
