@@ -51,6 +51,9 @@ class DispatchResult:
     output: str = ""           # raw agent output (distinct from the log `text`)
     run_id: str = ""           # per-node run record id, when one was opened
     duration_ms: int = 0
+    # A node that parks the run until a human answers (see InterruptEntity):
+    # {"question", "choices", "output_key"}. None for every other node.
+    interrupt: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.written is None:
@@ -142,6 +145,48 @@ class FlowEntity:
     def run(self, node: Dict[str, Any], state: FlowState, ctx: RunContext) -> DispatchResult:
         raise NotImplementedError(
             f"entity category '{self.category}' has no inline run()"
+        )
+
+
+@register_category("interrupt")
+class InterruptEntity(FlowEntity):
+    """A node that stops the run to ask a person something.
+
+    Its callable returns ``{"question", "choices"}`` and writes nothing: the
+    node's declared output key is reserved for the *answer*, which only exists
+    once a human has given one. The result carries an ``interrupt`` payload,
+    and that is what the engine acts on — on a surface that can park a run (the
+    task subprocess) the flow checkpoints and ends, and the answer arrives
+    through a resume; on a surface that cannot park (flow chat) the engine
+    ignores the payload and the question is simply the node's output.
+
+    The first declared output key is where the answer lands on resume, and
+    defaults to ``answer``.
+    """
+
+    def run(self, node: Dict[str, Any], state: FlowState, ctx: RunContext) -> DispatchResult:
+        _inputs, outputs, config = EntityNode(self.spec)._resolve_io(node)
+        try:
+            fn = self.spec.load_callable()
+        except Exception as e:  # noqa: BLE001
+            return DispatchResult(ok=False, error=f"entity '{self.id}' not callable: {e}")
+        try:
+            payload = fn(state, config, ctx)
+        except Exception as e:  # noqa: BLE001
+            return DispatchResult(ok=False, error=f"{type(e).__name__}: {e}")
+
+        if isinstance(payload, NodeResult):
+            payload = payload.outputs
+        payload = payload if isinstance(payload, dict) else {"question": str(payload or "")}
+        question = str(payload.get("question") or "").strip()
+        if not question:
+            return DispatchResult(ok=False, error="interrupt node asks no question")
+        raw_choices = payload.get("choices") or []
+        choices = [str(c) for c in raw_choices] if isinstance(raw_choices, (list, tuple)) else []
+        output_key = (list(outputs) or ["answer"])[0]
+        return DispatchResult(
+            ok=True, text=question, output=question,
+            interrupt={"question": question, "choices": choices, "output_key": output_key},
         )
 
 

@@ -25,6 +25,7 @@ const CATEGORY_LABELS = {
   processor: 'Processors',
   condition: 'Conditions',
   transform: 'Transforms',
+  interrupt: 'Interrupts',
 };
 
 export function EntityPalette({ entitiesByCategory = {} }) {
@@ -39,7 +40,7 @@ export function EntityPalette({ entitiesByCategory = {} }) {
   };
 
   const cats = Object.keys(entitiesByCategory).sort((a, b) => {
-    const order = ['agent', 'processor', 'condition', 'transform'];
+    const order = ['agent', 'processor', 'condition', 'transform', 'interrupt'];
     const ia = order.indexOf(a); const ib = order.indexOf(b);
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });

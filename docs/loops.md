@@ -30,11 +30,25 @@ The run goes to the background and returns its id; iterations appear on the page
 as they complete. `get_loop_run_tool` reports progress, `stop_loop_run_tool`
 ends it.
 
+## If it is interrupted
+
+A loop runs inside the backend, so a restart ends it mid-run. After every
+iteration the run records its position: how many passes it has done, the last
+output, the reviewer's last verdict, the best score, the patience counter and
+what it has spent. `POST /api/loops/runs/{id}/resume` starts at the pass after
+the last one that finished, with the feedback that pass was going to get. The
+watchdog resumes a run whose heartbeat has gone quiet by itself, twice at most.
+Iterations already done keep their rows and their scores: a resume continues the
+trajectory rather than starting a new one.
+
 ## Gotchas
 
 - The judge sees the result, not the conversation. If the criterion depends on
   context the flow did not produce, it cannot be judged.
 - Feeding back "the reviewer's complaints" only helps if the flow's first node
   actually reads them.
+- A resumed loop counts its ceilings from the position it restored, so the
+  iteration cap and the cost ceiling still mean what they said. The wall clock
+  restarts with the process: it bounds one sitting, not the whole run.
 
 Related: [flows](flows.md), [costs](costs.md).

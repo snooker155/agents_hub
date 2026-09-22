@@ -20,6 +20,8 @@ from managers import run_manager
 from agents import agent_launcher
 from flow import launcher as flow_launcher
 from flow import store as flow_store
+from flow.engine import ON_ERROR_POLICIES
+from flow.estimate import estimate_flow_cost
 from workspace import (
     create_workspace_folder,
     get_workspace_metadata,
@@ -83,6 +85,11 @@ class FlowUpdate(BaseModel):
     mutability: Optional[bool] = None
     recordability: Optional[str] = None
     state: Optional[Dict[str, Any]] = None
+    # Execution policy (see flow.engine): how many nodes may run at once, and
+    # what a failed node does to the rest of the graph. Both have engine
+    # defaults, so a flow that never sets them behaves as it always did.
+    max_parallel: Optional[int] = None
+    on_error: Optional[str] = None
 
 
 class FlowImport(BaseModel):
@@ -104,6 +111,15 @@ class FlowRunNode(BaseModel):
     node_id: str
     workspace: Optional[str] = None
     description: Optional[str] = None
+
+
+class FlowResume(BaseModel):
+    """Body of POST /runs/{flow_run_id}/resume.
+
+    ``answer`` is the person's reply when the run is parked on a
+    ``human_interrupt`` node; a run that merely died has nothing to answer.
+    """
+    answer: Optional[str] = None
 
 
 class FlowTrigger(BaseModel):
@@ -174,6 +190,13 @@ async def update_flow(flow_id: str, data: FlowUpdate):
     for i, f in enumerate(flows):
         if f["id"] == flow_id:
             patch = {k: v for k, v in data.model_dump().items() if v is not None}
+            if "on_error" in patch and patch["on_error"] not in ON_ERROR_POLICIES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"on_error must be one of {', '.join(ON_ERROR_POLICIES)}",
+                )
+            if "max_parallel" in patch and int(patch["max_parallel"]) < 1:
+                raise HTTPException(status_code=400, detail="max_parallel must be at least 1")
             patch["updated_at"] = _now()
             flows[i] = {**f, **patch}
             _save(flows)
@@ -345,8 +368,53 @@ async def run_flow(flow_id: str, req: FlowRun):
             "run_id": run_id,
             "session_id": session_id,
             "workspace": ws_name,
+            # What this run is expected to cost, from the same catalog prices
+            # the cost page uses. Returned with the launch so the figure is in
+            # front of whoever pressed Run, not only on the estimate endpoint.
+            "estimated_cost": _safe_estimate(flow),
         }
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _safe_estimate(flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Price a flow, or return None. An estimate must never block a run."""
+    try:
+        return estimate_flow_cost(flow)
+    except Exception:
+        return None
+
+
+@router.get("/{flow_id}/estimate")
+async def estimate_flow(flow_id: str):
+    """What one run of this flow is expected to cost, before starting it.
+
+    One call per agent node, priced from the Models page catalog. Nodes are
+    listed individually because a graph whose cost is one expensive node is a
+    different decision from one that spreads it evenly.
+    """
+    flow = next((f for f in _load() if f["id"] == flow_id), None)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    return estimate_flow_cost(flow)
+
+
+@router.post("/runs/{flow_run_id}/resume")
+async def resume_flow_run(flow_run_id: str, req: Optional[FlowResume] = None):
+    """Continue a flow run from its checkpoint.
+
+    Two runs need this: one parked on a ``human_interrupt`` node, which resumes
+    with the person's ``answer`` written into flow state, and one whose process
+    died, which resumes with the nodes it had already finished replayed rather
+    than re-run. Declared above ``/{flow_id}`` variants with the same shape so
+    "runs" is never read as a flow id.
+    """
+    answer = (req.answer if req else None)
+    try:
+        return flow_launcher.resume_flow_run(flow_run_id, answer)
+    except flow_launcher.FlowResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 
 

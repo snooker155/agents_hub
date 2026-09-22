@@ -217,6 +217,15 @@ class LoopRun:
     total_cost: float = 0.0
     started_at: str = field(default_factory=utc_iso)
     finished_at: Optional[str] = None
+    #: Where the run has got to, written after every iteration: enough to pick
+    #: it up again (``iterations_done``, ``previous_output``, ``best_score``,
+    #: ``stale``, ``spend``, ``history``, the last verdict and a heartbeat).
+    #: A run that is interrupted has usually done several whole flows, and
+    #: losing them to a restart is the most expensive forgetting there is.
+    position: Dict[str, Any] = field(default_factory=dict)
+    #: How many times the watchdog has resumed this run by itself. Capped, so a
+    #: run that cannot get past its next iteration is not retried forever.
+    resume_attempts: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -228,6 +237,7 @@ class LoopRun:
             "stop_reason": self.stop_reason, "result": self.result,
             "error": self.error, "total_cost": self.total_cost,
             "started_at": self.started_at, "finished_at": self.finished_at,
+            "position": dict(self.position), "resume_attempts": self.resume_attempts,
         }
 
 

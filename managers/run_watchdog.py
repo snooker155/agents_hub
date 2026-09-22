@@ -37,6 +37,16 @@ whose carrier process died, trims archived history past the per-workspace
 retention limit, and delivers messages that were written to a copy while it was
 busy (``instances.delivery.drain_idle``) — none of which has anywhere else to
 happen once the copy stopped running.
+
+Flow and loop runs are swept too, and for them death is not the end: both write
+a checkpoint as they go, so a run whose process is gone is **resumed** from it
+rather than failed. Only a run with no checkpoint, or one that has already been
+resumed :data:`MAX_AUTO_RESUMES` times, is closed as failed — a run that cannot
+get past its next node must not be restarted forever. Liveness for a flow run
+is its ``heartbeat_at``, refreshed every node and at least every 15 seconds
+while an agent node runs, because a pid says only that *a* process exists: the
+pid of a crashed-and-reused number is alive, and a hung orchestrator's pid is
+alive too, while a heartbeat that stopped moving is the run itself going quiet.
 """
 from __future__ import annotations
 
@@ -56,6 +66,14 @@ TICK_SECONDS = float(os.environ.get("RUN_WATCHDOG_TICK_SECONDS", "60"))
 PENDING_AUTOSTART_SECONDS = float(os.environ.get("RUN_PENDING_AUTOSTART_SECONDS", "180"))
 # Hard deadline: a pending run that could not be auto-started is failed.
 PENDING_TIMEOUT_SECONDS = float(os.environ.get("RUN_PENDING_TIMEOUT_SECONDS", "900"))
+# A flow run's heartbeat is refreshed every node and at least every 15s inside a
+# node, so several missed beats mean the process is gone, not merely busy.
+FLOW_HEARTBEAT_STALE_SECONDS = float(os.environ.get("FLOW_HEARTBEAT_STALE_SECONDS", "180"))
+# A loop beats once per flow node of the iteration it is running; the threshold
+# is wider because a single node of a single iteration can legitimately be slow.
+LOOP_HEARTBEAT_STALE_SECONDS = float(os.environ.get("LOOP_HEARTBEAT_STALE_SECONDS", "900"))
+# How many times the watchdog may resume the same run by itself.
+MAX_AUTO_RESUMES = int(os.environ.get("RUN_MAX_AUTO_RESUMES", "2"))
 
 
 def _age_seconds(iso_ts: str) -> Optional[float]:
@@ -202,8 +220,137 @@ def sweep_once() -> int:
                     _fail_run(rec, "Run process died without finalizing (crash or external kill).")
                     closed += 1
 
+    closed += _sweep_flow_runs()
+    closed += _sweep_loop_runs()
     closed += _sweep_instances()
     return closed
+
+
+def _flow_run_is_dead(rec: Dict[str, Any]) -> bool:
+    """True when a running flow run's process is gone.
+
+    The heartbeat decides when there is one. A record written before heartbeats
+    existed has none, and for those the old pid probe is still the best signal
+    available — being wrong about an old run is worse than being late about it.
+    """
+    from managers import run_manager as rm
+
+    heartbeat = str(rec.get("heartbeat_at") or "")
+    if heartbeat:
+        age = _age_seconds(heartbeat)
+        return age is not None and age > FLOW_HEARTBEAT_STALE_SECONDS
+    pid = int(rec.get("pid") or 0)
+    return pid > 0 and not rm._pid_exists(pid)
+
+
+def _sweep_flow_runs() -> int:
+    """Resume flow runs whose process died with a checkpoint; fail the rest."""
+    try:
+        from flow import run_store
+    except Exception:
+        return 0
+
+    handled = 0
+    for rec in run_store.load_flow_runs():
+        if str(rec.get("status") or "") != "running":
+            continue
+        if not _flow_run_is_dead(rec):
+            continue
+
+        flow_run_id = str(rec.get("flow_run_id") or "")
+        attempts = int(rec.get("resume_attempts") or 0)
+        checkpoint = rec.get("checkpoint") or {}
+        if checkpoint and attempts < MAX_AUTO_RESUMES:
+            try:
+                from flow.launcher import resume_flow_run
+                resume_flow_run(flow_run_id, auto=True)
+                log.warning(
+                    "watchdog resumed flow run %s from its checkpoint (attempt %d)",
+                    flow_run_id[:8], attempts + 1,
+                )
+                handled += 1
+                continue
+            except Exception:
+                log.exception("watchdog could not resume flow run %s", flow_run_id[:8])
+
+        error = (
+            "Flow run process stopped without finalizing"
+            + (f" and could not be resumed after {attempts} attempt(s)."
+               if checkpoint else " and had no checkpoint to resume from.")
+        )
+        try:
+            run_store.close_flow_run(flow_run_id, status="failed", exit_code=1, error=error)
+            from flow.launcher import _set_flow_running
+            _set_flow_running(str(rec.get("flow_id") or ""), False)
+            task_id = str(rec.get("task_id") or "")
+            if task_id:
+                from managers.run_manager import finalize_flow_task
+                finalize_flow_task(task_id, "failed", 1, error=error)
+            log.warning("watchdog failed flow run %s: %s", flow_run_id[:8], error)
+            handled += 1
+        except Exception:
+            log.exception("watchdog could not close flow run %s", flow_run_id[:8])
+    return handled
+
+
+def _sweep_loop_runs() -> int:
+    """Resume loop runs whose backend process died mid-iteration.
+
+    A loop lives in the backend process, so a restart ends every loop that was
+    running. Each completed iteration is a whole flow's worth of work, which is
+    exactly why the run carries a position: the resume picks up at the iteration
+    after the last one that finished, instead of paying for all of them again.
+    """
+    try:
+        from loops import store as loop_store
+    except Exception:
+        return 0
+
+    handled = 0
+    for run in loop_store.list_runs(limit=200):
+        if run.status != "running":
+            continue
+        position = dict(run.position or {})
+        heartbeat = str(position.get("heartbeat_at") or "")
+        age = _age_seconds(heartbeat) if heartbeat else None
+        if age is None or age <= LOOP_HEARTBEAT_STALE_SECONDS:
+            continue
+
+        attempts = int(position.get("resume_attempts") or 0)
+        if position.get("iterations_done") and attempts < MAX_AUTO_RESUMES:
+            try:
+                import threading
+                from loops.runner import resume_loop_run
+                threading.Thread(
+                    target=resume_loop_run, args=(run.loop_run_id,),
+                    kwargs={"auto": True}, daemon=True,
+                    name=f"loop-resume-{run.loop_run_id}",
+                ).start()
+                log.warning(
+                    "watchdog resumed loop run %s from iteration %s (attempt %d)",
+                    run.loop_run_id[:8], position.get("iterations_done"), attempts + 1,
+                )
+                handled += 1
+                continue
+            except Exception:
+                log.exception("watchdog could not resume loop run %s", run.loop_run_id[:8])
+
+        run.status = "failed"
+        run.stop_reason = "error"
+        run.error = (
+            "The loop stopped without finishing (the backend process ended) and "
+            + ("could not be resumed." if position.get("iterations_done")
+               else "had no position to resume from.")
+        )
+        from loops.models import utc_iso
+        run.finished_at = utc_iso()
+        try:
+            loop_store.save_run(run)
+            log.warning("watchdog failed loop run %s", run.loop_run_id[:8])
+            handled += 1
+        except Exception:
+            log.exception("watchdog could not close loop run %s", run.loop_run_id[:8])
+    return handled
 
 
 def _sweep_instances() -> int:

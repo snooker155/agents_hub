@@ -23,6 +23,12 @@ from managers.run_manager import _utc_now_iso
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+#: The agent id a ``human_interrupt`` node parks its task under. A flow node is
+#: not an agent, so this names the *kind* of pause rather than something the
+#: registry can re-run: the answer resumes the flow process, it does not start
+#: an agent. The task route keys its flow branch off this.
+INTERRUPT_AGENT_ID = "human_interrupt"
+
 
 def _set_flow_running(flow_id: str, running: bool) -> None:
     try:
@@ -113,9 +119,25 @@ def start_flow_run(
         import json as _json
         args += ["--seed", _json.dumps(seed)]
 
-    with open(log_file, "w", encoding="utf-8") as lf:
+    pid = _spawn_flow_process(args, log_file, env, flow_id, header="Flow run started")
+
+    # Record the orchestrator pid on the flow-run record so a stop request can
+    # terminate this specific instance, and flip the flow's coarse running marker.
+    run_store.mark_running(run_id, pid)
+    _set_flow_running(flow_id, True)
+    return run_id, session_id
+
+
+def _spawn_flow_process(args, log_file, env, flow_id: str, *, header: str, mode: str = "w") -> int:
+    """Start runtime/flow_run.py detached and return its pid.
+
+    Shared by the first launch and by :func:`resume_flow_run`, which appends to
+    the same log file so one flow run reads as one story even when it took two
+    processes to finish it.
+    """
+    with open(log_file, mode, encoding="utf-8") as lf:
         lf.write(
-            f"--- Flow run started at {_utc_now_iso()} ---\n"
+            f"--- {header} at {_utc_now_iso()} ---\n"
             f"Flow ID : {flow_id}\n"
             f"Command : {args}\n\n"
         )
@@ -128,7 +150,6 @@ def start_flow_run(
         else:
             start_new_session = True
 
-
         proc = subprocess.Popen(
             args,
             start_new_session=start_new_session,
@@ -138,12 +159,116 @@ def start_flow_run(
             stdout=lf,
             stderr=subprocess.STDOUT,
         )
+    return proc.pid
 
-    # Record the orchestrator pid on the flow-run record so a stop request can
-    # terminate this specific instance, and flip the flow's coarse running marker.
-    run_store.mark_running(run_id, proc.pid)
+
+class FlowResumeError(Exception):
+    """A flow run cannot be resumed (unknown run, or no checkpoint to resume from)."""
+
+
+def resume_flow_run(
+    flow_run_id: str,
+    answer: Optional[str] = None,
+    *,
+    auto: bool = False,
+) -> Dict[str, Any]:
+    """Continue a flow run from its checkpoint, in a fresh subprocess.
+
+    The run keeps its own id, task and session: a resume is the same execution
+    carrying on, not a new one, so the history tab, the task and the per-node
+    runs all stay where they were. ``runtime/flow_run.py`` is relaunched with
+    ``--resume-from``, replays the nodes the checkpoint records as done and runs
+    the rest.
+
+    ``answer`` is the person's reply to a ``human_interrupt`` node: it is written
+    into the checkpoint's state under the key that node declared, and the node
+    is marked done, so the resumed run continues past it with the answer in
+    state. ``auto`` marks a resume the watchdog performed rather than a person,
+    and is what its ``resume_attempts`` cap counts.
+    """
+    from tasks import service as _ts
+    from workspace import as_param_dict, resolve_task_workspace
+    from flow import store as flow_store
+    from flow import run_store
+
+    rec = run_store.get_flow_run(flow_run_id)
+    if not rec:
+        raise FlowResumeError(f"Flow run not found: {flow_run_id}")
+
+    checkpoint = dict(rec.get("checkpoint") or {})
+    if not checkpoint:
+        raise FlowResumeError(
+            f"Flow run {flow_run_id} has no checkpoint to resume from"
+        )
+
+    flow_id = str(rec.get("flow_id") or "")
+    task_id = str(rec.get("task_id") or "")
+    session_id = str(rec.get("session_id") or "")
+    if not flow_store.get_flow(flow_id):
+        raise FlowResumeError(f"Flow not found: {flow_id}")
+    task = _ts.get_task(task_id) if task_id else None
+    if task is None:
+        raise FlowResumeError(f"Task not found for flow run {flow_run_id}")
+
+    # Fold the answer into the checkpoint: the interrupt node becomes a node
+    # that is done, and its answer is in state where successors read it.
+    interrupt = dict(checkpoint.get("interrupt") or {})
+    if answer is not None and interrupt:
+        key = str(interrupt.get("output_key") or "answer")
+        node_id = str(interrupt.get("node_id") or "")
+        state = dict(checkpoint.get("state") or {})
+        state[key] = answer
+        checkpoint["state"] = state
+        done = [d for d in (checkpoint.get("done") or []) if d.get("node_id") != node_id]
+        if node_id:
+            done.append({"node_id": node_id, "output": answer, "ok": True})
+        checkpoint["done"] = done
+    checkpoint.pop("interrupt", None)
+
+    ws_name, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": rec.get("workspace")}))
+
+    log_file = rec.get("log_file")
+    if not log_file:
+        log_dir = AGENTS_HUB_ROOT / "run_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = str(log_dir / f"flow_run_{flow_run_id}.log")
+
+    attempts = int(rec.get("resume_attempts") or 0) + (1 if auto else 0)
+    run_store.update_flow_run(flow_run_id, {
+        "checkpoint": checkpoint,
+        "status": "running",
+        "resume_attempts": attempts,
+        "resumed_at": _utc_now_iso(),
+        "heartbeat_at": _utc_now_iso(),
+        "finished_at": None,
+        "exit_code": None,
+        "error": None,
+    })
+
+    args = [
+        sys.executable,
+        str(PROJECT_ROOT / "runtime" / "flow_run.py"),
+        "--flow-id", flow_id,
+        "--workspace", str(ws_path),
+        "--task-id", task_id,
+        "--run-id", flow_run_id,
+        "--session-id", session_id,
+        "--resume-from", flow_run_id,
+    ]
+    env = _build_env(ws_name, session_id, str(log_file))
+    pid = _spawn_flow_process(args, log_file, env, flow_id, header="Flow run resumed", mode="a")
+
+    run_store.mark_running(flow_run_id, pid)
     _set_flow_running(flow_id, True)
-    return run_id, session_id
+    try:
+        _ts.update_task(task.id, status=_ts.TaskStatus.in_progress, pending_question=None)
+    except Exception:
+        pass
+    return {
+        "flow_run_id": flow_run_id, "flow_id": flow_id, "task_id": task_id,
+        "session_id": session_id, "pid": pid, "resume_attempts": attempts,
+        "resumed_nodes": len(checkpoint.get("done") or []),
+    }
 
 
 class FlowNotFoundError(Exception):

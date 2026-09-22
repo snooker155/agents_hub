@@ -5,6 +5,7 @@ column rather than as columns, so tightening a ceiling never needs a migration.
 """
 from __future__ import annotations
 
+import sqlite3
 from typing import Any, Dict, List, Optional
 
 from common import db
@@ -15,6 +16,73 @@ _CONFIG_FIELDS = (
     "cost_ceiling", "max_wall_seconds", "evaluator_mode", "evaluator_agent_id",
     "evaluator_provider", "evaluator_model",
 )
+
+
+# ── The resume position ──────────────────────────────────────────────────────
+# A loop run that is interrupted (backend restart, crash, kill) has usually done
+# real work: several iterations, each a whole flow. Losing that to a process
+# ending is the most expensive kind of forgetting in the product, so after every
+# iteration the run's position — what it has done, what the reviewer said and
+# what it has spent — is written to the row. The column is added here rather
+# than in the shared schema so the change is additive and needs no migration:
+# an existing database gets it on first use, a fresh one on creation.
+
+_PROGRESS_COLUMN = "progress"
+_progress_column_ready: set = set()
+
+
+def _ensure_progress_column() -> None:
+    """Add ``loop_runs.progress`` once per database. Idempotent and cheap."""
+    key = str(getattr(db, "DB_FILE", ""))
+    if key in _progress_column_ready:
+        return
+    conn = db.get_conn()
+    present = {r["name"] for r in conn.execute("PRAGMA table_info(loop_runs)")}
+    if _PROGRESS_COLUMN not in present:
+        try:
+            with db.transaction() as tconn:
+                tconn.execute(f"ALTER TABLE loop_runs ADD COLUMN {_PROGRESS_COLUMN} TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+    _progress_column_ready.add(key)
+
+
+def save_position(loop_run_id: str, position: Dict[str, Any]) -> None:
+    """Persist where a run has got to, so it can be resumed from here."""
+    _ensure_progress_column()
+    with db.transaction() as conn:
+        conn.execute(
+            f"UPDATE loop_runs SET {_PROGRESS_COLUMN} = ? WHERE loop_run_id = ?",
+            (db.dumps(position or {}), loop_run_id),
+        )
+
+
+def get_position(loop_run_id: str) -> Dict[str, Any]:
+    """The stored resume position of a run, or ``{}`` when it has none."""
+    _ensure_progress_column()
+    row = db.get_conn().execute(
+        f"SELECT {_PROGRESS_COLUMN} FROM loop_runs WHERE loop_run_id = ?", (loop_run_id,)
+    ).fetchone()
+    if not row:
+        return {}
+    return db.loads(row[_PROGRESS_COLUMN], {}) or {}
+
+
+def touch_heartbeat(loop_run_id: str) -> None:
+    """Refresh the position's ``heartbeat_at``, without touching the rest.
+
+    Called as each flow node of an iteration finishes: an iteration is a whole
+    flow and can legitimately take many minutes, so the watchdog must be able to
+    tell "still working" from "the process is gone" more often than once per
+    iteration. Best-effort — a missed heartbeat is not worth failing a run over.
+    """
+    try:
+        position = get_position(loop_run_id)
+        position["heartbeat_at"] = utc_iso()
+        save_position(loop_run_id, position)
+    except Exception:
+        pass
 
 
 def _notify(resource: str, **meta) -> None:
@@ -102,18 +170,23 @@ def delete_loop(loop_id: str) -> bool:
 # ── Runs ─────────────────────────────────────────────────────────────────────
 
 def save_run(run: LoopRun) -> LoopRun:
+    # INSERT OR REPLACE rewrites the whole row, so the resume position is
+    # written with it; leaving it out of the column list would quietly blank a
+    # running loop's position the next time its record was saved.
+    _ensure_progress_column()
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO loop_runs
+            f"""INSERT OR REPLACE INTO loop_runs
                (loop_run_id, loop_id, workspace, status, goal, task_id, session_id,
                 iterations_done, best_score, final_score, stop_reason, result,
-                error, total_cost, started_at, finished_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                error, total_cost, started_at, finished_at, {_PROGRESS_COLUMN})
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 run.loop_run_id, run.loop_id, run.workspace, run.status, run.goal,
                 run.task_id, run.session_id, run.iterations_done, run.best_score,
                 run.final_score, run.stop_reason, run.result, run.error,
                 run.total_cost, run.started_at, run.finished_at,
+                db.dumps(run.position or {}),
             ),
         )
     _notify("loop_runs", loop_run_id=run.loop_run_id, loop_id=run.loop_id)
@@ -134,9 +207,17 @@ def update_progress(loop_run_id: str, **fields: Any) -> None:
     Saving the whole record here would resurrect the in-memory ``running``
     status over a ``stopping`` one written by :func:`request_stop`, and the loop
     would run on after the user pressed stop.
+
+    ``position=`` is accepted alongside the columns and stored as the run's
+    resume point (see :func:`save_position`).
     """
+    position = fields.pop("position", None)
+    if position is not None:
+        save_position(loop_run_id, position)
     updates = {k: v for k, v in fields.items() if k in _PROGRESS_FIELDS}
     if not updates:
+        if position is not None:
+            _notify("loop_runs", loop_run_id=loop_run_id)
         return
     assignments = ", ".join(f"{k} = ?" for k in updates)
     with db.transaction() as conn:
@@ -148,7 +229,15 @@ def update_progress(loop_run_id: str, **fields: Any) -> None:
 
 
 def _row_to_run(row) -> LoopRun:
+    # The resume position is one JSON column, and the watchdog's attempt
+    # counter lives inside it rather than as a column of its own: both are
+    # written together, by the same writer, on the same schedule.
+    keys = row.keys()
+    position = (db.loads(row[_PROGRESS_COLUMN], {}) or {}
+                if _PROGRESS_COLUMN in keys else {})
     return LoopRun(
+        position=position,
+        resume_attempts=int(position.get("resume_attempts") or 0),
         loop_run_id=row["loop_run_id"],
         loop_id=row["loop_id"] or "",
         workspace=row["workspace"],
@@ -276,6 +365,7 @@ def get_iteration(loop_run_id: str, iteration: int) -> Optional[Dict[str, Any]]:
 __all__ = [
     "save_loop", "get_loop", "list_loops", "delete_loop",
     "save_run", "get_run", "list_runs", "update_progress",
+    "save_position", "get_position", "touch_heartbeat",
     "request_stop", "stop_requested",
     "save_iteration", "list_iterations", "get_iteration",
 ]

@@ -88,6 +88,7 @@ def _run_agent_node(
     flow_state: Any,
     agent_overrides: Dict[str, Any],
     port: int,
+    outcome: Any = None,
 ) -> Any:
     """Execute an agent node in-process: open a run record, run the LLM agent
     with callbacks against the prebuilt ``prompt``, write its output to flow
@@ -102,6 +103,12 @@ def _run_agent_node(
     label = _node_value(node, "label") or agent_id
 
     run_id = str(uuid4())
+    # Publish the run id on the outcome as soon as it exists: a node that hits
+    # its timeout is stopped from the engine's thread, and closing its run
+    # record is the only stop this surface can offer (the LLM call itself runs
+    # in a worker thread that cannot be interrupted).
+    if outcome is not None:
+        outcome.run_id = run_id
     log_path = run_log_path(run_id)
 
     # One instance per node of this flow run — re-executions of the same node
@@ -210,7 +217,9 @@ def build_task_driver(
     Captures the per-run context in closures: agent nodes run through the sync
     ``_run_agent_node`` (off the event loop via ``asyncio.to_thread``), node
     outcomes are mirrored into flow-log events + the ``node_run_ids`` map, and
-    the stop check reads the live flow-run record.
+    the stop check reads the live flow-run record. The checkpoint and heartbeat
+    hooks write to the same record, which is what lets a killed run be resumed
+    instead of failed.
     """
     agent_overrides = agent_overrides or {}
 
@@ -222,7 +231,8 @@ def build_task_driver(
         # successor nodes read them.
         dr = await asyncio.to_thread(
             _run_agent_node, node, node_id, prompt,
-            args=args, flow_state=flow_state, agent_overrides=agent_overrides, port=port,
+            args=args, flow_state=flow_state, agent_overrides=agent_overrides,
+            port=port, outcome=outcome,
         )
         outcome.ok = dr.ok
         outcome.output = dr.output
@@ -234,6 +244,46 @@ def build_task_driver(
         outcome.duration_ms = dr.duration_ms
         return
         yield  # make this an async generator (never reached)
+
+    def _stop_agent_node(node: Dict[str, Any], node_id: str, outcome: Any) -> None:
+        """Stop a node that ran past its ``timeout_seconds``.
+
+        The invocation itself is a synchronous call on a worker thread and
+        cannot be interrupted, so what is stopped is the record of it: the
+        node's run is closed as failed immediately, the engine fails the node,
+        and the abandoned thread's later close is a no-op on an already closed
+        record. Saying so here is better than pretending the model stopped.
+        """
+        rid = getattr(outcome, "run_id", "") or ""
+        if not rid:
+            return
+        try:
+            close_run(rid, status="failed", exit_code=1,
+                      error="node exceeded its timeout_seconds and was abandoned")
+        except Exception as e:  # noqa: BLE001
+            print(f"[node_timeout] could not close run {rid[:8]}: {e}")
+
+    def _on_checkpoint(cp: Dict[str, Any]) -> None:
+        """Persist the resume point on the flow-run record after every node.
+
+        Arbitrary keys survive on a flow-run record, so the checkpoint rides on
+        the record the watchdog and the resume endpoint already read, rather
+        than in a file of its own that could disagree with it.
+        """
+        try:
+            run_store.update_flow_run(run_id, {
+                "checkpoint": cp, "heartbeat_at": _utc_now_iso(),
+            })
+        except Exception as e:  # noqa: BLE001 - a checkpoint never fails a run
+            print(f"[checkpoint] could not write checkpoint for {run_id[:8]}: {e}")
+
+    def _on_heartbeat() -> None:
+        """Prove the run is alive while one node takes a long time. The watchdog
+        treats a stale heartbeat, not a missing pid, as death."""
+        try:
+            run_store.update_flow_run(run_id, {"heartbeat_at": _utc_now_iso()})
+        except Exception:
+            pass
 
     def _make_run_context(node_id: str) -> RunContext:
         return RunContext(
@@ -254,11 +304,23 @@ def build_task_driver(
                 "status": "running",
             })
 
+    #: Why a node was not executed, in the words the history tab shows.
+    _SKIP_REASONS = {
+        "branch_not_selected": "not on the selected branch",
+        "predecessor_failed": "a node it depends on failed",
+        "branch_isolated": "its branch was isolated after a failure",
+        "cancelled_after_failure": "the run stopped at the first failure",
+        "already_done": "already completed before this run resumed",
+        "already_skipped": "already skipped before this run resumed",
+    }
+
     def _on_node_skip(ev: dict) -> None:
-        print(f"[node_skip] node={ev['node_id']} reason={ev.get('reason')}")
+        reason = ev.get("reason") or ""
+        print(f"[node_skip] node={ev['node_id']} reason={reason}")
         log_flow(flow_id, run_id, {
             "timestamp": _utc_now_iso(), "type": "node_skip", "node_id": ev["node_id"],
-            "content": f"Skipping node '{ev['node_id']}': not on the selected branch",
+            "content": f"Skipping node '{ev['node_id']}': "
+                       + _SKIP_REASONS.get(reason, reason or "not on the selected branch"),
             "status": "skipped",
         })
 
@@ -311,4 +373,11 @@ def build_task_driver(
         on_node_start=_on_node_start,
         on_node_done=_on_node_done,
         on_node_skip=_on_node_skip,
+        on_checkpoint=_on_checkpoint,
+        on_heartbeat=_on_heartbeat,
+        stop_agent_node=_stop_agent_node,
+        # The task surface owns a task and a flow-run record, so it can park a
+        # run in awaiting_input and come back to it. That is what makes a
+        # human_interrupt node work here and not in flow chat.
+        supports_interrupt=True,
     )

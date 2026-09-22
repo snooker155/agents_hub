@@ -14,9 +14,10 @@ from pathlib import Path
 
 from tasks import service as tasks_service
 from agents import registry
+from flow import launcher as flow_launcher
 from managers import run_manager
 from agents import agent_launcher
-from tasks import AgentState, CreatedBy, TaskStatus
+from tasks import Actor, AgentState, CreatedBy, TaskStatus
 from workspace import create_workspace_folder, resolve_project_root, project_folder_name, resolve_task_project_name
 from workspace import get_workspace_metadata
 from agents.agent_factory import create_agent
@@ -125,6 +126,7 @@ async def create_task(task: TaskCreate):
             should_decompose=task.should_decompose,
             parent_id=parent_uuid,
             depends=depends_uuids,
+            due_at=task.due_at,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -134,7 +136,7 @@ async def create_task(task: TaskCreate):
     if task.priority:
         extra["priority"] = task.priority
     if extra:
-        tasks_service.update_task(t.id, **extra)
+        tasks_service.update_task(t.id, actor=Actor.user, **extra)
         t = tasks_service.get_task(t.id) or t
 
     return task_to_dict(t)
@@ -185,7 +187,7 @@ async def update_task(task_id: UUID, update: TaskUpdate):
             run_manager.delete_assigned_run(str(task_id))
 
     try:
-        updated = tasks_service.update_task(task_id, **fields)
+        updated = tasks_service.update_task(task_id, actor=Actor.user, **fields)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not updated:
@@ -590,6 +592,23 @@ async def answer_task(task_id: UUID, payload: TaskAnswer):
         raise HTTPException(status_code=400, detail="Task is not awaiting input")
 
     pending = getattr(t, "pending_question", None) or {}
+
+    # A flow parked on a human_interrupt node is *resumed*, not re-run: the flow
+    # process comes back at its checkpoint with the answer written into flow
+    # state. There is no agent to re-run here, because no agent asked — the
+    # graph did. Everything below is the agent path and is untouched.
+    if (pending.get("agent_id") or "") == flow_launcher.INTERRUPT_AGENT_ID:
+        answer = (payload.answer or "").strip()
+        if not answer:
+            raise HTTPException(status_code=400, detail="Answer must not be empty")
+        node_run = run_manager.get_run_by_id(str(pending.get("run_id") or "")) or {}
+        flow_run_id = str(node_run.get("flow_run_id") or "")
+        try:
+            resumed = flow_launcher.resume_flow_run(flow_run_id, answer)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"task": task_to_dict(tasks_service.get_task(task_id)), **resumed}
+
     agent_id = pending.get("agent_id") or t.assigned_agent_type
     if not agent_id:
         raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")

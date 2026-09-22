@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 from loops import store
 from loops.models import EVALUATOR_MODES, Loop
-from loops.runner import estimate_cost, run_loop
+from loops.runner import LoopResumeError, estimate_cost, resume_loop_run, run_loop
 
 router = APIRouter(prefix="/api/loops", tags=["loops"])
 
@@ -176,6 +176,52 @@ async def get_iterations(loop_run_id: str, since: int = 0):
         "error": run.error,
         "iterations": store.list_iterations(loop_run_id, since),
     }
+
+
+@router.post("/runs/{loop_run_id}/resume")
+async def resume_run(loop_run_id: str):
+    """Continue a loop run from the iteration after its last completed one.
+
+    A loop runs inside the backend process, so a restart ends it mid-run. Every
+    finished iteration is a whole flow's worth of work, and the run's stored
+    position is what makes picking it up cheaper than starting over. Runs on a
+    background thread, like the initial start, and returns the run record.
+    """
+    run = store.get_run(loop_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Loop run not found")
+
+    failure: Dict[str, Any] = {}
+    ready = threading.Event()
+
+    def _worker():
+        try:
+            resume_loop_run(loop_run_id, on_iteration=lambda _it: ready.set())
+        except Exception as e:  # noqa: BLE001
+            failure["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            ready.set()
+
+    # Refuse before starting the thread when the run is plainly not resumable,
+    # so the caller gets the reason instead of a silently dead background task.
+    try:
+        _precheck_resumable(run)
+    except LoopResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    threading.Thread(target=_worker, name=f"loop-resume-{loop_run_id}", daemon=True).start()
+    ready.wait(timeout=1.0)
+    if failure:
+        raise HTTPException(status_code=400, detail=failure["error"])
+    return (store.get_run(loop_run_id) or run).to_dict()
+
+
+def _precheck_resumable(run) -> None:
+    """Raise :class:`LoopResumeError` when this run cannot be resumed at all."""
+    if run.status in ("completed", "stopped"):
+        raise LoopResumeError(f"Loop run already finished ({run.status})")
+    if not (run.position or {}).get("iterations_done"):
+        raise LoopResumeError("Loop run has no position to resume from")
 
 
 @router.post("/runs/{loop_run_id}/stop")

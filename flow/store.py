@@ -57,6 +57,9 @@ _NON_YAML_FLOW_FIELDS = {"id", "task_id"}
 # are dropped: ids live only in the visual JSON, nodeTask is obsolete.
 _LOGIC_NODE_FIELDS = {
     "input", "inputs", "output", "outputs", "config",
+    # Execution policy the engine reads per node (see flow.engine): how many
+    # times a failed attempt is repeated and how long one attempt may take.
+    "retry", "timeout_seconds",
 }
 # Per-node ``data`` keys that are purely visual.
 _VISUAL_DATA_FIELDS = {"label", "description", "domain"}
