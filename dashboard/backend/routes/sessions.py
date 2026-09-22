@@ -34,6 +34,7 @@ from common.session_service import (
     delete_context as _delete_context,
     get_context_by_id as _get_context_by_id,
 )
+from models import SessionPage
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -263,7 +264,7 @@ def _enrich_context(ctx: Dict[str, Any], stats: Dict[str, Dict[str, Any]]) -> Di
 
 # -------------------- Endpoints --------------------
 
-@router.get("")
+@router.get("", response_model=SessionPage)
 async def list_sessions(
     workspace: Optional[str] = None,
     status: Optional[str] = None,

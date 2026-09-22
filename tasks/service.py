@@ -157,6 +157,27 @@ def list_tasks(*, store: TaskStore = default_store) -> List[Task]:
     return store.list()
 
 
+def list_tasks_page(
+    *, workspace: Optional[str] = None, limit: Optional[int] = None,
+    offset: Optional[int] = None, store: TaskStore = default_store,
+) -> tuple[List[Task], int]:
+    """One page of tasks plus the total that matched, for ``GET /api/tasks``.
+
+    Without a workspace filter, ``limit``/``offset`` are pushed straight into
+    the store's SQL query. A workspace filter has to be applied in Python (the
+    stored value isn't always the trimmed form ``list_tasks`` compares
+    against), so that case loads the table once and slices here — still one
+    pass, not one query per page.
+    """
+    if workspace:
+        matching = [t for t in store.list() if (t.workspace or "").strip() == workspace]
+        total = len(matching)
+        start = offset or 0
+        page = matching[start: start + limit] if limit is not None else matching[start:]
+        return page, total
+    return store.list(limit=limit, offset=offset), store.count()
+
+
 def update_task(
     task_id: UUID,
     *,

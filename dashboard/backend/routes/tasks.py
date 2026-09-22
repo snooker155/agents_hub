@@ -4,7 +4,7 @@ Task-related API routes.
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional, Union
 from uuid import UUID
 import json
 import threading
@@ -23,7 +23,7 @@ from workspace import get_workspace_metadata
 from agents.agent_factory import create_agent
 from tasks.assign import assign_agent_to_task, AssignError
 from tasks.serialize import task_to_dict
-from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate, TaskAnswer
+from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate, TaskAnswer, TaskListItem, TaskDetail, TaskPage
 from common.session_service import add_event_to_session
 from common.paths import PROJECTS_FILE
 
@@ -47,16 +47,22 @@ def _resolve_task_ref(ref: str) -> UUID:
 
 
 
-@router.get("")
-async def list_tasks(workspace: Optional[str] = None):
-    all_tasks = tasks_service.list_tasks()
-    
-    if workspace:
-        tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
-    else:
-        tasks = all_tasks
+@router.get("", response_model=Union[List[TaskListItem], TaskPage])
+async def list_tasks(workspace: Optional[str] = None, limit: Optional[int] = None,
+                     offset: Optional[int] = None):
+    """The task list. With no ``limit``/``offset`` this is the full list, exactly
+    as before; with either, it is one page: ``{items, total, limit, offset}``."""
+    if limit is None and offset is None:
+        all_tasks = tasks_service.list_tasks()
+        if workspace:
+            tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
+        else:
+            tasks = all_tasks
+        return [task_to_dict(t) for t in tasks]
 
-    return [task_to_dict(t) for t in tasks]
+    page, total = tasks_service.list_tasks_page(workspace=workspace, limit=limit, offset=offset)
+    return {"items": [task_to_dict(t) for t in page], "total": total,
+            "limit": limit, "offset": offset}
 
 
 @router.post("")
@@ -142,7 +148,7 @@ async def create_task(task: TaskCreate):
     return task_to_dict(t)
 
 
-@router.get("/{task_id}")
+@router.get("/{task_id}", response_model=TaskDetail)
 async def get_task(task_id: UUID):
     t = tasks_service.get_task(task_id)
     if not t:

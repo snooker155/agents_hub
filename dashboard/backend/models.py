@@ -2,7 +2,7 @@
 Pydantic models for API request/response validation.
 """
 from datetime import datetime
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 from typing import List, Optional, Dict, Any
 
 
@@ -390,3 +390,185 @@ class ProjectGraphChat(BaseModel):
 class ProjectTasksChat(BaseModel):
     """One planner-chat turn. Empty message = the default 'generate from graphs'."""
     message: Optional[str] = None
+
+
+# ── Response models ────────────────────────────────────────────────────────
+#
+# These document the shape of the big list/detail endpoints for the OpenAPI
+# schema without narrowing what the routes are actually free to return: every
+# one of them carries ``extra="allow"``, so a field the frontend reads that
+# isn't declared here still passes through untouched rather than being
+# dropped by response-model filtering. Only the fields the frontend (see
+# dashboard/frontend/src/api/index.js and the pages that consume it) actually
+# reads are declared as real fields.
+
+
+class AgentListItem(BaseModel):
+    """One row of ``GET /api/agents`` — see ``AgentSpec.to_dict()``."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str = ""
+    type: Optional[str] = None
+    description: str = ""
+    domain: str = ""
+    tools: List[str] = []
+    capacity: int = 1
+    memory_type: Optional[str] = None
+    system: bool = False
+    shared: bool = False
+    owner_workspace: Optional[str] = None
+    definition_id: Optional[str] = None
+    skills_enabled: bool = True
+    # A remote (agent-hub HTTP contract) agent's connection config — absent for
+    # an in-process one.
+    remote: Optional[Dict[str, Any]] = None
+    # Annotated onto every row by the route (not part of AgentSpec.to_dict()).
+    has_running_node: bool = False
+    is_default_chat_agent: bool = False
+
+
+class AgentDetail(AgentListItem):
+    """``GET /api/agents/{id}`` — an ``AgentListItem`` plus its execution config."""
+    model_config = ConfigDict(extra="allow")
+
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    response_format: Optional[str] = None
+    clarify_gate: Optional[bool] = None
+    allow_self_delegation: Optional[bool] = None
+    delegates: Optional[List[str]] = None
+    episodic_write_enabled: Optional[bool] = None
+
+
+class AgentPage(BaseModel):
+    """``GET /api/agents`` with ``limit``/``offset``."""
+    model_config = ConfigDict(extra="allow")
+
+    items: List[AgentListItem]
+    total: int
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+
+
+class TaskListItem(BaseModel):
+    """One row of ``GET /api/tasks`` — see ``tasks.serialize.task_to_dict``."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    key: Optional[str] = None
+    title: str
+    description: str = ""
+    status: str
+    priority: Optional[str] = None
+    workspace: Optional[str] = None
+    project: Optional[str] = None
+    project_id: Optional[str] = None
+    parent_id: Optional[str] = None
+    depends: List[str] = []
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    due_at: Optional[datetime] = None
+    blocked_reason: Optional[str] = None
+    should_decompose: bool = False
+    assigned_agent_type: Optional[str] = None
+    assigned_agent_params: Optional[Dict[str, Any]] = None
+    assigned_agent_run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    external_source: Optional[Dict[str, Any]] = None
+    pending_question: Optional[Dict[str, Any]] = None
+    pending_approval: Optional[Dict[str, Any]] = None
+    agent_state: str = "none"
+    overdue: bool = False
+
+
+class TaskDetail(TaskListItem):
+    """``GET /api/tasks/{id}`` — a ``TaskListItem`` plus its subtasks."""
+    model_config = ConfigDict(extra="allow")
+
+    subtasks: List[TaskListItem] = []
+
+
+class TaskPage(BaseModel):
+    """``GET /api/tasks`` with ``limit``/``offset``."""
+    model_config = ConfigDict(extra="allow")
+
+    items: List[TaskListItem]
+    total: int
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+
+
+class FlowListItem(BaseModel):
+    """One row of ``GET /api/flows`` — a combined flow dict (logic + visual)."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str = ""
+    description: str = ""
+    workspace: Optional[str] = None
+    task_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    entry_point: Optional[str] = None
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+
+
+class FlowDetail(FlowListItem):
+    """``GET /api/flows/{id}`` — same shape as a list row, one flow's worth."""
+    model_config = ConfigDict(extra="allow")
+
+
+class FlowPage(BaseModel):
+    """``GET /api/flows`` with ``limit``/``offset``."""
+    model_config = ConfigDict(extra="allow")
+
+    items: List[FlowListItem]
+    total: int
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+
+
+class SessionListItem(BaseModel):
+    """One row of ``GET /api/sessions`` — see ``routes.sessions._enrich_context``."""
+    model_config = ConfigDict(extra="allow")
+
+    session_id: str
+    title: Optional[str] = None
+    description: str = ""
+    workspace: Optional[str] = None
+    agent_id: Optional[str] = None
+    is_flow: bool = False
+    status: str = "pending"
+    created_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    agents: List[str] = []
+    message_count: int = 0
+    event_count: int = 0
+
+
+class SessionPage(BaseModel):
+    """``GET /api/sessions`` — always the paginated shape."""
+    model_config = ConfigDict(extra="allow")
+
+    items: List[SessionListItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class WorkspaceListItem(BaseModel):
+    """One row of ``GET /api/workspaces``."""
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    path: str
+    tasks_count: int = 0
+    attached: bool = False
+    target: Optional[str] = None

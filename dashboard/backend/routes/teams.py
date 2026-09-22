@@ -19,19 +19,19 @@ Both read the same rows — watching live and reading it back look the same.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from teams import store
 from teams.models import MAX_MEMBERS, MODES, Team
 from teams.prompts import suggest_manifest, team_system_prompt
 from teams.runner import estimate_cost, run_team, stop_run
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 router = APIRouter(prefix="/api/teams", tags=["teams"])
 
@@ -331,10 +331,6 @@ TEAM_AGENT_ID = "team_creator"
 TEAM_CHAT_KIND = "team"
 
 
-class TeamChatIn(BaseModel):
-    message: str = ""
-
-
 def _agent_catalog(workspace: Optional[str]) -> List[Dict[str, str]]:
     """The agents that could take a seat on this team."""
     from agents import registry
@@ -407,61 +403,29 @@ def _team_chat_prompt(team: Team, history: List[dict], user_message: str) -> str
     return "\n".join(parts)
 
 
-@router.get("/{team_id}/chat")
-async def get_team_chat(team_id: str):
-    """The build chat for one team: the transcript plus the rich replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_team_chat(request):
+    from types import SimpleNamespace
 
-    if not store.get_team(team_id):
-        raise HTTPException(status_code=404, detail="Team not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(TEAM_CHAT_KIND, team_id),
-        "trace": chat_store.get_trace(TEAM_CHAT_KIND, team_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": TEAM_CHAT_KIND, "id": team_id},
-    }
-
-
-@router.delete("/{team_id}/chat")
-async def clear_team_chat(team_id: str):
-    """Clear the transcript and start a fresh chat session. The team is untouched."""
-    from common.entity_chat_store import entity_chat_store
-
-    if not store.get_team(team_id):
-        raise HTTPException(status_code=404, detail="Team not found")
-    epoch = entity_chat_store().clear(TEAM_CHAT_KIND, team_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/{team_id}/chat")
-async def chat_team(team_id: str, payload: TeamChatIn):
-    """Run one turn of the team build chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
-    ``team`` event carrying the roster as it stands after the turn, the final
-    ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
-
+    team_id = request.path_params["team_id"]
     team = store.get_team(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    return SimpleNamespace(entity_id=team_id, workspace=team.workspace, team=team)
 
-    before = _team_state(team)
 
+def _load_team_send(request, body):
+    ctx = _load_team_chat(request)
+    ctx.before = _team_state(ctx.team)
+    return ctx
+
+
+def _team_summarize(ctx):
     def _summarize() -> str:
-        after_team = store.get_team(team_id)
+        after_team = store.get_team(ctx.entity_id)
         if not after_team:
             return "The team is gone."
         after = _team_state(after_team)
+        before = ctx.before
         if after == before:
             return ""
         bits = []
@@ -480,54 +444,35 @@ async def chat_team(team_id: str, payload: TeamChatIn):
         if after["max_rounds"] != before["max_rounds"]:
             bits.append("retuned how long it runs")
         return ("Done — " + ", ".join(bits) + ".") if bits else "Done — the team was updated."
+    return _summarize
 
-    spec = EntityChatSpec(
-        kind=TEAM_CHAT_KIND,
-        agent_id=TEAM_AGENT_ID,
-        title=f"{team.name} · team",
-        workspace=team.workspace,
-    )
 
-    async def run_turn(queue: asyncio.Queue):
+def _team_context_setup(ctx):
+    # The builder's tools resolve the workspace from this ContextVar, so the
+    # edit lands in the team's own workspace, not the UI's current one.
+    if ctx.team.workspace:
         from common.workspace_context import _workspace_ctx
-
-        # The builder's tools resolve the workspace from this ContextVar, so the
-        # edit lands in the team's own workspace, not the UI's current one.
-        if team.workspace:
-            _workspace_ctx.set(team.workspace)
-
-        await run_entity_chat_turn(
-            queue, spec, team_id, user_message,
-            lambda history: _team_chat_prompt(store.get_team(team_id) or team,
-                                              history, user_message),
-            summarize=_summarize,
-        )
-        after = store.get_team(team_id)
-        if after:
-            await queue.put({"type": "team", "team": _enrich(after)})
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": TEAM_CHAT_KIND, "id": team_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+        _workspace_ctx.set(ctx.team.workspace)
 
 
-@router.post("/{team_id}/chat/stop")
-async def stop_team_chat(team_id: str):
-    """Stop the in-flight build run for this team.
+async def _team_post_turn(queue, ctx):
+    after = store.get_team(ctx.entity_id)
+    if after:
+        await queue.put({"type": "team", "team": _enrich(after)})
 
-    The agent runs detached from the SSE connection, so aborting the browser
-    request cannot stop it — this cancels the underlying task.
-    """
-    from chat.entity_chat import cancel_entity_runs
 
-    if not store.get_team(team_id):
-        raise HTTPException(status_code=404, detail="Team not found")
-    cancelled = cancel_entity_runs(TEAM_CHAT_KIND, team_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=TEAM_CHAT_KIND,
+    path="/{team_id}/chat",
+    load=_load_team_chat,
+    load_for_send=_load_team_send,
+    prompt=lambda ctx, history, msg: _team_chat_prompt(
+        store.get_team(ctx.entity_id) or ctx.team, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=TEAM_CHAT_KIND, agent_id=TEAM_AGENT_ID,
+        title=f"{ctx.team.name} · team", workspace=ctx.team.workspace,
+    ),
+    summarize=_team_summarize,
+    context_setup=_team_context_setup,
+    post_turn=_team_post_turn,
+)))

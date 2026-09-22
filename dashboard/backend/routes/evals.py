@@ -17,17 +17,17 @@ same shape ``routes/replay.py`` uses.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from evals import store
 from evals.models import Case, EvalSet, GraderSpec, RunConfig
 from evals.runner import case_from_run, diff_runs, project_cost, run_eval
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 router = APIRouter(prefix="/api", tags=["evals"])
 
@@ -135,10 +135,6 @@ EVAL_AGENT_ID = "eval_agent"
 EVAL_CHAT_KIND = "evals"
 
 
-class EvalChatIn(BaseModel):
-    message: str = ""
-
-
 def _eval_chat_id(workspace: Optional[str]) -> str:
     return (workspace or "default").strip() or "default"
 
@@ -199,58 +195,28 @@ def _eval_chat_prompt(workspace: str, history: List[dict], user_message: str) ->
     return "\n".join(parts)
 
 
-@router.get("/evals/chat")
-async def get_eval_chat(workspace: Optional[str] = Query(None)):
-    """The Eval Agent's transcript for this workspace, plus the replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_eval_chat(request):
+    from types import SimpleNamespace
 
-    chat_store = entity_chat_store()
-    chat_id = _eval_chat_id(workspace)
-    return {
-        "messages": chat_store.get_messages(EVAL_CHAT_KIND, chat_id),
-        "trace": chat_store.get_trace(EVAL_CHAT_KIND, chat_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": EVAL_CHAT_KIND, "id": chat_id},
-    }
+    ws = _eval_chat_id(request.query_params.get("workspace"))
+    return SimpleNamespace(entity_id=ws, workspace=ws)
 
 
-@router.delete("/evals/chat")
-async def clear_eval_chat(workspace: Optional[str] = Query(None)):
-    """Clear the transcript and start a fresh session. No set is touched."""
-    from common.entity_chat_store import entity_chat_store
-
-    epoch = entity_chat_store().clear(EVAL_CHAT_KIND, _eval_chat_id(workspace),
-                                      new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/evals/chat")
-async def chat_evals(payload: EvalChatIn, workspace: Optional[str] = Query(None)):
-    """Run one turn of the Eval Agent chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then an
-    ``evals`` event carrying the sets and runs as they stand after the turn, the
-    final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
+def _load_eval_send(request, body):
     from common.bootstrap import ensure_system_agent
 
     if not ensure_system_agent(EVAL_AGENT_ID):
         raise HTTPException(status_code=503,
                             detail=f"The '{EVAL_AGENT_ID}' agent is not registered")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    ctx = _load_eval_chat(request)
+    ctx.before = _eval_state(ctx.workspace)
+    return ctx
 
-    ws = _eval_chat_id(workspace)
-    before = _eval_state(ws)
 
+def _eval_summarize(ctx):
     def _summarize() -> str:
-        after = _eval_state(ws)
+        after = _eval_state(ctx.workspace)
+        before = ctx.before
         if after == before:
             return ""
         was = {e["eval_set_id"] for e in before["eval_sets"]}
@@ -263,50 +229,40 @@ async def chat_evals(payload: EvalChatIn, workspace: Optional[str] = Query(None)
         if not bits:
             bits.append("updated a set")
         return "Done — " + ", ".join(bits) + "."
+    return _summarize
 
-    spec = EntityChatSpec(
-        kind=EVAL_CHAT_KIND,
-        agent_id=EVAL_AGENT_ID,
-        title=f"{ws} · evals",
-        workspace=ws,
+
+def _eval_context_setup(ctx):
+    from common.workspace_context import _workspace_ctx
+
+    # The eval tools resolve the workspace from this ContextVar, so a set
+    # lands where the user is looking.
+    _workspace_ctx.set(ctx.workspace)
+
+
+async def _eval_post_turn(queue, ctx):
+    await queue.put({"type": "evals", **_eval_state(ctx.workspace)})
+
+
+# Declared before the ``/evals/{eval_set_id}`` routes below — "chat" is a
+# literal path, and a catch-all declared first would read it as a set id.
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=EVAL_CHAT_KIND,
+    path="/evals/chat",
+    load=_load_eval_chat,
+    load_for_send=_load_eval_send,
+    prompt=lambda ctx, history, msg: _eval_chat_prompt(ctx.workspace, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=EVAL_CHAT_KIND, agent_id=EVAL_AGENT_ID,
+        title=f"{ctx.workspace} · evals", workspace=ctx.workspace,
         # A sweep runs to completion inside the turn, so the ceiling has to
         # allow for a long single tool call rather than many short ones.
         max_iterations=60,
-    )
-
-    async def run_turn(queue: asyncio.Queue):
-        from common.workspace_context import _workspace_ctx
-
-        # The eval tools resolve the workspace from this ContextVar, so a set
-        # lands where the user is looking.
-        _workspace_ctx.set(ws)
-
-        await run_entity_chat_turn(
-            queue, spec, ws, user_message,
-            lambda history: _eval_chat_prompt(ws, history, user_message),
-            summarize=_summarize,
-        )
-        await queue.put({"type": "evals", **_eval_state(ws)})
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": EVAL_CHAT_KIND, "id": ws})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
-
-
-@router.post("/evals/chat/stop")
-async def stop_eval_chat(workspace: Optional[str] = Query(None)):
-    """Stop the in-flight Eval Agent turn for this workspace."""
-    from chat.entity_chat import cancel_entity_runs
-
-    cancelled = cancel_entity_runs(EVAL_CHAT_KIND, _eval_chat_id(workspace))
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+    ),
+    summarize=_eval_summarize,
+    context_setup=_eval_context_setup,
+    post_turn=_eval_post_turn,
+)))
 
 
 @router.get("/evals/{eval_set_id}")

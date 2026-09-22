@@ -151,8 +151,31 @@ class TaskStore:
             for t in tasks:
                 _write_task_row(conn, t)
 
-    def list(self, timeout: float = 10.0) -> List[Task]:
-        return self.load(timeout=timeout)
+    def list(self, timeout: float = 10.0, *, limit: Optional[int] = None,
+             offset: Optional[int] = None) -> List[Task]:
+        """Every task, or one page of them.
+
+        ``limit``/``offset`` push the page into the query itself (``LIMIT -1``
+        is SQLite for "no cap, but still skip ``offset`` rows") rather than
+        loading every row and slicing in Python — the point of a SQL-backed
+        store over the JSON ones, where slicing after load is the only option.
+        """
+        if limit is None and offset is None:
+            return self.load(timeout=timeout)
+        rows = db.get_conn().execute(
+            "SELECT doc FROM tasks ORDER BY rowid LIMIT ? OFFSET ?",
+            (limit if limit is not None else -1, offset or 0),
+        ).fetchall()
+        out: List[Task] = []
+        for r in rows:
+            t = _doc_to_task(r["doc"])
+            if t is not None:
+                out.append(t)
+        return out
+
+    def count(self) -> int:
+        row = db.get_conn().execute("SELECT COUNT(*) AS c FROM tasks").fetchone()
+        return int(row["c"]) if row is not None else 0
 
     def get(self, task_id: UUID | str, timeout: float = 10.0) -> Optional[Task]:
         row = db.get_conn().execute(

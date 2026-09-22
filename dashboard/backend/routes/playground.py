@@ -34,15 +34,25 @@ from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from playground import store, story as story_lib
-from playground.environments import list_environments
-from playground.models import ACTIVATIONS, Role, Scenario, utc_iso
-from playground.worlds import WorldSpec, new_world_id, validate_world, warnings_for
-from playground.runner import (
-    estimate_cost, run_simulation, stop_simulation, trigger_agent,
-)
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+from common.config import playground_enabled
 
 router = APIRouter(prefix="/api/playground", tags=["playground"])
+
+# The ``playground`` package (~17% of the backend by line count) is optional:
+# when PLAYGROUND_ENABLED=false, main.py never includes this router, so the
+# names below are never called. Guarding the import here (rather than only
+# skipping include_router) is what keeps ``import playground`` itself out of
+# a disabled backend's startup path. See docs/playground.md.
+if playground_enabled():
+    from playground import store, story as story_lib
+    from playground.environments import list_environments
+    from playground.models import ACTIVATIONS, Role, Scenario, utc_iso
+    from playground.worlds import WorldSpec, new_world_id, validate_world, warnings_for
+    from playground.runner import (
+        estimate_cost, run_simulation, stop_simulation, trigger_agent,
+    )
 
 
 class RoleIn(BaseModel):
@@ -441,10 +451,6 @@ _WORLD_FIELDS = ("name", "description", "starting_location", "time_of_day",
                  "hours_per_tick", "rules", "base_actions", "end_when")
 
 
-class WorldChatIn(BaseModel):
-    message: str = ""
-
-
 class WorldGenerateIn(BaseModel):
     requirement: str
     workspace: Optional[str] = None
@@ -534,63 +540,31 @@ def _world_workspace_path(spec: WorldSpec) -> Optional[str]:
         return None
 
 
-@router.get("/worlds/{world_id}/chat")
-async def get_world_chat(world_id: str):
-    """The build chat for one world: the transcript, and the rich trace the UI
-    replays on reload so the session comes back, not just the conversation."""
-    from common.entity_chat_store import entity_chat_store
+def _load_world_chat(request):
+    """The world a build-chat route needs, or a 404 in the shape ``_refuse`` gives."""
+    from types import SimpleNamespace
 
-    if not store.get_world(world_id):
+    world_id = request.path_params["world_id"]
+    world = store.get_world(world_id)
+    if not world:
         raise _refuse(404, "world_not_found", "World not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(WORLD_CHAT_KIND, world_id),
-        "trace": chat_store.get_trace(WORLD_CHAT_KIND, world_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": WORLD_CHAT_KIND, "id": world_id},
-    }
+    return SimpleNamespace(entity_id=world_id, world=world)
 
 
-@router.delete("/worlds/{world_id}/chat")
-async def clear_world_chat(world_id: str):
-    """Clear the transcript and start a fresh session. The world is untouched."""
-    from common.entity_chat_store import entity_chat_store
-
-    if not store.get_world(world_id):
-        raise _refuse(404, "world_not_found", "World not found")
-    epoch = entity_chat_store().clear(WORLD_CHAT_KIND, world_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
+def _load_world_send(request, body):
+    ctx = _load_world_chat(request)
+    ctx.before = ctx.world.to_dict()
+    return ctx
 
 
-@router.post("/worlds/{world_id}/chat")
-async def chat_world(world_id: str, payload: WorldChatIn):
-    """Run one turn of the world build chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
-    ``world`` event carrying the world as it stands after the turn — so the
-    form reloads without a second request — the final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
-
-    spec = store.get_world(world_id)
-    if not spec:
-        raise _refuse(404, "world_not_found", "World not found")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise _refuse(400, "empty_message", "Empty message")
-
-    before = spec.to_dict()
-
+def _world_summarize(ctx):
     def _summarize() -> str:
         """What changed, for a run that ended without usable words of its own."""
-        after_spec = store.get_world(world_id)
+        after_spec = store.get_world(ctx.entity_id)
         if not after_spec:
             return "The world is gone."
         after = after_spec.to_dict()
+        before = ctx.before
         if after == before:
             return ""
         bits = []
@@ -604,55 +578,56 @@ async def chat_world(world_id: str, payload: WorldChatIn):
         if not bits:
             bits.append("retuned its details")
         return "Done — " + ", ".join(bits) + "."
+    return _summarize
 
-    chat_spec = EntityChatSpec(
-        kind=WORLD_CHAT_KIND,
-        agent_id=WORLD_AGENT_ID,
-        title=f"{spec.name} · world",
-        workspace=spec.workspace,
-        workspace_path=_world_workspace_path(spec),
-    )
 
-    async def run_turn(queue: asyncio.Queue):
+def _world_context_setup(ctx):
+    # The builder's tools resolve the workspace from this ContextVar (it
+    # propagates into the threads the sync tools run on), so edits land in
+    # the world's own workspace rather than the UI's current one.
+    if ctx.world.workspace:
         from common.workspace_context import _workspace_ctx
+        _workspace_ctx.set(ctx.world.workspace)
 
-        # The builder's tools resolve the workspace from this ContextVar (it
-        # propagates into the threads the sync tools run on), so edits land in
-        # the world's own workspace rather than the UI's current one.
-        if spec.workspace:
-            _workspace_ctx.set(spec.workspace)
 
-        await run_entity_chat_turn(
-            queue, chat_spec, world_id, user_message,
-            lambda history: _world_chat_prompt(store.get_world(world_id) or spec,
-                                               history, user_message),
-            summarize=_summarize,
-        )
-        after = store.get_world(world_id)
-        if after:
-            await queue.put({"type": "world", "world": _world_payload(after)})
+async def _world_post_turn(queue, ctx):
+    after = store.get_world(ctx.entity_id)
+    if after:
+        await queue.put({"type": "world", "world": _world_payload(after)})
 
+
+def _world_tap(ctx):
+    # The tap is what makes the turn watchable: every tool the builder
+    # finishes is followed by whatever it changed in the world, as lines in
+    # the chat and as a fresh world for the form.
     def _read_world():
-        current = store.get_world(world_id)
+        current = store.get_world(ctx.entity_id)
         return (current.to_dict(), current) if current else None
 
-    async def event_stream():
-        # The tap is what makes the turn watchable: every tool the builder
-        # finishes is followed by whatever it changed in the world, as lines in
-        # the chat and as a fresh world for the form.
-        queue = RecordingQueue(tap=_live_change_tap(
-            _read_world,
-            lambda spec: {"type": "world", "world": _world_payload(spec)},
-            sections=_WORLD_SECTIONS, fields=_WORLD_FIELDS,
-        ))
-        yield sse({"type": "meta", "kind": WORLD_CHAT_KIND, "id": world_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
+    return _live_change_tap(
+        _read_world,
+        lambda spec: {"type": "world", "world": _world_payload(spec)},
+        sections=_WORLD_SECTIONS, fields=_WORLD_FIELDS,
+    )
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=WORLD_CHAT_KIND,
+    path="/worlds/{world_id}/chat",
+    load=_load_world_chat,
+    load_for_send=_load_world_send,
+    prompt=lambda ctx, history, msg: _world_chat_prompt(
+        store.get_world(ctx.entity_id) or ctx.world, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=WORLD_CHAT_KIND, agent_id=WORLD_AGENT_ID,
+        title=f"{ctx.world.name} · world", workspace=ctx.world.workspace,
+        workspace_path=_world_workspace_path(ctx.world),
+    ),
+    summarize=_world_summarize,
+    context_setup=_world_context_setup,
+    post_turn=_world_post_turn,
+    tap=_world_tap,
+)))
 
 
 @router.post("/worlds/generate")
@@ -743,22 +718,6 @@ async def generate_world(data: WorldGenerateIn):
         "message": summary or "The World Builder could not design a world for this request.",
         "world": None,
     }
-
-
-@router.post("/worlds/{world_id}/chat/stop")
-async def stop_world_chat(world_id: str):
-    """Stop the in-flight build run for this world.
-
-    The agent runs detached from the SSE connection, so aborting the browser
-    request cannot stop it — this cancels the underlying task. Whatever it
-    already saved is kept and the run closes cleanly.
-    """
-    from chat.entity_chat import cancel_entity_runs
-
-    if not store.get_world(world_id):
-        raise _refuse(404, "world_not_found", "World not found")
-    cancelled = cancel_entity_runs(WORLD_CHAT_KIND, world_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
 
 
 # ── Scenarios ─────────────────────────────────────────────────────────────────
@@ -1063,10 +1022,6 @@ _SCENARIO_MAPS = ("env_params", "limits")
 SCENARIO_CHAT_KIND = "scenario"
 
 
-class ScenarioChatIn(BaseModel):
-    message: str = ""
-
-
 class ScenarioGenerateIn(BaseModel):
     requirement: str
     workspace: Optional[str] = None
@@ -1187,72 +1142,31 @@ def _scenario_workspace_path(scenario) -> Optional[str]:
         return None
 
 
-@router.get("/scenarios/{scenario_id}/chat")
-async def get_scenario_chat(scenario_id: str):
-    """The build chat for one scenario.
+def _load_scenario_chat(request):
+    """The scenario a build-chat route needs, or a plain 404 as before."""
+    from types import SimpleNamespace
 
-    ``messages`` is the plain transcript; ``trace`` is the rich feed (thinking +
-    tool steps interleaved) the UI replays on reload so the whole session — not
-    just the conversation — comes back.
-    """
-    from common.entity_chat_store import entity_chat_store
-
-    if not store.get_scenario(scenario_id):
-        raise HTTPException(status_code=404, detail="Scenario not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(SCENARIO_CHAT_KIND, scenario_id),
-        "trace": chat_store.get_trace(SCENARIO_CHAT_KIND, scenario_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": SCENARIO_CHAT_KIND, "id": scenario_id},
-    }
-
-
-@router.delete("/scenarios/{scenario_id}/chat")
-async def clear_scenario_chat(scenario_id: str):
-    """Clear the transcript and start a fresh chat session.
-
-    The scenario itself is untouched — this wipes the conversation and advances
-    the session epoch so the next turn opens a new run-thread in Messages.
-    """
-    from common.entity_chat_store import entity_chat_store
-
-    if not store.get_scenario(scenario_id):
-        raise HTTPException(status_code=404, detail="Scenario not found")
-    epoch = entity_chat_store().clear(SCENARIO_CHAT_KIND, scenario_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/scenarios/{scenario_id}/chat")
-async def chat_scenario(scenario_id: str, payload: ScenarioChatIn):
-    """Run one turn of the scenario build chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
-    ``scenario`` event carrying the configuration as it stands after the turn
-    (so the form reloads without a second request), the final ``message`` and
-    ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
-
+    scenario_id = request.path_params["scenario_id"]
     scenario = store.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    return SimpleNamespace(entity_id=scenario_id, scenario=scenario)
 
-    before = _scenario_state(scenario)
 
+def _load_scenario_send(request, body):
+    ctx = _load_scenario_chat(request)
+    ctx.before = _scenario_state(ctx.scenario)
+    return ctx
+
+
+def _scenario_summarize(ctx):
     def _summarize() -> str:
         """What changed, for a run that ended without usable words of its own."""
-        after_scenario = store.get_scenario(scenario_id)
+        after_scenario = store.get_scenario(ctx.entity_id)
         if not after_scenario:
             return "The scenario is gone."
         after = _scenario_state(after_scenario)
+        before = ctx.before
         if after == before:
             return ""
         bits = []
@@ -1269,74 +1183,59 @@ async def chat_scenario(scenario_id: str, payload: ScenarioChatIn):
         if after.get("narrative") != before.get("narrative"):
             bits.append("wrote its narrative")
         return ("Done — " + ", ".join(bits) + ".") if bits else "Done — the scenario was updated."
+    return _summarize
 
-    spec = EntityChatSpec(
-        kind=SCENARIO_CHAT_KIND,
-        agent_id=SCENARIO_AGENT_ID,
-        title=f"{scenario.name} · scenario",
-        workspace=scenario.workspace,
-        workspace_path=_scenario_workspace_path(scenario),
-    )
 
-    async def run_turn(queue: asyncio.Queue):
+def _scenario_context_setup(ctx):
+    # The builder's tools resolve the workspace from this ContextVar (it
+    # propagates into the threads the sync tools run on), so edits land in
+    # the scenario's own workspace rather than the UI's current one.
+    if ctx.scenario.workspace:
         from common.workspace_context import _workspace_ctx
+        _workspace_ctx.set(ctx.scenario.workspace)
 
-        # The builder's tools resolve the workspace from this ContextVar (it
-        # propagates into the threads the sync tools run on), so edits land in
-        # the scenario's own workspace rather than the UI's current one.
-        if scenario.workspace:
-            _workspace_ctx.set(scenario.workspace)
 
-        await run_entity_chat_turn(
-            queue, spec, scenario_id, user_message,
-            lambda history: _scenario_chat_prompt(store.get_scenario(scenario_id) or scenario,
-                                                  history, user_message),
-            summarize=_summarize,
-        )
-        # The page's form is driven off this: one event with the configuration
-        # as it now stands, rather than a refetch the user has to wait for.
-        after = store.get_scenario(scenario_id)
-        if after:
-            await queue.put({"type": "scenario", "scenario": after.to_dict()})
+async def _scenario_post_turn(queue, ctx):
+    # The page's form is driven off this: one event with the configuration
+    # as it now stands, rather than a refetch the user has to wait for.
+    after = store.get_scenario(ctx.entity_id)
+    if after:
+        await queue.put({"type": "scenario", "scenario": after.to_dict()})
 
+
+def _scenario_tap(ctx):
+    # Same live reporting the world chat has: the cast, the environment
+    # parameters and the limits appear in the form as the tools set them,
+    # each one announced in the conversation.
     def _read_scenario():
-        current = store.get_scenario(scenario_id)
+        current = store.get_scenario(ctx.entity_id)
         return (_scenario_state(current), current) if current else None
 
-    async def event_stream():
-        # Same live reporting the world chat has: the cast, the environment
-        # parameters and the limits appear in the form as the tools set them,
-        # each one announced in the conversation.
-        queue = RecordingQueue(tap=_live_change_tap(
-            _read_scenario,
-            lambda current: {"type": "scenario", "scenario": current.to_dict()},
-            sections=_SCENARIO_SECTIONS, fields=_SCENARIO_FIELDS,
-            maps=_SCENARIO_MAPS,
-        ))
-        yield sse({"type": "meta", "kind": SCENARIO_CHAT_KIND, "id": scenario_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+    return _live_change_tap(
+        _read_scenario,
+        lambda current: {"type": "scenario", "scenario": current.to_dict()},
+        sections=_SCENARIO_SECTIONS, fields=_SCENARIO_FIELDS,
+        maps=_SCENARIO_MAPS,
+    )
 
 
-@router.post("/scenarios/{scenario_id}/chat/stop")
-async def stop_scenario_chat(scenario_id: str):
-    """Stop the in-flight build run for this scenario.
-
-    The agent runs detached from the SSE connection, so aborting the browser
-    request cannot stop it — this cancels the underlying task. Whatever it
-    already saved is kept and the run closes cleanly.
-    """
-    from chat.entity_chat import cancel_entity_runs
-
-    if not store.get_scenario(scenario_id):
-        raise HTTPException(status_code=404, detail="Scenario not found")
-    cancelled = cancel_entity_runs(SCENARIO_CHAT_KIND, scenario_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=SCENARIO_CHAT_KIND,
+    path="/scenarios/{scenario_id}/chat",
+    load=_load_scenario_chat,
+    load_for_send=_load_scenario_send,
+    prompt=lambda ctx, history, msg: _scenario_chat_prompt(
+        store.get_scenario(ctx.entity_id) or ctx.scenario, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=SCENARIO_CHAT_KIND, agent_id=SCENARIO_AGENT_ID,
+        title=f"{ctx.scenario.name} · scenario", workspace=ctx.scenario.workspace,
+        workspace_path=_scenario_workspace_path(ctx.scenario),
+    ),
+    summarize=_scenario_summarize,
+    context_setup=_scenario_context_setup,
+    post_turn=_scenario_post_turn,
+    tap=_scenario_tap,
+)))
 
 
 #: The one instruction the Scenario Creator is given, either way it is run.

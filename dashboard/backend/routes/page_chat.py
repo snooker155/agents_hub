@@ -28,16 +28,22 @@ Three deliberate properties:
 """
 from __future__ import annotations
 
-import asyncio
 import re
 from types import SimpleNamespace
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/api/page-chat", tags=["page-chat"])
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+
+# No prefix here: the one call site below (build_entity_chat_router's routes,
+# the whole of this module) supplies "/api/page-chat" itself, because its own
+# path is "" — a bare prefix + "" pair is what every other chat's include_router
+# call leaves to its own file's router, but FastAPI refuses it when both sides
+# of THAT particular merge are empty at once.
+router = APIRouter(tags=["page-chat"])
 
 #: The one agent behind every page chat. General purpose and read-first: it can
 #: reach tasks, flows, agents, scenarios, teams, loops and the docs, which is
@@ -152,100 +158,59 @@ def _page_chat_prompt(payload: PageChatIn, history: List[dict], user_message: st
     return "\n".join(parts)
 
 
-@router.get("")
-async def get_page_chat(scope: str = Query("")):
-    """One scope's transcript plus the rich replay trace."""
-    from common.entity_chat_store import entity_chat_store
-
-    store = entity_chat_store()
-    chat_id = _chat_id(scope)
-    return {
-        "messages": store.get_messages(PAGE_CHAT_KIND, chat_id),
-        "trace": store.get_trace(PAGE_CHAT_KIND, chat_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": PAGE_CHAT_KIND, "id": chat_id},
-        "agent_id": PAGE_CHAT_AGENT_ID,
-    }
+def _load_page_chat(request: Request) -> SimpleNamespace:
+    """GET / DELETE / stop all take the scope as a query param."""
+    chat_id = _chat_id(request.query_params.get("scope", ""))
+    return SimpleNamespace(entity_id=chat_id)
 
 
-@router.delete("")
-async def clear_page_chat(scope: str = Query("")):
-    """Clear this scope's transcript and start a fresh session."""
-    from common.entity_chat_store import entity_chat_store
-
-    epoch = entity_chat_store().clear(PAGE_CHAT_KIND, _chat_id(scope), new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("")
-async def chat_page(payload: PageChatIn):
-    """Run one turn of the page chat (SSE).
-
-    Same wire format as every other entity chat, so the browser drives it with
-    the same component: ``tool_*`` / ``thinking`` / ``token`` events, then the
-    final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
+def _load_page_send(request: Request, body: dict) -> SimpleNamespace:
+    """The send route alone carries the full page payload, in its body."""
     from common.bootstrap import ensure_system_agent
 
     if not ensure_system_agent(PAGE_CHAT_AGENT_ID):
         raise HTTPException(status_code=503,
                             detail=f"The '{PAGE_CHAT_AGENT_ID}' agent is not registered")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
-
+    try:
+        payload = PageChatIn(**body)
+    except Exception as e:  # noqa: BLE001 — surfaced as a normal validation error
+        raise HTTPException(status_code=422, detail=str(e))
     chat_id = _chat_id(payload.scope)
     workspace = payload.workspace or None
-    spec = EntityChatSpec(
-        kind=PAGE_CHAT_KIND,
-        agent_id=PAGE_CHAT_AGENT_ID,
-        title=(payload.title.strip() or chat_id) + " · page chat",
-        workspace=workspace,
-        workspace_path=_workspace_path(workspace),
+    return SimpleNamespace(entity_id=chat_id, workspace=workspace, payload=payload)
+
+
+def _page_context_setup(ctx: SimpleNamespace) -> None:
+    from common.workspace_context import _project_ctx, _workspace_ctx
+
+    # The agent's tools resolve workspace and project from these ContextVars,
+    # so "my tasks" means the ones the user is looking at.
+    if ctx.workspace:
+        _workspace_ctx.set(ctx.workspace)
+    if ctx.payload.project_id:
+        _project_ctx.set(ctx.payload.project_id)
+
+
+# No prefix on `router` itself (see its declaration above): this include_router
+# call is the one place "/api/page-chat" is spelled out, because the chat's own
+# path is "" — the whole of this module is these four routes.
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=PAGE_CHAT_KIND,
+    path="",
+    load=_load_page_chat,
+    load_for_send=_load_page_send,
+    prompt=lambda ctx, history, msg: _page_chat_prompt(ctx.payload, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=PAGE_CHAT_KIND, agent_id=PAGE_CHAT_AGENT_ID,
+        title=(ctx.payload.title.strip() or ctx.entity_id) + " · page chat",
+        workspace=ctx.workspace, workspace_path=_workspace_path(ctx.workspace),
         # A question about the screen is answered in a handful of tool calls.
         # The generous build ceilings would only buy a longer wrong turn.
         max_iterations=40,
-    )
-
-    async def run_turn(queue: asyncio.Queue):
-        from common.workspace_context import _project_ctx, _workspace_ctx
-
-        # The agent's tools resolve workspace and project from these ContextVars,
-        # so "my tasks" means the ones the user is looking at.
-        if workspace:
-            _workspace_ctx.set(workspace)
-        if payload.project_id:
-            _project_ctx.set(payload.project_id)
-
-        await run_entity_chat_turn(
-            queue, spec, chat_id, user_message,
-            lambda history: _page_chat_prompt(payload, history, user_message),
-        )
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": PAGE_CHAT_KIND, "id": chat_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
-
-
-@router.post("/stop")
-async def stop_page_chat(scope: str = Query("")):
-    """Stop the in-flight turn for one scope."""
-    from chat.entity_chat import cancel_entity_runs
-
-    cancelled = cancel_entity_runs(PAGE_CHAT_KIND, _chat_id(scope))
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+    ),
+    context_setup=_page_context_setup,
+    meta_extra=lambda ctx: {"agent_id": PAGE_CHAT_AGENT_ID},
+)), prefix="/api/page-chat")
 
 
 def _workspace_path(workspace: Optional[str]) -> Optional[str]:

@@ -15,12 +15,11 @@ images.
 """
 from __future__ import annotations
 
-import asyncio
 import mimetypes
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import base64
@@ -45,6 +44,9 @@ from views.serve import is_allowed_upstream
 from views.ops import OpError
 from views.models import SUPPORTED_KINDS
 from views.studio import create_studio_view, scene_context_note
+
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 router = APIRouter(prefix="/api/views", tags=["views"])
 
@@ -287,10 +289,6 @@ VIEW_CHAT_KIND = "view"
 VIEW_AGENT_ID = "visualizer"
 
 
-class ViewChatIn(BaseModel):
-    message: str = ""
-
-
 def _view_chat_prompt(view_id: str, history: List[dict], user_message: str) -> str:
     """One turn's prompt: the live view, then the talk.
 
@@ -336,102 +334,50 @@ def _workspace_path(workspace: Optional[str]) -> Optional[str]:
         return None
 
 
-@router.get("/{view_id}/chat")
-async def get_view_chat(view_id: str):
-    """The build chat for one view: the transcript plus the rich replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_view_chat(request):
+    from types import SimpleNamespace
 
-    if not get_view(view_id):
-        raise HTTPException(status_code=404, detail="View not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(VIEW_CHAT_KIND, view_id),
-        "trace": chat_store.get_trace(VIEW_CHAT_KIND, view_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": VIEW_CHAT_KIND, "id": view_id},
-    }
-
-
-@router.delete("/{view_id}/chat")
-async def clear_view_chat(view_id: str):
-    """Clear the transcript and start a fresh session. The view is untouched."""
-    from common.entity_chat_store import entity_chat_store
-
-    if not get_view(view_id):
-        raise HTTPException(status_code=404, detail="View not found")
-    epoch = entity_chat_store().clear(VIEW_CHAT_KIND, view_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/{view_id}/chat")
-async def chat_view(view_id: str, payload: ViewChatIn):
-    """Run one turn of the Studio build chat (SSE).
-
-    The canvas does not wait for this stream: the view tools publish their ops
-    on the ``view:<view_id>`` channel, which the Studio is already subscribed
-    to. The stream carries the conversation — thinking, tool steps, the reply.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
-
+    view_id = request.path_params["view_id"]
     doc = get_view(view_id)
     if not doc:
         raise HTTPException(status_code=404, detail="View not found")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
-
     workspace = doc.get("workspace") or None
-    spec = EntityChatSpec(
-        kind=VIEW_CHAT_KIND,
-        agent_id=VIEW_AGENT_ID,
-        title=f"{doc.get('title') or view_id} · view",
-        workspace=workspace,
-        workspace_path=_workspace_path(workspace),
-    )
-
-    async def run_turn(queue: asyncio.Queue):
-        from common.agent_context import current_view_id
-        from common.workspace_context import _workspace_ctx
-
-        # The view tools take the view to edit from this ContextVar, so the
-        # agent can "add a node" without being told which view every time; the
-        # workspace one roots its file/data tools in the view's own workspace.
-        current_view_id.set(view_id)
-        if workspace:
-            _workspace_ctx.set(workspace)
-
-        await run_entity_chat_turn(
-            queue, spec, view_id, user_message,
-            lambda history: _view_chat_prompt(view_id, history, user_message),
-        )
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": VIEW_CHAT_KIND, "id": view_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+    return SimpleNamespace(entity_id=view_id, workspace=workspace, doc=doc)
 
 
-@router.post("/{view_id}/chat/stop")
-async def stop_view_chat(view_id: str):
-    """Stop the in-flight build run for this view.
+def _load_view_stop(request):
+    """Stopping never checks existence: a deleted view still has an id worth
+    cancelling a run for, and there is nothing else this route needs."""
+    from types import SimpleNamespace
 
-    The agent runs detached from the SSE connection, so aborting the browser
-    request cannot stop it — this cancels the underlying task.
-    """
-    from chat.entity_chat import cancel_entity_runs
+    return SimpleNamespace(entity_id=request.path_params["view_id"])
 
-    cancelled = cancel_entity_runs(VIEW_CHAT_KIND, view_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+
+def _view_context_setup(ctx):
+    from common.agent_context import current_view_id
+    from common.workspace_context import _workspace_ctx
+
+    # The view tools take the view to edit from this ContextVar, so the agent
+    # can "add a node" without being told which view every time; the workspace
+    # one roots its file/data tools in the view's own workspace.
+    current_view_id.set(ctx.entity_id)
+    if ctx.workspace:
+        _workspace_ctx.set(ctx.workspace)
+
+
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=VIEW_CHAT_KIND,
+    path="/{view_id}/chat",
+    load=_load_view_chat,
+    load_for_stop=_load_view_stop,
+    prompt=lambda ctx, history, msg: _view_chat_prompt(ctx.entity_id, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=VIEW_CHAT_KIND, agent_id=VIEW_AGENT_ID,
+        title=f"{ctx.doc.get('title') or ctx.entity_id} · view",
+        workspace=ctx.workspace, workspace_path=_workspace_path(ctx.workspace),
+    ),
+    context_setup=_view_context_setup,
+)))
 
 
 @router.get("/{view_id}/assets/{asset_path:path}")

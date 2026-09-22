@@ -5,14 +5,12 @@ Includes the agent's own definition chat (``/{agent_id}/definition/chat``),
 where the Agent Creator edits an agent's instructions, capabilities and usage in
 place while the user watches the files change beside the conversation.
 """
-import asyncio
 import json
 import re
 import dataclasses
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 from pydantic import BaseModel
 
@@ -23,8 +21,10 @@ from agents import prompt_assembly
 from agents import versions as agent_versions
 from tools.registry import get_all_tools
 from agents.capability_guard import CapabilityViolation
-from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate
+from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate, AgentListItem, AgentDetail, AgentPage
 from workspace import system_agent_ids, get_workspace_metadata, update_workspace_metadata, create_workspace_folder
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -90,9 +90,17 @@ def _workspace_memory_overrides(workspace: str) -> dict:
     return get_workspace_metadata(workspace).get("agent_memory_overrides") or {}
 
 
-@router.get("")
-async def list_agents(workspace: Optional[str] = None):
-    """List all available agents from registry and factory definitions."""
+@router.get("", response_model=Union[List[AgentListItem], AgentPage])
+async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = None,
+                      offset: Optional[int] = None):
+    """List all available agents from registry and factory definitions.
+
+    Agents are assembled in memory from the registry and factory definitions
+    (not a queryable store), so ``limit``/``offset`` slice the assembled list
+    rather than being pushed into a query. With neither given, the response is
+    the full list exactly as before; with either, it is one page:
+    ``{items, total, limit, offset}``.
+    """
     # Get agents from existing registry
     registry_agents = registry.list_agents()
     reg_ids = {a.id for a in registry_agents}
@@ -136,19 +144,32 @@ async def list_agents(workspace: Optional[str] = None):
     # Annotate each agent with whether it has a running node in the requested workspace
     # and flag system agents that cannot be removed. Memory assignments are
     # per-workspace, so patch them to the requesting workspace's view.
-    from managers.node_manager import get_running_nodes_for_agent
+    from managers.node_manager import list_nodes
     _ws = (workspace or "default").strip() or "default"
     _mem_overrides = _workspace_memory_overrides(_ws)
+    # One pass over every node instead of one list_nodes() call per agent —
+    # list_nodes() re-syncs every node's live status (a process check each),
+    # so calling it once per agent turned this into an O(agents * nodes)
+    # liveness scan.
+    _running_by_agent: Dict[str, List[Dict[str, Any]]] = {}
+    for node in list_nodes():
+        if node.get("status") != "running":
+            continue
+        _running_by_agent.setdefault(node.get("agent_id"), []).append(node)
     for agent in all_agents:
         _apply_workspace_memory(agent, _ws, _mem_overrides)
-        running_nodes = get_running_nodes_for_agent(agent["id"])
+        running_nodes = _running_by_agent.get(agent["id"], [])
         if workspace and workspace != "default":
             running_nodes = [n for n in running_nodes if n.get("workspace") == workspace]
         agent["has_running_node"] = len(running_nodes) > 0
         agent["system"] = agent["id"] in _SYS_IDS
         agent["is_default_chat_agent"] = agent["id"] == _get_workspace_default_chat_agent(workspace)
 
-    return all_agents
+    if limit is None and offset is None:
+        return all_agents
+    start = offset or 0
+    page = all_agents[start: start + limit] if limit is not None else all_agents[start:]
+    return {"items": page, "total": len(all_agents), "limit": limit, "offset": offset}
 
 
 @router.get("/tools")
@@ -195,7 +216,7 @@ async def capability_check(data: AgentToolsUpdate):
     return result
 
 
-@router.get("/{agent_id}")
+@router.get("/{agent_id}", response_model=AgentDetail)
 async def get_agent_details(agent_id: str, workspace: Optional[str] = None):
     from workspace import is_system_agent
     spec = registry.get_agent(agent_id)
@@ -1242,10 +1263,6 @@ DEFINITION_AGENT_ID = "agent_creator"
 DEFINITION_CHAT_KIND = "agentdef"
 
 
-class DefinitionChatIn(BaseModel):
-    message: str = ""
-
-
 def _definition_state(agent_id: str) -> Dict[str, Any]:
     """What the agent is editing: the record's editable fields plus the three
     markdown files that become the system prompt."""
@@ -1339,65 +1356,35 @@ def _definition_chat_prompt(agent_id: str, history: List[dict], user_message: st
     return "\n".join(parts)
 
 
-@router.get("/{agent_id}/definition/chat")
-async def get_definition_chat(agent_id: str):
-    """The definition chat for one agent: transcript plus the rich replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_definition_chat(request):
+    """Path param only: the agent under edit, 404 when it does not exist."""
+    from types import SimpleNamespace
 
-    if registry.get_agent(agent_id) is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(DEFINITION_CHAT_KIND, agent_id),
-        "trace": chat_store.get_trace(DEFINITION_CHAT_KIND, agent_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": DEFINITION_CHAT_KIND, "id": agent_id},
-    }
-
-
-@router.delete("/{agent_id}/definition/chat")
-async def clear_definition_chat(agent_id: str):
-    """Clear the transcript and start a fresh session. The agent is untouched."""
-    from common.entity_chat_store import entity_chat_store
-
-    if registry.get_agent(agent_id) is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    epoch = entity_chat_store().clear(DEFINITION_CHAT_KIND, agent_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/{agent_id}/definition/chat")
-async def chat_definition(agent_id: str, payload: DefinitionChatIn,
-                          workspace: Optional[str] = None):
-    """Run one turn of the agent definition chat (SSE).
-
-    Streams the editor's ``tool_*`` / ``thinking`` / ``token`` events, then an
-    ``agentdef`` event carrying the definition as it stands after the turn, the
-    final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
-    from common.bootstrap import ensure_system_agent
-
+    agent_id = request.path_params["agent_id"]
     spec = registry.get_agent(agent_id)
     if spec is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    return SimpleNamespace(entity_id=agent_id, workspace=None, agent_spec=spec)
+
+
+def _load_definition_send(request, body):
+    from common.bootstrap import ensure_system_agent
+
+    ctx = _load_definition_chat(request)
     if not ensure_system_agent(DEFINITION_AGENT_ID):
         raise HTTPException(status_code=503,
                             detail=f"The '{DEFINITION_AGENT_ID}' agent is not registered")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    ctx.workspace = request.query_params.get("workspace")
+    ctx.before = _definition_state(ctx.entity_id)
+    return ctx
 
-    before = _definition_state(agent_id)
 
+def _definition_summarize(ctx):
     def _summarize() -> str:
-        after = _definition_state(agent_id)
+        after = _definition_state(ctx.entity_id)
         if not after:
             return "The agent is gone."
+        before = ctx.before
         if after == before:
             return ""
         bits = []
@@ -1415,47 +1402,32 @@ async def chat_definition(agent_id: str, payload: DefinitionChatIn,
         if after["description"] != before["description"]:
             bits.append("rewrote its description")
         return ("Done — " + ", ".join(bits) + ".") if bits else "Done — the agent was updated."
+    return _summarize
 
-    chat_spec = EntityChatSpec(
-        kind=DEFINITION_CHAT_KIND,
-        agent_id=DEFINITION_AGENT_ID,
-        title=f"{spec.name} · definition",
-        workspace=workspace,
-    )
 
-    async def run_turn(queue: asyncio.Queue):
+def _definition_context_setup(ctx):
+    if ctx.workspace:
         from common.workspace_context import _workspace_ctx
-
-        if workspace:
-            _workspace_ctx.set(workspace)
-
-        await run_entity_chat_turn(
-            queue, chat_spec, agent_id, user_message,
-            lambda history: _definition_chat_prompt(agent_id, history, user_message),
-            summarize=_summarize,
-        )
-        after = registry.get_agent(agent_id)
-        if after:
-            await queue.put({"type": "agentdef", "agent": _definition_state(agent_id)})
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": DEFINITION_CHAT_KIND, "id": agent_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+        _workspace_ctx.set(ctx.workspace)
 
 
-@router.post("/{agent_id}/definition/chat/stop")
-async def stop_definition_chat(agent_id: str):
-    """Stop the in-flight definition edit for this agent."""
-    from chat.entity_chat import cancel_entity_runs
+async def _definition_post_turn(queue, ctx):
+    after = registry.get_agent(ctx.entity_id)
+    if after:
+        await queue.put({"type": "agentdef", "agent": _definition_state(ctx.entity_id)})
 
-    if registry.get_agent(agent_id) is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    cancelled = cancel_entity_runs(DEFINITION_CHAT_KIND, agent_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=DEFINITION_CHAT_KIND,
+    path="/{agent_id}/definition/chat",
+    load=_load_definition_chat,
+    load_for_send=_load_definition_send,
+    prompt=lambda ctx, history, msg: _definition_chat_prompt(ctx.entity_id, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=DEFINITION_CHAT_KIND, agent_id=DEFINITION_AGENT_ID,
+        title=f"{ctx.agent_spec.name} · definition", workspace=ctx.workspace,
+    ),
+    summarize=_definition_summarize,
+    context_setup=_definition_context_setup,
+    post_turn=_definition_post_turn,
+)))

@@ -3,11 +3,9 @@ Shared memory related API routes.
 """
 from datetime import datetime, timezone
 
-import asyncio
 import json
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -21,6 +19,8 @@ from models import (
 )
 from rag import get_rag_status, ingest_file, delete_file_vectors, delete_pool_vectors
 from common.paths import workspace_knowledge_dir
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 
 router = APIRouter(prefix="/api/shared-memory", tags=["memory"])
@@ -93,10 +93,6 @@ async def get_rag_config():
 
 MEMORY_AGENT_ID = "memory_extractor"
 MEMORY_CHAT_KIND = "memory"
-
-
-class MemoryChatIn(BaseModel):
-    message: str = ""
 
 
 def _memory_chat_id(workspace: Optional[str], memory_id: Optional[str] = None) -> str:
@@ -199,109 +195,60 @@ def _memory_chat_prompt(workspace: str, pools: List[Dict[str, Any]],
     return "\n".join(parts)
 
 
-@router.get("/chat")
-async def get_memory_chat(workspace: Optional[str] = Query(None),
-                          memory_id: Optional[str] = Query(None)):
-    """The Memory Agent's transcript for the open pool, plus the replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_memory_chat(request):
+    from types import SimpleNamespace
 
+    workspace = request.query_params.get("workspace")
+    memory_id = request.query_params.get("memory_id")
     chat_id = _memory_chat_id(workspace, memory_id)
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(MEMORY_CHAT_KIND, chat_id),
-        "trace": chat_store.get_trace(MEMORY_CHAT_KIND, chat_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": MEMORY_CHAT_KIND, "id": chat_id},
-        "pools": _pool_card(memory_id) or _bound_pools(workspace),
-    }
+    pools = _pool_card(memory_id) or _bound_pools(workspace)
+    return SimpleNamespace(entity_id=chat_id, workspace=workspace,
+                           memory_id=memory_id, pools=pools)
 
 
-@router.delete("/chat")
-async def clear_memory_chat(workspace: Optional[str] = Query(None),
-                            memory_id: Optional[str] = Query(None)):
-    """Clear the transcript and start a fresh session. No memory is touched."""
-    from common.entity_chat_store import entity_chat_store
-
-    epoch = entity_chat_store().clear(MEMORY_CHAT_KIND,
-                                      _memory_chat_id(workspace, memory_id),
-                                      new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/chat")
-async def chat_memory(payload: MemoryChatIn,
-                      workspace: Optional[str] = Query(None),
-                      memory_id: Optional[str] = Query(None)):
-    """Run one turn of the Memory Agent chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
-    ``memory`` event so the page can refresh what the pool holds, the final
-    ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
+def _load_memory_send(request, body):
     from common.bootstrap import ensure_system_agent
 
     if not ensure_system_agent(MEMORY_AGENT_ID):
         raise HTTPException(status_code=503,
                             detail=f"The '{MEMORY_AGENT_ID}' agent is not registered")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    ctx = _load_memory_chat(request)
+    ctx.ws = (ctx.workspace or "default").strip() or "default"
+    return ctx
 
-    ws = (workspace or "default").strip() or "default"
-    chat_id = _memory_chat_id(workspace, memory_id)
-    pools = _pool_card(memory_id) or _bound_pools(workspace)
 
-    spec = EntityChatSpec(
-        kind=MEMORY_CHAT_KIND,
-        agent_id=MEMORY_AGENT_ID,
-        title=f"{pools[0]['name'] or ws if pools else ws} · memory",
-        workspace=ws,
+def _memory_context_setup(ctx):
+    from common.workspace_context import _workspace_ctx
+
+    # The pool binding is resolved per workspace, so this ContextVar decides
+    # which pool the agent's tools write to.
+    _workspace_ctx.set(ctx.ws)
+
+
+async def _memory_post_turn(queue, ctx):
+    await queue.put({"type": "memory", "pools": ctx.pools})
+
+
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=MEMORY_CHAT_KIND,
+    path="/chat",
+    load=_load_memory_chat,
+    load_for_send=_load_memory_send,
+    prompt=lambda ctx, history, msg: _memory_chat_prompt(ctx.ws, ctx.pools, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=MEMORY_CHAT_KIND, agent_id=MEMORY_AGENT_ID,
+        title=f"{ctx.pools[0]['name'] or ctx.ws if ctx.pools else ctx.ws} · memory",
+        workspace=ctx.ws,
         # Bind the agent to the pool the user has open, so the question is
         # answered from what they are looking at rather than from whatever the
         # record happens to be assigned. Reaches the agent cache key, so two
         # pools are two cached agents.
-        agent_overrides={"memory_pool": memory_id} if memory_id else {},
-    )
-
-    async def run_turn(queue: asyncio.Queue):
-        from common.workspace_context import _workspace_ctx
-
-        # The pool binding is resolved per workspace, so this ContextVar decides
-        # which pool the agent's tools write to.
-        _workspace_ctx.set(ws)
-
-        await run_entity_chat_turn(
-            queue, spec, chat_id, user_message,
-            lambda history: _memory_chat_prompt(ws, pools, history, user_message),
-        )
-        await queue.put({"type": "memory", "pools": pools})
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": MEMORY_CHAT_KIND, "id": chat_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
-
-
-@router.post("/chat/stop")
-async def stop_memory_chat(workspace: Optional[str] = Query(None),
-                           memory_id: Optional[str] = Query(None)):
-    """Stop the in-flight Memory Agent turn for this pool."""
-    from chat.entity_chat import cancel_entity_runs
-
-    cancelled = cancel_entity_runs(MEMORY_CHAT_KIND,
-                                   _memory_chat_id(workspace, memory_id))
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+        agent_overrides={"memory_pool": ctx.memory_id} if ctx.memory_id else {},
+    ),
+    context_setup=_memory_context_setup,
+    post_turn=_memory_post_turn,
+    meta_extra=lambda ctx: {"pools": ctx.pools},
+)))
 
 
 # Declared before the ``/{memory_id}`` routes below: "chat" is a literal path,
