@@ -94,8 +94,19 @@ def _client():
     return TestClient(app)
 
 
+def _served_paths(app) -> set:
+    """Every path the app serves, from its OpenAPI schema.
+
+    Not from ``app.routes``: FastAPI 0.141 keeps an included router as one
+    opaque ``_IncludedRouter`` entry with no ``path`` of its own, so walking
+    ``app.routes`` finds nothing under ``/api/`` there while every endpoint
+    still answers. The schema lists the paths the same way on every version.
+    """
+    return set(app.openapi().get("paths", {}))
+
+
 def test_enabled_app_serves_playground_routes():
-    app_paths = {getattr(r, "path", "") for r in _client().app.routes}
+    app_paths = _served_paths(_client().app)
     assert any(p.startswith("/api/playground") for p in app_paths)
 
 
@@ -145,9 +156,10 @@ _SUBPROCESS_SCRIPT = textwrap.dedent("""
 
     result = {{
         "playground_in_sys_modules": "playground" in sys.modules,
+        # From the OpenAPI schema, not app.routes: see _served_paths above.
         "playground_routes": [
-            getattr(r, "path", "") for r in app.routes
-            if getattr(r, "path", "").startswith("/api/playground")
+            p for p in app.openapi().get("paths", {{}})
+            if p.startswith("/api/playground")
         ],
         "features_playground": health.get("features", {{}}).get("playground"),
         "catalog_ids": sorted(t.id for t in TOOL_CATALOG),

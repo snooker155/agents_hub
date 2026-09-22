@@ -25,6 +25,12 @@ python-dotenv>=1.0.0
 langfuse>=2.0.0,<3.0.0
 tiktoken>=0.7.0
 httpx>=0.27.0
+# MCP servers as tool groups (mcp_client/): the LangChain adapter and the
+# protocol library it drives. The client imports them lazily, but nothing
+# in mcp_client works without them, so they are a real dependency here.
+langchain-mcp-adapters>=0.1.0,<0.2.0
+# mcp 2.x moved mcp.shared.session; the 0.1 adapters import it from there.
+mcp>=1.0.0,<2.0.0
 # HTML -> text for the fetch_url tool. tools/web.py degrades to a regex
 # stripper without it, so this is a quality dependency, not a hard one.
 beautifulsoup4>=4.12.0
