@@ -238,6 +238,12 @@ function KanbanCard({ task, allTasks, onDelete, onAssign, onApprove, onReject, d
 
       {/* Meta row */}
       <div className="flex flex-wrap gap-1.5 mb-2 empty:hidden">
+        {task.overdue && (
+          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-red-50 text-red-600 border border-red-200">
+            <AlertCircle className="w-3 h-3" />
+            {t('taskBoard.overdue')}
+          </span>
+        )}
         {showWorkspace && task.workspace && (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200">
             {task.workspace}

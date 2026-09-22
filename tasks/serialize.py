@@ -18,9 +18,14 @@ def task_to_dict(task: Any) -> Dict[str, Any]:
         data["parent_id"] = str(data["parent_id"])
     if data.get("depends"):
         data["depends"] = [str(d) for d in data["depends"]]
-    # agent_state is a @property not a field, so model_dump() omits it — add explicitly
+    # agent_state/overdue are @property, not fields, so model_dump() omits
+    # them — add explicitly.
     try:
         data["agent_state"] = task.agent_state.value
     except Exception:
         data.setdefault("agent_state", "none")
+    try:
+        data["overdue"] = task.overdue
+    except Exception:
+        data.setdefault("overdue", False)
     return data

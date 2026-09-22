@@ -7,6 +7,8 @@ export default {
   changeProject: 'Сменить проект',
   noProjectsFound: 'Проекты не найдены',
   noPriority: 'Без приоритета',
+  dueDate: 'Срок выполнения',
+  noDueDate: 'Без срока',
   addSubtask: 'Добавить подзадачу',
   adding: 'Добавление…',
   title: 'Заголовок',

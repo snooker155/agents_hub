@@ -165,6 +165,10 @@ def build_task_instruction(task_id: str, base_instruction: str) -> str:
             or f"Process task {task_id}"
         )
 
+        # One line naming the deadline, when set, so the agent knows there is one.
+        if getattr(task, "due_at", None):
+            instruction = f"Deadline: {task.due_at.isoformat()}\n{instruction}"
+
         # If this is a subtask, prepend the parent task's title+description so the
         # agent understands the big-picture goal.
         try:

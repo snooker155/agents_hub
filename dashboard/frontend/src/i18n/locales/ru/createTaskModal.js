@@ -3,6 +3,7 @@ export default {
   title: 'Заголовок',
   description: 'Описание',
   initialStatus: 'Начальный статус',
+  dueDateOptional: 'Срок выполнения (необязательно)',
   projectOptional: 'Проект (необязательно)',
   noProject: '— Без проекта —',
   cancel: 'Отмена',

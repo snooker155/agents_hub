@@ -1,6 +1,7 @@
 """
 Pydantic models for API request/response validation.
 """
+from datetime import datetime
 from pydantic import BaseModel, model_validator
 from typing import List, Optional, Dict, Any
 
@@ -17,6 +18,8 @@ class TaskCreate(BaseModel):
     project_id: Optional[str] = None
     # Task IDs or keys (e.g. DEMO-12) that must complete before this task runs
     depends: Optional[List[str]] = None
+    # Optional deadline, ISO 8601. Naive values are assumed UTC.
+    due_at: Optional[datetime] = None
 
 
 class TaskWorkspaceUpdate(BaseModel):
@@ -33,6 +36,8 @@ class TaskUpdate(BaseModel):
     project: Optional[str] = None
     # Replace the task's dependency list (task IDs or keys); [] clears it
     depends: Optional[List[str]] = None
+    # Optional deadline, ISO 8601. Naive values are assumed UTC. Send null to clear it.
+    due_at: Optional[datetime] = None
 
 
 class AgentCreateCustom(BaseModel):

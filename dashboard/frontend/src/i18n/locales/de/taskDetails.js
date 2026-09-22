@@ -7,6 +7,8 @@ export default {
   changeProject: 'Projekt wechseln',
   noProjectsFound: 'Keine Projekte gefunden',
   noPriority: 'Keine Priorität',
+  dueDate: 'Fälligkeitsdatum',
+  noDueDate: 'Kein Fälligkeitsdatum',
   addSubtask: 'Teilaufgabe hinzufügen',
   adding: 'Wird hinzugefügt…',
   title: 'Titel',

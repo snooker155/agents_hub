@@ -7,8 +7,9 @@ import {
   Play, Pause, Square, Split, Trash2, Folder, FolderOpen, Plus, Check, X,
   User, UserPlus, Flag, GitBranch, Layers, ExternalLink, Loader,
   ChevronDown, ChevronRight, ThumbsUp, ThumbsDown, History, FileText, Eye, Code2, HelpCircle,
-  CheckSquare, ShieldQuestion,
+  CheckSquare, ShieldQuestion, Calendar,
 } from 'lucide-react';
+import DateInput from '../components/DateInput';
 import {
   getTask, getAgents, assignAgent, approveAssignment, rejectAssignment, stopAgent, getMessageLogs,
   runDecomposer, getTaskExecutionLog, deleteTask, updateTask, createTask, getProjects,
@@ -301,6 +302,59 @@ function ProjectSelector({ current, projects, onChange }) {
           ))}
           {projects.length === 0 && (
             <p className="px-3 py-2 text-xs text-gray-400 italic">{t('taskDetails.noProjectsFound')}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Due date field: a badge that opens a date picker; turns red once overdue.
+// `overdue` comes from the task record (the backend already derives it from
+// due_at + status), so this never computes against the current time itself.
+function DueDateField({ current, overdue, onChange }) {
+  const { t, language } = useI18n();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const label = current
+    ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(current))
+    : t('taskDetails.noDueDate');
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-opacity hover:opacity-80 ${
+          overdue ? 'text-red-600 bg-red-50 border-red-200' : current ? 'text-gray-600 bg-gray-50 border-gray-200' : 'text-gray-400 bg-gray-50 border-gray-200'
+        }`}
+        title={t('taskDetails.dueDate')}
+      >
+        <Calendar className="w-3 h-3" />
+        {label}
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-2">
+          <DateInput
+            mode="datetime"
+            valueFormat="iso"
+            value={current || ''}
+            onChange={(v) => onChange(v || null)}
+            className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+          />
+          {current && (
+            <button
+              onClick={() => { onChange(null); setOpen(false); }}
+              className="mt-2 w-full text-xs text-gray-500 hover:text-gray-700 text-center"
+            >
+              {t('common.clear')}
+            </button>
           )}
         </div>
       )}
@@ -1034,6 +1088,7 @@ const TaskDetails = () => {
         <div className="flex items-center flex-wrap gap-2 mt-3">
           <StatusDropdown current={task.status} onChange={v => patch({ status: v })} />
           <PriorityDropdown current={task.priority} onChange={v => patch({ priority: v })} />
+          <DueDateField current={task.due_at} overdue={task.overdue} onChange={v => patch({ due_at: v })} />
           <ProjectSelector
             current={task.project_id || null}
             projects={projects}

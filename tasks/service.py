@@ -21,9 +21,14 @@ from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID, uuid4
 
 from tasks.models import (
+    Actor,
     CreatedBy,
+    IllegalTransition,  # noqa: F401 — re-exported for callers that catch it from here
     Task,
     TaskStatus,
+    check_transition,
+    coerce_priority,
+    priority_sort_key,
 )
 from tasks.storage import (
     TaskStore,
@@ -91,6 +96,7 @@ def create_task(
     should_decompose: bool = False,
     external_source: Optional[Dict[str, Any]] = None,
     depends: Optional[Sequence[UUID]] = None,
+    due_at: Optional[datetime] = None,
     store: TaskStore = default_store,
 ) -> Task:
     """Create a new task and persist it in the store.
@@ -123,6 +129,7 @@ def create_task(
         should_decompose=should_decompose,
         external_source=external_source,
         depends=dep_ids,
+        due_at=due_at,
     )
     append_task_activity_log(task.id, "created", "Task created")
     if task.status == TaskStatus.blocked and (task.blocked_reason or "").startswith(DEPENDENCY_BLOCK_PREFIX):
@@ -150,8 +157,21 @@ def list_tasks(*, store: TaskStore = default_store) -> List[Task]:
     return store.list()
 
 
-def update_task(task_id: UUID, *, store: TaskStore = default_store, **fields) -> Optional[Task]:
-    """Update fields of a given task. Returns updated task or None if not found."""
+def update_task(
+    task_id: UUID,
+    *,
+    store: TaskStore = default_store,
+    actor: Actor | str = Actor.system,
+    **fields,
+) -> Optional[Task]:
+    """Update fields of a given task. Returns updated task or None if not found.
+
+    ``actor`` gates a status change against the transition table (see
+    ``tasks.models.TRANSITIONS``): a ``system`` actor (the default, so every
+    internal caller keeps working unchanged) may perform any transition in
+    the table; ``user`` and ``agent`` are further restricted. Raises
+    ``IllegalTransition`` (a ``ValueError``) when the move is not allowed.
+    """
     fields.pop("id", None)
 
     if "depends" in fields:
@@ -175,6 +195,8 @@ def update_task(task_id: UUID, *, store: TaskStore = default_store, **fields) ->
 
         task = store.get(task_id)
         if task and task.status != new_status:
+            check_transition(task.status, new_status, actor)
+
             # Clear blocked_reason when leaving blocked
             if new_status != TaskStatus.blocked and "blocked_reason" not in fields:
                 fields["blocked_reason"] = None
@@ -902,17 +924,23 @@ def add_subtask(
     )
 
 
-def stop_task(task_id: UUID, *, store: TaskStore = default_store) -> Optional[Task]:
-    """Mark the task as stopped. Returns updated task or None if not found."""
-    return store.update(task_id, status=TaskStatus.stopped)
+def stop_task(task_id: UUID, *, actor: Actor | str = Actor.system, store: TaskStore = default_store) -> Optional[Task]:
+    """Mark the task as stopped. Returns updated task or None if not found.
+
+    Goes through update_task so the transition is gated and logged the same
+    way every other status change is.
+    """
+    return update_task(task_id, store=store, actor=actor, status=TaskStatus.stopped)
 
 
-def block_task(task_id: UUID, reason: str, *, store: TaskStore = default_store) -> Optional[Task]:
+def block_task(
+    task_id: UUID, reason: str, *, actor: Actor | str = Actor.system, store: TaskStore = default_store
+) -> Optional[Task]:
     """Mark the task as blocked with a given reason. Returns updated task or None.
 
     Goes through update_task so blocking a parent cascades to its descendants.
     """
-    return update_task(task_id, store=store, status=TaskStatus.blocked, blocked_reason=reason)
+    return update_task(task_id, store=store, actor=actor, status=TaskStatus.blocked, blocked_reason=reason)
 
 
 # -------------------- Tool-call approval --------------------
@@ -1072,6 +1100,26 @@ def create_sequence(
     # Persist all tasks in one save call
     store.save(tasks)
     return seq_id
+
+
+# -------------------- Dispatch ordering --------------------
+
+def order_for_dispatch(tasks: Sequence[Task]) -> List[Task]:
+    """Sort candidate tasks the way the orchestrator/worker loops dispatch them.
+
+    Order: priority descending (critical first), then due_at ascending with
+    tasks that have no deadline sorted last, then created_at ascending (oldest
+    first) as the final tie-breaker. A single helper so both node_run.py loops
+    (and anything else picking the next task to run) agree on the same order.
+    """
+    def _key(t: Task):
+        pr = coerce_priority(getattr(t, "priority", None))
+        due = getattr(t, "due_at", None)
+        due_key = (1, "") if due is None else (0, due.isoformat())
+        created = getattr(t, "created_at", None)
+        return (priority_sort_key(pr), due_key, created.isoformat() if created else "")
+
+    return sorted(tasks, key=_key)
 
 
 # -------------------- Activity log --------------------
@@ -1257,7 +1305,10 @@ __all__ = [
     "Task",
     "TaskStatus",
     "CreatedBy",
+    "Actor",
+    "IllegalTransition",
     "TaskStore",
+    "order_for_dispatch",
     "create_task",
     "get_task",
     "list_tasks",

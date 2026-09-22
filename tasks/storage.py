@@ -205,6 +205,7 @@ class TaskStore:
         should_decompose: bool = False,
         external_source: Optional[dict] = None,
         depends: Optional[Sequence[UUID]] = None,
+        due_at: Optional[datetime] = None,
         timeout: float = 10.0,
     ) -> Task:
         # Key computation and insert happen in the same transaction so two
@@ -232,6 +233,7 @@ class TaskStore:
                 should_decompose=should_decompose,
                 external_source=external_source,
                 depends=list(depends or []),
+                due_at=due_at,
             )
             _write_task_row(conn, task)
         return task

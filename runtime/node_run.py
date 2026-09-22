@@ -232,6 +232,10 @@ def run_orchestrator_loop(node_id: str, workspace: str | None, agent_id: str = "
                 ]
                 pending = _new + _followup + _direct
 
+            # Higher priority first, then earlier deadline, then oldest first —
+            # shared with the worker loop so both agree on dispatch order.
+            pending = tasks_service.order_for_dispatch(pending)
+
             for task in pending:
                 # Resolve workspace / project path
                 abs_ws = workspace
@@ -576,6 +580,9 @@ def run_worker_loop(node_id: str, agent_id: str, workspace: str | None) -> None:
                 and t.agent_state == AgentState.assigned
                 and task_in_workspace(t, node_workspace)
             ]
+            # Higher priority first, then earlier deadline, then oldest first —
+            # shared with the orchestrator loop so both agree on dispatch order.
+            assigned = tasks_service.order_for_dispatch(assigned)
 
             for task in assigned:
                 abs_ws = workspace

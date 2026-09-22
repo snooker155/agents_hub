@@ -7,6 +7,8 @@ export default {
   changeProject: 'Change project',
   noProjectsFound: 'No projects found',
   noPriority: 'No priority',
+  dueDate: 'Due date',
+  noDueDate: 'No due date',
   addSubtask: 'Add Subtask',
   adding: 'Adding…',
   title: 'Title',
