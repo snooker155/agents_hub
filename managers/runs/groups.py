@@ -92,12 +92,16 @@ class RunGroup:
 
 # ── Cost ─────────────────────────────────────────────────────────────────────
 
-def _runs_cost(run_ids: List[str]) -> float:
+def runs_cost(run_ids: List[str]) -> float:
     """Catalog-priced spend of a set of agent runs.
 
     Best effort by design: an unknown (provider, model) pair prices at zero and
     a broken price catalog returns zero, because a cost readout must never be
     the thing that fails a page or a stop.
+
+    The one pricing loop over run records. loops.runner and teams.runner used
+    to keep their own copies of this same arithmetic; both now call here so a
+    flow, a loop and a team are priced by the same rule.
     """
     ids = [str(r) for r in run_ids if r]
     if not ids:
@@ -110,6 +114,33 @@ def _runs_cost(run_ids: List[str]) -> float:
         prices = load_price_map()
         records = get_runs_by_ids(ids)
         return round(sum(run_cost_usd(rec, prices) for rec in records.values()), 6)
+    except Exception:
+        return 0.0
+
+
+# Kept as a private alias: this module's own adapters below were written
+# against the old name.
+_runs_cost = runs_cost
+
+
+def turn_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
+    """Catalog-priced spend of one agent turn, priced from token counts rather
+    than a run record.
+
+    A team turn is priced before any run record exists (the member's run is
+    opened and closed around the same call), so it cannot go through
+    :func:`runs_cost`. This is the same ``run_cost_usd`` path, given a
+    synthetic record shaped like the real ones, so there is still exactly one
+    place that knows how to price a (provider, model, tokens) triple.
+    """
+    try:
+        from common.pricing import load_price_map, run_cost_usd
+        return round(run_cost_usd(
+            {"provider": provider, "model": model,
+             "process": {"token_usage": {"inbound_tokens": inbound,
+                                         "outbound_tokens": outbound}}},
+            load_price_map(),
+        ), 6)
     except Exception:
         return 0.0
 
@@ -457,4 +488,5 @@ def group_cost(kind: str, group_id: str) -> float:
 
 
 __all__ = ["RunGroup", "KINDS", "ACTIVE_STATUSES",
-           "get_group", "list_groups", "stop_group", "group_cost"]
+           "get_group", "list_groups", "stop_group", "group_cost",
+           "runs_cost", "turn_cost"]

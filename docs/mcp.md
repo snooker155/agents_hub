@@ -15,14 +15,21 @@ Configured per [workspace](workspaces.md). A server attached to one workspace is
 invisible to agents built in another, because the configuration lives inside the
 workspace record rather than beside it.
 
+## In the dashboard
+
+The **MCP** page lets you attach servers and manage their configuration. Each server form collects the id, transport type (stdio, streamable_http, sse, or websocket), the endpoint details (command and args for stdio, URL and headers for HTTP, URL only for websocket), capability claims, approval settings, and a tool allowlist. The Test button connects to the server and lists its tools, showing which ones the current allowlist keeps. When you grant tools to an agent, use either the group form `mcp:<server_id>` to take the whole server or the tool form `mcp__<server_id>__<tool_name>` to take one.
+
 ## Attaching one
 
 Pick a transport and fill in what it needs.
 
 - **stdio** runs the server as a child process: a `command`, its `args`, and
   optional `env` variables. This is how the published servers usually ship.
-- **streamable_http** and **sse** call a server over HTTP: a `url` and optional
-  `headers`.
+- **streamable_http** and **sse** call a server over HTTP: a `url` (`http://`
+  or `https://`) and optional `headers`.
+- **websocket** calls a server over a `ws://` or `wss://` `url`. A websocket
+  session carries no headers, so any stored on the server are kept but never
+  sent for this transport.
 
 A stdio example, the reference filesystem server:
 

@@ -46,12 +46,18 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
 from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
+from routes import a2a as a2a_router
+from routes import auth as auth_router
 from routes import run_groups as run_groups_router
+from routes import run_state as run_state_router
 from routes import settings as settings_router
 from routes import models as models_router
 
-# Settings, for the optional bearer token below
-from common.config import settings
+# Settings: read at startup for the optional-feature checks below. The auth
+# guard reads the live settings object through common.identity instead, so a
+# mode changed in .env takes effect on the next restart without this import
+# having pinned an old value.
+from common.config import settings  # noqa: F401  (kept: imported by name elsewhere)
 
 
 @asynccontextmanager
@@ -111,6 +117,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠ Could not start external-state publisher: {e}")
 
+    # Start the cross-replica broker bridge (common/broker_bridge.py). A no-op
+    # when AGENTS_HUB_BROKER_URL is unset, which is the default and what a
+    # single-replica deployment wants; see docs/scaling.md.
+    try:
+        from common.broker_bridge import start_bridge
+        await start_bridge()
+    except Exception as e:
+        print(f"⚠ Could not start broker bridge: {e}")
+
     # Start the run watchdog (fails runs stuck in 'pending' and runs whose
     # process died, so tasks never freeze waiting on a run that cannot finish).
     try:
@@ -125,6 +140,11 @@ async def lifespan(app: FastAPI):
     task = getattr(app.state, "external_publisher", None)
     if task:
         task.cancel()
+    try:
+        from common.broker_bridge import stop_bridge
+        await stop_bridge()
+    except Exception:
+        pass
     try:
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.stop()
@@ -173,13 +193,21 @@ def get_orchestrator_settings_path() -> PathlibPath:
     return path
 
 # ============================================================================
-# Optional bearer-token authentication
+# Identity: authentication and authorization
 # ============================================================================
-# Off by default (settings.api_token == "") so the local-only workflow is
-# unchanged. When a token is configured, every /api request must present it via
-# ``Authorization: Bearer <token>``, ``X-Api-Token: <token>`` header, or a
-# ``?token=<token>`` query parameter — the query form lets the browser's
-# EventSource (which cannot set headers) authenticate the /api/stream SSE.
+# One guard for all three AUTH_MODE postures (see common/identity.py and
+# docs/identity.md). ``single`` — the default — lets everything through
+# exactly as before any of this existed. ``token`` is the original shared
+# ``AGENTS_HUB_API_TOKEN``: every /api request must present it via
+# ``Authorization: Bearer <token>``, an ``X-Api-Token: <token>`` header, or a
+# ``?token=<token>`` query parameter (the query form lets the browser's
+# EventSource, which cannot set headers, authenticate the /api/stream SSE).
+# ``multi`` resolves a session token to a named user and checks their global
+# role and their membership of the workspace the request names.
+#
+# The decision itself lives in ``common.identity.authorize_request`` on top of
+# the pure predicates in ``common.auth``, so the whole matrix is testable
+# without a server; this function only translates the answer into a response.
 #
 # Registered BEFORE the CORS middleware on purpose. Starlette's add_middleware
 # inserts at the head of the list and the head is the outermost layer, so the
@@ -188,18 +216,34 @@ def get_orchestrator_settings_path() -> PathlibPath:
 # with no Access-Control-Allow-Origin header. The browser then reports a CORS
 # failure instead of the auth failure that actually happened.
 async def _api_token_guard(request, call_next):
-    from common.auth import is_authorized
-    if not is_authorized(
-        configured_token=settings.api_token,
-        method=request.method,
-        path=request.url.path,
-        auth_header=request.headers.get("authorization"),
-        x_api_token=request.headers.get("x-api-token"),
-        query_token=request.query_params.get("token"),
-    ):
+    from common import identity
+
+    allowed, principal = identity.authorize_request(request)
+    if not allowed:
         from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=401, content={"detail": "Invalid or missing API token"})
-    return await call_next(request)
+        if principal is None:
+            # Unchanged from before identity shipped: one ``detail`` string,
+            # whether the request carried no credential, a wrong token or an
+            # expired session. Which of the three it was is not information an
+            # unauthenticated caller has earned.
+            return JSONResponse(status_code=401,
+                                content={"detail": "Invalid or missing API token"})
+        # Authenticated, but not for this. 403 rather than 401 on purpose: the
+        # browser treats a 401 as "your session is gone" and signs itself out,
+        # so answering a workspace the caller simply is not a member of with
+        # 401 would log them out of the whole app.
+        return JSONResponse(status_code=403,
+                            content={"detail": "Not a member of this workspace"})
+
+    # Routes read the principal off the request; the stores that stamp an owner
+    # onto a new record read it off a contextvar instead, so they need no
+    # signature change (common.identity.current_user_id).
+    request.state.principal = principal
+    token = identity.set_current_user(principal.id if principal else None)
+    try:
+        return await call_next(request)
+    finally:
+        identity.reset_current_user(token)
 
 
 app.add_middleware(BaseHTTPMiddleware, dispatch=_api_token_guard)
@@ -317,6 +361,10 @@ app.include_router(loops.router)
 # Run groups: flows, loops, teams and task containers behind one interface
 app.include_router(run_groups_router.router)
 
+# Run state: the write surface a run container uses instead of opening the
+# database itself, when AGENT_RUN_STATE_TRANSPORT=http (see docs/containers.md)
+app.include_router(run_state_router.router)
+
 # Teams domain: a bounded roster of agents that know each other and talk
 app.include_router(teams.router)
 
@@ -388,6 +436,11 @@ app.include_router(nodes.router)
 # External domain: token-authenticated access for exposed nodes
 app.include_router(external.router)
 
+# A2A domain: agent cards and the JSON-RPC endpoint of the Agent2Agent protocol.
+# Carries no prefix of its own: the well-known card path is fixed by the spec
+# and sits at the site root, so this router spells out its own paths.
+app.include_router(a2a_router.router)
+
 # Projects domain: project management, repo, frontend/backend preview
 app.include_router(projects.router)
 
@@ -418,6 +471,11 @@ app.include_router(views.router)
 # Notifications domain: outbound webhook/slack endpoints, alert rules, and the
 # inbound task-filing webhook.
 app.include_router(notify_router.router)
+
+# Identity domain: the auth-mode probe, login/logout, users and workspace
+# membership. Registered in every mode — ``GET /api/auth/mode`` is how the
+# frontend learns there is nothing to render.
+app.include_router(auth_router.router)
 
 # ============================================================================
 # Entry Point

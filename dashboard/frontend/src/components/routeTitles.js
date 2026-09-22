@@ -28,6 +28,7 @@ export const ROUTE_TITLES = [
   { match: /^\/registry$/, titleKey: 'layout.titles.registry' },
   { match: /^\/sessions$/, titleKey: 'layout.titles.sessions' },
   { match: /^\/sessions\/.+$/, titleKey: 'layout.titles.sessionDetails' },
+  { match: /^\/run-groups$/, titleKey: 'layout.titles.runGroups' },
   { match: /^\/messages$/, titleKey: 'layout.titles.messages' },
   { match: /^\/messages\/.+$/, titleKey: 'layout.titles.messageDetails' },
   { match: /^\/nodes$/, titleKey: 'layout.titles.nodes' },

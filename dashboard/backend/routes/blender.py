@@ -32,6 +32,7 @@ _project_root = Path(__file__).resolve().parents[3]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
+from common.session_broker import notify_change
 from connectors.blender import pool, store
 
 
@@ -69,6 +70,7 @@ async def update_config(payload: BlenderConfigUpdate):
         store.save(patch)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    notify_change("blender_daemons")
     return await get_config()
 
 
@@ -88,13 +90,17 @@ async def list_daemons():
 
 @router.delete("/daemons/{key}")
 async def stop_daemon(key: str):
+    # pool.stop already publishes the event (a daemon can also be stopped from
+    # an agent's own process, not just this route), so this is belt-and-braces.
     stopped = await asyncio.to_thread(pool.stop, key)
     if not stopped:
         raise HTTPException(status_code=404, detail=f"no engine running for {key!r}")
+    notify_change("blender_daemons", key=key)
     return {"ok": True, "stopped": key}
 
 
 @router.delete("/daemons")
 async def stop_all_daemons():
     stopped = await asyncio.to_thread(pool.stop_all)
+    notify_change("blender_daemons")
     return {"ok": True, "stopped": stopped}

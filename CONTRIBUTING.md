@@ -62,7 +62,7 @@ A tool is a LangChain `@tool` function in `tools/`. It shows up in four places, 
 
 **1. Write the tool in `tools/`**
 
-Use a Pydantic `args_schema` so the arguments are typed and self describing:
+Declare the tool with a Pydantic `args_schema` so arguments are typed and self describing:
 
 ```python
 # tools/calculator.py (excerpt)
@@ -84,20 +84,9 @@ Return a JSON string or plain text. Raise nothing at the agent: return an error 
 
 An agent receives only the tools its record names. The factory builds the `available` list near `agents/agent_factory.py:556` from every tool module and then picks by name, so import your tool there and add it to that list. Without this step the id is silently ignored.
 
-**3. Add a catalog entry in `tools/registry.py`**
+**3. Tool reaches the catalog automatically**
 
-`TOOL_CATALOG` is what the dashboard's agent editor shows. Most entries are hand written `ToolSpec` records (see the `calculator` entry around line 312). Geometry tools are generated from their `args_schema` by `_geometry_specs()`; prefer that pattern for a new family of tools so the catalog cannot drift from the code.
-
-```python
-ToolSpec(
-    id="calculator",
-    name="Calculator",
-    category="calculator",
-    description="Evaluate mathematical expressions.",
-    parameters=[{"name": "expression", "type": "string", "required": True}],
-    requires_workspace=False,
-),
-```
+The tool catalog is generated from tools themselves, not hand-typed in parallel. The `spec_from_tool()` function in `tools/registry.py` reads each tool's name, docstring, and `args_schema` to build a `ToolSpec`, so the catalog stays accurate without duplication. A small table in `_CATALOG_OVERRIDES` carries only the few things a schema cannot express: friendlier display names and workspace requirements for tools whose schema has no field for them.
 
 **4. Classify it in `tools/capabilities.py`**
 
@@ -110,6 +99,31 @@ Seed agents live in `bootstrap/agents.json` with their prompts in `agents/defini
 **6. Test it**
 
 `tests/test_capabilities.py` covers grants and blocked combinations, `tests/test_entity_tools.py` covers tools that read and write hub entities. Add a direct unit test of the function itself next to those.
+
+**Entity management tools**
+
+Six modules own entity-specific management tools (flow, loop, team, scenario, world, project). Rather than each hand-rolling try/except, json_ok/json_err wrapping, and the `@tool` decorator, they use the factory in `tools/_crud.py` to avoid duplication:
+
+```python
+# tools/flow_management.py (excerpt)
+from tools._crud import EntityToolSpec, ToolDef, build_entity_tools
+
+def _create_flow(name: str, blueprint: str) -> str:
+    """Create a flow from a name and blueprint."""
+    ...
+
+_SPEC = EntityToolSpec(
+    singular="flow",
+    plural="flows",
+    create=ToolDef("create_flow_tool", CreateFlowInput, _create_flow, "Failed to create flow"),
+    get=ToolDef("get_flow_tool", GetFlowInput, _get_flow, "Failed to get flow"),
+    modify=ToolDef("modify_flow_tool", ModifyFlowInput, _modify_flow, "Failed to modify flow"),
+)
+_TOOLS = tools_by_id(build_entity_tools(_SPEC))
+create_flow_tool = _TOOLS["create_flow_tool"]
+```
+
+The factory provides the error handling, json_ok/json_err wrapping, and the `@tool` decorator. Handlers are plain functions with the body and docstring the old decorated function had, minus the outer try/except the factory now provides.
 
 ## Adding an API route
 
@@ -157,33 +171,49 @@ assert response.status_code == 200
 
 ## Adding a dashboard page
 
-Pages are React components in `dashboard/frontend/src/pages/` and are routed in `dashboard/frontend/src/App.jsx`.
+Pages are React components in `dashboard/frontend/src/pages/` and are routed in `dashboard/frontend/src/App.jsx`. Pages are lazy-loaded on demand so bundle size stays manageable, and each route gets its own error boundary.
 
 **1. Create a page component**
 
 ```jsx
 // dashboard/frontend/src/pages/ExamplePage.jsx
-import { useTranslation } from '../i18n';
+import { useI18n } from '../i18n';
 
 export default function ExamplePage() {
-  const { t } = useTranslation();
-  return <div>{t('pages.example.title')}</div>;
+  const { t } = useI18n();
+  return <div>{t('examplePage.title')}</div>;
 }
 ```
 
-**2. Add a route in `dashboard/frontend/src/App.jsx`**
+**2. Add a lazy route in `dashboard/frontend/src/App.jsx`**
+
+Declare the page as a lazy import and wrap it with `guard()`, which adds an error boundary and suspense loader per route:
 
 ```jsx
-import ExamplePage from './pages/ExamplePage';
+const ExamplePage = lazy(() => import('./pages/ExamplePage'));
 // ... in Routes:
-<Route path="/example" element={<ExamplePage />} />
+<Route path="/example" element={guard(<ExamplePage />)} />
 ```
 
-**3. Add a sidebar entry**
+The `guard()` function handles `RouteBoundary` with a per-route error boundary, keyed on pathname so a caught error resets on navigation.
+
+**3. Add the route title in `src/components/routeTitles.js`**
+
+`ROUTE_TITLES` is an ordered list of `{match, titleKey}` entries; the first regex that matches the pathname names the page for the document title and the page chat header. The title itself is a locale string under `layout.titles`:
+
+```javascript
+// src/components/routeTitles.js (excerpt)
+export const ROUTE_TITLES = [
+  { match: /^\/example$/, titleKey: 'layout.titles.example' },
+  ...
+];
+```
+
+**4. Add a sidebar entry**
 
 Edit the navigation component that reads from locale `nav` namespace. The sidebar menu is built from `dashboard/frontend/src/i18n/locales/en/nav.js` and other language files.
 
-**4. Never hardcode colors**
+**5. Never hardcode colors**
 
 Colors come from generated `src/theme.css`. To add a new brand color:
 

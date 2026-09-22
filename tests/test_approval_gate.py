@@ -249,6 +249,54 @@ def test_the_parked_call_is_readable_from_the_agent_that_stopped(gate_on, in_tas
     assert hooks.pending_approval_for(_Agent()) is None
 
 
+# -------------------- gate order: think-gate wraps the approval guard --------------------
+#
+# agent_factory builds each action tool as GatedTool(GuardedTool(tool)) — the
+# think-gate outermost — so a fresh run that has not called `think` yet
+# refuses before the approval guard is ever reached. The opposite order used
+# to let the guard consume an approved fingerprint and hand the call to a
+# gate that could still refuse it, spending the operator's yes on a refusal.
+
+def test_a_gate_refusal_never_reaches_the_approval_guard(gate_on, in_task):
+    from reasoning.think_gate import GatedTool, ThinkGate
+
+    class _Agent:
+        pass
+
+    agent = _Agent()
+    guarded = hooks.guard_action_tools(
+        [fake_run_shell], agent_id="swe_agent", workspace="acme")[0]
+    gate = ThinkGate("deep")  # enforces a think before every action
+    agent._tools = [GatedTool(guarded, gate)]
+
+    # No think yet: the gate refuses on its own, without the inner GuardedTool
+    # (and therefore the approval machinery) ever running.
+    refusal = agent._tools[0].run({"command": "rm -rf build"})
+    assert "BLOCKED" in refusal
+    assert hooks.pending_approval_for(agent) is None
+
+
+def test_pending_approval_for_finds_the_guard_through_the_gate(gate_on, in_task):
+    from reasoning.think_gate import GatedTool, ThinkGate
+
+    class _Agent:
+        pass
+
+    agent = _Agent()
+    guarded = hooks.guard_action_tools(
+        [fake_run_shell], agent_id="swe_agent", workspace="acme")[0]
+    gate = ThinkGate("deep")
+    gate.note_think()  # clears the gate, so this call reaches the guard
+    agent._tools = [GatedTool(guarded, gate)]
+
+    with pytest.raises(ApprovalSignal):
+        agent._tools[0].run({"command": "rm -rf build"})
+    # _guards_of unwraps the GatedTool via .inner to find the ToolGuard that
+    # actually holds the parked call.
+    pending = hooks.pending_approval_for(agent)
+    assert pending is not None and pending["tool"] == "run_shell"
+
+
 # -------------------- parking and resuming --------------------
 
 def test_parking_a_task_stores_the_call_and_keeps_it_unfinished():

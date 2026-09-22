@@ -32,7 +32,7 @@ def isolated_plan_store(tmp_path, monkeypatch):
     monkeypatch.setattr(ps, "plan_store", PlanStore(path=tmp_path / "plans.json"))
 
 
-def _job(run_at_local, recurrence, *, cron=None, tz="Europe/Berlin"):
+def _job(run_at_local, recurrence, *, cron=None, tz="Europe/Berlin", catch_up=False):
     run_at_utc = run_at_local.astimezone(timezone.utc)
     return ScheduledJob(
         kind=JobKind.notification,
@@ -41,6 +41,7 @@ def _job(run_at_local, recurrence, *, cron=None, tz="Europe/Berlin"):
         recurrence=recurrence,
         cron=cron,
         timezone=tz,
+        catch_up=catch_up,
     )
 
 
@@ -118,14 +119,57 @@ def test_next_run_cron_is_next_weekday_9am_in_tz():
 
 def test_next_run_cron_rolls_forward_past_missed_occurrences():
     # run_at is far in the past (backend was down); next_run anchors on "now",
-    # not on run_at, so it jumps straight to the next future slot.
+    # not on run_at, so it jumps straight to the next future slot. Default
+    # catch_up=False.
     run_at_local = datetime(2026, 1, 1, 9, 0, tzinfo=BERLIN)
     job = _job(run_at_local, Recurrence.cron, cron="0 9 * * *")
+    assert job.catch_up is False
     now = datetime(2026, 9, 22, 15, 0, tzinfo=timezone.utc)
     nxt = ps._next_run(job, now)
     assert nxt > now
     nxt_local = nxt.astimezone(BERLIN)
     assert nxt_local.date() == datetime(2026, 9, 23).date()
+
+
+# -------------------- catch_up --------------------
+
+def test_catch_up_cron_advances_one_occurrence_from_the_missed_slot():
+    """With catch_up, the next slot is the one right after run_at, even though
+    it is still in the past, so the scheduler's next tick will find it due
+    again immediately and fire it, one missed occurrence at a time."""
+    run_at_local = datetime(2026, 1, 1, 9, 0, tzinfo=BERLIN)
+    job = _job(run_at_local, Recurrence.cron, cron="0 9 * * *", catch_up=True)
+    now = datetime(2026, 9, 22, 15, 0, tzinfo=timezone.utc)  # months later
+    nxt = ps._next_run(job, now)
+    nxt_local = nxt.astimezone(BERLIN)
+    assert nxt_local.date() == datetime(2026, 1, 2).date()  # the very next day, not "now"
+    assert nxt < now  # still due immediately
+
+
+def test_catch_up_false_is_the_default_and_unchanged_from_before_the_field():
+    job = ScheduledJob(kind=JobKind.notification, title="t",
+                       run_at=datetime.now(timezone.utc), recurrence=Recurrence.none)
+    assert job.catch_up is False
+
+
+def test_catch_up_daily_advances_one_day_from_the_missed_slot_not_to_now():
+    run_at_local = datetime(2026, 1, 1, 9, 0, tzinfo=BERLIN)
+    job = _job(run_at_local, Recurrence.daily, catch_up=True)
+    now = datetime(2026, 9, 22, 15, 0, tzinfo=timezone.utc)
+    nxt = ps._next_run(job, now)
+    nxt_local = nxt.astimezone(BERLIN)
+    assert nxt_local.date() == datetime(2026, 1, 2).date()
+    assert nxt < now
+
+
+def test_create_job_persists_catch_up():
+    job = ps.create_job(
+        kind=JobKind.notification, title="t", run_at=datetime.now(timezone.utc),
+        catch_up=True,
+    )
+    assert job.catch_up is True
+    stored = ps.plan_store.get(job.id)
+    assert stored.catch_up is True
 
 
 # -------------------- DST: daily job stays at the same local time --------------------
@@ -225,6 +269,34 @@ def test_route_update_rejects_bad_cron_with_400(plan_client):
         "recurrence": "cron", "cron": "garbage",
     })
     assert resp.status_code == 400
+
+
+def test_route_create_defaults_catch_up_to_false(plan_client):
+    resp = plan_client.post("/api/plan/jobs", json={
+        "kind": "notification", "title": "t", "delay_minutes": 5,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["catch_up"] is False
+
+
+def test_route_create_accepts_catch_up_true(plan_client):
+    resp = plan_client.post("/api/plan/jobs", json={
+        "kind": "notification", "title": "t", "delay_minutes": 5,
+        "recurrence": "cron", "cron": "0 9 * * *", "catch_up": True,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["catch_up"] is True
+
+
+def test_route_update_can_turn_catch_up_on(plan_client):
+    created = plan_client.post("/api/plan/jobs", json={
+        "kind": "notification", "title": "t", "delay_minutes": 5,
+        "recurrence": "cron", "cron": "0 9 * * *",
+    }).json()
+    assert created["catch_up"] is False
+    resp = plan_client.patch(f"/api/plan/jobs/{created['id']}", json={"catch_up": True})
+    assert resp.status_code == 200
+    assert resp.json()["catch_up"] is True
 
 
 # -------------------- tool-level JSON errors --------------------

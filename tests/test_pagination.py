@@ -159,3 +159,52 @@ def test_flows_paging_slices_the_loaded_list_and_reports_the_total(flows_client)
     # flow_store.list_flows() sorts by filename (== id here), so the page is
     # deterministic without re-deriving the store's own ordering.
     assert [f["id"] for f in body["items"]] == sorted(ids)[2:4]
+
+
+def test_flows_with_an_explicit_allowlist_pages_the_ids_not_the_catalog(flows_client, monkeypatch):
+    """An ``allowed_flows`` workspace only ever needs the ids it names, so the
+    page is drawn from that list directly rather than the whole catalog."""
+    from workspace import create_workspace_folder, update_workspace_metadata
+
+    ids = _make_flows(5)
+    create_workspace_folder("ws-allow")
+    allowed = sorted(ids)[1:4]
+    update_workspace_metadata("ws-allow", {"allowed_flows": allowed})
+
+    body = flows_client.get(
+        "/api/flows", params={"workspace": "ws-allow", "limit": 2}).json()
+    assert body["total"] == len(allowed)
+    assert [f["id"] for f in body["items"]] == allowed[:2]
+
+
+# ── flow_store.list_flows / count_flows (store-level paging) ────────────────
+
+def test_flow_store_list_flows_pages_without_parsing_the_rest(flows_client):
+    """flows_client resets the store into a temp dir per test (see the
+    ``routes.flows`` import); paging here only has to prove the slice and the
+    file-count total agree with the unpaged list."""
+    from flow import store as flow_store
+    ids = _make_flows(5)
+    total = flow_store.count_flows()
+    assert total == 5
+    page = flow_store.list_flows(limit=2, offset=3)
+    assert [f["id"] for f in page] == sorted(ids)[3:5]
+
+
+# ── agents.registry.list_agents (store-level paging) ─────────────────────────
+
+def test_registry_list_agents_pages_the_cached_spec_list(monkeypatch):
+    from agents.registry import AgentSpec
+    import agents.registry as registry_module
+
+    specs = [
+        AgentSpec(id=f"agent-{i}", name=f"Agent {i}", type="langchain",
+                  entrypoint="agents.agent_factory:build_agent_executor")
+        for i in range(5)
+    ]
+    monkeypatch.setattr(registry_module, "_maybe_reload", lambda: list(specs))
+
+    assert registry_module.list_agents() == specs
+    assert registry_module.count_agents() == 5
+    assert registry_module.list_agents(limit=2, offset=1) == specs[1:3]
+    assert registry_module.list_agents(offset=4) == specs[4:]

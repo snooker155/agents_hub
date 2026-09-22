@@ -46,7 +46,27 @@
       "default_workspace_only": false,
       "temperature": 0.0,
       "max_tokens": 15000,
-      "verbose": false
+      "verbose": false,
+      "delegates": [
+        "agent_creator",
+        "decomposer",
+        "flow_creator",
+        "memory_extractor",
+        "architect_agent",
+        "planner",
+        "visualizer",
+        "swe_agent",
+        "code_reviewer",
+        "main-agent",
+        "universal_agent",
+        "prompt-engineer",
+        "plot-manager",
+        "world_builder",
+        "scenario_creator",
+        "loop_creator",
+        "team_creator",
+        "project_manager"
+      ]
     },
     {
       "id": "agent_creator",
@@ -511,7 +531,8 @@
       "clarify_gate": true,
       "delegates": [
         "web_searcher"
-      ]
+      ],
+      "capability_override": true
     },
     {
       "id": "web_searcher",
@@ -587,7 +608,27 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "delegates": [
+        "orchestrator",
+        "agent_creator",
+        "decomposer",
+        "flow_creator",
+        "memory_extractor",
+        "architect_agent",
+        "planner",
+        "visualizer",
+        "swe_agent",
+        "code_reviewer",
+        "universal_agent",
+        "prompt-engineer",
+        "plot-manager",
+        "world_builder",
+        "scenario_creator",
+        "loop_creator",
+        "team_creator",
+        "project_manager"
+      ]
     },
     {
       "id": "universal_agent",
@@ -637,7 +678,27 @@
       "default_workspace_only": false,
       "shared": true,
       "skills_enabled": false,
-      "allow_self_delegation": true
+      "allow_self_delegation": true,
+      "delegates": [
+        "orchestrator",
+        "agent_creator",
+        "decomposer",
+        "flow_creator",
+        "memory_extractor",
+        "architect_agent",
+        "planner",
+        "visualizer",
+        "swe_agent",
+        "code_reviewer",
+        "main-agent",
+        "prompt-engineer",
+        "plot-manager",
+        "world_builder",
+        "scenario_creator",
+        "loop_creator",
+        "team_creator",
+        "project_manager"
+      ]
     },
     {
       "id": "service_agent",
@@ -786,7 +847,27 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "delegates": [
+        "orchestrator",
+        "agent_creator",
+        "decomposer",
+        "flow_creator",
+        "memory_extractor",
+        "architect_agent",
+        "planner",
+        "visualizer",
+        "swe_agent",
+        "code_reviewer",
+        "main-agent",
+        "universal_agent",
+        "prompt-engineer",
+        "plot-manager",
+        "world_builder",
+        "loop_creator",
+        "team_creator",
+        "project_manager"
+      ]
     },
     {
       "id": "loop_creator",
@@ -818,7 +899,27 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "delegates": [
+        "orchestrator",
+        "agent_creator",
+        "decomposer",
+        "flow_creator",
+        "memory_extractor",
+        "architect_agent",
+        "planner",
+        "visualizer",
+        "swe_agent",
+        "code_reviewer",
+        "main-agent",
+        "universal_agent",
+        "prompt-engineer",
+        "plot-manager",
+        "world_builder",
+        "scenario_creator",
+        "team_creator",
+        "project_manager"
+      ]
     },
     {
       "id": "team_creator",
@@ -847,7 +948,27 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "delegates": [
+        "orchestrator",
+        "agent_creator",
+        "decomposer",
+        "flow_creator",
+        "memory_extractor",
+        "architect_agent",
+        "planner",
+        "visualizer",
+        "swe_agent",
+        "code_reviewer",
+        "main-agent",
+        "universal_agent",
+        "prompt-engineer",
+        "plot-manager",
+        "world_builder",
+        "scenario_creator",
+        "loop_creator",
+        "project_manager"
+      ]
     },
     {
       "id": "project_manager",

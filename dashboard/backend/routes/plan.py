@@ -30,6 +30,11 @@ class JobCreate(BaseModel):
     recurrence: Recurrence = Recurrence.none
     cron: Optional[str] = Field(None, description="Cron expression, required when recurrence='cron'")
     timezone: Optional[str] = Field(None, description="IANA timezone name, e.g. 'Europe/Berlin'. Defaults to UTC.")
+    catch_up: bool = Field(
+        False,
+        description="When more than one occurrence was missed, advance one slot per "
+                    "firing instead of jumping straight to the next future one.",
+    )
     workspace: Optional[str] = None
     agent_id: Optional[str] = None
     # flow jobs: which flow to trigger, an optional JSON seed, and a concurrency cap.
@@ -59,6 +64,7 @@ class JobUpdate(BaseModel):
     recurrence: Optional[Recurrence] = None
     cron: Optional[str] = None
     timezone: Optional[str] = None
+    catch_up: Optional[bool] = None
     agent_id: Optional[str] = None
     channels: Optional[List[str]] = None
 
@@ -84,6 +90,7 @@ async def create_job(payload: JobCreate):
             recurrence=payload.recurrence,
             cron=payload.cron,
             timezone=payload.timezone,
+            catch_up=payload.catch_up,
             workspace=payload.workspace,
             created_by="user",
             agent_id=payload.agent_id,

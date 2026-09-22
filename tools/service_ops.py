@@ -27,7 +27,6 @@ combined with an outbound channel. See ``tools/capabilities.py``.
 """
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +34,8 @@ from typing import Any, Dict, Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+
+from tools._json import json_err, json_ok
 
 
 # ── output shaping ───────────────────────────────────────────────────────────
@@ -46,16 +47,16 @@ MAX_LOG_CHARS = 12_000
 MAX_LOG_LINES = 400
 
 
+# Shared JSON envelope (tools/_json.py), the ``default=str`` variant: payloads
+# here can carry datetimes (run/session timestamps) that json.dumps cannot
+# serialize on its own.
 def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2, default=str)
+    return json_ok(payload, default=str)
 
 
 def _json_err(message: str, *, code: str = "bad_request",
               extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2, default=str)
+    return json_err(message, code=code, extra=extra, default=str)
 
 
 def _approval_required(action: str, target: str, effect: str) -> str:

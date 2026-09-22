@@ -6,6 +6,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { PageChatProvider } from './components/pageChat/PageChatContext';
 import { FeaturesProvider } from './components/FeaturesContext';
 import { useFeatures } from './components/features';
+import { AuthProvider } from './components/AuthContext';
+import { isAdmin, needsLogin, useAuth } from './components/auth';
 import { useI18n } from './i18n';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +41,7 @@ const AgentManifest = lazy(() => import('./pages/AgentManifest'));
 const ToolsExplorer = lazy(() => import('./pages/ToolsExplorer'));
 const Orchestrator = lazy(() => import('./pages/Orchestrator'));
 const Sessions = lazy(() => import('./pages/Sessions'));
+const RunGroups = lazy(() => import('./pages/RunGroups'));
 const SessionDetails = lazy(() => import('./pages/SessionDetails'));
 const Messages = lazy(() => import('./pages/Messages'));
 const Instances = lazy(() => import('./pages/Instances'));
@@ -73,6 +76,10 @@ const Views = lazy(() => import('./pages/Views'));
 const ViewDetail = lazy(() => import('./pages/ViewDetail'));
 const Studio = lazy(() => import('./pages/Studio'));
 const Docs = lazy(() => import('./pages/Docs'));
+// Identity pages. Both are inert outside AUTH_MODE=multi: the login screen is
+// never reached and the users route is not registered. See docs/identity.md.
+const Login = lazy(() => import('./pages/Login'));
+const Users = lazy(() => import('./pages/Users'));
 
 /** Centred spinner shown while a page's chunk is on the wire. */
 function RouteFallback() {
@@ -103,6 +110,7 @@ const guard = (element) => <RouteBoundary>{element}</RouteBoundary>;
 
 function AppRoutes() {
   const { playground } = useFeatures();
+  const auth = useAuth();
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
@@ -133,6 +141,7 @@ function AppRoutes() {
         <Route path="/registry" element={guard(<Registry />)} />
         <Route path="/sessions" element={guard(<Sessions />)} />
         <Route path="/sessions/:sessionId" element={guard(<SessionDetails />)} />
+        <Route path="/run-groups" element={guard(<RunGroups />)} />
         <Route path="/messages" element={guard(<Messages />)} />
         <Route path="/messages/:runId" element={guard(<MessageDetails />)} />
         <Route path="/connections" element={guard(<Connections />)} />
@@ -173,11 +182,43 @@ function AppRoutes() {
         )}
         <Route path="/settings" element={guard(<Settings />)} />
         <Route path="/settings/:section" element={guard(<Settings />)} />
+        {/* Accounts exist only under AUTH_MODE=multi, and only an administrator
+            manages them. Anyone else lands on the dashboard, so the page never
+            has to render a refusal of its own. */}
+        {isAdmin(auth) ? (
+          <Route path="/users" element={guard(<Users />)} />
+        ) : (
+          <Route path="/users" element={<Navigate to="/dashboard" replace />} />
+        )}
         <Route path="/docs" element={guard(<Docs />)} />
         <Route path="/docs/:section" element={guard(<Docs />)} />
+        {/* The api client sends a browser whose session died to /login; once
+            AuthGate has let it back in there is nothing to show at that path. */}
+        <Route path="/login" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Suspense>
   );
+}
+
+/**
+ * Nothing of the application renders until the viewer is allowed to see it.
+ *
+ * A pass-through in `single` and `token` mode, where there is one operator and
+ * no login to do. In `multi` mode it shows the login screen (or, on a first
+ * run, the form that creates the first administrator) in place of the whole
+ * app, so there is no route to bookmark past it and no shell behind it.
+ */
+function AuthGate({ children }) {
+  const auth = useAuth();
+  if (auth.loading) return <RouteFallback />;
+  if (needsLogin(auth)) {
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <Login />
+      </Suspense>
+    );
+  }
+  return children;
 }
 
 function App() {
@@ -185,13 +226,17 @@ function App() {
     <Router>
       {/* Inside the router: the page chat's subject is the route, so it can
           only be resolved under one. */}
-      <FeaturesProvider>
-        <PageChatProvider>
-          <Layout>
-            <AppRoutes />
-          </Layout>
-        </PageChatProvider>
-      </FeaturesProvider>
+      <AuthProvider>
+        <FeaturesProvider>
+          <PageChatProvider>
+            <AuthGate>
+              <Layout>
+                <AppRoutes />
+              </Layout>
+            </AuthGate>
+          </PageChatProvider>
+        </FeaturesProvider>
+      </AuthProvider>
     </Router>
   );
 }

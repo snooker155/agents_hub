@@ -16,10 +16,15 @@ showing what fired.
 after each firing.
 
 `cron` jobs carry a standard 5-field cron expression (`cron`) and a timezone
-(`timezone`, an IANA name such as `Europe/Berlin`, default UTC). The next run
-is the next cron occurrence after now, evaluated in that timezone, so a
+(`timezone`, an IANA name such as `Europe/Berlin`, default UTC). By default
+(`catch_up: false`), the next run is the next cron occurrence after now, so a
 backend that was down for a while rolls forward to the next future slot
-instead of replaying every tick it missed.
+instead of replaying every tick it missed. A job created with `catch_up: true`
+instead advances one occurrence per firing from the slot it just fired,
+even when that slot is still in the past: such a job is due again immediately,
+so the scheduler's next tick fires it again, and a long outage is worked
+through one missed occurrence at a time rather than jumped over. Either way a
+single firing only ever runs the job once.
 
 `hourly`, `daily` and `weekly` jobs also carry a timezone. The interval is
 applied to the job's local wall-clock time, not the UTC instant, so a daily

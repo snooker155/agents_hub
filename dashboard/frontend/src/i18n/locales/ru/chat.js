@@ -147,6 +147,7 @@ export default {
   noOutput: '(нет вывода)',
   noStreamedOutput: 'Потоковый вывод не получен.',
   failedToGetResponse: 'Не удалось получить ответ.',
+  compactionNotice: 'Более ранние сообщения свёрнуты в сводку ({{count}} реплик).',
   sendFailed: 'Не удалось отправить',
   default: 'по умолчанию',
   in: 'вход',

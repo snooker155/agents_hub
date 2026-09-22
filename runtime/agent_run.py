@@ -13,18 +13,12 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from common.paths import AGENTS_HUB_ROOT
-from managers.run_manager import (
-    _utc_now_iso,
-    close_run_from_result,
-    finalize_task_from_run,
-    park_task_awaiting_input,
-    open_run,
-    update_run,
-)
+from common.state_transport import get_state_transport
+from managers.run_manager import _utc_now_iso
 from agents.agent_lifecycle import run_agent_lifecycle
 from agents.callbacks import SessionPublishCallback as _SessionPublishCallback
 from common.utils import Tee as _Tee  # Tee re-exported for back-compat (was defined here)
-from tasks.context import build_task_instruction, persist_task_result
+from tasks.context import build_task_instruction
 
 
 def _setup_cli_log(run_id: str, workspace: str) -> str:
@@ -44,6 +38,27 @@ def _setup_cli_log(run_id: str, workspace: str) -> str:
     return str(log_path)
 
 
+def _setup_docker_log_tee(log_path: str) -> None:
+    """Tee sys.stdout / sys.stderr into a Docker task run's log file.
+
+    Mirrors ``_setup_cli_log`` above, except it appends instead of truncating:
+    the launcher (``agents.agent_launcher._start_run_in_docker``) already wrote
+    the run's header line to this file before the container started, and that
+    header must survive. Active only with ``--write-stdout-to-log`` (passed for
+    the inner command of a Docker task run, never the local subprocess path),
+    so a detached container's run log carries full output the same way a local
+    subprocess run's does from its Popen pipe, instead of staying just the
+    header. See docs/containers.md, "Logs in Docker mode".
+    """
+    try:
+        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        lf = open(log_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        sys.stdout = _Tee(sys.__stdout__, lf)
+        sys.stderr = _Tee(sys.__stderr__, lf)
+    except Exception:
+        pass
+
+
 # -------------------- Run lifecycle --------------------
 
 def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[str]) -> Optional[str]:
@@ -54,7 +69,7 @@ def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[s
         if not os.environ.get("AGENT_LOG_FILE"):
             os.environ["AGENT_LOG_FILE"] = _setup_cli_log(run_id, ws)
 
-        open_run(
+        get_state_transport().open_run(
             run_id,
             agent_id,
             task_id=str(task_id) if task_id else None,
@@ -76,9 +91,17 @@ def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[s
 
 
 def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", process: Optional[dict] = None) -> None:
-    """Update run state, persist task result, and finalize task status."""
+    """Update run state, persist task result, and finalize task status.
+
+    Every write below goes through the state transport (db, direct, by
+    default; http for a run container whose state dir is read-only, see
+    common/state_transport.py) instead of calling managers.run_manager /
+    tasks.* directly, but each call is the same call at the same point in the
+    same order as before that module existed.
+    """
     try:
-        close_run_from_result(run_id, result, **({"process": process} if process else {}))
+        state = get_state_transport()
+        state.close_run_from_result(run_id, result, **({"process": process} if process else {}))
 
         # The agent paused via ask_user: persist the question as the task result so
         # it's visible (and picked up as prior context on resume), then park the
@@ -86,8 +109,8 @@ def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", proc
         # session continuation stays pending until the user answers.
         if getattr(result, "status", "") == "awaiting_input":
             if task_id:
-                persist_task_result(task_id, run_id, result.agent_output or "", agent_id=agent_id)
-                park_task_awaiting_input(run_id, getattr(result, "pending_question", None) or {}, agent_id=agent_id)
+                state.persist_task_result(task_id, run_id, result.agent_output or "", agent_id=agent_id)
+                state.park_task_awaiting_input(run_id, getattr(result, "pending_question", None) or {}, agent_id=agent_id)
             return
 
         # The agent stopped on a tool call that needs the user's approval. Same
@@ -96,9 +119,8 @@ def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", proc
         # exactly what would run before letting it (see agents/hooks.py).
         if getattr(result, "status", "") == "awaiting_approval":
             if task_id:
-                persist_task_result(task_id, run_id, result.agent_output or "", agent_id=agent_id)
-                from tasks.service import park_task_awaiting_approval
-                park_task_awaiting_approval(
+                state.persist_task_result(task_id, run_id, result.agent_output or "", agent_id=agent_id)
+                state.park_task_awaiting_approval(
                     task_id,
                     getattr(result, "pending_approval", None) or {},
                     run_id=run_id, agent_id=agent_id,
@@ -106,10 +128,10 @@ def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", proc
             return
 
         if result.ok and task_id:
-            persist_task_result(task_id, run_id, result.agent_output or "", agent_id=agent_id)
+            state.persist_task_result(task_id, run_id, result.agent_output or "", agent_id=agent_id)
 
         try:
-            finalize_task_from_run(run_id, "completed" if result.ok else "failed", 0 if result.ok else 1)
+            state.finalize_task_from_run(run_id, "completed" if result.ok else "failed", 0 if result.ok else 1)
         except Exception:
             pass
     except Exception:
@@ -134,8 +156,22 @@ def main():
     ap.add_argument("--resume-run", help="Run id the remote agent paused, to continue")
     ap.add_argument("--resume-value", help="The answer, JSON-encoded")
     ap.add_argument("--resume-key", help="The agent's own id for the question, when it gave one")
+    ap.add_argument("--write-stdout-to-log", action="store_true",
+                     help="Mirror stdout/stderr into AGENT_LOG_FILE (used for Docker task runs)")
 
     args = ap.parse_args()
+
+    # Docker task runs only (the launcher appends this flag to the inner command
+    # of _start_run_in_docker, never to the local subprocess path): mirror
+    # stdout/stderr into the run's log file before anything else prints, so the
+    # file carries full output instead of just the header the launcher wrote
+    # before starting the container. Parsed ahead of _register_run_start, whose
+    # own CLI-only log setup below only fires when AGENT_LOG_FILE is unset —
+    # already the case here, so the two never race for sys.stdout.
+    if args.write_stdout_to_log:
+        _docker_log_file = os.environ.get("AGENT_LOG_FILE")
+        if _docker_log_file:
+            _setup_docker_log_tee(_docker_log_file)
 
     # Two distinct workspace channels (they differ when a project subfolder is in
     # play, so neither is redundant):
@@ -208,6 +244,8 @@ def main():
         _pub_cb = _SessionPublishCallback(_sess_id, run_id, agent_id, _port)
         _extra_callbacks.append(_pub_cb)
 
+    _state = get_state_transport()
+
     def _after_build(agent) -> None:
         print(
             f"[agent_init] agent={agent_id}"
@@ -218,14 +256,13 @@ def main():
         # Record the *actual* provider/model the agent resolved to (the agent is
         # the source of truth — no need for agent_launcher to pre-resolve into env).
         try:
-            update_run(run_id, {"provider": agent.provider or "", "model": agent.model or "", "input": instruction})
+            _state.update_run(run_id, {"provider": agent.provider or "", "model": agent.model or "", "input": instruction})
         except Exception:
             pass
         # Seed the input context now so the dashboard shows this worker's system
         # prompt while the run is still executing (the full context replaces it
         # at close).
-        from managers.run_manager import seed_run_input_context
-        seed_run_input_context(run_id, getattr(agent, "system_prompt", "") or "", instruction)
+        _state.seed_run_input_context(run_id, getattr(agent, "system_prompt", "") or "", instruction)
         # Emit a meta event so the frontend knows a new continuation run started.
         if _pub_cb is not None:
             _pub_cb._post({

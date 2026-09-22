@@ -162,7 +162,7 @@ def test_depth_limit_stops_the_walk(monkeypatch):
 
 # ── the capability_guard integration ─────────────────────────────────────────
 
-def test_check_agent_tools_warns_about_the_delegated_trifecta(monkeypatch):
+def test_check_agent_tools_blocks_the_delegated_trifecta(monkeypatch):
     """End-to-end through agents.capability_guard: check_agent_tools /
     enforce_agent_tools resolve delegates via agents.registry themselves
     (both _delegates_of/_all_agent_ids in tools.capabilities and
@@ -170,10 +170,16 @@ def test_check_agent_tools_warns_about_the_delegated_trifecta(monkeypatch):
     patch the registry, not a fake resolver, to exercise the real wiring.
 
     A combination that only closes through delegation is reported, with the
-    path, but never blocks: blocking it would refuse to build the seed
-    orchestrator, whose unrestricted delegates list reaches the web searcher."""
+    path, and blocks exactly like an own-tool trifecta: an agent that can
+    delegate to something that holds the other two capabilities effectively
+    holds all three itself. The seed roster's coordinating agents (see
+    bootstrap/agents.json) each carry an explicit, narrow ``delegates`` list
+    for exactly this reason — an unrestricted list reaching the web searcher
+    (or anything else that completes the trifecta) is refused here, not
+    merely warned about."""
+    import pytest
     from agents.registry import AgentSpec
-    from agents.capability_guard import check_agent_tools, enforce_agent_tools, enforce_built_tools
+    from agents.capability_guard import CapabilityViolation, check_agent_tools, enforce_agent_tools, enforce_built_tools
 
     specs = {
         "orchestrator": AgentSpec(id="orchestrator", name="orchestrator", type="langchain", entrypoint="x"),
@@ -183,12 +189,14 @@ def test_check_agent_tools_warns_about_the_delegated_trifecta(monkeypatch):
     monkeypatch.setattr("agents.registry.list_agents", lambda: list(specs.values()))
 
     violation = check_agent_tools("orchestrator", ["run_agent_tool"])
-    assert violation is not None and not violation.blocking
+    assert violation is not None and violation.blocking
     assert violation.rule_id == "lethal_trifecta_via_delegation"
     assert any("via run_agent_tool -> swe_agent" in label
                for labels in violation.sources.values() for label in labels)
-    enforce_agent_tools("orchestrator", ["run_agent_tool"])
-    enforce_built_tools("orchestrator", ["run_agent_tool"])
+    with pytest.raises(CapabilityViolation):
+        enforce_agent_tools("orchestrator", ["run_agent_tool"])
+    with pytest.raises(CapabilityViolation):
+        enforce_built_tools("orchestrator", ["run_agent_tool"])
 
 
 def test_own_tools_still_block(monkeypatch):

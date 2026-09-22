@@ -90,6 +90,22 @@ def _workspace_memory_overrides(workspace: str) -> dict:
     return get_workspace_metadata(workspace).get("agent_memory_overrides") or {}
 
 
+def _light_registry_dict(spec) -> Dict[str, Any]:
+    """Just the fields workspace-visibility filtering reads.
+
+    Filtering runs over every agent (visibility has to, to compute ``total``
+    correctly); the full ``spec.to_dict()`` (tools, commands, remote
+    descriptor, everything) does not, so it is deferred to the page slice.
+    """
+    return {
+        "id": spec.id,
+        "system": spec.system,
+        "shared": spec.shared,
+        "owner_workspace": spec.owner_workspace,
+        "default_workspace_only": spec.default_workspace_only,
+    }
+
+
 @router.get("", response_model=Union[List[AgentListItem], AgentPage])
 async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = None,
                       offset: Optional[int] = None):
@@ -100,6 +116,12 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
     rather than being pushed into a query. With neither given, the response is
     the full list exactly as before; with either, it is one page:
     ``{items, total, limit, offset}``.
+
+    Visibility filtering (workspace ownership, ``allowed_agents``,
+    ``default_workspace_only``) runs over cheap fields for every candidate, since
+    it decides ``total``; building the full agent dict and annotating it with
+    live node status and the workspace's memory overrides only happens for the
+    agents in the requested page.
     """
     # Get agents from existing registry
     registry_agents = registry.list_agents()
@@ -109,44 +131,59 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
     factory = get_factory()
     factory_agents = factory.list_available_agents()
 
-    # Combine into single array for backward compatibility with frontend
-    # Registry agents come first, then factory agents (if not already in registry)
-    all_agents = [a.to_dict() for a in registry_agents]
-    for fa in factory_agents:
-        if fa["id"] not in reg_ids:
-            all_agents.append(fa)
-
-    # Filter by workspace
     _SYS_IDS = system_agent_ids()
-
-    # Workspace-ownership visibility: a workspace-owned agent that is not shared
-    # only appears in its owning workspace. Applies to every workspace,
-    # including 'default'. System agents are always visible.
-    all_agents = [a for a in all_agents if _agent_visible_in_workspace(a, workspace)]
-
+    allowed = None
     if workspace and workspace != "default":
         from workspace import get_workspace_metadata
-        metadata = get_workspace_metadata(workspace)
-        allowed = metadata.get("allowed_agents")
-        if allowed is not None:
-            all_agents = [
-                a for a in all_agents
-                if a["id"] in allowed
-                or a["id"] in _SYS_IDS
-                # An agent owned by this workspace is always available here even
-                # if it was never explicitly added to allowed_agents.
-                or a.get("owner_workspace") == workspace
-            ]
-        # Always hide default-workspace-only agents from non-default workspaces
-        # (system agents are never default_workspace_only).
-        all_agents = [a for a in all_agents if not a.get("default_workspace_only", False)]
+        allowed = get_workspace_metadata(workspace).get("allowed_agents")
 
-    # Annotate each agent with whether it has a running node in the requested workspace
-    # and flag system agents that cannot be removed. Memory assignments are
-    # per-workspace, so patch them to the requesting workspace's view.
+    def _visible(light: Dict[str, Any]) -> bool:
+        # Workspace-ownership visibility: a workspace-owned agent that is not
+        # shared only appears in its owning workspace. Applies to every
+        # workspace, including 'default'. System agents are always visible.
+        if not _agent_visible_in_workspace(light, workspace):
+            return False
+        if workspace and workspace != "default":
+            if allowed is not None and not (
+                light["id"] in allowed
+                or light["id"] in _SYS_IDS
+                # An agent owned by this workspace is always available here
+                # even if it was never explicitly added to allowed_agents.
+                or light.get("owner_workspace") == workspace
+            ):
+                return False
+            # Always hide default-workspace-only agents from non-default
+            # workspaces (system agents are never default_workspace_only).
+            if light.get("default_workspace_only", False):
+                return False
+        return True
+
+    # Registry entries first, factory-only entries next: same order as before.
+    # ``item`` is either the AgentSpec (full dict deferred) or the factory dict
+    # (already the cheap shape, nothing further to defer).
+    visible: List[Any] = [
+        spec for spec in registry_agents if _visible(_light_registry_dict(spec))
+    ]
+    visible.extend(
+        fa for fa in factory_agents
+        if fa["id"] not in reg_ids and _visible(fa)
+    )
+
+    total = len(visible)
+    if limit is None and offset is None:
+        page_items = visible
+    else:
+        start = offset or 0
+        page_items = visible[start: start + limit] if limit is not None else visible[start:]
+
+    # Annotate each agent with whether it has a running node in the requested
+    # workspace and flag system agents that cannot be removed. Memory
+    # assignments are per-workspace, so patch them to the requesting
+    # workspace's view. Only the page pays for any of this.
     from managers.node_manager import list_nodes
     _ws = (workspace or "default").strip() or "default"
     _mem_overrides = _workspace_memory_overrides(_ws)
+    _default_chat_agent = _get_workspace_default_chat_agent(workspace)
     # One pass over every node instead of one list_nodes() call per agent —
     # list_nodes() re-syncs every node's live status (a process check each),
     # so calling it once per agent turned this into an O(agents * nodes)
@@ -156,20 +193,22 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
         if node.get("status") != "running":
             continue
         _running_by_agent.setdefault(node.get("agent_id"), []).append(node)
-    for agent in all_agents:
+
+    page: List[Dict[str, Any]] = []
+    for item in page_items:
+        agent = item.to_dict() if hasattr(item, "to_dict") else dict(item)
         _apply_workspace_memory(agent, _ws, _mem_overrides)
         running_nodes = _running_by_agent.get(agent["id"], [])
         if workspace and workspace != "default":
             running_nodes = [n for n in running_nodes if n.get("workspace") == workspace]
         agent["has_running_node"] = len(running_nodes) > 0
         agent["system"] = agent["id"] in _SYS_IDS
-        agent["is_default_chat_agent"] = agent["id"] == _get_workspace_default_chat_agent(workspace)
+        agent["is_default_chat_agent"] = agent["id"] == _default_chat_agent
+        page.append(agent)
 
     if limit is None and offset is None:
-        return all_agents
-    start = offset or 0
-    page = all_agents[start: start + limit] if limit is not None else all_agents[start:]
-    return {"items": page, "total": len(all_agents), "limit": limit, "offset": offset}
+        return page
+    return {"items": page, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/tools")

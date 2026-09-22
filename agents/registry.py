@@ -607,9 +607,28 @@ def _maybe_reload() -> List[AgentSpec]:
 
 # -------------------- Public API --------------------
 
-def list_agents() -> List[AgentSpec]:
-    """Return the list of available AgentSpec objects (validated)."""
-    return list(_maybe_reload())
+def list_agents(limit: Optional[int] = None, offset: Optional[int] = None) -> List[AgentSpec]:
+    """Return the list of available AgentSpec objects (validated).
+
+    ``limit``/``offset`` page over the cached spec list already held in
+    memory (the mtime-cached result of ``_maybe_reload``), so a page costs a
+    slice, not a re-read of agents.json. With neither given, the full list is
+    returned exactly as before. A caller that must filter before paging (e.g.
+    the ``/api/agents`` route's workspace visibility rules) pages the filtered
+    result itself instead; this is for a caller that wants a page of the raw
+    registry.
+    """
+    specs = list(_maybe_reload())
+    if limit is None and offset is None:
+        return specs
+    start = offset or 0
+    return specs[start: start + limit] if limit is not None else specs[start:]
+
+
+def count_agents() -> int:
+    """Total number of registry agents, for a caller paging with
+    :func:`list_agents` that needs ``total`` without holding the whole list."""
+    return len(_maybe_reload())
 
 
 def get_agent(agent_id: str) -> Optional[AgentSpec]:
@@ -665,6 +684,11 @@ def add_agent(
         list(spec.tools or []),
         previous_tools=list(_prev.tools or []) if _prev else None,
         override=bool(spec.capability_override),
+        # The spec being saved, not the (possibly stale-or-absent) registry
+        # record: a brand-new agent, or one whose delegates list is being
+        # narrowed in this very call, must be judged on the allowlist it is
+        # about to have. See agents.capability_guard.check_agent_tools.
+        delegates=list(spec.delegates or []),
     )
 
     # A system agent the operator edits stops tracking the seed: bootstrap's

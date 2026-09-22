@@ -339,8 +339,10 @@ export default function Loops() {
 
   // A loop runs inside the backend process, so a restart ends it mid-run. The
   // stored position is what makes picking it up cheaper than starting over; a
-  // run that never finished an iteration has nothing to resume from.
-  const isResumable = (r) => r.status === 'failed' && !!(r.position?.iterations_done);
+  // run that never finished an iteration has nothing to resume from. A
+  // completed run has nothing left to do, so only a failed or a deliberately
+  // stopped run is offered.
+  const isResumable = (r) => (r.status === 'failed' || r.status === 'stopped') && !!(r.position?.iterations_done);
 
   const handleResume = async (loopRunId) => {
     setResuming(loopRunId);

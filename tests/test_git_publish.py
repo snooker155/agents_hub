@@ -443,3 +443,84 @@ def test_git_publish_route_refuses_base_equal_to_head(tmp_path_factory, fake_git
     )
     assert resp.status_code == 400
     assert "onto itself" in resp.json()["detail"]
+
+
+# ── the reduced path: a remote with no provider configured ──────────────────
+# A project attached to a plain git remote (or one whose provider is not
+# GitHub/GitLab) still has somewhere to push. It just cannot ask a provider
+# API to open a pull/merge request, so run_git_publish falls back to
+# commit + push and reports {pushed, branch, remote, pull_request: None}
+# instead of refusing outright.
+
+def test_git_publish_pushes_without_a_provider(tmp_path_factory):
+    from tools.git_publish import run_git_publish
+
+    project, repo_dir, origin = _make_project(tmp_path_factory, provider="local", remote_id=None)
+    (repo_dir / "feature.py").write_text("print('hi')\n")
+
+    result = run_git_publish(project.id, title="Push only, no provider")
+
+    assert result["ok"] is True
+    assert result["pushed"] is True
+    assert result["branch"].startswith("agent/")
+    assert result["remote"] == str(origin)
+    assert result["pull_request"] is None
+    # No provider was configured, so nothing here should even try to reach one.
+    assert "pr_number" not in result
+
+    refs = subprocess.run(
+        ["git", "ls-remote", "--heads", str(origin)],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert f"refs/heads/{result['branch']}" in refs
+
+
+def test_git_publish_without_a_provider_still_refuses_the_checked_out_branch(tmp_path_factory):
+    from tools.git_publish import run_git_publish
+
+    project, repo_dir, _origin = _make_project(tmp_path_factory, provider="local", remote_id=None)
+    (repo_dir / "feature.py").write_text("print('hi')\n")
+
+    result = run_git_publish(project.id, branch="main", title="Sneaky direct push")
+
+    assert result["ok"] is False
+    assert result["code"] == "branch_protection"
+
+
+def test_git_publish_without_a_provider_or_a_remote_is_refused(tmp_path_factory):
+    """A repo that was never given a remote at all has nowhere to push,
+    provider or not."""
+    from tools.git_publish import run_git_publish
+
+    project, repo_dir, _origin = _make_project(tmp_path_factory, provider="local", remote_id=None)
+    _git(repo_dir, "remote", "remove", "origin")
+    (repo_dir / "feature.py").write_text("print('hi')\n")
+
+    result = run_git_publish(project.id, title="Nowhere to push this")
+
+    assert result["ok"] is False
+    assert result["code"] == "no_remote"
+
+
+def test_git_publish_route_without_a_provider(tmp_path_factory):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes.projects import router as projects_router
+
+    project, repo_dir, origin = _make_project(tmp_path_factory, provider="local", remote_id=None)
+    (repo_dir / "feature.py").write_text("print('hi')\n")
+
+    app = FastAPI()
+    app.include_router(projects_router)
+    client = TestClient(app)
+
+    resp = client.post(
+        f"/api/projects/{project.id}/git/publish",
+        json={"title": "Push only via the route"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["pushed"] is True
+    assert body["remote"] == str(origin)
+    assert body["pull_request"] is None

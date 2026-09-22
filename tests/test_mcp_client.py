@@ -112,6 +112,30 @@ def test_two_servers_cannot_share_an_id(workspace):
         mcp_store.create_server(workspace, _stdio_cfg())
 
 
+def test_websocket_is_a_transport_and_its_url_scheme_is_checked(workspace):
+    assert "websocket" in mcp_store.TRANSPORTS
+    with pytest.raises(ValueError):
+        mcp_store.create_server(workspace, {
+            "id": "ws", "transport": "websocket", "url": "https://example.test/mcp",
+        })
+    created = mcp_store.create_server(workspace, {
+        "id": "ws", "transport": "websocket", "url": "wss://example.test/mcp",
+    })
+    assert created["url"] == "wss://example.test/mcp"
+    # Editing into a mismatched scheme is refused the same way as creating one.
+    with pytest.raises(ValueError):
+        mcp_store.update_server(workspace, "ws", {"url": "http://example.test/mcp"})
+
+
+def test_http_transports_reject_a_non_http_url(workspace):
+    with pytest.raises(ValueError):
+        mcp_store.create_server(workspace, {
+            "id": "t", "transport": "streamable_http", "url": "ws://example.test/mcp",
+        })
+    # An empty URL is left alone -- the adapter gives a clearer error for that.
+    mcp_store.create_server(workspace, {"id": "t2", "transport": "sse", "url": ""})
+
+
 def test_secrets_are_masked_on_the_way_out(workspace):
     mcp_store.create_server(workspace, {
         "id": "tickets", "transport": "streamable_http", "url": "https://example.test/mcp",
@@ -176,6 +200,28 @@ def test_loading_renames_and_applies_the_allowlist(workspace, monkeypatch):
     tools = mcp_client.load_server_tools({"id": "tickets", "transport": "stdio",
                                           "command": "x", "tool_allowlist": ["search"]})
     assert [t.name for t in tools] == ["mcp__tickets__search"]
+
+
+# ── Connection configuration ─────────────────────────────────────────────────
+
+def test_websocket_connection_config_has_no_headers():
+    """WebsocketConnection (langchain_mcp_adapters' sessions module) declares
+    only transport, url and session_kwargs -- no headers slot -- so passing one
+    through would be silently ignored at best and a TypeError at worst."""
+    cfg = mcp_client.connection_config({
+        "id": "tickets", "transport": "websocket", "url": "wss://example.test/mcp",
+        "headers": {"Authorization": "Bearer x"},
+    })
+    assert cfg == {"transport": "websocket", "url": "wss://example.test/mcp"}
+    assert "headers" not in cfg
+
+
+def test_http_transports_still_carry_headers():
+    cfg = mcp_client.connection_config({
+        "id": "tickets", "transport": "streamable_http", "url": "https://example.test/mcp",
+        "headers": {"Authorization": "Bearer x"},
+    })
+    assert cfg["headers"] == {"Authorization": "Bearer x"}
 
 
 # ── The cache ─────────────────────────────────────────────────────────────────

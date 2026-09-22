@@ -469,15 +469,22 @@ def build_run_command(
         written to; only /tmp, the state dir and the workspace are writable.
       --memory / --cpus / --pids-limit — a single run cannot exhaust the host.
       agents_file / custom_providers_file, when given, are re-mounted
-        read-only *inside* the read-write state dir mount, so a run can still
-        write its own logs and run records there but cannot edit agent
-        definitions or provider credentials. The shared SQLite database
-        underneath is not similarly pinned — see docs/containers.md.
+        read-only *inside* the state dir mount, so a run can still write its
+        own logs and run records there but cannot edit agent definitions or
+        provider credentials, unless AGENT_RUN_STATE_TRANSPORT is "http" in
+        `env`, in which case the state dir is read-only wholesale (the run
+        reaches the database through the backend's /api/run-state routes
+        instead of opening it directly, see common/state_transport.py) and
+        only run_logs/ is re-mounted read-write on top, for the run's own log
+        file. The default ("db", direct SQLite access) mounts the state dir
+        read-write, unchanged from before this mode existed. See
+        docs/containers.md.
     """
     from common.config import live_setting
     mem = memory or live_setting("AGENT_DOCKER_MEMORY", DEFAULT_RUN_MEMORY)
     cpu = cpus or live_setting("AGENT_DOCKER_CPUS", DEFAULT_RUN_CPUS)
     pids = pids_limit or DEFAULT_RUN_PIDS_LIMIT
+    http_transport = (env or {}).get("AGENT_RUN_STATE_TRANSPORT") == "http"
 
     docker_cmd = [
         "docker", "run",
@@ -495,9 +502,17 @@ def build_run_command(
         "--security-opt", "no-new-privileges",
         "--read-only",
         "--tmpfs", "/tmp",
-        "-v", f"{_host_path(state_dir)}:{CONTAINER_STATE_DIR}",
+        "-v", f"{_host_path(state_dir)}:{CONTAINER_STATE_DIR}" + (":ro" if http_transport else ""),
         "-v", f"{_host_path(tasks_dir)}:{CONTAINER_TASKS_DIR}",
     ]
+
+    if http_transport:
+        # Re-mounted read-write on top of the now read-only state dir: the run
+        # still writes its own log file directly (the log tee in
+        # runtime/agent_run.py has no HTTP equivalent), everything else about
+        # its state goes through /api/run-state.
+        run_logs_dir = str(Path(state_dir) / "run_logs")
+        docker_cmd += ["-v", f"{_host_path(run_logs_dir)}:{CONTAINER_STATE_DIR}/run_logs"]
 
     if agents_file:
         docker_cmd += ["-v", f"{_host_path(agents_file)}:{CONTAINER_STATE_DIR}/agents.json:ro"]

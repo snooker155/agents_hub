@@ -601,9 +601,21 @@ def guard_action_tools(
 
 
 def _guards_of(agent: Any):
-    """The tool guards an agent was built with (empty for an unwrapped agent)."""
+    """The tool guards an agent was built with (empty for an unwrapped agent).
+
+    Looks through one wrapping layer: ``agent_factory`` builds each action
+    tool as ``GatedTool(GuardedTool(tool))`` (the think-gate outermost, see
+    the comment in ``agent_factory._build_agent``), so the object in the
+    agent's tool list carries a ``.gate`` and an ``.inner`` (the reasoning
+    module's attribute name for the wrapped tool) rather than a ``.guard``
+    directly. Unwrap via ``inner`` when the outer object has none, so a
+    parked approval is still found through the gate the same way it was found
+    directly before that reordering.
+    """
     for tool in (getattr(agent, "_tools", None) or getattr(agent, "tools", None) or []):
         guard = getattr(tool, "guard", None)
+        if guard is None:
+            guard = getattr(getattr(tool, "inner", None), "guard", None)
         if isinstance(guard, ToolGuard):
             yield guard
 

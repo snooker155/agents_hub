@@ -95,6 +95,13 @@ def test_an_unknown_window_falls_back_to_a_flat_budget(monkeypatch):
     assert history_budget_chars("ollama", "something-local") == FALLBACK_BUDGET_CHARS
 
 
+def test_the_fallback_budget_is_the_same_constant_as_the_prompt_history_bound():
+    """One number, one source: chat.context.HISTORY_CHAR_BUDGET is what this
+    module's fallback imports, so the two can never quietly drift apart."""
+    from chat.context import HISTORY_CHAR_BUDGET
+    assert FALLBACK_BUDGET_CHARS == HISTORY_CHAR_BUDGET
+
+
 # ── the fold ─────────────────────────────────────────────────────────────────
 
 def test_a_conversation_inside_the_budget_is_sent_as_it_is():

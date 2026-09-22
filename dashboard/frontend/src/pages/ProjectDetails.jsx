@@ -120,6 +120,10 @@ export default function ProjectDetails() {
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState('');
   const [prUrl, setPrUrl] = useState('');
+  // Set instead of prUrl when the repo has a remote but no GitHub/GitLab
+  // provider configured: publish still commits and pushes, it just has no
+  // provider API to ask for a pull/merge request afterwards.
+  const [pushResult, setPushResult] = useState(null);
   const [publishForm, setPublishForm] = useState({ title: '', body: '', branch: '', base: '', draft: true });
   const [showConnect, setShowConnect] = useState(false);
   const [syncingIssues, setSyncingIssues] = useState(false);
@@ -296,6 +300,7 @@ export default function ProjectDetails() {
     setPublishing(true);
     setPublishError('');
     setPrUrl('');
+    setPushResult(null);
     try {
       const { data } = await publishProjectBranch(id, {
         title: publishForm.title,
@@ -304,8 +309,14 @@ export default function ProjectDetails() {
         base: publishForm.base || null,
         draft: publishForm.draft,
       });
-      setPrUrl(data.pr_url || '');
-      if (!data.pr_url) setGitMsg(data.message || t('projectDetails.publish.pushed'));
+      if (data.pr_url) {
+        setPrUrl(data.pr_url);
+      } else if (data.pushed) {
+        // Either open_pr was false, or there was no provider to ask for a
+        // pull/merge request at all: either way, show what actually landed.
+        setPushResult({ branch: data.branch, remote: data.remote });
+        setGitMsg(data.message || t('projectDetails.publish.pushed'));
+      }
       loadGitStatus();
     } catch (e2) {
       setPublishError(e2.response?.data?.detail || t('projectDetails.errors.publish'));
@@ -315,6 +326,12 @@ export default function ProjectDetails() {
   };
 
   const isConnectedRepo = ['github', 'gitlab'].includes(project?.repo?.type) && project?.repo?.remote_id;
+  // A repo attached with a remote but no GitHub/GitLab provider still has
+  // somewhere to push; it just cannot open a pull/merge request, so the
+  // publish modal offers a reduced, push-only path instead of hiding the
+  // button entirely.
+  const hasRepoRemote = !!project?.repo?.url;
+  const canPublishBranch = isConnectedRepo || hasRepoRemote;
 
   const loadSwagger = async (baseOverride) => {
     if (!project?.backend?.enabled) return;
@@ -998,9 +1015,9 @@ export default function ProjectDetails() {
                   <Link2 className="w-3.5 h-3.5" /> {t('projectDetails.connectRepository')}
                 </button>
               )}
-              {isConnectedRepo && (
+              {canPublishBranch && (
                 <button
-                  onClick={() => { setShowPublish(true); setPublishError(''); setPrUrl(''); }}
+                  onClick={() => { setShowPublish(true); setPublishError(''); setPrUrl(''); setPushResult(null); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
                 >
                   <Send className="w-3.5 h-3.5" /> {t('projectDetails.publish.button')}
@@ -1420,8 +1437,15 @@ export default function ProjectDetails() {
               </button>
             </div>
             <form onSubmit={handlePublish} className="p-5 space-y-4">
+              {!isConnectedRepo && (
+                <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2">
+                  {t('projectDetails.publish.noProviderNotice')}
+                </p>
+              )}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.prTitle')}</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  {isConnectedRepo ? t('projectDetails.publish.prTitle') : t('projectDetails.publish.commitMessage')}
+                </label>
                 <input
                   required
                   value={publishForm.title}
@@ -1429,17 +1453,19 @@ export default function ProjectDetails() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.body')}</label>
-                <textarea
-                  rows={4}
-                  value={publishForm.body}
-                  onChange={e => setPublishForm(f => ({ ...f, body: e.target.value }))}
-                  placeholder={t('projectDetails.publish.bodyPlaceholder')}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+              {isConnectedRepo && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.body')}</label>
+                  <textarea
+                    rows={4}
+                    value={publishForm.body}
+                    onChange={e => setPublishForm(f => ({ ...f, body: e.target.value }))}
+                    placeholder={t('projectDetails.publish.bodyPlaceholder')}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              )}
+              <div className={isConnectedRepo ? 'grid grid-cols-2 gap-3' : ''}>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.branch')}</label>
                   <input
@@ -1449,25 +1475,29 @@ export default function ProjectDetails() {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.base')}</label>
-                  <input
-                    value={publishForm.base}
-                    onChange={e => setPublishForm(f => ({ ...f, base: e.target.value }))}
-                    placeholder={t('projectDetails.publish.optional')}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  />
-                </div>
+                {isConnectedRepo && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.base')}</label>
+                    <input
+                      value={publishForm.base}
+                      onChange={e => setPublishForm(f => ({ ...f, base: e.target.value }))}
+                      placeholder={t('projectDetails.publish.optional')}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                )}
               </div>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={publishForm.draft}
-                  onChange={e => setPublishForm(f => ({ ...f, draft: e.target.checked }))}
-                  className="accent-indigo-600"
-                />
-                {t('projectDetails.publish.draft')}
-              </label>
+              {isConnectedRepo && (
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={publishForm.draft}
+                    onChange={e => setPublishForm(f => ({ ...f, draft: e.target.checked }))}
+                    className="accent-indigo-600"
+                  />
+                  {t('projectDetails.publish.draft')}
+                </label>
+              )}
 
               {publishError && (
                 <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{publishError}</p>
@@ -1476,6 +1506,11 @@ export default function ProjectDetails() {
                 <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
                   {t('projectDetails.publish.opened')}{' '}
                   <a href={prUrl} target="_blank" rel="noreferrer" className="underline font-medium">{prUrl}</a>
+                </p>
+              )}
+              {pushResult && (
+                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
+                  {t('projectDetails.publish.pushedBranch', { branch: pushResult.branch, remote: pushResult.remote })}
                 </p>
               )}
 

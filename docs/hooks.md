@@ -8,6 +8,10 @@ Both are off until you configure them. An installation that configures neither
 behaves exactly as it did before: the only approval check is the advisory one
 some tools have always carried (see the end of this page).
 
+## In the dashboard
+
+**Settings → Tool policy** is where you configure both. The approval gate toggle (`require_tool_approval`) switches the gate on for a workspace, and the hooks editor below it holds the JSON-formatted hook configuration. Edits reach the agent process immediately, so a change applies to the next run without a restart.
+
 ## Hooks
 
 Hooks are configured per workspace, in `<workspace>/.hooks.json` or under a

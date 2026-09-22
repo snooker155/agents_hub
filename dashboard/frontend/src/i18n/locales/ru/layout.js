@@ -60,6 +60,7 @@ export default {
     registry: 'Реестр',
     sessions: 'Сессии',
     sessionDetails: 'Детали сессии',
+    runGroups: 'Группы запусков',
     messages: 'Запуски',
     messageDetails: 'Детали запуска',
     nodes: 'Узлы',

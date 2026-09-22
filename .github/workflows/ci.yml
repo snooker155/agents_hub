@@ -67,7 +67,9 @@ jobs:
           fi
 
       - name: Test
-        run: npx vitest run
+        # Workers hung intermittently when files ran in parallel on the CI
+        # runner; one worker at a time is slower but finishes every time.
+        run: npx vitest run --fileParallelism=false
 
       - name: Build
         run: npx vite build

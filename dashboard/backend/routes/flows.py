@@ -154,6 +154,13 @@ def _public_flow(flow: Dict[str, Any]) -> Dict[str, Any]:
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
+def _paginate(items: list, limit: Optional[int], offset: Optional[int]) -> list:
+    if limit is None and offset is None:
+        return items
+    start = offset or 0
+    return items[start: start + limit] if limit is not None else items[start:]
+
+
 @router.get("", response_model=Union[List[FlowListItem], FlowPage])
 async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = None,
                      offset: Optional[int] = None):
@@ -161,27 +168,39 @@ async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = Non
     as before; with either, it is one page: ``{items, total, limit, offset}``.
 
     Flows are file-backed (one YAML+JSON pair per flow via ``flow_store``), not
-    a queryable store, so the page is sliced after loading rather than pushed
-    into a query.
-    """
-    flows = _load()
-    if workspace:
-        # When a workspace declares an explicit ``allowed_flows`` allowlist it is
-        # authoritative; otherwise fall back to workspace-ownership visibility
-        # (global flows + flows owned by this workspace). Keeps the flow picker
-        # in sync with the run_flow authorization check.
-        allowed = get_workspace_metadata(workspace).get("allowed_flows")
-        if allowed is not None:
-            flows = [f for f in flows if f.get("id") in allowed]
-        else:
-            flows = [f for f in flows if not f.get("workspace") or f.get("workspace") == workspace]
+    a queryable store. Visibility filtering happens on the cheapest field that
+    can answer it before anything is parsed off disk, and ``_public_flow`` (the
+    only per-item work here) runs on the resulting page, not the whole catalog:
 
-    flows = [_public_flow(f) for f in flows]
+    - An explicit ``allowed_flows`` allowlist *is* the filter, metadata already
+      in hand, so only the ids that land on the requested page get read.
+    - Otherwise, ownership ("global flows + flows owned by this workspace") is
+      a property of each flow's own record, so every flow still has to be
+      parsed once to know it: flow_store keeps no index for that.
+    - With no workspace at all, ``flow_store`` pages the file list itself and
+      parses only those files.
+    """
+    allowed = get_workspace_metadata(workspace).get("allowed_flows") if workspace else None
+
+    if allowed is not None:
+        flow_ids = sorted(str(fid) for fid in allowed)
+        total = len(flow_ids)
+        page_ids = _paginate(flow_ids, limit, offset)
+        flows = [f for f in (flow_store.get_flow(fid) for fid in page_ids) if f]
+    elif workspace:
+        # Keeps the flow picker in sync with the run_flow authorization check.
+        visible = [f for f in _load()
+                  if not f.get("workspace") or f.get("workspace") == workspace]
+        total = len(visible)
+        flows = _paginate(visible, limit, offset)
+    else:
+        total = flow_store.count_flows()
+        flows = flow_store.list_flows(limit=limit, offset=offset)
+
+    page = [_public_flow(f) for f in flows]
     if limit is None and offset is None:
-        return flows
-    start = offset or 0
-    page = flows[start: start + limit] if limit is not None else flows[start:]
-    return {"items": page, "total": len(flows), "limit": limit, "offset": offset}
+        return page
+    return {"items": page, "total": total, "limit": limit, "offset": offset}
 
 
 @router.post("")

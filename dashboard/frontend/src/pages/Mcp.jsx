@@ -195,6 +195,7 @@ function ServerForm({ workspace, server, transports, onClose, onSaved }) {
   };
 
   const stdio = form.transport === 'stdio';
+  const websocket = form.transport === 'websocket';
 
   return (
     <Modal
@@ -270,15 +271,21 @@ function ServerForm({ workspace, server, transports, onClose, onSaved }) {
           </>
         ) : (
           <>
-            <Field label={t('mcp.urlLabel')}>
+            <Field
+              label={t('mcp.urlLabel')}
+              hint={websocket ? t('mcp.urlWebsocketHint') : t('mcp.urlHttpHint')}
+            >
               <input
                 value={form.url}
                 onChange={(e) => set({ url: e.target.value })}
-                placeholder="https://tickets.internal/mcp"
+                placeholder={websocket ? 'wss://tickets.internal/mcp' : 'https://tickets.internal/mcp'}
                 className={INPUT}
               />
             </Field>
-            <Field label={t('mcp.headersLabel')} hint={`${t('mcp.pairsHint')} ${t('mcp.secretsHint')}`}>
+            <Field
+              label={t('mcp.headersLabel')}
+              hint={websocket ? t('mcp.headersWebsocketHint') : `${t('mcp.pairsHint')} ${t('mcp.secretsHint')}`}
+            >
               <textarea
                 value={form.headers}
                 onChange={(e) => set({ headers: e.target.value })}

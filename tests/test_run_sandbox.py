@@ -180,6 +180,34 @@ def test_run_command_omits_ro_mounts_when_files_absent(no_host_translation):
     assert "agents.json" not in " ".join(argv)
 
 
+def test_run_command_default_transport_mounts_state_dir_read_write(no_host_translation):
+    """AGENT_RUN_STATE_TRANSPORT unset (or "db"): unchanged from before the
+    http transport existed, the state dir mounts read-write."""
+    argv = _run_cmd()
+    assert "/host/.agents_hub:/app/.agents_hub" in argv
+    assert "/host/.agents_hub:/app/.agents_hub:ro" not in argv
+    assert "run_logs" not in " ".join(argv)
+
+
+def test_run_command_http_transport_mounts_state_dir_read_only(no_host_translation):
+    """AGENT_RUN_STATE_TRANSPORT=http: the state dir goes :ro wholesale, with
+    run_logs/ re-mounted :rw on top for the run's own log file. See
+    docs/containers.md and common/state_transport.py."""
+    argv = _run_cmd(env={
+        "OPENAI_API_KEY": "sk-test",
+        "HOST_PROJECT_ROOT": "/host",
+        "AGENT_RUN_STATE_TRANSPORT": "http",
+    })
+    joined = " ".join(argv)
+    assert "/host/.agents_hub:/app/.agents_hub:ro" in joined
+    assert "/host/.agents_hub/run_logs:/app/.agents_hub/run_logs" in joined
+    assert "/host/.agents_hub/run_logs:/app/.agents_hub/run_logs:ro" not in joined
+    # The read-only overlays for agents.json / custom_providers.json still apply.
+    assert "/host/.agents_hub/agents.json:/app/.agents_hub/agents.json:ro" in joined
+    # The relay env var itself still reaches the container.
+    assert "-e AGENT_RUN_STATE_TRANSPORT=http" in joined
+
+
 # ── agents.agent_launcher.start_run: mode resolution + Docker wiring ────────
 
 def test_local_mode_still_calls_popen(dot_env, fake_popen):

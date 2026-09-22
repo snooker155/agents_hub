@@ -25,7 +25,6 @@ Three rules hold across all three kinds:
 """
 from __future__ import annotations
 
-import json
 import threading
 import time
 from typing import Any, Callable, Dict, Optional
@@ -38,18 +37,13 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
+from tools._json import json_err, json_ok
 
 
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request",
-              extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+# Shared JSON envelope (tools/_json.py); kept under these names here since this
+# module's tools were already calling them.
+_json_ok = json_ok
+_json_err = json_err
 
 
 #: Statuses that mean "this run is still spending money".

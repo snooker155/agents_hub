@@ -783,19 +783,15 @@ class AgentFactory:
             tool_list,
         )
         reasoning_tools, think_gate, plan_gate = build_reasoning_tools(reasoning)
-        # When step-by-step thinking is enforced, wrap the agent's action tools
-        # so they refuse to run until the agent has called `think` (see
-        # reasoning/think_gate.py). Reasoning tools themselves are never gated.
-        if think_gate is not None:
-            from reasoning.think_gate import gate_tools
-            tools = gate_tools(tools, think_gate)
         # When planning is enabled, gate the `plan` / `save_plan` tools on a
         # prior `assess_complexity` call so trivial requests skip planning
         # (see reasoning/plan_gate.py).
         if plan_gate is not None:
             from reasoning.plan_gate import gate_plan_tools
             reasoning_tools = gate_plan_tools(reasoning_tools, plan_gate)
-        tools = [*tools, *reasoning_tools]
+        # The think-gate wrap itself happens further down, after MCP tools are
+        # appended and after guard_action_tools — see the comment there.
+        # reasoning_tools are appended after that too, unwrapped either way.
         reasoning_prompt = build_reasoning_prompt(reasoning)
         if reasoning_prompt:
             config["system_prompt"] = (
@@ -851,6 +847,33 @@ class AgentFactory:
         from agents.hooks import guard_action_tools
         tools = guard_action_tools(tools, agent_id=agent_id, spec=_spec, workspace=workspace)
 
+        # Step-by-step think enforcement wraps the approval guard, not the
+        # other way around: GatedTool(GuardedTool(tool)), gate outermost. A
+        # task resumed on an approved call (tools/approval.py call_fingerprint)
+        # is identified and consumed by GuardedTool; if the gate wrapped the
+        # *inside* instead, GuardedTool would spend that approval and hand the
+        # call to a GatedTool that can still refuse for want of a `think` in
+        # this fresh run, burning the approval on a refusal instead of the
+        # real call. With the gate outermost it refuses first, before the
+        # approval is ever touched, so the operator's yes is still there to
+        # spend once the model actually thinks. See reasoning/think_gate.py
+        # and agents/hooks.py (``_guards_of`` unwraps a GatedTool to find the
+        # ToolGuard it wraps, e.g. for ``pending_approval_for``).
+        #
+        # This also means the MCP tools appended just above are now gated on
+        # `think` like every other action tool — they were not before, since
+        # gating used to run ahead of the MCP append. That is a fix, not a
+        # side effect: an MCP tool is exactly the kind of action step / think
+        # mode is meant to slow down.
+        if think_gate is not None:
+            from reasoning.think_gate import gate_tools
+            tools = gate_tools(tools, think_gate)
+
+        # Reasoning tools are appended last, after both wraps, and are never
+        # gated or guarded themselves (gate_tools skips _REASONING_TOOL_NAMES
+        # regardless, but they are not even offered to it here).
+        tools = [*tools, *reasoning_tools]
+
         # Capability guard, defence in depth. The record was already checked at
         # save time, but everything above this point may have *appended* tools
         # (memory pools, skills, clarify-gate ask_user, the project graph reader,
@@ -861,6 +884,7 @@ class AgentFactory:
             agent_id,
             [getattr(t, "name", getattr(t, "__name__", "")) for t in tools],
             override=bool(_spec.capability_override) if _spec else False,
+            delegates=list(_spec.delegates or []) if _spec else [],
         )
 
         # Create agent

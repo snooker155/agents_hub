@@ -39,6 +39,7 @@ import {
   BookOpen,
   HardDriveDownload,
   Webhook,
+  ShieldCheck,
 } from 'lucide-react';
 import OnboardingChecklist from '../components/docs/OnboardingChecklist';
 import {
@@ -1070,6 +1071,54 @@ function ToolboxDoc() {
   );
 }
 
+function HooksDoc() {
+  const { t } = useI18n();
+  return (
+    <div>
+      <H2>{t('docs.nav.hooks')}</H2>
+      <P><Rich>{t('docs.hooksDoc.lead')}</Rich></P>
+
+      <H3>{t('docs.hooksDoc.configTitle')}</H3>
+      <P><Rich>{t('docs.hooksDoc.configBody')}</Rich></P>
+      <CodeBlock label=".hooks.json">{`{
+  "PreToolUse": [
+    {"matcher": "run_shell|delete_file", "type": "command",
+     "command": "./scripts/check_tool_call.py", "timeout": 10},
+    {"matcher": "apply_unified_diff", "type": "http",
+     "url": "http://localhost:9000/review", "fail_closed": true}
+  ],
+  "PostToolUse": [
+    {"matcher": ".*", "type": "command", "command": "./scripts/audit.sh"}
+  ]
+}`}</CodeBlock>
+      <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
+        <li><Rich>{t('docs.hooksDoc.matcher')}</Rich></li>
+        <li><Rich>{t('docs.hooksDoc.type')}</Rich></li>
+        <li><Rich>{t('docs.hooksDoc.exempt')}</Rich></li>
+      </ul>
+
+      <H3>{t('docs.hooksDoc.payloadTitle')}</H3>
+      <P><Rich>{t('docs.hooksDoc.payloadBody')}</Rich></P>
+
+      <H3>{t('docs.hooksDoc.exitTitle')}</H3>
+      <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
+        <li><Rich>{t('docs.hooksDoc.exit0')}</Rich></li>
+        <li><Rich>{t('docs.hooksDoc.exit2')}</Rich></li>
+        <li><Rich>{t('docs.hooksDoc.exitOther')}</Rich></li>
+      </ul>
+      <P><Rich>{t('docs.hooksDoc.httpBody')}</Rich></P>
+      <Callout tone="warn"><Rich>{t('docs.hooksDoc.securityCallout')}</Rich></Callout>
+
+      <H3>{t('docs.hooksDoc.gateTitle')}</H3>
+      <P><Rich>{t('docs.hooksDoc.gateBody')}</Rich></P>
+      <CodeBlock label={t('docs.hooksDoc.gateSettingsLabel')}>{`{"settings": {"require_tool_approval": true}}`}</CodeBlock>
+      <P><Rich>{t('docs.hooksDoc.gateTools')}</Rich></P>
+      <P><Rich>{t('docs.hooksDoc.gateTask')}</Rich></P>
+      <Callout tone="tip"><Rich>{t('docs.hooksDoc.advisoryTip')}</Rich></Callout>
+    </div>
+  );
+}
+
 function MemoryDoc() {
   const { t } = useI18n();
   return (
@@ -1329,6 +1378,7 @@ const GROUPS = [
       { id: 'flows', key: 'flows', icon: Factory, render: FlowsDoc },
       { id: 'loops', key: 'loops', icon: Repeat, render: LoopsDoc },
       { id: 'tools', key: 'tools', icon: Wrench, render: ToolboxDoc },
+      { id: 'hooks', key: 'hooks', icon: ShieldCheck, render: HooksDoc },
       { id: 'memory', key: 'memory', icon: Database, render: MemoryDoc },
       { id: 'web-logs', key: 'webLogs', icon: Globe, render: WebLogsDoc },
       { id: 'evals', key: 'evals', icon: FlaskConical, render: EvalsDoc },

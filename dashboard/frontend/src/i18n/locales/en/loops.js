@@ -1,7 +1,7 @@
 export default {
   resume: 'Resume',
   resuming: 'Resuming…',
-  resumeHint: 'Continue this run from the iteration after its last completed one.',
+  resumeHint: 'Continue this run from the iteration after its last completed one, whether it failed or was stopped.',
   resumeFailed: 'Could not resume the run',
   loops: 'Loops',
   aFlowRunsItsNodes: 'A flow runs its nodes once. A loop runs the same flow again, feeding each pass the previous result and a reviewer\'s feedback, until an agent judges the exit criterion met. Every iteration is kept, so you can watch the score move instead of guessing.',

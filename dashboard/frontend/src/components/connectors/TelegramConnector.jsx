@@ -6,6 +6,7 @@ import {
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
+import { useLiveRefetch } from '../stream';
 
 // Moved out of the Settings page, which is where nobody looked for it: a
 // connector is something you *attach*, so it belongs with the other things you
@@ -52,26 +53,20 @@ export default function TelegramConnector() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Still a poll, and slower than it was.
-  //
-  // There is no live event to subscribe to here: the backend publishes
-  // `<resource>.changed` for tasks, runs, nodes, agents, flows, loops, teams
-  // and the playground, but the Telegram poller's liveness (running,
-  // last_poll, last_error) is not among them — a `telegram.changed`
-  // notification from the poller's own loop is what this would subscribe to if
-  // it existed. Until then this reads the status every 30 seconds instead of
-  // every 5: a connector's health is something you glance at, not something
-  // you watch, and a save already refreshes it outright.
-  useEffect(() => {
-    const id = setInterval(async () => {
-      try {
-        const { data } = await getTelegramStatus();
-        setStatus(data);
-        setConfig((c) => ({ ...c, running: data.running, bot_username: data.bot_username }));
-      } catch { /* a failed read just waits for the next one */ }
-    }, 30000);
-    return () => clearInterval(id);
+  // The poller's liveness (running, last_poll, last_error) changes from its
+  // own background loop, not from anything this tab did, so it needs a live
+  // update rather than a fixed refresh point. The backend publishes
+  // `telegram.changed` on the app channel for exactly this; a save already
+  // refreshes the same fields outright, so this only needs to cover changes
+  // from elsewhere.
+  const refreshStatus = useCallback(async () => {
+    try {
+      const { data } = await getTelegramStatus();
+      setStatus(data);
+      setConfig((c) => ({ ...c, running: data.running, bot_username: data.bot_username }));
+    } catch { /* a failed read just waits for the next event */ }
   }, []);
+  useLiveRefetch(refreshStatus, { type: 'telegram.changed' });
 
   const handleSave = async ({ enabled, clear_token } = {}) => {
     setSaving(true);

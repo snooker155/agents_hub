@@ -243,6 +243,15 @@ export default {
   },
   connectorsMoved: 'Telegram, GitHub/GitLab and Blender moved to Connect → Connectors.',
   apiAccess: {
+    modeTitle: 'Authentication mode',
+    modeExplainer: 'Three postures. Single operator means no login and no accounts: the API is open, which is right for one person on their own machine. Token means one shared secret gates every request, the minimum whenever the port can be reached by anybody else. Multiple users means named accounts with passwords, a global role (administrator or member) and a role per workspace (owner, editor, viewer).',
+    modeWhereBefore: 'The mode is set with',
+    modeWhereAfter: 'in the .env file and takes effect when the backend restarts. It cannot be changed from here, on purpose: it is a deployment decision, not a preference.',
+    modes: {
+      single: { name: 'Single operator', summary: 'no login, no accounts, the API is open' },
+      token: { name: 'Shared token', summary: 'one secret gates every request to the API' },
+      multi: { name: 'Multiple users', summary: 'named accounts, passwords, roles and workspace membership' },
+    },
     title: 'Browser token',
     intro: 'A token this browser attaches to every request to the backend, as a Bearer header. It matters only when the server side is configured to require one.',
     tokenLabel: 'Token',

@@ -5,7 +5,6 @@ Provides tools for creating, updating, and managing tasks in the system.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -40,6 +39,7 @@ from tasks.service import (
     get_task_result as svc_get_task_result,
 )
 from tasks.keys import looks_like_key
+from tools._json import json_err, json_ok
 from workspace import create_workspace_folder as ws_create_workspace_folder
 
 # -------------------- helpers --------------------
@@ -116,15 +116,10 @@ def _record_task(task: Optional[Task], action: str) -> None:
     record_entity("task", str(task.id), action, (task.title or "").strip())
 
 
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+# Shared JSON envelope (tools/_json.py); kept under these names here since this
+# module's tools were already calling them.
+_json_ok = json_ok
+_json_err = json_err
 
 
 def _active_workspace(explicit: Optional[str] = None) -> Optional[str]:

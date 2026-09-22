@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from chat.context import HISTORY_CHAR_BUDGET as FALLBACK_BUDGET_CHARS
+
 #: Share of the model's context window the conversation may occupy before it is
 #: folded. The rest is headroom for the system prompt's own growth, this turn's
 #: attachments, the tool trail of the run, and the answer.
@@ -35,8 +37,9 @@ BUDGET_FRACTION = 0.6
 CHARS_PER_TOKEN = 4
 
 #: Budget when the model's context window is unknown (a local model, a gateway
-#: that reports nothing). Matches the prompt history bound in ``chat.context``.
-FALLBACK_BUDGET_CHARS = 60_000
+#: that reports nothing). One constant with ``chat.context.HISTORY_CHAR_BUDGET``,
+#: imported above under this name: that module's flat prompt-history bound and
+#: this module's fallback are the same number by definition, not by coincidence.
 
 #: Ceiling on the summary itself, in output tokens.
 SUMMARY_MAX_TOKENS = 800

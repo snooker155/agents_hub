@@ -131,6 +131,15 @@ def connection_config(record: Dict[str, Any]) -> Dict[str, Any]:
             "args": [str(a) for a in (record.get("args") or [])],
             "env": env,
         }
+    if transport == "websocket":
+        # langchain_mcp_adapters' WebsocketConnection only declares
+        # ``transport``, ``url`` and ``session_kwargs`` — no ``headers``. A
+        # server's headers are kept in storage in case it is switched to a
+        # transport that does use them, but they are not sent here.
+        return {
+            "transport": "websocket",
+            "url": str(record.get("url") or ""),
+        }
     return {
         "transport": transport,
         "url": str(record.get("url") or ""),

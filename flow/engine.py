@@ -33,6 +33,7 @@ unchanged; only the control flow that produces them is centralized here.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -222,6 +223,20 @@ class AgentNodeOutcome:
     plus ``stopped`` so the loop can short-circuit on a user stop. The driver
     owns building the per-node ``DispatchResult``-equivalent (state.apply,
     run-record close, logging); the engine only reads these fields.
+
+    ``stop_event`` is the cross-thread signal a timeout uses to actually stop
+    the model, not just the bookkeeping around it. A node's invocation may run
+    synchronously on a worker thread (``asyncio.to_thread``) that
+    ``asyncio.wait_for``'s cancellation cannot reach — cancelling the
+    *awaiting* coroutine does nothing to a thread already inside a blocking
+    call. ``run_flow_engine`` sets this event (via
+    ``driver.stop_agent_node``) when a node's attempt times out; a driver
+    whose invocation can observe it (an in-loop callback checked at the next
+    LLM/tool boundary — see ``flow.task_driver._StopFlagGuard``) uses it to
+    make the agent actually stop there instead of running unobserved to
+    completion. One fresh, unset ``Event`` per attempt (see ``default_factory``),
+    so a retried attempt is never stopped by a flag an earlier, abandoned
+    attempt's timeout set.
     """
     ok: bool = False
     output: str = ""
@@ -232,6 +247,7 @@ class AgentNodeOutcome:
     run_id: str = ""
     duration_ms: int = 0
     stopped: bool = False
+    stop_event: threading.Event = field(default_factory=threading.Event)
 
 
 @dataclass
@@ -274,9 +290,12 @@ class FlowEngineDriver:
     #: are running, so a run whose process dies is distinguishable from one
     #: sitting inside a long agent call.
     on_heartbeat: Callable[[], None] = lambda: None
-    #: Ask the driver to stop an agent node that has hit its ``timeout_seconds``
-    #: (kill the run record, cancel the invocation — whatever it can offer).
-    #: Receives (node, node_id, outcome).
+    #: Ask the driver to stop an agent node that has hit its ``timeout_seconds``.
+    #: Receives (node, node_id, outcome). At minimum the driver should close its
+    #: run record; a driver whose invocation can observe ``outcome.stop_event``
+    #: (see ``AgentNodeOutcome``) should also set it there, so the model itself
+    #: stops at its next LLM/tool boundary instead of only being disowned in the
+    #: bookkeeping while it keeps running unobserved on its worker thread.
     stop_agent_node: Callable[..., None] = lambda node, node_id, outcome: None
     #: True when this surface can park the run and come back later, which is
     #: what a ``human_interrupt`` node needs. The task surface sets it; chat
@@ -315,7 +334,12 @@ async def run_flow_engine(
     run; see :data:`ON_ERROR_POLICIES`. Per node, ``retry: {max,
     backoff_seconds}`` re-runs a failed attempt and ``timeout_seconds`` bounds
     each attempt (a timed-out agent node is stopped through
-    ``driver.stop_agent_node`` and counts as failed). The outcome contract is
+    ``driver.stop_agent_node`` and counts as failed). Cancelling the
+    ``asyncio.wait_for`` that enforces the timeout only reaches an invocation
+    still on the event loop; one running synchronously on a worker thread keeps
+    running there regardless, so ``stop_agent_node`` also gets the outcome's
+    ``stop_event`` (see ``AgentNodeOutcome``) to signal a driver-side guard that
+    can act on it at the next LLM/tool call. The outcome contract is
     unchanged: ``any_failure`` is true when any node ended not-ok, and the
     ``flow_finish`` event reports ``ok = not any_failure``.
 
@@ -510,9 +534,15 @@ async def run_flow_engine(
                     else:
                         await coro
                 except asyncio.TimeoutError:
-                    # The driver owns whatever "stop" means for its surface
-                    # (close the run record, kill the invocation); the engine
-                    # only insists that the node counts as failed.
+                    # asyncio.wait_for already cancelled `coro`; that reaches an
+                    # invocation still awaiting on the loop, but not one running
+                    # synchronously on a worker thread (task_driver's
+                    # asyncio.to_thread invocation is exactly that case). The
+                    # driver owns whatever else "stop" means for its surface —
+                    # close the run record, and set outcome.stop_event so an
+                    # in-loop guard can act on it at the model's next step (see
+                    # AgentNodeOutcome, FlowEngineDriver.stop_agent_node). The
+                    # engine only insists that the node counts as failed either way.
                     try:
                         driver.stop_agent_node(node, node_id, outcome)
                     except Exception as e:  # noqa: BLE001

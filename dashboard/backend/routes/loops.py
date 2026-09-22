@@ -217,8 +217,13 @@ async def resume_run(loop_run_id: str):
 
 
 def _precheck_resumable(run) -> None:
-    """Raise :class:`LoopResumeError` when this run cannot be resumed at all."""
-    if run.status in ("completed", "stopped"):
+    """Raise :class:`LoopResumeError` when this run cannot be resumed at all.
+
+    ``stopped`` is resumable (see loops.runner.resume_loop_run): a stop leaves
+    the run at a valid position, so only ``completed`` has nothing left to
+    continue.
+    """
+    if run.status == "completed":
         raise LoopResumeError(f"Loop run already finished ({run.status})")
     if not (run.position or {}).get("iterations_done"):
         raise LoopResumeError("Loop run has no position to resume from")

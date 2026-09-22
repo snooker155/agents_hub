@@ -1,4 +1,5 @@
-import { appendLiveThought, genId, mergeMessageFile } from './turnState';
+import { appendLiveThought, buildCompactionNotice, genId, mergeMessageFile } from './turnState';
+import { useI18n } from '../../i18n';
 import { useChannel } from '../stream';
 import { useEffect } from 'react';
 
@@ -13,6 +14,7 @@ export function useChatSessionStream(deps) {
     continuationMsgIdRef, currentConvId, mergeArtifact, sessionId, setActiveRunId,
     setConversations,
   } = deps;
+  const { t } = useI18n();
 
   // ---- session SSE subscription for continuation runs ----
   // Subscribe to this session's channel on the shared multiplexed stream so
@@ -162,6 +164,23 @@ export function useChatSessionStream(deps) {
         )
       );
       continuationMsgIdRef.current = null;
+    } else if (event.type === 'compaction' && continuationMsgIdRef.current) {
+      // The primary run's own compaction event is folded in by the fetch
+      // stream (useChatSend); this only fires for a continuation run this tab
+      // is tracking, so it isn't inserted twice. It lands before the
+      // continuation's bubble, since the fold happened before that turn ran.
+      const continuationMsgId = continuationMsgIdRef.current;
+      const notice = buildCompactionNotice(t, event);
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== convId) return c;
+          const idx = c.messages.findIndex((m) => m.id === continuationMsgId);
+          const messages = [...c.messages];
+          if (idx === -1) messages.push(notice);
+          else messages.splice(idx, 0, notice);
+          return { ...c, messages };
+        })
+      );
     } else if (event.type === 'session_done') {
       continuationMsgIdRef.current = null;
     }

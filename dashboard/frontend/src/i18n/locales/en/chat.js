@@ -147,6 +147,7 @@ export default {
   noOutput: '(no output)',
   noStreamedOutput: 'No streamed output received.',
   failedToGetResponse: 'Failed to get a response.',
+  compactionNotice: 'Earlier messages were folded into a summary ({{count}} turns).',
   sendFailed: 'Send failed',
   default: 'default',
   in: 'in',

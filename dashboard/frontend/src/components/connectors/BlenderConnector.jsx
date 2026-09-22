@@ -6,6 +6,7 @@ import {
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
+import { useLiveRefetch } from '../stream';
 
 // Moved out of the Settings page, which is where nobody looked for it: a
 // connector is something you *attach*, so it belongs with the other things you
@@ -64,18 +65,13 @@ export default function BlenderConnector() {
   }, []);
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
-  // Still a poll, and slower than it was.
-  //
-  // There is no live event to subscribe to here: the daemon registry is
-  // cross-process and nothing publishes a `<resource>.changed` for it, so
-  // there is no `blender_daemons.changed` for this to follow. The engines list
-  // is refreshed every 30 seconds rather than every 5, and the buttons on this
-  // card reload it themselves, so an action's result is immediate either way.
-  useEffect(() => {
-    loadDaemons();
-    const timer = setInterval(loadDaemons, 30000);
-    return () => clearInterval(timer);
-  }, [loadDaemons]);
+  // The daemon registry is cross-process, so an engine another process
+  // started or stopped needs a live update rather than a fixed refresh point.
+  // The backend publishes `blender_daemons.changed` on the app channel for
+  // exactly this; the buttons on this card also reload it themselves, so an
+  // action's own result is immediate either way.
+  useEffect(() => { loadDaemons(); }, [loadDaemons]);
+  useLiveRefetch(loadDaemons, { type: 'blender_daemons.changed' });
 
   const save = async (patch) => {
     setBusy('save');

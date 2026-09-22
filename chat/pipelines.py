@@ -76,8 +76,14 @@ async def _run_chat_pipeline(request: ChatRequest):
     materialize_attachments(request)
     resolve_references(request)
     full_prompt, workspace_abs = build_chat_context(request)
-    # Prior turns travel as messages, not as text in front of this one.
-    history_messages = build_history_messages(request.history)
+    # Prior turns travel as messages, not as text in front of this one. Built
+    # uncapped: the flat HISTORY_CHAR_BUDGET cut used to run here, before the
+    # agent (and therefore its model) was even known, and by the time
+    # compact_for_turn saw the history it had already been truncated, so a
+    # large-window model's conversation was thrown away rather than folded
+    # into a summary. compact_for_turn below now does that bounding itself,
+    # against the running agent's real budget, so the fold gets a chance.
+    history_messages = build_history_messages(request.history, budget_chars=float("inf"))
     run_id, msg_id, log_file, log_lines, session_id = create_chat_run(request)
 
     apply_workspace_ctx(request, workspace_abs)

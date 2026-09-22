@@ -55,24 +55,45 @@ def _resolve_agent_tools(agent_id: str) -> List[str]:
     return list(spec.tools or []) if spec is not None else []
 
 
-def _effective_violation(agent_id: str, tools: Sequence[str]) -> Optional[Violation]:
+def _effective_violation(
+    agent_id: str,
+    tools: Sequence[str],
+    *,
+    delegates: Optional[Sequence[str]] = None,
+) -> Optional[Violation]:
     """The combination this agent's tool set forms, own tools or by delegation.
 
     Own tools are judged exactly as before: a blocked combination on the
     agent's own list blocks. A combination that only closes through delegation
-    (``tools.capabilities.effective_capabilities``) is reported at *warn*
-    severity, with the path in ``sources``, rather than blocking. Blocking it
-    would refuse to build every coordinating agent in the seed roster, the
-    orchestrator included: an agent with an unrestricted ``delegates`` list can
-    reach the web searcher, and the web searcher holds ingest and exfiltrate on
-    purpose. The operator sees the path in the editor and the audit; narrowing
-    ``delegates`` on the agent is how the warning goes away.
+    (``tools.capabilities.effective_capabilities``) blocks too, at the rule's
+    own severity, with the delegation path folded into ``sources`` and named
+    in ``rule_id``/``title``/``explanation`` (the ``_via_delegation`` suffix)
+    so the operator can see exactly which hop closed it. An agent that can
+    delegate to the web searcher (ingest and exfiltrate, on purpose) while
+    also reading private data itself effectively holds the whole trifecta,
+    whether that reach sits in its own tool list or one hop away; narrowing
+    ``delegates`` is how the block goes away, the same way removing an own
+    tool would.
+
+    ``delegates``, when given, is the ``delegates`` allowlist of the spec
+    being checked, used to resolve *this agent's own* reachability instead of
+    a registry lookup (see ``tools.capabilities._walk_delegation_graph``'s
+    ``root_delegates``). A registry lookup is right for an already-persisted
+    agent, but wrong at save time for a brand-new agent or one whose
+    ``delegates`` field is being changed: the record the registry would
+    return is not the one being validated. Every hop past the root still
+    resolves through the registry, since those agents really are already on
+    disk.
     """
     own = check_combination(tools)
     if own is not None and own.blocking:
         return own
-    caps = effective_capabilities(agent_id, tools, resolve_agent_tools=_resolve_agent_tools)
-    sources = effective_capability_sources(agent_id, tools, resolve_agent_tools=_resolve_agent_tools)
+    caps = effective_capabilities(
+        agent_id, tools, resolve_agent_tools=_resolve_agent_tools, root_delegates=delegates,
+    )
+    sources = effective_capability_sources(
+        agent_id, tools, resolve_agent_tools=_resolve_agent_tools, root_delegates=delegates,
+    )
     reached = check_effective_combination(caps, sources)
     if reached is None:
         return own
@@ -86,7 +107,6 @@ def _effective_violation(agent_id: str, tools: Sequence[str]) -> Optional[Violat
                 + " This combination only closes through agents this one can "
                 "delegate to; restrict its delegates list to remove the path."
             ),
-            severity="warn",
         )
     return reached
 
@@ -124,6 +144,7 @@ def check_agent_tools(
     *,
     previous_tools: Optional[Sequence[str]] = None,
     override: bool = False,
+    delegates: Optional[Sequence[str]] = None,
 ) -> Optional[Violation]:
     """Save-time check. Returns the violation to report, or None to allow.
 
@@ -133,6 +154,13 @@ def check_agent_tools(
     list, so an agent that only looks safe because the dangerous half of the
     trifecta lives one hop away does not slip through.
 
+    ``delegates`` is the spec's own ``delegates`` field being saved — pass it
+    (``agents.registry.add_agent`` does) so a brand-new agent, or one whose
+    allowlist is being narrowed in this very call, is judged on the allowlist
+    it is about to have rather than on the registry's stale-or-absent record
+    of it (see ``_effective_violation``). Left as ``None``, the root falls
+    back to a registry lookup like every other hop.
+
     Returns None (allow) when the mode is ``off``, when the operator set
     ``capability_override``, or when the stored record already formed the same
     violation — the grandfather clause that keeps an existing roster editable.
@@ -140,7 +168,7 @@ def check_agent_tools(
     if guard_mode() == "off":
         return None
 
-    violation = _effective_violation(agent_id, tools)
+    violation = _effective_violation(agent_id, tools, delegates=delegates)
     if violation is None:
         return None
 
@@ -178,10 +206,11 @@ def enforce_agent_tools(
     *,
     previous_tools: Optional[Sequence[str]] = None,
     override: bool = False,
+    delegates: Optional[Sequence[str]] = None,
 ) -> None:
     """Save-time enforcement. Raises :class:`CapabilityViolation` in block mode."""
     violation = check_agent_tools(
-        agent_id, tools, previous_tools=previous_tools, override=override
+        agent_id, tools, previous_tools=previous_tools, override=override, delegates=delegates,
     )
     if violation is None or not violation.blocking:
         return
@@ -211,6 +240,7 @@ def enforce_built_tools(
     tool_names: Iterable[str],
     *,
     override: bool = False,
+    delegates: Optional[Sequence[str]] = None,
 ) -> None:
     """Build-time enforcement over the *resolved* tool instances.
 
@@ -221,13 +251,18 @@ def enforce_built_tools(
     whichever agent can still reach it. The per-agent override is honoured
     here only when the run is genuinely container-isolated, if
     ``settings.capability_override_requires_container`` is on.
+
+    ``delegates`` is the built spec's own allowlist, threaded through for the
+    same reason ``check_agent_tools`` takes it: a registry lookup of the root
+    agent by id can be stale mid-edit, so the caller (``agent_factory``, which
+    already has the spec in hand) passes it directly.
     """
     mode = guard_mode()
     if mode == "off":
         return
 
     names = list(tool_names)
-    violation = _effective_violation(agent_id, names)
+    violation = _effective_violation(agent_id, names, delegates=delegates)
     if violation is None or not violation.blocking:
         return
 
@@ -240,9 +275,22 @@ def enforce_built_tools(
         if not strict or _container_isolated(agent_id):
             return
         log.error(
-            "capability guard: agent %r has capability_override but is not container-isolated "
-            "— override not honoured at build time.",
+            "capability guard: agent %r has capability_override but is not container-isolated, "
+            "so the override is not honoured at build time.",
             agent_id,
+        )
+        # The operator chose the override on purpose; the message must say why
+        # it did not apply and what makes it apply, or the refusal reads as if
+        # the override were ignored for no reason.
+        violation = dataclasses.replace(
+            violation,
+            explanation=(
+                violation.explanation
+                + " This agent carries capability_override, which is honoured only "
+                "when it runs container-isolated with no network (execution mode "
+                "docker, see docs/containers.md); in local mode the combination "
+                "stays refused."
+            ),
         )
 
     if mode == "warn":
@@ -280,7 +328,7 @@ def audit_roster() -> List[tuple]:
     from agents.registry import list_agents
     out = []
     for spec in list_agents():
-        v = _effective_violation(spec.id, list(spec.tools or []))
+        v = _effective_violation(spec.id, list(spec.tools or []), delegates=list(spec.delegates or []))
         if v is not None and v.blocking:
             out.append((spec.id, v))
     return out

@@ -3,6 +3,7 @@ export default {
     button: 'Branch veröffentlichen',
     title: 'Branch veröffentlichen',
     prTitle: 'Titel',
+    commitMessage: 'Commit-Nachricht',
     body: 'Beschreibung',
     bodyPlaceholder: 'Leer gelassen, wird das Aufgabenergebnis verwendet.',
     branch: 'Branch',
@@ -12,6 +13,8 @@ export default {
     publishing: 'Wird veröffentlicht…',
     opened: 'Pull Request geöffnet:',
     pushed: 'Branch gepusht.',
+    noProviderNotice: 'Für dieses Repository ist kein GitHub- oder GitLab-Provider konfiguriert. Dies committet und pusht Ihren Branch zum Remote, es wird kein Pull Request geöffnet.',
+    pushedBranch: '{{branch}} zu {{remote}} gepusht.',
   },
   tabs: {
     overview: 'Überblick',

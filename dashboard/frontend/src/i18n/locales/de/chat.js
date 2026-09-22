@@ -147,6 +147,7 @@ export default {
   noOutput: '(keine Ausgabe)',
   noStreamedOutput: 'Keine gestreamte Ausgabe empfangen.',
   failedToGetResponse: 'Es konnte keine Antwort abgerufen werden.',
+  compactionNotice: 'Frühere Nachrichten wurden zu einer Zusammenfassung zusammengefasst ({{count}} Gesprächsrunden).',
   sendFailed: 'Senden fehlgeschlagen',
   default: 'Standard',
   in: 'ein',

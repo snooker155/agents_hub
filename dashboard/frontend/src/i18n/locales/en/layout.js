@@ -60,6 +60,7 @@ export default {
     registry: 'Registry',
     sessions: 'Sessions',
     sessionDetails: 'Session Details',
+    runGroups: 'Run Groups',
     messages: 'Runs',
     messageDetails: 'Run Details',
     nodes: 'Nodes',

@@ -241,6 +241,67 @@ def test_a_node_that_runs_past_its_timeout_is_stopped_and_counted_failed(monkeyp
     assert events[-1]["any_failure"] is True
 
 
+def test_the_stop_flag_lets_a_worker_thread_invocation_actually_stop(monkeypatch):
+    """A timeout by itself only gets the driver a chance to stop the node (the
+    test above); actually stopping the *model* is the driver's job, and the
+    hard case is flow.task_driver's real shape: the invocation is a
+    synchronous call on a worker thread (``asyncio.to_thread``), which
+    ``asyncio.wait_for``'s cancellation of the coroutine *awaiting* that
+    thread cannot reach — the thread keeps running regardless. Reproduced
+    here with a plain ``threading.Event``-driven loop standing in for
+    ``flow.task_driver._StopFlagGuard`` checking between LLM/tool steps:
+    ``stop_agent_node`` sets ``outcome.stop_event`` (flow.engine.AgentNodeOutcome),
+    and the "agent" notices it on its own thread and returns early, well
+    before it would have finished on its own.
+    """
+    import threading
+    import time
+
+    _install_fakes(monkeypatch)
+    stopped_early = threading.Event()
+
+    def _blocking_steps(stop_event: threading.Event) -> None:
+        # Stands in for a sequence of LLM/tool calls, each an opportunity for
+        # a real in-loop guard to check the flag between them.
+        for _ in range(50):
+            if stop_event.is_set():
+                stopped_early.set()
+                return
+            time.sleep(0.02)
+
+    async def _run_agent_node(node, node_id, label, prompt, outcome, flow_state):
+        await asyncio.to_thread(_blocking_steps, outcome.stop_event)
+        outcome.ok = False
+        outcome.error = "stopped"
+        return
+        yield  # async-generator marker
+
+    def _stop_agent_node(node, node_id, outcome):
+        outcome.stop_event.set()
+
+    driver = FlowEngineDriver(
+        build_agent_prompt=build_agent_input,
+        run_agent_node=_run_agent_node,
+        make_run_context=lambda nid: RunContext(node_id=nid),
+        stop_agent_node=_stop_agent_node,
+    )
+    flow = {
+        "id": "flagged",
+        "nodes": [{"id": "a", "kind": "agent", "timeout_seconds": 0.05}],
+        "edges": [],
+    }
+    events = _drive(flow, driver)
+
+    done = [e for e in events if e["type"] == "node_done"][0]
+    assert done["ok"] is False and "timed out" in done["error"]
+    # The engine moves on immediately (it does not, and cannot, wait for a
+    # thread it has no handle to join) — the flag reaching that thread and it
+    # actually stopping happens a little after, which is exactly the point.
+    assert stopped_early.wait(timeout=1.0), (
+        "the worker thread never noticed outcome.stop_event and kept running"
+    )
+
+
 def test_a_timeout_does_not_stop_the_branch_running_beside_it(monkeypatch):
     _install_fakes(monkeypatch)
     flow = {

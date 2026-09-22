@@ -135,22 +135,11 @@ def _seed_state(
 # ── Cost ─────────────────────────────────────────────────────────────────────
 
 def _runs_cost(run_ids: List[str]) -> float:
-    """Catalog-priced spend of a set of runs. Best effort — an unknown model is
-    zero-cost, never an exception."""
-    if not run_ids:
-        return 0.0
-    try:
-        from common.pricing import load_price_map, run_cost_usd
-        from managers.run_manager import get_run_by_id
-        prices = load_price_map()
-        total = 0.0
-        for rid in run_ids:
-            rec = get_run_by_id(rid)
-            if rec:
-                total += run_cost_usd(rec, prices)
-        return round(total, 6)
-    except Exception:
-        return 0.0
+    """Catalog-priced spend of a set of runs. Delegates to
+    managers.runs.groups.runs_cost, the one pricing loop over run records, so a
+    loop iteration is priced the same way a flow or a team is."""
+    from managers.runs.groups import runs_cost
+    return runs_cost(list(run_ids))
 
 
 # ── One iteration ────────────────────────────────────────────────────────────
@@ -257,6 +246,7 @@ def run_loop(
     seed: Optional[Dict[str, Any]] = None,
     on_iteration: Optional[Callable[[Iteration], None]] = None,
     resume_run: Optional[LoopRun] = None,
+    resumed_from_status: Optional[str] = None,
 ) -> LoopRun:
     """Run a loop to convergence, or to whichever ceiling it hits first.
 
@@ -266,7 +256,10 @@ def run_loop(
     ``resume_run`` continues an existing run from its stored position instead of
     starting a new one: the iterations it already completed keep their rows and
     their scores, and the next pass is the one after the last it finished. See
-    :func:`resume_loop_run`.
+    :func:`resume_loop_run`. ``resumed_from_status`` is the status the run was
+    in before this call (``"stopped"`` when a person's stop is being resumed
+    rather than a crash recovery); it is only used to annotate the
+    ``loop_resume`` event and the server log, never to change what runs.
     """
     loop = store.get_loop(loop_id)
     if not loop:
@@ -306,9 +299,19 @@ def run_loop(
             task_id=task_id, session_id=session_id,
         )
     store.save_run(run)
-    _publish(run.loop_run_id, {
-        "type": "loop_resume" if resume_run else "loop_start", **run.to_dict()
-    })
+    if resume_run:
+        # Distinct from a plain resume (e.g. the watchdog picking a crashed run
+        # back up): a person's explicit stop is what "resumed from a stop"
+        # means here, and it is worth its own line in the server log plus a
+        # field on the event, so the run's activity trail says why it restarted.
+        resume_event = {"type": "loop_resume", **run.to_dict()}
+        if resumed_from_status:
+            resume_event["resumed_from_status"] = resumed_from_status
+            if resumed_from_status == "stopped":
+                log.info("loop %s resumed after being stopped by request", run.loop_run_id)
+        _publish(run.loop_run_id, resume_event)
+    else:
+        _publish(run.loop_run_id, {"type": "loop_start", **run.to_dict()})
 
     max_iterations = max(1, min(int(loop.max_iterations or 1), MAX_ITERATIONS_CAP))
     wall_cap = min(float(loop.max_wall_seconds or MAX_WALL_SECONDS_CAP), MAX_WALL_SECONDS_CAP)
@@ -645,15 +648,22 @@ def resume_loop_run(
 
     ``auto`` marks a resume the watchdog performed rather than a person, and is
     what its attempt cap counts.
+
+    A run in ``stopped`` is resumable: it stopped at a valid position (the
+    iterations it had already done, their history, the running spend), so
+    picking it back up from there is exactly what a person who pressed Stop by
+    mistake, or wants to let it run further, needs. Only ``completed`` is
+    refused outright: nothing is left to continue.
     """
     run = store.get_run(loop_run_id)
     if not run:
         raise LoopResumeError(f"Loop run not found: {loop_run_id}")
-    if run.status in ("completed", "stopped"):
+    if run.status == "completed":
         raise LoopResumeError(f"Loop run {loop_run_id} already finished ({run.status})")
     position = dict(run.position or {})
     if not position.get("iterations_done"):
         raise LoopResumeError(f"Loop run {loop_run_id} has no position to resume from")
+    resumed_from_status = run.status
     if auto:
         position["resume_attempts"] = int(position.get("resume_attempts") or 0) + 1
         run.resume_attempts = position["resume_attempts"]
@@ -661,7 +671,7 @@ def resume_loop_run(
         store.save_position(loop_run_id, position)
     return run_loop(
         run.loop_id, goal=run.goal, workspace=run.workspace, task_id=run.task_id,
-        on_iteration=on_iteration, resume_run=run,
+        on_iteration=on_iteration, resume_run=run, resumed_from_status=resumed_from_status,
     )
 
 

@@ -58,7 +58,7 @@ HTTP = {
 def test_the_empty_workspace_lists_nothing_and_says_what_it_supports(client):
     body = client.get("/api/mcp/servers", params=WS).json()
     assert body["servers"] == []
-    assert set(body["transports"]) == {"stdio", "streamable_http", "sse"}
+    assert set(body["transports"]) == {"stdio", "streamable_http", "sse", "websocket"}
 
 
 def test_create_list_patch_delete(client):
@@ -85,6 +85,20 @@ def test_a_bad_id_is_refused_with_a_reason(client):
     bad = client.post("/api/mcp/servers", params=WS, json={**STDIO, "id": "my server"})
     assert bad.status_code == 400
     assert "double underscore" in bad.json()["detail"]
+
+
+def test_a_websocket_server_is_accepted_and_a_bad_scheme_is_refused(client):
+    created = client.post("/api/mcp/servers", params=WS, json={
+        "id": "live", "transport": "websocket", "url": "wss://live.example.test/mcp",
+    })
+    assert created.status_code == 201
+    assert created.json()["server"]["transport"] == "websocket"
+
+    bad = client.post("/api/mcp/servers", params=WS, json={
+        "id": "live2", "transport": "websocket", "url": "https://live.example.test/mcp",
+    })
+    assert bad.status_code == 400
+    assert "ws://" in bad.json()["detail"]
 
 
 def test_an_id_cannot_be_taken_twice(client):

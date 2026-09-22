@@ -1,7 +1,8 @@
 /**
- * The three pure helpers a streamed turn is folded together with: a local id
- * for an optimistic bubble, the capped live-thought buffer, and merging one
- * `artifact` event into a message's file list.
+ * The pure helpers a streamed turn is folded together with: a local id for an
+ * optimistic bubble, the capped live-thought buffer, merging one `artifact`
+ * event into a message's file list, and the notice shown when the backend
+ * folds older history into a summary.
  *
  * In their own module because the send path and the session stream both fold
  * the same events, and neither should own the other's copy.
@@ -42,4 +43,17 @@ function mergeMessageFile(files, event) {
   return next;
 }
 
-export { genId, appendLiveThought, mergeMessageFile, MAX_LIVE_THOUGHT_CHARS };
+// A `compaction` stream event marks the point where the backend replaced older
+// turns with a summary. Rendered as a subtle centered notice (see
+// MessageBubble) rather than a chat bubble: it's a fact about the transcript,
+// not something either party said.
+function buildCompactionNotice(t, event) {
+  return {
+    id: genId(),
+    role: 'system',
+    kind: 'compaction',
+    content: t('chat.compactionNotice', { count: event.folded || 0 }),
+  };
+}
+
+export { genId, appendLiveThought, mergeMessageFile, buildCompactionNotice, MAX_LIVE_THOUGHT_CHARS };

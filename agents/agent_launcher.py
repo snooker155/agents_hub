@@ -246,20 +246,30 @@ def _start_run_in_docker(
     from managers.container_manager import CONTAINER_STATE_DIR
     from runtime import docker_runner
 
-    inner_cmd = [sys.executable, "-m", "runtime.agent_run"] + cli_args
+    # --write-stdout-to-log: the inner command's own flag (runtime/agent_run.py),
+    # never added to `cli_args` itself since that list is shared with the local
+    # subprocess branch above, which pipes Popen's stdout into the log file
+    # directly and would tee into it twice if the flag reached that path too.
+    inner_cmd = [sys.executable, "-m", "runtime.agent_run"] + cli_args + ["--write-stdout-to-log"]
 
     # AGENT_LOG_FILE in `env` is the *host* path agent_launcher just created,
     # meant for the Popen stdout redirection the local branch uses below —
     # there is no equivalent redirection for a detached container. Point it
     # instead at that same file's container-mounted path, so open_run() (which
     # agent_run.py calls on startup) records a log_file the dashboard can
-    # open. agent_run.py does not tee its own stdout into it in Docker mode —
-    # that tee only activates when AGENT_LOG_FILE is unset (the bare-CLI
-    # case) — so the file itself stays just the header written below; full
-    # run output lives in `docker logs <container_name>`. See
-    # docs/containers.md for this as a documented gap rather than a bug.
+    # open, and so --write-stdout-to-log above tees into the same file. See
+    # docs/containers.md, "Logs in Docker mode".
     docker_env = dict(env)
     docker_env["AGENT_LOG_FILE"] = f"{CONTAINER_STATE_DIR}/run_logs/{log_file.name}"
+
+    # How the container reaches its own run/task records: direct SQLite access
+    # by default (the state dir mount is read-write, same as always), or the
+    # HTTP relay when the operator opted into AGENT_RUN_STATE_TRANSPORT=http,
+    # which is also what pins the state dir mount read-only for this run (see
+    # managers.container_manager.build_run_command). Resolved live, like
+    # AGENT_EXECUTION_MODE, so a Settings change applies to the next run.
+    from common.config import run_state_transport as _run_state_transport
+    docker_env["AGENT_RUN_STATE_TRANSPORT"] = _run_state_transport()
 
     with open(log_file, "w", encoding="utf-8") as lf:
         lf.write(

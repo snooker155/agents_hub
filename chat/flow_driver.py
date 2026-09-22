@@ -354,5 +354,15 @@ def build_chat_driver(
         on_node_start=_on_node_start,
         on_flow_start=_on_flow_start,
         on_node_done=_on_node_done,
+        # No stop_agent_node override: unlike the task surface's synchronous,
+        # worker-thread invocation (flow.task_driver, which needs an explicit
+        # stop_event + in-loop guard to actually reach it), this node runs on
+        # the event loop the whole way (agent.arun as an asyncio.Task). When
+        # the engine's timeout fires, asyncio.wait_for cancels the coroutine
+        # that is awaiting this generator, which throws CancelledError in here
+        # at the current `async for event in drive_streaming_run(...)` — the
+        # `except asyncio.CancelledError` block below cancels the underlying
+        # agent task and closes the run record as stopped. The default no-op
+        # stop_agent_node is correct as-is: there is nothing left for it to do.
     )
     return driver, state

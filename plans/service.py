@@ -88,6 +88,7 @@ def create_job(
     recurrence: Recurrence = Recurrence.none,
     cron: Optional[str] = None,
     timezone: Optional[str] = None,
+    catch_up: bool = False,
     workspace: Optional[str] = None,
     created_by: str = "user",
     agent_id: Optional[str] = None,
@@ -106,6 +107,7 @@ def create_job(
         recurrence=recurrence,
         cron=cron_expr,
         timezone=tz_name,
+        catch_up=catch_up,
         workspace=workspace,
         created_by=created_by,
         agent_id=agent_id,
@@ -367,16 +369,29 @@ def due_jobs(now: Optional[datetime] = None) -> List[ScheduledJob]:
 def _next_run(job: ScheduledJob, now: datetime) -> datetime:
     """Compute the next run_at for a recurring job, past ``now``.
 
-    Cron follows the spec literally: the next cron occurrence after ``now``,
-    evaluated in the job's timezone, converted back to UTC. That alone makes
-    a missed occurrence (backend down for a while) roll forward to the next
-    future slot, without replaying every tick that was missed.
+    ``job.catch_up`` is the fork in this function: it only matters when the
+    slot just fired is more than one occurrence behind ``now`` (the backend
+    was down through several ticks).
 
-    hourly/daily/weekly keep the plain interval, but the arithmetic happens
-    on the job's local wall-clock time (via zoneinfo) rather than on the UTC
-    instant, so a daily job stays at the same local hour across a DST change:
-    the elapsed real time shifts by an hour instead of the local clock time
-    drifting.
+    ``catch_up`` False (the default, and the only behaviour before this field
+    existed): cron follows the spec literally, giving the next cron occurrence
+    after ``now``; hourly/daily/weekly step forward by their interval until
+    past ``now``. Either way every missed occurrence in between is silently
+    dropped and the job re-arms on the next slot that is still in the future.
+    A single ``fire_job`` call only ever runs the job once regardless (see its
+    docstring), so this is about how far the schedule jumps, not about
+    replaying missed ticks.
+
+    ``catch_up`` True: the next occurrence after the slot that *just* fired,
+    full stop, even when that is still in the past. Such a job is due again
+    immediately, so the scheduler's ordinary next tick claims and fires it
+    right away, so the backend catches up one missed occurrence per tick instead
+    of jumping straight to "now" and losing the rest.
+
+    hourly/daily/weekly arithmetic happens on the job's local wall-clock time
+    (via zoneinfo) rather than on the UTC instant, so a daily job stays at the
+    same local hour across a DST change: the elapsed real time shifts by an
+    hour instead of the local clock time drifting.
     """
     now = _ensure_aware(now)
     tz = _resolve_tz(job.timezone)
@@ -384,8 +399,9 @@ def _next_run(job: ScheduledJob, now: datetime) -> datetime:
     if job.recurrence == Recurrence.cron:
         if not job.cron:
             raise ValueError(f"job {job.id} has recurrence=cron but no cron expression")
-        now_in_tz = now.astimezone(tz)
-        nxt = croniter(job.cron, now_in_tz).get_next(datetime)
+        base = job.run_at if job.catch_up else now
+        base_in_tz = _ensure_aware(base).astimezone(tz)
+        nxt = croniter(job.cron, base_in_tz).get_next(datetime)
         return _ensure_aware(nxt).astimezone(timezone.utc)
 
     deltas = {
@@ -396,6 +412,8 @@ def _next_run(job: ScheduledJob, now: datetime) -> datetime:
     delta = deltas[job.recurrence]
     local = _ensure_aware(job.run_at).astimezone(tz)
     nxt = local + delta
+    if job.catch_up:
+        return nxt.astimezone(timezone.utc)
     # Roll forward past missed occurrences (e.g. backend was down).
     while nxt <= now.astimezone(tz):
         nxt += delta

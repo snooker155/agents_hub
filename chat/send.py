@@ -69,7 +69,11 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
     materialize_attachments(request)
     resolve_references(request)
     full_prompt, workspace_abs = build_chat_context(request)
-    history_messages = build_history_messages(request.history)
+    # Uncapped: compact_for_turn below bounds this against the agent's real
+    # model budget, so a flat cut here cannot throw away history compaction
+    # would otherwise have folded into a summary. See chat/pipelines.py for
+    # the same fix on the streaming path.
+    history_messages = build_history_messages(request.history, budget_chars=float("inf"))
     run_id, _, log_file, log_lines, session_id = create_chat_run(request)
 
     # Propagate workspace to agent tools (e.g. list_tasks) via a context var

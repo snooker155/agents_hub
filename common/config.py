@@ -147,6 +147,24 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return "local"
         return v
+    # How a run's own entrypoint (runtime/agent_run.py) reaches its run and
+    # task records: "db" (default) opens the shared SQLite database directly,
+    # same as always. "http" instead relays those writes to the backend's
+    # /api/run-state routes: the mode a run container uses when its
+    # .agents_hub mount is read-only (see common/state_transport.py,
+    # managers/container_manager.py's build_run_command, docs/containers.md).
+    run_state_transport: Literal["db", "http"] = Field(
+        default="db",
+        validation_alias=AliasChoices("AGENT_RUN_STATE_TRANSPORT", "run_state_transport"),
+        validate_default=False,
+    )
+
+    @field_validator("run_state_transport", mode="before")
+    @classmethod
+    def _default_run_state_transport(cls, v: object) -> object:
+        if v == "" or v is None:
+            return "db"
+        return v
     # Docker image to use when agent_mode = "docker"
     agent_docker_image: str = Field(default="")
     # Optional Docker network (e.g. "host" or a named bridge network)
@@ -159,6 +177,30 @@ class Settings(BaseSettings):
     # ``Authorization: Bearer <token>`` (or ``X-Api-Token: <token>``). Empty
     # (default) keeps the API open, preserving the current local-only behaviour.
     api_token: str = Field(default="", validation_alias=AliasChoices("AGENTS_HUB_API_TOKEN", "api_token"))
+    # Identity posture. Three explicit modes, documented in docs/identity.md:
+    #   "single" (default) — exactly one operator on this machine or host. No
+    #     login, no users, no roles, no owner checks; the API behaves as it
+    #     always has and every ownable record is owned by the constant
+    #     ``common.auth.LOCAL_OPERATOR_ID``.
+    #   "token"  — the shared ``AGENTS_HUB_API_TOKEN`` below gates /api. Still
+    #     one operator: no users, no roles.
+    #   "multi"  — named users with passwords, sessions, a global role and
+    #     per-workspace membership roles.
+    # Backwards compatibility: leaving this unset (or "single") while a token
+    # *is* configured resolves to "token", so a deployment that only ever set
+    # AGENTS_HUB_API_TOKEN keeps working exactly as before. Resolve it through
+    # ``common.auth.effective_auth_mode``, never off this field directly.
+    auth_mode: str = Field(
+        default="single",
+        validation_alias=AliasChoices("AUTH_MODE", "auth_mode"),
+    )
+    # How long a login stays valid, in hours. Sessions are opaque random tokens
+    # stored hashed (no JWT, nothing to sign), so there is no signing secret to
+    # configure: revoking one is deleting its row.
+    auth_session_hours: int = Field(
+        default=24 * 14,
+        validation_alias=AliasChoices("AUTH_SESSION_HOURS", "auth_session_hours"),
+    )
     # When true, ``run_shell`` only permits commands whose first word is in
     # ``allow_shell``. Off by default so existing agent shell usage is unchanged;
     # a workspace can opt in via its settings (shell_allowlist_enabled).
@@ -313,6 +355,16 @@ class Settings(BaseSettings):
     agent_cache_ttl: int = Field(
         default=900, validation_alias=AliasChoices("AGENT_CACHE_TTL", "agent_cache_ttl"))
 
+    # ── Cross-replica event bridge (common/broker_bridge.py) ──────────────────
+    # Empty (default, off): the session broker stays in-process only, exactly as
+    # today. Set to a Redis URL (e.g. redis://redis:6379/0) when more than one
+    # backend replica is running behind a load balancer: every local publish is
+    # then also fanned out over Redis pub/sub, so a browser tab connected to a
+    # different replica than the one that produced an event still receives it.
+    # See docs/scaling.md for when this is needed and how to run it.
+    broker_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BROKER_URL", "broker_url"))
+
     model_config = SettingsConfigDict(
         case_sensitive=False,
         env_file=str(PROJECT_ROOT / ".env"),
@@ -418,6 +470,17 @@ def agent_execution_mode() -> str:
     """
     mode = live_setting("AGENT_EXECUTION_MODE", settings.agent_mode).lower()
     return mode if mode in ("local", "docker") else "local"
+
+
+def run_state_transport() -> str:
+    """How a run's own entrypoint reaches its run/task records: "db" (direct
+    SQLite access, the default) or "http" (relayed through the backend's
+    /api/run-state routes). Resolved live, the same way as
+    ``agent_execution_mode``. Unrecognised reads as "db", the mode that needs
+    no backend reachable over HTTP.
+    """
+    mode = live_setting("AGENT_RUN_STATE_TRANSPORT", settings.run_state_transport).lower()
+    return mode if mode in ("db", "http") else "db"
 
 
 # Convenience accessors to align with previous orchestrator.config API

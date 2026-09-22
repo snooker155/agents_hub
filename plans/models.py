@@ -51,6 +51,12 @@ class ScheduledJob(BaseModel):
     # cron evaluation and to keep hourly/daily/weekly firings at the same
     # local wall-clock time across a DST change.
     timezone: Optional[str] = None
+    # Opt-in: when the scheduler finds this job more than one slot behind (the
+    # backend was down through several occurrences), advance one occurrence
+    # per firing instead of jumping straight to the next slot that is still in
+    # the future. False (default) keeps today's behaviour: every missed
+    # occurrence in between is silently dropped. See plans.service._next_run.
+    catch_up: bool = False
     status: JobStatus = JobStatus.scheduled
 
     # -------------------- lease + idempotency --------------------

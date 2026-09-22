@@ -15,6 +15,15 @@ import { Bot, User } from 'lucide-react';
 
 function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifactsByPath }) {
   const { t } = useI18n();
+  // A fact about the transcript (e.g. older turns folded into a summary), not
+  // something either party said: a subtle centered line, not a chat bubble.
+  if (msg.role === 'system') {
+    return (
+      <div className="flex justify-center mb-6 mx-2">
+        <span className="text-xs text-gray-400 italic text-center px-3">{msg.content}</span>
+      </div>
+    );
+  }
   const isUser = msg.role === 'user';
   // A tool is currently executing (set on tool_start, cleared on the first
   // response token). Surfaced as a labelled indicator so the user sees that

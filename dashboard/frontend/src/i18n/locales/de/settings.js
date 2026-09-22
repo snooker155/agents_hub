@@ -243,6 +243,15 @@ export default {
   },
   connectorsMoved: 'Telegram, GitHub/GitLab und Blender sind jetzt unter Verbinden → Konnektoren.',
   apiAccess: {
+    modeTitle: 'Authentifizierungsmodus',
+    modeExplainer: 'Drei Betriebsarten. Einzelbetrieb bedeutet: keine Anmeldung, keine Konten, die API ist offen, was für eine Person am eigenen Rechner genau richtig ist. Gemeinsames Token bedeutet: ein geteiltes Geheimnis schützt jede Anfrage, das Minimum, sobald der Port auch für andere erreichbar ist. Mehrbenutzerbetrieb bedeutet: benannte Konten mit Passwörtern, eine globale Rolle (Administrator oder Mitglied) und eine Rolle je Arbeitsbereich (Eigentümer, Bearbeiter, Leser).',
+    modeWhereBefore: 'Der Modus wird mit',
+    modeWhereAfter: 'in der .env-Datei gesetzt und gilt nach einem Neustart des Backends. Von hier aus lässt er sich bewusst nicht ändern: das ist eine Entscheidung des Betriebs, keine Einstellung.',
+    modes: {
+      single: { name: 'Einzelbetrieb', summary: 'keine Anmeldung, keine Konten, die API ist offen' },
+      token: { name: 'Gemeinsames Token', summary: 'ein Geheimnis schützt jede Anfrage an die API' },
+      multi: { name: 'Mehrbenutzerbetrieb', summary: 'benannte Konten, Passwörter, Rollen und Mitgliedschaften' },
+    },
     title: 'Browser-Token',
     intro: 'Ein Token, das dieser Browser jeder Anfrage an das Backend als Bearer-Header beifügt. Es spielt nur eine Rolle, wenn die Serverseite eines verlangt.',
     tokenLabel: 'Token',

@@ -38,22 +38,100 @@ export const setApiToken = (token) => {
   }
 };
 
+// The session token of a logged-in user (AUTH_MODE=multi, see
+// docs/identity.md). A separate key from the operator token above because they
+// are separate things: one is a shared credential the operator pastes in, the
+// other is issued by the backend to this browser and revoked on logout. When a
+// session exists it wins, so a browser that once held an operator token does
+// not keep presenting it after somebody logs in.
+const SESSION_KEY = 'agents_hub_session_token';
+
+export const getSessionToken = () => {
+  try {
+    return window.localStorage.getItem(SESSION_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
+export const setSessionToken = (token) => {
+  try {
+    if (token) window.localStorage.setItem(SESSION_KEY, token);
+    else window.localStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Privacy mode or no localStorage: nothing to persist.
+  }
+};
+
+/**
+ * Whichever credential this browser currently has, session first.
+ *
+ * Exported because the SSE stream cannot ride the axios instance: EventSource
+ * opens its own connection and cannot set headers, so `StreamContext` has to
+ * put this in the query string itself.
+ */
+export const getAuthToken = () => getSessionToken() || getApiToken();
+const activeToken = getAuthToken;
+
 // Headers a fetch() call outside the `api` instance needs to authenticate.
 // Every streaming endpoint below opens its own fetch (a long-lived response
 // body axios cannot hand back incrementally), so each has to attach this
 // itself rather than riding the interceptor below.
 const authFetchHeaders = () => {
-  const token = getApiToken();
+  const token = activeToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 api.interceptors.request.use((config) => {
-  const token = getApiToken();
+  const token = activeToken();
   if (token) {
     config.headers = { ...config.headers, Authorization: `Bearer ${token}` };
   }
   return config;
 });
+
+// A 401 means the session this browser holds is gone: expired, logged out
+// elsewhere, or revoked with a password reset. Drop it and send the app back
+// to the login screen, rather than leaving every page showing its own error.
+// Only sessions are handled here: an operator token that stops working is a
+// configuration problem the Settings page reports, not a login to redo, and
+// the auth routes themselves answer 401 as part of their normal contract.
+const LOGIN_PATH = '/login';
+const isAuthRoute = (url = '') => String(url).includes('/auth/');
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    if (status === 401 && getSessionToken() && !isAuthRoute(error?.config?.url)) {
+      setSessionToken('');
+      if (window.location.pathname !== LOGIN_PATH) {
+        window.location.assign(LOGIN_PATH);
+      }
+    }
+    return Promise.reject(error);
+  },
+);
+
+// Identity API (see docs/identity.md and dashboard/backend/routes/auth.py).
+// `getAuthMode` is public in every mode and is what the frontend renders from.
+export const getAuthMode = () => api.get('/auth/mode');
+export const authBootstrap = (data) => api.post('/auth/bootstrap', data);
+export const authLogin = (data) => api.post('/auth/login', data);
+export const authLogout = () => api.post('/auth/logout');
+export const getMe = () => api.get('/auth/me');
+export const getUsers = () => api.get('/auth/users');
+export const createUser = (data) => api.post('/auth/users', data);
+export const updateUser = (id, data) => api.patch(`/auth/users/${id}`, data);
+export const deleteUser = (id) => api.delete(`/auth/users/${id}`);
+export const resetUserPassword = (id, password) =>
+  api.post(`/auth/users/${id}/password`, { password });
+
+// Workspace membership: who may read, write or administer one workspace.
+export const getWorkspaceMembers = (name) => api.get(`/workspaces/${name}/members`);
+export const setWorkspaceMember = (name, data) => api.put(`/workspaces/${name}/members`, data);
+export const removeWorkspaceMember = (name, userId) =>
+  api.delete(`/workspaces/${name}/members/${userId}`);
 
 // System health snapshot: DB reachability + store counts, background-service
 // liveness, on-disk state sizes, and agent build-cache hit/miss stats.
@@ -494,6 +572,11 @@ export const getSession = (sessionId) => api.get(`/sessions/${sessionId}`);
 export const getSessionMessages = (sessionId) => api.get(`/sessions/${sessionId}/messages`);
 export const stopSession = (sessionId) => api.post(`/sessions/${sessionId}/stop`);
 export const deleteSession = (sessionId, params) => api.delete(`/sessions/${sessionId}`, { params });
+
+// Run groups API — one view over flow/loop/team runs and task containers.
+export const listRunGroups = (params) => api.get('/runs/groups', { params });
+export const getRunGroup = (kind, id) => api.get(`/runs/groups/${kind}/${id}`);
+export const stopRunGroup = (kind, id) => api.post(`/runs/groups/${kind}/${id}/stop`);
 
 // Instances API — the live copies of agents. A run is what a copy did; an
 // instance is the copy itself, and unlike a run it can still be written to

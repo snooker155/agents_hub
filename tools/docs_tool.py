@@ -24,12 +24,13 @@ from __future__ import annotations
 import json
 import re
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from common.paths import PROJECT_ROOT
+from tools._json import json_err, json_ok
 
 DOCS_DIR = PROJECT_ROOT / "docs"
 INDEX_FILE = DOCS_DIR / "index.json"
@@ -47,16 +48,10 @@ _STOPWORDS = frozenset({
 })
 
 
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request",
-              extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+# Shared JSON envelope (tools/_json.py); kept under these names here since this
+# module's tools were already calling them.
+_json_ok = json_ok
+_json_err = json_err
 
 
 @lru_cache(maxsize=1)

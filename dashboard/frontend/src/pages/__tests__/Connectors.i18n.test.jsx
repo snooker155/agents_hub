@@ -4,6 +4,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import Connectors from '../Connectors';
 import { I18nProvider } from '../../i18n';
+import { StreamContext } from '../../components/stream';
+
+// Telegram and Blender follow live `X.changed` events instead of polling
+// (see useLiveRefetch), which needs a stream context above them; this test
+// only renders their static shape, so a stream that never delivers anything
+// is enough.
+const silentStream = { connected: true, on: () => () => {}, acquireChannel: () => () => {}, onRefetch: () => () => {} };
 
 // Telegram, Git and Blender used to be tabs on the Settings page, and this is
 // the coverage that came with them: every tab, in every language, rendering its
@@ -41,7 +48,9 @@ const TABS = ['Telegram', 'GitHub', 'Blender'];
 
 function show() {
   return render(
-    <I18nProvider><MemoryRouter><Connectors /></MemoryRouter></I18nProvider>,
+    <StreamContext.Provider value={silentStream}>
+      <I18nProvider><MemoryRouter><Connectors /></MemoryRouter></I18nProvider>
+    </StreamContext.Provider>,
   );
 }
 

@@ -386,11 +386,19 @@ def test_sync_leaves_operator_fields_alone(seeded_system_agent):
 def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
     """Safety outranks preservation. Merging a local grant with the seed can
     form a blocked capability combination — reading private data alongside web
-    access is the case this exists for. The seed wins and the extra is dropped."""
+    access is the case this exists for. The seed wins and the extra is dropped.
+
+    Uses swe_agent rather than researcher_agent: researcher_agent's seed now
+    carries ``capability_override`` (its own tools read private data and it
+    delegates to the web searcher, a reviewed, deliberate combination — see
+    agents/definitions/researcher_agent/capabilities.md), which would skip the
+    very check this test is pinning down. swe_agent has no override and reads
+    private data (read_file, list_files, search_text) the same way."""
     from common.bootstrap import _sync_system_agents
     from tools.capabilities import check_combination
 
-    seed = next(a for a in _seed_system_agents() if a["id"] == "researcher_agent")
+    seed = next(a for a in _seed_system_agents() if a["id"] == "swe_agent")
+    assert not seed.get("capability_override"), "precondition: this agent is not overridden"
     live = dict(seed)
     live["tools"] = list(seed["tools"]) + ["web_search", "fetch_url"]
     assert check_combination(live["tools"]).blocking, "precondition: the merge is blocked"
@@ -398,7 +406,7 @@ def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
 
     _sync_system_agents()
 
-    after = _read_registry()["researcher_agent"]["tools"]
+    after = _read_registry()["swe_agent"]["tools"]
     assert set(after) == set(seed["tools"])
     assert check_combination(after) is None or not check_combination(after).blocking
 

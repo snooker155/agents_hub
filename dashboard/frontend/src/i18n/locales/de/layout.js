@@ -60,6 +60,7 @@ export default {
     registry: 'Registry',
     sessions: 'Sitzungen',
     sessionDetails: 'Sitzungsdetails',
+    runGroups: 'Laufgruppen',
     messages: 'Läufe',
     messageDetails: 'Laufdetails',
     nodes: 'Knoten',

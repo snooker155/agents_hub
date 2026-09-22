@@ -175,38 +175,58 @@ def run_git_publish(
     if proj is None:
         return _err(f"No project found matching {project!r}", code="not_found")
 
-    provider_name = str(getattr(proj.repo.type, "value", proj.repo.type) or "")
-    if provider_name not in ("github", "gitlab"):
-        return _err(
-            f"Project {proj.name!r} is not connected to a GitHub or GitLab repo "
-            "(git_publish only knows how to open a pull/merge request on those two)",
-            code="unsupported_repo",
-        )
-
     repo_dir = _repo_dir(proj)
     if repo_dir is None or not repo_dir.exists():
         return _err(f"Repo directory not found for project {proj.name!r}. Clone it first.", code="not_found")
 
-    remote_id = proj.repo.remote_id
-    if not remote_id:
-        origin = git_ops.remote_url(repo_dir)
-        remote_id = remote_id_from_url(origin) if origin else None
-    if not remote_id:
-        return _err(
-            "Could not determine the owner/repo for this project's remote. "
-            "Connect it to a repo through the Projects page first",
-            code="unresolved_remote",
-        )
+    provider_name = str(getattr(proj.repo.type, "value", proj.repo.type) or "")
+    has_provider = provider_name in ("github", "gitlab")
 
-    try:
-        provider = get_provider(provider_name)
-    except GitProviderError as e:
-        return _err(str(e), code="provider_error")
+    # A GitHub/GitLab project opens a pull/merge request, so it needs the
+    # remote resolved to an owner/repo and a working provider client before
+    # anything touches the working tree. Anything else (a plain git remote,
+    # bitbucket, a repo attached with no provider at all) still gets to push:
+    # it just cannot ask a provider API to open a request afterwards, so the
+    # reduced path below only ever commits and pushes.
+    provider = None
+    remote_id = None
+    repo_default: Optional[str] = None
+    remote_url = git_ops.remote_url(repo_dir)
 
-    try:
-        repo_default = provider.default_branch(remote_id)
-    except GitProviderError as e:
-        return _err(str(e), code="provider_error")
+    if has_provider:
+        remote_id = proj.repo.remote_id
+        if not remote_id:
+            remote_id = remote_id_from_url(remote_url) if remote_url else None
+        if not remote_id:
+            return _err(
+                "Could not determine the owner/repo for this project's remote. "
+                "Connect it to a repo through the Projects page first",
+                code="unresolved_remote",
+            )
+        try:
+            provider = get_provider(provider_name)
+        except GitProviderError as e:
+            return _err(str(e), code="provider_error")
+        try:
+            repo_default = provider.default_branch(remote_id)
+        except GitProviderError as e:
+            return _err(str(e), code="provider_error")
+    else:
+        if not remote_url:
+            return _err(
+                f"Project {proj.name!r} has no git remote to push to. Attach one "
+                "through the Projects page first",
+                code="no_remote",
+            )
+        # No provider to ask for the repo's default branch, so the branch
+        # that happens to be checked out when the publish starts stands in for
+        # it: refusing to reuse it as the new branch's name is the same
+        # protection in spirit (never push straight onto the branch a review
+        # would otherwise gate), just without a provider call to confirm it.
+        try:
+            repo_default = git_ops.current_branch(repo_dir) or None
+        except GitOpsError:
+            repo_default = None
 
     target_base = (base or "").strip() or repo_default
     task_ctx = _current_task_context()
@@ -215,13 +235,13 @@ def run_git_publish(
     # Branch protection: a publish always goes through its own branch. Checked
     # before anything touches the repo, so a bad request never leaves a
     # half-made branch/commit behind.
-    if branch_name == repo_default:
+    if repo_default and branch_name == repo_default:
         return _err(
             f"Refusing to push to the repo's default branch ({repo_default!r}). "
             "Publish through a branch, not directly onto it.",
             code="branch_protection",
         )
-    if branch_name == target_base:
+    if has_provider and branch_name == target_base:
         return _err(
             f"Refusing to open a pull/merge request from {branch_name!r} onto itself.",
             code="branch_protection",
@@ -230,9 +250,20 @@ def run_git_publish(
     try:
         git_ops.create_branch(repo_dir, branch_name)
         commit_sha = git_ops.commit_all(repo_dir, title)
-        git_ops.push(repo_dir, branch_name, provider=provider_name)
+        git_ops.push(repo_dir, branch_name, provider=provider_name if has_provider else None)
     except GitOpsError as e:
         return _err(str(e), code="git_error")
+
+    if not has_provider:
+        # The reduced path: no provider configured, so there is nothing left
+        # to do but report what actually happened. ``open_pr`` is not
+        # consulted here — there is no provider to ask, regardless of what
+        # the caller wanted.
+        record_entity("project", proj.id, "updated", proj.name)
+        return _ok({
+            "branch": branch_name, "commit": commit_sha, "pushed": True,
+            "remote": remote_url, "pull_request": None, "pr_url": None,
+        })
 
     result: Dict[str, Any] = {
         "branch": branch_name, "commit": commit_sha, "pushed": True, "pr_url": None,
@@ -288,13 +319,20 @@ def git_publish(
 ) -> str:
     """Commit the project's working tree, push a branch, and open a pull/merge request.
 
-    This is the only tool that sends workspace content to GitHub or GitLab. It
-    never force pushes, and it never pushes to the repo's default branch: a
-    change always lands on its own branch (agent/<task>-<slug> unless you name
-    one), so whatever review already protects the default branch still applies.
-    A small denylist (.env, *.pem, id_rsa*, plus anything the repo's own
-    .gitignore already excludes) is never staged, even if it falls inside the
-    change. Refuses outright when there is nothing to commit.
+    This is the only tool that sends workspace content to GitHub, GitLab or a
+    plain git remote. It never force pushes, and it never pushes to the repo's
+    default branch: a change always lands on its own branch
+    (agent/<task>-<slug> unless you name one), so whatever review already
+    protects the default branch still applies. A small denylist (.env,
+    *.pem, id_rsa*, plus anything the repo's own .gitignore already excludes)
+    is never staged, even if it falls inside the change. Refuses outright when
+    there is nothing to commit.
+
+    When the project has no GitHub/GitLab provider configured, this commits
+    and pushes the branch to the remote and stops there: no pull/merge
+    request is possible without a provider, so `body`, `base`, `draft` and
+    `open_pr` are ignored and the result carries `pushed`, `branch` and
+    `remote` instead of a PR/MR url.
 
     Leave `body` empty to have it built from the task you are working on: its
     title, description and result so far. Or write your own summary.

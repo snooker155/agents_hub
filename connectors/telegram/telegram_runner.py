@@ -23,6 +23,7 @@ from typing import Any, Optional
 import httpx
 
 from agents import registry
+from common.session_broker import notify_change
 from connectors.telegram import telegram_store
 
 
@@ -374,6 +375,7 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
             conversation_id=binding.get("conversation_id") or str(uuid.uuid4()),
             title=_chat_title(message),
         )
+        notify_change("telegram", chat_id=chat_id)
         await _send_text(
             api, chat_id,
             f"Bound to agent `{args}` in workspace `{workspace}`. Send a message to start.",
@@ -443,6 +445,7 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
             conversation_id=binding.get("conversation_id") or str(uuid.uuid4()),
             title=_chat_title(message),
         )
+        notify_change("telegram", chat_id=chat_id)
         await _send_text(
             api, chat_id,
             f"Bound to flow `{match.get('name') or match['id']}` in workspace `{workspace}`. "
@@ -673,6 +676,7 @@ async def _run_agent_for_telegram(
             workspace=workspace,
             conversation_id=conv_id, title=binding.get("title"),
         )
+        notify_change("telegram", chat_id=chat_id)
 
     # Telegram has no client-side transcript to send, so rebuild the prior turns
     # from this conversation's completed runs — otherwise every message would run

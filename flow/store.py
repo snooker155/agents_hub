@@ -415,13 +415,24 @@ def _read_pair(flow_id: str) -> Optional[Dict[str, Any]]:
 
 # ── public API ───────────────────────────────────────────────────────────────
 
-def list_flows() -> List[Dict[str, Any]]:
-    """Return all flows as combined dicts (logic+visual merged)."""
+def list_flows(limit: Optional[int] = None, offset: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Return flows as combined dicts (logic+visual merged), file-name order.
+
+    ``limit``/``offset`` page the file list *before* anything is read off disk:
+    each flow is a YAML+JSON pair, so a page of N flows costs N parses rather
+    than "parse the whole catalog, then slice". With neither given, every flow
+    is returned, exactly as before. See :func:`count_flows` for the matching
+    total that does not parse anything either.
+    """
     _migrate_legacy_if_needed()
     if not FLOWS_DIR.exists():
         return []
+    paths = sorted(FLOWS_DIR.glob("*.yaml"))
+    if limit is not None or offset is not None:
+        start = offset or 0
+        paths = paths[start: start + limit] if limit is not None else paths[start:]
     out: List[Dict[str, Any]] = []
-    for yp in sorted(FLOWS_DIR.glob("*.yaml")):
+    for yp in paths:
         try:
             flow = _read_pair(yp.stem)
         except FlowParseError as e:
@@ -432,6 +443,15 @@ def list_flows() -> List[Dict[str, Any]]:
         if flow:
             out.append(flow)
     return out
+
+
+def count_flows() -> int:
+    """Total number of flows on disk, for a caller paging with
+    :func:`list_flows` that needs ``total`` without parsing every file."""
+    _migrate_legacy_if_needed()
+    if not FLOWS_DIR.exists():
+        return 0
+    return sum(1 for _ in FLOWS_DIR.glob("*.yaml"))
 
 
 def get_flow(flow_id: str) -> Optional[Dict[str, Any]]:

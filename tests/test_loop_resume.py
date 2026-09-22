@@ -180,6 +180,92 @@ def test_a_finished_run_is_not_resumable():
         resume_loop_run(run.loop_run_id)
 
 
+# ── resuming a run a person stopped ─────────────────────────────────────────
+# A "stopped" run has a valid position (it stopped between iterations, not
+# mid-one), so it is resumable: only "completed" has nothing left to do.
+
+def test_a_stopped_run_is_resumable_and_continues_from_its_position(
+    monkeypatch, stub_flow
+):
+    loop, flow = _seed_loop(max_iterations=4, target_score=None, patience=0)
+    monkeypatch.setattr("flow.store.get_flow", lambda fid: flow)
+    stub_flow([10, 20, 30, 40])
+
+    run = run_loop(loop.loop_id, goal="write it")
+    # Simulate a user stop applied after two iterations completed: same shape
+    # of row a real stop leaves (see loops.store.request_stop / run_loop's
+    # LoopStopped("stopped", ...) handling), built directly here since
+    # stub_flow's fake flow does not itself expose should_stop.
+    stopped = store.get_run(run.loop_run_id)
+    stopped.status = "stopped"
+    stopped.stop_reason = "stopped"
+    stopped.position = {**stopped.position, "iterations_done": 2}
+    store.save_run(stopped)
+
+    resumed = resume_loop_run(run.loop_run_id)
+    assert resumed.status == "completed"
+    assert resumed.stop_reason == "max_iterations"  # the stop is cleared, not carried over
+
+
+def test_resuming_a_stopped_run_clears_the_stop_reason_before_it_runs(
+    monkeypatch, stub_flow
+):
+    """Regardless of how the resumed run ends, it must not still be carrying
+    the old stop's status/stop_reason once run_loop has taken over."""
+    loop, flow = _seed_loop(max_iterations=2, target_score=None, patience=0)
+    monkeypatch.setattr("flow.store.get_flow", lambda fid: flow)
+    stub_flow([10, 20])
+
+    run = store.save_run(LoopRun(
+        loop_id=loop.loop_id, status="stopped", stop_reason="stopped",
+        position={"iterations_done": 1},
+    ))
+    resumed = resume_loop_run(run.loop_run_id)
+    assert resumed.status in ("completed", "failed")  # it actually ran, not refused
+    assert resumed.stop_reason != "stopped"
+
+
+def test_resuming_a_stopped_run_is_recorded_as_a_resume_from_a_stop(
+    monkeypatch, stub_flow
+):
+    """The run's activity trail (the loop_resume event, and the server log)
+    says this resume followed a stop, distinct from a plain crash recovery."""
+    loop, flow = _seed_loop(max_iterations=2, target_score=None, patience=0)
+    monkeypatch.setattr("flow.store.get_flow", lambda fid: flow)
+    stub_flow([10, 20])
+
+    events: list = []
+    monkeypatch.setattr(runner, "_publish", lambda _id, event: events.append(event))
+
+    run = store.save_run(LoopRun(
+        loop_id=loop.loop_id, status="stopped", stop_reason="stopped",
+        position={"iterations_done": 1},
+    ))
+    resume_loop_run(run.loop_run_id)
+
+    resume_events = [e for e in events if e.get("type") == "loop_resume"]
+    assert resume_events, "expected a loop_resume event"
+    assert resume_events[0]["resumed_from_status"] == "stopped"
+
+
+def test_precheck_resumable_allows_stopped_and_refuses_only_completed():
+    import sys
+    from pathlib import Path
+
+    backend = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from routes.loops import _precheck_resumable
+    from loops.runner import LoopResumeError as RouteLoopResumeError
+
+    stopped_run = LoopRun(loop_id="l", status="stopped", position={"iterations_done": 1})
+    _precheck_resumable(stopped_run)  # does not raise
+
+    completed_run = LoopRun(loop_id="l", status="completed", position={"iterations_done": 1})
+    with pytest.raises(RouteLoopResumeError, match="already finished"):
+        _precheck_resumable(completed_run)
+
+
 def test_an_automatic_resume_counts_itself(monkeypatch, stub_flow):
     """The watchdog's cap needs a counter that survives the process that set it."""
     loop, flow = _seed_loop(max_iterations=3, target_score=None, patience=0)

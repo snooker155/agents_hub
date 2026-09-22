@@ -84,16 +84,11 @@ def _publish(team_run_id: str, event: Dict[str, Any]) -> None:
 
 
 def _turn_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
-    try:
-        from common.pricing import load_price_map, run_cost_usd
-        return round(run_cost_usd(
-            {"provider": provider, "model": model,
-             "process": {"token_usage": {"inbound_tokens": inbound,
-                                         "outbound_tokens": outbound}}},
-            load_price_map(),
-        ), 6)
-    except Exception:
-        return 0.0
+    """Priced from token counts, before the member's run record exists.
+    Delegates to managers.runs.groups.turn_cost, the one place that turns a
+    (provider, model, tokens) triple into a catalog price."""
+    from managers.runs.groups import turn_cost
+    return turn_cost(provider, model, inbound, outbound)
 
 
 # ── One agent's turn ─────────────────────────────────────────────────────────

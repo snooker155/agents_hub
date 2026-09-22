@@ -5,6 +5,7 @@ import {
   RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
+import { TOKEN, useAuth } from '../components/auth';
 import {
   getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides,
   getWorkspacePolicy, updateWorkspacePolicy,
@@ -366,6 +367,7 @@ function CustomBackendsTab() {
 
 function ApiAccessTab() {
   const { t } = useI18n();
+  const { mode } = useAuth();
   const [token, setToken] = useState(() => getApiToken());
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -405,6 +407,24 @@ function ApiAccessTab() {
       <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-500">
         {t('settings.apiAccess.intro')}
       </div>
+      {/* The posture the backend is actually running in. Read-only on purpose:
+          the mode is a deployment decision, not a setting a signed-in user can
+          flip out from under everybody else. */}
+      <SectionCard title={t('settings.apiAccess.modeTitle')}>
+        <p className="text-sm text-gray-700">
+          <span className="font-semibold">{t(`settings.apiAccess.modes.${mode}.name`)}</span>
+          {': '}
+          {t(`settings.apiAccess.modes.${mode}.summary`)}
+        </p>
+        <p className="text-sm text-gray-600">{t('settings.apiAccess.modeExplainer')}</p>
+        <p className="text-sm text-gray-600">
+          {t('settings.apiAccess.modeWhereBefore')} <code className="bg-gray-100 rounded px-1">AUTH_MODE</code>{' '}
+          {t('settings.apiAccess.modeWhereAfter')}
+        </p>
+      </SectionCard>
+      {/* The browser's own copy of the shared token. Only `token` mode uses
+          one: `single` needs no credential and `multi` issues a session. */}
+      {mode === TOKEN && (
       <SectionCard title={t('settings.apiAccess.title')}>
         <div>
           <label className="text-sm font-medium text-gray-700">{t('settings.apiAccess.tokenLabel')}</label>
@@ -433,6 +453,7 @@ function ApiAccessTab() {
           )}
         </div>
       </SectionCard>
+      )}
       <SectionCard title={t('settings.apiAccess.serverTitle')}>
         <p className="text-sm text-gray-600">
           {t('settings.apiAccess.serverHintBefore')} <code className="bg-gray-100 rounded px-1">AGENTS_HUB_API_TOKEN</code>{' '}
@@ -1252,7 +1273,7 @@ export default function Settings() {
                   <div className="pt-4 border-t border-gray-100">
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <label className="text-sm font-medium text-gray-700">{t('settings.hooks')}</label>
-                      <Link to="/docs/tools" className="text-xs text-indigo-600 hover:text-indigo-800">
+                      <Link to="/docs/hooks" className="text-xs text-indigo-600 hover:text-indigo-800">
                         {t('settings.hooksDocsLink')}
                       </Link>
                     </div>

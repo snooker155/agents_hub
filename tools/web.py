@@ -18,16 +18,17 @@ both tools grant ``ingests_untrusted`` and ``fetch_url`` also grants
 """
 from __future__ import annotations
 
-import ipaddress
 import json
 import logging
 import re
-import socket
+import socket  # noqa: F401  (kept so tests can monkeypatch web.socket.getaddrinfo)
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+
+from common.ssrf import resolve_and_check
 
 log = logging.getLogger(__name__)
 
@@ -61,45 +62,11 @@ def wrap_untrusted(source: str, body: str) -> str:
 
 _BLOCKED_SCHEMES_MSG = "only http:// and https:// URLs may be fetched"
 
-
-def _is_public_ip(ip_str: str) -> bool:
-    """True only for globally-routable addresses.
-
-    Everything else — loopback, private ranges, link-local (including the cloud
-    metadata endpoint at 169.254.169.254), multicast, reserved — is refused.
-    """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
-        return False
-    return not (
-        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
-        or ip.is_reserved or ip.is_unspecified
-    )
-
-
-def resolve_and_check(host: str) -> Tuple[bool, str]:
-    """Resolve ``host`` and require *every* address it maps to be public.
-
-    Checking every answer, not just the first, closes the DNS-rebinding gap
-    where a name resolves to one public and one private address.
-    """
-    if not host:
-        return False, "URL has no host"
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror as e:
-        return False, f"could not resolve host {host!r}: {e}"
-    addrs = {info[4][0] for info in infos}
-    if not addrs:
-        return False, f"could not resolve host {host!r}"
-    for addr in addrs:
-        if not _is_public_ip(addr):
-            return False, (
-                f"host {host!r} resolves to non-public address {addr} — "
-                "internal, loopback and link-local targets are blocked"
-            )
-    return True, ""
+# The check itself (is_public_address / resolve_and_check) used to be defined
+# here; it now lives in common/ssrf.py, shared with projects.proxy_service
+# (the project backend proxy, which needs the identical check), and
+# resolve_and_check is imported above under its original name so every
+# existing caller and test in this module is unaffected.
 
 
 # ── Domain policy ─────────────────────────────────────────────────────────────

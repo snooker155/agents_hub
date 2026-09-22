@@ -31,7 +31,16 @@ log = logging.getLogger(__name__)
 # Where the list lives inside a workspace's ``settings`` dict.
 MCP_SETTINGS_KEY = "mcp_servers"
 
-TRANSPORTS = ("stdio", "streamable_http", "sse")
+TRANSPORTS = ("stdio", "streamable_http", "sse", "websocket")
+
+# The URL schemes each non-stdio transport can actually be reached on. Used by
+# :func:`validate_url` to catch a pasted http:// URL on a websocket server (or
+# the reverse) at save time rather than at the next agent build.
+_URL_SCHEMES: Dict[str, tuple] = {
+    "streamable_http": ("http", "https"),
+    "sse": ("http", "https"),
+    "websocket": ("ws", "wss"),
+}
 
 # Substrings that make a header or env *name* a credential. Matched on the name
 # rather than the value: a value that happens to look like a token is not one,
@@ -70,6 +79,27 @@ def validate_id(server_id: str) -> str:
             "tool in mcp__<server>__<tool>)."
         )
     return sid
+
+
+def validate_url(transport: str, url: str) -> None:
+    """Raise if a non-stdio transport's URL cannot possibly work with it.
+
+    An empty URL is left alone: connecting already refuses a missing URL with
+    a clearer message than this could give, and there is a moment (a new
+    server, half filled in) where that is the honest state. This only catches
+    a URL that is present but of the wrong kind, such as an ``http://`` pasted
+    where a websocket transport wants ``ws://``.
+    """
+    schemes = _URL_SCHEMES.get(str(transport or ""))
+    text = str(url or "").strip()
+    if not schemes or not text:
+        return
+    from urllib.parse import urlparse
+
+    scheme = urlparse(text).scheme.lower()
+    if scheme not in schemes:
+        wanted = " or ".join(f"{s}://" for s in schemes)
+        raise ValueError(f"A {transport} server's URL must start with {wanted}")
 
 
 def is_secret_name(name: str) -> bool:
@@ -216,6 +246,7 @@ def _save(workspace: str, records: List[Dict[str, Any]]) -> None:
 def create_server(workspace: str, data: Dict[str, Any]) -> Dict[str, Any]:
     """Add a server to this workspace. The id must be free and well formed."""
     record = _normalize({**(data or {}), "id": validate_id((data or {}).get("id"))})
+    validate_url(record["transport"], record["url"])
     records = list_servers(workspace)
     if any(r["id"] == record["id"] for r in records):
         raise ValueError(f"An MCP server with id '{record['id']}' already exists here")
@@ -245,7 +276,9 @@ def update_server(workspace: str, server_id: str, changes: Dict[str, Any]) -> Op
                 merged[key] = _unmask_map(value, current.get(key))
             else:
                 merged[key] = value
-        records[index] = _normalize(merged)
+        normalized = _normalize(merged)
+        validate_url(normalized["transport"], normalized["url"])
+        records[index] = normalized
         _save(workspace, records)
         return records[index]
     return None
@@ -374,4 +407,5 @@ __all__ = [
     "unmask_secrets",
     "update_server",
     "validate_id",
+    "validate_url",
 ]

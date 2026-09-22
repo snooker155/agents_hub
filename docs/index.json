@@ -8,6 +8,7 @@
       "summary": "An agent is a definition, not a process: a prompt, a set of tools, a model, and optionally memory. Running it produces a [run](sessions-and-runs.md).",
       "surface": "Agents",
       "related": [
+        "a2a",
         "chat",
         "imported-agents",
         "instances",
@@ -78,11 +79,12 @@
       "surface": "Connections",
       "summary": "An agent that already runs in production, on its own triggers, reporting what it does into this hub. The hub starts nothing and only watches.",
       "related": [
-        "imported-agents",
-        "sessions-and-runs",
-        "costs",
+        "a2a",
         "agents",
-        "connectors"
+        "connectors",
+        "costs",
+        "imported-agents",
+        "sessions-and-runs"
       ],
       "headings": [
         "Where it lives",
@@ -201,6 +203,7 @@
         "workspaces"
       ],
       "headings": [
+        "In the dashboard",
         "Hooks",
         "The approval gate",
         "What stays advisory"
@@ -212,12 +215,13 @@
       "surface": "Agents",
       "summary": "An agent that already exists, already works and has its own dependencies does not need rebuilding here. Import it from its git repository: the hub clones it, checks whether it can run, and adds it to the agent list either way.",
       "related": [
+        "a2a",
         "agents",
-        "marketplace",
+        "connections",
         "containers",
-        "tools-and-capabilities",
         "flows",
-        "connections"
+        "marketplace",
+        "tools-and-capabilities"
       ],
       "headings": [
         "Where it runs",
@@ -225,6 +229,7 @@
         "The shape of an agent",
         "Pausing to ask",
         "The import flow",
+        "Importing an A2A agent",
         "What you give up",
         "Gotchas"
       ]
@@ -320,6 +325,7 @@
         "workspaces"
       ],
       "headings": [
+        "In the dashboard",
         "Attaching one",
         "The id scheme",
         "Capabilities",
@@ -518,10 +524,11 @@
       "summary": "Credentials and connection details. What models are offered and which is default lives on the [models](models.md) page, not here.",
       "surface": "Settings",
       "related": [
+        "connectors",
+        "identity",
         "models",
         "service-health",
-        "workspaces",
-        "connectors"
+        "workspaces"
       ],
       "headings": [
         "What is here",
@@ -706,6 +713,7 @@
         "agents",
         "cli",
         "costs",
+        "identity",
         "memory",
         "projects"
       ],
@@ -735,6 +743,69 @@
         "Inbound: signing and idempotency",
         "Filing a task from outside",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "scaling",
+      "title": "Running more than one backend",
+      "surface": "Installation",
+      "summary": "docker compose --scale backend=N needs the cross-replica broker bridge (AGENTS_HUB_BROKER_URL) or SSE clients pinned to another replica stop seeing live updates; the default single replica needs none of this.",
+      "related": [
+        "installation",
+        "service-health",
+        "sessions-and-runs",
+        "notifications",
+        "scheduling"
+      ],
+      "headings": [
+        "Per replica vs. shared",
+        "The broker bridge",
+        "Running it",
+        "Limits",
+        "Staying on one replica (the default)"
+      ]
+    },
+    {
+      "id": "identity",
+      "title": "Identity",
+      "summary": "Who is using this hub and what they may do. Three modes set with `AUTH_MODE`: a single operator (the default, no login at all), a shared API token, or named users with passwords, roles and per-workspace membership.",
+      "surface": "Settings",
+      "related": [
+        "settings",
+        "workspaces",
+        "installation",
+        "service-health"
+      ],
+      "headings": [
+        "The three modes",
+        "First run in multi mode",
+        "Roles and what each may do",
+        "What a record remembers",
+        "The service credential",
+        "How passwords and sessions are stored",
+        "Picking a mode",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "a2a",
+      "title": "A2A (Agent2Agent)",
+      "surface": "Agents",
+      "summary": "A2A is the open protocol for one agent to call another across products: a JSON Agent Card at a well-known URL, and JSON-RPC 2.0 over HTTP. The hub speaks it both ways, serving a card for every agent and importing an agent from nothing but its card URL.",
+      "related": [
+        "imported-agents",
+        "agents",
+        "connections",
+        "tasks",
+        "sessions-and-runs"
+      ],
+      "headings": [
+        "Agent cards",
+        "The JSON-RPC endpoint",
+        "Streaming",
+        "State mapping",
+        "Importing an A2A agent",
+        "What is not implemented"
       ]
     }
   ]

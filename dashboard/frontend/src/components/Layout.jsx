@@ -4,10 +4,13 @@ import { useWorkspace } from './workspace';
 import { useTheme } from './theme';
 import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
+import { MULTI, isAdmin, useAuth } from './auth';
 import { getWorkspaces, getWorkspaceModel, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import {
   LayoutDashboard,
   CheckSquare,
+  LogOut,
+  UserCog,
   Folder,
   Database,
   Factory,
@@ -50,6 +53,7 @@ import {
   Share2,
   Link2,
   Plug,
+  Layers,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -84,6 +88,7 @@ const Layout = ({ children }) => {
   // Optional features the backend reports at /api/health; a feature that is
   // switched off has no sidebar row and no route (see App.jsx).
   const { playground: playgroundEnabled } = useFeatures();
+  const auth = useAuth();
   const { t } = useI18n();
   const [workspaces, setWorkspaces] = useState([]);
   // workspaceModel: full model state returned by GET /api/workspaces/{name}/model
@@ -295,6 +300,7 @@ const Layout = ({ children }) => {
         { name: t('nav.tasks'), path: '/tasks', icon: CheckSquare },
         { name: t('nav.plan'), path: '/plan', icon: CalendarClock },
         { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle },
+        { name: t('nav.runGroups'), path: '/run-groups', icon: Layers },
         { name: t('nav.messages'), path: '/messages', icon: ScrollText },
         { name: t('nav.views'), path: '/views', icon: Images },
         { name: t('nav.studio'), path: '/studio', icon: Shapes },
@@ -356,7 +362,10 @@ const Layout = ({ children }) => {
         { name: t('nav.costs'), path: '/costs', icon: DollarSign },
         { name: t('nav.docs'), path: '/docs', icon: BookOpen },
         { name: t('nav.settings'), path: '/settings', icon: Settings },
-      ],
+        // Accounts exist only under AUTH_MODE=multi, and only an administrator
+        // manages them. In the single-operator modes there is nothing to show.
+        isAdmin(auth) && { name: t('nav.users'), path: '/users', icon: UserCog },
+      ].filter(Boolean),
     },
   ];
 
@@ -587,9 +596,28 @@ const Layout = ({ children }) => {
             </button>
             {/* Interface language */}
             <LanguageSwitcher />
-            <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs">
-              JD
-            </div>
+            {/* Who is signed in, and the way out. Only under AUTH_MODE=multi:
+                in the single-operator modes there is nobody to be signed in
+                as and nothing to sign out of. */}
+            {auth.mode === MULTI && auth.user && (
+              <div className="flex items-center gap-2">
+                <span
+                  title={auth.user.username}
+                  className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs uppercase"
+                >
+                  {String(auth.user.username || '?').slice(0, 2)}
+                </span>
+                <button
+                  type="button"
+                  onClick={auth.logout}
+                  title={t('auth.logout')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>{t('auth.logout')}</span>
+                </button>
+              </div>
+            )}
           </div>
         </header>
         <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>

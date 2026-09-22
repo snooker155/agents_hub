@@ -152,7 +152,7 @@ def publish(
         base=base, draft=draft, open_pr=open_pr,
     )
     if not result.get("ok"):
-        status = 404 if result.get("code") in ("not_found", "unresolved_remote") else 400
+        status = 404 if result.get("code") in ("not_found", "unresolved_remote", "no_remote") else 400
         raise ServiceError(status, result.get("error"))
     return result
 

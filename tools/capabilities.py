@@ -525,6 +525,7 @@ def _walk_delegation_graph(
     *,
     resolve_agent_tools,
     depth: int,
+    root_delegates: Optional[Sequence[str]] = None,
 ) -> tuple:
     """Shared traversal behind ``effective_capabilities`` / ``effective_capability_sources``.
 
@@ -536,6 +537,19 @@ def _walk_delegation_graph(
 
     Breadth-first, cycle-safe (a ``visited`` set seeded with ``agent_id``) and
     depth-limited (at most ``depth`` delegation hops from the root).
+
+    ``root_delegates``: the reachability of every hop is normally resolved
+    from the registry (``_delegation_targets`` -> ``_delegates_of`` ->
+    ``agents.registry.get_agent``), which is exactly right for an agent
+    already on disk. It is wrong for the root of a save-time check: the spec
+    being validated (a brand-new agent, or an existing one with its
+    ``delegates`` field being changed) is not the one the registry would
+    return yet, so a lookup there sees either nothing or the stale prior
+    value, not the allowlist actually being saved. Pass the spec's own
+    ``delegates`` here to resolve the *first* hop from it instead of the
+    registry; every later hop (an already-persisted agent) still goes through
+    the registry as usual. ``None`` (the default) leaves the root on the
+    registry lookup too, unchanged from before this parameter existed.
     """
     tools = list(tools or [])
     caps: Set[str] = set(capabilities_of(tools))
@@ -543,6 +557,12 @@ def _walk_delegation_graph(
 
     if not any(t in DELEGATING_TOOLS for t in tools):
         return caps, sources
+
+    def _targets_of(aid: str) -> List[str]:
+        if aid == agent_id and root_delegates is not None:
+            allow = list(root_delegates)
+            return allow if allow else _all_agent_ids()
+        return _delegation_targets(aid)
 
     visited: Set[str] = {agent_id}
     frontier: List[tuple] = [(agent_id, tools, "")]
@@ -554,7 +574,7 @@ def _walk_delegation_graph(
             delegating_tool = next((t for t in atools if t in DELEGATING_TOOLS), None)
             if delegating_tool is None:
                 continue
-            for target_id in _delegation_targets(aid):
+            for target_id in _targets_of(aid):
                 if target_id in visited:
                     continue
                 visited.add(target_id)
@@ -579,6 +599,7 @@ def effective_capabilities(
     *,
     resolve_agent_tools,
     depth: int = 4,
+    root_delegates: Optional[Sequence[str]] = None,
 ) -> Set[str]:
     """The capabilities this agent's tool set grants, directly or by delegation.
 
@@ -600,8 +621,14 @@ def effective_capabilities(
     ``agents.registry.get_agent(id).tools`` with a lazy import, so this module
     stays import-cycle-free and unit-testable with a fake resolver. The walk
     is cycle-safe and stops after ``depth`` delegation hops (default 4).
+
+    ``root_delegates``, when given, resolves the root's own reachability
+    instead of a registry lookup — see ``_walk_delegation_graph``.
     """
-    caps, _ = _walk_delegation_graph(agent_id, tools, resolve_agent_tools=resolve_agent_tools, depth=depth)
+    caps, _ = _walk_delegation_graph(
+        agent_id, tools, resolve_agent_tools=resolve_agent_tools, depth=depth,
+        root_delegates=root_delegates,
+    )
     return caps
 
 
@@ -611,6 +638,7 @@ def effective_capability_sources(
     *,
     resolve_agent_tools,
     depth: int = 4,
+    root_delegates: Optional[Sequence[str]] = None,
 ) -> Dict[str, List[str]]:
     """``effective_capabilities``, but with each capability's source path.
 
@@ -619,8 +647,13 @@ def effective_capability_sources(
     labelled ``"via <delegating tool> -> <agent id>: <tool ids>"`` (chained
     with ``" -> "`` across multiple hops), so a :class:`Violation` can point at
     the actual path instead of just the fact that it exists.
+
+    ``root_delegates``: see ``_walk_delegation_graph``.
     """
-    _, sources = _walk_delegation_graph(agent_id, tools, resolve_agent_tools=resolve_agent_tools, depth=depth)
+    _, sources = _walk_delegation_graph(
+        agent_id, tools, resolve_agent_tools=resolve_agent_tools, depth=depth,
+        root_delegates=root_delegates,
+    )
     return sources
 
 

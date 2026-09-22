@@ -84,6 +84,42 @@ def test_the_total_budget_drops_the_oldest_turns():
     assert 0 < len(messages) < 20
 
 
+def test_a_known_model_is_bounded_by_its_own_window_not_the_flat_budget(monkeypatch):
+    """A large-window model must not be truncated at the size of a small one:
+    that was the whole bug (see chat/compaction.py, chat/pipelines.py)."""
+    monkeypatch.setattr("providers.context_windows.get_model_context_window",
+                        lambda provider, model: 2_000_000)
+    messages = build_history_messages(
+        _history(*[("user", "y" * 4000) for _ in range(20)]),
+        provider="anthropic", model="claude-huge",
+    )
+    total = sum(len(m.content) for m in messages)
+    assert total > HISTORY_CHAR_BUDGET
+    assert len(messages) == 20
+
+
+def test_an_unknown_model_still_falls_back_to_the_flat_budget(monkeypatch):
+    monkeypatch.setattr("providers.context_windows.get_model_context_window",
+                        lambda provider, model: 0)
+    messages = build_history_messages(
+        _history(*[("user", "y" * 4000) for _ in range(20)]),
+        provider="ollama", model="something-local",
+    )
+    total = sum(len(m.content) for m in messages)
+    assert total <= HISTORY_CHAR_BUDGET
+
+
+def test_budget_chars_infinity_defers_the_cut_entirely():
+    """This is how chat.pipelines / chat.send feed compact_for_turn: the flat
+    cut is skipped so compaction sees the full conversation and can fold it
+    into a summary instead of it being silently dropped first."""
+    messages = build_history_messages(
+        _history(*[("user", "y" * 4000) for _ in range(20)]),
+        budget_chars=float("inf"),
+    )
+    assert len(messages) == 20
+
+
 def test_the_messages_are_exactly_the_turns_the_lines_were():
     """Both renderings share one bound, so nothing changed about what is sent —
     only how it is carried."""

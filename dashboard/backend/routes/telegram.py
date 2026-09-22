@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agents import registry
+from common.session_broker import notify_change
 from connectors.telegram.telegram_runner import TelegramAPI, service as tg_service
 from connectors.telegram import telegram_store
 from workspace import get_workspace_folder
@@ -161,6 +162,7 @@ async def update_config(data: TelegramConfigUpdate):
     else:
         await tg_service.stop()
 
+    notify_change("telegram")
     return TelegramConfigResponse(
         enabled=telegram_store.is_enabled(),
         has_token=telegram_store.has_token(),
@@ -223,6 +225,7 @@ async def create_binding(data: BindingCreate):
         conversation_id=existing.get("conversation_id") or str(uuid.uuid4()),
         title=data.title or existing.get("title"),
     )
+    notify_change("telegram", chat_id=data.chat_id)
     return BindingResponse(**_enriched_binding(binding))
 
 
@@ -231,6 +234,7 @@ async def delete_binding(chat_id: int):
     removed = telegram_store.remove_binding(chat_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Binding not found")
+    notify_change("telegram", chat_id=chat_id)
     return {"ok": True}
 
 

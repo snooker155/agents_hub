@@ -83,16 +83,22 @@ HISTORY_CHAR_BUDGET = 60_000
 _ROLE_LABELS = {"user": "User", "assistant": "Assistant"}
 
 
-def bounded_history(history: list) -> list[tuple[str, str]]:
+def bounded_history(history: list, *, budget_chars: float | None = None) -> list[tuple[str, str]]:
     """The tail of a conversation that fits the prompt bounds, oldest first.
 
     Returns ``(role, content)`` pairs with ``role`` one of ``user`` /
-    ``assistant``. One definition behind both renderings — text lines and
-    structured messages — so a turn that reaches the model as a message is
+    ``assistant``. One definition behind both renderings, text lines and
+    structured messages, so a turn that reaches the model as a message is
     exactly the turn that used to reach it as a line, truncation included.
+
+    ``budget_chars`` overrides the flat :data:`HISTORY_CHAR_BUDGET` (the
+    default, used when it is None). A caller that folds oversized history
+    itself, such as ``chat.compaction``, passes ``float('inf')`` here to skip
+    this cut entirely and let its own budget decide what survives; the
+    per-message and per-turn-count caps below still apply either way.
     """
     turns: list[tuple[str, str]] = []
-    budget = HISTORY_CHAR_BUDGET
+    budget = HISTORY_CHAR_BUDGET if budget_chars is None else budget_chars
     for msg in reversed(history[-HISTORY_MAX_MESSAGES:]):
         role = "user" if str(msg.role) == "user" else "assistant"
         content = str(msg.content or "")
@@ -108,7 +114,28 @@ def bounded_history(history: list) -> list[tuple[str, str]]:
     return turns
 
 
-def build_history_lines(history: list) -> list[str]:
+def _history_budget(provider: str, model: str, budget_chars: float | None) -> float | None:
+    """Resolve the bound for :func:`bounded_history` from either an explicit
+    override or a known (provider, model) pair.
+
+    An explicit ``budget_chars`` wins outright (it is how a caller opts out of
+    the cut entirely with ``float('inf')``). Otherwise, when a provider or
+    model is given, the bound is that model's own share of its context window
+    (``chat.compaction.history_budget_chars``, the same number compaction
+    folds against) rather than the flat fallback, so a large-window model is
+    not truncated at the size of a small one. With neither, None defers to
+    :data:`HISTORY_CHAR_BUDGET` inside ``bounded_history``.
+    """
+    if budget_chars is not None:
+        return budget_chars
+    if not provider and not model:
+        return None
+    from chat.compaction import history_budget_chars
+    return history_budget_chars(provider, model)
+
+
+def build_history_lines(history: list, *, provider: str = "", model: str = "",
+                        budget_chars: float | None = None) -> list[str]:
     """Bounded conversation history as ``Role: content`` lines (oldest first).
 
     The text rendering, kept for the prompts that are not built for a
@@ -116,10 +143,13 @@ def build_history_lines(history: list) -> list[str]:
     the flow nodes' text blocks. Agent chat sends
     :func:`build_history_messages` instead.
     """
-    return [f"{_ROLE_LABELS[role]}: {content}" for role, content in bounded_history(history)]
+    budget = _history_budget(provider, model, budget_chars)
+    return [f"{_ROLE_LABELS[role]}: {content}"
+            for role, content in bounded_history(history, budget_chars=budget)]
 
 
-def build_history_messages(history: list) -> list:
+def build_history_messages(history: list, *, provider: str = "", model: str = "",
+                           budget_chars: float | None = None) -> list:
     """Bounded conversation history as LangChain messages (oldest first).
 
     ``HumanMessage`` / ``AIMessage`` only: a tool call belongs to the run that
@@ -128,11 +158,17 @@ def build_history_messages(history: list) -> list:
     ``chat_history`` placeholder, which is what lets the model read the
     conversation as a conversation and lets a provider prompt cache recognise
     the prefix it saw last turn.
+
+    ``provider``/``model`` size the bound to that model's real context window
+    instead of the flat fallback; ``budget_chars`` overrides both (a chat
+    pipeline that runs compaction on this same list passes ``float('inf')`` so
+    compaction, not this flat cut, decides what survives).
     """
     from langchain_core.messages import AIMessage, HumanMessage
+    budget = _history_budget(provider, model, budget_chars)
     return [
         HumanMessage(content=content) if role == "user" else AIMessage(content=content)
-        for role, content in bounded_history(history)
+        for role, content in bounded_history(history, budget_chars=budget)
     ]
 
 

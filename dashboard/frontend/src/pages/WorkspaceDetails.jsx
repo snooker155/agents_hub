@@ -6,6 +6,7 @@ import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgen
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow } from 'lucide-react';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
+import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -1080,6 +1081,11 @@ const WorkspaceDetails = () => {
           </div>
         </div>
       )}
+
+      {/* Who may reach this workspace. Renders nothing outside AUTH_MODE=multi,
+          and nothing for a viewer who is neither an owner of it nor an admin.
+          See components/workspace/WorkspaceMembers.jsx. */}
+      {activeTab === 'agents' && <WorkspaceMembers workspace={name} />}
 
       {activeTab === 'instructions' && (
         <div className="bg-white p-6 shadow-md rounded-lg">
