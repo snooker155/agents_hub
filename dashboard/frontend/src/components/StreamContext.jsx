@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { StreamContext } from './stream';
-import { API_ORIGIN, getApiToken } from '../api';
+import { API_ORIGIN, getAuthToken } from '../api';
 
 /*
  * Single multiplexed SSE connection for the whole dashboard.
@@ -25,7 +25,7 @@ import { API_ORIGIN, getApiToken } from '../api';
 
 function postChannels(clientId, add, remove) {
   if (!clientId) return;
-  const token = getApiToken();
+  const token = getAuthToken();
   fetch(`${API_ORIGIN}/api/stream/${clientId}/channels`, {
     method: 'POST',
     headers: {
@@ -97,13 +97,15 @@ export function StreamProvider({ children }) {
 
     const connect = () => {
       if (closed) return;
-      // EventSource cannot set request headers, so an operator token (when
-      // configured, see common/auth.py) has to travel as a query parameter —
-      // the one form the backend's auth guard accepts besides a header. The
-      // same limitation is why the last event id travels as `since` rather
-      // than a real Last-Event-ID header: only the browser's own silent retry
-      // can set that, and this provider replaces the connection itself instead.
-      const token = getApiToken();
+      // EventSource cannot set request headers, so whichever credential this
+      // browser holds — a user's session under AUTH_MODE=multi, otherwise the
+      // operator token when one is configured — has to travel as a query
+      // parameter, the one form the backend's auth guard accepts besides a
+      // header. The same limitation is why the last event id travels as
+      // `since` rather than a real Last-Event-ID header: only the browser's
+      // own silent retry can set that, and this provider replaces the
+      // connection itself instead.
+      const token = getAuthToken();
       const params = [];
       if (token) params.push(`token=${encodeURIComponent(token)}`);
       if (clientIdRef.current) params.push(`client=${encodeURIComponent(clientIdRef.current)}`);

@@ -210,15 +210,23 @@ def _seed_workspace_metadata(name: str, attached_path: Optional[str] = None) -> 
     ``attached_path`` records where an attached workspace points, so the API can
     report it without a filesystem round trip.
     """
+    from common.identity import claim_workspace, current_user_id
+
     _migrate_legacy_metadata()
     if name in _load_all_metadata() and attached_path is None:
         return
+    seeded = False
     with FileLock(_WORKSPACES_META_LOCK):
         all_meta = _load_all_metadata()
         if name not in all_meta:
             all_meta[name] = {
                 "name": name,
                 "created_at": str(uuid.uuid4()),  # Placeholder for actual time if needed
+                # Who created it. ``local`` outside AUTH_MODE=multi, where there
+                # is exactly one operator and an owner would be a fiction; a
+                # user id under multi, where it decides who may configure or
+                # delete the workspace. See common/identity.py.
+                "owner": current_user_id(),
                 "allowed_agents": list(system_agent_ids()),
                 "env_vars": {},
                 "settings": {},
@@ -226,9 +234,20 @@ def _seed_workspace_metadata(name: str, attached_path: Optional[str] = None) -> 
             default_chat = _default_chat_agent_id()
             if default_chat:
                 all_meta[name]["default_chat_agent"] = default_chat
+            seeded = True
         if attached_path is not None:
             all_meta[name]["attached_path"] = attached_path
         _save_all_metadata(all_meta)
+    # Outside the file lock: the membership row is a database write, and the
+    # creator has to become an ``owner`` member or they could not reach the
+    # workspace they just made. A no-op in every mode but multi.
+    if seeded:
+        try:
+            claim_workspace(name)
+        except Exception:
+            # A workspace that exists but has no membership row is recoverable
+            # (an admin can add one); a create that fails because of it is not.
+            pass
 
 
 def attach_workspace_folder(target: Path | str, name: Optional[str] = None) -> Path:

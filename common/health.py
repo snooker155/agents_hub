@@ -111,7 +111,20 @@ def _providers() -> Dict[str, Any]:
         "anthropic_key_set": bool(settings.anthropic_api_key),
         "google_key_set": bool(settings.google_api_key),
         "api_auth_enabled": bool(settings.api_token),
+        # The posture in force, resolved (a configured token alone still means
+        # token mode). Reported so a configuration problem can be read off the
+        # health snapshot rather than inferred from a 401. See docs/identity.md.
+        "auth_mode": _auth_mode(),
     }
+
+
+def _auth_mode() -> str:
+    """The effective AUTH_MODE, or "unknown" if identity cannot be imported."""
+    try:
+        from common.identity import current_mode
+        return current_mode()
+    except Exception:
+        return "unknown"
 
 
 def _blender() -> Dict[str, Any]:

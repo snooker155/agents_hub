@@ -74,15 +74,27 @@ def _doc_to_task(doc: str) -> Optional[Task]:
     return None
 
 
+def _creating_user_id() -> str:
+    """Who is filing the task being created right now.
+
+    Lazy import: the identity module reads the settings and opens the database,
+    and this store is imported by agent subprocesses that only read tasks.
+    """
+    from common.identity import current_user_id
+    return current_user_id()
+
+
 def _write_task_row(conn, task: Task) -> None:
     d = _model_to_dict(task)
     conn.execute(
         "INSERT OR REPLACE INTO tasks (id, key, parent_id, status, workspace, "
-        "project_id, created_at, updated_at, doc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "project_id, created_by_user, created_at, updated_at, doc) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (str(task.id), task.key,
          str(task.parent_id) if task.parent_id else None,
          str(d.get("status") or ""), task.workspace,
          str(task.project_id) if task.project_id else None,
+         task.created_by_user or "local",
          task.created_at.isoformat() if task.created_at else "",
          task.updated_at.isoformat() if task.updated_at else "",
          _task_doc(task)),
@@ -245,6 +257,9 @@ class TaskStore:
                 title=title,
                 description=description,
                 created_by=created_by,
+                # Read off the contextvar the auth middleware sets, so no
+                # caller of create_task has to learn about identity.
+                created_by_user=_creating_user_id(),
                 parent_id=parent_id,
                 sequence_id=sequence_id,
                 order=order,

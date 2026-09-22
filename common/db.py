@@ -169,6 +169,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     status     TEXT,
     workspace  TEXT,
     project_id TEXT,
+    -- Who filed it, under AUTH_MODE=multi; 'local' in the single-operator
+    -- modes. `created_by` in the doc says what *kind* of actor did (a person,
+    -- the orchestrator, an external system); this says which user.
+    created_by_user TEXT,
     created_at TEXT,
     updated_at TEXT,
     doc        TEXT NOT NULL
@@ -587,6 +591,7 @@ CREATE TABLE IF NOT EXISTS chats (
     team_id       TEXT,
     target_mode   TEXT,
     origin        TEXT,       -- NULL/web for the dashboard, "telegram" for a bound thread
+    owner         TEXT,       -- the user it belongs to; 'local' outside AUTH_MODE=multi
     message_count INTEGER DEFAULT 0,
     created_at    TEXT,
     updated_at    TEXT,
@@ -594,6 +599,51 @@ CREATE TABLE IF NOT EXISTS chats (
 );
 CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chats_ws      ON chats(workspace, updated_at DESC);
+
+-- Identity (AUTH_MODE=multi only; see common/identity.py and docs/identity.md).
+-- These tables exist in every database and stay empty in the other two modes,
+-- which is what keeps "switch the mode in .env and restart" a complete answer:
+-- no migration step stands between single-operator and multi-user.
+--
+-- The password is never stored, only a PBKDF2-HMAC-SHA256 digest of it with a
+-- per-user salt. The iteration count is a column, not a constant, so raising
+-- the cost later re-hashes on next login instead of invalidating every
+-- password at once.
+CREATE TABLE IF NOT EXISTS users (
+    user_id       TEXT PRIMARY KEY,
+    username      TEXT NOT NULL,
+    display_name  TEXT,
+    role          TEXT NOT NULL DEFAULT 'member',  -- admin | member
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    password_iterations INTEGER NOT NULL,
+    disabled      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT,
+    updated_at    TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+-- One row per logged-in browser. The token itself is never stored: the row is
+-- keyed by its SHA-256, so a stolen database hands over no usable session.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash   TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    created_at   TEXT,
+    expires_at   TEXT,
+    last_seen_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+
+-- Who may do what inside one workspace. Absence of a row means no access at
+-- all (admins excepted), so this table is the whole membership answer.
+CREATE TABLE IF NOT EXISTS workspace_members (
+    workspace  TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    role       TEXT NOT NULL DEFAULT 'viewer',  -- viewer | editor | owner
+    created_at TEXT,
+    PRIMARY KEY (workspace, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
 """
 
 
@@ -617,7 +667,10 @@ def _connect() -> sqlite3.Connection:
 # version bump).
 #   2 — the `flow_runs` table, and the import of flow_runs.json into it.
 #   3 — the `agent_versions` table (registry definition history).
-SCHEMA_VERSION = 3
+#   4 — `tasks.created_by_user` and `chats.owner`, the owner fields identity
+#       (AUTH_MODE) writes. The users/auth_sessions/workspace_members tables
+#       beside them are plain CREATE TABLE IF NOT EXISTS and need no version.
+SCHEMA_VERSION = 4
 
 # Columns added to a table *after* it first shipped. ``_SCHEMA`` only ever runs
 # CREATE TABLE IF NOT EXISTS, so a new column in the CREATE body reaches fresh
@@ -644,6 +697,13 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     # Repeats/variance: which attempt (1-based) a result is, within its
     # (case, config) pair. Pre-existing rows are all attempt 1.
     "eval_results": {"attempt": "INTEGER"},
+    # Who created the record, under AUTH_MODE=multi. Columns rather than keys
+    # in `doc`, because the lists are filtered by them. Everything that existed
+    # before identity shipped was created by the single local operator, and the
+    # backfill below says exactly that instead of leaving a NULL that reads as
+    # "unknown".
+    "tasks": {"created_by_user": "TEXT"},
+    "chats": {"owner": "TEXT"},
 }
 
 # Statements that fill a freshly added column from data already in the row.
@@ -660,6 +720,12 @@ _ADDED_COLUMN_BACKFILL: dict[str, list[str]] = {
     ],
     "eval_results": [
         "UPDATE eval_results SET attempt = 1 WHERE attempt IS NULL",
+    ],
+    "tasks": [
+        "UPDATE tasks SET created_by_user = 'local' WHERE created_by_user IS NULL",
+    ],
+    "chats": [
+        "UPDATE chats SET owner = 'local' WHERE owner IS NULL",
     ],
 }
 

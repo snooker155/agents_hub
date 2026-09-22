@@ -1,7 +1,7 @@
 """
 Workspace-related API routes.
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from typing import List, Optional
 from pathlib import Path
@@ -32,6 +32,22 @@ from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, Works
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+def _visible_to_caller(request, roots: List[Path]) -> List[Path]:
+    """Filter a workspace listing down to what the caller may see.
+
+    Only ``multi`` filters: in ``single`` and ``token`` mode there is one
+    operator and every workspace is theirs.
+    """
+    from common import identity
+    if identity.current_mode() != "multi":
+        return roots
+    principal = identity.request_principal(request)
+    if principal is None or principal.is_admin:
+        return roots
+    allowed = set(identity.workspaces_for_user(principal.id))
+    return [p for p in roots if p.name in allowed]
 
 
 def _is_safe_workspace_name(name: str) -> bool:
@@ -127,7 +143,7 @@ def _calc_task_progress(task, all_tasks):
 
 
 @router.get("", response_model=List[WorkspaceListItem])
-async def list_workspaces():
+async def list_workspaces(request: Request):
     roots = list_workspace_folders()
     if not roots:
         # Create default workspace if none exists
@@ -136,6 +152,11 @@ async def list_workspaces():
             roots = [p]
         except Exception:
             pass
+
+    # Under AUTH_MODE=multi a user sees the workspaces they are a member of and
+    # nothing else; an admin sees all of them. A no-op in the single-operator
+    # modes, where there is nobody to hide anything from. See common/identity.py.
+    roots = _visible_to_caller(request, roots)
 
     all_tasks = tasks_service.list_tasks()
     items = []

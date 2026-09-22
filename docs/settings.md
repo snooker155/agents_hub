@@ -25,9 +25,18 @@ global setting.
 
 ## API auth
 
+`AUTH_MODE` in `.env` picks one of three postures: `single` (the default, one
+operator and no login at all), `token` (one shared secret gates every request),
+or `multi` (named accounts with passwords, roles and per-workspace
+membership). The API access tab shows which one is in force. [identity](identity.md)
+explains all three, how to pick one, and the first-run bootstrap under `multi`.
+The rest of this section is the `token` mode.
+
 The service's own API can be closed to callers that do not present a token.
 This is off by default, unlike a provider key: nothing here checks it until the
-operator turns it on.
+operator turns it on. Setting `AGENTS_HUB_API_TOKEN` is enough on its own:
+with `AUTH_MODE` unset it resolves to `token` mode, which is what it has always
+done.
 
 - **Server side.** Set `AGENTS_HUB_API_TOKEN` in `.env` and restart the
   backend. Once set, every `/api` request must present it, as an

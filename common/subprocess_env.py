@@ -39,6 +39,14 @@ def base_subprocess_env(workspace_name: str) -> Dict[str, str]:
     # would get a 401. Set it explicitly, the same way as OPENAI_API_KEY above.
     if settings.api_token:
         env["AGENTS_HUB_API_TOKEN"] = settings.api_token
+    # AUTH_MODE=multi with no shared token: a subprocess has no session and no
+    # password, so it cannot authenticate as a user at all. The backend mints
+    # one random service credential per process and hands it down here; it acts
+    # as admin for the relay POSTs and dies with the process that issued it.
+    # See common/identity.py, "the service credential".
+    from common.identity import SERVICE_TOKEN_ENV, current_mode, service_token
+    if current_mode() == "multi" and not settings.api_token:
+        env[SERVICE_TOKEN_ENV] = service_token()
     return env
 
 

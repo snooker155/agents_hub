@@ -37,6 +37,15 @@ from typing import Any, Dict, List, Optional
 
 from common import db
 
+
+def _current_user_id() -> str:
+    """Owner for a newly stored conversation. Imported lazily: the identity
+    module reads the settings, and this store is imported by processes that
+    only ever read chats."""
+    from common.identity import current_user_id
+    return current_user_id()
+
+
 #: How many bubbles one chat keeps. Beyond this the oldest are dropped, which is
 #: what the browser store did to whole conversations once the quota was hit.
 MAX_MESSAGES = 2000
@@ -52,7 +61,7 @@ _HEAVY_MSG_FIELDS = ("tool_calls", "files", "view", "timeline", "thinking_live",
 
 #: Fields the client owns and the row mirrors into columns.
 _COLUMNS = ("title", "workspace", "project_id", "agent_id", "flow_id",
-            "team_id", "target_mode", "origin")
+            "team_id", "target_mode", "origin", "owner")
 
 
 def _now() -> str:
@@ -162,6 +171,12 @@ def save_chat(chat: Dict[str, Any]) -> Dict[str, Any]:
         doc = _fit({
             **chat,
             "id": chat_id,
+            # Who the conversation belongs to. Taken from the request in
+            # flight rather than from the client, which must not be able to
+            # claim someone else's chat, and never rewritten once set: a
+            # client that re-saves a conversation is not changing its owner.
+            # ``local`` outside AUTH_MODE=multi. See common/identity.py.
+            "owner": ((existing or {}).get("owner") or _current_user_id()),
             "created_at": (chat.get("created_at")
                            or (existing or {}).get("created_at") or _now()),
             "updated_at": _now(),
@@ -169,8 +184,8 @@ def save_chat(chat: Dict[str, Any]) -> Dict[str, Any]:
         conn.execute(
             "INSERT OR REPLACE INTO chats "
             "(chat_id, title, workspace, project_id, agent_id, flow_id, team_id,"
-            " target_mode, origin, message_count, created_at, updated_at, doc) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " target_mode, origin, owner, message_count, created_at, updated_at, doc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (chat_id, *[doc.get(c) for c in _COLUMNS], len(_messages(doc)),
              doc.get("created_at"), doc.get("updated_at"), db.dumps(doc)),
         )
