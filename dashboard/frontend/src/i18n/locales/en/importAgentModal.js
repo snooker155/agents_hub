@@ -25,4 +25,6 @@ export default {
   workedExampleAfter: ', and is walked through under Docs → Importing agents.',
   cancel: 'Cancel',
   httpsGithubComOwnerMy: 'https://github.com/owner/my-agent  (or an absolute local path)',
+  sourceUrl: 'Repository or agent card URL',
+  sourceUrlHint: 'A repository URL, or the URL of an A2A agent card (ending in /.well-known/agent-card.json). A card needs no clone: the hub reads the agent\u2019s endpoint and skills from it.',
 };

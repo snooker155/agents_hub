@@ -1,7 +1,54 @@
 import ImportedAgentPanel from '../ImportedAgentPanel';
-import { Activity, Clock, Database, Globe, Lock, MessageSquare, Wrench } from 'lucide-react';
+import { Activity, Check, Clock, Copy, Database, Globe, Lock, MessageSquare, Share2, Wrench } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { API_ORIGIN } from '../../api';
 import { useAgentPage } from './context';
+
+/**
+ * The agent's own A2A card, for pointing an outside client at it.
+ *
+ * Shown for every agent, not only imported ones: the hub serves a card for each
+ * of them, and this link is the whole setup an external Agent2Agent client
+ * needs. The URL is same-origin by default because that is where the dashboard
+ * itself reaches the API from.
+ */
+function A2ACardLink({ agentId, t }) {
+  const [copied, setCopied] = useState(false);
+  const base = API_ORIGIN || window.location.origin;
+  const url = `${base}/api/a2a/agents/${agentId}/.well-known/agent-card.json`;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard access can be refused; the URL is on screen either way.
+    }
+  };
+
+  return (
+    <div className="mt-5 pt-4 border-t border-gray-100">
+      <div className="flex items-center gap-2 mb-1">
+        <Share2 className="w-3.5 h-3.5 text-indigo-500" />
+        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">
+          {t('agentDetails.a2aCard')}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <a href={url} target="_blank" rel="noreferrer"
+          className="text-xs text-indigo-600 hover:text-indigo-800 break-all">{url}</a>
+        <button type="button" onClick={copy}
+          className="text-xs text-gray-500 hover:text-indigo-600 border border-gray-200 rounded px-2 py-0.5 flex items-center gap-1 flex-shrink-0">
+          {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+          {copied ? t('agentDetails.copied') : t('agentDetails.copy')}
+        </button>
+      </div>
+      <p className="text-xs text-gray-500 mt-1 leading-relaxed">{t('agentDetails.a2aCardHint')}</p>
+    </div>
+  );
+}
 
 /** Everything this agent is, at a glance: readiness, description, sharing, and what it can reach. */
 export default function OverviewTab() {
@@ -100,6 +147,7 @@ export default function OverviewTab() {
                 </div>
               )}
             </div>
+            <A2ACardLink agentId={agent.id} t={t} />
           </div>
 
           {/* ── Marketplace publishing ── */}

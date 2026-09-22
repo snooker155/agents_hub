@@ -1375,3 +1375,163 @@ def test_a_pause_is_reported_even_when_nobody_is_streaming(stub_agent_service):
     assert result.status == "awaiting_input"
     assert result.pending_question["choices"] == ["approve", "reject"]
     assert result.pending_question["key"] == "i-7"
+
+
+# ── importing an A2A agent from its card ────────────────────────────────────
+
+class _CardHandler(BaseHTTPRequestHandler):
+    """A stand-in for an agent that speaks A2A: it serves a card and JSON-RPC."""
+
+    card = {
+        "protocolVersion": "0.3.0",
+        "name": "Researcher",
+        "description": "Answers research questions.",
+        "version": "3",
+        "capabilities": {"streaming": True},
+        "skills": [{"id": "research", "name": "Research", "tags": ["web"]},
+                   {"id": "summarise", "name": "Summarise", "tags": []}],
+    }
+    status = 200
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        if self.path.rstrip("/").endswith((".well-known/agent-card.json", ".well-known/agent.json")):
+            card = dict(type(self).card)
+            # The card's own url is what the hub posts to, so it has to name
+            # this very server rather than a placeholder.
+            card.setdefault("url", f"http://127.0.0.1:{self.server.server_port}")
+            self._send(type(self).status, card)
+            return
+        self._send(404, {"error": "not found"})
+
+    def _send(self, status, payload):
+        raw = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+
+@pytest.fixture
+def stub_card_service():
+    """Serves an A2A agent card; yields its card URL."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _CardHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield (f"http://127.0.0.1:{server.server_port}/.well-known/agent-card.json",
+               f"http://127.0.0.1:{server.server_port}", _CardHandler)
+    finally:
+        server.shutdown()
+        server.server_close()
+        _CardHandler.status = 200
+
+
+def test_a_card_url_is_told_apart_from_a_repository():
+    from agents.importer import a2a_import
+
+    assert a2a_import.is_card_url("https://x.dev/.well-known/agent-card.json") is True
+    assert a2a_import.is_card_url("https://x.dev/.well-known/agent.json") is True
+    assert a2a_import.is_card_url("https://github.com/owner/repo") is False
+    assert a2a_import.is_card_url("/tmp/local/repo") is False
+
+
+def test_a_manifest_may_declare_the_a2a_runtime(tmp_path):
+    """A repository is still allowed to declare A2A: the agent is running
+    elsewhere and the manifest simply names its endpoint."""
+    (tmp_path / "agent-hub.json").write_text(json.dumps({
+        "schema": "agents-hub/agent-manifest@1",
+        "id": "remote-a2a", "name": "Remote A2A",
+        "runtime": {"kind": "a2a", "url": "https://agent.example.com/rpc",
+                    "card_url": "https://agent.example.com/.well-known/agent-card.json"},
+    }))
+    manifest = parse_manifest(tmp_path)
+    assert manifest.problems == []
+    assert manifest.runtime_kind == "a2a"
+    assert manifest.card_url.endswith("agent-card.json")
+
+
+def test_inspecting_a_card_url_clones_nothing(stub_card_service):
+    card_url, endpoint, _ = stub_card_service
+
+    inspected = import_service.inspect(card_url)
+
+    assert inspected["token"] == "", "there is nothing staged to promote or discard"
+    assert inspected["manifest"]["runtime_kind"] == "a2a"
+    assert inspected["manifest"]["url"] == endpoint
+    assert inspected["suggested"]["id"] == "researcher"
+    assert inspected["card"]["skills"] == ["research", "summarise"]
+    assert inspected["report"]["runnable"] is True
+    ids = {c["id"] for c in inspected["report"]["checks"]}
+    # No repository and nothing to package: the card answers both questions.
+    assert "card" in ids and "repo" not in ids and "packaging" not in ids
+
+
+def test_registering_from_a_card_stores_the_a2a_descriptor(stub_card_service):
+    card_url, endpoint, _ = stub_card_service
+
+    import_service.register("", repo_url=card_url, agent_id="researcher")
+
+    spec = registry.get_agent("researcher")
+    assert spec.is_remote()
+    assert spec.remote["kind"] == "a2a"
+    assert spec.remote["url"] == endpoint
+    assert spec.remote["card_url"] == card_url
+    # Copied off the card so a run need not fetch it again to find out.
+    assert spec.remote["streaming"] is True
+    assert spec.remote["manifest"]["tools"] == ["research", "summarise"]
+
+
+def test_an_a2a_import_builds_a_remote_agent_that_speaks_a2a(stub_card_service):
+    from agents.agent_factory import create_agent
+
+    card_url, endpoint, _ = stub_card_service
+    import_service.register("", repo_url=card_url, agent_id="researcher")
+
+    agent = create_agent("researcher")
+    assert isinstance(agent, RemoteAgent)
+    assert agent.is_a2a is True
+    # One endpoint, every method: there is no path to append.
+    assert agent.run_url == endpoint
+    assert agent.supports_resume is True
+
+
+def test_a_card_that_cannot_be_read_is_an_import_error(stub_card_service):
+    card_url, _, handler = stub_card_service
+    handler.status = 503
+
+    with pytest.raises(import_service.ImportError_) as err:
+        import_service.inspect(card_url)
+    assert "503" in str(err.value)
+
+
+def test_rechecking_an_a2a_agent_re_reads_its_card(stub_card_service):
+    card_url, _, handler = stub_card_service
+    import_service.register("", repo_url=card_url, agent_id="researcher")
+
+    handler.card = {**_CardHandler.card, "capabilities": {"streaming": False}}
+    try:
+        result = import_service.recheck("researcher")
+    finally:
+        handler.card = {**_CardHandler.card, "capabilities": {"streaming": True}}
+
+    assert result["runnable"] is True
+    assert registry.get_agent("researcher").remote["streaming"] is False
+
+
+def test_the_import_api_accepts_a_card_url(api_client, stub_card_service):
+    card_url, endpoint, _ = stub_card_service
+
+    inspected = api_client.post("/api/agent-import/inspect", json={"repo_url": card_url}).json()
+    assert inspected["report"]["runnable"] is True
+
+    registered = api_client.post("/api/agent-import/register", json={
+        "token": inspected["token"],
+        "repo_url": card_url,
+        "agent_id": inspected["suggested"]["id"],
+    }).json()
+    assert registered["runnable"] is True
+    assert registered["agent"]["remote"]["kind"] == "a2a"

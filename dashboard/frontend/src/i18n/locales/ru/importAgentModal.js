@@ -25,4 +25,6 @@ export default {
   workedExampleAfter: ', он разобран в разделе «Документация → Импорт агентов».',
   cancel: 'Отмена',
   httpsGithubComOwnerMy: 'https://github.com/owner/my-agent  (или абсолютный локальный путь)',
+  sourceUrl: 'URL репозитория или карточки агента',
+  sourceUrlHint: 'URL репозитория или URL карточки агента A2A (заканчивается на /.well-known/agent-card.json). Карточке не нужен клон: хаб читает из неё адрес агента и его навыки.',
 };

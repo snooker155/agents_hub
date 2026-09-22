@@ -76,6 +76,23 @@ Streaming is used only when both halves are present: the remote declared the
 endpoint *and* something on this side is listening. Otherwise the single-shot
 POST runs, which is one round trip and is all the contract requires.
 
+A remote may instead speak **A2A** (the Agent2Agent protocol). Its descriptor
+then carries ``kind: "a2a"`` and its ``url`` is a JSON-RPC endpoint rather than a
+base with paths under it::
+
+    POST <url>    {"jsonrpc": "2.0", "method": "message/send",
+                   "params": {"message": {"role": "user", "parts": [...]},
+                              "configuration": {"blocking": true},
+                              "metadata": {"run_id": ..., "workspace": ...}}}
+    ->  {"jsonrpc": "2.0", "result": {Task}}
+
+Only the wire format differs: the Task's artifacts become the run's output, its
+``input-required`` state becomes ``awaiting_input`` (and the answer is sent as a
+second message on the same ``taskId``), and ``message/stream``'s events become
+the same ``token``/``done`` frames everything downstream already renders. The
+translation is in :mod:`a2a.client`, kept pure so it is tested against recorded
+JSON; this class only carries it over HTTP.
+
 Two limits remain, and they follow from the process boundary:
 
 * Without a ``usage`` frame there is no token or cost accounting. LangChain
@@ -303,6 +320,11 @@ class _StreamState:
         self._emitter = emitter
         self._usage_sinks = usage_sinks
         self.translator = FrameTranslator()
+        # An A2A stream ends with the answer as an artifact, separately from
+        # the tokens that already showed it. It is kept here rather than
+        # emitted so the chat does not print the reply twice, and used as the
+        # output when the closing frame carries none.
+        self.artifact_text = ""
 
     @property
     def text_parts(self) -> List[str]:
@@ -394,7 +416,16 @@ class RemoteAgent(AgentBase):
         return normalize_base_url(self.remote.get("url") or "")
 
     @property
+    def is_a2a(self) -> bool:
+        """Whether this remote speaks A2A rather than the hub's own contract."""
+        return str(self.remote.get("kind") or "").strip().lower() == "a2a"
+
+    @property
     def run_url(self) -> str:
+        if self.is_a2a:
+            # One endpoint, every method: A2A puts the verb in the JSON-RPC
+            # body, so there is no path to append.
+            return self.base_url_remote
         path = self.remote.get("run_path") or DEFAULT_RUN_PATH
         return f"{self.base_url_remote}{path if path.startswith('/') else '/' + path}"
 
@@ -405,6 +436,8 @@ class RemoteAgent(AgentBase):
 
     @property
     def stream_url(self) -> str:
+        if self.is_a2a:
+            return self.base_url_remote
         path = self.remote.get("stream_path") or ""
         if not path:
             return ""
@@ -426,7 +459,14 @@ class RemoteAgent(AgentBase):
 
     @property
     def supports_resume(self) -> bool:
-        """Whether a paused run of this agent can be continued where it stopped."""
+        """Whether a paused run of this agent can be continued where it stopped.
+
+        Always true for A2A: continuing is not an extra endpoint there but the
+        ordinary way to speak to a task that asked something, so every agent
+        that speaks the protocol can be answered.
+        """
+        if self.is_a2a:
+            return bool(self.base_url_remote)
         return bool(self.base_url_remote and self.remote.get("resume_path"))
 
     @property
@@ -440,8 +480,12 @@ class RemoteAgent(AgentBase):
 
         Opt-in by design: ``/run`` is the one endpoint the contract requires, so
         an agent that never streams stays trivially importable. Declaring
-        ``runtime.stream_path`` is what turns streaming on.
+        ``runtime.stream_path`` is what turns streaming on. For an A2A agent the
+        equivalent statement is ``capabilities.streaming`` on its card, recorded
+        on the descriptor at import time.
         """
+        if self.is_a2a:
+            return bool(self.base_url_remote and self.remote.get("streaming"))
         return bool(self.base_url_remote and self.remote.get("stream_path"))
 
     @property
@@ -476,6 +520,17 @@ class RemoteAgent(AgentBase):
 
         if not self.base_url_remote:
             return {"ok": False, "detail": "no url configured"}
+        if self.is_a2a:
+            # A2A has no health method. The card is the equivalent: a service
+            # that serves one is up, and it is the only URL the protocol
+            # guarantees answers a GET.
+            card_url = str(self.remote.get("card_url") or "")
+            if not card_url:
+                return {"ok": False, "detail": "no agent card URL recorded for this A2A agent"}
+            from agents.importer import a2a_import
+
+            probe = a2a_import.probe(card_url)
+            return {"ok": probe["ok"], "detail": probe["detail"]}
         try:
             with httpx.Client(timeout=timeout) as client:
                 resp = client.get(self.health_url, headers=resolve_auth_header(self.remote))
@@ -569,9 +624,11 @@ class RemoteAgent(AgentBase):
         if state.done is not None:
             payload = dict(state.done)
             payload.setdefault("steps", [s.model_dump() for s in state.steps])
+            if not _extract_output(payload) and state.artifact_text:
+                payload["output"] = state.artifact_text
             if not _extract_output(payload) and state.text_parts:
                 payload["output"] = "".join(state.text_parts)
-            result = self._map_response(200, payload, "")
+            result = self._map_hub_payload(payload)
             # Steps collected live are richer than whatever the done frame
             # repeats, so keep them when the frame carried none.
             if not result.steps and state.steps:
@@ -606,15 +663,84 @@ class RemoteAgent(AgentBase):
 
     # ── run ─────────────────────────────────────────────────────────────────
 
-    def _request(self, instruction: str, kwargs: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, str]]:
-        """Build the JSON body and headers for one run request."""
+    def _request(
+        self,
+        instruction: str,
+        kwargs: Dict[str, Any],
+        *,
+        stream: bool = False,
+    ) -> tuple[Dict[str, Any], Dict[str, str]]:
+        """Build the JSON body and headers for one run request.
+
+        ``stream`` only matters for A2A, where the method name is part of the body
+        rather than part of the URL.
+        """
+        headers = {"Content-Type": "application/json", **resolve_auth_header(self.remote)}
+        if self.is_a2a:
+            from a2a import client as a2a_client
+
+            body = a2a_client.build_send_request(
+                instruction,
+                stream=stream,
+                run_id=kwargs.get("run_id"),
+                workspace=kwargs.get("workspace", self.workspace),
+            )
+            return body, headers
         body: Dict[str, Any] = {
             "prompt": instruction,
             "run_id": kwargs.get("run_id"),
             "workspace": kwargs.get("workspace", self.workspace),
         }
-        headers = {"Content-Type": "application/json", **resolve_auth_header(self.remote)}
         return body, headers
+
+    def _hub_frames(self, event: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The hub stream frames one line off the wire produced.
+
+        A native remote already speaks the hub's frame vocabulary, so its event
+        passes through untouched; an A2A event is translated first. Doing it
+        here keeps one streaming loop for both.
+        """
+        if not self.is_a2a:
+            return [event]
+        from a2a import client as a2a_client
+
+        return a2a_client.frames_from_stream_event(event)
+
+    def _feed(self, state: "_StreamState", line: str) -> None:
+        """Parse one line of the stream and hand its frames to the translator."""
+        event = _parse_stream_line(line)
+        if event is None:
+            return
+        for frame in self._hub_frames(event):
+            if frame.get("type") == "a2a_artifact":
+                state.artifact_text = str(frame.get("text") or "") or state.artifact_text
+                continue
+            state.handle(frame)
+
+    def _map_a2a(self, payload: Any) -> AgentResult:
+        """Turn a JSON-RPC reply from an A2A agent into an AgentResult."""
+        from a2a import client as a2a_client
+
+        outcome = a2a_client.outcome_from_response(payload)
+        if outcome["status"] == "awaiting_input":
+            return AgentResult(
+                ok=True,
+                status="awaiting_input",
+                agent_output=outcome.get("question") or outcome.get("output") or "",
+                pending_question={
+                    "question": outcome.get("question") or "",
+                    "choices": [],
+                    # The remote task id: answering means sending another
+                    # message on this exact task, so without it the run could
+                    # only be started again from the top.
+                    "key": outcome.get("key") or "",
+                    "node": "",
+                },
+            )
+        if outcome["ok"]:
+            return AgentResult(ok=True, status="done", agent_output=outcome["output"])
+        return AgentResult(ok=False, status="error", error=outcome["error"],
+                           agent_output=outcome.get("output") or "")
 
     def _no_endpoint(self) -> AgentResult:
         return AgentResult(
@@ -650,6 +776,22 @@ class RemoteAgent(AgentBase):
                 error=f"Remote agent returned HTTP {status_code}: {(text or '').strip()[:2000]}",
             )
 
+        # An A2A reply is a JSON-RPC envelope around a Task, not the hub's own
+        # {ok, output} shape, so it is read by its own mapper. Errors above this
+        # line are transport-level and read the same either way.
+        if self.is_a2a:
+            return self._map_a2a(payload)
+
+        return self._map_hub_payload(payload)
+
+    def _map_hub_payload(self, payload: Any) -> AgentResult:
+        """Map a payload already in the hub's ``{ok, output, ...}`` shape.
+
+        Split out of :meth:`_map_response` because a *streamed* run reaches this
+        point having already been translated into hub frames, whichever protocol
+        produced them: its closing frame is hub-shaped even for an A2A agent, so
+        it must not be run through the A2A envelope reader a second time.
+        """
         # A pause reported without a stream. The streaming path learns this from
         # an ``interrupt`` frame, but streaming needs a listener on this side,
         # and a run nobody is watching must still be able to stop and ask: a
@@ -731,7 +873,7 @@ class RemoteAgent(AgentBase):
 
         callbacks = kwargs.get("callbacks")
         streaming, emitter, sinks = self._should_stream(callbacks)
-        body, headers = self._request(instruction, kwargs)
+        body, headers = self._request(instruction, kwargs, stream=streaming)
 
         if streaming:
             state = _StreamState(emitter, sinks)
@@ -742,9 +884,7 @@ class RemoteAgent(AgentBase):
                             resp.read()
                             return self._map_response(resp.status_code, None, resp.text)
                         for line in resp.iter_lines():
-                            event = _parse_stream_line(line)
-                            if event is not None:
-                                state.handle(event)
+                            self._feed(state, line)
             except Exception as exc:  # noqa: BLE001
                 # Partial output is still worth keeping: a stream that dies
                 # halfway has usually already shown the user real work.
@@ -775,6 +915,9 @@ class RemoteAgent(AgentBase):
         """
         import httpx
 
+        if self.is_a2a:
+            return self._resume_a2a(run_id, value, key=key, **kwargs)
+
         if not self.supports_resume:
             return AgentResult(
                 ok=False, status="error",
@@ -799,9 +942,7 @@ class RemoteAgent(AgentBase):
                         resp.read()
                         return self._map_response(resp.status_code, None, resp.text)
                     for line in resp.iter_lines():
-                        event = _parse_stream_line(line)
-                        if event is not None:
-                            state.handle(event)
+                        self._feed(state, line)
         except Exception as exc:  # noqa: BLE001
             if state.text_parts:
                 return AgentResult(
@@ -810,6 +951,71 @@ class RemoteAgent(AgentBase):
                     error=f"Remote agent resume failed: {type(exc).__name__}: {exc}",
                 )
             return self._unreachable(exc, self.resume_url)
+        return self._stream_result(state)
+
+    def _resume_a2a(self, run_id: str, value: Any, *, key: str = "", **kwargs) -> AgentResult:
+        """Answer an A2A agent that paused, on the task it paused in.
+
+        There is no separate endpoint: a second ``message/send`` carrying the
+        paused task's id *is* the continuation, and the agent picks up whatever
+        state it was holding. Without that id the hub would have to start the
+        agent over with the answer in its prompt, which is a different run that
+        merely reads the same.
+        """
+        import httpx
+
+        if not self.base_url_remote:
+            return self._no_endpoint()
+        task_id = str(key or "").strip()
+        if not task_id:
+            return AgentResult(
+                ok=False, status="error",
+                error=(
+                    f"Agent '{self.agent_id}' paused without recording the remote task id, "
+                    f"so the answer has nowhere to go. Run it again instead."
+                ),
+            )
+
+        from a2a import client as a2a_client
+
+        callbacks = kwargs.get("callbacks")
+        emitter = self._resolve_emitter(callbacks)
+        sinks = self._usage_sinks(callbacks)
+        streaming = self.supports_streaming and emitter is not None
+        headers = {"Content-Type": "application/json", **resolve_auth_header(self.remote)}
+        body = a2a_client.build_send_request(
+            "" if value is None else str(value),
+            stream=streaming,
+            task_id=task_id,
+            run_id=run_id,
+            workspace=kwargs.get("workspace", self.workspace),
+        )
+
+        if not streaming:
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.post(self.run_url, json=body, headers=headers)
+            except Exception as exc:  # noqa: BLE001
+                return self._unreachable(exc, self.run_url)
+            return self._map_response(resp.status_code, self._payload_of(resp), resp.text)
+
+        state = _StreamState(emitter, sinks)
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream("POST", self.stream_url, json=body, headers=headers) as resp:
+                    if resp.status_code >= 400:
+                        resp.read()
+                        return self._map_response(resp.status_code, None, resp.text)
+                    for line in resp.iter_lines():
+                        self._feed(state, line)
+        except Exception as exc:  # noqa: BLE001
+            if state.text_parts:
+                return AgentResult(
+                    ok=False, status="error", steps=state.steps,
+                    agent_output="".join(state.text_parts),
+                    error=f"Remote agent resume failed: {type(exc).__name__}: {exc}",
+                )
+            return self._unreachable(exc, self.stream_url)
         return self._stream_result(state)
 
     async def arun(self, instruction: str, **kwargs) -> AgentResult:
@@ -829,7 +1035,7 @@ class RemoteAgent(AgentBase):
 
         callbacks = kwargs.get("callbacks")
         streaming, emitter, sinks = self._should_stream(callbacks)
-        body, headers = self._request(instruction, kwargs)
+        body, headers = self._request(instruction, kwargs, stream=streaming)
 
         if streaming:
             state = _StreamState(emitter, sinks)
@@ -840,9 +1046,7 @@ class RemoteAgent(AgentBase):
                             await resp.aread()
                             return self._map_response(resp.status_code, None, resp.text)
                         async for line in resp.aiter_lines():
-                            event = _parse_stream_line(line)
-                            if event is not None:
-                                state.handle(event)
+                            self._feed(state, line)
             except Exception as exc:  # noqa: BLE001
                 if state.text_parts:
                     return AgentResult(

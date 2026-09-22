@@ -47,9 +47,15 @@ MANIFEST_FILENAMES = ("agent-hub.json", ".agent-hub.json", "agenthub.json")
 
 SCHEMA_ID = "agents-hub/agent-manifest@1"
 
-# The only runtime kind implemented today. Declared as a set so an unsupported
+# The runtime kinds implemented today. Declared as a set so an unsupported
 # value produces a named, actionable error rather than a silent misconfiguration.
-SUPPORTED_RUNTIME_KINDS = ("http",)
+#
+# ``http`` is this hub's own tiny contract (see the module docstring).
+# ``a2a`` is the Agent2Agent protocol: the agent is already running and speaks
+# JSON-RPC behind an Agent Card, so ``runtime.url`` is its JSON-RPC endpoint and
+# no other path is needed. Such an agent is usually imported straight from its
+# card URL, without a repository at all (see agents/importer/a2a_import.py).
+SUPPORTED_RUNTIME_KINDS = ("http", "a2a")
 
 AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
 
@@ -102,6 +108,16 @@ REQUIREMENTS: List[Dict[str, str]] = [
             "Either a Dockerfile named in runtime.docker.dockerfile, or an already "
             "running service whose URL you supply at import time. Without one of "
             "the two the agent imports but cannot be run."
+        ),
+    },
+    {
+        "id": "a2a",
+        "title": "Or: an A2A agent card",
+        "detail": (
+            "An agent that already speaks the Agent2Agent protocol needs no "
+            "manifest and no repository. Paste the URL of its card "
+            "(.../.well-known/agent-card.json) instead of a repository URL and "
+            "the hub reads its endpoint, name and skills from there."
         ),
     },
     {
@@ -163,6 +179,11 @@ class AgentManifest:
     # answer, but only by being run again from the start — which for a graph
     # with a checkpointer is not the same thing at all.
     resume_path: str = ""
+    # A2A only. ``card_url`` is where the agent's card was read from, and
+    # ``card`` is the card itself, kept so the readiness report and the agent
+    # page can show what the agent declared without fetching it again.
+    card_url: str = ""
+    card: Dict[str, Any] = field(default_factory=dict)
     port: Optional[int] = None
     timeout: Optional[int] = None
     auth_token_env: str = ""
@@ -192,6 +213,8 @@ class AgentManifest:
             "stream_path": self.stream_path,
             "graph_path": self.graph_path,
             "resume_path": self.resume_path,
+            "card_url": self.card_url,
+            "card": dict(self.card),
             "port": self.port,
             "timeout": self.timeout,
             "auth_token_env": self.auth_token_env,
@@ -301,6 +324,7 @@ def parse_manifest(repo_dir: Path) -> AgentManifest:
     manifest.graph_path = _normalize_path(raw_graph, "") if raw_graph else ""
     raw_resume = _as_str(runtime.get("resume_path"))
     manifest.resume_path = _normalize_path(raw_resume, "") if raw_resume else ""
+    manifest.card_url = _as_str(runtime.get("card_url"))
     manifest.port = _as_int(runtime.get("port"))
     manifest.timeout = _as_int(runtime.get("timeout"))
     manifest.auth_token_env = _as_str(runtime.get("auth_token_env"))

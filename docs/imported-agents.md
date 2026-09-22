@@ -127,6 +127,23 @@ a graph looks the same here whichever runtime it runs on. Its own README lists
 the four places the JS event stream differs from the Python one, which is the
 part worth reading before writing an adapter of your own.
 
+## Importing an A2A agent
+
+An agent that speaks [A2A](a2a.md), the Agent2Agent protocol, needs no manifest
+and no repository: it is already running and its Agent Card already says where
+its endpoint is and what it can do. Paste the card URL (it ends in
+`/.well-known/agent-card.json`) where the dialog asks for a repository URL, and
+the hub reads the card instead of cloning. Everything after that is the same:
+the same readiness report, the same registry record, the same agent page.
+
+A repository may also declare `runtime.kind = "a2a"` with the endpoint under
+`runtime.url`, for an agent whose code lives in git but whose service runs
+somewhere else.
+
+The hub serves the other direction too: every agent here has its own A2A card,
+so an outside orchestrator can drive it without knowing this API. The agent page
+shows that URL with a copy button.
+
 ## What you give up
 
 The process boundary that keeps a foreign agent's dependencies out also hides
@@ -155,4 +172,4 @@ its internals:
 - An import whose service is not running imports fine and simply cannot run.
   That is the intended state, not a failure.
 
-Related: [agents](agents.md), [marketplace](marketplace.md), [containers](containers.md), [tools-and-capabilities](tools-and-capabilities.md).
+Related: [agents](agents.md), [a2a](a2a.md), [marketplace](marketplace.md), [containers](containers.md), [tools-and-capabilities](tools-and-capabilities.md).
