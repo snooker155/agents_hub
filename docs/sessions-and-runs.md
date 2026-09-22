@@ -21,6 +21,34 @@ a task session groups the work on one task; a flow session groups its nodes.
 
 Stopping a session stops every run still going inside it.
 
+## Run group
+
+A session says which runs belong together. A **run group** says what set them
+going. Four things own a set of runs:
+
+| Kind | What it is | Its children |
+| --- | --- | --- |
+| `flow` | one execution of a flow | the runs of its nodes |
+| `loop` | a flow re-run until an agent judges it good enough | one flow group per iteration |
+| `team` | one execution of a team against a goal | the members' turns |
+| `container` | a parent task executing its subtasks | the runs on the subtasks |
+
+Whichever kind you ask about, the answers have the same shape: a status, when it
+started and finished, an error if there was one, the children, and the total
+cost. The cost is always the same sum, the catalog price of the group's own
+agent runs, so a flow, a loop and a team are priced by one rule and a loop's
+spend is the spend of the flow runs inside it.
+
+Stopping a group stops the work it owns. A flow group signals its orchestrator
+and stops the node runs still in flight; a loop or a team asks its run to stop
+at the next safe point, between iterations or between rounds; a container pauses
+and re-queues the subtask it was on.
+
+From the API: `GET /api/runs/groups?kind=&workspace=` lists them,
+`GET /api/runs/groups/{kind}/{id}` reads one, `POST .../stop` stops it. Each
+kind also keeps its own richer views under `/api/flows`, `/api/loops` and
+`/api/teams`; the group endpoints are for when you want all four at once.
+
 ## Reading a failure
 
 1. Find the run. Filter by status `failed` and a time window.

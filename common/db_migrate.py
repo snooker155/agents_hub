@@ -14,6 +14,9 @@ Runs automatically from ``common.db`` when the database has no
 - ``session_contexts.json``            → ``sessions``
 - ``pending_continuations.json``       → ``continuations``
 - ``nodes.json``                       → ``nodes``
+- ``flow_runs.json``                   → ``flow_runs`` (own marker, see
+  :func:`migrate_flow_runs`: it shipped after the import above, so a
+  database that already set ``json_migrated`` still owes this one)
 
 Every successfully imported source is renamed to ``<name>.migrated`` (dirs get
 the same suffix) so a half-upgraded environment can never write to a store the
@@ -48,6 +51,12 @@ RUN_COLUMNS = (
 
 TASK_COLUMNS = ("id", "key", "parent_id", "status", "workspace", "project_id",
                 "created_at", "updated_at")
+
+# Flow-run keys mirrored into dedicated columns. The whole record is also kept
+# verbatim in ``doc``, so a key not listed here (a checkpoint, say) is preserved
+# rather than dropped.
+FLOW_RUN_COLUMNS = ("flow_run_id", "flow_id", "task_id", "session_id", "workspace",
+                    "status", "pid", "started_at", "finished_at", "exit_code", "error")
 
 
 def _read_json(path: Path) -> Optional[Any]:
@@ -263,6 +272,24 @@ def _import_nodes(conn: sqlite3.Connection) -> int:
     return n
 
 
+def _import_flow_runs(conn: sqlite3.Connection) -> int:
+    src = AGENTS_HUB_ROOT / "flow_runs.json"
+    data = _read_json(src)
+    if data is None or _is_corrupt(data) or not isinstance(data, list):
+        return 0
+    n = 0
+    for rec in data:
+        if not isinstance(rec, dict) or not rec.get("flow_run_id"):
+            continue
+        conn.execute(
+            f"INSERT OR REPLACE INTO flow_runs ({', '.join(FLOW_RUN_COLUMNS)}, doc) "
+            f"VALUES ({', '.join('?' * len(FLOW_RUN_COLUMNS))}, ?)",
+            [rec.get(k) for k in FLOW_RUN_COLUMNS] + [_dumps(rec)],
+        )
+        n += 1
+    return n
+
+
 # ── entrypoint ───────────────────────────────────────────────────────────────
 
 def migrate_legacy_json(conn: sqlite3.Connection) -> Optional[Dict[str, int]]:
@@ -311,3 +338,37 @@ def rename_migrated_sources() -> None:
         _rename_migrated(AGENTS_HUB_ROOT / name)
     for dirname in ("run_process", "activity_logs", "results", "routing_logs"):
         _rename_migrated(AGENTS_HUB_ROOT / dirname)
+
+
+
+def migrate_flow_runs(conn: sqlite3.Connection) -> Optional[int]:
+    """Import ``flow_runs.json`` into the ``flow_runs`` table, once.
+
+    Kept apart from :func:`migrate_legacy_json` and guarded by its own
+    ``flow_runs_migrated`` marker, because flow runs moved into SQLite later:
+    every database out there already carries ``json_migrated``, so folding this
+    import into that marker would skip it exactly where it is needed. Like the
+    import above it runs inside the caller's ``BEGIN IMMEDIATE`` and manages no
+    transaction of its own.
+
+    Returns ``None`` when the marker was already set (another process or an
+    earlier start did it — nothing to rename), or the number of imported records
+    when this call performed the import. The caller renames the source file
+    after its commit lands, via :func:`rename_flow_runs_source`.
+    """
+    row = conn.execute("SELECT value FROM meta WHERE key='flow_runs_migrated'").fetchone()
+    if row is not None:
+        return None
+    count = _import_flow_runs(conn)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('flow_runs_migrated', ?)",
+        (json.dumps({"at": _now_iso(), "count": count}),),
+    )
+    return count
+
+
+def rename_flow_runs_source() -> None:
+    """Rename ``flow_runs.json`` to ``flow_runs.json.migrated`` after the import
+    committed, so a half-upgraded environment cannot keep writing flow runs to a
+    file nothing reads any more. Best-effort, like the renames above."""
+    _rename_migrated(AGENTS_HUB_ROOT / "flow_runs.json")

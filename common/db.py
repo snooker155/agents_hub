@@ -25,10 +25,12 @@ so it is safe for any entrypoint — backend, ``runtime/agent_run.py``,
 ``runtime/node_run.py``, the CLI — to touch the stores first.
 
 That startup sequence (post-hoc column ALTERs, schema creation, the
-``schema_version`` bump and the legacy-JSON import) all run inside one
+``schema_version`` bump and the JSON imports) all run inside one
 ``BEGIN IMMEDIATE`` transaction, so two processes racing to open the same
 fresh-or-stale database serialize instead of one seeing a column that isn't
-there yet while the other is mid-``ALTER TABLE``.
+there yet while the other is mid-``ALTER TABLE``. There are two imports, each
+with its own marker: the original bulk one and ``flow_runs.json``, which moved
+into SQLite later and so cannot ride on a marker every database already has.
 """
 from __future__ import annotations
 
@@ -116,6 +118,32 @@ CREATE TABLE IF NOT EXISTS run_payloads (
     artifacts         TEXT,   -- file-change diffs recorded during the run
     updated_at        TEXT
 );
+
+-- One row per flow *execution* (not per agent run: the per-node agent runs live
+-- in `runs` and carry this id as extra.flow_run_id). The same flow can run many
+-- times in parallel, so running state and orchestrator pid belong here and not
+-- on the flow definition.
+--
+-- `doc` holds the whole record as JSON and is the source of truth for reads;
+-- the columns beside it are an indexed mirror of the fields queries filter on.
+-- Callers store checkpoints and other keys of their own on a record, and those
+-- survive in `doc` without a schema change.
+CREATE TABLE IF NOT EXISTS flow_runs (
+    flow_run_id TEXT PRIMARY KEY,
+    flow_id     TEXT,
+    task_id     TEXT,
+    session_id  TEXT,
+    workspace   TEXT,
+    status      TEXT,     -- pending | running | completed | failed | stopped
+    pid         INTEGER,  -- the orchestrator subprocess (runtime/flow_run.py)
+    started_at  TEXT,
+    finished_at TEXT,
+    exit_code   INTEGER,
+    error       TEXT,
+    doc         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_flow_runs_flow   ON flow_runs(flow_id);
+CREATE INDEX IF NOT EXISTS idx_flow_runs_status ON flow_runs(status);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id         TEXT PRIMARY KEY,
@@ -565,11 +593,12 @@ def _connect() -> sqlite3.Connection:
 
 # Bumped whenever _ADDED_COLUMNS (or any other startup migration folded into
 # _ensure_ready) grows a new entry. A fresh database is stamped with this value
-# immediately; an existing one is upgraded to it — see _ensure_ready. Kept at 1
-# for now: it names the column-backfill migrations below, not every schema
-# change ever made (CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
-# additions are self-idempotent and need no version bump).
-SCHEMA_VERSION = 1
+# immediately; an existing one is upgraded to it — see _ensure_ready. It names
+# the migrations below, not every schema change ever made (CREATE TABLE IF NOT
+# EXISTS / CREATE INDEX IF NOT EXISTS additions are self-idempotent and need no
+# version bump).
+#   2 — the `flow_runs` table, and the import of flow_runs.json into it.
+SCHEMA_VERSION = 2
 
 # Columns added to a table *after* it first shipped. ``_SCHEMA`` only ever runs
 # CREATE TABLE IF NOT EXISTS, so a new column in the CREATE body reaches fresh
@@ -686,6 +715,7 @@ def _ensure_ready(conn: sqlite3.Connection) -> None:
 
         conn.execute("BEGIN IMMEDIATE")
         migrated: Optional[dict] = None
+        flow_runs_migrated: Optional[int] = None
         try:
             # Needed before the version read below; also in _SCHEMA (harmless
             # to create twice, both are IF NOT EXISTS).
@@ -726,6 +756,15 @@ def _ensure_ready(conn: sqlite3.Connection) -> None:
             if row is None:
                 from common import db_migrate
                 migrated = db_migrate.migrate_legacy_json(conn)
+
+            # flow_runs.json moved into SQLite after the first migration shipped,
+            # so it carries its own marker: a database that already set
+            # `json_migrated` still has to import it exactly once. Same
+            # transaction, same all-or-nothing guarantee.
+            row = conn.execute("SELECT value FROM meta WHERE key='flow_runs_migrated'").fetchone()
+            if row is None:
+                from common import db_migrate
+                flow_runs_migrated = db_migrate.migrate_flow_runs(conn)
         except Exception:
             conn.execute("ROLLBACK")
             raise
@@ -737,6 +776,12 @@ def _ensure_ready(conn: sqlite3.Connection) -> None:
             db_migrate.rename_migrated_sources()
             if any(migrated.values()):
                 print(f"[db] migrated legacy JSON state into SQLite: {migrated}")
+
+        if flow_runs_migrated is not None:
+            from common import db_migrate
+            db_migrate.rename_flow_runs_source()
+            if flow_runs_migrated:
+                print(f"[db] migrated {flow_runs_migrated} flow run(s) into SQLite")
 
         _schema_ready = True
 

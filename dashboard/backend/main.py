@@ -46,6 +46,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
 from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router
+from routes import run_groups as run_groups_router
 from routes import settings as settings_router
 from routes import models as models_router
 
@@ -307,6 +308,9 @@ app.include_router(flow_entities.router)
 
 # Loops domain: a flow re-run until an agent judges the exit criterion met
 app.include_router(loops.router)
+
+# Run groups: flows, loops, teams and task containers behind one interface
+app.include_router(run_groups_router.router)
 
 # Teams domain: a bounded roster of agents that know each other and talk
 app.include_router(teams.router)

@@ -9,7 +9,19 @@ running state and orchestrator pid cannot live on the flow definition.
 
 Records are keyed by ``flow_run_id`` (the id flow/launcher generates and passes
 to runtime/flow_run.py as --run-id; the per-node agent runs carry it as flow_run_id).
-The file format and locking mirror managers.run_manager's agent-run store.
+
+Storage is the ``flow_runs`` table (see ``common.db``), which replaced a
+``flow_runs.json`` file guarded by a FileLock. A flow run is written from at
+least three processes at once — the launcher, the orchestrator subprocess and
+the backend's stop route — and the whole-file rewrite meant every one of those
+writers serialized on the lock and rewrote every other flow's records to change
+one field. Existing files are imported on first open, see
+``common.db_migrate.migrate_flow_runs``.
+
+A record is a plain dict and the table keeps it whole in ``doc``: callers store
+keys of their own on a run (a checkpoint, say) and read them back unchanged.
+The columns beside ``doc`` are an indexed mirror of the fields queries filter
+on, and every write here refreshes them together with the document.
 """
 from __future__ import annotations
 
@@ -19,12 +31,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from filelock import FileLock
-
+from common import db
+from common.db_migrate import FLOW_RUN_COLUMNS
 from common.paths import AGENTS_HUB_ROOT
-
-FLOW_RUNS_FILE = AGENTS_HUB_ROOT / "flow_runs.json"
-FLOW_RUNS_LOCK = AGENTS_HUB_ROOT / "flow_runs.json.lock"
 
 FLOW_LOGS_DIR = AGENTS_HUB_ROOT / "flow_logs"
 
@@ -125,31 +134,36 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
     return events
 
 
-def _load(timeout: float = 10.0) -> List[Dict[str, Any]]:
-    if not FLOW_RUNS_FILE.exists():
-        return []
-    with FileLock(str(FLOW_RUNS_LOCK), timeout=timeout):
-        try:
-            txt = FLOW_RUNS_FILE.read_text(encoding="utf-8")
-            return json.loads(txt) if txt.strip() else []
-        except Exception:
-            return []
+def _row_to_record(row) -> Dict[str, Any]:
+    """Rebuild a flow-run record from its row. ``doc`` is the whole record, so
+    the mirrored columns are only a fallback for a row written by something
+    other than this module."""
+    rec = db.loads(row["doc"], None)
+    if isinstance(rec, dict):
+        return rec
+    return {k: row[k] for k in FLOW_RUN_COLUMNS}
 
 
-def _save(runs: List[Dict[str, Any]], timeout: float = 10.0) -> None:
-    FLOW_RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(runs, ensure_ascii=False, indent=2)
-    with FileLock(str(FLOW_RUNS_LOCK), timeout=timeout):
-        tmp = FLOW_RUNS_FILE.with_suffix(FLOW_RUNS_FILE.suffix + ".tmp")
-        tmp.write_text(payload, encoding="utf-8")
-        os.replace(tmp, FLOW_RUNS_FILE)
+def _write(conn, rec: Dict[str, Any]) -> None:
+    """Persist one whole record, refreshing the mirrored columns from it."""
+    conn.execute(
+        f"INSERT OR REPLACE INTO flow_runs ({', '.join(FLOW_RUN_COLUMNS)}, doc) "
+        f"VALUES ({', '.join('?' * len(FLOW_RUN_COLUMNS))}, ?)",
+        [rec.get(k) for k in FLOW_RUN_COLUMNS] + [db.dumps(rec)],
+    )
 
 
 # -------------------- Public API --------------------
 
 def load_flow_runs(timeout: float = 10.0) -> List[Dict[str, Any]]:
-    """Return all flow-run records."""
-    return _load(timeout)
+    """Return all flow-run records, oldest first.
+
+    ``timeout`` is the old file-lock wait and is accepted but unused: SQLite
+    does its own waiting (``PRAGMA busy_timeout``). The parameter stays because
+    callers pass it positionally.
+    """
+    rows = db.get_conn().execute("SELECT * FROM flow_runs ORDER BY rowid").fetchall()
+    return [_row_to_record(r) for r in rows]
 
 
 def _notify_flow_runs(flow_id: Optional[str] = None) -> None:
@@ -161,42 +175,50 @@ def _notify_flow_runs(flow_id: Optional[str] = None) -> None:
 
 
 def upsert_flow_run(rec: Dict[str, Any]) -> None:
-    """Insert or update a flow-run record by ``flow_run_id``."""
-    runs = _load()
-    for i, r in enumerate(runs):
-        if r.get("flow_run_id") == rec.get("flow_run_id"):
-            runs[i] = {**r, **rec}
-            _save(runs)
-            _notify_flow_runs(rec.get("flow_id") or r.get("flow_id"))
-            return
-    runs.append(rec)
-    _save(runs)
-    _notify_flow_runs(rec.get("flow_id"))
+    """Insert or update a flow-run record by ``flow_run_id``.
+
+    An existing record is merged into, not replaced, so a field this caller did
+    not mention survives — the same semantics the JSON store had.
+    """
+    flow_run_id = str(rec.get("flow_run_id") or "")
+    if not flow_run_id:
+        return
+    with db.transaction() as conn:
+        row = conn.execute("SELECT * FROM flow_runs WHERE flow_run_id = ?",
+                           (flow_run_id,)).fetchone()
+        existing = _row_to_record(row) if row is not None else None
+        merged = {**existing, **rec} if existing else dict(rec)
+        _write(conn, merged)
+    _notify_flow_runs(merged.get("flow_id"))
 
 
 def update_flow_run(flow_run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Apply partial updates to a flow-run record and return the merged record."""
-    runs = _load()
-    for i, r in enumerate(runs):
-        if r.get("flow_run_id") == flow_run_id:
-            newr = {**r, **updates}
-            runs[i] = newr
-            _save(runs)
-            try:
-                from common.session_broker import notify_change
-                notify_change("flow_runs", flow_run_id=flow_run_id, flow_id=newr.get("flow_id"))
-            except Exception:
-                pass
-            return newr
-    return None
+    """Apply partial updates to a flow-run record and return the merged record.
+
+    The merge happens inside one transaction, so two processes checkpointing
+    different keys on the same run cannot drop each other's write.
+    """
+    with db.transaction() as conn:
+        row = conn.execute("SELECT * FROM flow_runs WHERE flow_run_id = ?",
+                           (str(flow_run_id),)).fetchone()
+        if row is None:
+            return None
+        newr = {**_row_to_record(row), **updates}
+        newr["flow_run_id"] = str(flow_run_id)
+        _write(conn, newr)
+    try:
+        from common.session_broker import notify_change
+        notify_change("flow_runs", flow_run_id=flow_run_id, flow_id=newr.get("flow_id"))
+    except Exception:
+        pass
+    return newr
 
 
 def get_flow_run(flow_run_id: str) -> Optional[Dict[str, Any]]:
     """Return a flow-run record by id, or None."""
-    for r in _load():
-        if r.get("flow_run_id") == flow_run_id:
-            return r
-    return None
+    row = db.get_conn().execute("SELECT * FROM flow_runs WHERE flow_run_id = ?",
+                                (str(flow_run_id),)).fetchone()
+    return _row_to_record(row) if row is not None else None
 
 
 def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
@@ -213,11 +235,12 @@ def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
     started node lit indefinitely. The reconcile emits a flow_stopped log event so
     that node clears too. Pending runs have no pid yet, so they are never reaped.
     """
+    rows = db.get_conn().execute(
+        "SELECT * FROM flow_runs WHERE flow_id = ? AND status IN ('running', 'pending') "
+        "ORDER BY rowid", (str(flow_id),)).fetchall()
     active: List[Dict[str, Any]] = []
     reaped = False
-    for r in _load():
-        if r.get("flow_id") != flow_id or r.get("status") not in {"running", "pending"}:
-            continue
+    for r in (_row_to_record(row) for row in rows):
         # Only reap once a pid has been recorded (status == running); a pending run
         # hasn't been handed a pid yet and is legitimately not-yet-started.
         pid = r.get("pid")

@@ -345,7 +345,7 @@ The first connection in any process ensures the schema and runs a one-time migra
 - `plans.json`, `notifications.json` — scheduled jobs and the notification inbox
 - `shared_memory.json` — shared memory pools (notes, structured slots, RAG file metadata)
 - `episodes/<pool_id>.json`, `graphs/<pool_id>.json`, `procedures.json` — episodic, graph, and procedural memory
-- `flows/`, `flow_runs.json`, `flow_logs/` — flow definitions and runs
+- `flows/`, `flow_logs/` — flow definitions and per-run logs; flow run records live in the `flow_runs` table of the SQLite database (an existing `flow_runs.json` is imported once and renamed `.migrated`)
 - `run_logs/`, `node_logs/`, `dockerfiles/` — generated artifacts
 - `web_requests.jsonl` — the web access log
 - `workspaces/` — workspace folders, per-workspace metadata, and views under `<workspace>/.views/<view_id>/`
