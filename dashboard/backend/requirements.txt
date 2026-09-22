@@ -6,3 +6,11 @@ filelock>=3.25
 PyYAML>=6.0
 python-multipart>=0.0.22
 pypdf>=6.7
+
+# Optional: only needed when AGENTS_HUB_BROKER_URL is set, for the
+# cross-replica session-broker bridge (common/broker_bridge.py, docs/scaling.md).
+# A plain requirements.txt has no "extra" mechanism, so this stays commented
+# out rather than installed everywhere; a deployment that scales the backend
+# installs it explicitly with `pip install redis>=5,<6` (or its own image
+# layer) instead of uncommenting it here.
+# redis>=5,<6

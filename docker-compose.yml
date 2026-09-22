@@ -30,6 +30,13 @@ services:
       # Nothing else is pinned here on purpose: values set in this block
       # override .env, so AGENT_EXECUTION_MODE (local | docker), ALLOW_ORIGINS
       # and the provider settings all stay where you edit them, in .env.
+      # Cross-replica broker bridge (see docs/scaling.md). Empty by default,
+      # which keeps the session broker in-process only, exactly like a single
+      # replica today. Compose cannot set this only when --scale is used, so
+      # it is passed through here and left for you to set in .env: put
+      # AGENTS_HUB_BROKER_URL=redis://redis:6379/0 there and start the `redis`
+      # service with `--profile scale` when running more than one backend.
+      AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -63,11 +70,13 @@ services:
       # still finds a real host path.
     # The image runs as a non-root user (hub, uid 1000), so it needs to be in
     # the socket's group to use the mounted /var/run/docker.sock above. Find
-    # the group id with `stat -c %g /var/run/docker.sock` on the host (often
-    # 999 or 998; on macOS with Docker Desktop it is usually 0, i.e. root,
-    # in which case this line is unnecessary) and set DOCKER_GID in .env if it
-    # differs from the default below. Harmless to leave in place when the
-    # socket line above is removed: it just adds an unused supplementary group.
+    # the group id as the container sees it: `docker compose run --rm --no-deps
+    # backend ls -ln /var/run/docker.sock` (often 999 or 998 on Linux; on macOS
+    # with Docker Desktop the socket inside the VM is root:root, mode 660, so
+    # DOCKER_GID=0 is required there, verified 2026-09-22) and set DOCKER_GID
+    # in .env if it differs from the default below. Harmless to leave in place
+    # when the socket line above is removed: it just adds an unused
+    # supplementary group.
     group_add:
       - "${DOCKER_GID:-999}"
     working_dir: /app
@@ -79,10 +88,30 @@ services:
   # Dashboard: the built bundle behind nginx, which also proxies /api and
   # balances it over however many backend replicas are up.
   #   docker compose up --build
-  #   docker compose up --build --scale backend=3
   # The bundle is baked into the image, so a source change needs a rebuild of
   # this service. For an HMR loop, run Vite on the host instead:
   #   cd dashboard/frontend && npm run dev
+  #
+  # ---- Running more than one backend (--scale backend=N) ----
+  # The backend keeps state in process (the SSE session broker, per-client
+  # replay buffers) and on the local disk (.agents_hub/, SQLite). Scaling to
+  # several replicas is safe only when ALL of the following hold; see
+  # docs/scaling.md for the full picture:
+  #   1. AGENTS_HUB_BROKER_URL is set (in .env) to a reachable Redis URL, so
+  #      each replica's live SSE events reach every other replica's clients.
+  #   2. Every replica runs on the SAME host and shares the SAME bind mount
+  #      for the repo and .agents_hub/ (SQLite plus the state directory) —
+  #      this compose file already guarantees that; it only breaks if you
+  #      change the volumes to per-replica ones.
+  #   3. The `redis` service is started too:
+  #        docker compose --profile scale up --build --scale backend=3
+  # Without the broker URL set, --scale must NOT be used: a live update
+  # produced by one replica (a run finishing, a chat token, a notification)
+  # would only ever reach the browser tabs whose SSE connection happens to
+  # land on that same replica, and every other tab would silently stop
+  # updating until its next full refetch. The default (this file, no
+  # --scale, no AGENTS_HUB_BROKER_URL) is one backend replica, which needs
+  # none of this and is the supported default.
   frontend:
     build:
       context: ./dashboard/frontend
@@ -100,3 +129,23 @@ services:
       BACKEND_SERVERS: ${BACKEND_SERVERS:-backend:8000}
       # Shared cache TTL for generated view assets. 0 turns it off.
       API_ASSET_CACHE_SECONDS: ${API_ASSET_CACHE_SECONDS:-30}
+
+  # Cross-replica pub/sub for the session broker (common/broker_bridge.py).
+  # Only needed, and only started, when running more than one backend replica
+  # (see the note above the `frontend` service and docs/scaling.md); under the
+  # `scale` profile so a plain `docker compose up` never pulls or starts it.
+  #   docker compose --profile scale up --build --scale backend=3
+  # No port published: only the backend replicas on this compose network talk
+  # to it. Not exposed to the host, and not meant to be.
+  redis:
+    image: redis:7-alpine
+    profiles:
+      - scale
+    # Uncomment to persist queued pub/sub state across a restart. Pub/sub
+    # itself is fire-and-forget and needs no persistence, so this is optional.
+    # volumes:
+    #   - redis_data:/data
+    restart: unless-stopped
+
+# volumes:
+#   redis_data:

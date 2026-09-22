@@ -35,6 +35,12 @@ From a sync thread:      broker.publish_threadsafe(channel, {...})
 Resource invalidation:   notify_change("tasks", task_id=...)
 Subprocess → HTTP POST → /api/sessions/{id}/events → apublish().
 
+This hub is single-process: an event published here only ever reaches
+subscribers connected to this same replica. Running more than one backend
+replica (docker compose --scale backend=N) needs the events fanned out across
+replicas too; see common/broker_bridge.py and docs/scaling.md for the optional
+Redis-backed bridge that does this, off by default.
+
 Per-client backpressure
 ------------------------
 A browser tab that stops reading (a backgrounded tab, a stalled network) must
@@ -68,7 +74,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Deque, Dict, List, Optional, Set, Tuple
 
 #: Default per-client queue depth; override with AGENTS_HUB_SSE_QUEUE_MAX.
 DEFAULT_SSE_QUEUE_MAX = 1000
@@ -124,29 +130,64 @@ class SessionBroker:
         # client_id → state, for multiplexed connections
         self._clients: Dict[str, _ClientState] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Cross-replica fan-out hook (see common/broker_bridge.py): a plain
+        # list of callables invoked with (channel, tagged_event) on every
+        # locally-published event, unless the publish call passed
+        # skip_sinks=True. The broker has no idea what a sink does with an
+        # event, or that Redis exists, so this stays a single process's
+        # in-memory hub either way.
+        self.outbound_sinks: List[Callable[[str, dict], None]] = []
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Called once at FastAPI startup to store the running event loop."""
         self._loop = loop
 
+    def add_sink(self, sink: Callable[[str, dict], None]) -> None:
+        """Register a callable for cross-replica fan-out. See ``outbound_sinks``."""
+        self.outbound_sinks.append(sink)
+
+    def remove_sink(self, sink: Callable[[str, dict], None]) -> None:
+        try:
+            self.outbound_sinks.remove(sink)
+        except ValueError:
+            pass
+
+    def _notify_sinks(self, channel: str, event: dict) -> None:
+        for sink in list(self.outbound_sinks):
+            try:
+                sink(channel, event)
+            except Exception:
+                # A sink's own failure (Redis briefly down, a bad payload)
+                # must never break delivery to this replica's own clients.
+                pass
+
     # ── publish ──────────────────────────────────────────────────────────────
 
-    def publish_threadsafe(self, channel: str, event: dict) -> None:
+    def publish_threadsafe(self, channel: str, event: dict, *, skip_sinks: bool = False) -> None:
         """Publish from a sync thread (e.g. a LangChain callback in a thread pool).
 
         Safe to call from any thread; uses call_soon_threadsafe to hand off
-        to the event loop without blocking.
+        to the event loop without blocking. ``skip_sinks`` is set by
+        common/broker_bridge.py when re-injecting an event another replica
+        already fanned out, so it is delivered here but not sent out again.
         """
         loop = self._loop
         if not loop or not loop.is_running():
             return
         tagged = {**event, "channel": channel}
+        if not skip_sinks:
+            loop.call_soon_threadsafe(self._notify_sinks, channel, tagged)
         for state in list(self._queues.get(channel, [])):
             loop.call_soon_threadsafe(self._deliver, state, tagged)
 
-    async def apublish(self, channel: str, event: dict) -> None:
-        """Publish from an async context."""
+    async def apublish(self, channel: str, event: dict, *, skip_sinks: bool = False) -> None:
+        """Publish from an async context. ``skip_sinks`` is set by
+        common/broker_bridge.py when re-injecting an event another replica
+        already fanned out, so it is delivered here but not sent out again.
+        """
         tagged = {**event, "channel": channel}
+        if not skip_sinks:
+            self._notify_sinks(channel, tagged)
         for state in list(self._queues.get(channel, [])):
             self._deliver(state, tagged)
 

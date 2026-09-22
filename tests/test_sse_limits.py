@@ -334,6 +334,25 @@ async def _body_test_an_unknown_client_query_param_opens_a_fresh_one():
     assert '"resumed": false' in ready
 
 
+async def _body_test_reconnecting_to_a_different_replica_refetches_instead_of_resuming():
+    """Behind nginx with more than one backend replica, a reconnect can land
+    on a different replica than the one that issued the client id — the
+    per-client replay state (SessionBroker._clients, the ring buffer) is
+    process-local and the cross-replica bridge (common/broker_bridge.py)
+    deliberately does not try to share it (see docs/scaling.md). Two separate
+    SessionBroker instances stand in for two replicas here: the id issued by
+    "replica A" is unknown to "replica B", so resume_client must report it as
+    such — the same unknown-client path exercised above, just under the name
+    of the scenario this project actually cares about."""
+    from common.session_broker import SessionBroker
+
+    replica_a = SessionBroker()
+    client_id, _ = replica_a.open_client(["app"])
+
+    replica_b = SessionBroker()
+    assert replica_b.resume_client(client_id, 5) is None
+
+
 # ── running the async bodies above ──────────────────────────────────────────
 # The suite has no pytest-asyncio; async work is driven with asyncio.run, and
 # the broker's queues are created and read inside that same loop. Each test
@@ -387,3 +406,6 @@ def test_reconnecting_with_client_and_last_event_id_resumes_and_replays():
 
 def test_an_unknown_client_query_param_opens_a_fresh_one():
     asyncio.run(_body_test_an_unknown_client_query_param_opens_a_fresh_one())
+
+def test_reconnecting_to_a_different_replica_refetches_instead_of_resuming():
+    asyncio.run(_body_test_reconnecting_to_a_different_replica_refetches_instead_of_resuming())
