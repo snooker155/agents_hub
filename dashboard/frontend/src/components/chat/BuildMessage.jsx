@@ -61,8 +61,23 @@ function TimelineArtifactChip({ entry, onJump }) {
   );
 }
 
+/**
+ * A system notice, such as the compaction marker the backend emits when older
+ * history is folded into a summary: one quiet centred line between messages,
+ * never a bubble with an avatar. Shared by both chat views so the notice
+ * looks the same whichever one is open.
+ */
+function SystemNotice({ msg }) {
+  return (
+    <div className="flex justify-center mb-6 mx-2">
+      <span className="text-xs text-gray-400 italic text-center px-3">{msg.content}</span>
+    </div>
+  );
+}
+
 function BuildMessage({ msg, agentName, onJumpArtifact }) {
   const { t } = useI18n();
+  if (msg.role === 'system') return <SystemNotice msg={msg} />;
   const isUser = msg.role === 'user';
   if (isUser) {
     return (
@@ -134,4 +149,4 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
   );
 }
 
-export { ChatTrail, TimelineArtifactChip, BuildMessage };
+export { ChatTrail, TimelineArtifactChip, BuildMessage, SystemNotice };
