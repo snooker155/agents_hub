@@ -14,6 +14,11 @@ In order of how much you should trust them:
 * ``llm_judge`` — an explicit rubric scored by a model. Necessary for open-ended
   answers, and itself unreliable: it is the last resort, never the only signal,
   and its raw output is always kept next to the score.
+* ``tool_called`` / ``tool_not_called`` / ``tool_sequence`` / ``max_tool_calls`` /
+  ``tool_input_matches`` / ``no_error_tool_results`` — trajectory graders: they
+  score *how* the agent got there, not just what it said, by reading the tool
+  calls recorded on the run behind the case (``common.run_payloads``). Free,
+  deterministic, and blind to anything the final answer says about itself.
 """
 from __future__ import annotations
 
@@ -250,6 +255,202 @@ def grade_assertions(output: str, case, params: Dict[str, Any]) -> GradeResult:
     )
 
 
+# ── Trajectory graders ─────────────────────────────────────────────────────────
+#
+# These read the tool calls recorded for the run the case was executed as
+# (``EvalResult.run_id``), not the final text output — so they take a fourth
+# argument, ``payload``: the run's canonical structured payload
+# (``common.run_payloads``), or ``None`` when no run is available to inspect.
+# ``grade_all``/``grade`` load it once per case and hand it to whichever
+# graders need it; see ``TRAJECTORY_GRADERS`` below.
+
+def _tool_calls(payload: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    calls = payload.get("tool_calls")
+    return [c for c in calls if isinstance(c, dict)] if isinstance(calls, list) else []
+
+
+def _tool_names(payload: Optional[Dict[str, Any]]) -> List[str]:
+    return [str(c.get("tool") or "") for c in _tool_calls(payload)]
+
+
+def _input_json(value: Any) -> str:
+    """Render a recorded tool input as JSON text, whatever shape it was stored in."""
+    if isinstance(value, str):
+        try:
+            return json.dumps(json.loads(value), ensure_ascii=False)
+        except Exception:
+            return value
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        return str(value)
+
+
+def _tool_output_is_error(output: Any) -> bool:
+    """A tool result counts as an error when it is marked as one.
+
+    Covers the two conventions this codebase's tools actually use: an
+    ``{"ok": false, ...}`` envelope (see ``tools/eval_ops.py``'s ``_json_err``)
+    and a bare ``"error"`` key, plus the ``on_tool_error`` callback's
+    ``"ERROR: ..."`` string for a call that raised outright.
+    """
+    text = output if isinstance(output, str) else _input_json(output)
+    if text.startswith("ERROR:"):
+        return True
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return False
+    if isinstance(parsed, dict):
+        if parsed.get("ok") is False:
+            return True
+        if parsed.get("error"):
+            return True
+    return False
+
+
+def grade_tool_called(output: str, case, params: Dict[str, Any],
+                       payload: Optional[Dict[str, Any]]) -> GradeResult:
+    """``params['tool']`` was called at least ``min_times`` (default 1), at
+    most ``max_times`` (default unlimited)."""
+    tool = str(params.get("tool") or "")
+    if not tool:
+        return GradeResult("tool_called", 0.0, False, "no `tool` configured")
+    if payload is None:
+        return GradeResult("tool_called", 0.0, False, "no run payload available for this case")
+    min_times = int(params.get("min_times", 1) or 0)
+    max_times = params.get("max_times")
+    max_times = int(max_times) if max_times is not None else None
+
+    times = _tool_names(payload).count(tool)
+    ok = times >= min_times and (max_times is None or times <= max_times)
+    return GradeResult(
+        "tool_called", 1.0 if ok else 0.0, ok,
+        f"{tool} was called {times} time(s)",
+        {"times": times},
+    )
+
+
+def grade_tool_not_called(output: str, case, params: Dict[str, Any],
+                          payload: Optional[Dict[str, Any]]) -> GradeResult:
+    """``params['tool']`` was never called — the negative of ``tool_called``."""
+    tool = str(params.get("tool") or "")
+    if not tool:
+        return GradeResult("tool_not_called", 0.0, False, "no `tool` configured")
+    if payload is None:
+        return GradeResult("tool_not_called", 0.0, False, "no run payload available for this case")
+
+    names = _tool_names(payload)
+    times = names.count(tool)
+    hit = times > 0
+    return GradeResult(
+        "tool_not_called", 0.0 if hit else 1.0, not hit,
+        f"{tool} was called {times} time(s)" if hit else f"{tool} was never called",
+        {"times": times},
+    )
+
+
+def grade_tool_sequence(output: str, case, params: Dict[str, Any],
+                        payload: Optional[Dict[str, Any]]) -> GradeResult:
+    """The tools in ``params['tools']`` were called in that order.
+
+    ``contiguous`` (default False) requires them back to back; otherwise other
+    tool calls may fall between them, as long as the relative order holds.
+    """
+    tools = [str(t) for t in (params.get("tools") or []) if str(t).strip()]
+    contiguous = bool(params.get("contiguous", False))
+    if not tools:
+        return GradeResult("tool_sequence", 0.0, False, "no `tools` sequence configured")
+    if payload is None:
+        return GradeResult("tool_sequence", 0.0, False, "no run payload available for this case")
+
+    called = _tool_names(payload)
+    if contiguous:
+        span = len(tools)
+        ok = any(called[i:i + span] == tools for i in range(len(called) - span + 1))
+    else:
+        # `x in iterator` consumes the iterator up to and including the first
+        # match, so this checks each tool is found strictly after the last —
+        # exactly an in-order (not necessarily contiguous) subsequence test.
+        it = iter(called)
+        ok = all(t in it for t in tools)
+
+    return GradeResult(
+        "tool_sequence", 1.0 if ok else 0.0, ok,
+        "sequence found" if ok else f"expected order {tools!r}, got {called!r}",
+        {"called": called},
+    )
+
+
+def grade_max_tool_calls(output: str, case, params: Dict[str, Any],
+                         payload: Optional[Dict[str, Any]]) -> GradeResult:
+    """No more than ``params['limit']`` tool calls total in the run."""
+    limit = params.get("limit")
+    if limit is None:
+        return GradeResult("max_tool_calls", 0.0, False, "no `limit` configured")
+    limit = int(limit)
+    if payload is None:
+        return GradeResult("max_tool_calls", 0.0, False, "no run payload available for this case")
+
+    n = len(_tool_calls(payload))
+    ok = n <= limit
+    return GradeResult(
+        "max_tool_calls", 1.0 if ok else 0.0, ok,
+        f"{n} tool call(s), limit {limit}", {"count": n},
+    )
+
+
+def grade_tool_input_matches(output: str, case, params: Dict[str, Any],
+                             payload: Optional[Dict[str, Any]]) -> GradeResult:
+    """``params['pattern']`` matches the JSON of some call to ``params['tool']``."""
+    tool = str(params.get("tool") or "")
+    pattern = str(params.get("pattern") or "")
+    if not tool or not pattern:
+        return GradeResult("tool_input_matches", 0.0, False, "no `tool`/`pattern` configured")
+    if payload is None:
+        return GradeResult("tool_input_matches", 0.0, False, "no run payload available for this case")
+
+    flags = 0 if params.get("case_sensitive") else re.IGNORECASE
+    try:
+        rx = re.compile(pattern, flags | re.S)
+    except re.error as e:
+        return GradeResult("tool_input_matches", 0.0, False, f"invalid pattern: {e}")
+
+    calls = [c for c in _tool_calls(payload) if str(c.get("tool")) == tool]
+    if not calls:
+        return GradeResult("tool_input_matches", 0.0, False, f"{tool} was not called")
+    for c in calls:
+        text = _input_json(c.get("input"))
+        if rx.search(text):
+            return GradeResult(
+                "tool_input_matches", 1.0, True,
+                f"matched a call to {tool}", {"input": text[:300]},
+            )
+    return GradeResult(
+        "tool_input_matches", 0.0, False,
+        f"no call to {tool} matched {pattern!r}",
+    )
+
+
+def grade_no_error_tool_results(output: str, case, params: Dict[str, Any],
+                                payload: Optional[Dict[str, Any]]) -> GradeResult:
+    """No tool call in the run returned an error payload."""
+    if payload is None:
+        return GradeResult("no_error_tool_results", 0.0, False, "no run payload available for this case")
+
+    calls = _tool_calls(payload)
+    errors = [c for c in calls if _tool_output_is_error(c.get("output"))]
+    ok = not errors
+    names = ", ".join(f"{c.get('tool')} (step {c.get('step')})" for c in errors[:5])
+    return GradeResult(
+        "no_error_tool_results", 1.0 if ok else 0.0, ok,
+        "no tool returned an error" if ok else f"tool(s) returned an error: {names}",
+        {"errored_tools": [c.get("tool") for c in errors]},
+    )
+
+
 # ── LLM-as-judge ──────────────────────────────────────────────────────────────
 
 _JUDGE_PROMPT = """You are grading one response from an AI agent against a rubric.
@@ -336,6 +537,12 @@ GRADERS: Dict[str, Callable[..., GradeResult]] = {
     "json_valid": grade_json_valid,
     "json_schema": grade_json_schema,
     "assertions": grade_assertions,
+    "tool_called": grade_tool_called,
+    "tool_not_called": grade_tool_not_called,
+    "tool_sequence": grade_tool_sequence,
+    "max_tool_calls": grade_max_tool_calls,
+    "tool_input_matches": grade_tool_input_matches,
+    "no_error_tool_results": grade_no_error_tool_results,
     "llm_judge": grade_llm_judge,
 }
 
@@ -343,31 +550,65 @@ GRADERS: Dict[str, Callable[..., GradeResult]] = {
 # sweep and to warn that a suite's score depends on a model's judgement.
 COSTED_GRADERS = frozenset({"llm_judge"})
 
+# Which graders read the run's recorded trajectory instead of (or in addition
+# to) the final output, and so need the run's structured payload handed to
+# them as a fourth argument. See ``grade``/``grade_all``.
+TRAJECTORY_GRADERS = frozenset({
+    "tool_called", "tool_not_called", "tool_sequence", "max_tool_calls",
+    "tool_input_matches", "no_error_tool_results",
+})
 
-def grade(output: str, case, spec) -> GradeResult:
-    """Run one grader spec against one output. Never raises."""
+
+def _load_run_payload(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The run's canonical structured payload, or None if there is nothing to load.
+
+    Imported lazily: graders is imported by code that never touches a run
+    (e.g. the estimate path), and managers.run_manager pulls in a lot behind it.
+    """
+    if not run_id:
+        return None
+    try:
+        from managers import run_manager as rm
+        payload = rm.get_run_process(run_id)
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def grade(output: str, case, spec, *, run_id: Optional[str] = None) -> GradeResult:
+    """Run one grader spec against one output. Never raises.
+
+    ``run_id`` is the real agent run the case was executed as — only read (and
+    only loaded once) when ``spec.kind`` is a trajectory grader.
+    """
     fn = GRADERS.get(spec.kind)
     if fn is None:
         return GradeResult(spec.kind, 0.0, False, f"unknown grader {spec.kind!r}")
     try:
+        if spec.kind in TRAJECTORY_GRADERS:
+            return fn(output, case, dict(spec.params or {}), _load_run_payload(run_id))
         return fn(output, case, dict(spec.params or {}))
     except Exception as e:
         log.exception("grader %s crashed", spec.kind)
         return GradeResult(spec.kind, 0.0, False, f"grader crashed: {type(e).__name__}: {e}")
 
 
-def grade_all(output: str, case, specs) -> tuple:
+def grade_all(output: str, case, specs, *, run_id: Optional[str] = None) -> tuple:
     """Run every grader and combine into one weighted score.
 
     Returns ``(per_grader_dict, combined_score, passed)``. ``passed`` requires
     *every* grader to pass: a case that satisfies the schema but fails the
     rubric has not passed, and averaging that away would hide it.
+
+    ``run_id`` is forwarded to ``grade`` for any trajectory grader in ``specs``;
+    output-based graders ignore it, so existing callers that omit it keep
+    working unchanged.
     """
     specs = list(specs or [])
     if not specs:
         return {}, 0.0, False
 
-    results = [grade(output, case, s) for s in specs]
+    results = [grade(output, case, s, run_id=run_id) for s in specs]
     weights = [max(0.0, float(getattr(s, "weight", 1.0) or 0.0)) for s in specs]
     total_weight = sum(weights) or float(len(results))
     if sum(weights) == 0:
@@ -379,5 +620,6 @@ def grade_all(output: str, case, specs) -> tuple:
 
 
 __all__ = [
-    "GradeResult", "GRADERS", "COSTED_GRADERS", "grade", "grade_all",
+    "GradeResult", "GRADERS", "COSTED_GRADERS", "TRAJECTORY_GRADERS",
+    "grade", "grade_all",
 ]

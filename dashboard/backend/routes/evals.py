@@ -8,6 +8,7 @@ Eval harness API — datasets, sweeps, score matrices.
 ``POST /api/evals/{id}/estimate``             projected spend before a sweep
 ``POST /api/evals/{id}/run``                  run the sweep (blocking, billable)
 ``GET /api/evals/{id}/runs``                  history for a set
+``GET /api/evals/runs/{a}/diff/{b}``          compare two runs cell by cell
 ``GET /api/eval-runs/{run_id}``               one run + its score matrix
 
 Sweeps are real, slow, billable LLM calls, so the run handler is a plain ``def``
@@ -26,7 +27,7 @@ from pydantic import BaseModel
 
 from evals import store
 from evals.models import Case, EvalSet, GraderSpec, RunConfig
-from evals.runner import case_from_run, project_cost, run_eval
+from evals.runner import case_from_run, diff_runs, project_cost, run_eval
 
 router = APIRouter(prefix="/api", tags=["evals"])
 
@@ -63,6 +64,9 @@ class ConfigIn(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     label: str = ""
+    # Runs each case this many times under this config (capped in RunConfig)
+    # so sampling variance shows up as a spread instead of one lucky draw.
+    repeats: int = 1
 
 
 class RunEvalIn(BaseModel):
@@ -87,7 +91,8 @@ def _case_from_in(c: CaseIn) -> Case:
 
 def _configs_from_in(items: List[ConfigIn]) -> List[RunConfig]:
     return [
-        RunConfig(agent_id=c.agent_id, provider=c.provider, model=c.model, label=c.label)
+        RunConfig(agent_id=c.agent_id, provider=c.provider, model=c.model,
+                  label=c.label, repeats=c.repeats)
         for c in items
     ]
 
@@ -403,6 +408,20 @@ def start_eval_run(eval_set_id: str, data: Optional[RunEvalIn] = None):
 @router.get("/evals/{eval_set_id}/runs")
 async def list_eval_runs_for_set(eval_set_id: str, limit: int = 50):
     return {"eval_runs": [r.to_dict() for r in store.list_eval_runs(eval_set_id, limit)]}
+
+
+@router.get("/evals/runs/{run_a_id}/diff/{run_b_id}")
+async def diff_eval_runs(run_a_id: str, run_b_id: str):
+    """Compare two eval runs cell by cell: which cases got fixed, which regressed.
+
+    Matches by (case id, config label) using each run's own recorded results,
+    so it works across two runs of the same set even if their config lists
+    differ, and regardless of whether either run used repeats.
+    """
+    try:
+        return diff_runs(run_a_id, run_b_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/eval-runs/{eval_run_id}")

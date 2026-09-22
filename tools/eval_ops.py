@@ -257,7 +257,9 @@ def _configs(raw: Optional[List[Dict[str, Any]]], evalset):
 class EstimateEvalInput(BaseModel):
     eval_set_id: str = Field(..., description="Eval set to price")
     configs: Optional[List[Dict[str, Any]]] = Field(
-        None, description='Columns to sweep, e.g. [{"agent_id": "x", "model": "gpt-4o"}]')
+        None, description='Columns to sweep, e.g. [{"agent_id": "x", "model": "gpt-4o", '
+        '"repeats": 3}]. `repeats` (default 1, max 10) reruns every case that many '
+        'times under that config, to measure variance instead of one draw.')
 
 
 @tool("estimate_eval_tool", args_schema=EstimateEvalInput)
@@ -266,8 +268,8 @@ def estimate_eval_tool(eval_set_id: str,
     """Project what a sweep will cost before running it.
 
     Show this to the user before asking them to approve a run. The number is an
-    order-of-magnitude estimate, not a quote: cases times configs, plus a judge
-    call per cell when the graders include one.
+    order-of-magnitude estimate, not a quote: cases times configs times each
+    config's `repeats`, plus a judge call per cell when the graders include one.
     """
     try:
         from evals import store
@@ -289,32 +291,42 @@ def estimate_eval_tool(eval_set_id: str,
 class RunEvalInput(BaseModel):
     eval_set_id: str = Field(..., description="Eval set to run")
     configs: Optional[List[Dict[str, Any]]] = Field(
-        None, description="Columns to sweep; omit for the set's default agent")
+        None, description='Columns to sweep; omit for the set\'s default agent. Each '
+        'config may set "repeats" (default 1, max 10) to rerun every case that many '
+        'times under it, so sampling variance shows up as a spread, not one draw.')
     cost_ceiling: Optional[float] = Field(
         None, gt=0, description="Stop the sweep when accumulated spend crosses this (USD)")
     user_approved: bool = Field(
         False, description="Set only after the user has approved the projected cost")
+    compare_with_previous: bool = Field(
+        False, description="Also diff this run against the set's previous run, "
+        "if one exists, and return which cases got fixed or regressed")
 
 
 @tool("run_eval_tool", args_schema=RunEvalInput)
 def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = None,
                   cost_ceiling: Optional[float] = None,
-                  user_approved: bool = False) -> str:
+                  user_approved: bool = False,
+                  compare_with_previous: bool = False) -> str:
     """Run an eval set and return the score matrix. Refuses until approved.
 
-    A sweep is every case against every config, so the call count is their
-    product — plus one judge call per cell when the graders include an LLM judge.
-    The refusal carries the projection so the user approves with the number in
-    front of them.
+    A sweep is every case against every config (times each config's `repeats`,
+    default 1), so the call count is their product, plus one judge call per
+    cell when the graders include an LLM judge. The refusal carries the
+    projection so the user approves with the number in front of them.
 
     Unlike a scenario or a loop, this runs to completion before answering: an
     eval is a measurement, and half of one is not useful. Set `cost_ceiling` on
     anything large; the workspace budget is re-checked per cell as well, so a
     sweep cannot walk past a hard cap one call at a time.
+
+    Set `compare_with_previous=True` to also get a diff against the set's most
+    recent prior run: "did the change help" answered in the same call, instead
+    of a second round trip through list_eval_runs_tool/get_eval_run_tool.
     """
     try:
         from evals import store
-        from evals.runner import project_cost, run_eval
+        from evals.runner import diff_runs, project_cost, run_eval
 
         evalset = store.get_eval_set(eval_set_id)
         if not evalset:
@@ -340,10 +352,24 @@ def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = No
                        "configs": [c.resolved_label() for c in resolved]},
             )
 
+        # The previous run has to be found before this sweep is recorded, or
+        # "previous" would be the run we are about to create.
+        previous_run_id = None
+        if compare_with_previous:
+            history = store.list_eval_runs(eval_set_id, limit=1)
+            previous_run_id = history[0].eval_run_id if history else None
+
         run = run_eval(eval_set_id, resolved,
                        workspace=evalset.workspace, cost_ceiling=cost_ceiling)
-        return _json_ok({"eval_run": run.to_dict(),
-                         "matrix": store.build_matrix(run.eval_run_id)})
+        payload: Dict[str, Any] = {"eval_run": run.to_dict(),
+                                   "matrix": store.build_matrix(run.eval_run_id)}
+        if compare_with_previous:
+            if previous_run_id:
+                payload["diff"] = diff_runs(previous_run_id, run.eval_run_id)
+            else:
+                payload["diff"] = None
+                payload["diff_note"] = "No previous run on this set to compare against."
+        return _json_ok(payload)
     except ValueError as e:
         return _json_err(str(e), code="invalid")
     except Exception as e:

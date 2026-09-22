@@ -88,17 +88,27 @@ class GraderSpec:
         )
 
 
+# A repeat per case per config is a full LLM call, so an unbounded value would
+# let one config multiply a sweep's cost without any further approval.
+MAX_REPEATS = 10
+
+
 @dataclass
 class RunConfig:
     """One column of the score matrix: an agent under a given model.
 
     ``label`` names the column in the UI. Leaving provider/model unset means
     "the agent's configured model", which is the baseline column.
+
+    ``repeats`` runs each case this many times under this config, so variance
+    from sampling temperature shows up as a spread instead of a single lucky
+    (or unlucky) draw. Capped at ``MAX_REPEATS``: cost scales with it directly.
     """
     agent_id: str = ""
     provider: Optional[str] = None
     model: Optional[str] = None
     label: str = ""
+    repeats: int = 1
 
     def resolved_label(self) -> str:
         if self.label:
@@ -108,10 +118,14 @@ class RunConfig:
             parts.append(self.model)
         return " / ".join(parts)
 
+    def resolved_repeats(self) -> int:
+        return max(1, min(MAX_REPEATS, int(self.repeats or 1)))
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "agent_id": self.agent_id, "provider": self.provider,
             "model": self.model, "label": self.resolved_label(),
+            "repeats": self.resolved_repeats(),
         }
 
     @classmethod
@@ -121,6 +135,7 @@ class RunConfig:
             provider=d.get("provider") or None,
             model=d.get("model") or None,
             label=str(d.get("label") or ""),
+            repeats=int(d.get("repeats") or 1),
         )
 
 
@@ -179,6 +194,8 @@ class EvalResult:
     case_id: str = ""
     config_label: str = ""
     run_id: Optional[str] = None
+    # 1-based: which repeat of this (case, config) pair this is.
+    attempt: int = 1
     ok: bool = True
     error: Optional[str] = None
     output: str = ""
@@ -198,6 +215,7 @@ class EvalResult:
             "case_id": self.case_id,
             "config_label": self.config_label,
             "run_id": self.run_id,
+            "attempt": self.attempt,
             "ok": self.ok,
             "error": self.error,
             "output": self.output,
@@ -242,6 +260,6 @@ class EvalRun:
 
 
 __all__ = [
-    "EVAL_CHANNEL", "Case", "GraderSpec", "RunConfig", "EvalSet",
+    "EVAL_CHANNEL", "MAX_REPEATS", "Case", "GraderSpec", "RunConfig", "EvalSet",
     "EvalResult", "EvalRun", "utc_iso", "new_id",
 ]

@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   FlaskConical, Plus, Play, Trash2, Loader, ChevronRight, ChevronDown,
-  AlertTriangle, DollarSign, CheckCircle, XCircle, X, Save, History,
+  AlertTriangle, DollarSign, CheckCircle, XCircle, X, Save, History, GitCompare,
 } from 'lucide-react';
 import {
   getEvalSets, createEvalSet, getEvalSet, deleteEvalSet, addEvalCase,
   deleteEvalCase, estimateEvalRun, runEvalSet, getEvalRuns, getEvalRun,
-  getEvalGraders, getAgents,
+  getEvalRunDiff, getEvalGraders, getAgents,
   getEvalChat, clearEvalChat, stopEvalChat, evalChatUrl,
 } from '../api';
 import { useWorkspace } from '../components/workspace';
@@ -89,6 +89,8 @@ export default function Evals() {
   const [showCase, setShowCase] = useState(false);
   const [cellDetail, setCellDetail] = useState(null);
   const [expandedCases, setExpandedCases] = useState({});
+  const [diffResult, setDiffResult] = useState(null);
+  const [diffing, setDiffing] = useState(false);
 
   // Run configuration: which agent/model columns the sweep compares.
   const [configs, setConfigs] = useState([]);
@@ -127,6 +129,7 @@ export default function Evals() {
     setActiveRun(null);
     setEstimate(null);
     setMessage('');
+    setDiffResult(null);
     try {
       const [{ data: set }, { data: hist }] = await Promise.all([
         getEvalSet(id), getEvalRuns(id),
@@ -134,7 +137,7 @@ export default function Evals() {
       setSelected(set);
       setRuns(hist.eval_runs || []);
       setConfigs(set.agent_id
-        ? [{ agent_id: set.agent_id, provider: '', model: '', label: 'baseline' }]
+        ? [{ agent_id: set.agent_id, provider: '', model: '', label: 'baseline', repeats: 1 }]
         : []);
       if ((hist.eval_runs || []).length) {
         const { data: latest } = await getEvalRun(hist.eval_runs[0].eval_run_id);
@@ -142,6 +145,27 @@ export default function Evals() {
       }
     } catch {
       setMessage(t('evals.loadFailed'));
+    }
+  };
+
+  // The run right before the one on screen, in this set's history (newest
+  // first) — what "compare with previous" means without asking the user to
+  // pick two runs by hand.
+  const previousRun = activeRun
+    ? runs[runs.findIndex((r) => r.eval_run_id === activeRun.eval_run_id) + 1]
+    : null;
+
+  const handleCompareWithPrevious = async () => {
+    if (!activeRun || !previousRun) return;
+    setDiffing(true);
+    setMessage('');
+    try {
+      const { data } = await getEvalRunDiff(previousRun.eval_run_id, activeRun.eval_run_id);
+      setDiffResult(data);
+    } catch (e) {
+      setMessage(e.response?.data?.detail || t('evals.diffFailed'));
+    } finally {
+      setDiffing(false);
     }
   };
 
@@ -159,6 +183,7 @@ export default function Evals() {
     if (!selected) return;
     setRunning(true);
     setMessage('');
+    setDiffResult(null);
     try {
       const { data } = await runEvalSet(selected.eval_set_id, {
         configs,
@@ -308,7 +333,7 @@ export default function Evals() {
                     <button
                       onClick={() => setConfigs([...configs, {
                         agent_id: selected.agent_id || agents[0]?.id || '',
-                        provider: '', model: '', label: '',
+                        provider: '', model: '', label: '', repeats: 1,
                       }])}
                       className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
                     >
@@ -356,6 +381,18 @@ export default function Evals() {
                           }}
                           placeholder={t('evals.columnLabel')}
                           className="text-xs border border-gray-300 rounded-md px-2 py-1.5 w-36"
+                        />
+                        <input
+                          type="number" min="1" max="10"
+                          value={c.repeats || 1}
+                          onChange={(e) => {
+                            const next = [...configs];
+                            const n = parseInt(e.target.value, 10);
+                            next[i] = { ...c, repeats: Number.isFinite(n) ? n : 1 };
+                            setConfigs(next);
+                          }}
+                          title={t('evals.repeatsHint')}
+                          className="text-xs border border-gray-300 rounded-md px-2 py-1.5 w-16"
                         />
                         <button
                           onClick={() => setConfigs(configs.filter((_, j) => j !== i))}
@@ -492,6 +529,7 @@ export default function Evals() {
                           onChange={async (e) => {
                             const { data } = await getEvalRun(e.target.value);
                             setActiveRun(data);
+                            setDiffResult(null);
                           }}
                           value={activeRun.eval_run_id}
                           className="text-xs border border-gray-300 rounded-md px-2 py-1"
@@ -503,13 +541,72 @@ export default function Evals() {
                           ))}
                         </select>
                       )}
+                      {previousRun && (
+                        <button
+                          onClick={handleCompareWithPrevious}
+                          disabled={diffing}
+                          title={t('evals.compareWithPreviousHint')}
+                          className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
+                        >
+                          {diffing
+                            ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
+                            : <GitCompare className="w-3.5 h-3.5 mr-1" />}
+                          {t('evals.compareWithPrevious')}
+                        </button>
+                      )}
                     </div>
                   </div>
+
+                  {diffResult && (
+                    <div className="mb-5 rounded-lg border border-gray-200 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">
+                          {t('evals.diffResult')}
+                        </span>
+                        <button onClick={() => setDiffResult(null)} className="p-1 text-gray-400 hover:text-gray-700">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-xs mb-2">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold">
+                          {t('evals.fixedCount', { count: diffResult.summary.fixed })}
+                        </span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-semibold">
+                          {t('evals.regressedCount', { count: diffResult.summary.regressed })}
+                        </span>
+                        <span className="text-gray-500">
+                          {t('evals.sameCount', { count: diffResult.summary.same })}
+                        </span>
+                        <span className="text-gray-400 ml-auto">
+                          {pct(diffResult.summary.pass_rate_a)} → {pct(diffResult.summary.pass_rate_b)}
+                        </span>
+                      </div>
+                      {diffResult.cases.filter((c) => c.change === 'fixed' || c.change === 'regressed').length === 0 ? (
+                        <p className="text-xs text-gray-500 italic">{t('evals.noChangedCases')}</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {diffResult.cases
+                            .filter((c) => c.change === 'fixed' || c.change === 'regressed')
+                            .map((c) => (
+                              <li key={`${c.case_id}-${c.config_a || c.config_b}`} className="flex items-center gap-2 text-xs">
+                                {c.change === 'fixed'
+                                  ? <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                                  : <XCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />}
+                                <span className="font-mono text-gray-500">{c.case_id.slice(0, 12)}</span>
+                                <span className="text-gray-400">·</span>
+                                <span className="text-gray-700">{c.config_a || c.config_b}</span>
+                              </li>
+                            ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
 
                   {/* Per-config headline: the one number, with the counts behind it. */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
                     {configLabels.map((label) => {
                       const s = activeRun.summary[label] || {};
+                      const repeated = (s.total || 0) > Object.keys(s.cases || {}).length;
                       return (
                         <div key={label} className="rounded-lg border border-gray-200 p-3">
                           <div className="text-xs font-semibold text-gray-500 truncate">{label}</div>
@@ -518,6 +615,16 @@ export default function Evals() {
                             {s.passed || 0}/{s.total || 0} passed
                             {s.errors ? ` · ${s.errors} errored` : ''}
                           </div>
+                          {repeated && (
+                            <div className="text-[11px] text-gray-500 mt-0.5">
+                              {t('evals.passRate')} {pct(s.pass_rate)} · {t('evals.std')} {(s.std || 0).toFixed(2)}
+                              {s.unstable_cases > 0 && (
+                                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
+                                  {t('evals.unstableCases', { count: s.unstable_cases })}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           <div className="text-[11px] text-gray-400 mt-0.5">
                             ${(s.cost || 0).toFixed(4)}
                           </div>
@@ -547,11 +654,16 @@ export default function Evals() {
                               if (!cell) {
                                 return <td key={label} className="text-center py-2 px-2 text-xs text-gray-300">—</td>;
                               }
+                              const caseStats = activeRun.summary?.[label]?.cases?.[c.case_id];
+                              const repeated = caseStats && caseStats.attempts > 1;
+                              const title = repeated
+                                ? `${t('evals.passRate')} ${pct(caseStats.pass_rate)} · ${t('evals.std')} ${caseStats.std.toFixed(2)}`
+                                : t('evals.openTheRawOutputBehind');
                               return (
                                 <td key={label} className="text-center py-2 px-2">
                                   <button
-                                    onClick={() => setCellDetail({ cell, case: c, label })}
-                                    title={t('evals.openTheRawOutputBehind')}
+                                    onClick={() => setCellDetail({ cell, case: c, label, caseStats })}
+                                    title={title}
                                     className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-semibold ${scoreColor(cell.score, cell.ok)}`}
                                   >
                                     {cell.ok
@@ -559,6 +671,13 @@ export default function Evals() {
                                       : <AlertTriangle className="w-3 h-3" />}
                                     {cell.ok ? pct(cell.score) : 'err'}
                                   </button>
+                                  {repeated && caseStats.unstable && (
+                                    <div className="mt-1">
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold">
+                                        {t('evals.unstable')}
+                                      </span>
+                                    </div>
+                                  )}
                                 </td>
                               );
                             })}
@@ -756,7 +875,8 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
 
 function CellDetailModal({ detail, onClose }) {
   const { t } = useI18n();
-  const { cell, case: c, label } = detail;
+  const { cell, case: c, label, caseStats } = detail;
+  const repeated = caseStats && caseStats.attempts > 1;
   return (
     <Modal title={`${label} — ${c.input.slice(0, 60)}`} onClose={onClose} wide>
       <div className="space-y-4 text-sm">
@@ -767,6 +887,7 @@ function CellDetailModal({ detail, onClose }) {
           <div className="text-xs text-gray-500">
             {cell.duration_ms}ms · {cell.inbound_tokens}+{cell.outbound_tokens} tokens ·
             ${cell.cost.toFixed(4)}
+            {cell.attempt > 1 && ` · ${t('evals.attempt', { n: cell.attempt })}`}
           </div>
           {cell.run_id && (
             <a href={`/messages/${cell.run_id}`} className="text-xs text-indigo-600 hover:underline ml-auto">
@@ -774,6 +895,20 @@ function CellDetailModal({ detail, onClose }) {
             </a>
           )}
         </div>
+
+        {repeated && (
+          <div className="rounded-lg border border-gray-200 p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+            <span>{t('evals.attempts')}: {caseStats.attempts}</span>
+            <span>{t('evals.passRate')}: {pct(caseStats.pass_rate)}</span>
+            <span>{t('evals.std')}: {caseStats.std.toFixed(3)}</span>
+            <span>{t('evals.range')}: {pct(caseStats.min)} {t('evals.to')} {pct(caseStats.max)}</span>
+            {caseStats.unstable && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
+                {t('evals.unstable')}
+              </span>
+            )}
+          </div>
+        )}
 
         {cell.error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">

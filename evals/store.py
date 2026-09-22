@@ -161,14 +161,14 @@ def save_result(result: EvalResult) -> EvalResult:
             """INSERT OR REPLACE INTO eval_results
                (result_id, eval_run_id, case_id, config_label, run_id, ok, error,
                 output, scores, score, passed, duration_ms, inbound_tokens,
-                outbound_tokens, cost)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                outbound_tokens, cost, attempt)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 result.result_id, result.eval_run_id, result.case_id,
                 result.config_label, result.run_id, int(result.ok), result.error,
                 result.output, db.dumps(result.scores), result.score,
                 int(result.passed), result.duration_ms, result.inbound_tokens,
-                result.outbound_tokens, result.cost,
+                result.outbound_tokens, result.cost, int(result.attempt or 1),
             ),
         )
     return result
@@ -181,6 +181,7 @@ def _row_to_result(row) -> EvalResult:
         case_id=row["case_id"] or "",
         config_label=row["config_label"] or "",
         run_id=row["run_id"],
+        attempt=int(row["attempt"] or 1),
         ok=bool(row["ok"]),
         error=row["error"],
         output=row["output"] or "",
