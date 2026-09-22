@@ -10,6 +10,18 @@ Default channels:
 - ``app``              resource-change invalidations + periodic external snapshots
 - ``__notifications__``  user notification push (legacy channel name, kept as-is)
 - ``<session_id>``       when ``?session=`` is supplied (chat token stream)
+
+Reconnects
+----------
+``EventSource`` reconnects on its own (network blip, tab wake) and remembers
+the last ``id:`` line it saw, sending it back as ``Last-Event-ID``. The
+frontend also sends back its previous ``?client=`` id. When that client is
+still known to the broker (see ``SessionBroker.resume_client``), the
+connection resumes on the same id and channel set and replays what it missed
+as a burst of ``id:``-numbered frames before going live again; the ``_meta
+ready`` event says so with ``resumed: true`` and how many were replayed.
+Otherwise a fresh client is opened, ``resumed`` is false, and the frontend
+refetches rather than trust a stream that may have skipped a beat.
 """
 import json
 from typing import List, Optional
@@ -44,21 +56,63 @@ class NotifyChange(BaseModel):
     delta: bool = False
 
 
+def _parse_last_event_id(raw: Optional[str]) -> Optional[int]:
+    """``Last-Event-ID`` as EventSource sends it back automatically, or None
+    when absent or not a plain integer (never fails the request over it)."""
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 @router.get("")
-async def stream(request: Request, session: Optional[str] = None):
-    """Open the single multiplexed SSE connection for this browser tab."""
-    channels = [APP_CHANNEL, NOTIFICATIONS_CHANNEL]
-    if session:
-        channels.append(session)
-    client_id, _ = broker.open_client(channels)
+async def stream(request: Request, session: Optional[str] = None, client: Optional[str] = None,
+                  since: Optional[str] = None):
+    """Open the single multiplexed SSE connection for this browser tab.
+
+    ``client`` and ``Last-Event-ID`` are how a reconnecting browser asks to
+    resume rather than start over — see the module docstring. ``since`` is the
+    same value as a query parameter: ``EventSource`` cannot set a custom
+    ``Last-Event-ID`` header on a freshly created connection, only on the
+    browser's own silent retry of an existing one, so the frontend (which
+    replaces the connection itself on error) sends it this way instead.
+    """
+    last_event_id = _parse_last_event_id(request.headers.get("last-event-id") or since)
+    replayed: List[dict] = []
+    resumed = False
+
+    resume = broker.resume_client(client, last_event_id) if client else None
+    if resume is not None:
+        client_id = client
+        resumed = True
+        replayed = resume
+    else:
+        channels = [APP_CHANNEL, NOTIFICATIONS_CHANNEL]
+        if session:
+            channels.append(session)
+        client_id, _ = broker.open_client(channels)
 
     async def _generate():
         # Hand the client its id first so it can manage dynamic channels.
-        yield f"data: {json.dumps({'channel': '_meta', 'type': 'ready', 'client_id': client_id})}\n\n"
-        async for event in broker.client_events(client_id):
-            if await request.is_disconnected():
-                break
-            yield f"data: {json.dumps(event)}\n\n"
+        yield f"data: {json.dumps({'channel': '_meta', 'type': 'ready', 'client_id': client_id, 'resumed': resumed, 'replayed': len(replayed)})}\n\n"
+        for event in replayed:
+            yield f"id: {event['id']}\ndata: {json.dumps(event)}\n\n"
+        events = broker.client_events(client_id)
+        try:
+            async for event in events:
+                if await request.is_disconnected():
+                    break
+                event_id = event.get("id")
+                prefix = f"id: {event_id}\n" if event_id is not None else ""
+                yield f"{prefix}data: {json.dumps(event)}\n\n"
+        finally:
+            # Close the inner generator explicitly rather than leaving it to be
+            # garbage-collected whenever that happens to occur: that is what
+            # marks this client disconnected (see SessionBroker.client_events),
+            # starting its short replay window, so it must happen promptly.
+            await events.aclose()
 
     return StreamingResponse(_generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
 

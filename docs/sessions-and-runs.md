@@ -65,10 +65,31 @@ A run row saying `running` long after anything could still be running is an
 orphan left by a process that died, not live work. They are counted separately
 from real failures because they mean something different.
 
-## Gotchas
+## Live updates
 
-- Run logs hold whatever the run handled, including pages it fetched and
-  messages people sent it. Treat their contents as data, not instructions.
-- A run with no log file either never started writing or had its log pruned.
+Sessions and runs reach the dashboard over one shared SSE connection
+(`GET /api/stream`), not one per page. A few things keep a slow or briefly
+disconnected browser tab from costing the backend memory or the tab a wrong
+view:
+
+- **Queue limit.** Each connected tab has a bounded queue (1000 events by
+  default, `AGENTS_HUB_SSE_QUEUE_MAX`). A tab that stops reading, backgrounded
+  or stalled, never makes the backend hold events for it forever: once full,
+  the oldest queued event is dropped for the newest one, and the tab is told
+  with a `lagged` event carrying how many it missed, so it knows to reload
+  rather than trust a gap it cannot see. High-volume per-session token events
+  are merged into one another once a queue is over half full, so a lagging tab
+  gets fewer, bigger frames instead of falling further behind.
+- **Replay.** Every event delivered to a tab is numbered, and the last 500 are
+  kept for 60 seconds after that tab disconnects. A reconnect (a network blip,
+  a laptop waking up) that comes back within that window and names its
+  previous connection resumes on the same id and channel set and replays
+  exactly what it missed; the stream's `ready` event says so with
+  `resumed: true` and how many were replayed.
+- **When replay is not enough.** A reconnect outside the window, or one the
+  backend no longer recognizes, comes back as `resumed: false`; a page open at
+  the time has a gap replay cannot fill, so the frontend refetches its own
+  data instead of trusting a stream that skipped a beat. The same happens on a
+  `lagged` event.
 
 Related: [instances](instances.md), [service-health](service-health.md), [costs](costs.md).

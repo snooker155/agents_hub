@@ -4,11 +4,18 @@
  * provider component and Fast Refresh can hot-swap it (same split as
  * `i18n/core.js` / `I18nProvider.jsx`).
  *
- *   useStream()                         → { connected, on, acquireChannel }
+ *   useStream()                         → { connected, on, acquireChannel, onRefetch }
  *   useStreamEvent(channel, type, fn)   → fire fn on matching events
  *   useLiveResource(fetchFn, opts)      → initial fetch + debounced refetch
  *   useLiveRefetch(fn, opts)            → refetch only, no initial call
  *   useChannel(channel, fn?)            → subscribe to a dynamic channel
+ *
+ * `onRefetch(fn)` (from useStream()) registers a callback the provider calls
+ * after a gap the stream itself could not fill in (a reconnect that could not
+ * resume, or events dropped because a connection fell behind). A page with its
+ * own live data can register here as a last-resort full reload; this is
+ * separate from useLiveResource/useLiveRefetch, which already refetch off
+ * ordinary change events and need no extra wiring for this.
  */
 import { createContext, useContext, useEffect, useLayoutEffect, useRef } from 'react';
 
@@ -77,10 +84,18 @@ export function useLiveResource(fetchFn, { type, deps = [], channel = 'app' } = 
  * one hook means ONE debounce timer, so two events landing together cost one
  * refetch, not one per subscription. `debounceMs` widens that window for a
  * page whose events arrive as a drawn-out burst rather than all at once.
+ *
+ * `fallbackMs` adds a slow safety-net interval on top of the subscription, for
+ * a page whose *detail* has no event of its own: a team's board or a
+ * simulation's ticks are published on their own run channel, and only the run
+ * starting or finishing reaches the app channel. When that run channel drops,
+ * the subscription alone would leave the page frozen. This is a floor, not a
+ * poll: keep it at 30s or more, so it costs one request a minute rather than
+ * twenty, and let the stream do the real work.
  */
 export function useLiveRefetch(
   handler,
-  { type, channel = 'app', sources, enabled = true, debounceMs = 300 } = {},
+  { type, channel = 'app', sources, enabled = true, debounceMs = 300, fallbackMs = 0 } = {},
 ) {
   const { on } = useStream();
   const hRef = useRef(handler);
@@ -107,6 +122,13 @@ export function useLiveRefetch(
       if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     };
   }, [subsKey, enabled, debounceMs, on]);
+
+  // The safety net, in its own effect so changing it never re-subscribes.
+  useEffect(() => {
+    if (!enabled || !fallbackMs) return undefined;
+    const id = setInterval(() => hRef.current?.(), fallbackMs);
+    return () => clearInterval(id);
+  }, [enabled, fallbackMs]);
 }
 
 /**
