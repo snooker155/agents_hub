@@ -335,8 +335,13 @@ app.include_router(replay.router)
 # Evals domain: batch replay across cases x models, scored by graders
 app.include_router(evals.router)
 
-# Playground domain: multi-agent simulation against a deterministic environment
-app.include_router(playground.router)
+# Playground domain: multi-agent simulation against a deterministic environment.
+# Optional: off (PLAYGROUND_ENABLED=false) skips both the routes and the
+# ``playground`` package import they would otherwise trigger. See
+# docs/playground.md, "Turning the playground off".
+from common.config import playground_enabled as _playground_enabled
+if _playground_enabled():
+    app.include_router(playground.router)
 
 # Memory domain: shared memory management
 app.include_router(memory.router)

@@ -1,0 +1,7 @@
+# The playground (playground/**: simulation worlds and scenarios) has no
+# dependencies of its own beyond what dashboard/backend/requirements.txt and
+# requirements-agents.txt already install (langchain_core, plus the standard
+# library). This extra exists as a marker so `pip install -e ".[playground]"`
+# is a meaningful command, and so a future playground dependency has a home
+# that does not leak into a deployment that turns the feature off with
+# PLAYGROUND_ENABLED=false. See docs/playground.md, "Turning the playground off".

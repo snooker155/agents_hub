@@ -364,11 +364,21 @@ def _flow_management_specs() -> List[ToolSpec]:
 
 
 def _world_management_specs() -> List[ToolSpec]:
+    # Playground is optional (PLAYGROUND_ENABLED); off, the agent editor must
+    # not offer world-building tools. Ids stay in tools/capabilities.py's
+    # tables either way — only the catalog omits them. See docs/playground.md.
+    from common.config import playground_enabled
+    if not playground_enabled():
+        return []
     from tools.world_management import WORLD_MANAGEMENT_TOOLS
     return [spec_from_tool(t, category="world_management") for t in WORLD_MANAGEMENT_TOOLS]
 
 
 def _scenario_management_specs() -> List[ToolSpec]:
+    # Same optional-playground gate as _world_management_specs above.
+    from common.config import playground_enabled
+    if not playground_enabled():
+        return []
     from tools.scenario_management import SCENARIO_MANAGEMENT_TOOLS
     return [spec_from_tool(t, category="scenario_management") for t in SCENARIO_MANAGEMENT_TOOLS]
 
@@ -395,8 +405,16 @@ def _project_management_specs() -> List[ToolSpec]:
 
 
 def _entity_run_specs() -> List[ToolSpec]:
+    # entity_runs.py groups three unrelated "launch a long-running entity"
+    # tools together (scenario, team, loop). Only the scenario ones belong to
+    # the optional playground; team/loop stay in the catalog regardless.
+    from common.config import playground_enabled
     from tools.entity_runs import ENTITY_RUN_TOOLS
-    return [spec_from_tool(t, category="entity_runs") for t in ENTITY_RUN_TOOLS]
+    tools = ENTITY_RUN_TOOLS
+    if not playground_enabled():
+        tools = [t for t in tools if getattr(t, "name", "") not in
+                 ("run_scenario_tool", "get_scenario_run_tool", "stop_scenario_run_tool")]
+    return [spec_from_tool(t, category="entity_runs") for t in tools]
 
 
 def _git_publish_specs() -> List[ToolSpec]:
