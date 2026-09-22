@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone as _dt_timezone
 from enum import Enum
 from pathlib import Path
 from typing import Iterable, List, Optional, Type, TypeVar
@@ -12,13 +12,20 @@ from pydantic import BaseModel
 
 from common.paths import PLANS_FILE as DEFAULT_PLANS_FILE
 from common.paths import NOTIFICATIONS_FILE as DEFAULT_NOTIFICATIONS_FILE
-from .models import Notification, ScheduledJob
+from .models import JobStatus, Notification, ScheduledJob
 
 M = TypeVar("M", bound=BaseModel)
 
 
 def _model_to_dict(obj: BaseModel) -> dict:
     return obj.model_dump()
+
+
+def _aware(dt: datetime) -> datetime:
+    """Treat naive datetimes as UTC, same convention as plans.service."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_dt_timezone.utc)
+    return dt
 
 
 def _json_default(o):
@@ -138,6 +145,86 @@ class _JsonStore:
 class PlanStore(_JsonStore):
     def __init__(self, path: Path | str | None = None):
         super().__init__(path or DEFAULT_PLANS_FILE, ScheduledJob)
+
+    def claim_due_jobs(
+        self,
+        now: datetime,
+        owner: str,
+        lease_seconds: float = 120.0,
+        timeout: float = 10.0,
+    ) -> List[ScheduledJob]:
+        """Atomically select due jobs with no live lease and stamp a lease on them.
+
+        Runs entirely under one FileLock acquisition (read, filter, write), so
+        two schedulers calling this concurrently against the same store — two
+        backend replicas, or an overlapping slow tick — can never both see the
+        same job as claimable: whichever acquires the lock second reloads the
+        file the first one just wrote and finds the lease already held.
+        """
+        now = _aware(now)
+        lease_until = now + timedelta(seconds=lease_seconds)
+        with FileLock(str(self.lock_path), timeout=timeout):
+            items = self._load_unlocked()
+            claimed: List[ScheduledJob] = []
+            new_list: List[ScheduledJob] = []
+            for item in items:
+                held = item.lease_until is not None and _aware(item.lease_until) > now
+                due = item.status == JobStatus.scheduled and _aware(item.run_at) <= now
+                if due and not held:
+                    data = _model_to_dict(item)
+                    data["lease_until"] = lease_until
+                    data["lease_owner"] = owner
+                    updated = self._parse(data)
+                    if hasattr(updated, "touch"):
+                        updated.touch()
+                    claimed.append(updated)
+                    new_list.append(updated)
+                else:
+                    new_list.append(item)
+            if claimed:
+                self._atomic_write([_model_to_dict(i) for i in new_list])
+            return claimed
+
+    def force_claim_job(
+        self,
+        job_id: UUID | str,
+        owner: str,
+        lease_seconds: float = 120.0,
+        timeout: float = 10.0,
+    ) -> Optional[ScheduledJob]:
+        """Claim one specific job for an immediate manual fire (run-now).
+
+        Ignores ``run_at`` (that is the point of run-now) but still refuses a
+        job whose lease is held by someone else and not yet expired, so a
+        manual fire can never overlap an in-flight automatic one.
+        """
+        iid = str(job_id)
+        now = datetime.now(_dt_timezone.utc)
+        lease_until = now + timedelta(seconds=lease_seconds)
+        with FileLock(str(self.lock_path), timeout=timeout):
+            items = self._load_unlocked()
+            new_list: List[ScheduledJob] = []
+            claimed: Optional[ScheduledJob] = None
+            for item in items:
+                if str(item.id) != iid:
+                    new_list.append(item)
+                    continue
+                held = item.lease_until is not None and _aware(item.lease_until) > now
+                eligible = item.status in (JobStatus.scheduled, JobStatus.paused) and not held
+                if not eligible:
+                    new_list.append(item)
+                    continue
+                data = _model_to_dict(item)
+                data["lease_until"] = lease_until
+                data["lease_owner"] = owner
+                updated = self._parse(data)
+                if hasattr(updated, "touch"):
+                    updated.touch()
+                claimed = updated
+                new_list.append(updated)
+            if claimed is not None:
+                self._atomic_write([_model_to_dict(i) for i in new_list])
+            return claimed
 
 
 class NotificationStore(_JsonStore):

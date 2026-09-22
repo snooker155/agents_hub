@@ -127,7 +127,15 @@ function isoToLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const RECURRENCE_OPTIONS = ['none', 'hourly', 'daily', 'weekly'];
+const RECURRENCE_OPTIONS = ['none', 'hourly', 'daily', 'weekly', 'cron'];
+
+function browserTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
 
 // ---- create / edit modal ----------------------------------------------------
 
@@ -139,6 +147,8 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
   const [message, setMessage] = useState(job?.message || '');
   const [runAt, setRunAt] = useState(job ? isoToLocalInput(job.run_at) : '');
   const [recurrence, setRecurrence] = useState(job?.recurrence || 'none');
+  const [cron, setCron] = useState(job?.cron || '');
+  const [tz, setTz] = useState(job?.timezone || browserTimezone());
   const [agentId, setAgentId] = useState(job?.agent_id || '');
   const [flowId, setFlowId] = useState(job?.flow_id || '');
   const [seedText, setSeedText] = useState(job?.seed ? JSON.stringify(job.seed, null, 2) : '');
@@ -160,6 +170,7 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
     if (!title.trim()) { setError(t('plan.errors.titleRequired')); return; }
     if (!runAt) { setError(t('plan.errors.timeRequired')); return; }
     if (kind === 'flow' && !flowId) { setError(t('plan.errors.pickFlow')); return; }
+    if (recurrence === 'cron' && !cron.trim()) { setError(t('plan.errors.cronRequired')); return; }
     let seed = null;
     if (kind === 'flow' && seedText.trim()) {
       try {
@@ -172,12 +183,17 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
     setSaving(true);
     setError('');
     try {
+      const cronFields = {
+        cron: recurrence === 'cron' ? cron.trim() : null,
+        timezone: recurrence !== 'none' ? (tz.trim() || null) : null,
+      };
       if (isEdit) {
         await updatePlanJob(job.id, {
           title: title.trim(),
           message,
           run_at: localInputToIso(runAt),
           recurrence,
+          ...cronFields,
           agent_id: kind === 'agent_task' ? (agentId || null) : null,
           channels,
         });
@@ -188,6 +204,7 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
           message,
           run_at: localInputToIso(runAt),
           recurrence,
+          ...cronFields,
           workspace: workspace || null,
           agent_id: kind === 'agent_task' ? (agentId || null) : null,
           flow_id: kind === 'flow' ? (flowId || null) : null,
@@ -283,6 +300,34 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
             </select>
           </div>
         </div>
+
+        {recurrence !== 'none' && (
+          <div className="flex gap-3">
+            {recurrence === 'cron' && (
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.cronExpression')}</label>
+                <input
+                  type="text"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={cron}
+                  onChange={e => setCron(e.target.value)}
+                  placeholder="0 9 * * 1-5"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">{t('plan.cronHint')}</p>
+              </div>
+            )}
+            <div className={recurrence === 'cron' ? 'w-44' : 'flex-1'}>
+              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.timezone')}</label>
+              <input
+                type="text"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={tz}
+                onChange={e => setTz(e.target.value)}
+                placeholder="Europe/Berlin"
+              />
+            </div>
+          </div>
+        )}
 
         {kind === 'agent_task' && (
           <div>
@@ -597,7 +642,10 @@ export default function Plan() {
                     </div>
                     <div className="md:text-center text-sm text-gray-600">
                       {job.recurrence !== 'none' ? (
-                        <span className="inline-flex items-center gap-1"><Repeat className="w-3 h-3" />{job.recurrence}</span>
+                        <span className="inline-flex items-center gap-1" title={job.timezone || 'UTC'}>
+                          <Repeat className="w-3 h-3" />
+                          {job.recurrence === 'cron' ? (job.cron || 'cron') : job.recurrence}
+                        </span>
                       ) : <span className="text-gray-400">{t('plan.once')}</span>}
                     </div>
                     <div className="md:text-center text-sm text-gray-600 truncate">

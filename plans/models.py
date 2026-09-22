@@ -27,6 +27,7 @@ class Recurrence(str, Enum):
     hourly = "hourly"
     daily = "daily"
     weekly = "weekly"
+    cron = "cron"
 
 
 class ScheduledJob(BaseModel):
@@ -44,7 +45,26 @@ class ScheduledJob(BaseModel):
 
     run_at: datetime
     recurrence: Recurrence = Recurrence.none
+    # recurrence == cron only: the cron expression driving the next run_at.
+    cron: Optional[str] = None
+    # IANA timezone name (e.g. "Europe/Berlin"). None means UTC. Used for
+    # cron evaluation and to keep hourly/daily/weekly firings at the same
+    # local wall-clock time across a DST change.
+    timezone: Optional[str] = None
     status: JobStatus = JobStatus.scheduled
+
+    # -------------------- lease + idempotency --------------------
+    # Held while a scheduler tick is firing this job, so a second tick (a
+    # second replica, or an overlapping slow fire) skips it instead of
+    # firing it again. Cleared once the firing completes.
+    lease_until: Optional[datetime] = None
+    lease_owner: Optional[str] = None
+    # Total number of times this job has actually fired.
+    fire_count: int = 0
+    # run_at of the slot most recently fired. Firing checks this before
+    # doing anything visible, so a retry after a crash between the side
+    # effect and updating the record does not fire the same slot twice.
+    last_fired_slot: Optional[datetime] = None
 
     workspace: Optional[str] = None
     created_by: str = "user"  # "user" | "agent"

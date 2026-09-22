@@ -28,6 +28,8 @@ class JobCreate(BaseModel):
     run_at: Optional[datetime] = None
     delay_minutes: Optional[int] = Field(None, ge=1)
     recurrence: Recurrence = Recurrence.none
+    cron: Optional[str] = Field(None, description="Cron expression, required when recurrence='cron'")
+    timezone: Optional[str] = Field(None, description="IANA timezone name, e.g. 'Europe/Berlin'. Defaults to UTC.")
     workspace: Optional[str] = None
     agent_id: Optional[str] = None
     # flow jobs: which flow to trigger, an optional JSON seed, and a concurrency cap.
@@ -55,6 +57,8 @@ class JobUpdate(BaseModel):
     message: Optional[str] = None
     run_at: Optional[datetime] = None
     recurrence: Optional[Recurrence] = None
+    cron: Optional[str] = None
+    timezone: Optional[str] = None
     agent_id: Optional[str] = None
     channels: Optional[List[str]] = None
 
@@ -71,20 +75,25 @@ async def list_jobs(workspace: Optional[str] = None, status: Optional[str] = Non
 
 @router.post("/jobs")
 async def create_job(payload: JobCreate):
-    job = plan_service.create_job(
-        kind=payload.kind,
-        title=payload.title,
-        message=payload.message,
-        run_at=payload.resolved_run_at(),
-        recurrence=payload.recurrence,
-        workspace=payload.workspace,
-        created_by="user",
-        agent_id=payload.agent_id,
-        flow_id=payload.flow_id,
-        seed=payload.seed,
-        max_concurrent=payload.max_concurrent,
-        channels=payload.channels,
-    )
+    try:
+        job = plan_service.create_job(
+            kind=payload.kind,
+            title=payload.title,
+            message=payload.message,
+            run_at=payload.resolved_run_at(),
+            recurrence=payload.recurrence,
+            cron=payload.cron,
+            timezone=payload.timezone,
+            workspace=payload.workspace,
+            created_by="user",
+            agent_id=payload.agent_id,
+            flow_id=payload.flow_id,
+            seed=payload.seed,
+            max_concurrent=payload.max_concurrent,
+            channels=payload.channels,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return job_to_dict(job)
 
 
@@ -106,7 +115,10 @@ async def update_job(job_id: UUID, payload: JobUpdate):
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
-    updated = plan_service.update_job(job_id, **fields)
+    try:
+        updated = plan_service.update_job(job_id, **fields)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return job_to_dict(updated)
 
 
@@ -152,13 +164,20 @@ async def cancel_job(job_id: UUID):
 
 @router.post("/jobs/{job_id}/run-now")
 async def run_job_now(job_id: UUID):
-    """Fire a scheduled/paused job immediately, bypassing its run_at."""
+    """Fire a scheduled/paused job immediately, bypassing its run_at.
+
+    Claims the job first (same lease as the automatic tick) so a manual fire
+    can never race an in-flight automatic one on the same job.
+    """
     job = plan_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status not in (JobStatus.scheduled, JobStatus.paused):
         raise HTTPException(status_code=400, detail=f"Cannot run a job in status '{job.status.value}'")
-    result = plan_service.fire_job(job)
+    claimed = plan_service.claim_job_now(job_id)
+    if not claimed:
+        raise HTTPException(status_code=409, detail="Job is currently being fired elsewhere; try again shortly")
+    result = plan_service.fire_job(claimed)
     updated = plan_service.get_job(job_id)
     return {"result": result, "job": job_to_dict(updated) if updated else None}
 

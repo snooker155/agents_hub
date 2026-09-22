@@ -112,7 +112,15 @@ class ScheduleTaskInput(BaseModel):
     description: str = Field("", description="Detailed description of the work the agent should do")
     run_at: Optional[str] = Field(None, description="ISO 8601 datetime when to start the task (UTC if no offset)")
     delay_minutes: Optional[int] = Field(None, ge=1, description="Alternative to run_at: minutes from now")
-    recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, or weekly")
+    recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, weekly, or cron")
+    cron: Optional[str] = Field(
+        None,
+        description="Cron expression, required when recurrence='cron' (e.g. '0 9 * * 1-5' for weekdays at 9am)",
+    )
+    timezone: Optional[str] = Field(
+        None,
+        description="IANA timezone name for recurrence timing, e.g. 'Europe/Berlin'. Defaults to UTC.",
+    )
     agent_id: Optional[str] = Field(
         None,
         description="Optional agent to run the task. Omit to let the orchestrator pick one at fire time.",
@@ -162,6 +170,8 @@ class UpdateScheduledInput(BaseModel):
     run_at: Optional[str] = Field(None, description="New ISO 8601 firing time")
     delay_minutes: Optional[int] = Field(None, ge=1, description="Alternative to run_at: minutes from now")
     recurrence: Optional[Recurrence] = None
+    cron: Optional[str] = Field(None, description="New cron expression, required when recurrence='cron'")
+    timezone: Optional[str] = Field(None, description="New IANA timezone name, e.g. 'Europe/Berlin'")
     agent_id: Optional[str] = Field(None, description="New agent for agent_task jobs; empty string clears it")
 
 
@@ -215,6 +225,8 @@ def schedule_task(
     run_at: Optional[str] = None,
     delay_minutes: Optional[int] = None,
     recurrence: Recurrence = Recurrence.none,
+    cron: Optional[str] = None,
+    timezone: Optional[str] = None,
     agent_id: Optional[str] = None,
     telegram: bool = False,
 ) -> str:
@@ -223,9 +235,11 @@ def schedule_task(
     At the scheduled time a regular task is created and started: if agent_id
     is set, that agent runs it; otherwise the orchestrator routes it. The user
     is notified when the work starts. Use for requests like "every morning
-    generate a summary" or "in 3 hours run the tests again". Set telegram=true
-    to also send that start notification to the user's bound Telegram chat(s).
-    Returns JSON with the created job.
+    generate a summary" or "in 3 hours run the tests again". For recurrence
+    'cron', pass a cron expression; timezone (IANA name, default UTC) applies
+    to cron and keeps hourly/daily/weekly at the same local time across a DST
+    change. Set telegram=true to also send that start notification to the
+    user's bound Telegram chat(s). Returns JSON with the created job.
     """
     try:
         if agent_id:
@@ -239,6 +253,8 @@ def schedule_task(
             message=description,
             run_at=when,
             recurrence=recurrence,
+            cron=cron,
+            timezone=timezone,
             workspace=resolve_active_workspace(),
             created_by="agent",
             agent_id=agent_id or None,
@@ -340,9 +356,12 @@ def update_scheduled(
     run_at: Optional[str] = None,
     delay_minutes: Optional[int] = None,
     recurrence: Optional[Recurrence] = None,
+    cron: Optional[str] = None,
+    timezone: Optional[str] = None,
     agent_id: Optional[str] = None,
 ) -> str:
-    """Update a pending scheduled job (time, title, message, recurrence, or agent).
+    """Update a pending scheduled job (time, title, message, recurrence, cron,
+    timezone, or agent).
 
     Only scheduled/paused jobs can be edited. Returns JSON with the updated job.
     """
@@ -366,6 +385,10 @@ def update_scheduled(
             fields["run_at"] = _resolve_run_at(run_at, delay_minutes)
         if recurrence is not None:
             fields["recurrence"] = recurrence
+        if cron is not None:
+            fields["cron"] = cron
+        if timezone is not None:
+            fields["timezone"] = timezone
         if agent_id is not None:
             if agent_id.strip():
                 from agents.registry import get_agent as reg_get_agent

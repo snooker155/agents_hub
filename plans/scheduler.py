@@ -51,9 +51,10 @@ class PlanScheduler:
     async def _loop(self) -> None:
         from plans import service
 
+        owner = service._default_owner()
         while not self._stop.is_set():
             try:
-                results = await asyncio.to_thread(service.run_due_jobs)
+                results = await asyncio.to_thread(service.run_due_jobs, owner)
                 for r in results:
                     if r.get("ok"):
                         log.info("fired job %s (%s)", r.get("job_id"), r.get("kind"))

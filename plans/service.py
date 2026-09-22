@@ -10,9 +10,14 @@ normal run/session records.
 from __future__ import annotations
 
 import logging
+import os
+import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
+
+from croniter import croniter
 
 from .models import JobKind, JobStatus, Notification, Recurrence, ScheduledJob
 from .storage import NotificationStore, PlanStore
@@ -37,6 +42,41 @@ def _ensure_aware(dt: datetime) -> datetime:
     return dt
 
 
+def _default_owner() -> str:
+    """Identify this process for lease ownership: hostname:pid."""
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _resolve_tz(name: Optional[str]) -> ZoneInfo:
+    try:
+        return ZoneInfo(name or "UTC")
+    except Exception:
+        # Bad/legacy data should not crash a tick; fall back to UTC.
+        return ZoneInfo("UTC")
+
+
+def _validate_timezone(tz: Optional[str]) -> str:
+    """Validate an IANA timezone name, defaulting to UTC. Raises ValueError."""
+    name = (tz or "UTC").strip() or "UTC"
+    try:
+        ZoneInfo(name)
+    except Exception as e:
+        raise ValueError(f"Unknown timezone '{name}'. Use an IANA name, e.g. 'Europe/Berlin'.") from e
+    return name
+
+
+def _validate_cron(expr: Optional[str]) -> str:
+    """Validate a cron expression with croniter. Raises ValueError."""
+    text = (expr or "").strip()
+    if not text:
+        raise ValueError("Recurrence 'cron' requires a cron expression, e.g. '0 9 * * 1-5'.")
+    try:
+        croniter(text)
+    except Exception as e:
+        raise ValueError(f"Invalid cron expression '{text}': {e}") from e
+    return text
+
+
 # -------------------- Job CRUD --------------------
 
 def create_job(
@@ -46,6 +86,8 @@ def create_job(
     message: str = "",
     run_at: datetime,
     recurrence: Recurrence = Recurrence.none,
+    cron: Optional[str] = None,
+    timezone: Optional[str] = None,
     workspace: Optional[str] = None,
     created_by: str = "user",
     agent_id: Optional[str] = None,
@@ -54,12 +96,16 @@ def create_job(
     max_concurrent: int = 1,
     channels: Optional[List[str]] = None,
 ) -> ScheduledJob:
+    tz_name = _validate_timezone(timezone)
+    cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
     job = ScheduledJob(
         kind=kind,
         title=title,
         message=message,
         run_at=_ensure_aware(run_at),
         recurrence=recurrence,
+        cron=cron_expr,
+        timezone=tz_name,
         workspace=workspace,
         created_by=created_by,
         agent_id=agent_id,
@@ -95,6 +141,14 @@ def _notify_plan_changed() -> None:
 def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
     if "run_at" in fields and isinstance(fields["run_at"], datetime):
         fields["run_at"] = _ensure_aware(fields["run_at"])
+    if "timezone" in fields:
+        fields["timezone"] = _validate_timezone(fields["timezone"])
+    if "cron" in fields and fields["cron"] is not None:
+        fields["cron"] = _validate_cron(fields["cron"])
+    if fields.get("recurrence") == Recurrence.cron:
+        existing = plan_store.get(job_id)
+        cron_val = fields.get("cron") or (existing.cron if existing else None)
+        fields["cron"] = _validate_cron(cron_val)
     updated = plan_store.update(job_id, **fields)
     if updated:
         _notify_plan_changed()
@@ -256,7 +310,7 @@ def job_to_dict(job: ScheduledJob) -> Dict[str, Any]:
     for key in ("kind", "status", "recurrence"):
         if hasattr(data.get(key), "value"):
             data[key] = data[key].value
-    for ts in ("run_at", "last_fired_at", "created_at", "updated_at"):
+    for ts in ("run_at", "last_fired_at", "created_at", "updated_at", "lease_until", "last_fired_slot"):
         if data.get(ts) is not None:
             try:
                 data[ts] = data[ts].isoformat()
@@ -275,60 +329,124 @@ def due_jobs(now: Optional[datetime] = None) -> List[ScheduledJob]:
     ]
 
 
-def _next_run(run_at: datetime, recurrence: Recurrence, now: datetime) -> datetime:
+def _next_run(job: ScheduledJob, now: datetime) -> datetime:
+    """Compute the next run_at for a recurring job, past ``now``.
+
+    Cron follows the spec literally: the next cron occurrence after ``now``,
+    evaluated in the job's timezone, converted back to UTC. That alone makes
+    a missed occurrence (backend down for a while) roll forward to the next
+    future slot, without replaying every tick that was missed.
+
+    hourly/daily/weekly keep the plain interval, but the arithmetic happens
+    on the job's local wall-clock time (via zoneinfo) rather than on the UTC
+    instant, so a daily job stays at the same local hour across a DST change:
+    the elapsed real time shifts by an hour instead of the local clock time
+    drifting.
+    """
+    now = _ensure_aware(now)
+    tz = _resolve_tz(job.timezone)
+
+    if job.recurrence == Recurrence.cron:
+        if not job.cron:
+            raise ValueError(f"job {job.id} has recurrence=cron but no cron expression")
+        now_in_tz = now.astimezone(tz)
+        nxt = croniter(job.cron, now_in_tz).get_next(datetime)
+        return _ensure_aware(nxt).astimezone(timezone.utc)
+
     deltas = {
         Recurrence.hourly: timedelta(hours=1),
         Recurrence.daily: timedelta(days=1),
         Recurrence.weekly: timedelta(weeks=1),
     }
-    delta = deltas[recurrence]
-    nxt = _ensure_aware(run_at) + delta
+    delta = deltas[job.recurrence]
+    local = _ensure_aware(job.run_at).astimezone(tz)
+    nxt = local + delta
     # Roll forward past missed occurrences (e.g. backend was down).
-    while nxt <= now:
+    while nxt <= now.astimezone(tz):
         nxt += delta
-    return nxt
+    return nxt.astimezone(timezone.utc)
 
 
 def fire_job(job: ScheduledJob) -> Dict[str, Any]:
-    """Execute one due job and update its record. Returns a summary dict."""
-    now = _now()
-    result: Dict[str, Any] = {"job_id": str(job.id), "kind": job.kind.value}
-    try:
-        if job.kind == JobKind.notification:
-            n = create_notification(
-                title=job.title,
-                body=job.message,
-                source={"job_id": str(job.id)},
-                workspace=job.workspace,
-                channels=job.channels,
-            )
-            result["notification_id"] = str(n.id)
-        elif job.kind == JobKind.flow:
-            task_id = _fire_flow(job)
-            result["task_id"] = task_id
-        else:
-            task_id = _fire_agent_task(job)
-            result["task_id"] = task_id
+    """Execute one due job and update its record. Returns a summary dict.
 
-        fields: Dict[str, Any] = {"last_fired_at": now, "last_error": None}
-        if job.kind in (JobKind.agent_task, JobKind.flow) and result.get("task_id"):
-            fields["created_task_ids"] = [*job.created_task_ids, result["task_id"]]
-        if job.recurrence == Recurrence.none:
-            fields["status"] = JobStatus.fired
-        else:
-            fields["run_at"] = _next_run(job.run_at, job.recurrence, now)
-        plan_store.update(job.id, **fields)
-        result["ok"] = True
-    except Exception as e:
-        # Recurring jobs keep going next period; one-shots are marked failed.
-        fields = {"last_error": str(e), "last_fired_at": now}
-        if job.recurrence == Recurrence.none:
-            fields["status"] = JobStatus.failed
-        else:
-            fields["run_at"] = _next_run(job.run_at, job.recurrence, now)
-        plan_store.update(job.id, **fields)
-        result["ok"] = False
-        result["error"] = str(e)
+    ``fire_job`` only runs on a claimed job: if ``job`` was returned by
+    ``claim_due_jobs`` / ``claim_job_now`` it already carries a lease and is
+    used as is. Called directly with an unclaimed job (a tool, a route, a
+    test), it claims the job itself first, so a caller never has to remember
+    the two-step dance and two schedulers still can't race the same fire —
+    whichever call wins the claim proceeds, the other gets back a "locked"
+    error instead of a lease-less race.
+
+    The job's ``run_at`` at call time is the "slot" it is firing for; if a
+    previous attempt already recorded that slot as fired (it crashed after
+    the side effect but before this bookkeeping wrote), the side effect is
+    skipped and only the bookkeeping below is completed — so a job fires at
+    most once per slot even across a crash and a retried lease.
+    """
+    if not job.lease_owner:
+        claimed = plan_store.force_claim_job(job.id, _default_owner())
+        if not claimed:
+            return {
+                "job_id": str(job.id), "kind": job.kind.value, "ok": False,
+                "error": "job is locked by another firing, or is not in a fireable status",
+            }
+        job = claimed
+
+    now = _now()
+    slot = _ensure_aware(job.run_at)
+    already_fired = job.last_fired_slot is not None and _ensure_aware(job.last_fired_slot) == slot
+    result: Dict[str, Any] = {"job_id": str(job.id), "kind": job.kind.value}
+    error: Optional[str] = None
+
+    if already_fired:
+        result["skipped"] = "already_fired_this_slot"
+    else:
+        # Record the slot as fired *before* running the side effect. If the
+        # process crashes between the side effect and the completion write
+        # below, this mark survives, so a retry after the lease expires takes
+        # the already_fired branch above instead of firing a second time.
+        plan_store.update(job.id, last_fired_slot=slot)
+        try:
+            if job.kind == JobKind.notification:
+                n = create_notification(
+                    title=job.title,
+                    body=job.message,
+                    source={"job_id": str(job.id)},
+                    workspace=job.workspace,
+                    channels=job.channels,
+                )
+                result["notification_id"] = str(n.id)
+            elif job.kind == JobKind.flow:
+                result["task_id"] = _fire_flow(job)
+            else:
+                result["task_id"] = _fire_agent_task(job)
+        except Exception as e:
+            error = str(e)
+
+    fields: Dict[str, Any] = {
+        "lease_until": None,
+        "lease_owner": None,
+        "fire_count": job.fire_count + 1,
+        "last_fired_at": now,
+        "last_error": error,
+    }
+    if job.kind in (JobKind.agent_task, JobKind.flow) and result.get("task_id"):
+        fields["created_task_ids"] = [*job.created_task_ids, result["task_id"]]
+    if job.recurrence == Recurrence.none:
+        fields["status"] = JobStatus.failed if error else JobStatus.fired
+    else:
+        try:
+            fields["run_at"] = _next_run(job, now)
+        except Exception as e:
+            # Bad cron/timezone data should not wedge the tick; keep the job
+            # alive and try again shortly rather than crashing the scheduler.
+            log.error("failed computing next run for job %s: %s", job.id, e)
+            fields["run_at"] = now + timedelta(hours=1)
+    plan_store.update(job.id, **fields)
+    result["ok"] = error is None
+    if error:
+        result["error"] = error
     return result
 
 
@@ -451,10 +569,36 @@ def _fire_flow(job: ScheduledJob) -> str:
     return result["task_id"]
 
 
-def run_due_jobs() -> List[Dict[str, Any]]:
-    """Fire every due job once. Called by the scheduler loop each tick."""
+def claim_due_jobs(
+    now: Optional[datetime] = None,
+    owner: Optional[str] = None,
+    lease_seconds: float = 120.0,
+) -> List[ScheduledJob]:
+    """Atomically claim due jobs with no live lease (see PlanStore.claim_due_jobs).
+
+    Two schedulers racing this on the same store — two backend replicas, or a
+    tick that overlaps a slow previous fire — each get a disjoint set back,
+    so a job is handed to at most one of them.
+    """
+    now = now or _now()
+    owner = owner or _default_owner()
+    return plan_store.claim_due_jobs(now, owner, lease_seconds=lease_seconds)
+
+
+def claim_job_now(
+    job_id: UUID | str,
+    owner: Optional[str] = None,
+    lease_seconds: float = 120.0,
+) -> Optional[ScheduledJob]:
+    """Claim one specific job for an immediate manual fire (the run-now action)."""
+    owner = owner or _default_owner()
+    return plan_store.force_claim_job(job_id, owner, lease_seconds=lease_seconds)
+
+
+def run_due_jobs(owner: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Claim and fire every due job once. Called by the scheduler loop each tick."""
     results = []
-    for job in due_jobs():
+    for job in claim_due_jobs(owner=owner):
         results.append(fire_job(job))
     return results
 
@@ -480,6 +624,8 @@ __all__ = [
     "notification_to_dict",
     "job_to_dict",
     "due_jobs",
+    "claim_due_jobs",
+    "claim_job_now",
     "fire_job",
     "run_due_jobs",
 ]
