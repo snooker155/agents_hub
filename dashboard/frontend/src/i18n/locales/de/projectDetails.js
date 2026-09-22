@@ -1,4 +1,18 @@
 export default {
+  publish: {
+    button: 'Branch veröffentlichen',
+    title: 'Branch veröffentlichen',
+    prTitle: 'Titel',
+    body: 'Beschreibung',
+    bodyPlaceholder: 'Leer gelassen, wird das Aufgabenergebnis verwendet.',
+    branch: 'Branch',
+    base: 'Basis',
+    optional: 'Optional',
+    draft: 'Als Entwurf öffnen',
+    publishing: 'Wird veröffentlicht…',
+    opened: 'Pull Request geöffnet:',
+    pushed: 'Branch gepusht.',
+  },
   tabs: {
     overview: 'Überblick',
     tasks: 'Aufgaben',
@@ -98,6 +112,7 @@ export default {
   info: 'Info',
   cancel: 'Abbrechen',
   errors: {
+    publish: 'Branch konnte nicht veröffentlicht werden',
     loadFile: 'Datei konnte nicht geladen werden',
     loadFiles: 'Dateien konnten nicht geladen werden',
     gitStatus: 'Git-Status konnte nicht abgerufen werden',

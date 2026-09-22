@@ -4,7 +4,7 @@ import {
   Database, Plus, Trash2, FileText, Save, X, Upload, Cpu, Users,
   Files, ChevronRight, RefreshCw, CheckCircle, AlertCircle, Clock,
   Zap, Search, Edit3, Link2, BarChart2, FileSearch, StickyNote, Layers,
-  Activity, BookOpen, Share2, Sparkles, GitMerge, Eraser, MessageSquare,
+  Activity, BookOpen, Share2, Sparkles, GitMerge, Eraser, MessageSquare, Brain,
 } from 'lucide-react';
 import {
   getSharedMemories, createSharedMemory, deleteSharedMemory,
@@ -13,6 +13,7 @@ import {
   indexMemoryFile, deindexMemoryFile, listMemoryFiles,
   getRagConfig, getAgents, updateAgentMemory,
   addMemoryNote, updateMemoryNote, deleteMemoryNote,
+  upsertMemoryBlock, deleteMemoryBlock,
   upsertMemoryStructuredSlot, deleteMemoryStructuredSlot,
   listMemoryEpisodes, getMemoryEpisodesStats, deleteMemoryEpisode,
   getMemoryGraph, getMemoryGraphStats, linkMemoryGraph,
@@ -28,6 +29,11 @@ import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../component
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
+// The blocks every pool is seeded with (memory/models.py default_blocks). They
+// are part of the prompt's shape rather than one pool's content, so the page
+// offers no Delete for them.
+const DEFAULT_BLOCK_NAMES = ['persona', 'user'];
+
 const EPISODE_KIND_COLOR = {
   interaction: 'bg-blue-100 text-blue-700',
   task:        'bg-indigo-100 text-indigo-700',
@@ -99,6 +105,16 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const [slotDataRaw, setSlotDataRaw] = useState('{}');
   const [slotDataError, setSlotDataError] = useState('');
 
+  // Core memory block state. Drafts are keyed by block name and live only until
+  // the block is saved, so an unsaved edit survives re-rendering the card but
+  // never masks what the pool actually holds.
+  const [blockDrafts, setBlockDrafts] = useState({});
+  const [savingBlock, setSavingBlock] = useState('');
+  const [showAddBlock, setShowAddBlock] = useState(false);
+  const [newBlockName, setNewBlockName] = useState('');
+  const [newBlockLimit, setNewBlockLimit] = useState('2000');
+  const [newBlockDesc, setNewBlockDesc] = useState('');
+
   const selectPool = useCallback(async (id) => {
     try {
       const resp = await getSharedMemory(id);
@@ -107,6 +123,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
       onPoolSelected?.(id);
       setViewingNote(null); setShowAddNote(false); setEditingNote(null);
       setShowAddSlot(false); setEditingSlot(null);
+      setBlockDrafts({}); setShowAddBlock(false);
     } catch (e) {
       toast.error(t('memoryManager.errors.openMemory'), errorDetail(e));
     }
@@ -151,6 +168,62 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const startEditNote = (n) => {
     setEditingNote(n); setNoteTitle(n.title); setNoteContent(n.content);
     setViewingNote(null); setShowAddNote(false);
+  };
+
+  // ---- Core memory blocks ----
+  // A block is rendered into every system prompt, so the limit is a real budget
+  // rather than a formality: the counter turns red before the save is refused.
+  const blocks = selected?.blocks || [];
+  const blockValue = (b) => (blockDrafts[b.name] !== undefined ? blockDrafts[b.name] : (b.value || ''));
+  const isDefaultBlock = (name) => DEFAULT_BLOCK_NAMES.includes(name);
+
+  const setBlockDraft = (name, value) => setBlockDrafts(prev => ({ ...prev, [name]: value }));
+
+  const handleSaveBlock = async (block) => {
+    setSavingBlock(block.name);
+    try {
+      const resp = await upsertMemoryBlock(selected.id, block.name, { value: blockValue(block) });
+      setSelected(resp.data);
+      setBlockDrafts(prev => {
+        const next = { ...prev };
+        delete next[block.name];
+        return next;
+      });
+      toast.success(t('memoryManager.blocks.saved', { name: block.name }));
+    } catch (e) {
+      toast.error(t('memoryManager.blocks.errors.save'), errorDetail(e));
+    } finally {
+      setSavingBlock('');
+    }
+  };
+
+  const handleDeleteBlock = async (block) => {
+    if (!window.confirm(t('memoryManager.blocks.confirmDelete', { name: block.name }))) return;
+    try {
+      const resp = await deleteMemoryBlock(selected.id, block.name);
+      setSelected(resp.data);
+    } catch (e) {
+      toast.error(t('memoryManager.blocks.errors.delete'), errorDetail(e));
+    }
+  };
+
+  const handleAddBlock = async (e) => {
+    e.preventDefault();
+    const name = newBlockName.trim();
+    if (!name) return;
+    try {
+      const limit = parseInt(newBlockLimit, 10);
+      const resp = await upsertMemoryBlock(selected.id, name, {
+        value: '',
+        limit_chars: Number.isFinite(limit) && limit > 0 ? limit : 2000,
+        description: newBlockDesc.trim(),
+      });
+      setSelected(resp.data);
+      setShowAddBlock(false);
+      setNewBlockName(''); setNewBlockLimit('2000'); setNewBlockDesc('');
+    } catch (e) {
+      toast.error(t('memoryManager.blocks.errors.create'), errorDetail(e));
+    }
   };
 
   // ---- Structured slots ----
@@ -316,6 +389,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const graphStats = statsFor(graphStatsFor);
 
   const CONTENT_TABS = [
+    { id: 'blocks',     label: t('memoryManager.contentTabs.blocks'),     icon: Brain,      count: blocks.length },
     { id: 'structured', label: t('memoryManager.contentTabs.structured'), icon: Layers,     count: structuredSlots.length },
     { id: 'notes',      label: t('memoryManager.contentTabs.notes'),      icon: StickyNote, count: notes.length },
     { id: 'journals',   label: t('memoryManager.contentTabs.journals'),   icon: BookOpen,   count: journals.length },
@@ -401,6 +475,11 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                     <Plus className="w-3.5 h-3.5" /> {t('memoryManager.addSlot')}
                   </button>
                 )}
+                {contentTab === 'blocks' && (
+                  <button onClick={() => setShowAddBlock(true)} className="flex items-center gap-1 text-sm border border-indigo-200 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
+                    <Plus className="w-3.5 h-3.5" /> {t('memoryManager.blocks.addBlock')}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -425,6 +504,98 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                 );
               })}
             </div>
+
+            {/* Blocks tab — the always-in-context layer of the prompt */}
+            {contentTab === 'blocks' && (
+              <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                <p className="text-xs text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                  {t('memoryManager.blocks.intro')}
+                </p>
+
+                {showAddBlock && (
+                  <form onSubmit={handleAddBlock} className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-sm font-semibold text-indigo-800">{t('memoryManager.blocks.newBlock')}</h4>
+                      <button type="button" onClick={() => setShowAddBlock(false)} className="text-indigo-400 hover:text-indigo-600"><X className="w-4 h-4" /></button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.blocks.name')}</label>
+                        <input required value={newBlockName} onChange={e => setNewBlockName(e.target.value)} placeholder={t('memoryManager.blocks.namePlaceholder')}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.blocks.limit')}</label>
+                        <input type="number" min="1" value={newBlockLimit} onChange={e => setNewBlockLimit(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.blocks.description')}</label>
+                      <input value={newBlockDesc} onChange={e => setNewBlockDesc(e.target.value)} placeholder={t('memoryManager.blocks.descriptionPlaceholder')}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                    </div>
+                    <button type="submit" className="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2">
+                      <Plus className="w-3.5 h-3.5" /> {t('memoryManager.blocks.addBlock')}
+                    </button>
+                  </form>
+                )}
+
+                {blocks.length === 0 ? (
+                  <p className="p-6 text-center text-gray-400 text-sm italic">{t('memoryManager.blocks.noBlocksYet')}</p>
+                ) : blocks.map((block) => {
+                  const value = blockValue(block);
+                  const limit = block.limit_chars || 0;
+                  const over = limit > 0 && value.length > limit;
+                  const dirty = blockDrafts[block.name] !== undefined && blockDrafts[block.name] !== (block.value || '');
+                  return (
+                    <div key={block.name} className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 font-mono flex items-center gap-2">
+                            {block.name}
+                            {block.read_only && (
+                              <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">{t('memoryManager.readOnly')}</span>
+                            )}
+                          </p>
+                          {block.description && <p className="text-xs text-gray-500 mt-0.5">{block.description}</p>}
+                        </div>
+                        {!block.read_only && !isDefaultBlock(block.name) && (
+                          <button onClick={() => handleDeleteBlock(block)} className="text-gray-300 hover:text-red-500 p-1 shrink-0" title={t('memoryManager.blocks.deleteBlock')}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      <textarea
+                        value={value}
+                        disabled={block.read_only}
+                        onChange={(e) => setBlockDraft(block.name, e.target.value)}
+                        rows={5}
+                        placeholder={t('memoryManager.blocks.valuePlaceholder')}
+                        className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:outline-none disabled:bg-gray-50 disabled:text-gray-500 ${
+                          over ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-indigo-500'
+                        }`}
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-xs font-medium ${over ? 'text-red-600' : 'text-gray-400'}`}>
+                          {t('memoryManager.blocks.counter', { used: value.length, limit })}
+                          {over ? ` · ${t('memoryManager.blocks.overBy', { count: value.length - limit })}` : ''}
+                        </span>
+                        {!block.read_only && (
+                          <button
+                            onClick={() => handleSaveBlock(block)}
+                            disabled={over || savingBlock === block.name || !dirty}
+                            className="flex items-center gap-1 text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            <Save className="w-3.5 h-3.5" /> {savingBlock === block.name ? t('common.saving') : t('common.save')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Notes tab */}
             {contentTab === 'notes' && (

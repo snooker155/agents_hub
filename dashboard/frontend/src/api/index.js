@@ -414,6 +414,10 @@ export const setWorkspaceAgentCapacity = (wsName, agentId, capacity) => api.put(
 export const removeWorkspaceAgentCapacity = (wsName, agentId) => api.delete(`/workspaces/${encodeURIComponent(wsName)}/agents/${encodeURIComponent(agentId)}/capacity`);
 export const getWorkspaceSettingsOverrides = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/settings-overrides`);
 export const updateWorkspaceSettingsOverrides = (name, overrides) => api.put(`/workspaces/${encodeURIComponent(name)}/settings-overrides`, { overrides });
+// The workspace's tool policy: the approval gate and the PreToolUse/PostToolUse
+// hooks (see tools/approval.py and agents/hooks.py).
+export const getWorkspacePolicy = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/policy`);
+export const updateWorkspacePolicy = (name, policy) => api.put(`/workspaces/${encodeURIComponent(name)}/policy`, policy);
 export const getWorkspaceModel = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/model`);
 export const updateWorkspaceModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/model`, data);
 export const updateWorkspaceDefaultModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/default-model`, data);
@@ -447,6 +451,12 @@ export const memoryChatUrl = (workspace, memoryId) => {
   const qs = new URLSearchParams(memoryChatParams(workspace, memoryId)).toString();
   return '/shared-memory/chat' + (qs ? `?${qs}` : '');
 };
+// Core memory blocks — always-in-context text rendered into the agent's prompt.
+export const listMemoryBlocks = (id) => api.get(`/shared-memory/${id}/blocks`);
+export const upsertMemoryBlock = (id, name, data) =>
+  api.put(`/shared-memory/${id}/blocks/${encodeURIComponent(name)}`, data);
+export const deleteMemoryBlock = (id, name) =>
+  api.delete(`/shared-memory/${id}/blocks/${encodeURIComponent(name)}`);
 export const addMemoryNote = (id, data) => api.post(`/shared-memory/${id}/notes`, data);
 export const updateMemoryNote = (id, noteId, data) => api.put(`/shared-memory/${id}/notes/${noteId}`, data);
 export const deleteMemoryNote = (id, noteId) => api.delete(`/shared-memory/${id}/notes/${noteId}`);
@@ -532,6 +542,10 @@ export const restartNode = (nodeId) => api.post(`/nodes/${nodeId}/restart`);
 export const deleteNode = (nodeId) => api.delete(`/nodes/${nodeId}`);
 export const exposeNode = (nodeId) => api.post(`/nodes/${nodeId}/expose`);
 export const unexposeNode = (nodeId) => api.delete(`/nodes/${nodeId}/expose`);
+// Inbound signing for an exposed node. Write-only: a node reports only
+// `inbound_secret_configured`, never the value.
+export const setNodeInboundSecret = (nodeId, secret) => api.put(`/nodes/${nodeId}/inbound-secret`, { secret });
+export const clearNodeInboundSecret = (nodeId) => api.delete(`/nodes/${nodeId}/inbound-secret`);
 export const getNodeConnections = (nodeId) => api.get(`/nodes/${nodeId}/connections`);
 export const getNodeRuns = (nodeId, limit = 50) => api.get(`/nodes/${nodeId}/runs`, { params: { limit } });
 
@@ -583,6 +597,13 @@ export const getFlowLogs = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/logs`, { params: { workspace } });
 export const getFlowRuns = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/runs`, { params: { workspace } });
+// One record per execution (status, checkpoint, timing), unlike /runs which
+// groups the log. A failed or parked run with a checkpoint can be resumed.
+export const getFlowInstances = (flowId, activeOnly = false) =>
+  api.get(`/flows/${encodeURIComponent(flowId)}/instances`, { params: { active_only: activeOnly } });
+export const estimateFlowCost = (flowId) => api.get(`/flows/${encodeURIComponent(flowId)}/estimate`);
+export const resumeFlowRun = (flowRunId, answer) =>
+  api.post(`/flows/runs/${encodeURIComponent(flowRunId)}/resume`, answer ? { answer } : {});
 
 // Flow entity registry — federated catalog of flow-usable nodes (agents,
 // processors, conditions, transforms, ...). Backs the Registry menu.
@@ -612,6 +633,8 @@ export const projectRegistryChatUrl = (workspace) =>
 export const cloneProjectRepo = (id) => api.post(`/projects/${id}/clone-repo`);
 export const getProjectGitStatus = (id) => api.get(`/projects/${id}/git-status`);
 export const pullProjectRepo = (id) => api.post(`/projects/${id}/git-pull`);
+// Commit, push a branch and open a PR/MR: the same path the git_publish tool takes.
+export const publishProjectBranch = (id, data) => api.post(`/projects/${id}/git/publish`, data);
 export const getProjectSwaggerSpec = (id, baseUrl) => api.get(`/projects/${id}/swagger-spec`, { params: baseUrl ? { base_url: baseUrl } : {} });
 export const getProjectSpecFromCode = (id) => api.get(`/projects/${id}/spec-from-code`);
 export const proxyProjectApiRequest = (id, data) => api.post(`/projects/${id}/api-request`, data);
@@ -957,6 +980,7 @@ export const getLoopRun = (runId) => api.get(`/loops/runs/${runId}`);
 export const getLoopIterations = (runId, since = 0) =>
   api.get(`/loops/runs/${runId}/iterations`, { params: { since } });
 export const stopLoopRun = (runId) => api.post(`/loops/runs/${runId}/stop`);
+export const resumeLoopRun = (runId) => api.post(`/loops/runs/${runId}/resume`);
 
 // Teams API — a bounded roster of agents that know each other and talk
 // (see teams/ and routes/teams.py).

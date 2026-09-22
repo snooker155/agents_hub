@@ -1,4 +1,18 @@
 export default {
+  publish: {
+    button: 'Publish branch',
+    title: 'Publish branch',
+    prTitle: 'Title',
+    body: 'Body',
+    bodyPlaceholder: 'Left empty, the task result is used.',
+    branch: 'Branch',
+    base: 'Base',
+    optional: 'Optional',
+    draft: 'Open as a draft',
+    publishing: 'Publishing…',
+    opened: 'Pull request opened:',
+    pushed: 'Branch pushed.',
+  },
   tabs: {
     overview: 'Overview',
     tasks: 'Tasks',
@@ -98,6 +112,7 @@ export default {
   info: 'Info',
   cancel: 'Cancel',
   errors: {
+    publish: 'Publishing the branch failed',
     loadFile: 'Failed to load file',
     loadFiles: 'Failed to load files',
     gitStatus: 'Could not fetch git status',

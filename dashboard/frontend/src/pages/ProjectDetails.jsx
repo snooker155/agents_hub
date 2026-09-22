@@ -5,7 +5,7 @@ import {
   cloneProjectRepo, getProjectGitStatus, pullProjectRepo,
   getProjectSwaggerSpec, proxyProjectApiRequest,
   getProjectFiles, getProjectFileContent,
-  getProjectSpecFromCode, syncProjectIssues,
+  getProjectSpecFromCode, syncProjectIssues, publishProjectBranch,
 } from '../api';
 import ImportRepoModal from '../components/ImportRepoModal';
 import ProjectGraph from '../components/flow/ProjectGraph';
@@ -114,6 +114,13 @@ export default function ProjectDetails() {
   const [cloning, setCloning] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [gitMsg, setGitMsg] = useState('');
+  // Publish: commit, push a branch and open a PR/MR. The same refusals the
+  // git_publish tool obeys apply, so the modal only collects the wording.
+  const [showPublish, setShowPublish] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState('');
+  const [prUrl, setPrUrl] = useState('');
+  const [publishForm, setPublishForm] = useState({ title: '', body: '', branch: '', base: '', draft: true });
   const [showConnect, setShowConnect] = useState(false);
   const [syncingIssues, setSyncingIssues] = useState(false);
 
@@ -282,6 +289,29 @@ export default function ProjectDetails() {
     setGitMsg(msg);
     fetchProject();
     loadGitStatus();
+  };
+
+  const handlePublish = async (e) => {
+    e.preventDefault();
+    setPublishing(true);
+    setPublishError('');
+    setPrUrl('');
+    try {
+      const { data } = await publishProjectBranch(id, {
+        title: publishForm.title,
+        body: publishForm.body,
+        branch: publishForm.branch || null,
+        base: publishForm.base || null,
+        draft: publishForm.draft,
+      });
+      setPrUrl(data.pr_url || '');
+      if (!data.pr_url) setGitMsg(data.message || t('projectDetails.publish.pushed'));
+      loadGitStatus();
+    } catch (e2) {
+      setPublishError(e2.response?.data?.detail || t('projectDetails.errors.publish'));
+    } finally {
+      setPublishing(false);
+    }
   };
 
   const isConnectedRepo = ['github', 'gitlab'].includes(project?.repo?.type) && project?.repo?.remote_id;
@@ -970,6 +1000,14 @@ export default function ProjectDetails() {
               )}
               {isConnectedRepo && (
                 <button
+                  onClick={() => { setShowPublish(true); setPublishError(''); setPrUrl(''); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
+                >
+                  <Send className="w-3.5 h-3.5" /> {t('projectDetails.publish.button')}
+                </button>
+              )}
+              {isConnectedRepo && (
+                <button
                   onClick={handleSyncIssues} disabled={syncingIssues}
                   className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50 disabled:opacity-50"
                 >
@@ -1366,6 +1404,100 @@ export default function ProjectDetails() {
             </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* Publish branch modal */}
+      {showPublish && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg bg-white rounded-xl shadow-lg border border-gray-200">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                <Send className="w-4 h-4 text-indigo-600" /> {t('projectDetails.publish.title')}
+              </h3>
+              <button onClick={() => setShowPublish(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handlePublish} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.prTitle')}</label>
+                <input
+                  required
+                  value={publishForm.title}
+                  onChange={e => setPublishForm(f => ({ ...f, title: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.body')}</label>
+                <textarea
+                  rows={4}
+                  value={publishForm.body}
+                  onChange={e => setPublishForm(f => ({ ...f, body: e.target.value }))}
+                  placeholder={t('projectDetails.publish.bodyPlaceholder')}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.branch')}</label>
+                  <input
+                    value={publishForm.branch}
+                    onChange={e => setPublishForm(f => ({ ...f, branch: e.target.value }))}
+                    placeholder={t('projectDetails.publish.optional')}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.base')}</label>
+                  <input
+                    value={publishForm.base}
+                    onChange={e => setPublishForm(f => ({ ...f, base: e.target.value }))}
+                    placeholder={t('projectDetails.publish.optional')}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={publishForm.draft}
+                  onChange={e => setPublishForm(f => ({ ...f, draft: e.target.checked }))}
+                  className="accent-indigo-600"
+                />
+                {t('projectDetails.publish.draft')}
+              </label>
+
+              {publishError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{publishError}</p>
+              )}
+              {prUrl && (
+                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
+                  {t('projectDetails.publish.opened')}{' '}
+                  <a href={prUrl} target="_blank" rel="noreferrer" className="underline font-medium">{prUrl}</a>
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPublish(false)}
+                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50"
+                >
+                  {t('common.close')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={publishing || !publishForm.title.trim()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {publishing ? t('projectDetails.publish.publishing') : t('projectDetails.publish.button')}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

@@ -1,4 +1,8 @@
 export default {
+  resume: 'Fortsetzen',
+  resuming: 'Wird fortgesetzt…',
+  resumeHint: 'Diesen Lauf ab der Iteration nach der letzten abgeschlossenen fortsetzen.',
+  resumeFailed: 'Lauf konnte nicht fortgesetzt werden',
   loops: 'Loops',
   aFlowRunsItsNodes: 'Ein Flow durchläuft seine Knoten einmal. Ein Loop führt denselben Flow erneut aus und gibt jedem Durchlauf das vorherige Ergebnis und das Feedback eines Reviewers mit, bis ein Agent das Abbruchkriterium als erfüllt bewertet. Jede Iteration bleibt erhalten, sodass Sie die Punktzahl verfolgen können, statt zu raten.',
   newLoop: 'Neuer Loop',

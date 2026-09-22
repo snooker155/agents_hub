@@ -3,7 +3,7 @@ Workspace-related API routes.
 """
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
-from typing import Optional
+from typing import List, Optional
 from pathlib import Path
 import mimetypes
 import os
@@ -28,7 +28,7 @@ from workspace import (
     set_workspace_instructions,
 )
 from workspace import storage as _workspace_storage
-from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction
+from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
@@ -126,7 +126,7 @@ def _calc_task_progress(task, all_tasks):
     return int(round((done / len(subs)) * 100)) if subs else 0
 
 
-@router.get("")
+@router.get("", response_model=List[WorkspaceListItem])
 async def list_workspaces():
     roots = list_workspace_folders()
     if not roots:
@@ -541,6 +541,112 @@ async def update_workspace_settings_overrides(name: str, payload: dict):
     except Exception:
         pass
     return {"overrides": cleaned}
+
+
+# ── Tool policy: the approval gate and the hooks that run around a tool call ──
+#
+# Both live in the workspace metadata and are read live by the agent process:
+# ``tools.approval.approval_gate_enabled`` reads ``settings.require_tool_approval``
+# and ``agents.hooks.load_hooks`` reads the ``hooks`` key (which wins over a
+# ``.hooks.json`` file in the folder). They are edited together here because an
+# operator thinks of them as one thing: what happens around a tool call.
+
+_HOOK_EVENTS = ("PreToolUse", "PostToolUse")
+_HOOK_TYPES = ("command", "http")
+
+
+def _validate_hooks(raw) -> dict:
+    """Return the hook config to store, or raise 400 naming the bad entry.
+
+    A hook that never runs is worse than no hook at all, so the shape is checked
+    here rather than discovered at the first tool call: a malformed entry is
+    dropped silently by ``agents.hooks.load_hooks``.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="hooks must be an object keyed by event")
+    unknown = [k for k in raw if k not in _HOOK_EVENTS]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown hook event(s) {sorted(unknown)}; expected {', '.join(_HOOK_EVENTS)}",
+        )
+    out: dict = {}
+    for event in _HOOK_EVENTS:
+        entries = raw.get(event)
+        if entries is None:
+            continue
+        if not isinstance(entries, list):
+            raise HTTPException(status_code=400, detail=f"{event} must be a list of hook entries")
+        cleaned = []
+        for index, entry in enumerate(entries):
+            where = f"{event}[{index}]"
+            if not isinstance(entry, dict):
+                raise HTTPException(status_code=400, detail=f"{where}: each hook must be an object")
+            kind = str(entry.get("type") or "command").strip().lower()
+            if kind not in _HOOK_TYPES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{where}: type must be one of {', '.join(_HOOK_TYPES)}",
+                )
+            matcher = entry.get("matcher", "")
+            if not isinstance(matcher, str):
+                raise HTTPException(status_code=400, detail=f"{where}: matcher must be a string")
+            if kind == "command" and not str(entry.get("command") or "").strip():
+                raise HTTPException(status_code=400, detail=f"{where}: a command hook needs a command")
+            if kind == "http" and not str(entry.get("url") or "").strip():
+                raise HTTPException(status_code=400, detail=f"{where}: an http hook needs a url")
+            if "timeout" in entry and entry["timeout"] is not None:
+                try:
+                    float(entry["timeout"])
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=400, detail=f"{where}: timeout must be a number of seconds",
+                    )
+            cleaned.append({**entry, "type": kind, "matcher": matcher})
+        out[event] = cleaned
+    return out
+
+
+def _policy_payload(name: str) -> dict:
+    metadata = get_workspace_metadata(name)
+    settings = metadata.get("settings") or {}
+    hooks = metadata.get("hooks")
+    return {
+        "require_tool_approval": bool(settings.get("require_tool_approval")),
+        "hooks": hooks if isinstance(hooks, dict) else {},
+    }
+
+
+@router.get("/{name}/policy")
+async def get_workspace_policy(name: str):
+    """The workspace's tool policy: the approval gate and the hook config."""
+    return _policy_payload(name)
+
+
+@router.put("/{name}/policy")
+async def update_workspace_policy(name: str, payload: dict):
+    """Replace the workspace's tool policy.
+
+    ``require_tool_approval`` is written into the same ``settings`` block the
+    Settings page edits, so the gate reads it without a second lookup; ``hooks``
+    is a top-level metadata key, validated entry by entry before it is stored.
+    """
+    _ensure_writable_workspace(name)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="policy must be a key-value object")
+
+    updates: dict = {}
+    if "require_tool_approval" in payload:
+        settings = dict(get_workspace_metadata(name).get("settings") or {})
+        settings["require_tool_approval"] = bool(payload.get("require_tool_approval"))
+        updates["settings"] = settings
+    if "hooks" in payload:
+        updates["hooks"] = _validate_hooks(payload.get("hooks"))
+    if updates:
+        update_workspace_metadata(name, updates)
+    return _policy_payload(name)
 
 
 @router.get("/{name}/env")

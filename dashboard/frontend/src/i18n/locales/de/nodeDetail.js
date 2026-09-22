@@ -1,4 +1,12 @@
 export default {
+  inboundSecret: 'Eingehendes Secret',
+  secretSet: 'Signatur erforderlich',
+  secretNotSet: 'Nur Token',
+  signatureNote: 'Mit gesetztem Secret signieren Aufrufer den Rumpf und senden X-AgentsHub-Signature (siehe docs/notifications.md).',
+  newSecret: 'Neues Secret',
+  setSecret: 'Setzen',
+  clearSecret: 'Löschen',
+  secretFailed: 'Eingehendes Secret konnte nicht gespeichert werden',
   backToNodes: 'Zurück zu den Knoten',
   nodes: 'Knoten',
   notFound: 'Knoten nicht gefunden',

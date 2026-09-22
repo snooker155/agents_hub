@@ -6,7 +6,7 @@ import {
 import { Link } from 'react-router-dom';
 import {
   getLoops, createLoop, getLoop, updateLoop, deleteLoop, estimateLoop,
-  startLoop, getLoopRuns, getLoopRun, getLoopIterations, stopLoopRun,
+  startLoop, getLoopRuns, getLoopRun, getLoopIterations, stopLoopRun, resumeLoopRun,
   listFlows, getAgents,
   getLoopChat, clearLoopChat, stopLoopChat, loopChatUrl,
 } from '../api';
@@ -14,7 +14,7 @@ import EntityChat from '../components/EntityChat';
 import InPanelNote from '../components/pageChat/InPanelNote';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useWorkspace } from '../components/workspace';
-import { useChannel } from '../components/stream';
+import { useChannel, useLiveRefetch, useStream } from '../components/stream';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -183,10 +183,10 @@ export default function Loops() {
   const [goal, setGoal] = useState('');
   const [estimate, setEstimate] = useState(null);
   const [starting, setStarting] = useState(false);
+  const [resuming, setResuming] = useState(null);
   const [saving, setSaving] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [message, setMessage] = useState('');
-  const pollRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -255,19 +255,34 @@ export default function Loops() {
     }
   });
 
-  useEffect(() => {
-    if (!run?.loop_run_id) return undefined;
-    const live = run.status === 'running' || run.status === 'stopping';
-    if (!live) return undefined;
-    pollRef.current = setInterval(async () => {
-      try {
-        const { data } = await getLoopIterations(run.loop_run_id, 0);
-        setIterations(data.iterations || []);
-        setRun((prev) => ({ ...prev, ...data }));
-      } catch { /* transient */ }
-    }, 4000);
-    return () => clearInterval(pollRef.current);
-  }, [run?.loop_run_id, run?.status]);
+  // Iteration catch-up, replacing what used to be a 4-second poll.
+  //
+  // Iterations arrive on the `loop:<run_id>` channel subscribed above, and
+  // `loop_runs.changed` (loops/store.py `_notify`) fires when a run starts,
+  // records an iteration or ends. `fallbackMs` is the floor under a dropped
+  // channel, not a poll.
+  const catchUpIterations = useCallback(async () => {
+    const runId = run?.loop_run_id;
+    if (!runId) return;
+    try {
+      const { data } = await getLoopIterations(runId, 0);
+      setIterations(data.iterations || []);
+      setRun((prev) => ({ ...prev, ...data }));
+    } catch { /* transient */ }
+  }, [run?.loop_run_id]);
+
+  useLiveRefetch(catchUpIterations, {
+    type: 'loop_runs.changed',
+    enabled: Boolean(run?.loop_run_id)
+      && (run?.status === 'running' || run?.status === 'stopping'),
+    fallbackMs: 30000,
+  });
+
+  // A reconnect that could not resume, or events dropped because this tab fell
+  // behind, leaves the trajectory holding whatever it had.
+  const { onRefetch } = useStream();
+  useEffect(() => onRefetch(() => { catchUpIterations(); loadLoops(); }),
+    [onRefetch, catchUpIterations, loadLoops]);
 
   const handleCreate = async (name, flowId) => {
     try {
@@ -320,6 +335,26 @@ export default function Loops() {
       await stopLoopRun(run.loop_run_id);
       setRun((prev) => ({ ...prev, status: 'stopping' }));
     } catch { /* already finished */ }
+  };
+
+  // A loop runs inside the backend process, so a restart ends it mid-run. The
+  // stored position is what makes picking it up cheaper than starting over; a
+  // run that never finished an iteration has nothing to resume from.
+  const isResumable = (r) => r.status === 'failed' && !!(r.position?.iterations_done);
+
+  const handleResume = async (loopRunId) => {
+    setResuming(loopRunId);
+    setMessage('');
+    try {
+      const { data } = await resumeLoopRun(loopRunId);
+      setRun(data);
+      const { data: hist } = await getLoopRuns(selected.loop_id);
+      setRuns(hist.runs || []);
+    } catch (e) {
+      setMessage(e.response?.data?.detail || t('loops.resumeFailed'));
+    } finally {
+      setResuming(null);
+    }
   };
 
   const handleEstimate = async () => {
@@ -686,18 +721,29 @@ export default function Loops() {
                     <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold uppercase tracking-wide text-gray-500 mr-1">{t('loops.runs')}</span>
                       {runs.slice(0, 8).map((r) => (
-                        <button
-                          key={r.loop_run_id}
-                          onClick={() => loadRun(r.loop_run_id)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${
-                            run?.loop_run_id === r.loop_run_id
-                              ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
-                              : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                          }`}
-                        >
-                          {new Date(r.started_at).toLocaleString()} · {r.iterations_done}x
-                          {r.final_score !== null && r.final_score !== undefined ? ` · ${Math.round(r.final_score)}` : ''}
-                        </button>
+                        <span key={r.loop_run_id} className="inline-flex items-center gap-1">
+                          <button
+                            onClick={() => loadRun(r.loop_run_id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${
+                              run?.loop_run_id === r.loop_run_id
+                                ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                                : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                            }`}
+                          >
+                            {new Date(r.started_at).toLocaleString()} · {r.iterations_done}x
+                            {r.final_score !== null && r.final_score !== undefined ? ` · ${Math.round(r.final_score)}` : ''}
+                          </button>
+                          {isResumable(r) && (
+                            <button
+                              onClick={() => handleResume(r.loop_run_id)}
+                              disabled={resuming === r.loop_run_id}
+                              title={t('loops.resumeHint')}
+                              className="px-2 py-1 rounded-lg text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                            >
+                              {resuming === r.loop_run_id ? t('loops.resuming') : t('loops.resume')}
+                            </button>
+                          )}
+                        </span>
                       ))}
                     </div>
                   )}

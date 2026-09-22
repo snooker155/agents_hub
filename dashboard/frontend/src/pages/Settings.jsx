@@ -7,6 +7,7 @@ import {
 import { useWorkspace } from '../components/workspace';
 import {
   getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides,
+  getWorkspacePolicy, updateWorkspacePolicy,
   updateSettings, getApiToken, setApiToken, API_ORIGIN,
 } from '../api';
 
@@ -481,6 +482,15 @@ export default function Settings() {
 
   const [wsOverrides, setWsOverrides] = useState({});
 
+  // The workspace's tool policy lives outside the override bag: the approval
+  // gate and the hooks are read live by the agent process, so they get their
+  // own endpoint and their own save rather than riding on the page's Save.
+  const [policy, setPolicy] = useState({ require_tool_approval: false, hooks: {} });
+  const [hooksText, setHooksText] = useState('{}');
+  const [hooksError, setHooksError] = useState('');
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policySaved, setPolicySaved] = useState(false);
+
   const [fetchErrors, setFetchErrors] = useState({ ollama: '', lmstudio: '' });
   const [providerStatus, setProviderStatus] = useState({ openai: null, anthropic: null, google: null, ollama: null, lmstudio: null });
   const [providerTesting, setProviderTesting] = useState({ openai: false, anthropic: false, google: false, ollama: false, lmstudio: false });
@@ -502,13 +512,52 @@ export default function Settings() {
     }
   };
 
+  const savePolicy = async (patch) => {
+    setPolicySaving(true);
+    setError('');
+    setPolicySaved(false);
+    try {
+      const { data } = await updateWorkspacePolicy(activeWorkspace, patch);
+      setPolicy(data);
+      if (patch.hooks !== undefined) setHooksText(JSON.stringify(data.hooks || {}, null, 2));
+      setPolicySaved(true);
+      setTimeout(() => setPolicySaved(false), 3000);
+      return true;
+    } catch (e) {
+      setError(`${t('settings.errors.policySave')}: ` + (e.response?.data?.detail || e.message));
+      return false;
+    } finally {
+      setPolicySaving(false);
+    }
+  };
+
+  const toggleApproval = (next) => savePolicy({ require_tool_approval: next });
+
+  const saveHooks = async () => {
+    let parsed;
+    try {
+      parsed = hooksText.trim() ? JSON.parse(hooksText) : {};
+    } catch {
+      setHooksError(t('settings.hooksInvalidJson'));
+      return;
+    }
+    if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+      setHooksError(t('settings.hooksMustBeObject'));
+      return;
+    }
+    setHooksError('');
+    await savePolicy({ hooks: parsed });
+  };
+
   const load = useCallback(async (ws = activeWorkspace) => {
     setLoading(true);
     setError('');
     try {
-      const [globalResp, overridesResp] = await Promise.all([
+      const [globalResp, overridesResp, policyResp] = await Promise.all([
         api.get('/api/settings'),
         getWorkspaceSettingsOverrides(ws),
+        // A workspace that predates the policy endpoint simply has none yet.
+        getWorkspacePolicy(ws).catch(() => null),
       ]);
 
       const data = globalResp.data;
@@ -525,6 +574,11 @@ export default function Settings() {
       });
 
       setWsOverrides(overridesResp?.data?.overrides || {});
+
+      const loadedPolicy = policyResp?.data || { require_tool_approval: false, hooks: {} };
+      setPolicy(loadedPolicy);
+      setHooksText(JSON.stringify(loadedPolicy.hooks || {}, null, 2));
+      setHooksError('');
     } catch (e) {
       setError(`${t('settings.errors.load')}: ` + (e.response?.data?.detail || e.message));
     } finally {
@@ -1166,6 +1220,71 @@ export default function Settings() {
                       </div>
                     </div>
                   )}
+                </SectionCard>
+
+                <SectionCard title={t('settings.toolPolicy')}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm font-medium text-gray-700">{t('settings.toolApproval')}</label>
+                        {activeWorkspace && (
+                          <span className="text-xs text-indigo-600 font-medium bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
+                            {t('settings.workspaceBadge', { workspace: activeWorkspace })}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">{t('settings.toolApprovalHint')}</p>
+                    </div>
+                    <label className="inline-flex items-center cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={!!policy.require_tool_approval}
+                        disabled={policySaving}
+                        onChange={(e) => toggleApproval(e.target.checked)}
+                      />
+                      <span className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-disabled:opacity-50 relative transition-colors">
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${policy.require_tool_approval ? 'translate-x-5' : ''}`} />
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="pt-4 border-t border-gray-100">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-sm font-medium text-gray-700">{t('settings.hooks')}</label>
+                      <Link to="/docs/tools" className="text-xs text-indigo-600 hover:text-indigo-800">
+                        {t('settings.hooksDocsLink')}
+                      </Link>
+                    </div>
+                    <p className="text-xs text-gray-500 mb-2">
+                      {t('settings.hooksHint')} <code className="bg-gray-100 rounded px-1">docs/hooks.md</code>
+                    </p>
+                    <textarea
+                      value={hooksText}
+                      onChange={(e) => { setHooksText(e.target.value); setHooksError(''); }}
+                      rows={10}
+                      spellCheck={false}
+                      placeholder={'{\n  "PreToolUse": []\n}'}
+                      className={`${inputCls} font-mono text-xs ${hooksError ? 'border-red-300' : ''}`}
+                    />
+                    {hooksError && <p className="mt-1 text-xs text-red-600">{hooksError}</p>}
+                    <div className="mt-2 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={saveHooks}
+                        disabled={policySaving}
+                        className="flex items-center gap-2 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {policySaving ? t('common.saving') : t('settings.saveHooks')}
+                      </button>
+                      {policySaved && (
+                        <span className="text-xs text-green-600 inline-flex items-center gap-1">
+                          <CheckCircle className="w-3.5 h-3.5" /> {t('settings.policySaved')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </SectionCard>
 
                 <SectionCard title={t('settings.taskAssignment')}>

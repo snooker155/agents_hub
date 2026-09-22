@@ -23,12 +23,18 @@ class NodeCreate(BaseModel):
 
 
 def _enrich(node: dict) -> dict:
-    """Add agent display name and domain to a node record."""
+    """Add agent display name and domain to a node record.
+
+    The inbound secret never leaves the backend: the record reports only whether
+    one is set, so the page can offer Set/Clear without ever holding the value.
+    """
     agent_id = node.get("agent_id", "")
     spec = registry.get_agent(agent_id)
     running_sessions = node_manager.get_running_sessions_for_node(node.get("node_id", ""))
+    public = {k: v for k, v in node.items() if k != "inbound_secret"}
     return {
-        **node,
+        **public,
+        "inbound_secret_configured": bool(node.get("inbound_secret")),
         "agent_name": spec.name if spec else agent_id,
         "agent_domain": getattr(spec, "domain", "") if spec else "",
         "running_sessions_count": len(running_sessions),
@@ -167,6 +173,43 @@ async def unexpose_node(node_id: str):
         raise HTTPException(status_code=404, detail="Node not found")
     ok = node_manager.unexpose_node(node_id)
     return {"unexposed": ok}
+
+
+class InboundSecret(BaseModel):
+    """Body of PUT /{node_id}/inbound-secret."""
+    secret: str
+
+
+@router.put("/{node_id}/inbound-secret")
+async def set_inbound_secret(node_id: str, data: InboundSecret):
+    """Require a signature on this node's external calls.
+
+    Once a secret is set, ``POST /api/external/{token}/run`` refuses any request
+    that is not signed with it (see routes/external.py and docs/notifications.md).
+    The value is write-only: it is stored on the node record and never returned.
+    """
+    node = node_manager.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    secret = (data.secret or "").strip()
+    if not secret:
+        raise HTTPException(status_code=400, detail="secret must not be empty")
+    updated = node_manager.update_node(node_id, {"inbound_secret": secret})
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to store the inbound secret")
+    return _enrich(updated)
+
+
+@router.delete("/{node_id}/inbound-secret")
+async def clear_inbound_secret(node_id: str):
+    """Drop the node's inbound secret: external calls go back to token-only."""
+    node = node_manager.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    updated = node_manager.update_node(node_id, {"inbound_secret": ""})
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to clear the inbound secret")
+    return _enrich(updated)
 
 
 @router.get("/{node_id}/runs")

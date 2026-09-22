@@ -10,6 +10,8 @@ import {
   getNodeRuns,
   exposeNode,
   unexposeNode,
+  setNodeInboundSecret,
+  clearNodeInboundSecret,
   startNode,
   stopNode,
   deleteNode,
@@ -100,6 +102,75 @@ function CopyButton({ text, className = '' }) {
   );
 }
 
+// ── Inbound secret ─────────────────────────────────────────────────────────
+//
+// With a secret set, routes/external.py refuses any call to this node that is
+// not signed with it. The value is write-only: the node record reports only
+// `inbound_secret_configured`, so the field offers Set and Clear and never
+// shows what is stored.
+
+function InboundSecretField({ node, onNodeUpdated }) {
+  const { t } = useI18n();
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const configured = !!node.inbound_secret_configured;
+
+  const apply = async (secret) => {
+    setBusy(true);
+    setError('');
+    try {
+      const r = secret
+        ? await setNodeInboundSecret(node.node_id, secret)
+        : await clearNodeInboundSecret(node.node_id);
+      onNodeUpdated(r.data);
+      setValue('');
+    } catch (e) {
+      setError(e.response?.data?.detail || t('nodeDetail.secretFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{t('nodeDetail.inboundSecret')}</p>
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+          configured ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+        }`}>
+          {configured ? t('nodeDetail.secretSet') : t('nodeDetail.secretNotSet')}
+        </span>
+      </div>
+      <p className="text-xs text-gray-500 mb-2">{t('nodeDetail.signatureNote')}</p>
+      <div className="flex items-center gap-2">
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={t('nodeDetail.newSecret')}
+          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+        />
+        <button
+          onClick={() => apply(value.trim())}
+          disabled={busy || !value.trim()}
+          className="text-[10px] font-semibold px-2 py-1.5 rounded border border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+        >
+          {t('nodeDetail.setSecret')}
+        </button>
+        <button
+          onClick={() => apply('')}
+          disabled={busy || !configured}
+          className="text-[10px] font-semibold px-2 py-1.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+        >
+          {t('nodeDetail.clearSecret')}
+        </button>
+      </div>
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
 // ── Expose panel ───────────────────────────────────────────────────────────
 
 function ExposePanel({ node, onNodeUpdated }) {
@@ -185,6 +256,8 @@ function ExposePanel({ node, onNodeUpdated }) {
           )}
         </div>
 
+        <InboundSecretField node={node} onNodeUpdated={onNodeUpdated} />
+
         {runUrl && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">{t('nodeDetail.exampleRequest')}</p>
@@ -262,6 +335,8 @@ function ExposePanel({ node, onNodeUpdated }) {
               </div>
             </div>
           )}
+
+          <InboundSecretField node={node} onNodeUpdated={onNodeUpdated} />
 
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 mb-1.5">{t('nodeDetail.exampleRequest')}</p>

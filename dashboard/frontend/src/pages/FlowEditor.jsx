@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, ChevronUp, Circle, ClipboardList, Download, FileText, History, Loader2, MessageSquare, Play, Plus, Save, Square, SquareTerminal, Workflow, XCircle, Factory } from 'lucide-react';
-import { exportFlow, getAgents, getFlow, getFlowLogs, getFlowRuns, getTasks, runFlow, stopFlow, runFlowNode, updateFlow, listFlowEntities } from '../api';
+import { CheckCircle2, ChevronDown, ChevronUp, Circle, ClipboardList, DollarSign, Download, FileText, History, Loader2, MessageSquare, Play, Plus, RotateCcw, Save, Square, SquareTerminal, Workflow, XCircle, Factory } from 'lucide-react';
+import { exportFlow, getAgents, getFlow, getFlowLogs, getFlowRuns, getTasks, runFlow, stopFlow, runFlowNode, updateFlow, listFlowEntities, estimateFlowCost, getFlowInstances, resumeFlowRun } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
 import { useWorkspace } from '../components/workspace';
 import { useTheme } from '../components/theme';
@@ -13,6 +13,7 @@ import FlowChat from '../components/flow/FlowChat';
 
 import { AppBar } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import { useToast, errorDetail } from '../components/toast';
 const DOMAIN_COLORS = {
   management: '#22d3ee',
   analysis: '#fbbf24',
@@ -43,6 +44,10 @@ function normalizeNode(node, onRunNode) {
       input: d.input || node.input || [],
       output: d.output || node.output || [],
       config: d.config || node.config || {},
+      // Per-node execution policy the engine reads (flow/engine.py): how many
+      // times a failed attempt is repeated, and how long one attempt may take.
+      retry: d.retry || node.retry || null,
+      timeout_seconds: d.timeout_seconds ?? node.timeout_seconds ?? '',
       domain: d.domain || node.domain || 'general',
       nodeTask: d.nodeTask || node.nodeTask || '',
       onRunNode,
@@ -71,6 +76,15 @@ function serializeNode(node) {
   if (Array.isArray(d.input) && d.input.length) out.data.input = d.input;
   if (Array.isArray(d.output) && d.output.length) out.data.output = d.output;
   if (d.config && Object.keys(d.config).length) out.data.config = d.config;
+  // Policy fields are written only when set, so a node that never used them
+  // keeps the same YAML it had before retries and timeouts existed.
+  const retryMax = Number(d.retry?.max) || 0;
+  const retryBackoff = Number(d.retry?.backoff_seconds) || 0;
+  if (retryMax > 0 || retryBackoff > 0) {
+    out.data.retry = { max: retryMax, backoff_seconds: retryBackoff };
+  }
+  const timeout = Number(d.timeout_seconds);
+  if (Number.isFinite(timeout) && timeout > 0) out.data.timeout_seconds = timeout;
   return out;
 }
 
@@ -98,6 +112,138 @@ const fmtKeys = (arr) => (Array.isArray(arr) ? arr.join(', ') : '');
 const NODE_LIFECYCLE_TYPES = new Set([
   'agent_start', 'agent_finish', 'agent_error', 'agent_stopped', 'node_skip',
 ]);
+
+// Per-node execution policy: how many times a failed attempt is repeated and
+// how long one attempt may take. Both are optional; left at zero the node
+// behaves exactly as it did before retries and timeouts existed.
+function NodePolicy({ node, onPatch }) {
+  const { t } = useI18n();
+  const d = node.data || {};
+  const retry = d.retry || {};
+  const patchRetry = (patch) => {
+    const next = { max: Number(retry.max) || 0, backoff_seconds: Number(retry.backoff_seconds) || 0, ...patch };
+    onPatch({ retry: (next.max > 0 || next.backoff_seconds > 0) ? next : null });
+  };
+
+  return (
+    <div className="space-y-2 rounded-[20px] border border-slate-200 bg-slate-50 p-4">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        {t('flowEditor.nodePolicy')}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[11px] font-medium text-slate-500">
+          {t('flowEditor.retryMax')}
+          <input
+            type="number"
+            min="0"
+            value={retry.max ?? 0}
+            onChange={(e) => patchRetry({ max: Number(e.target.value) || 0 })}
+            className={`${INPUT_CLS} mt-1`}
+          />
+        </label>
+        <label className="block text-[11px] font-medium text-slate-500">
+          {t('flowEditor.retryBackoff')}
+          <input
+            type="number"
+            min="0"
+            step="0.5"
+            value={retry.backoff_seconds ?? 0}
+            onChange={(e) => patchRetry({ backoff_seconds: Number(e.target.value) || 0 })}
+            className={`${INPUT_CLS} mt-1`}
+          />
+        </label>
+      </div>
+      <label className="block text-[11px] font-medium text-slate-500">
+        {t('flowEditor.timeoutSeconds')}
+        <input
+          type="number"
+          min="0"
+          value={d.timeout_seconds ?? ''}
+          onChange={(e) => onPatch({ timeout_seconds: e.target.value })}
+          placeholder={t('flowEditor.noTimeout')}
+          className={`${INPUT_CLS} mt-1`}
+        />
+      </label>
+      <p className="text-[11px] leading-5 text-slate-400">{t('flowEditor.nodePolicyHint')}</p>
+    </div>
+  );
+}
+
+// The human_interrupt node asks a person and parks the run. Its config is two
+// fields and a list, so it gets a form rather than the raw JSON box: a blank
+// question is the one way to make the node park a run on an empty prompt.
+function InterruptConfig({ node, onPatch }) {
+  const { t } = useI18n();
+  const d = node.data || {};
+  const config = d.config || {};
+  const choices = Array.isArray(config.choices) ? config.choices : [];
+  const patchConfig = (patch) => onPatch({ config: { ...config, ...patch } });
+  const setChoice = (index, value) =>
+    patchConfig({ choices: choices.map((c, i) => (i === index ? value : c)) });
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          {t('flowEditor.interruptQuestion')}
+        </label>
+        <textarea
+          value={config.question || ''}
+          onChange={(e) => patchConfig({ question: e.target.value })}
+          rows={3}
+          placeholder={t('flowEditor.interruptQuestionPlaceholder')}
+          className={INPUT_CLS}
+        />
+        <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.interruptQuestionHint')}</p>
+      </div>
+
+      <div className="space-y-2">
+        <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          {t('flowEditor.interruptChoices')}
+        </label>
+        {choices.map((choice, index) => (
+          <div key={index} className="flex items-center gap-2">
+            <input
+              value={choice}
+              onChange={(e) => setChoice(index, e.target.value)}
+              className={INPUT_CLS}
+            />
+            <button
+              type="button"
+              onClick={() => patchConfig({ choices: choices.filter((_, i) => i !== index) })}
+              className="shrink-0 rounded-xl border border-slate-200 px-2 py-2 text-slate-400 transition hover:border-rose-300 hover:text-rose-500"
+              aria-label={t('flowEditor.removeChoice')}
+            >
+              <XCircle className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => patchConfig({ choices: [...choices, ''] })}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t('flowEditor.addChoice')}
+        </button>
+        <p className="px-1 text-[11px] text-slate-400">{t('flowEditor.interruptChoicesHint')}</p>
+      </div>
+
+      <div>
+        <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          {t('flowEditor.interruptOutputKey')}
+        </label>
+        <input
+          value={(d.output || [])[0] || ''}
+          onChange={(e) => onPatch({ output: e.target.value.trim() ? [e.target.value.trim()] : [] })}
+          placeholder="answer"
+          className={INPUT_CLS}
+        />
+        <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.interruptOutputKeyHint')}</p>
+      </div>
+    </div>
+  );
+}
 
 // Node inspector: edits label/description/task for any node, plus the state
 // contract (input/output keys) and config JSON for non-agent entity nodes.
@@ -170,13 +316,18 @@ function NodeInspector({ node, isAgent, onPatch, onRun, running }) {
       </div>
 
       {isAgent ? (
-        <textarea
-          value={d.nodeTask || ''}
-          onChange={(e) => onPatch({ nodeTask: e.target.value })}
-          rows={4}
-          placeholder={t('flowEditor.optionalNodeSpecificTask')}
-          className={INPUT_CLS}
-        />
+        <>
+          <textarea
+            value={d.nodeTask || ''}
+            onChange={(e) => onPatch({ nodeTask: e.target.value })}
+            rows={4}
+            placeholder={t('flowEditor.optionalNodeSpecificTask')}
+            className={INPUT_CLS}
+          />
+          <NodePolicy node={node} onPatch={onPatch} />
+        </>
+      ) : d.entity_id === 'human_interrupt' ? (
+        <InterruptConfig node={node} onPatch={onPatch} />
       ) : (
         <div className="space-y-1">
           <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
@@ -206,9 +357,66 @@ function NodeInspector({ node, isAgent, onPatch, onRun, running }) {
   );
 }
 
+// The shared secret POST /{flow_id}/trigger requires a signature against. The
+// value is write-only: the flow reports only whether one is set, so the field
+// offers Set and Clear and never shows what is stored.
+function WebhookSecret({ flow, onSet }) {
+  const { t } = useI18n();
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const configured = !!flow.webhook_secret_configured;
+
+  const run = async (secret) => {
+    setBusy(true);
+    try {
+      await onSet(secret);
+      setValue('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 border-t border-slate-200 pt-3">
+      <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        {t('flowEditor.webhookSecret')}
+      </label>
+      <p className="px-1 text-[11px] leading-5 text-slate-400">
+        {configured ? t('flowEditor.webhookSecretSet') : t('flowEditor.webhookSecretNotSet')}
+      </p>
+      <input
+        type="password"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={t('flowEditor.webhookSecretPlaceholder')}
+        className={INPUT_CLS}
+      />
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={busy || !value.trim()}
+          onClick={() => run(value.trim())}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-700 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {t('flowEditor.setSecret')}
+        </button>
+        <button
+          type="button"
+          disabled={busy || !configured}
+          onClick={() => run('')}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-rose-300 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {t('flowEditor.clearSecret')}
+        </button>
+      </div>
+      <p className="px-1 text-[11px] leading-5 text-slate-400">{t('flowEditor.signatureHeaderNote')}</p>
+    </div>
+  );
+}
+
 // Flow-level meta editor: entry_point, mutability, recordability, and the
 // initial state-key defaults. Patches go to `flow` and mark the editor dirty.
-function FlowSettings({ flow, nodes, onPatch }) {
+function FlowSettings({ flow, nodes, onPatch, onSetWebhookSecret }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const mutability = flow.mutability !== false; // default true
@@ -262,6 +470,36 @@ function FlowSettings({ flow, nodes, onPatch }) {
               <option value="none">{t('flowEditor.none')}</option>
             </select>
           </div>
+
+          {/* Execution policy — what a failed node does to the rest of the
+              graph, and how much of the graph may run at once. */}
+          <div>
+            <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('flowEditor.onError')}</label>
+            <select
+              value={flow.on_error || 'fail_fast'}
+              onChange={(e) => onPatch({ on_error: e.target.value })}
+              className={INPUT_CLS}
+            >
+              <option value="fail_fast">{t('flowEditor.onErrorFailFast')}</option>
+              <option value="continue">{t('flowEditor.onErrorContinue')}</option>
+              <option value="isolate_branch">{t('flowEditor.onErrorIsolateBranch')}</option>
+            </select>
+            <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.onErrorHint')}</p>
+          </div>
+
+          <div>
+            <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('flowEditor.maxParallel')}</label>
+            <input
+              type="number"
+              min="1"
+              value={flow.max_parallel ?? 4}
+              onChange={(e) => onPatch({ max_parallel: Math.max(1, Number(e.target.value) || 1) })}
+              className={INPUT_CLS}
+            />
+            <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.maxParallelHint')}</p>
+          </div>
+
+          <WebhookSecret flow={flow} onSet={onSetWebhookSecret} />
         </div>
       ) : null}
     </div>
@@ -423,6 +661,7 @@ function RuntimeStateBlock({ logs }) {
 
 function FlowEditor() {
   const { t } = useI18n();
+  const toast = useToast();
   const navigate = useNavigate();
   const { flowId } = useParams();
   const { selectedWorkspace, liveUpdates } = useWorkspace();
@@ -451,6 +690,13 @@ function FlowEditor() {
   // for the History list, manual flow runs, and replay of a selected record.
   const [streamLogs, setStreamLogs] = useState([]);
   const [runs, setRuns] = useState([]);
+  // One record per execution (flow/run_store.py), keyed by flow_run_id. The
+  // History list is built from the log, which knows nothing about a run's
+  // checkpoint; these records are what say whether a run can be resumed.
+  const [instances, setInstances] = useState({});
+  const [resumingRun, setResumingRun] = useState(null);
+  const [estimate, setEstimate] = useState(null);
+  const [estimating, setEstimating] = useState(false);
   const [selectedRunGroup, setSelectedRunGroup] = useState(null); // History record being viewed
   const [dirty, setDirty] = useState(false);
   const [rightTab, setRightTab] = useState('graph'); // graph | logs
@@ -571,6 +817,16 @@ function FlowEditor() {
       setRuns(response.data || []);
     } catch (error) {
       console.error('Failed to load runs', error);
+    }
+    try {
+      const { data } = await getFlowInstances(flowId);
+      const byId = {};
+      (data || []).forEach((record) => {
+        if (record?.flow_run_id) byId[record.flow_run_id] = record;
+      });
+      setInstances(byId);
+    } catch (error) {
+      console.error('Failed to load run records', error);
     }
   }, [flowId]);
 
@@ -890,6 +1146,10 @@ function FlowEditor() {
         ...(flow.mutability !== undefined ? { mutability: flow.mutability } : {}),
         ...(flow.recordability !== undefined ? { recordability: flow.recordability } : {}),
         ...(flow.state !== undefined ? { state: flow.state } : {}),
+        // Execution policy (flow/engine.py). Sent only when set, so a flow that
+        // never touched them keeps the engine's own defaults.
+        ...(flow.on_error !== undefined ? { on_error: flow.on_error } : {}),
+        ...(flow.max_parallel !== undefined ? { max_parallel: flow.max_parallel } : {}),
         ...override,
       };
       const response = await updateFlow(flowId, payload);
@@ -938,6 +1198,12 @@ function FlowEditor() {
         description: flow.description || '',
         task_id: flow.task_id || undefined,
       });
+      // The run endpoint prices the flow on the way out, so what a run is about
+      // to cost lands in front of whoever pressed Run, not only on Estimate.
+      const cost = started?.data?.estimated_cost;
+      if (cost && typeof cost.total_usd === 'number') {
+        toast.success(t('flowEditor.runStarted'), t('flowEditor.estimatedCost', { usd: cost.total_usd.toFixed(4) }));
+      }
       setFlowSessionId(started?.data?.session_id || null);
       setFlow((prev) => ({ ...prev, running: true }));
       await loadLogs(workspaceName);
@@ -946,6 +1212,43 @@ function FlowEditor() {
       alert(`Failed to start flow: ${error.response?.data?.detail || error.message}`);
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleEstimate = async () => {
+    setEstimating(true);
+    try {
+      const { data } = await estimateFlowCost(flowId);
+      setEstimate(data);
+    } catch (error) {
+      toast.error(t('flowEditor.estimateFailed'), errorDetail(error));
+    } finally {
+      setEstimating(false);
+    }
+  };
+
+  const handleResumeRun = async (flowRunId) => {
+    setResumingRun(flowRunId);
+    try {
+      await resumeFlowRun(flowRunId);
+      toast.success(t('flowEditor.runResumed'));
+      await loadRuns(flow?.workspace || selectedWorkspace);
+    } catch (error) {
+      toast.error(t('flowEditor.resumeFailed'), errorDetail(error));
+    } finally {
+      setResumingRun(null);
+    }
+  };
+
+  // Write-only: the secret goes up, and the flow comes back saying only whether
+  // one is set. An empty string clears it.
+  const handleSetWebhookSecret = async (secret) => {
+    try {
+      const { data } = await updateFlow(flowId, { webhook_secret: secret });
+      setFlow((prev) => ({ ...prev, webhook_secret_configured: !!data.webhook_secret_configured }));
+      toast.success(secret ? t('flowEditor.webhookSecretSaved') : t('flowEditor.webhookSecretCleared'));
+    } catch (error) {
+      toast.error(t('flowEditor.webhookSecretFailed'), errorDetail(error));
     }
   };
 
@@ -1153,6 +1456,47 @@ function FlowEditor() {
               </button>
 
               <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleEstimate}
+                  disabled={estimating}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <DollarSign className="h-4 w-4" />
+                  {estimating ? t('flowEditor.estimating') : t('flowEditor.estimateCost')}
+                </button>
+                {estimate ? (
+                  <div className="rounded-[20px] border border-slate-200 bg-white p-4">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="text-sm font-bold text-slate-900">
+                        ${Number(estimate.total_usd || 0).toFixed(4)}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setEstimate(null)}
+                        className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
+                      >
+                        {t('flowEditor.hideEstimate')}
+                      </button>
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {(estimate.per_node || []).map((row) => (
+                        <div key={row.node_id} className="flex items-baseline justify-between gap-2 text-[11px]">
+                          <span className="truncate text-slate-600">{row.label || row.node_id}</span>
+                          <span className="shrink-0 font-mono text-slate-500">
+                            {row.model || t('flowEditor.noModelCall')} · ${Number(row.usd || 0).toFixed(4)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-[11px] leading-5 text-slate-400">
+                      {t('flowEditor.flowEstimateNote')}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-bold text-slate-900">{t('flowEditor.tasks')}</div>
                   <button
@@ -1207,6 +1551,9 @@ function FlowEditor() {
           <div className={`min-h-0 flex-1 overflow-y-auto p-3 ${leftTab === 'history' ? '' : 'hidden'}`}>
             <FlowHistory
               runs={displayRuns}
+              instances={instances}
+              onResume={handleResumeRun}
+              resumingRun={resumingRun}
               selectedRunGroup={selectedRunGroup}
               onSelect={(run) => {
                 const group = run.run_group;
@@ -1413,6 +1760,7 @@ function FlowEditor() {
                       flow={flow}
                       nodes={nodes}
                       onPatch={(patch) => { setFlow((prev) => ({ ...prev, ...patch })); setDirty(true); }}
+                      onSetWebhookSecret={handleSetWebhookSecret}
                     />
                   </div>
                   {/* Separator between settings and the node registry. */}
@@ -1480,6 +1828,8 @@ const RUN_STATUS_STYLES = {
   completed: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Completed' },
   stopped: { dot: 'bg-rose-500', text: 'text-rose-600', label: 'Stopped' },
   running: { dot: 'bg-amber-500 animate-pulse', text: 'text-amber-600', label: 'Running' },
+  failed: { dot: 'bg-rose-500', text: 'text-rose-600', label: 'Failed' },
+  awaiting_input: { dot: 'bg-violet-500', text: 'text-violet-600', label: 'Waiting for a person' },
 };
 
 // Reconstruct conversation bubbles from a History record's flow-log events.
@@ -1590,7 +1940,12 @@ function FlowRunMessages({ run, messages = [], onClose }) {
   );
 }
 
-function FlowHistory({ runs = [], selectedRunGroup, onSelect }) {
+// A run that failed, or parked on a human_interrupt node, keeps the checkpoint
+// it got to. `instances` is the per-execution record (flow/run_store.py) that
+// carries it: the log-derived rows the list is built from do not.
+const RESUMABLE_STATUSES = new Set(['failed', 'awaiting_input']);
+
+function FlowHistory({ runs = [], instances = {}, onResume, resumingRun, selectedRunGroup, onSelect }) {
   const { t } = useI18n();
   if (!runs.length) {
     return (
@@ -1604,19 +1959,20 @@ function FlowHistory({ runs = [], selectedRunGroup, onSelect }) {
       {runs.map((run) => {
         const isActive = run.run_group === selectedRunGroup;
         const isChat = run.kind === 'chat';
-        const status = RUN_STATUS_STYLES[run.status] || RUN_STATUS_STYLES.running;
+        const record = instances[run.run_group] || {};
+        const canResume = RESUMABLE_STATUSES.has(record.status) && !!record.checkpoint;
+        const status = RUN_STATUS_STYLES[record.status] || RUN_STATUS_STYLES[run.status] || RUN_STATUS_STYLES.running;
         const nodeCount = (run.events || []).filter((e) => e.type === 'agent_start').length;
         return (
-          <button
+          <div
             key={run.run_group}
-            type="button"
-            onClick={() => onSelect(run)}
             className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
               isActive
                 ? 'border-cyan-300 bg-cyan-50'
                 : 'border-slate-200 bg-slate-50 hover:border-cyan-300 hover:bg-cyan-50'
             }`}
           >
+          <button type="button" onClick={() => onSelect(run)} className="w-full text-left">
             <div className="flex items-center justify-between gap-2">
               <span
                 className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
@@ -1638,6 +1994,18 @@ function FlowHistory({ runs = [], selectedRunGroup, onSelect }) {
               {fmtDateTime(run.started_at)} · {t('flowEditor.stepCount', { count: nodeCount })}
             </div>
           </button>
+          {canResume ? (
+            <button
+              type="button"
+              onClick={() => onResume(run.run_group)}
+              disabled={resumingRun === run.run_group}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RotateCcw className="h-3 w-3" />
+              {resumingRun === run.run_group ? t('flowEditor.resuming') : t('flowEditor.resume')}
+            </button>
+          ) : null}
+          </div>
         );
       })}
     </div>

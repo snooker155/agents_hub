@@ -7,7 +7,7 @@ import asyncio
 import os
 import signal
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 import json
 
@@ -22,6 +22,7 @@ from flow import launcher as flow_launcher
 from flow import store as flow_store
 from flow.engine import ON_ERROR_POLICIES
 from flow.estimate import estimate_flow_cost
+from models import FlowListItem, FlowDetail, FlowPage
 from workspace import (
     create_workspace_folder,
     get_workspace_metadata,
@@ -90,6 +91,9 @@ class FlowUpdate(BaseModel):
     # defaults, so a flow that never sets them behaves as it always did.
     max_parallel: Optional[int] = None
     on_error: Optional[str] = None
+    # Write-only: the shared secret POST /{flow_id}/trigger requires a signature
+    # against. Sending "" clears it; the flow is never read back with it.
+    webhook_secret: Optional[str] = None
 
 
 class FlowImport(BaseModel):
@@ -135,10 +139,31 @@ class FlowTrigger(BaseModel):
     max_concurrent: int = 1
 
 
+def _public_flow(flow: Dict[str, Any]) -> Dict[str, Any]:
+    """A flow record safe to hand to the dashboard.
+
+    The webhook secret is write-only: the trigger route compares against it, and
+    the page only ever needs to know whether one is set.
+    """
+    if not isinstance(flow, dict):
+        return flow
+    public = {k: v for k, v in flow.items() if k != "webhook_secret"}
+    public["webhook_secret_configured"] = bool(flow.get("webhook_secret"))
+    return public
+
+
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
-@router.get("")
-async def list_flows(workspace: Optional[str] = None):
+@router.get("", response_model=Union[List[FlowListItem], FlowPage])
+async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = None,
+                     offset: Optional[int] = None):
+    """The flow list. With no ``limit``/``offset`` this is the full list, exactly
+    as before; with either, it is one page: ``{items, total, limit, offset}``.
+
+    Flows are file-backed (one YAML+JSON pair per flow via ``flow_store``), not
+    a queryable store, so the page is sliced after loading rather than pushed
+    into a query.
+    """
     flows = _load()
     if workspace:
         # When a workspace declares an explicit ``allowed_flows`` allowlist it is
@@ -150,7 +175,13 @@ async def list_flows(workspace: Optional[str] = None):
             flows = [f for f in flows if f.get("id") in allowed]
         else:
             flows = [f for f in flows if not f.get("workspace") or f.get("workspace") == workspace]
-    return flows
+
+    flows = [_public_flow(f) for f in flows]
+    if limit is None and offset is None:
+        return flows
+    start = offset or 0
+    page = flows[start: start + limit] if limit is not None else flows[start:]
+    return {"items": page, "total": len(flows), "limit": limit, "offset": offset}
 
 
 @router.post("")
@@ -172,7 +203,7 @@ async def create_flow(data: FlowCreate):
     return flow
 
 
-@router.get("/{flow_id}")
+@router.get("/{flow_id}", response_model=FlowDetail)
 async def get_flow(flow_id: str):
     try:
         flow = flow_store.get_flow(flow_id)
@@ -181,7 +212,7 @@ async def get_flow(flow_id: str):
         raise HTTPException(status_code=422, detail=str(e))
     if flow is None:
         raise HTTPException(status_code=404, detail="Flow not found")
-    return flow
+    return _public_flow(flow)
 
 
 @router.put("/{flow_id}")
@@ -197,6 +228,15 @@ async def update_flow(flow_id: str, data: FlowUpdate):
                 )
             if "max_parallel" in patch and int(patch["max_parallel"]) < 1:
                 raise HTTPException(status_code=400, detail="max_parallel must be at least 1")
+            if "webhook_secret" in patch:
+                # An empty string is how the UI clears the secret: drop the key
+                # rather than storing "", which the trigger would read as falsy
+                # anyway but which would keep reporting the flow as configured.
+                secret = str(patch.pop("webhook_secret") or "").strip()
+                if secret:
+                    patch["webhook_secret"] = secret
+                else:
+                    f = {k: v for k, v in f.items() if k != "webhook_secret"}
             patch["updated_at"] = _now()
             flows[i] = {**f, **patch}
             _save(flows)
@@ -204,7 +244,7 @@ async def update_flow(flow_id: str, data: FlowUpdate):
             ws_name = patch.get("workspace")
             if ws_name:
                 _authorize_flow_in_workspace(ws_name, flow_id)
-            return flows[i]
+            return _public_flow(flows[i])
     raise HTTPException(status_code=404, detail="Flow not found")
 
 

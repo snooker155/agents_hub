@@ -1,4 +1,12 @@
 export default {
+  inboundSecret: 'Inbound secret',
+  secretSet: 'Signature required',
+  secretNotSet: 'Token only',
+  signatureNote: 'With a secret set, callers must sign the body and send X-AgentsHub-Signature (see docs/notifications.md).',
+  newSecret: 'New secret',
+  setSecret: 'Set',
+  clearSecret: 'Clear',
+  secretFailed: 'Could not save the inbound secret',
   backToNodes: 'Back to Nodes',
   nodes: 'Nodes',
   notFound: 'Node not found',

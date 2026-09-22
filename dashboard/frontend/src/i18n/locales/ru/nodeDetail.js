@@ -1,4 +1,12 @@
 export default {
+  inboundSecret: 'Входящий секрет',
+  secretSet: 'Нужна подпись',
+  secretNotSet: 'Только токен',
+  signatureNote: 'Когда секрет задан, вызывающая сторона подписывает тело и шлёт X-AgentsHub-Signature (см. docs/notifications.md).',
+  newSecret: 'Новый секрет',
+  setSecret: 'Задать',
+  clearSecret: 'Очистить',
+  secretFailed: 'Не удалось сохранить входящий секрет',
   backToNodes: 'К узлам',
   nodes: 'Узлы',
   notFound: 'Узел не найден',
