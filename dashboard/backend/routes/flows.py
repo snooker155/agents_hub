@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -419,15 +419,36 @@ async def resume_flow_run(flow_run_id: str, req: Optional[FlowResume] = None):
 
 
 @router.post("/{flow_id}/trigger")
-async def trigger_flow_webhook(flow_id: str, req: Optional[FlowTrigger] = None):
+async def trigger_flow_webhook(flow_id: str, request: Request, req: Optional[FlowTrigger] = None):
     """Webhook entry point: start a flow run from an external caller with an
     optional JSON ``seed``, guarded by a per-flow concurrency cap.
 
     Auth: when ``AGENTS_HUB_API_TOKEN`` is configured, the global middleware
-    already requires it on this ``/api`` route — no extra check here. Returns
-    429 when the concurrency cap is hit, 403 when the flow isn't allowed in the
-    workspace, 404 for an unknown flow.
+    already requires it on this ``/api`` route — no extra check here. When the
+    flow's own record carries a ``webhook_secret``, the caller must also sign
+    the request the same way ``notify.outbound`` signs what this hub sends out
+    (see docs/notifications.md); a flow with no secret configured keeps
+    today's behaviour unchanged. Returns 429 when the concurrency cap is hit,
+    403 when the flow isn't allowed in the workspace, 404 for an unknown flow,
+    401 for a missing/invalid signature and 409 for a replayed delivery.
     """
+    flow = flow_store.get_flow(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    secret = flow.get("webhook_secret")
+    if secret:
+        from notify.inbound import seen_delivery, verify_signature
+
+        raw_body = await request.body()
+        signature = request.headers.get("X-AgentsHub-Signature", "")
+        timestamp = request.headers.get("X-AgentsHub-Timestamp", "")
+        delivery_id = request.headers.get("X-AgentsHub-Delivery", "")
+        if not verify_signature(secret, raw_body, signature, timestamp):
+            raise HTTPException(status_code=401, detail="Invalid or missing signature")
+        if delivery_id and seen_delivery(delivery_id):
+            raise HTTPException(status_code=409, detail="Delivery already processed")
+
     req = req or FlowTrigger()
     try:
         result = flow_launcher.trigger_flow(

@@ -92,6 +92,12 @@ def _notify_task_run_finished(old: Dict[str, Any], new: Dict[str, Any]) -> None:
             return
         if str(old.get("status") or "") in _NOTIFY_TERMINAL_STATUSES:
             return  # already finalized — don't notify twice
+
+        # Alert rules (run_failed, spend thresholds) evaluate here too, for
+        # every run reaching a terminal status — not only task-bound ones.
+        from notify import rules as notify_rules
+        notify_rules.evaluate_run_finished(new)
+
         task_id = new.get("task_id")
         agent_id = str(new.get("agent_id") or "")
         if not task_id or agent_id == _ROUTING_AGENT_ID:

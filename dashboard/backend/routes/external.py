@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from managers import node_manager
+from notify.inbound import seen_delivery, verify_signature
 
 router = APIRouter(prefix="/api/external", tags=["external"])
 
@@ -65,6 +66,23 @@ async def external_run(token: str, body: ExternalRunRequest, request: Request):
 
     if not node:
         raise HTTPException(status_code=404, detail="No exposed node found for this token")
+
+    # When the node has an inbound secret configured, the caller must sign the
+    # request the same way notify.outbound signs what this hub sends out.
+    # Nodes with no secret configured keep today's behaviour: the token alone
+    # is enough, unchanged.
+    secret = node.get("inbound_secret")
+    if secret:
+        raw_body = await request.body()
+        signature = request.headers.get("X-AgentsHub-Signature", "")
+        timestamp = request.headers.get("X-AgentsHub-Timestamp", "")
+        delivery_id = request.headers.get("X-AgentsHub-Delivery", "")
+        if not verify_signature(secret, raw_body, signature, timestamp):
+            _log(401, "bad_signature")
+            raise HTTPException(status_code=401, detail="Invalid or missing signature")
+        if delivery_id and seen_delivery(delivery_id):
+            _log(409, "replayed_delivery")
+            raise HTTPException(status_code=409, detail="Delivery already processed")
 
     node_id = node["node_id"]
     agent_id = node.get("agent_id", "")

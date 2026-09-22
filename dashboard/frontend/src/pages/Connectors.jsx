@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Boxes, GitBranch, Link2, Send } from 'lucide-react';
+import { Boxes, GitBranch, Link2, Send, Webhook } from 'lucide-react';
 
 import BlenderConnector from '../components/connectors/BlenderConnector';
 import GitConnector from '../components/connectors/GitConnector';
 import TelegramConnector from '../components/connectors/TelegramConnector';
+import WebhooksConnector from '../components/connectors/WebhooksConnector';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 
@@ -24,6 +25,7 @@ const TABS = [
   { id: 'telegram', icon: Send, Component: TelegramConnector },
   { id: 'git', icon: GitBranch, Component: GitConnector },
   { id: 'blender', icon: Boxes, Component: BlenderConnector },
+  { id: 'webhooks', icon: Webhook, Component: WebhooksConnector },
 ];
 
 export default function Connectors() {

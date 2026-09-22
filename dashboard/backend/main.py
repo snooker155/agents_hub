@@ -45,7 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
-from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router
+from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
 from routes import run_groups as run_groups_router
 from routes import settings as settings_router
 from routes import models as models_router
@@ -138,6 +138,11 @@ async def lifespan(app: FastAPI):
     try:
         from connectors.telegram.telegram_runner import service as _tg_service
         await _tg_service.stop()
+    except Exception:
+        pass
+    try:
+        from notify import outbound as _notify_outbound
+        _notify_outbound.shutdown()
     except Exception:
         pass
 
@@ -404,6 +409,10 @@ app.include_router(health.router)
 
 # Views domain: rich agent-generated views + their assets and per-user state
 app.include_router(views.router)
+
+# Notifications domain: outbound webhook/slack endpoints, alert rules, and the
+# inbound task-filing webhook.
+app.include_router(notify_router.router)
 
 # ============================================================================
 # Entry Point

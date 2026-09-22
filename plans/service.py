@@ -202,10 +202,12 @@ def create_notification(
 ) -> Notification:
     """Persist an inbox entry and push it to live SSE subscribers.
 
-    The inbox (dashboard bell) is always the source of truth. When ``channels``
-    includes ``"telegram"``, the same notification is *also* pushed to the
-    Telegram chats bound in this workspace (best-effort). Omit telegram and the
-    notification stays inbox-only.
+    The inbox (dashboard bell) is always the source of truth. ``channels``
+    picks which best-effort side channels also get it: ``"telegram"`` reaches
+    the Telegram chats bound in this workspace; ``"slack"`` and ``"webhook"``
+    reach every enabled endpoint of that kind (see ``notify.store``) whose
+    events include ``"notification"``. Omit all three and the notification
+    stays inbox-only.
     """
     n = Notification(
         title=title,
@@ -218,6 +220,10 @@ def create_notification(
     _publish_notification(n)
     if channels and "telegram" in channels:
         _push_telegram(workspace, title, body)
+    if channels and "slack" in channels:
+        _push_endpoints(workspace, "slack", n)
+    if channels and "webhook" in channels:
+        _push_endpoints(workspace, "webhook", n)
     return n
 
 
@@ -228,6 +234,35 @@ def _push_telegram(workspace: Optional[str], title: str, body: str) -> None:
         notify_workspace(workspace, title, body)
     except Exception:
         log.debug("telegram notification delivery failed", exc_info=True)
+
+
+def _push_endpoints(workspace: Optional[str], kind: str, n: Notification) -> None:
+    """Best-effort delivery to every enabled ``kind`` endpoint subscribed to
+    the ``"notification"`` event; never raises. Sibling of :func:`_push_telegram`
+    for the endpoints configured on the Connectors page's Webhooks tab."""
+    try:
+        from notify import outbound as notify_outbound
+        from notify import store as notify_store
+
+        ws = workspace or "default"
+        event = {
+            "id": str(uuid4()),
+            "type": "notification",
+            "workspace": ws,
+            "created_at": _now().isoformat(),
+            "data": {
+                "title": n.title,
+                "body": n.body,
+                "severity": n.severity,
+                "source": n.source,
+            },
+        }
+        for endpoint in notify_store.endpoints_for_event(ws, "notification"):
+            if endpoint.get("kind") != kind:
+                continue
+            notify_outbound.dispatch(endpoint, event)
+    except Exception:
+        log.debug("%s notification delivery failed", kind, exc_info=True)
 
 
 def _publish_notification(n: Notification) -> None:
