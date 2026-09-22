@@ -163,6 +163,10 @@ AGENT_TRANSITIONS: Dict[TaskStatus, FrozenSet[TaskStatus]] = {
     TaskStatus.blocked: frozenset({TaskStatus.in_progress}),
     TaskStatus.resolved: frozenset({TaskStatus.reviewing}),
     TaskStatus.reviewing: frozenset({TaskStatus.reviewed, TaskStatus.in_progress}),
+    # The orchestrator closes a task once the reviewer approved it (its
+    # instructions say so in Step 5): done is reachable for an agent from
+    # reviewed and from nowhere else.
+    TaskStatus.reviewed: frozenset({TaskStatus.done}),
 }
 
 
@@ -323,6 +327,12 @@ class Task(BaseModel):
     # Compared against the workspace's orchestrator ``max_retries`` before
     # re-dispatching a failed run instead of blocking it (see run_manager).
     retry_count: int = Field(default=0, description="Automatic retries spent after failed runs")
+
+    # Number of fix->review cycles already started for this task. Incremented
+    # each time a review run starts and compared against
+    # managers.runs.task_finalize.MAX_REVIEW_CYCLES; the task is blocked for
+    # the user instead of starting another review once it is reached.
+    review_cycles: int = Field(default=0, description="Review cycles already started for this task")
 
     priority: TaskPriority = Field(default=TaskPriority.medium, description="Task priority: low, medium, high, critical")
 

@@ -86,6 +86,14 @@ def test_agent_cannot_set_reviewed_reviewing_or_pending_from_in_progress():
             ts.update_task(t.id, status=target, actor=Actor.agent)
 
 
+def test_orchestrator_agent_closes_a_reviewed_task_only():
+    t = ts.create_task("work", status=TaskStatus.reviewed)
+    assert ts.update_task(t.id, status=TaskStatus.done, actor=Actor.agent).status == TaskStatus.done
+    t2 = ts.create_task("work", status=TaskStatus.resolved)
+    with pytest.raises(IllegalTransition):
+        ts.update_task(t2.id, status=TaskStatus.done, actor=Actor.agent)
+
+
 def test_reviewer_agent_records_its_verdict():
     """The code_reviewer agent moves a resolved task to reviewing and then to
     reviewed, or back to in_progress with findings; those are the only routes

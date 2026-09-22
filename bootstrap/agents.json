@@ -31,7 +31,13 @@
         "run_agent_tool",
         "run_flow_tool",
         "search_docs",
-        "read_doc"
+        "read_doc",
+        "schedule_notification",
+        "schedule_task",
+        "notify_user",
+        "list_scheduled",
+        "cancel_scheduled",
+        "update_scheduled"
       ],
       "commands": [],
       "capacity": 1,

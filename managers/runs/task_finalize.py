@@ -137,6 +137,16 @@ def park_task_awaiting_input(run_id: str, question: Dict[str, Any], agent_id: st
         pass
 
 
+# How many fix->review cycles a task may go through before the pipeline stops
+# looping and hands it back to the user (see _auto_start_review below). The
+# orchestrator's prompt used to spell out this number itself; it is enforced
+# here instead so the limit cannot drift from what the prompt says. Plain
+# module constant rather than a common.config setting: no other per-task loop
+# limit lives in settings yet, and this one is internal wiring, not something
+# an operator tunes per deployment.
+MAX_REVIEW_CYCLES = 3
+
+
 def _auto_start_review(tid, task) -> bool:
     """Deterministically start a code_reviewer run on a freshly resolved task.
 
@@ -145,6 +155,14 @@ def _auto_start_review(tid, task) -> bool:
     the reviewer itself, nothing else would. Skipped (returns False) when the
     reviewer is not registered, not allowed in the workspace, or the workspace
     is not in subprocess mode (node mode dispatches through its polling loop).
+
+    Also the choke point for the fix->review cycle limit: this function fires
+    every time a continuation run resolves the task, including every fix cycle
+    after a reviewer rejection, so counting review starts here catches the
+    whole loop rather than just its first pass. Once ``review_cycles`` reaches
+    ``MAX_REVIEW_CYCLES`` the task is blocked for the user instead of starting
+    another review, and the user is notified the same way ``ask_user`` parks a
+    task for them.
     """
     try:
         from tasks import service as _ts
@@ -161,10 +179,32 @@ def _auto_start_review(tid, task) -> bool:
         if metadata.get("orchestrator", {}).get("execution_mode", "subprocess") == "node":
             return False
 
+        cycles = int(getattr(task, "review_cycles", 0) or 0)
+        if cycles >= MAX_REVIEW_CYCLES:
+            reason = (
+                f"Review cycle limit ({MAX_REVIEW_CYCLES}) reached for this task — "
+                "it needs your input instead of another automatic fix/review pass."
+            )
+            _ts.block_task(tid, reason=reason)
+            _ts.append_task_activity_log(tid, "review_cycle_limit", reason)
+            try:
+                from plans import service as _plan_service
+                _plan_service.create_notification(
+                    title="A task hit its review cycle limit",
+                    body=reason,
+                    severity="warning",
+                    source={"origin": "agent", "task_id": str(tid)},
+                    workspace=ws_name,
+                    channels=["dashboard"],
+                )
+            except Exception:
+                pass
+            return False
+
         from agents import agent_launcher
         review_run_id, _sess = agent_launcher.start_run(str(tid), "code_reviewer", None)
         _ts.assign_agent(tid, "code_reviewer", None, run_id=review_run_id)
-        _ts.update_task(tid, status=_ts.TaskStatus.reviewing)
+        _ts.update_task(tid, status=_ts.TaskStatus.reviewing, review_cycles=cycles + 1)
         _ts.append_task_activity_log(
             tid,
             "auto_review",

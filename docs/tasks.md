@@ -108,7 +108,7 @@ small set of moves marked **bold** below. Anything else raises
 | reviewed | blocked | system, user |
 | reviewed | stopped | system, user |
 | reviewed | reviewing | system |
-| reviewed | done | system, user |
+| reviewed | done | system, user, agent (the orchestrator) |
 | done | todo | system, user |
 | done | ready | system, user |
 | done | in_progress | system, user |

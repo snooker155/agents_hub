@@ -150,6 +150,52 @@ def test_capabilities_doc_matches_granted_tools(agent):
     )
 
 
+def _known_tool_ids() -> set[str]:
+    """Every id the runtime accepts in a `tools` list: catalog tools plus the
+    legacy group aliases `agents.agent_factory` expands (see its `alias_groups`)."""
+    from tools.registry import get_all_tools
+
+    aliases = {
+        "filesystem", "task_management", "agent_coordination", "agent_management",
+        "agent_flows", "flow_management", "scenario_management", "world_management",
+        "team_management", "loop_management", "project_management", "entity_runs",
+        "schedule_management", "service_ops", "docs", "geometry", "evals",
+    }
+    return {t.id for t in get_all_tools()} | aliases
+
+
+def _backticked_tools_in_instructions(agent_id: str) -> set[str]:
+    """Tool ids named between backticks in an agent's instructions.md.
+
+    instructions.md is prose, not a tool list, so it is scanned only for
+    identifiers the author explicitly marked as code (backticked) — an
+    unmarked word that happens to collide with a tool id (a parameter name,
+    an example) is not a promise the runtime has to keep.
+    """
+    import re
+
+    path = DEFINITIONS_DIR / agent_id / "instructions.md"
+    if not path.is_file():
+        return set()
+
+    known = _known_tool_ids()
+    backticked = set(re.findall(r"`([a-z_][a-z0-9_]*)`", path.read_text(encoding="utf-8")))
+    return backticked & known
+
+
+@pytest.mark.parametrize("agent", [a["id"] for a in _seed_system_agents()])
+def test_instructions_doc_matches_granted_tools(agent):
+    """Same contract as capabilities.md, for the main prompt: a tool the
+    instructions tell the agent to call by name must be one it actually holds,
+    or the model calls it and gets a hard failure."""
+    ad = next(a for a in _seed_agents() if a["id"] == agent)
+    promised_but_missing = _backticked_tools_in_instructions(agent) - _granted_tools(ad)
+    assert not promised_but_missing, (
+        f"{agent}: instructions.md names tools the agent does not have: "
+        f"{sorted(promised_but_missing)}"
+    )
+
+
 @pytest.mark.parametrize("agent", [a["id"] for a in _seed_system_agents()])
 def test_system_agents_have_a_definition(agent):
     """The prompt is assembled from the definition folder, so a system agent
