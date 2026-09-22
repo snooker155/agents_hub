@@ -4,8 +4,10 @@ Each function returns an EmbeddingResult or raises RuntimeError with
 an install hint if the required package is missing.
 """
 from __future__ import annotations
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List, Tuple
 
 
 @dataclass
@@ -37,15 +39,79 @@ def embed_openai(texts: List[str], model: str, api_key: str) -> EmbeddingResult:
 
 # ── Sentence-Transformers ─────────────────────────────────────────────────────
 
+# Loading a SentenceTransformer reads the weights from disk and builds the torch
+# graph: seconds, and hundreds of megabytes. It was paid again on every call,
+# including once per query. One instance per model name per process instead.
+_ST_MODELS: Dict[str, object] = {}
+_ST_LOCK = threading.Lock()
+
+# Repeated texts are common: the same query asked twice, the same chunk
+# re-indexed. A small LRU keeps the last few hundred vectors rather than
+# re-running the model over text it has already seen.
+_EMBED_CACHE_SIZE = 512
+_EMBED_CACHE: "OrderedDict[Tuple[str, str], List[float]]" = OrderedDict()
+_EMBED_CACHE_LOCK = threading.Lock()
+
+
+def get_sentence_transformer(model: str):
+    """Return the process-wide SentenceTransformer for *model*, loading once."""
+    st = _ST_MODELS.get(model)
+    if st is not None:
+        return st
+    with _ST_LOCK:
+        st = _ST_MODELS.get(model)
+        if st is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ImportError:
+                raise RuntimeError(
+                    "sentence-transformers not installed. Run: pip install sentence-transformers"
+                )
+            st = SentenceTransformer(model)
+            _ST_MODELS[model] = st
+    return st
+
+
+def _cache_get(model: str, text: str):
+    with _EMBED_CACHE_LOCK:
+        key = (model, text)
+        if key in _EMBED_CACHE:
+            _EMBED_CACHE.move_to_end(key)
+            return list(_EMBED_CACHE[key])
+    return None
+
+
+def _cache_put(model: str, text: str, vector: List[float]) -> None:
+    with _EMBED_CACHE_LOCK:
+        _EMBED_CACHE[(model, text)] = list(vector)
+        _EMBED_CACHE.move_to_end((model, text))
+        while len(_EMBED_CACHE) > _EMBED_CACHE_SIZE:
+            _EMBED_CACHE.popitem(last=False)
+
+
+def clear_embedding_cache() -> None:
+    """Drop the cached vectors (not the loaded models). Used by tests."""
+    with _EMBED_CACHE_LOCK:
+        _EMBED_CACHE.clear()
+
+
 def embed_sentence_transformers(texts: List[str], model: str) -> EmbeddingResult:
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        raise RuntimeError(
-            "sentence-transformers not installed. Run: pip install sentence-transformers"
-        )
-    st = SentenceTransformer(model)
-    vectors = st.encode(texts, convert_to_numpy=True).tolist()
+    vectors: List[List[float]] = [None] * len(texts)  # type: ignore[list-item]
+    todo: List[int] = []
+    for i, text in enumerate(texts):
+        hit = _cache_get(model, text)
+        if hit is None:
+            todo.append(i)
+        else:
+            vectors[i] = hit
+
+    if todo:
+        st = get_sentence_transformer(model)
+        fresh = st.encode([texts[i] for i in todo], convert_to_numpy=True).tolist()
+        for i, vector in zip(todo, fresh):
+            vectors[i] = vector
+            _cache_put(model, texts[i], vector)
+
     return EmbeddingResult(vectors=vectors, model=model, provider="sentence-transformers")
 
 

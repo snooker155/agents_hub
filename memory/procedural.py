@@ -278,28 +278,6 @@ def find_relevant_procedures(
     return [p for p, score in scored[:top_k] if score > 0.0]
 
 
-_SKILL_INQUIRY_WORDS = {"skill", "skills", "procedure", "procedures"}
-
-
-def is_skills_inquiry(query: str) -> bool:
-    """Return True if the query is asking about what skills the agent has."""
-    return bool(_SKILL_INQUIRY_WORDS & set(query.lower().split()))
-
-
-def _format_procedures(procedures: List[Procedure], header: str) -> str:
-    lines = [f"## {header}\n"]
-    for p in procedures:
-        lines.append(f"**{p.name}** (ID: `{p.id}`)")
-        lines.append(f"_{p.description}_")
-        for i, step in enumerate(p.steps, 1):
-            lines.append(f"  {i}. {step}")
-        lines.append("")
-    return "\n".join(lines) + "\n\n"
-
-
-SKILLS_RELEVANCE_THRESHOLD = 0.15
-
-
 def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> str:
     """Append a skills catalog (name + description) to the system prompt.
 
@@ -321,36 +299,6 @@ def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> 
         return system_prompt + "\n".join(lines) + "\n"
     except Exception:
         return system_prompt
-
-
-def inject_procedural_context(agent_id: str, workspace: str, instruction: str) -> str:
-    """Return a block of matching skill steps to prepend to the instruction.
-
-    Only skills whose name/description/tags are relevant to the instruction
-    (score above threshold) have their full steps injected. The catalog is
-    already in the system prompt, so we only add the actionable detail here.
-    """
-    try:
-        store = ProcedureStore(workspace)
-        agent_procedures = [p for p in store.load() if p.agent_id == agent_id]
-
-        if not agent_procedures:
-            return ""
-
-        if is_skills_inquiry(instruction):
-            # For explicit skill queries, show the full listing with steps
-            return _format_procedures(agent_procedures, "Your Skills")
-
-        matched = [
-            p for p in agent_procedures
-            if _score_relevance(p, instruction) >= SKILLS_RELEVANCE_THRESHOLD
-        ]
-        if not matched:
-            return ""
-
-        return _format_procedures(matched, "Relevant Skills for This Task")
-    except Exception:
-        return ""
 
 
 # ── Scoped tool factory ───────────────────────────────────────────────────────

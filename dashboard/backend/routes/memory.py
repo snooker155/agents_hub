@@ -19,7 +19,7 @@ from models import (
     MemoryNoteAdd, MemoryNoteUpdate,
     MemoryStructuredSlotUpsert,
 )
-from rag import get_rag_status, ingest_file
+from rag import get_rag_status, ingest_file, delete_file_vectors, delete_pool_vectors
 from common.paths import workspace_knowledge_dir
 
 
@@ -334,6 +334,13 @@ async def delete_shared_memory(memory_id: UUID):
     except Exception:
         pass
 
+    # And the pool's vectors: a deleted pool whose chunks stay in the store
+    # keeps answering searches from a pool that no longer exists.
+    try:
+        delete_pool_vectors(str(memory_id))
+    except Exception:
+        pass
+
     # Same for the per-pool graph file.
     try:
         from common.paths import pool_graph_file
@@ -404,6 +411,77 @@ async def delete_note(memory_id: UUID, note_id: str):
     if note and note.get("title"):
         _unlink_graph_mirror(memory_id, "note", note["title"])
     return result
+
+
+# ---------------------------------------------------------------------------
+# Core memory blocks — the always-in-context layer
+# ---------------------------------------------------------------------------
+
+class MemoryBlockUpsert(BaseModel):
+    """Body of a block PUT. Unset fields keep their current value."""
+
+    value: Optional[str] = None
+    limit_chars: Optional[int] = None
+    description: Optional[str] = None
+    read_only: Optional[bool] = None
+
+
+@router.get("/{memory_id}/blocks")
+async def list_memory_blocks(memory_id: UUID):
+    """The pool's blocks, exactly as they are rendered into a system prompt."""
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    return {"blocks": [b.model_dump() for b in mem.blocks]}
+
+
+@router.put("/{memory_id}/blocks/{name}")
+async def upsert_memory_block(memory_id: UUID, name: str, data: MemoryBlockUpsert):
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+
+    block = mem.get_block(name)
+    if block is not None and block.read_only and data.read_only is not False:
+        raise HTTPException(status_code=403, detail=f"Block '{block.name}' is read-only")
+
+    limit = data.limit_chars if data.limit_chars is not None else (
+        block.limit_chars if block else None
+    )
+    if data.value is not None and limit is not None and len(data.value) > limit:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Value is {len(data.value)} chars, {len(data.value) - limit} over the "
+                f"block's {limit} char limit"
+            ),
+        )
+
+    mem.upsert_block(
+        name,
+        data.value,
+        limit_chars=data.limit_chars,
+        description=data.description,
+        read_only=data.read_only,
+    )
+    return _mem_dump(_persist_mem(store, mem))
+
+
+@router.delete("/{memory_id}/blocks/{name}")
+async def delete_memory_block(memory_id: UUID, name: str):
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    block = mem.get_block(name)
+    if block is None:
+        raise HTTPException(status_code=404, detail=f"Block '{name}' not found")
+    if block.read_only:
+        raise HTTPException(status_code=403, detail=f"Block '{block.name}' is read-only")
+    mem.blocks = [b for b in mem.blocks if b.name != block.name]
+    return _mem_dump(_persist_mem(store, mem))
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +620,11 @@ async def deindex_knowledge_file(memory_id: UUID, filename: str):
 
     mem.rag_files = [f for f in mem.rag_files if f.get("filename") != filename]
     _persist_mem(store, mem)
-    return {"filename": filename, "status": "pending"}
+    # De-indexing means the chunks go too: leaving them made "pending" a lie,
+    # the file kept answering searches with no entry saying why.
+    ok, err, meta = delete_file_vectors(str(memory_id), filename)
+    return {"filename": filename, "status": "pending", "vectors_deleted": meta if ok else None,
+            "vector_error": err or None}
 
 
 @router.delete("/{memory_id}/files/{filename}")
@@ -560,7 +642,9 @@ async def delete_knowledge_file(memory_id: UUID, filename: str, workspace: str):
 
     mem.rag_files = [f for f in mem.rag_files if f.get("filename") != filename]
     _persist_mem(store, mem)
-    return {"deleted": filename}
+    ok, err, meta = delete_file_vectors(str(memory_id), filename)
+    return {"deleted": filename, "vectors_deleted": meta if ok else None,
+            "vector_error": err or None}
 
 
 # ---------------------------------------------------------------------------

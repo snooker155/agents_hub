@@ -15,7 +15,12 @@ from .embeddings import (
     embed_google,
     EmbeddingResult,
 )
-from .vector_store import upsert_chroma, upsert_pinecone, upsert_qdrant
+from .vector_store import (
+    delete_vectors,
+    upsert_chroma,
+    upsert_pinecone,
+    upsert_qdrant,
+)
 
 
 def get_rag_status() -> dict:
@@ -262,3 +267,42 @@ def ingest_file(file_path: Path, pool_id: str) -> Tuple[bool, str, int]:
     if not ok:
         return False, err, 0
     return True, "", len(chunks)
+
+
+# ---------------------------------------------------------------------------
+# Deletion — the other half of ingestion
+# ---------------------------------------------------------------------------
+
+def file_id_for(pool_id: str, filename: str) -> str:
+    """The vector-store file_id ingestion writes for one file of one pool."""
+    return f"{pool_id}::{filename}"
+
+
+def delete_file_vectors(pool_id: str, filename: str) -> Tuple[bool, str, dict]:
+    """Remove one indexed file's vectors from the configured store.
+
+    Returns (success, error_message, metadata). An unconfigured store is a
+    success with nothing deleted, so callers can delete unconditionally.
+    """
+    cfg = rag_config
+    try:
+        meta = delete_vectors(
+            cfg.vector_db, cfg.vector_db_collection, cfg.vector_db_url,
+            cfg.vector_db_api_key, file_id=file_id_for(pool_id, filename),
+        )
+        return True, "", meta
+    except Exception as exc:
+        return False, f"Vector delete error ({cfg.vector_db}): {exc}", {}
+
+
+def delete_pool_vectors(pool_id: str) -> Tuple[bool, str, dict]:
+    """Remove everything a pool ever indexed. Used when the pool is deleted."""
+    cfg = rag_config
+    try:
+        meta = delete_vectors(
+            cfg.vector_db, cfg.vector_db_collection, cfg.vector_db_url,
+            cfg.vector_db_api_key, pool_id=str(pool_id),
+        )
+        return True, "", meta
+    except Exception as exc:
+        return False, f"Vector delete error ({cfg.vector_db}): {exc}", {}

@@ -46,6 +46,21 @@ def is_rag_configured() -> bool:
 # Embedding
 # ---------------------------------------------------------------------------
 
+# One SentenceTransformer per model name per process. Agents run in
+# subprocesses and embed a query on most recalls; loading the weights each time
+# cost seconds per call.
+_ST_MODELS: dict = {}
+
+
+def _sentence_transformer(model: str):
+    st = _ST_MODELS.get(model)
+    if st is None:
+        from sentence_transformers import SentenceTransformer
+        st = SentenceTransformer(model)
+        _ST_MODELS[model] = st
+    return st
+
+
 def embed_query(text: str) -> Optional[list]:
     """Embed a single query text using the configured provider."""
     provider = _read_env("RAG_EMBEDDING_PROVIDER", "none")
@@ -54,8 +69,7 @@ def embed_query(text: str) -> Optional[list]:
         return None
     try:
         if provider == "sentence-transformers":
-            from sentence_transformers import SentenceTransformer
-            return SentenceTransformer(model).encode([text])[0].tolist()
+            return _sentence_transformer(model).encode([text])[0].tolist()
 
         if provider == "ollama":
             import requests
@@ -211,34 +225,52 @@ def search_rag(query: str, memory_id: str, top_k: int = 5) -> list[dict]:
     return []
 
 
-def inject_rag_context(agent_id: str, instruction: str, workspace: str | None = None) -> str:
+# ---------------------------------------------------------------------------
+# Deletion
+# ---------------------------------------------------------------------------
+
+def _vector_store_module():
+    """Import the backend's vector-store adapters from an agent subprocess.
+
+    The adapters are the single implementation of the delete logic; only the
+    configuration is read differently here (``.env`` rather than the live
+    environment), so the module is imported by path rather than duplicated.
     """
-    Return a context block to prepend to *instruction*, or "" when nothing
-    relevant is found or RAG is not configured for this agent (the pool
-    assignment is resolved per workspace).
-    """
-    if not is_rag_configured():
-        return ""
     try:
-        from agents.registry import get_agent as _get_agent
-        from memory.binding import effective_memory_pools
-        spec = _get_agent(agent_id)
-        pools = effective_memory_pools(spec, workspace) if spec else []
-        if not pools:
-            return ""
-        results = []
-        for pool_id in pools:
-            results.extend(search_rag(instruction, pool_id, top_k=5))
-        if not results:
-            return ""
-        chunks = [r["text"] for r in results if r.get("text", "").strip()]
-        if not chunks:
-            return ""
-        block = "\n\n---\n\n".join(chunks)
-        return (
-            "## Relevant context retrieved from memory (semantic search):\n\n"
-            + block
-            + "\n\n---\n\n"
-        )
+        from rag.vector_store import delete_vectors  # type: ignore
+        return delete_vectors
     except Exception:
-        return ""
+        pass
+    import sys
+
+    backend = _PROJECT_ROOT / "dashboard" / "backend"
+    if backend.is_dir() and str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from rag.vector_store import delete_vectors  # type: ignore
+    return delete_vectors
+
+
+def delete_rag_vectors(memory_id: str, filename: Optional[str] = None) -> dict:
+    """Delete one indexed file's vectors, or every vector of *memory_id*.
+
+    Returns a metadata dict; a store that is not configured, not installed or
+    not reachable comes back as a skip rather than an exception, because this
+    runs inside `forget`, where a vector problem must not lose the delete.
+    """
+    db = _read_env("RAG_VECTOR_DB", "none")
+    if db in ("none", ""):
+        return {"deleted": 0, "skipped": "no vector store configured"}
+    try:
+        delete_vectors = _vector_store_module()
+        kwargs = (
+            {"file_id": f"{memory_id}::{filename}"} if filename else {"pool_id": str(memory_id)}
+        )
+        return delete_vectors(
+            db,
+            _read_env("RAG_VECTOR_DB_COLLECTION", "agents_hub_rag"),
+            _read_env("RAG_VECTOR_DB_URL", ""),
+            _read_env("RAG_VECTOR_DB_API_KEY", ""),
+            **kwargs,
+        )
+    except Exception as exc:
+        return {"deleted": 0, "skipped": f"vector delete failed: {exc}"}
