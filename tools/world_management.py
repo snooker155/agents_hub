@@ -31,25 +31,15 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from langchain_core.tools import tool
+from langchain_core.tools import tool as _tool
 from pydantic import BaseModel, Field, field_validator
 
 from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
-
-
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request",
-              extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
+from tools._json import json_err as _json_err, json_ok as _json_ok
 
 
 def _coerce_json(v: Any) -> Any:
@@ -166,7 +156,7 @@ def _replacements(data: Dict[str, Any], changes: Dict[str, Any]) -> Dict[str, An
     return out
 
 
-# ── tools ─────────────────────────────────────────────────────────────────────
+# ── input schemas ─────────────────────────────────────────────────────────────
 
 class ListWorldsInput(BaseModel):
     workspace: Optional[str] = Field(
@@ -174,69 +164,12 @@ class ListWorldsInput(BaseModel):
     )
 
 
-@tool("list_worlds_tool", args_schema=ListWorldsInput)
-def list_worlds_tool(workspace: Optional[str] = None) -> str:
-    """List the authored worlds a scenario in this workspace can be cast in.
-
-    Call this before building: an existing world that nearly fits is a better
-    starting point than a new one, and the `env_id` is what a scenario stores.
-    """
-    try:
-        from playground import store
-
-        ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        worlds = store.list_worlds(ws)
-        return _json_ok({
-            "workspace": ws,
-            "count": len(worlds),
-            "worlds": [_summary(w) for w in worlds],
-        })
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to list worlds: {e}")
-
-
 class ListWorldTemplatesInput(BaseModel):
     pass
 
 
-@tool("list_world_templates_tool", args_schema=ListWorldTemplatesInput)
-def list_world_templates_tool() -> str:
-    """List the starter worlds, whole.
-
-    They are the worked examples of what a world can express — rooms that do
-    not all connect, props dealt to roles, fixtures with state, values an
-    action raises, an ending that reads one, and roles that may only act on
-    certain other roles. Read one before writing a world from scratch, and pass
-    its id as `template` to `create_world_tool` to start from a copy.
-    """
-    try:
-        from playground.world_templates import WORLD_TEMPLATES
-        return _json_ok({"templates": WORLD_TEMPLATES})
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to list world templates: {e}")
-
-
 class GetWorldInput(BaseModel):
     world_id: str = Field(..., description="The world's id (wld_…)")
-
-
-@tool("get_world_tool", args_schema=GetWorldInput)
-def get_world_tool(world_id: str) -> str:
-    """Get one world in full: its places, things, values, roles and actions.
-
-    Read the world before changing it — the `add_*` parameters of
-    `modify_world_tool` merge by name, and knowing what is already there is
-    what keeps an edit an edit.
-    """
-    try:
-        from playground import store
-
-        spec = store.get_world(world_id)
-        if not spec:
-            return _json_err(f"World not found: {world_id}", code="not_found")
-        return _json_ok(_report(spec))
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to get world: {e}")
 
 
 class WorldSectionsInput(BaseModel):
@@ -365,73 +298,6 @@ class CreateWorldInput(WorldSectionsInput):
     )
 
 
-@tool("create_world_tool", args_schema=CreateWorldInput)
-def create_world_tool(
-    name: str,
-    description: str = "",
-    template: Optional[str] = None,
-    rules: Optional[List[str]] = None,
-    locations: Optional[List[Dict[str, Any]]] = None,
-    items: Optional[List[Dict[str, Any]]] = None,
-    entities: Optional[List[Dict[str, Any]]] = None,
-    globals: Optional[List[Dict[str, Any]]] = None,   # noqa: A002 — the spec's own word
-    stats: Optional[List[Dict[str, Any]]] = None,
-    roles: Optional[List[Dict[str, Any]]] = None,
-    actions: Optional[List[Dict[str, Any]]] = None,
-    objectives: Optional[List[Dict[str, Any]]] = None,
-    base_actions: Optional[List[str]] = None,
-    starting_location: Optional[str] = None,
-    end_when: Optional[List[Dict[str, Any]]] = None,
-    time_of_day: Optional[str] = None,
-    hours_per_tick: Optional[int] = None,
-    workspace: Optional[str] = None,
-) -> str:
-    """Create a world: its places, things, values, roles and actions.
-
-    A world is where a scenario happens; it casts nobody. Build the place, then
-    let `scenario_creator` (or the user) cast agents into its roles.
-
-    Give it at least one location and something to do — a world whose rooms are
-    named but whose actions are all built-ins is a place to walk around and
-    talk in, which is a legitimate world and a thin one. Returns the world with
-    `problems`: anything still wrong with it, in the author's terms. The world
-    is stored either way, so an unfinished one can be finished next turn.
-    """
-    try:
-        from playground import store
-        from playground.worlds import WorldSpec, new_world_id
-
-        payload: Dict[str, Any] = {}
-        if template:
-            from playground.world_templates import WORLD_TEMPLATES
-            base = WORLD_TEMPLATES.get(template)
-            if not base:
-                return _json_err(
-                    f"No such template: {template}", code="not_found",
-                    extra={"templates": sorted(WORLD_TEMPLATES)},
-                )
-            payload.update(base)
-
-        given = {
-            "name": name, "description": description, "rules": rules,
-            "locations": locations, "items": items, "entities": entities,
-            "globals": globals, "stats": stats, "roles": roles,
-            "actions": actions, "objectives": objectives,
-            "base_actions": base_actions, "starting_location": starting_location,
-            "end_when": end_when, "time_of_day": time_of_day,
-            "hours_per_tick": hours_per_tick,
-        }
-        payload.update({k: v for k, v in given.items() if v not in (None, "")})
-        payload["world_id"] = new_world_id()
-        payload["workspace"] = (normalize_workspace_name(workspace)
-                                or resolve_active_workspace())
-
-        spec = store.save_world(WorldSpec.from_dict(payload))
-        return _json_ok({**_report(spec), "created": True})
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to create world: {e}")
-
-
 class ModifyWorldInput(WorldSectionsInput):
     world_id: str = Field(..., description="The world to change (wld_…)")
     name: Optional[str] = Field(None, description="Rename the world")
@@ -475,8 +341,125 @@ class ModifyWorldInput(WorldSectionsInput):
         return _coerce_json(v)
 
 
-@tool("modify_world_tool", args_schema=ModifyWorldInput)
-def modify_world_tool(world_id: str, **changes: Any) -> str:
+class ValidateWorldInput(BaseModel):
+    world_id: str = Field(..., description="The world to check (wld_…)")
+
+
+class DeleteWorldInput(BaseModel):
+    world_id: str = Field(..., description="The world to delete (wld_…)")
+
+
+# ── handlers ──────────────────────────────────────────────────────────────────
+
+def _list_worlds(workspace: Optional[str] = None) -> str:
+    """List the authored worlds a scenario in this workspace can be cast in.
+
+    Call this before building: an existing world that nearly fits is a better
+    starting point than a new one, and the `env_id` is what a scenario stores.
+    """
+    from playground import store
+
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    worlds = store.list_worlds(ws)
+    return _json_ok({
+        "workspace": ws,
+        "count": len(worlds),
+        "worlds": [_summary(w) for w in worlds],
+    })
+
+
+def _list_world_templates() -> str:
+    """List the starter worlds, whole.
+
+    They are the worked examples of what a world can express — rooms that do
+    not all connect, props dealt to roles, fixtures with state, values an
+    action raises, an ending that reads one, and roles that may only act on
+    certain other roles. Read one before writing a world from scratch, and pass
+    its id as `template` to `create_world_tool` to start from a copy.
+    """
+    from playground.world_templates import WORLD_TEMPLATES
+    return _json_ok({"templates": WORLD_TEMPLATES})
+
+
+def _get_world(world_id: str) -> str:
+    """Get one world in full: its places, things, values, roles and actions.
+
+    Read the world before changing it — the `add_*` parameters of
+    `modify_world_tool` merge by name, and knowing what is already there is
+    what keeps an edit an edit.
+    """
+    from playground import store
+
+    spec = store.get_world(world_id)
+    if not spec:
+        return _json_err(f"World not found: {world_id}", code="not_found")
+    return _json_ok(_report(spec))
+
+
+def _create_world(
+    name: str,
+    description: str = "",
+    template: Optional[str] = None,
+    rules: Optional[List[str]] = None,
+    locations: Optional[List[Dict[str, Any]]] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+    entities: Optional[List[Dict[str, Any]]] = None,
+    globals: Optional[List[Dict[str, Any]]] = None,   # noqa: A002 — the spec's own word
+    stats: Optional[List[Dict[str, Any]]] = None,
+    roles: Optional[List[Dict[str, Any]]] = None,
+    actions: Optional[List[Dict[str, Any]]] = None,
+    objectives: Optional[List[Dict[str, Any]]] = None,
+    base_actions: Optional[List[str]] = None,
+    starting_location: Optional[str] = None,
+    end_when: Optional[List[Dict[str, Any]]] = None,
+    time_of_day: Optional[str] = None,
+    hours_per_tick: Optional[int] = None,
+    workspace: Optional[str] = None,
+) -> str:
+    """Create a world: its places, things, values, roles and actions.
+
+    A world is where a scenario happens; it casts nobody. Build the place, then
+    let `scenario_creator` (or the user) cast agents into its roles.
+
+    Give it at least one location and something to do — a world whose rooms are
+    named but whose actions are all built-ins is a place to walk around and
+    talk in, which is a legitimate world and a thin one. Returns the world with
+    `problems`: anything still wrong with it, in the author's terms. The world
+    is stored either way, so an unfinished one can be finished next turn.
+    """
+    from playground import store
+    from playground.worlds import WorldSpec, new_world_id
+
+    payload: Dict[str, Any] = {}
+    if template:
+        from playground.world_templates import WORLD_TEMPLATES
+        base = WORLD_TEMPLATES.get(template)
+        if not base:
+            return _json_err(
+                f"No such template: {template}", code="not_found",
+                extra={"templates": sorted(WORLD_TEMPLATES)},
+            )
+        payload.update(base)
+
+    given = {
+        "name": name, "description": description, "rules": rules,
+        "locations": locations, "items": items, "entities": entities,
+        "globals": globals, "stats": stats, "roles": roles,
+        "actions": actions, "objectives": objectives,
+        "base_actions": base_actions, "starting_location": starting_location,
+        "end_when": end_when, "time_of_day": time_of_day,
+        "hours_per_tick": hours_per_tick,
+    }
+    payload.update({k: v for k, v in given.items() if v not in (None, "")})
+    payload["world_id"] = new_world_id()
+    payload["workspace"] = (normalize_workspace_name(workspace)
+                            or resolve_active_workspace())
+
+    spec = store.save_world(WorldSpec.from_dict(payload))
+    return _json_ok({**_report(spec), "created": True})
+
+
+def _modify_world(world_id: str, **changes: Any) -> str:
     """Change a stored world.
 
     Prefer the surgical parameters: `add_locations`, `add_actions`,
@@ -492,77 +475,69 @@ def modify_world_tool(world_id: str, **changes: Any) -> str:
 
     Returns the world as it now stands, with anything still wrong with it.
     """
-    try:
-        from playground import store
-        from playground.worlds import WorldSpec
+    from playground import store
+    from playground.worlds import WorldSpec
 
-        spec = store.get_world(world_id)
-        if not spec:
-            return _json_err(f"World not found: {world_id}", code="not_found")
+    spec = store.get_world(world_id)
+    if not spec:
+        return _json_err(f"World not found: {world_id}", code="not_found")
 
-        data = spec.to_dict()
+    data = spec.to_dict()
 
-        replacing = _replacements(data, changes)
-        if replacing and not changes.get("replace"):
-            detail = "; ".join(
-                f"{section}: {info['stored']} stored, {info['given']} given"
-                + (f", dropping {', '.join(info['dropped'])}" if info["dropped"] else "")
-                for section, info in replacing.items()
-            )
-            return _json_err(
-                "A whole-list parameter replaces the section instead of merging "
-                f"into it ({detail}). Use add_… / remove_… to change entries by "
-                "name, or pass replace=true if the user means 'these and no "
-                "others'.",
-                code="replace_required",
-                extra={"sections": replacing},
-            )
+    replacing = _replacements(data, changes)
+    if replacing and not changes.get("replace"):
+        detail = "; ".join(
+            f"{section}: {info['stored']} stored, {info['given']} given"
+            + (f", dropping {', '.join(info['dropped'])}" if info["dropped"] else "")
+            for section, info in replacing.items()
+        )
+        return _json_err(
+            "A whole-list parameter replaces the section instead of merging "
+            f"into it ({detail}). Use add_… / remove_… to change entries by "
+            "name, or pass replace=true if the user means 'these and no "
+            "others'.",
+            code="replace_required",
+            extra={"sections": replacing},
+        )
 
-        touched = False
+    touched = False
 
-        for field in ("name", "description", "starting_location", "time_of_day",
-                      "hours_per_tick", "base_actions", "rules", "end_when",
-                      *_NAMED_SECTIONS):
-            value = changes.get(field)
-            if value is not None and value != "":
-                data[field] = value
-                touched = True
-
-        if changes.get("add_rules"):
-            data["rules"] = list(data.get("rules") or []) + list(changes["add_rules"])
+    for field in ("name", "description", "starting_location", "time_of_day",
+                  "hours_per_tick", "base_actions", "rules", "end_when",
+                  *_NAMED_SECTIONS):
+        value = changes.get(field)
+        if value is not None and value != "":
+            data[field] = value
             touched = True
 
-        for section in _NAMED_SECTIONS:
-            additions = changes.get(f"add_{section}")
-            if additions:
-                data[section] = _merge_section(data.get(section) or [], additions)
-                touched = True
-            removals = changes.get(f"remove_{section}")
-            if removals:
-                data[section] = _drop_named(data.get(section) or [], removals)
-                touched = True
+    if changes.get("add_rules"):
+        data["rules"] = list(data.get("rules") or []) + list(changes["add_rules"])
+        touched = True
 
-        if not touched:
-            return _json_err("Nothing to change — pass at least one field",
-                             code="invalid")
+    for section in _NAMED_SECTIONS:
+        additions = changes.get(f"add_{section}")
+        if additions:
+            data[section] = _merge_section(data.get(section) or [], additions)
+            touched = True
+        removals = changes.get(f"remove_{section}")
+        if removals:
+            data[section] = _drop_named(data.get(section) or [], removals)
+            touched = True
 
-        # The id and the creation time are the row's: a scenario points at this
-        # world by id, and an edit is never a new world.
-        data["world_id"] = spec.world_id
-        data["created_at"] = spec.created_at
-        data["workspace"] = spec.workspace
-        saved = store.save_world(WorldSpec.from_dict(data))
-        return _json_ok({**_report(saved), "updated": True})
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to modify world: {e}")
+    if not touched:
+        return _json_err("Nothing to change — pass at least one field",
+                         code="invalid")
 
-
-class ValidateWorldInput(BaseModel):
-    world_id: str = Field(..., description="The world to check (wld_…)")
+    # The id and the creation time are the row's: a scenario points at this
+    # world by id, and an edit is never a new world.
+    data["world_id"] = spec.world_id
+    data["created_at"] = spec.created_at
+    data["workspace"] = spec.workspace
+    saved = store.save_world(WorldSpec.from_dict(data))
+    return _json_ok({**_report(saved), "updated": True})
 
 
-@tool("validate_world_tool", args_schema=ValidateWorldInput)
-def validate_world_tool(world_id: str) -> str:
+def _validate_world(world_id: str) -> str:
     """Check a stored world and report everything wrong with it.
 
     The same check the world's page runs: dangling location names, a role that
@@ -570,52 +545,68 @@ def validate_world_tool(world_id: str) -> str:
     world does not have. `problems` block nothing — the engine tolerates them
     all — but each one is something an agent in this world will run into.
     """
-    try:
-        from playground import store
-        from playground.worlds import problem_messages, validate_world, warnings_for
+    from playground import store
+    from playground.worlds import problem_messages, validate_world, warnings_for
 
-        spec = store.get_world(world_id)
-        if not spec:
-            return _json_err(f"World not found: {world_id}", code="not_found")
-        problems = problem_messages(validate_world(spec))
-        return _json_ok({
-            "world_id": world_id,
-            "valid": not problems,
-            "problems": problems,
-            "notes": problem_messages(warnings_for(spec)),
-        })
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to validate world: {e}")
+    spec = store.get_world(world_id)
+    if not spec:
+        return _json_err(f"World not found: {world_id}", code="not_found")
+    problems = problem_messages(validate_world(spec))
+    return _json_ok({
+        "world_id": world_id,
+        "valid": not problems,
+        "problems": problems,
+        "notes": problem_messages(warnings_for(spec)),
+    })
 
 
-class DeleteWorldInput(BaseModel):
-    world_id: str = Field(..., description="The world to delete (wld_…)")
-
-
-@tool("delete_world_tool", args_schema=DeleteWorldInput)
-def delete_world_tool(world_id: str) -> str:
+def _delete_world(world_id: str) -> str:
     """Delete a world. Refused while scenarios are cast in it.
 
     A scenario whose world is gone does not fail until somebody presses Run,
     which is the worst possible time to find out — so the scenarios are listed
     back instead, to be deleted or repointed first.
     """
-    try:
-        from playground import store
+    from playground import store
 
-        if not store.get_world(world_id):
-            return _json_err(f"World not found: {world_id}", code="not_found")
-        users = store.scenarios_using_world(world_id)
-        if users:
-            return _json_err(
-                f"{len(users)} scenario(s) run in this world; delete or repoint them first",
-                code="conflict", extra={"scenarios": users},
-            )
-        store.delete_world(world_id)
-        return _json_ok({"world_id": world_id, "deleted": True})
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to delete world: {e}")
+    if not store.get_world(world_id):
+        return _json_err(f"World not found: {world_id}", code="not_found")
+    users = store.scenarios_using_world(world_id)
+    if users:
+        return _json_err(
+            f"{len(users)} scenario(s) run in this world; delete or repoint them first",
+            code="conflict", extra={"scenarios": users},
+        )
+    store.delete_world(world_id)
+    return _json_ok({"world_id": world_id, "deleted": True})
 
+
+# ── tools ─────────────────────────────────────────────────────────────────────
+
+_SPEC = EntityToolSpec(
+    singular="world",
+    plural="worlds",
+    list=ToolDef("list_worlds_tool", ListWorldsInput, _list_worlds, "Failed to list worlds"),
+    get=ToolDef("get_world_tool", GetWorldInput, _get_world, "Failed to get world"),
+    create=ToolDef("create_world_tool", CreateWorldInput, _create_world, "Failed to create world"),
+    modify=ToolDef("modify_world_tool", ModifyWorldInput, _modify_world, "Failed to modify world"),
+    validate=ToolDef("validate_world_tool", ValidateWorldInput, _validate_world, "Failed to validate world"),
+    delete=ToolDef("delete_world_tool", DeleteWorldInput, _delete_world, "Failed to delete world"),
+)
+
+_TOOLS = tools_by_id(build_entity_tools(_SPEC))
+list_worlds_tool = _TOOLS["list_worlds_tool"]
+get_world_tool = _TOOLS["get_world_tool"]
+create_world_tool = _TOOLS["create_world_tool"]
+modify_world_tool = _TOOLS["modify_world_tool"]
+validate_world_tool = _TOOLS["validate_world_tool"]
+delete_world_tool = _TOOLS["delete_world_tool"]
+
+# A static listing of starter worlds — no id/lookup, no store write — so it
+# stays hand-built rather than going through the entity factory.
+list_world_templates_tool = _tool(
+    "list_world_templates_tool", args_schema=ListWorldTemplatesInput
+)(_list_world_templates)
 
 WORLD_MANAGEMENT_TOOLS = [
     list_worlds_tool,

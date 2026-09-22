@@ -10,7 +10,6 @@ auto-injected plan-store tools (save_plan / get_plan / list_plans / ...).
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from uuid import UUID
@@ -23,6 +22,7 @@ from common.workspace_context import resolve_active_workspace
 from plans.models import JobKind, JobStatus, Recurrence
 from plans import service as plan_service
 from plans.service import job_to_dict
+from tools._json import json_err as _json_err, json_ok as _json_ok
 
 
 # -------------------- helpers --------------------
@@ -32,17 +32,6 @@ def _record_job(job, action: str) -> None:
     if job is None:
         return
     record_entity("job", str(job.id), action, (job.title or "").strip())
-
-
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
 
 
 def _now() -> datetime:

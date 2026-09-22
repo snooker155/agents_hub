@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from langchain_core.tools import tool
 from pydantic import BaseModel, Field, field_validator
 
 from common.entity_sink import record_entity
@@ -25,18 +24,8 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
-
-
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request",
-              extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
+from tools._json import json_err as _json_err, json_ok as _json_ok
 
 
 def _coerce_json(v: Any) -> Any:
@@ -92,7 +81,7 @@ def _enum_error(value: str, allowed: tuple, field: str) -> Optional[str]:
     return None
 
 
-# ── tools ─────────────────────────────────────────────────────────────────────
+# ── input schemas ─────────────────────────────────────────────────────────────
 
 class ListProjectsInput(BaseModel):
     workspace: Optional[str] = Field(
@@ -101,34 +90,6 @@ class ListProjectsInput(BaseModel):
     status: Optional[str] = Field(
         None, description="Filter by status: 'active', 'archived' or 'completed'"
     )
-
-
-@tool("list_projects_tool", args_schema=ListProjectsInput)
-def list_projects_tool(workspace: Optional[str] = None, status: Optional[str] = None) -> str:
-    """List the projects in a workspace, with their type, status and task count."""
-    try:
-        from tasks import service as tasks_service
-
-        ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        projects = [p for p in _store().list() if not ws or p.workspace == ws]
-        if status:
-            projects = [p for p in projects
-                        if str(getattr(p.status, "value", p.status)) == status]
-
-        all_tasks = tasks_service.list_tasks()
-        counts: Dict[str, int] = {}
-        for task in all_tasks:
-            pid = getattr(task, "project_id", None)
-            if pid:
-                counts[str(pid)] = counts.get(str(pid), 0) + 1
-
-        return _json_ok({
-            "workspace": ws,
-            "count": len(projects),
-            "projects": [_simplify(p, tasks_count=counts.get(p.id, 0)) for p in projects],
-        })
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to list projects: {e}")
 
 
 class CreateProjectInput(BaseModel):
@@ -164,107 +125,8 @@ class CreateProjectInput(BaseModel):
         return _coerce_json(v)
 
 
-@tool("create_project_tool", args_schema=CreateProjectInput)
-def create_project_tool(
-    name: str,
-    description: str = "",
-    type: str = "general",
-    tags: Optional[List[str]] = None,
-    repo: Optional[Dict[str, Any]] = None,
-    frontend: Optional[Dict[str, Any]] = None,
-    backend: Optional[Dict[str, Any]] = None,
-    workspace: Optional[str] = None,
-) -> str:
-    """Create a project inside a workspace, and its folder on disk.
-
-    The workspace must already exist — projects cannot create one. `repo` only
-    records where the code lives; nothing is cloned or pushed. Returns the
-    created project and its `project_id`.
-    """
-    try:
-        from projects.models import BackendConfig, FrontendConfig, Project, RepoConfig
-        from workspace import get_workspace_folder, project_folder_name, resolve_project_root
-
-        ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        if not ws:
-            return _json_err(
-                "No workspace given and no active workspace — pass `workspace`.",
-                code="no_workspace",
-            )
-        if get_workspace_folder(ws) is None:
-            return _json_err(f"Workspace '{ws}' not found", code="not_found")
-
-        bad = _enum_error(type, _TYPES, "type")
-        if bad:
-            return _json_err(bad, code="invalid")
-
-        store = _store()
-        clash = next(
-            (p for p in store.list()
-             if p.workspace == ws and p.name.strip().lower() == name.strip().lower()),
-            None,
-        )
-        if clash:
-            return _json_err(
-                f"Workspace '{ws}' already has a project named '{name}' — projects "
-                "share a folder namespace, so the name must be unique.",
-                code="conflict", extra={"project_id": clash.id},
-            )
-
-        project = Project(
-            name=name.strip(), description=description or "", type=type,
-            workspace=ws, tags=list(tags or []),
-        )
-        if repo:
-            project.repo = RepoConfig(**repo)
-        if frontend:
-            project.frontend = FrontendConfig(**frontend)
-        if backend:
-            project.backend = BackendConfig(**backend)
-
-        store.add(project)
-
-        # The folder is what makes the project usable by an agent; a failure to
-        # create it is worth reporting rather than swallowing.
-        folder_error = None
-        try:
-            resolve_project_root(project.workspace, project_folder_name(project.name))
-        except Exception as e:  # noqa: BLE001
-            folder_error = str(e)
-
-        record_entity("project", project.id, "created", project.name)
-        out: Dict[str, Any] = {
-            "message": f"Project '{project.name}' created successfully",
-            "project_id": project.id,
-            "project": _simplify(project),
-        }
-        if folder_error:
-            out["warnings"] = [f"project folder could not be created: {folder_error}"]
-        return _json_ok(out)
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to create project: {e}")
-
-
 class GetProjectInput(BaseModel):
     project_id: str = Field(..., min_length=1, description="ID of the project (from list_projects_tool)")
-
-
-@tool("get_project_tool", args_schema=GetProjectInput)
-def get_project_tool(project_id: str) -> str:
-    """Get a project's full record: workspace, folder, repo link, frontend/backend config and task count."""
-    try:
-        from tasks import service as tasks_service
-
-        project = _store().get(project_id)
-        if not project:
-            return _json_err("Project not found", code="not_found",
-                             extra={"project_id": project_id})
-        count = sum(1 for t in tasks_service.list_tasks()
-                    if str(getattr(t, "project_id", "") or "") == project_id)
-        record_entity("project", project_id, "viewed", project.name)
-        return _json_ok({"project": _simplify(project, tasks_count=count)})
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to get project: {e}")
 
 
 class ModifyProjectInput(BaseModel):
@@ -284,8 +146,128 @@ class ModifyProjectInput(BaseModel):
         return _coerce_json(v)
 
 
-@tool("modify_project_tool", args_schema=ModifyProjectInput)
-def modify_project_tool(
+class DeleteProjectInput(BaseModel):
+    project_id: str = Field(..., min_length=1, description="ID of the project to delete")
+
+
+# ── handlers ──────────────────────────────────────────────────────────────────
+
+def _list_projects(workspace: Optional[str] = None, status: Optional[str] = None) -> str:
+    """List the projects in a workspace, with their type, status and task count."""
+    from tasks import service as tasks_service
+
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    projects = [p for p in _store().list() if not ws or p.workspace == ws]
+    if status:
+        projects = [p for p in projects
+                    if str(getattr(p.status, "value", p.status)) == status]
+
+    all_tasks = tasks_service.list_tasks()
+    counts: Dict[str, int] = {}
+    for task in all_tasks:
+        pid = getattr(task, "project_id", None)
+        if pid:
+            counts[str(pid)] = counts.get(str(pid), 0) + 1
+
+    return _json_ok({
+        "workspace": ws,
+        "count": len(projects),
+        "projects": [_simplify(p, tasks_count=counts.get(p.id, 0)) for p in projects],
+    })
+
+
+def _create_project(
+    name: str,
+    description: str = "",
+    type: str = "general",
+    tags: Optional[List[str]] = None,
+    repo: Optional[Dict[str, Any]] = None,
+    frontend: Optional[Dict[str, Any]] = None,
+    backend: Optional[Dict[str, Any]] = None,
+    workspace: Optional[str] = None,
+) -> str:
+    """Create a project inside a workspace, and its folder on disk.
+
+    The workspace must already exist — projects cannot create one. `repo` only
+    records where the code lives; nothing is cloned or pushed. Returns the
+    created project and its `project_id`.
+    """
+    from projects.models import BackendConfig, FrontendConfig, Project, RepoConfig
+    from workspace import get_workspace_folder, project_folder_name, resolve_project_root
+
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    if not ws:
+        return _json_err(
+            "No workspace given and no active workspace — pass `workspace`.",
+            code="no_workspace",
+        )
+    if get_workspace_folder(ws) is None:
+        return _json_err(f"Workspace '{ws}' not found", code="not_found")
+
+    bad = _enum_error(type, _TYPES, "type")
+    if bad:
+        return _json_err(bad, code="invalid")
+
+    store = _store()
+    clash = next(
+        (p for p in store.list()
+         if p.workspace == ws and p.name.strip().lower() == name.strip().lower()),
+        None,
+    )
+    if clash:
+        return _json_err(
+            f"Workspace '{ws}' already has a project named '{name}' — projects "
+            "share a folder namespace, so the name must be unique.",
+            code="conflict", extra={"project_id": clash.id},
+        )
+
+    project = Project(
+        name=name.strip(), description=description or "", type=type,
+        workspace=ws, tags=list(tags or []),
+    )
+    if repo:
+        project.repo = RepoConfig(**repo)
+    if frontend:
+        project.frontend = FrontendConfig(**frontend)
+    if backend:
+        project.backend = BackendConfig(**backend)
+
+    store.add(project)
+
+    # The folder is what makes the project usable by an agent; a failure to
+    # create it is worth reporting rather than swallowing.
+    folder_error = None
+    try:
+        resolve_project_root(project.workspace, project_folder_name(project.name))
+    except Exception as e:  # noqa: BLE001
+        folder_error = str(e)
+
+    record_entity("project", project.id, "created", project.name)
+    out: Dict[str, Any] = {
+        "message": f"Project '{project.name}' created successfully",
+        "project_id": project.id,
+        "project": _simplify(project),
+    }
+    if folder_error:
+        out["warnings"] = [f"project folder could not be created: {folder_error}"]
+    return _json_ok(out)
+
+
+def _get_project(project_id: str) -> str:
+    """Get a project's full record: workspace, folder, repo link, frontend/backend config and task count."""
+    from tasks import service as tasks_service
+
+    project = _store().get(project_id)
+    if not project:
+        return _json_err("Project not found", code="not_found",
+                         extra={"project_id": project_id})
+    count = sum(1 for t in tasks_service.list_tasks()
+                if str(getattr(t, "project_id", "") or "") == project_id)
+    record_entity("project", project_id, "viewed", project.name)
+    return _json_ok({"project": _simplify(project, tasks_count=count)})
+
+
+def _modify_project(
     project_id: str,
     name: Optional[str] = None,
     description: Optional[str] = None,
@@ -302,57 +284,49 @@ def modify_project_tool(
     disk, so the work stays where the agents left it. `status: 'archived'` is
     the reversible alternative to deleting.
     """
-    try:
-        store = _store()
-        if not store.get(project_id):
-            return _json_err("Project not found", code="not_found",
-                             extra={"project_id": project_id})
+    store = _store()
+    if not store.get(project_id):
+        return _json_err("Project not found", code="not_found",
+                         extra={"project_id": project_id})
 
-        for value, allowed, field in ((status, _STATUSES, "status"), (type, _TYPES, "type")):
-            bad = _enum_error(value or "", allowed, field)
-            if bad:
-                return _json_err(bad, code="invalid")
+    for value, allowed, field in ((status, _STATUSES, "status"), (type, _TYPES, "type")):
+        bad = _enum_error(value or "", allowed, field)
+        if bad:
+            return _json_err(bad, code="invalid")
 
-        fields: Dict[str, Any] = {}
-        if name is not None:
-            fields["name"] = name.strip()
-        if description is not None:
-            fields["description"] = description
-        if status is not None:
-            fields["status"] = status
-        if type is not None:
-            fields["type"] = type
-        if tags is not None:
-            fields["tags"] = list(tags)
-        if repo is not None:
-            fields["repo"] = repo
-        if frontend is not None:
-            fields["frontend"] = frontend
-        if backend is not None:
-            fields["backend"] = backend
+    fields: Dict[str, Any] = {}
+    if name is not None:
+        fields["name"] = name.strip()
+    if description is not None:
+        fields["description"] = description
+    if status is not None:
+        fields["status"] = status
+    if type is not None:
+        fields["type"] = type
+    if tags is not None:
+        fields["tags"] = list(tags)
+    if repo is not None:
+        fields["repo"] = repo
+    if frontend is not None:
+        fields["frontend"] = frontend
+    if backend is not None:
+        fields["backend"] = backend
 
-        if not fields:
-            return _json_err("Nothing to change — pass at least one field", code="invalid")
+    if not fields:
+        return _json_err("Nothing to change — pass at least one field", code="invalid")
 
-        updated = store.update(project_id, **fields)
-        if not updated:
-            return _json_err("Project not found", code="not_found",
-                             extra={"project_id": project_id})
-        record_entity("project", project_id, "updated", updated.name)
-        return _json_ok({
-            "message": f"Project '{updated.name}' updated successfully",
-            "project_id": project_id, "project": _simplify(updated),
-        })
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to modify project: {e}")
+    updated = store.update(project_id, **fields)
+    if not updated:
+        return _json_err("Project not found", code="not_found",
+                         extra={"project_id": project_id})
+    record_entity("project", project_id, "updated", updated.name)
+    return _json_ok({
+        "message": f"Project '{updated.name}' updated successfully",
+        "project_id": project_id, "project": _simplify(updated),
+    })
 
 
-class DeleteProjectInput(BaseModel):
-    project_id: str = Field(..., min_length=1, description="ID of the project to delete")
-
-
-@tool("delete_project_tool", args_schema=DeleteProjectInput)
-def delete_project_tool(project_id: str) -> str:
+def _delete_project(project_id: str) -> str:
     """Delete a project record and its saved structure graphs.
 
     The project's folder and files on disk are NOT removed, and neither are its
@@ -360,44 +334,60 @@ def delete_project_tool(project_id: str) -> str:
     still attached: archive the project instead, or move the tasks first.
     Confirm with the user before calling this.
     """
+    from tasks import service as tasks_service
+
+    store = _store()
+    project = store.get(project_id)
+    if not project:
+        return _json_err("Project not found", code="not_found",
+                         extra={"project_id": project_id})
+
+    attached = sum(1 for t in tasks_service.list_tasks()
+                   if str(getattr(t, "project_id", "") or "") == project_id)
+    if attached:
+        return _json_err(
+            f"Project '{project.name}' still has {attached} task(s). Move or close "
+            "them first, or set status='archived' instead of deleting.",
+            code="conflict", extra={"tasks_count": attached},
+        )
+
+    if not store.delete(project_id):
+        return _json_err("Project not found", code="not_found",
+                         extra={"project_id": project_id})
+
+    # The structure graphs are keyed by project id and become orphans
+    # otherwise — the API's delete does the same.
     try:
-        from tasks import service as tasks_service
+        from common.paths import PROJECT_GRAPHS_FILE
+        from projects.graph_store import ProjectGraphStore
+        ProjectGraphStore(path=PROJECT_GRAPHS_FILE).delete_project(project_id)
+    except Exception:
+        pass
 
-        store = _store()
-        project = store.get(project_id)
-        if not project:
-            return _json_err("Project not found", code="not_found",
-                             extra={"project_id": project_id})
+    return _json_ok({
+        "message": f"Project '{project.name}' deleted successfully (its folder on disk was kept)",
+        "project_id": project_id,
+    })
 
-        attached = sum(1 for t in tasks_service.list_tasks()
-                       if str(getattr(t, "project_id", "") or "") == project_id)
-        if attached:
-            return _json_err(
-                f"Project '{project.name}' still has {attached} task(s). Move or close "
-                "them first, or set status='archived' instead of deleting.",
-                code="conflict", extra={"tasks_count": attached},
-            )
 
-        if not store.delete(project_id):
-            return _json_err("Project not found", code="not_found",
-                             extra={"project_id": project_id})
+# ── tools ─────────────────────────────────────────────────────────────────────
 
-        # The structure graphs are keyed by project id and become orphans
-        # otherwise — the API's delete does the same.
-        try:
-            from common.paths import PROJECT_GRAPHS_FILE
-            from projects.graph_store import ProjectGraphStore
-            ProjectGraphStore(path=PROJECT_GRAPHS_FILE).delete_project(project_id)
-        except Exception:
-            pass
+_SPEC = EntityToolSpec(
+    singular="project",
+    plural="projects",
+    list=ToolDef("list_projects_tool", ListProjectsInput, _list_projects, "Failed to list projects"),
+    create=ToolDef("create_project_tool", CreateProjectInput, _create_project, "Failed to create project"),
+    get=ToolDef("get_project_tool", GetProjectInput, _get_project, "Failed to get project"),
+    modify=ToolDef("modify_project_tool", ModifyProjectInput, _modify_project, "Failed to modify project"),
+    delete=ToolDef("delete_project_tool", DeleteProjectInput, _delete_project, "Failed to delete project"),
+)
 
-        return _json_ok({
-            "message": f"Project '{project.name}' deleted successfully (its folder on disk was kept)",
-            "project_id": project_id,
-        })
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to delete project: {e}")
-
+_TOOLS = tools_by_id(build_entity_tools(_SPEC))
+list_projects_tool = _TOOLS["list_projects_tool"]
+create_project_tool = _TOOLS["create_project_tool"]
+get_project_tool = _TOOLS["get_project_tool"]
+modify_project_tool = _TOOLS["modify_project_tool"]
+delete_project_tool = _TOOLS["delete_project_tool"]
 
 PROJECT_MANAGEMENT_TOOLS = [
     list_projects_tool,

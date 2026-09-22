@@ -59,17 +59,7 @@ from tools.task_management import (
     _task_to_dict,
     _active_workspace,
 )
-
-
-def _json_ok(payload: Dict[str, object]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+from tools._json import json_err as _json_err, json_ok as _json_ok
 
 
 

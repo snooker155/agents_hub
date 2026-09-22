@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from langchain_core.tools import tool
 from pydantic import BaseModel, Field, field_validator
 
 from common.entity_sink import record_entity
@@ -26,18 +25,8 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
-
-
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request",
-              extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
+from tools._json import json_err as _json_err, json_ok as _json_ok
 
 
 def _coerce_json(v: Any) -> Any:
@@ -187,35 +176,12 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
     return errors, sorted(set(warnings))
 
 
-# ── tools ─────────────────────────────────────────────────────────────────────
+# ── input schemas ─────────────────────────────────────────────────────────────
 
 class ListLoopsInput(BaseModel):
     workspace: Optional[str] = Field(
         None, description="Workspace to list; defaults to the active workspace"
     )
-
-
-@tool("list_loops_tool", args_schema=ListLoopsInput)
-def list_loops_tool(workspace: Optional[str] = None) -> str:
-    """List the iteration loops in a workspace, with the flow each one repeats."""
-    try:
-        from loops import store
-
-        ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        loops = store.list_loops(ws)
-        return _json_ok({
-            "workspace": ws,
-            "count": len(loops),
-            "loops": [
-                {"loop_id": l.loop_id, "name": l.name, "description": l.description,
-                 "flow_id": l.flow_id, "exit_criterion": l.exit_criterion,
-                 "max_iterations": l.max_iterations,
-                 "evaluator_mode": l.evaluator_mode}
-                for l in loops
-            ],
-        })
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to list loops: {e}")
 
 
 class CreateLoopInput(BaseModel):
@@ -264,82 +230,8 @@ class CreateLoopInput(BaseModel):
         return _coerce_json(v)
 
 
-@tool("create_loop_tool", args_schema=CreateLoopInput)
-def create_loop_tool(
-    name: str,
-    flow_id: str,
-    exit_criterion: str,
-    description: str = "",
-    convergence: Optional[Dict[str, Any]] = None,
-    evaluator_mode: str = "final_agent",
-    evaluator_agent_id: Optional[str] = None,
-    evaluator_provider: Optional[str] = None,
-    evaluator_model: Optional[str] = None,
-    workspace: Optional[str] = None,
-) -> str:
-    """Create an iteration loop: an existing flow, repeated until a criterion is met.
-
-    The flow must already exist (list_flows_tool / create_flow_tool) and the exit
-    criterion must be real prose — it is what the evaluator judges every pass
-    against. The loop is validated before saving; on error nothing is written.
-    Returns the created loop and its `loop_id`.
-    """
-    try:
-        from loops import store
-        from loops.models import Loop
-
-        ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        payload: Dict[str, Any] = {
-            "name": name.strip(), "description": description or "",
-            "workspace": ws, "flow_id": flow_id,
-            "exit_criterion": exit_criterion,
-            "evaluator_mode": evaluator_mode,
-            "evaluator_agent_id": evaluator_agent_id or None,
-            "evaluator_provider": evaluator_provider or None,
-            "evaluator_model": evaluator_model or None,
-        }
-        unknown = _apply_convergence(payload, convergence)
-
-        errors, warnings = _validate(payload, ws)
-        if errors:
-            return _json_err(
-                "Loop is invalid and was NOT created. Fix the problems and try again.",
-                code="invalid_loop", extra={"errors": errors, "warnings": warnings},
-            )
-
-        loop = store.save_loop(Loop.from_dict(payload))
-        record_entity("loop", loop.loop_id, "created", loop.name)
-        out: Dict[str, Any] = {
-            "message": f"Loop '{loop.name}' created successfully",
-            "loop_id": loop.loop_id, "loop": _simplify(loop),
-        }
-        if warnings:
-            out["warnings"] = warnings
-        if unknown:
-            out["ignored_settings"] = unknown
-        return _json_ok(out)
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to create loop: {e}")
-
-
 class GetLoopInput(BaseModel):
     loop_id: str = Field(..., min_length=1, description="ID of the loop (from list_loops_tool)")
-
-
-@tool("get_loop_tool", args_schema=GetLoopInput)
-def get_loop_tool(loop_id: str) -> str:
-    """Get a loop's full definition: the flow it repeats, its exit criterion,
-    convergence settings and evaluator."""
-    try:
-        from loops import store
-
-        loop = store.get_loop(loop_id)
-        if not loop:
-            return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
-        record_entity("loop", loop_id, "viewed", loop.name)
-        return _json_ok({"loop": _simplify(loop)})
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to get loop: {e}")
 
 
 class ModifyLoopInput(BaseModel):
@@ -362,106 +254,8 @@ class ModifyLoopInput(BaseModel):
         return _coerce_json(v)
 
 
-@tool("modify_loop_tool", args_schema=ModifyLoopInput)
-def modify_loop_tool(
-    loop_id: str,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    flow_id: Optional[str] = None,
-    exit_criterion: Optional[str] = None,
-    convergence: Optional[Dict[str, Any]] = None,
-    evaluator_mode: Optional[str] = None,
-    evaluator_agent_id: Optional[str] = None,
-    evaluator_provider: Optional[str] = None,
-    evaluator_model: Optional[str] = None,
-) -> str:
-    """Change an existing loop. Only the fields you pass are touched.
-
-    `convergence` merges into what is stored, so you can raise the iteration cap
-    without restating the target score. The result is validated before saving:
-    on error nothing is written.
-    """
-    try:
-        from loops import store
-        from loops.models import Loop, utc_iso
-
-        existing = store.get_loop(loop_id)
-        if not existing:
-            return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
-
-        payload = existing.to_dict()
-        if name is not None:
-            payload["name"] = name.strip()
-        if description is not None:
-            payload["description"] = description
-        if flow_id is not None:
-            payload["flow_id"] = flow_id
-        if exit_criterion is not None:
-            payload["exit_criterion"] = exit_criterion
-        if evaluator_mode is not None:
-            payload["evaluator_mode"] = evaluator_mode
-        if evaluator_agent_id is not None:
-            payload["evaluator_agent_id"] = evaluator_agent_id or None
-        if evaluator_provider is not None:
-            payload["evaluator_provider"] = evaluator_provider or None
-        if evaluator_model is not None:
-            payload["evaluator_model"] = evaluator_model or None
-        unknown = _apply_convergence(payload, convergence)
-
-        errors, warnings = _validate(payload, payload.get("workspace"))
-        if errors:
-            return _json_err(
-                "Loop is invalid and was NOT changed. Fix the problems and try again.",
-                code="invalid_loop", extra={"errors": errors, "warnings": warnings},
-            )
-
-        payload["updated_at"] = utc_iso()
-        loop = store.save_loop(Loop.from_dict(payload))
-        record_entity("loop", loop.loop_id, "updated", loop.name)
-        out: Dict[str, Any] = {
-            "message": f"Loop '{loop.name}' updated successfully",
-            "loop_id": loop.loop_id, "loop": _simplify(loop),
-        }
-        if warnings:
-            out["warnings"] = warnings
-        if unknown:
-            out["ignored_settings"] = unknown
-        return _json_ok(out)
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to modify loop: {e}")
-
-
 class DeleteLoopInput(BaseModel):
     loop_id: str = Field(..., min_length=1, description="ID of the loop to delete")
-
-
-@tool("delete_loop_tool", args_schema=DeleteLoopInput)
-def delete_loop_tool(loop_id: str) -> str:
-    """Delete a loop by ID. Refuses while one of its runs is live.
-
-    The flow the loop wrapped is left alone. Deletion is permanent — confirm
-    with the user before calling this.
-    """
-    try:
-        from loops import store
-
-        loop = store.get_loop(loop_id)
-        if not loop:
-            return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
-        live = [r for r in store.list_runs(loop_id, limit=5)
-                if r.status in ("running", "stopping")]
-        if live:
-            return _json_err(
-                f"Loop '{loop_id}' has a live run; stop it before deleting.",
-                code="conflict", extra={"loop_run_id": live[0].loop_run_id},
-            )
-        if not store.delete_loop(loop_id):
-            return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
-        return _json_ok({
-            "message": f"Loop '{loop.name}' deleted successfully", "loop_id": loop_id,
-        })
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to delete loop: {e}")
 
 
 class ValidateLoopInput(BaseModel):
@@ -484,8 +278,184 @@ class ValidateLoopInput(BaseModel):
         return _coerce_json(v)
 
 
-@tool("validate_loop_tool", args_schema=ValidateLoopInput)
-def validate_loop_tool(
+# ── handlers ──────────────────────────────────────────────────────────────────
+
+def _list_loops(workspace: Optional[str] = None) -> str:
+    """List the iteration loops in a workspace, with the flow each one repeats."""
+    from loops import store
+
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    loops = store.list_loops(ws)
+    return _json_ok({
+        "workspace": ws,
+        "count": len(loops),
+        "loops": [
+            {"loop_id": l.loop_id, "name": l.name, "description": l.description,
+             "flow_id": l.flow_id, "exit_criterion": l.exit_criterion,
+             "max_iterations": l.max_iterations,
+             "evaluator_mode": l.evaluator_mode}
+            for l in loops
+        ],
+    })
+
+
+def _create_loop(
+    name: str,
+    flow_id: str,
+    exit_criterion: str,
+    description: str = "",
+    convergence: Optional[Dict[str, Any]] = None,
+    evaluator_mode: str = "final_agent",
+    evaluator_agent_id: Optional[str] = None,
+    evaluator_provider: Optional[str] = None,
+    evaluator_model: Optional[str] = None,
+    workspace: Optional[str] = None,
+) -> str:
+    """Create an iteration loop: an existing flow, repeated until a criterion is met.
+
+    The flow must already exist (list_flows_tool / create_flow_tool) and the exit
+    criterion must be real prose — it is what the evaluator judges every pass
+    against. The loop is validated before saving; on error nothing is written.
+    Returns the created loop and its `loop_id`.
+    """
+    from loops import store
+    from loops.models import Loop
+
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    payload: Dict[str, Any] = {
+        "name": name.strip(), "description": description or "",
+        "workspace": ws, "flow_id": flow_id,
+        "exit_criterion": exit_criterion,
+        "evaluator_mode": evaluator_mode,
+        "evaluator_agent_id": evaluator_agent_id or None,
+        "evaluator_provider": evaluator_provider or None,
+        "evaluator_model": evaluator_model or None,
+    }
+    unknown = _apply_convergence(payload, convergence)
+
+    errors, warnings = _validate(payload, ws)
+    if errors:
+        return _json_err(
+            "Loop is invalid and was NOT created. Fix the problems and try again.",
+            code="invalid_loop", extra={"errors": errors, "warnings": warnings},
+        )
+
+    loop = store.save_loop(Loop.from_dict(payload))
+    record_entity("loop", loop.loop_id, "created", loop.name)
+    out: Dict[str, Any] = {
+        "message": f"Loop '{loop.name}' created successfully",
+        "loop_id": loop.loop_id, "loop": _simplify(loop),
+    }
+    if warnings:
+        out["warnings"] = warnings
+    if unknown:
+        out["ignored_settings"] = unknown
+    return _json_ok(out)
+
+
+def _get_loop(loop_id: str) -> str:
+    """Get a loop's full definition: the flow it repeats, its exit criterion,
+    convergence settings and evaluator."""
+    from loops import store
+
+    loop = store.get_loop(loop_id)
+    if not loop:
+        return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
+    record_entity("loop", loop_id, "viewed", loop.name)
+    return _json_ok({"loop": _simplify(loop)})
+
+
+def _modify_loop(
+    loop_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    flow_id: Optional[str] = None,
+    exit_criterion: Optional[str] = None,
+    convergence: Optional[Dict[str, Any]] = None,
+    evaluator_mode: Optional[str] = None,
+    evaluator_agent_id: Optional[str] = None,
+    evaluator_provider: Optional[str] = None,
+    evaluator_model: Optional[str] = None,
+) -> str:
+    """Change an existing loop. Only the fields you pass are touched.
+
+    `convergence` merges into what is stored, so you can raise the iteration cap
+    without restating the target score. The result is validated before saving:
+    on error nothing is written.
+    """
+    from loops import store
+    from loops.models import Loop, utc_iso
+
+    existing = store.get_loop(loop_id)
+    if not existing:
+        return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
+
+    payload = existing.to_dict()
+    if name is not None:
+        payload["name"] = name.strip()
+    if description is not None:
+        payload["description"] = description
+    if flow_id is not None:
+        payload["flow_id"] = flow_id
+    if exit_criterion is not None:
+        payload["exit_criterion"] = exit_criterion
+    if evaluator_mode is not None:
+        payload["evaluator_mode"] = evaluator_mode
+    if evaluator_agent_id is not None:
+        payload["evaluator_agent_id"] = evaluator_agent_id or None
+    if evaluator_provider is not None:
+        payload["evaluator_provider"] = evaluator_provider or None
+    if evaluator_model is not None:
+        payload["evaluator_model"] = evaluator_model or None
+    unknown = _apply_convergence(payload, convergence)
+
+    errors, warnings = _validate(payload, payload.get("workspace"))
+    if errors:
+        return _json_err(
+            "Loop is invalid and was NOT changed. Fix the problems and try again.",
+            code="invalid_loop", extra={"errors": errors, "warnings": warnings},
+        )
+
+    payload["updated_at"] = utc_iso()
+    loop = store.save_loop(Loop.from_dict(payload))
+    record_entity("loop", loop.loop_id, "updated", loop.name)
+    out: Dict[str, Any] = {
+        "message": f"Loop '{loop.name}' updated successfully",
+        "loop_id": loop.loop_id, "loop": _simplify(loop),
+    }
+    if warnings:
+        out["warnings"] = warnings
+    if unknown:
+        out["ignored_settings"] = unknown
+    return _json_ok(out)
+
+
+def _delete_loop(loop_id: str) -> str:
+    """Delete a loop by ID. Refuses while one of its runs is live.
+
+    The flow the loop wrapped is left alone. Deletion is permanent — confirm
+    with the user before calling this.
+    """
+    from loops import store
+
+    loop = store.get_loop(loop_id)
+    if not loop:
+        return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
+    live = [r for r in store.list_runs(loop_id, limit=5)
+            if r.status in ("running", "stopping")]
+    if live:
+        return _json_err(
+            f"Loop '{loop_id}' has a live run; stop it before deleting.",
+            code="conflict", extra={"loop_run_id": live[0].loop_run_id},
+        )
+    if not store.delete_loop(loop_id):
+        return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
+    return _json_ok({
+        "message": f"Loop '{loop.name}' deleted successfully", "loop_id": loop_id,
+    })
+
+
+def _validate_loop(
     loop_id: Optional[str] = None,
     name: Optional[str] = None,
     flow_id: Optional[str] = None,
@@ -503,34 +473,52 @@ def validate_loop_tool(
     ceiling is inside the hard caps. Returns `valid` plus `errors` (blocking)
     and `warnings` (advisory).
     """
-    try:
-        ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
 
-        if loop_id:
-            from loops import store
-            loop = store.get_loop(loop_id)
-            if not loop:
-                return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
-            payload = loop.to_dict()
-            ws = normalize_workspace_name(payload.get("workspace")) or ws
-        elif flow_id or exit_criterion:
-            payload = {
-                "name": name or "proposed", "flow_id": flow_id or "",
-                "exit_criterion": exit_criterion or "",
-                "evaluator_mode": evaluator_mode or "final_agent",
-                "evaluator_agent_id": evaluator_agent_id or None,
-            }
-            _apply_convergence(payload, convergence)
-        else:
-            return _json_err(
-                "Provide either loop_id or flow_id/exit_criterion to validate", code="invalid"
-            )
+    if loop_id:
+        from loops import store
+        loop = store.get_loop(loop_id)
+        if not loop:
+            return _json_err("Loop not found", code="not_found", extra={"loop_id": loop_id})
+        payload = loop.to_dict()
+        ws = normalize_workspace_name(payload.get("workspace")) or ws
+    elif flow_id or exit_criterion:
+        payload = {
+            "name": name or "proposed", "flow_id": flow_id or "",
+            "exit_criterion": exit_criterion or "",
+            "evaluator_mode": evaluator_mode or "final_agent",
+            "evaluator_agent_id": evaluator_agent_id or None,
+        }
+        _apply_convergence(payload, convergence)
+    else:
+        return _json_err(
+            "Provide either loop_id or flow_id/exit_criterion to validate", code="invalid"
+        )
 
-        errors, warnings = _validate(payload, ws)
-        return _json_ok({"valid": not errors, "errors": errors, "warnings": warnings})
-    except Exception as e:  # noqa: BLE001
-        return _json_err(f"Failed to validate loop: {e}")
+    errors, warnings = _validate(payload, ws)
+    return _json_ok({"valid": not errors, "errors": errors, "warnings": warnings})
 
+
+# ── tools ─────────────────────────────────────────────────────────────────────
+
+_SPEC = EntityToolSpec(
+    singular="loop",
+    plural="loops",
+    list=ToolDef("list_loops_tool", ListLoopsInput, _list_loops, "Failed to list loops"),
+    create=ToolDef("create_loop_tool", CreateLoopInput, _create_loop, "Failed to create loop"),
+    get=ToolDef("get_loop_tool", GetLoopInput, _get_loop, "Failed to get loop"),
+    modify=ToolDef("modify_loop_tool", ModifyLoopInput, _modify_loop, "Failed to modify loop"),
+    delete=ToolDef("delete_loop_tool", DeleteLoopInput, _delete_loop, "Failed to delete loop"),
+    validate=ToolDef("validate_loop_tool", ValidateLoopInput, _validate_loop, "Failed to validate loop"),
+)
+
+_TOOLS = tools_by_id(build_entity_tools(_SPEC))
+list_loops_tool = _TOOLS["list_loops_tool"]
+create_loop_tool = _TOOLS["create_loop_tool"]
+get_loop_tool = _TOOLS["get_loop_tool"]
+modify_loop_tool = _TOOLS["modify_loop_tool"]
+delete_loop_tool = _TOOLS["delete_loop_tool"]
+validate_loop_tool = _TOOLS["validate_loop_tool"]
 
 LOOP_MANAGEMENT_TOOLS = [
     list_loops_tool,

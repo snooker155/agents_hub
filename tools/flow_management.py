@@ -21,7 +21,6 @@ import json
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from langchain_core.tools import tool
 from pydantic import BaseModel, Field, field_validator
 
 from common.entity_sink import record_entity
@@ -30,17 +29,8 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
-
-
-def _json_ok(payload: Dict[str, object]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+from tools._crud import EntityToolSpec, ToolDef, build_entity_tools, tools_by_id
+from tools._json import json_err as _json_err, json_ok as _json_ok
 
 
 def _coerce_json_list(v: Any) -> Any:
@@ -170,7 +160,7 @@ def _validate_combined(flow: Dict[str, Any], workspace: Optional[str]) -> tuple[
     return errors, sorted(set(warnings))
 
 
-# ── tools ─────────────────────────────────────────────────────────────────────
+# ── input schemas ─────────────────────────────────────────────────────────────
 
 class CreateFlowInput(BaseModel):
     name: str = Field(..., min_length=1, description="Short flow name")
@@ -196,81 +186,8 @@ class CreateFlowInput(BaseModel):
         return _coerce_json_list(v)
 
 
-@tool("create_flow_tool", args_schema=CreateFlowInput)
-def create_flow_tool(
-    name: str,
-    nodes: List[Dict[str, Any]],
-    description: str = "",
-    edges: Optional[List[Dict[str, Any]]] = None,
-    workspace: Optional[str] = None,
-) -> str:
-    """Create a new agent flow from nodes (agent steps) and edges (execution order).
-
-    Every node's agent_id must be a registered agent (check with
-    list_agents_tool first). The graph is validated before saving — unknown
-    agents, dangling edges, or cycles are rejected with the list of problems.
-    Returns the created flow (including its `flow_id`) on success.
-    """
-    try:
-        from flow import store as flow_store
-        from datetime import datetime, timezone
-
-        ws = normalize_workspace_name(workspace) or resolve_active_workspace()
-        now = datetime.now(timezone.utc).isoformat()
-        flow: Dict[str, Any] = {
-            "id": str(uuid4()),
-            "name": name.strip(),
-            "description": description or "",
-            "nodes": _to_combined_nodes(nodes or []),
-            "edges": _to_combined_edges(edges or []),
-            "workspace": ws,
-            "task_id": None,
-            "created_at": now,
-            "updated_at": now,
-        }
-
-        errors, warnings = _validate_combined(flow, ws)
-        if errors:
-            return _json_err(
-                "Flow is invalid and was NOT created. Fix the problems and try again.",
-                code="invalid_flow",
-                extra={"errors": errors, "warnings": warnings},
-            )
-
-        flow_store.save_flow(flow)
-        record_entity("flow", flow["id"], "created", flow["name"])
-        payload: Dict[str, Any] = {
-            "message": f"Flow '{flow['name']}' created successfully",
-            "flow_id": flow["id"],
-            "flow": _simplify(flow),
-        }
-        if warnings:
-            payload["warnings"] = warnings
-        return _json_ok(payload)
-    except Exception as e:
-        return _json_err(f"Failed to create flow: {e}")
-
-
 class GetFlowInput(BaseModel):
     flow_id: str = Field(..., min_length=1, description="ID of the flow to retrieve (from list_flows_tool)")
-
-
-@tool("get_flow_tool", args_schema=GetFlowInput)
-def get_flow_tool(flow_id: str) -> str:
-    """Get a flow's full definition: name, description, nodes, and edges."""
-    try:
-        from flow import store as flow_store
-
-        try:
-            flow = flow_store.get_flow(flow_id)
-        except flow_store.FlowParseError as e:
-            return _json_err(f"Flow is broken: {e}", code="invalid_flow", extra={"flow_id": flow_id})
-        if flow is None:
-            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
-        record_entity("flow", flow_id, "viewed", flow.get("name") or "")
-        return _json_ok({"flow": _simplify(flow), "entry_point": flow.get("entry_point")})
-    except Exception as e:
-        return _json_err(f"Failed to get flow: {e}")
 
 
 class ModifyFlowInput(BaseModel):
@@ -295,99 +212,8 @@ class ModifyFlowInput(BaseModel):
         return _coerce_json_list(v)
 
 
-@tool("modify_flow_tool", args_schema=ModifyFlowInput)
-def modify_flow_tool(
-    flow_id: str,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    nodes: Optional[List[Dict[str, Any]]] = None,
-    edges: Optional[List[Dict[str, Any]]] = None,
-) -> str:
-    """Modify an existing flow. Only the provided fields change.
-
-    `nodes`/`edges` are full replacements of the graph, not patches — use
-    get_flow_tool first and resubmit the complete updated lists. The resulting
-    graph is validated before saving; an invalid result leaves the stored flow
-    untouched.
-    """
-    try:
-        from flow import store as flow_store
-        from datetime import datetime, timezone
-
-        try:
-            flow = flow_store.get_flow(flow_id)
-        except flow_store.FlowParseError as e:
-            return _json_err(f"Flow is broken: {e}", code="invalid_flow", extra={"flow_id": flow_id})
-        if flow is None:
-            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
-
-        changed: List[str] = []
-        if name is not None and name.strip():
-            flow["name"] = name.strip()
-            changed.append("name")
-        if description is not None:
-            flow["description"] = description
-            changed.append("description")
-        if nodes is not None:
-            flow["nodes"] = _to_combined_nodes(nodes, existing=flow.get("nodes"))
-            changed.append("nodes")
-        if edges is not None:
-            flow["edges"] = _to_combined_edges(edges)
-            changed.append("edges")
-
-        if not changed:
-            return _json_ok({"flow": _simplify(flow), "message": f"Flow '{flow_id}' unchanged"})
-
-        errors, warnings = _validate_combined(flow, flow.get("workspace"))
-        if errors:
-            return _json_err(
-                "Modified flow is invalid; the stored flow was NOT changed.",
-                code="invalid_flow",
-                extra={"errors": errors, "warnings": warnings},
-            )
-
-        flow["updated_at"] = datetime.now(timezone.utc).isoformat()
-        flow_store.save_flow(flow)
-        record_entity("flow", flow_id, "updated", flow.get("name") or "")
-        payload: Dict[str, Any] = {
-            "message": f"Flow '{flow['name']}' modified successfully",
-            "changed": changed,
-            "flow": _simplify(flow),
-        }
-        if warnings:
-            payload["warnings"] = warnings
-        return _json_ok(payload)
-    except Exception as e:
-        return _json_err(f"Failed to modify flow: {e}")
-
-
 class DeleteFlowInput(BaseModel):
     flow_id: str = Field(..., min_length=1, description="ID of the flow to delete")
-
-
-@tool("delete_flow_tool", args_schema=DeleteFlowInput)
-def delete_flow_tool(flow_id: str) -> str:
-    """Delete a flow by ID. Refuses while an instance of the flow is running.
-
-    Deletion is permanent — confirm with the user before calling this.
-    """
-    try:
-        from flow import store as flow_store
-
-        try:
-            flow = flow_store.get_flow(flow_id)
-        except flow_store.FlowParseError:
-            flow = None  # broken flows can still be deleted
-        if flow is not None and flow.get("running"):
-            return _json_err(
-                f"Flow '{flow_id}' has a running instance; stop it before deleting.",
-                code="conflict",
-            )
-        if not flow_store.delete_flow(flow_id):
-            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
-        return _json_ok({"message": f"Flow '{flow_id}' deleted successfully", "flow_id": flow_id})
-    except Exception as e:
-        return _json_err(f"Failed to delete flow: {e}")
 
 
 class ValidateFlowInput(BaseModel):
@@ -410,8 +236,161 @@ class ValidateFlowInput(BaseModel):
         return _coerce_json_list(v)
 
 
-@tool("validate_flow_tool", args_schema=ValidateFlowInput)
-def validate_flow_tool(
+# ── handlers ──────────────────────────────────────────────────────────────────
+#
+# One handler per tool: the body the old @tool-decorated function ran inside
+# its try block. build_entity_tools (tools/_crud.py) supplies the decorator,
+# the args_schema wiring and the outer try/except.
+
+def _create_flow(
+    name: str,
+    nodes: List[Dict[str, Any]],
+    description: str = "",
+    edges: Optional[List[Dict[str, Any]]] = None,
+    workspace: Optional[str] = None,
+) -> str:
+    """Create a new agent flow from nodes (agent steps) and edges (execution order).
+
+    Every node's agent_id must be a registered agent (check with
+    list_agents_tool first). The graph is validated before saving — unknown
+    agents, dangling edges, or cycles are rejected with the list of problems.
+    Returns the created flow (including its `flow_id`) on success.
+    """
+    from flow import store as flow_store
+    from datetime import datetime, timezone
+
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    now = datetime.now(timezone.utc).isoformat()
+    flow: Dict[str, Any] = {
+        "id": str(uuid4()),
+        "name": name.strip(),
+        "description": description or "",
+        "nodes": _to_combined_nodes(nodes or []),
+        "edges": _to_combined_edges(edges or []),
+        "workspace": ws,
+        "task_id": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    errors, warnings = _validate_combined(flow, ws)
+    if errors:
+        return _json_err(
+            "Flow is invalid and was NOT created. Fix the problems and try again.",
+            code="invalid_flow",
+            extra={"errors": errors, "warnings": warnings},
+        )
+
+    flow_store.save_flow(flow)
+    record_entity("flow", flow["id"], "created", flow["name"])
+    payload: Dict[str, Any] = {
+        "message": f"Flow '{flow['name']}' created successfully",
+        "flow_id": flow["id"],
+        "flow": _simplify(flow),
+    }
+    if warnings:
+        payload["warnings"] = warnings
+    return _json_ok(payload)
+
+
+def _get_flow(flow_id: str) -> str:
+    """Get a flow's full definition: name, description, nodes, and edges."""
+    from flow import store as flow_store
+
+    try:
+        flow = flow_store.get_flow(flow_id)
+    except flow_store.FlowParseError as e:
+        return _json_err(f"Flow is broken: {e}", code="invalid_flow", extra={"flow_id": flow_id})
+    if flow is None:
+        return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+    record_entity("flow", flow_id, "viewed", flow.get("name") or "")
+    return _json_ok({"flow": _simplify(flow), "entry_point": flow.get("entry_point")})
+
+
+def _modify_flow(
+    flow_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    nodes: Optional[List[Dict[str, Any]]] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Modify an existing flow. Only the provided fields change.
+
+    `nodes`/`edges` are full replacements of the graph, not patches — use
+    get_flow_tool first and resubmit the complete updated lists. The resulting
+    graph is validated before saving; an invalid result leaves the stored flow
+    untouched.
+    """
+    from flow import store as flow_store
+    from datetime import datetime, timezone
+
+    try:
+        flow = flow_store.get_flow(flow_id)
+    except flow_store.FlowParseError as e:
+        return _json_err(f"Flow is broken: {e}", code="invalid_flow", extra={"flow_id": flow_id})
+    if flow is None:
+        return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+
+    changed: List[str] = []
+    if name is not None and name.strip():
+        flow["name"] = name.strip()
+        changed.append("name")
+    if description is not None:
+        flow["description"] = description
+        changed.append("description")
+    if nodes is not None:
+        flow["nodes"] = _to_combined_nodes(nodes, existing=flow.get("nodes"))
+        changed.append("nodes")
+    if edges is not None:
+        flow["edges"] = _to_combined_edges(edges)
+        changed.append("edges")
+
+    if not changed:
+        return _json_ok({"flow": _simplify(flow), "message": f"Flow '{flow_id}' unchanged"})
+
+    errors, warnings = _validate_combined(flow, flow.get("workspace"))
+    if errors:
+        return _json_err(
+            "Modified flow is invalid; the stored flow was NOT changed.",
+            code="invalid_flow",
+            extra={"errors": errors, "warnings": warnings},
+        )
+
+    flow["updated_at"] = datetime.now(timezone.utc).isoformat()
+    flow_store.save_flow(flow)
+    record_entity("flow", flow_id, "updated", flow.get("name") or "")
+    payload: Dict[str, Any] = {
+        "message": f"Flow '{flow['name']}' modified successfully",
+        "changed": changed,
+        "flow": _simplify(flow),
+    }
+    if warnings:
+        payload["warnings"] = warnings
+    return _json_ok(payload)
+
+
+def _delete_flow(flow_id: str) -> str:
+    """Delete a flow by ID. Refuses while an instance of the flow is running.
+
+    Deletion is permanent — confirm with the user before calling this.
+    """
+    from flow import store as flow_store
+
+    try:
+        flow = flow_store.get_flow(flow_id)
+    except flow_store.FlowParseError:
+        flow = None  # broken flows can still be deleted
+    if flow is not None and flow.get("running"):
+        return _json_err(
+            f"Flow '{flow_id}' has a running instance; stop it before deleting.",
+            code="conflict",
+        )
+    if not flow_store.delete_flow(flow_id):
+        return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+    return _json_ok({"message": f"Flow '{flow_id}' deleted successfully", "flow_id": flow_id})
+
+
+def _validate_flow(
     flow_id: Optional[str] = None,
     nodes: Optional[List[Dict[str, Any]]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
@@ -424,31 +403,48 @@ def validate_flow_tool(
     agent_id registered, edges reference existing nodes, graph is acyclic.
     Returns `valid` plus `errors` (blocking) and `warnings` (advisory).
     """
-    try:
-        ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
 
-        if flow_id:
-            from flow import store as flow_store
-            try:
-                flow = flow_store.get_flow(flow_id)
-            except flow_store.FlowParseError as e:
-                return _json_ok({"valid": False, "errors": [str(e)], "warnings": []})
-            if flow is None:
-                return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
-            ws = normalize_workspace_name(flow.get("workspace")) or ws
-        elif nodes is not None:
-            flow = {
-                "id": "proposed",
-                "nodes": _to_combined_nodes(nodes),
-                "edges": _to_combined_edges(edges or []),
-            }
-        else:
-            return _json_err("Provide either flow_id or nodes/edges to validate", code="invalid")
+    if flow_id:
+        from flow import store as flow_store
+        try:
+            flow = flow_store.get_flow(flow_id)
+        except flow_store.FlowParseError as e:
+            return _json_ok({"valid": False, "errors": [str(e)], "warnings": []})
+        if flow is None:
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+        ws = normalize_workspace_name(flow.get("workspace")) or ws
+    elif nodes is not None:
+        flow = {
+            "id": "proposed",
+            "nodes": _to_combined_nodes(nodes),
+            "edges": _to_combined_edges(edges or []),
+        }
+    else:
+        return _json_err("Provide either flow_id or nodes/edges to validate", code="invalid")
 
-        errors, warnings = _validate_combined(flow, ws)
-        return _json_ok({"valid": not errors, "errors": errors, "warnings": warnings})
-    except Exception as e:
-        return _json_err(f"Failed to validate flow: {e}")
+    errors, warnings = _validate_combined(flow, ws)
+    return _json_ok({"valid": not errors, "errors": errors, "warnings": warnings})
+
+
+# ── tools ─────────────────────────────────────────────────────────────────────
+
+_SPEC = EntityToolSpec(
+    singular="flow",
+    plural="flows",
+    create=ToolDef("create_flow_tool", CreateFlowInput, _create_flow, "Failed to create flow"),
+    get=ToolDef("get_flow_tool", GetFlowInput, _get_flow, "Failed to get flow"),
+    modify=ToolDef("modify_flow_tool", ModifyFlowInput, _modify_flow, "Failed to modify flow"),
+    delete=ToolDef("delete_flow_tool", DeleteFlowInput, _delete_flow, "Failed to delete flow"),
+    validate=ToolDef("validate_flow_tool", ValidateFlowInput, _validate_flow, "Failed to validate flow"),
+)
+
+_TOOLS = tools_by_id(build_entity_tools(_SPEC))
+create_flow_tool = _TOOLS["create_flow_tool"]
+get_flow_tool = _TOOLS["get_flow_tool"]
+modify_flow_tool = _TOOLS["modify_flow_tool"]
+delete_flow_tool = _TOOLS["delete_flow_tool"]
+validate_flow_tool = _TOOLS["validate_flow_tool"]
 
 
 __all__ = [
