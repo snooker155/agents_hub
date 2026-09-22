@@ -11,13 +11,14 @@ is removed, re-indexed shorter, or whose pool is deleted leaves no orphan
 vectors behind.
 """
 from __future__ import annotations
-from pathlib import Path
 from typing import List, Optional, Tuple
 from uuid import NAMESPACE_URL, uuid5
 from .embeddings import EmbeddingResult
 
+from common.paths import PROJECT_ROOT
+
 # Use a fixed absolute path so the backend and agent subprocesses share the same DB.
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_PROJECT_ROOT = PROJECT_ROOT
 _CHROMA_PATH = str(_PROJECT_ROOT / "chroma_db")
 
 

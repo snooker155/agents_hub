@@ -7,11 +7,12 @@ subprocesses where os.environ is frozen at launch time.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Optional
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_ENV_FILE = _PROJECT_ROOT / ".env"
+from common.paths import PROJECT_ROOT
+from common.dotenv import read_env as _read_dot_env
+
+_PROJECT_ROOT = PROJECT_ROOT
 _CHROMA_PATH = str(_PROJECT_ROOT / "chroma_db")
 
 
@@ -20,19 +21,11 @@ _CHROMA_PATH = str(_PROJECT_ROOT / "chroma_db")
 # ---------------------------------------------------------------------------
 
 def _read_env(key: str, default: str = "") -> str:
-    """Read from os.environ first, then fall back to .env file."""
+    """Read from os.environ first, then fall back to .env file (cached)."""
     val = os.environ.get(key, "")
     if val:
         return val.strip().strip("\"'")
-    if _ENV_FILE.exists():
-        for line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            if k.strip() == key:
-                return v.strip().strip("\"'")
-    return default
+    return _read_dot_env().get(key, default)
 
 
 def is_rag_configured() -> bool:

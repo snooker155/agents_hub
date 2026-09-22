@@ -27,10 +27,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
-from common.paths import AGENTS_HUB_ROOT
+from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from managers.run_manager import preopen_run, _utc_now_iso, _update_run, finalize_task_from_run
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def preregister_run(task_id: str, agent_id: str, session_id: Optional[str] = None) -> str:

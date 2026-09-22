@@ -77,12 +77,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
 from common.hostnet import to_host_gateway
-from common.paths import AGENTS_HUB_ROOT
+from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
-HERE = Path(__file__).resolve().parent
-PROJECT_ROOT = HERE.parent
 DOCKERFILE_DIR = AGENTS_HUB_ROOT / "dockerfiles"
 DOCKERFILE_DIR.mkdir(parents=True, exist_ok=True)
 

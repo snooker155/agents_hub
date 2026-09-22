@@ -21,7 +21,6 @@ backend surface as :class:`BackendError`.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any, List, Optional
 
 
@@ -475,7 +474,7 @@ def _ensure_importable() -> None:
     models by bare name (``from models import ...``).
     """
     import sys
-    root = Path(__file__).resolve().parent
-    for entry in (root, root / "dashboard" / "backend"):
+    from common.paths import PROJECT_ROOT
+    for entry in (PROJECT_ROOT, PROJECT_ROOT / "dashboard" / "backend"):
         if str(entry) not in sys.path:
             sys.path.insert(0, str(entry))

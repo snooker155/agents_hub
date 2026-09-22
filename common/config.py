@@ -7,6 +7,8 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dataclasses import dataclass, field
 
+from common.paths import PROJECT_ROOT
+
 DEFAULT_IGNORE: List[str] = [
     ".git",
     ".hg",
@@ -189,6 +191,13 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Playground (simulation worlds/scenarios) is ~17% of the backend by line
+    # count; this lets a deployment that does not use it skip loading it.
+    playground_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("PLAYGROUND_ENABLED", "playground_enabled"),
+    )
+
     # When true, the ``view_serve`` tool may *launch* a generated backend as a
     # workspace-scoped subprocess (killed with the view). Off by default — the
     # proxy-only registration path is always available; launching is the opt-in,
@@ -306,7 +315,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         case_sensitive=False,
-        env_file=str(Path(__file__).resolve().parents[1] / ".env"),
+        env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -338,18 +347,12 @@ def read_dot_env() -> dict:
     This is intentionally separate from the Settings object, which merges in
     field defaults that are indistinguishable from user-configured values.
     Use this when you need to know what the user has *actually set* via the UI.
+
+    Delegates to common.dotenv, which caches the parse by (mtime, size) so
+    repeated calls within a request do not re-read the file.
     """
-    env_file = Path(__file__).resolve().parents[1] / ".env"
-    result: dict = {}
-    if not env_file.exists():
-        return result
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        result[key.strip()] = val.strip().strip('"\'')
-    return result
+    from common.dotenv import read_env
+    return read_env()
 
 
 def streaming_enabled() -> bool:
@@ -391,6 +394,18 @@ def live_setting(env_key: str, default: str = "") -> str:
         raw = os.environ.get(env_key)
     value = (raw or "").strip()
     return value or default
+
+
+def playground_enabled() -> bool:
+    """Whether the playground (simulation worlds/scenarios) feature is on.
+
+    Resolved live like ``agent_execution_mode``, so flipping the .env value
+    takes effect without a restart. Default is on, so an existing install
+    that has never set the flag sees no change.
+    """
+    default = "true" if settings.playground_enabled else "false"
+    raw = live_setting("PLAYGROUND_ENABLED", default)
+    return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
 def agent_execution_mode() -> str:

@@ -14,14 +14,11 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
-from common.paths import AGENTS_HUB_ROOT
+from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from managers.run_manager import _utc_now_iso
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 #: The agent id a ``human_interrupt`` node parks its task under. A flow node is
 #: not an agent, so this names the *kind* of pause rather than something the

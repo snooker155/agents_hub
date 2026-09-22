@@ -17,15 +17,17 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from common import db
-from common.paths import AGENTS_HUB_ROOT
+# PROJECT_ROOT is re-exported by the managers.run_manager facade.
+from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT  # noqa: F401
 
 from .notifications import _notify_task_run_started
 from .store import _row_to_record, _update_run, _upsert_run, _utc_now_iso
 
 log = logging.getLogger(__name__)
 
+# Kept for managers.run_manager, which re-exports it by name (a facade over
+# the runs/ split, not something this module still uses itself).
 HERE = Path(__file__).resolve().parent
-PROJECT_ROOT = HERE.parents[1]
 RUN_LOGS_DIR = AGENTS_HUB_ROOT / "run_logs"
 
 

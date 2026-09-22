@@ -40,12 +40,10 @@ from filelock import FileLock
 
 from agents.registry import get_agent
 from common import db
-from common.paths import AGENTS_HUB_ROOT
+from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from common.session_broker import notify_change
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-HERE = Path(__file__).resolve().parent
-PROJECT_ROOT = HERE.parent
 AGENTS_HUB_ROOT.mkdir(parents=True, exist_ok=True)
 
 NODE_LOGS_DIR = AGENTS_HUB_ROOT / "node_logs"

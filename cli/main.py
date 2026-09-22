@@ -34,8 +34,14 @@ from rich.text import Text
 # The checkout that holds this package: <repo>/cli/main.py. Resolve the
 # service's modules before anything below imports them, so the CLI runs from any
 # working directory — and so `python cli/main.py` finds its own package too.
+# Computed from __file__, not imported from common.paths: this file can be the
+# very first thing executed (a direct `python cli/main.py`), before the repo
+# root is on sys.path at all, so common.paths itself would not yet be
+# importable. The formula matches common.paths.PROJECT_ROOT exactly, and once
+# the path insert below runs, everything downstream imports that one instead.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from cli.backend import get_backend, BackendError  # noqa: E402
 

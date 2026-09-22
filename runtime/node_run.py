@@ -22,11 +22,9 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
-from common.paths import PROJECTS_FILE
+from common.paths import PROJECT_ROOT, PROJECTS_FILE
 
 # Ensure project root is on sys.path when running as a module
-HERE = Path(__file__).resolve().parent
-PROJECT_ROOT = HERE.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
