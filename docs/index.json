@@ -34,11 +34,14 @@
         "agents",
         "flows",
         "teams",
-        "telegram"
+        "telegram",
+        "costs"
       ],
       "headings": [
         "What you can point it at",
         "What the agent sees",
+        "Compaction",
+        "Prompt caching",
         "Attachments and references",
         "Slash commands",
         "Delegation from chat",
@@ -104,7 +107,8 @@
         "projects",
         "views",
         "settings",
-        "mcp"
+        "mcp",
+        "notifications"
       ],
       "headings": [
         "Telegram",
@@ -140,7 +144,8 @@
         "loops",
         "models",
         "playground",
-        "workspaces"
+        "workspaces",
+        "notifications"
       ],
       "headings": [
         "Where the numbers come from",
@@ -327,7 +332,7 @@
     {
       "id": "memory",
       "title": "Memory",
-      "summary": "Agents have five complementary memory layers, bound to a pool. The pool is assigned per workspace, so the same agent can carry different knowledge in different workspaces.",
+      "summary": "Agents have several complementary memory layers, bound to a pool. Core memory blocks are always in the prompt; the rest are ranked and fetched with tools. The pool is assigned per workspace, so the same agent can carry different knowledge in different workspaces.",
       "surface": "Memory",
       "related": [
         "skills",
@@ -336,7 +341,10 @@
       ],
       "headings": [
         "The layers",
+        "Core memory blocks",
         "How agents use it",
+        "Ranking",
+        "Episodes",
         "Getting knowledge in",
         "Gotchas"
       ]
@@ -453,7 +461,8 @@
       "related": [
         "service-health",
         "tasks",
-        "telegram"
+        "telegram",
+        "notifications"
       ],
       "headings": [
         "Job kinds",
@@ -565,7 +574,8 @@
         "chat",
         "hooks",
         "projects",
-        "sessions-and-runs"
+        "sessions-and-runs",
+        "notifications"
       ],
       "headings": [
         "Lifecycle",
@@ -703,6 +713,27 @@
         "What a workspace holds",
         "Per-workspace memory",
         "The default workspace",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "notifications",
+      "title": "Notifications",
+      "surface": "Connectors",
+      "summary": "Outbound webhooks and Slack endpoints, alert rules for a failed run or spend past a threshold, and the signed, idempotent inbound webhooks (the node runner, a flow trigger, and filing a task from outside).",
+      "related": [
+        "connectors",
+        "scheduling",
+        "costs",
+        "tasks",
+        "nodes",
+        "flows"
+      ],
+      "headings": [
+        "Outbound: webhooks and Slack",
+        "Alert rules",
+        "Inbound: signing and idempotency",
+        "Filing a task from outside",
         "Gotchas"
       ]
     }

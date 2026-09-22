@@ -23,6 +23,25 @@ A workspace can override the model default, the execution mode (in-process or
 Docker) and environment variables. Anything not overridden falls through to the
 global setting.
 
+## API auth
+
+The service's own API can be closed to callers that do not present a token.
+This is off by default, unlike a provider key: nothing here checks it until the
+operator turns it on.
+
+- **Server side.** Set `AGENTS_HUB_API_TOKEN` in `.env` and restart the
+  backend. Once set, every `/api` request must present it, as an
+  `Authorization: Bearer` header, an `X-Api-Token` header, or a `?token=` query
+  parameter (used by the browser's EventSource, which cannot set headers).
+  `/api/ingest` is exempt: an external run reports in with its own connection
+  credential instead.
+- **Browser side.** System → API access holds this browser's token, kept in
+  its `localStorage` rather than in a workspace or the `.env`: it belongs to
+  the browser, not to a workspace. Saving it attaches it to every request this
+  browser makes; clearing the field and saving removes it. The Test button
+  calls `GET /api/health` with the current token and reports whether the
+  backend accepted it.
+
 ## Reading the health of this
 
 The health snapshot reports which keys are set (as booleans, never values),

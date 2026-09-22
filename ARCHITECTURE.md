@@ -33,9 +33,9 @@ Agents Hub is split into two main runtime layers:
 Under those runtime layers, the backend works with several domain modules:
 
 - `agents/`
-  Agent definitions (per-agent folders), prompt assembly, the factory, the run launcher, response parsing, the capability guard, callbacks (streaming, guards, statistics), the remote-agent adapter, and the repository importer.
+  Agent definitions (per-agent folders, the seeded roster only — see `bootstrap/agents.json`), prompt assembly, the factory, the run launcher, response parsing, the capability guard, per-workspace tool hooks (`hooks.py`), callbacks (streaming, guards, statistics), the remote-agent adapter, and the repository importer.
 - `managers/`
-  Process-level lifecycle: run records and logs (`run_manager`), long-running nodes (`node_manager`), agent containers (`container_manager`), and the watchdog that reconciles crashed runs.
+  Process-level lifecycle: run records and logs, long-running nodes (`node_manager`), agent containers (`container_manager`), and the watchdog that reconciles crashed runs. `run_manager.py` is a facade over `managers/runs/` (`store`, `lifecycle`, `task_finalize`, `notifications`, `groups`), kept as the single import point the rest of the codebase already uses.
 - `runtime/`
   Entrypoints a subprocess actually executes — `agent_run.py`, `node_run.py`, `flow_run.py`, plus the node HTTP server and the Docker runner.
 - `common/`
@@ -61,9 +61,17 @@ Under those runtime layers, the backend works with several domain modules:
 - `providers/`
   Provider registry, adapters for OpenAI-compatible backends, and context-window metadata.
 - `tools/`
-  Agent tools: filesystem, patching, shell, calculator, task and flow management, scheduling, web access, and the visualization family behind views.
+  Agent tools: filesystem, patching, shell, calculator, task and flow management, scheduling, web access, and the visualization family behind views. `capabilities.py` classifies every tool for the capability guard; `approval.py` is the awaiting-approval gate a workspace can put in front of a destructive call.
 - `connectors/`
   Outside-world integrations — Telegram (poller, chat→agent bindings) and git (GitHub/GitLab providers, repo operations, issue sync).
+- `connections/`
+  The other direction from an imported agent: an external agent that runs on its own trigger and reports its runs in over `/api/ingest`, authenticated by its own per-connection token rather than the operator's. Holds the connection store, the reporting service that turns a posted run into the same records a local run leaves, OTel/OTLP ingestion, and history retention. See [docs/connections.md](docs/connections.md).
+- `mcp_client/`
+  Connects to MCP servers configured per workspace and turns their tools into hub tools, named `mcp__<server id>__<tool name>` so the capability model can classify them.
+- `notify/`
+  Outbound webhooks and Slack incoming-webhooks, plus the alert rules that decide when an event fires one. Delivery runs off a queue on its own worker thread so a broken endpoint never blocks the run or notification that triggered it.
+- `clients/`
+  Tracer libraries an *external* graph imports to report into this hub in observe mode — `agents-hub-langgraph` (Python) and `agents-hub-langgraph-js` (JS/TS) — the client side of `connections/`.
 
 At a high level, the flow looks like this:
 
@@ -76,21 +84,17 @@ The most important top-level folders and files are:
 ```text
 agents_hub/
 ├── agents/
-│   ├── definitions/         # One folder per agent — layered markdown definitions
+│   ├── definitions/         # One folder per seeded agent — layered markdown definitions
 │   │   ├── swe_agent/
 │   │   │   ├── instructions.md
 │   │   │   ├── capabilities.md
 │   │   │   └── usage.md
 │   │   ├── orchestrator/
-│   │   ├── pm_agent/
-│   │   ├── qa_agent/
-│   │   ├── devops_agent/
 │   │   ├── researcher_agent/
 │   │   ├── code_reviewer/
-│   │   ├── memory_agent/
 │   │   ├── visualizer/      # Ships with the visualization toolset bound
 │   │   ├── agent_creator/
-│   │   └── ...
+│   │   └── ...              # the full seed roster is bootstrap/agents.json
 │   ├── prompt_assembly.py   # Builds the runtime system prompt from the three markdown layers
 │   ├── registry.py          # AgentSpec loader (reads .agents_hub/agents.json)
 │   ├── agent_factory.py     # Constructs runnable agents and binds tools / memory
@@ -99,10 +103,15 @@ agents_hub/
 │   ├── agent_replay.py      # Re-run a recorded run, optionally on another model
 │   ├── capability_guard.py  # Refuses dangerous tool combinations at save/build time
 │   ├── remote_agent.py      # HTTP adapter for agents imported from their own repos
+│   ├── hooks.py             # PreToolUse / PostToolUse workspace hooks (.hooks.json)
 │   ├── importer/            # Manifest parsing, readiness checks, clone/promote
 │   └── callbacks/           # Streaming, in-loop guards, run statistics
-├── managers/                # Run records, node lifecycle, agent containers, run watchdog
+├── managers/                # Run records (a facade over managers/runs/), node lifecycle, agent containers, run watchdog
 ├── runtime/                 # Subprocess entrypoints: agent_run, node_run, flow_run, docker_runner
+├── connections/             # External agents reporting runs in over /api/ingest (the reverse of an imported agent)
+├── mcp_client/              # MCP server connections, turned into hub tools
+├── notify/                  # Outbound webhooks / Slack incoming-webhooks and alert rules
+├── clients/                 # Tracer libraries an external graph imports to report into connections/
 ├── common/
 │   ├── db.py                # SQLite core (WAL) — runs, tasks, sessions, nodes, views, evals …
 │   ├── db_migrate.py        # One-time migration from the legacy JSON stores
@@ -140,11 +149,14 @@ agents_hub/
 │   └── tool.py              # LangChain tools exposed to agents (recall / remember / forget / record_episode …)
 ├── projects/                # Project models, storage, and the project graph
 ├── tasks/                   # Task models, storage, execution artifacts
-├── tools/                   # Tool implementations exposed to agents
+├── tools/                   # Tool implementations exposed to agents, plus approval.py (the awaiting_approval gate)
 ├── workspace/               # Workspace storage and metadata helpers
-├── bootstrap/               # Seed agents and workspaces for a fresh install
+├── bootstrap/               # Seed agents (agents.json) and workspaces for a fresh install
 ├── docs/                    # Shipped documentation corpus (search_docs / read_doc, and the Docs page)
-├── examples/                # Worked examples, including an importable Aider agent
+├── examples/
+│   ├── agents/              # Example prompts, not seeded — waterfall/, events/, story/, jobs/, misc/ (see examples/agents/README.md)
+│   ├── imported-agents/     # Worked HTTP-import examples (Aider, a LangGraph graph in Python and JS)
+│   └── 0N_*/                # Numbered runnable walkthroughs (task assistant, human-in-loop approval, Docker isolation, …)
 ├── .agents_hub/             # Runtime state: agents_hub.db, agents.json, workspaces, memory, views
 ├── cli/
 │   ├── main.py              # Terminal entry point: every command, and its rendering
@@ -197,8 +209,10 @@ agents_hub/
   Model catalog: which models are enabled per provider, the default per provider, and per-model pricing.
 - `.agents_hub/projects.json`
   JSON-backed project metadata store.
+- `.agents_hub/workspaces.json`
+  Central per-workspace metadata (settings overrides, allowed agents/flows, env vars, model override), keyed by workspace name, replacing the per-folder `.workspace.json` that a fresh open still migrates in and removes.
 - `.agents_hub/workspaces/`
-  Generated workspace folders and per-workspace metadata (including views under `<workspace>/.views/`).
+  Generated workspace folders — logs, plans, knowledge and project subfolders, and views under `<workspace>/.views/`.
 
 ## Agent Definitions — Layered Instructions
 
@@ -331,6 +345,7 @@ State is split between a SQLite database and files on disk, along one line: anyt
 | Simulation | `scenarios`, `sim_runs`, `sim_ticks` |
 | Loops | `loops`, `loop_runs`, `loop_iterations` |
 | Teams | `teams`, `team_runs`, `team_messages` |
+| Integration | `inbound_deliveries` (notify's idempotency record for an inbound webhook) |
 
 The first connection in any process ensures the schema and runs a one-time migration from the legacy JSON stores (`common/db_migrate.py`), leaving the originals behind as `*.migrated` — so any entrypoint, backend or CLI, may touch the stores first.
 
@@ -341,6 +356,8 @@ The first connection in any process ensures the schema and runs a one-time migra
 - `agents.json` — agent registry (AgentSpec records)
 - `models.json` — model catalog: enabled models, defaults, per-model pricing
 - `custom_providers.json`, `git_connectors.json`, `telegram.json` — connector and backend configuration
+- `connections.json` — connections registry (external agents reporting runs in over `/api/ingest`)
+- `workspaces.json` — central per-workspace metadata: settings overrides, allowed agents/flows, env vars, model override; MCP servers and notification endpoints/rules are stored here too, under each workspace's `settings`
 - `projects.json`, `project_graphs.json` — project metadata and graphs
 - `plans.json`, `notifications.json` — scheduled jobs and the notification inbox
 - `shared_memory.json` — shared memory pools (notes, structured slots, RAG file metadata)
@@ -348,7 +365,7 @@ The first connection in any process ensures the schema and runs a one-time migra
 - `flows/`, `flow_logs/` — flow definitions and per-run logs; flow run records live in the `flow_runs` table of the SQLite database (an existing `flow_runs.json` is imported once and renamed `.migrated`)
 - `run_logs/`, `node_logs/`, `dockerfiles/` — generated artifacts
 - `web_requests.jsonl` — the web access log
-- `workspaces/` — workspace folders, per-workspace metadata, and views under `<workspace>/.views/<view_id>/`
+- `workspaces/` — generated workspace folders (logs, plans, knowledge, project subfolders), and views under `<workspace>/.views/<view_id>/`; a workspace's settings live in `workspaces.json` above, not in its folder
 - `agents/definitions/<agent_id>/{instructions,capabilities,usage}.md` — layered agent prompts, in the repository rather than the state directory
 
 ## API Surface
@@ -358,11 +375,11 @@ The backend is organized by route domains, registered in `dashboard/backend/main
 | Area | Route groups |
 | --- | --- |
 | Agents | `agents`, `agent-import`, `marketplace`, `skills` |
-| Work | `tasks`, `plan`, `flows`, `flow-entities`, `loops`, `teams` |
+| Work | `tasks`, `plan`, `flows`, `flow-entities`, `loops`, `teams`, `runs/groups` |
 | Measurement | `stats`, `models`, `costs`, `evals`, `playground`, `runs/{id}/replay` |
 | Knowledge | `shared-memory`, `web-logs`, `views` |
 | Environment | `workspaces`, `projects`, `tools`, `sessions`, `messages`, `instances`, `chat`, `chats`, `nodes`, `containers` |
-| Integration | `external`, `telegram`, `git`, `settings`, `stream`, `health` |
+| Integration | `external`, `telegram`, `git`, `settings`, `stream`, `health`, `connections`, `ingest`, `mcp`, `notify` |
 
 The root endpoint (`GET /`) returns the API banner and the domains it serves. Most application endpoints live under `/api/*`.
 

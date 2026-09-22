@@ -11,8 +11,8 @@ const api = axios.create({
 });
 
 // Optional operator token (see common/auth.py). Off by default: an unconfigured
-// backend accepts every request and this stays a no-op. There is no Settings
-// field for it yet, so it is set from the browser console with
+// backend accepts every request and this stays a no-op. Settings → System →
+// API access sets it through setApiToken below, or it can be set directly with
 // `localStorage.setItem('agents_hub_api_token', '<token>')`, or baked into the
 // build with VITE_API_TOKEN when the same token should ship with every build.
 // localStorage wins so a token can be set (or rotated) without a rebuild.
@@ -24,6 +24,18 @@ export const getApiToken = () => {
     // Privacy mode or no localStorage: fall through to the build-time value.
   }
   return import.meta.env.VITE_API_TOKEN ?? '';
+};
+
+// Sets or clears this browser's token. An empty value removes the localStorage
+// key rather than storing a blank one, so getApiToken then falls back to
+// VITE_API_TOKEN (if any) instead of an empty override.
+export const setApiToken = (token) => {
+  try {
+    if (token) window.localStorage.setItem('agents_hub_api_token', token);
+    else window.localStorage.removeItem('agents_hub_api_token');
+  } catch {
+    // Privacy mode or no localStorage: nothing to persist.
+  }
 };
 
 // Headers a fetch() call outside the `api` instance needs to authenticate.
@@ -177,6 +189,14 @@ export const stopAgentDefinitionChat = (id) => api.post(`/agents/${id}/definitio
 export const agentDefinitionChatUrl = (id, workspace) =>
   `/agents/${id}/definition/chat` + (workspace ? `?workspace=${encodeURIComponent(workspace)}` : '');
 export const updateAgentDescription = (id, description) => api.put(`/agents/${id}/description`, { description });
+
+// Registry version history: one row per snapshot, a diff against the current
+// state or another version, and a rollback that goes back through add_agent
+// (so the capability guard still runs).
+export const getAgentVersions = (id) => api.get(`/agents/${id}/versions`);
+export const getAgentVersionDiff = (id, version, against = 'current') =>
+  api.get(`/agents/${id}/versions/${version}/diff`, { params: { against } });
+export const rollbackAgentVersion = (id, version) => api.post(`/agents/${id}/versions/${version}/rollback`);
 export const disconnectAgent = (id) => api.delete(`/agents/${id}`);
 export const updateAgentMemory = (id, data) => api.post(`/agents/${id}/memory`, data);
 export const eraseAgentMemory = (id, workspace) => api.delete(`/agents/${id}/memory`, { params: workspace ? { workspace } : {} });
@@ -275,6 +295,27 @@ export const testMcpServer = (id, workspace) =>
 export const listMcpServerTools = (id, workspace, refresh = false) =>
   api.get(`/mcp/servers/${encodeURIComponent(id)}/tools`,
           { params: { ...(workspace ? { workspace } : {}), ...(refresh ? { refresh: true } : {}) } });
+
+// ── Notifications: outbound endpoints + alert rules ──────────────────────────
+// Same masking convention as MCP servers: a webhook's secret comes back as its
+// last four characters, and sending that back unchanged keeps the stored value.
+export const listNotifyEndpoints = (workspace) => api.get('/notify/endpoints', inWorkspace(workspace));
+export const createNotifyEndpoint = (data, workspace) =>
+  api.post('/notify/endpoints', data, inWorkspace(workspace));
+export const updateNotifyEndpoint = (id, data, workspace) =>
+  api.patch(`/notify/endpoints/${encodeURIComponent(id)}`, data, inWorkspace(workspace));
+export const deleteNotifyEndpoint = (id, workspace) =>
+  api.delete(`/notify/endpoints/${encodeURIComponent(id)}`, inWorkspace(workspace));
+export const testNotifyEndpoint = (id, workspace) =>
+  api.post(`/notify/endpoints/${encodeURIComponent(id)}/test`, null, inWorkspace(workspace));
+
+export const listNotifyRules = (workspace) => api.get('/notify/rules', inWorkspace(workspace));
+export const createNotifyRule = (data, workspace) =>
+  api.post('/notify/rules', data, inWorkspace(workspace));
+export const updateNotifyRule = (id, data, workspace) =>
+  api.patch(`/notify/rules/${encodeURIComponent(id)}`, data, inWorkspace(workspace));
+export const deleteNotifyRule = (id, workspace) =>
+  api.delete(`/notify/rules/${encodeURIComponent(id)}`, inWorkspace(workspace));
 export const updateTask = (taskId, data) => api.patch(`/tasks/${taskId}`, data);
 export const assignAgent = (taskId, data) => api.post(`/tasks/${taskId}/assign`, data);
 export const approveAssignment = (taskId) => api.post(`/tasks/${taskId}/approve-assignment`);
@@ -790,6 +831,8 @@ export const estimateEvalRun = (id, data) => api.post(`/evals/${id}/estimate`, d
 export const runEvalSet = (id, data) => api.post(`/evals/${id}/run`, data, { timeout: 0 });
 export const getEvalRuns = (id) => api.get(`/evals/${id}/runs`);
 export const getEvalRun = (runId) => api.get(`/eval-runs/${runId}`);
+export const getEvalRunDiff = (runAId, runBId) =>
+  api.get(`/evals/runs/${runAId}/diff/${runBId}`);
 export const getEvalGraders = () => api.get('/eval-graders');
 
 // Playground API — multi-agent simulation (see playground/ and routes/playground.py)

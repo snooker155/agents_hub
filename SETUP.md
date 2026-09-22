@@ -17,7 +17,7 @@ Install these once on your machine:
 
 | Tool                  | Version    | Used for                                              |
 | --------------------- | ---------- | ----------------------------------------------------- |
-| Python                | 3.11+      | Backend, CLI, agent runners                           |
+| Python                | 3.10+      | Backend, CLI, agent runners                           |
 | Node.js + npm         | 22+        | Frontend dashboard                                    |
 | Git                   | any        | Cloning the repo                                      |
 | Docker + Compose      | any recent | Only required for Path B or Docker agent execution    |
@@ -26,7 +26,7 @@ Install these once on your machine:
 Verify:
 
 ```bash
-python --version    # >= 3.11
+python --version    # >= 3.10
 node --version      # >= 22
 npm --version
 docker --version    # optional
@@ -128,6 +128,11 @@ ALLOW_SHELL=python,pytest,ruff,black
 
 # CORS origins for the frontend
 ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+
+# Require a token on every /api request (unset means unauthenticated, fine on
+# localhost only). Restart the backend after setting it, and give the same
+# token to the browser under Settings → System → API access.
+# AGENTS_HUB_API_TOKEN=change-me
 ```
 
 ---
@@ -330,7 +335,7 @@ docker compose logs -f backend    # tail backend logs
 Once both services are up:
 
 1. Visit `http://localhost:5173` (Path A) or `http://localhost:8080` (Docker Compose).
-2. Open the **Agent Manager** page — you should see the built-in agents listed (`orchestrator`, `swe_agent`, `pm_agent`, `qa_agent`, `devops_agent`, …). Each agent's prompt is assembled from its `agents/definitions/<agent_id>/instructions.md` (plus optional `capabilities.md` and `usage.md`).
+2. Open the **Agent Manager** page — you should see the built-in agents listed (`orchestrator`, `swe_agent`, `code_reviewer`, `researcher_agent`, …, the full seed roster is `bootstrap/agents.json`). Each agent's prompt is assembled from its `agents/definitions/<agent_id>/instructions.md` (plus optional `capabilities.md` and `usage.md`).
 3. Create a **workspace** from the Workspaces page.
 4. Open the **Chat** page, pick an agent, send a test message ("hello, who are you?"). A successful reply confirms the provider key, model, and registry are all wired up correctly.
 5. Open **Memory Manager** to confirm shared memory pools (notes / structured slots / journal) are reachable. Episodes and the knowledge graph are populated as agents run.

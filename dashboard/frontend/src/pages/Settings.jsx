@@ -7,7 +7,7 @@ import {
 import { useWorkspace } from '../components/workspace';
 import {
   getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides,
-  updateSettings,
+  updateSettings, getApiToken, setApiToken, API_ORIGIN,
 } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -44,6 +44,7 @@ const GROUPS = [
       { id: 'rag',           key: 'rag',           icon: Database,   workspaceScoped: true },
       { id: 'observability', key: 'observability', icon: Activity,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
+      { id: 'apiAccess',     key: 'apiAccess',     icon: Lock },
     ],
   },
 ];
@@ -356,6 +357,91 @@ function CustomBackendsTab() {
   );
 }
 
+// ── API access tab ────────────────────────────────────────────────────────────
+// The browser's own token (see src/api/index.js getApiToken). It lives in
+// localStorage, not in a workspace override or the global .env: it belongs to
+// this browser, not to a workspace, and it is only ever read by this frontend
+// to attach an Authorization header to its own requests.
+
+function ApiAccessTab() {
+  const { t } = useI18n();
+  const [token, setToken] = useState(() => getApiToken());
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleSave = () => {
+    setApiToken(token);
+    setSaved(true);
+    setResult(null);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleClear = () => {
+    setToken('');
+    setApiToken('');
+    setSaved(false);
+    setResult(null);
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const resp = await fetch(`${API_ORIGIN}/api/health`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      setResult({ ok: resp.ok, status: resp.status });
+    } catch (e) {
+      setResult({ ok: false, status: null, error: e.message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-500">
+        {t('settings.apiAccess.intro')}
+      </div>
+      <SectionCard title={t('settings.apiAccess.title')}>
+        <div>
+          <label className="text-sm font-medium text-gray-700">{t('settings.apiAccess.tokenLabel')}</label>
+          <p className="text-xs text-gray-500 mb-1">{t('settings.apiAccess.tokenHint')}</p>
+          <input type="password" value={token} onChange={(e) => setToken(e.target.value)}
+            placeholder={t('settings.apiAccess.tokenPlaceholder')} autoComplete="new-password"
+            className={inputCls} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <button type="button" onClick={handleSave}
+            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium">
+            <Save className="w-3.5 h-3.5" /> {t('common.save')}
+          </button>
+          <button type="button" onClick={handleClear}
+            className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700">
+            <Trash2 className="w-3.5 h-3.5" /> {t('settings.apiAccess.clear')}
+          </button>
+          <button type="button" onClick={handleTest} disabled={testing}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-gray-300 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+            {testing ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wifi className="w-3 h-3" />} {t('settings.test')}
+          </button>
+          {saved && <span className="text-xs text-green-700">{t('settings.apiAccess.saved')}</span>}
+          {result && (result.ok
+            ? <span className="flex items-center gap-1 text-xs text-green-700"><CheckCircle className="w-3 h-3" /> {t('settings.apiAccess.ok')}</span>
+            : <span className="flex items-center gap-1 text-xs text-red-700"><AlertCircle className="w-3 h-3" /> {result.status === 401 ? t('settings.apiAccess.unauthorized') : t('settings.apiAccess.testFailed')}</span>
+          )}
+        </div>
+      </SectionCard>
+      <SectionCard title={t('settings.apiAccess.serverTitle')}>
+        <p className="text-sm text-gray-600">
+          {t('settings.apiAccess.serverHintBefore')} <code className="bg-gray-100 rounded px-1">AGENTS_HUB_API_TOKEN</code>{' '}
+          {t('settings.apiAccess.serverHintAfter')} <code className="bg-gray-100 rounded px-1">.env</code>{t('settings.apiAccess.serverHintRestart')}
+        </p>
+      </SectionCard>
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -578,7 +664,7 @@ export default function Settings() {
               heading's ⓘ rather than repeated down the page. */}
           <p>
             <span className="font-medium text-gray-700">{t('settings.workspaceLabel')} {activeWorkspace}</span>{' '}
-            {t('settings.storedIn')} <code className="text-xs bg-gray-100 rounded px-1">{t('settings.settings2')}</code> {t('settings.insideThisWorkspaces')} <code className="text-xs bg-gray-100 rounded px-1">.workspace.json</code>{t('settings.clearingAFieldMakesIt')}
+            {t('settings.storedIn')} <code className="text-xs bg-gray-100 rounded px-1">{t('settings.settings2')}</code> {t('settings.insideThisWorkspaces')} <code className="text-xs bg-gray-100 rounded px-1">.agents_hub/workspaces.json</code>{t('settings.clearingAFieldMakesIt')}
           </p>
           <p className="mt-2">
             {t('settings.fieldsMarkedBefore')} <span className="inline-flex items-center gap-0.5 text-amber-600"><Lock className="w-3 h-3" /> {t('settings.fromEnv')}</span> {t('settings.fieldsMarkedAfter')}
@@ -987,6 +1073,9 @@ export default function Settings() {
                 </SectionCard>
               </div>
             )}
+
+            {/* Section: API access */}
+            {active.id === 'apiAccess' && <ApiAccessTab />}
 
             {/* Section: agent execution */}
             {active.id === 'execution' && (

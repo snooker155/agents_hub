@@ -171,17 +171,20 @@ def test_entity_nodes_run_beside_agent_nodes(monkeypatch):
     flow = {
         "id": "f5", "name": "mixed",
         "nodes": [
-            {"id": "slow_entity", "kind": "processor", "sleep": 0.05},
+            {"id": "slow_entity", "kind": "processor", "sleep": 0.3},
             {"id": "agent", "kind": "agent"},
         ],
         "edges": [],
     }
     spans: dict = {}
     started = time.monotonic()
-    events = _drive(flow, _sleeping_driver(spans, sleep=0.05))
+    events = _drive(flow, _sleeping_driver(spans, sleep=0.3))
     elapsed = time.monotonic() - started
 
-    assert elapsed < 0.09  # both 50ms nodes, not one after the other
+    # Two 300 ms nodes side by side finish well under the 600 ms a sequential
+    # walk needs. The margin is wide on purpose: this box is often under an
+    # antivirus scan and a 50 ms budget flaked there.
+    assert elapsed < 0.5
     assert {e["node_id"] for e in events if e["type"] == "node_done"} == {"slow_entity", "agent"}
 
 

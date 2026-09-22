@@ -120,7 +120,7 @@ def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", proc
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("agent", help="Agent ID from definitions (e.g. pm_agent, swe_agent)")
+    ap.add_argument("agent", help="Agent ID from definitions (e.g. swe_agent, researcher_agent)")
     ap.add_argument("action", nargs="?", help="Optional action/instruction")
     ap.add_argument("--desc", help="Initial description for the task")
     ap.add_argument("--task-id", help="Optional task ID to associate with")
