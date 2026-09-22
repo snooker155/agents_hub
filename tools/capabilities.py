@@ -70,6 +70,8 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "search_memory": frozenset({READS_PRIVATE}),
     "read_structured_memory": frozenset({READS_PRIVATE}),
     "recall": frozenset({READS_PRIVATE}),
+    # A memory block is pool content the agent reads back in full.
+    "memory_block_read": frozenset({READS_PRIVATE}),
     "recall_episodes": frozenset({READS_PRIVATE}),
 
     # ── task / db reads ──────────────────────────────────────────────────────
@@ -148,6 +150,12 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "schedule_notification": frozenset({CAN_EXFILTRATE}),
     # Proxies a caller-supplied upstream URL through the view server.
     "view_serve": frozenset({CAN_EXFILTRATE}),
+    # git_publish pushes a branch to GitHub/GitLab and opens a PR/MR — the
+    # payload is the workspace's own tracked (and newly added) files, chosen by
+    # the agent's commit, leaving the system over a real network destination.
+    # Reading issues/PRs with the same token (connectors/git/providers.py)
+    # grants nothing: this is the one direction that moves bytes outward.
+    "git_publish": frozenset({CAN_EXFILTRATE}),
 
     # ── agent and job reads ──────────────────────────────────────────────────
     # get_agent_tool returns instructions.md, capabilities.md and usage.md in
@@ -192,6 +200,7 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     "clear_graph",
     # memory writers — write into pools, never out of the system
     "write_structured_memory", "append_journal", "remember", "record_episode",
+    "memory_block_append", "memory_block_replace",
     # skills
     "get_skill", "create_skill",
 

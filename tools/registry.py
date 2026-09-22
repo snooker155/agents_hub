@@ -399,6 +399,16 @@ def _entity_run_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="entity_runs") for t in ENTITY_RUN_TOOLS]
 
 
+def _git_publish_specs() -> List[ToolSpec]:
+    # Categorized under project_management rather than a new "git" category:
+    # it is a project's repo action in the same sense clone/pull are (see
+    # tools/project_management.py's own docstring on why those stay off this
+    # list), and the old catalog's fixed category set has no "git" entry —
+    # see tests/test_tool_catalog.py's OLD_CATEGORIES.
+    from tools.git_publish import GIT_PUBLISH_TOOLS
+    return [spec_from_tool(t, category="project_management") for t in GIT_PUBLISH_TOOLS]
+
+
 def _visualization_specs() -> List[ToolSpec]:
     from tools.views import create_view_tools, VIEW_MUTATION_TOOLS
     from tools.graph_builder import GRAPH_BUILDER_TOOLS
@@ -455,6 +465,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _loop_management_specs,
     _project_management_specs,
     _entity_run_specs,
+    _git_publish_specs,
     _visualization_specs,
     _web_specs,
     _service_ops_specs,

@@ -7,18 +7,22 @@ Only the small surface needed by the dashboard is implemented:
   - get_repo(remote_id) — single repo lookup, normalized
   - list_issues(remote_id) — all issues (open + closed), normalized
   - auth_header()      — HTTP header for token-safe git clone/pull injection
+  - default_branch(remote_id) — the branch a publish must never push directly to
+  - create_pull_request(...)  — GitHubProvider only, POST /repos/{o}/{r}/pulls
+  - create_merge_request(...) — GitLabProvider only, POST /projects/{id}/merge_requests
 
 Normalized shapes:
   repo:  {provider, remote_id, name, full_name, description, default_branch,
           clone_url, web_url, private}
   issue: {number, title, body, state ("open"|"closed"), labels, url,
           updated_at, author}
+  change request: {url, number}
 """
 from __future__ import annotations
 
 import base64
 from typing import Any, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -64,12 +68,30 @@ class GitProvider:
         """Authorization header value for git HTTP operations."""
         raise NotImplementedError
 
+    def default_branch(self, remote_id: str) -> str:
+        """The repo's default branch — a publish must never push directly onto it.
+
+        Both providers already normalize this through get_repo(), so one
+        implementation here covers GitHub and GitLab instead of two copies.
+        """
+        return str(self.get_repo(remote_id)["default_branch"])
+
     # --- shared helpers ---
     def _get(self, url: str, headers: dict[str, str], params: Optional[dict] = None) -> httpx.Response:
         try:
             resp = httpx.get(url, headers=headers, params=params, timeout=_API_TIMEOUT, follow_redirects=True)
         except httpx.HTTPError as e:
             raise GitProviderError(f"{self.name} API request failed: {e.__class__.__name__}") from e
+        return self._check(resp)
+
+    def _post(self, url: str, headers: dict[str, str], json_body: dict) -> httpx.Response:
+        try:
+            resp = httpx.post(url, headers=headers, json=json_body, timeout=_API_TIMEOUT)
+        except httpx.HTTPError as e:
+            raise GitProviderError(f"{self.name} API request failed: {e.__class__.__name__}") from e
+        return self._check(resp)
+
+    def _check(self, resp: httpx.Response) -> httpx.Response:
         if resp.status_code == 401:
             raise GitProviderError(f"{self.name} token is invalid or expired")
         if resp.status_code == 403:
@@ -77,7 +99,14 @@ class GitProvider:
         if resp.status_code == 404:
             raise GitProviderError(f"{self.name}: resource not found")
         if resp.status_code >= 400:
-            raise GitProviderError(f"{self.name} API error {resp.status_code}")
+            detail = ""
+            try:
+                data = resp.json()
+                detail = str(data.get("message") or data.get("error") or "").strip()
+            except Exception:
+                pass
+            suffix = f": {detail}" if detail else ""
+            raise GitProviderError(f"{self.name} API error {resp.status_code}{suffix}")
         return resp
 
     def _paginate(self, url: str, headers: dict[str, str], params: dict, limit: int) -> list[dict]:
@@ -164,6 +193,18 @@ class GitHubProvider(GitProvider):
     def auth_header(self) -> str:
         return f"Authorization: Basic {_b64(f'x-access-token:{self.token}')}"
 
+    def create_pull_request(
+        self, owner_repo: str, *, title: str, body: str, head: str, base: str,
+        draft: bool = False,
+    ) -> dict[str, Any]:
+        """POST /repos/{owner}/{repo}/pulls. GitHub's PR API takes `draft` natively."""
+        resp = self._post(
+            f"{self._api}/repos/{owner_repo}/pulls", self._headers(),
+            {"title": title, "body": body, "head": head, "base": base, "draft": bool(draft)},
+        )
+        data = resp.json()
+        return {"url": data.get("html_url"), "number": data.get("number")}
+
 
 class GitLabProvider(GitProvider):
     name = "GitLab"
@@ -226,6 +267,27 @@ class GitLabProvider(GitProvider):
     def auth_header(self) -> str:
         return f"Authorization: Basic {_b64(f'oauth2:{self.token}')}"
 
+    def create_merge_request(
+        self, owner_repo: str, *, title: str, body: str, head: str, base: str,
+        draft: bool = False,
+    ) -> dict[str, Any]:
+        """POST /projects/{id}/merge_requests.
+
+        GitLab's stable way to mark a merge request as a draft is the "Draft: "
+        title prefix (the boolean field is newer and not reliably present on
+        self-hosted instances), so that is what draft=True adds here.
+        """
+        encoded = quote(str(owner_repo), safe="")
+        payload = {
+            "title": f"Draft: {title}" if draft else title,
+            "description": body,
+            "source_branch": head,
+            "target_branch": base,
+        }
+        resp = self._post(f"{self._api}/projects/{encoded}/merge_requests", self._headers(), payload)
+        data = resp.json()
+        return {"url": data.get("web_url"), "number": data.get("iid")}
+
 
 def get_provider(provider: str) -> GitProvider:
     """Build a provider client from the stored configuration."""
@@ -234,3 +296,27 @@ def get_provider(provider: str) -> GitProvider:
     if provider == "gitlab":
         return GitLabProvider(store.get_token("gitlab"), store.get_base_url("gitlab"))
     raise GitProviderError(f"Unknown git provider: {provider!r}")
+
+
+def remote_id_from_url(url: str) -> Optional[str]:
+    """Best-effort owner/repo (or GitLab group/.../project) from a remote URL.
+
+    Handles the two shapes a clone URL takes — HTTPS
+    ("https://host/owner/repo.git") and SSH ("git@host:owner/repo.git") — the
+    same two ``clone_url`` / ``http_url_to_repo`` return from the provider
+    APIs. Used as a fallback for a project attached in place (see
+    dashboard/backend/routes/projects.py's /attach), which has no stored
+    ``remote_id`` and only whatever ``origin`` already points at.
+    """
+    s = (url or "").strip()
+    if not s:
+        return None
+    if s.startswith("git@") or (":" in s and "://" not in s):
+        # scp-like syntax: user@host:path
+        _, _, path = s.partition(":")
+    else:
+        path = urlparse(s).path
+    path = path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    return path or None

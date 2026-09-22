@@ -61,6 +61,9 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     "restart_node",
     "stop_container",
     "prune_run_logs",
+    # Sends workspace content outside the system: a push, plus a PR/MR opened
+    # from it. Not reversible from in here once GitHub/GitLab has it.
+    "git_publish",
 })
 
 # Reasoning scratchpad tools are never gated: they have no effect outside the

@@ -41,6 +41,7 @@ from connectors.git import git_ops
 from connectors.git.git_ops import GitOpsError
 from connectors.git.providers import get_provider, GitProviderError
 from connectors.git.issue_sync import sync_issues as _sync_project_issues
+from tools.git_publish import run_git_publish
 from chat.errors import error_event as _error_event
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -1709,6 +1710,35 @@ async def git_pull(project_id: str):
     except GitOpsError as e:
         status = 504 if "timed out" in str(e) else 500
         raise HTTPException(status_code=status, detail=str(e))
+
+
+class GitPublishRequest(BaseModel):
+    branch: Optional[str] = None
+    title: str
+    body: str = ""
+    base: Optional[str] = None
+    draft: bool = True
+    open_pr: bool = True
+
+
+@router.post("/{project_id}/git/publish")
+async def git_publish_route(project_id: str, payload: GitPublishRequest):
+    """Commit, push a branch and open a PR/MR: the dashboard button for git_publish.
+
+    Delegates to tools.git_publish.run_git_publish, the same function the
+    git_publish agent tool calls, so the branch-protection refusals (never the
+    default branch, never a PR/MR from a branch onto itself) apply exactly the
+    same way here as they do to an agent's own call.
+    """
+    result = await asyncio.to_thread(
+        run_git_publish, project_id,
+        branch=payload.branch, title=payload.title, body=payload.body,
+        base=payload.base, draft=payload.draft, open_pr=payload.open_pr,
+    )
+    if not result.get("ok"):
+        status = 404 if result.get("code") in ("not_found", "unresolved_remote") else 400
+        raise HTTPException(status_code=status, detail=result.get("error"))
+    return result
 
 
 # ─────────────────────────── BACKEND / SWAGGER ────────────────────────────
