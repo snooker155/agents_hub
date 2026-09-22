@@ -70,7 +70,7 @@ def build_conversation_history(conversation_id: str, *, max_turns: int = 20):
     conversation's completed chat runs: each run stores that exchange's
     ``user_message`` and ``response`` under ``process.llm_input_context``, so a
     chronological scan yields the alternating user/assistant transcript that
-    ``build_chat_context`` folds into the prompt. Returns the last ``max_turns``
+    ``build_history_messages`` turns into the turn's messages. Returns the last ``max_turns``
     exchanges, oldest first; ``[]`` on any error or for a fresh conversation.
     """
     from chat.models import ChatHistoryMessage

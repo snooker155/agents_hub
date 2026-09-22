@@ -78,6 +78,7 @@ def invoke_agent(
     catch_exceptions: bool = True,
     run_id: Optional[str] = None,
     resume: Optional[Dict[str, Any]] = None,
+    history: Optional[Sequence[Any]] = None,
 ) -> AgentInvocation:
     """Run ``agent.run(prompt, ...)`` timed, with a stats callback attached.
 
@@ -90,6 +91,12 @@ def invoke_agent(
       implementations take ``(self, instruction, **kwargs)``, so a positional
       second argument raises TypeError — which is what it used to do, breaking
       every caller that passed run_id (evals, replay, the lifecycle helper).
+
+    - ``history``: the conversation before this turn, as LangChain messages. A
+      chat surface passes it so prior turns reach the model as messages instead
+      of as text folded into the prompt; every other caller (a task run, an
+      eval, a delegation) has no conversation and passes nothing. Agents that do
+      not understand it ignore the keyword.
 
     - ``resume``: ``{"run_id", "value", "key"}`` to continue a run the agent
       paused, instead of starting a new one. Only an agent that implements
@@ -126,10 +133,13 @@ def invoke_agent(
                 key=str(resume.get("key") or ""),
                 callbacks=callbacks,
             )
-        elif run_id is not None:
-            result = agent.run(prompt, run_id=run_id, callbacks=callbacks)
         else:
-            result = agent.run(prompt, callbacks=callbacks)
+            kwargs: Dict[str, Any] = {"callbacks": callbacks}
+            if run_id is not None:
+                kwargs["run_id"] = run_id
+            if history:
+                kwargs["history"] = list(history)
+            result = agent.run(prompt, **kwargs)
     except ApprovalSignal as sig:
         # A tool call needs a human's yes. The agent implementation may let the
         # signal through (this branch) or, like StandardAgent, swallow it into a

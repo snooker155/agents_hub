@@ -256,6 +256,49 @@ def get_or_create_chat_session(
     return session_id
 
 
+# ── Conversation summary (history compaction) ─────────────────────────────────
+# A long chat is folded by ``chat.compaction``: its older turns become one
+# summary, and only the recent tail is sent verbatim. The summary belongs to the
+# conversation rather than to any one run, so it lives on the session context —
+# the next turn reads it back and extends it instead of paying to summarise the
+# same material again.
+
+def get_session_summary(session_id: Optional[str]) -> Dict[str, Any]:
+    """The stored summary: ``{text, covers_until, anchor, updated_at}``.
+
+    ``covers_until`` is how many of the conversation's history messages the
+    summary speaks for, counted from the start, and ``anchor`` fingerprints the
+    last of them so the count can be re-found once the surface's history window
+    has slid. Returns ``{}`` when the session has none (or does not exist), which
+    reads as "nothing folded yet".
+    """
+    if not session_id:
+        return {}
+    ctx = get_context_by_id(str(session_id)) or {}
+    summary = ctx.get("summary")
+    return dict(summary) if isinstance(summary, dict) else {}
+
+
+def set_session_summary(session_id: str, text: str, covers_until: int,
+                        anchor: str = "") -> None:
+    """Store (or replace) a session's conversation summary."""
+    if not session_id:
+        return
+    with db.transaction() as conn:
+        row = conn.execute("SELECT doc FROM sessions WHERE session_id = ?",
+                           (str(session_id),)).fetchone()
+        ctx = _row_to_ctx(row) if row is not None else None
+        if ctx is None:
+            return
+        _write_ctx(conn, {**ctx, "summary": {
+            "text": str(text or ""),
+            "covers_until": max(0, int(covers_until or 0)),
+            "anchor": str(anchor or ""),
+            "updated_at": _utc_now_iso(),
+        }, "updated_at": _utc_now_iso()})
+    _notify()
+
+
 def add_run_to_session(session_id: str, run_id: str) -> None:
     """Append a run_id to a session context's message_ids (idempotent)."""
     with db.transaction() as conn:

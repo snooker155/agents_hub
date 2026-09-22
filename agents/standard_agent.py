@@ -123,6 +123,22 @@ class StandardAgent(AgentBase):
             output = strip_think_tags(output)
         return parse_agent_response(output or "")
 
+    @staticmethod
+    def _executor_input(instruction: str, history: Any = None) -> dict:
+        """The executor payload for one run.
+
+        ``history`` is the conversation before this turn as LangChain messages
+        (HumanMessage / AIMessage; tool messages are never replayed). It fills
+        the prompt's ``chat_history`` placeholder, so the model reads prior turns
+        as a conversation instead of as text folded into this turn's message.
+        Callers with no history (task runs, evals, delegation) pass none and the
+        payload is what it always was.
+        """
+        payload: dict = {"input": instruction}
+        if history:
+            payload["chat_history"] = list(history)
+        return payload
+
     def _context_window_guard(self) -> Optional[ContextWindowGuard]:
         """Build a context-window guard for this agent's model, or None when the
         window is unknown (no reliable limit to enforce)."""
@@ -136,7 +152,11 @@ class StandardAgent(AgentBase):
         return None
 
     def run(self, instruction: str, **kwargs) -> AgentResult:
-        """Execute the agent."""
+        """Execute the agent.
+
+        ``history`` (keyword) carries the conversation before this turn as
+        LangChain messages; see :meth:`_executor_input`.
+        """
         guard = ToolRepetitionGuard(max_repeats=self.max_tool_repeats)
         try:
             workspace = kwargs.get("workspace", self.workspace)
@@ -159,7 +179,8 @@ class StandardAgent(AgentBase):
                 callbacks.append(extra_callbacks)
 
             config = {"callbacks": callbacks} if callbacks else None
-            result = self.executor.invoke({"input": instruction}, config=config)
+            result = self.executor.invoke(
+                self._executor_input(instruction, kwargs.get("history")), config=config)
 
             output = result.get("output", "") if isinstance(result, dict) else str(result)
             clean_text, response_obj = self._finalize_output(output)
@@ -189,7 +210,10 @@ class StandardAgent(AgentBase):
             )
 
     async def arun(self, instruction: str, **kwargs) -> AgentResult:
-        """Execute the agent asynchronously using ainvoke (no threads required)."""
+        """Execute the agent asynchronously using ainvoke (no threads required).
+
+        Takes the same ``history`` keyword as :meth:`run`.
+        """
         import asyncio
         guard = ToolRepetitionGuard(max_repeats=self.max_tool_repeats)
         try:
@@ -198,7 +222,8 @@ class StandardAgent(AgentBase):
             if ctx_guard:
                 callbacks.append(ctx_guard)
             config = {"callbacks": callbacks} if callbacks else None
-            result = await self.executor.ainvoke({"input": instruction}, config=config)
+            result = await self.executor.ainvoke(
+                self._executor_input(instruction, kwargs.get("history")), config=config)
             output = result.get("output", "") if isinstance(result, dict) else str(result)
             clean_text, response_obj = self._finalize_output(output)
             return AgentResult(ok=True, status="done", agent_output=clean_text,

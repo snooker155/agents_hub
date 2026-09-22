@@ -30,9 +30,11 @@ from chat.models import ChatRequest
 from common.session_service import get_or_create_chat_session
 from common import artifact_sink, entity_sink as entity_sink_mod, stream_sink
 
+from .compaction import compact_for_turn, compaction_event
 from .context import (
     build_chat_context,
     build_history_lines,
+    build_history_messages,
     context_block_lines,
     resolve_workspace_abs,
     apply_workspace_ctx,
@@ -66,12 +68,16 @@ async def _run_chat_pipeline(request: ChatRequest):
     Yielded event shapes:
     - {"type": "meta", "run_id", "session_id"}
     - callback events: token / thinking / tool_start / tool_end / tool_error / usage / error
+    - {"type": "compaction", "folded", "summary_chars", ...} when the conversation
+      was folded into a summary before the turn ran
     - {"type": "done", "ok", "response", "error", "run_id", "session_id", "usage", "tool_calls", "duration_ms", "entities"}
     """
     validate_chat_request(request)
     materialize_attachments(request)
     resolve_references(request)
     full_prompt, workspace_abs = build_chat_context(request)
+    # Prior turns travel as messages, not as text in front of this one.
+    history_messages = build_history_messages(request.history)
     run_id, msg_id, log_file, log_lines, session_id = create_chat_run(request)
 
     apply_workspace_ctx(request, workspace_abs)
@@ -114,7 +120,35 @@ async def _run_chat_pipeline(request: ChatRequest):
         # Persist the model/provider actually used for this run so the message
         # record reflects what ran, not the current default at view time.
         update_run(run_id, {"provider": agent.provider or "", "model": agent.model or ""})
-        return await agent.arun(full_prompt, callbacks=[callback])
+
+        async def _compact(force: bool):
+            # Summarising is an LLM call of its own; keep it off the event loop
+            # the way the agent build already is.
+            compaction = await asyncio.to_thread(
+                compact_for_turn,
+                agent=agent, history=history_messages,
+                system_prompt=getattr(agent, "system_prompt", "") or "", session_id=session_id,
+                force=force,
+            )
+            if compaction.folded:
+                # The UI has nothing for this event yet; it is emitted now so the
+                # turn that folded a conversation is visible when it does.
+                callback.emit_external(compaction_event(compaction))
+            return compaction
+
+        compaction = await _compact(False)
+        result = await agent.arun(full_prompt, history=compaction.messages,
+                                  callbacks=[callback])
+
+        # The provider is the last word on what fits: when it says the turn was
+        # too long anyway, fold the history and run the turn once more rather
+        # than handing the user an error they can only answer by clearing the chat.
+        if not result.ok and error_code(result.error or ""):
+            retry = await _compact(True)
+            if retry.folded:
+                result = await agent.arun(full_prompt, history=retry.messages,
+                                          callbacks=[callback])
+        return result
 
     # Install the artifact recorder so filesystem tools report file changes as
     # diffs through this run's callback. create_task copies the current context,
@@ -331,8 +365,9 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
     # build_chat_context. Only root nodes (no predecessor output) receive the
     # history + latest user message; downstream nodes work from predecessor
     # output (handled by the engine's build_agent_input, which the chat builder
-    # below wraps).
-    history_lines = build_history_lines(request.history)
+    # below wraps). The history goes to a root node as messages, the same way
+    # single-agent chat sends it.
+    history_messages = build_history_messages(request.history)
     context_lines = context_block_lines(request)
     user_message = request.message
     # Project scope preamble (same text as single-agent chat); prepended to root
@@ -358,7 +393,7 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
     driver, state = build_chat_driver(
         request=request, flow=flow, conv_id=conv_id, session_id=session_id,
         flow_name=flow_name, session_title=session_title, workspace_abs=workspace_abs,
-        history_lines=history_lines, context_lines=context_lines,
+        history_messages=history_messages, context_lines=context_lines,
         user_message=user_message, log_flow=_log_flow, project_note=proj_note,
     )
     node_meta = state.node_meta

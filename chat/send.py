@@ -22,7 +22,13 @@ from agents.agent_factory import create_agent
 from managers.run_manager import update_run, get_run_by_id as get_run
 
 from chat.models import ChatRequest
-from chat.context import build_chat_context, apply_workspace_ctx
+from chat.compaction import compact_for_turn
+from chat.context import (
+    apply_workspace_ctx,
+    build_chat_context,
+    build_history_messages,
+)
+from chat.errors import error_code
 from chat.attachments import materialize_attachments
 from chat.references import resolve_references
 from chat.runs import (
@@ -63,7 +69,8 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
     materialize_attachments(request)
     resolve_references(request)
     full_prompt, workspace_abs = build_chat_context(request)
-    run_id, _, log_file, log_lines, __ = create_chat_run(request)
+    history_messages = build_history_messages(request.history)
+    run_id, _, log_file, log_lines, session_id = create_chat_run(request)
 
     # Propagate workspace to agent tools (e.g. list_tasks) via a context var
     # that is thread-safe and copied into asyncio.to_thread's execution context.
@@ -100,10 +107,38 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
         # Persist the model/provider actually used for this run so the message
         # record reflects what ran, not the current default at view time.
         update_run(run_id, {"provider": agent.provider or "", "model": agent.model or ""})
-        return invoke_agent(
-            agent, full_prompt, run_id=run_id, catch_exceptions=False,
-            extra_callbacks=[RunStopCallback(run_id)],
-        ).result
+
+        def _invoke(history):
+            return invoke_agent(
+                agent, full_prompt, history=history, run_id=run_id,
+                catch_exceptions=False, extra_callbacks=[RunStopCallback(run_id)],
+            ).result
+
+        compaction = compact_for_turn(
+            agent=agent, history=history_messages,
+            system_prompt=getattr(agent, "system_prompt", "") or "", session_id=session_id,
+        )
+        if compaction.folded:
+            # Appended rather than written past: every later write rebuilds the
+            # file from this list, so a line that is not in it is lost.
+            log_lines.append(
+                f"[compaction] folded={compaction.folded} "
+                f"summary_chars={len(compaction.summary)}")
+            _write_log(log_file, log_lines)
+        result = _invoke(compaction.messages)
+
+        # The provider is the last word on what fits: when it says the turn was
+        # too long anyway, fold the history and try the turn once more rather
+        # than handing the user an error they can only answer by clearing the chat.
+        if not getattr(result, "ok", False) and error_code(getattr(result, "error", "") or ""):
+            compaction = compact_for_turn(
+                agent=agent, history=history_messages,
+                system_prompt=getattr(agent, "system_prompt", "") or "", session_id=session_id,
+                force=True,
+            )
+            if compaction.folded:
+                result = _invoke(compaction.messages)
+        return result
 
     from common.config import settings as _cfg
     chat_timeout = max(_cfg.chat_request_timeout, _cfg.llm_request_timeout + 60)

@@ -34,7 +34,6 @@ from managers.run_manager import (
 from common import artifact_sink, entity_sink as entity_sink_mod
 
 from chat.models import ChatRequest
-from chat.context import history_block_lines
 from chat.runs import utc_iso
 from chat.streaming import StreamDriveResult, drive_streaming_run
 
@@ -50,6 +49,9 @@ class ChatFlowState:
     run id (used as the final ``done`` event's run_id)."""
     node_meta: Dict[str, dict] = field(default_factory=dict)
     last_run_id: Optional[str] = None
+    #: node_id → the conversation messages that node runs with. Only a root node
+    #: has one: downstream nodes answer their predecessor, not the user.
+    node_history: Dict[str, list] = field(default_factory=dict)
 
 
 def build_chat_driver(
@@ -61,7 +63,7 @@ def build_chat_driver(
     flow_name: str,
     session_title: str,
     workspace_abs: Optional[str],
-    history_lines: list,
+    history_messages: list,
     context_lines: list,
     user_message: str,
     log_flow: Callable[[dict], None],
@@ -78,10 +80,9 @@ def build_chat_driver(
     node_meta = state.node_meta
 
     def _chat_prompt(shared, node, node_id, predecessors, node_outputs, flow_state, node_task):
-        """Root nodes get history + latest user message + the attached context
-        blocks (entities and files); downstream nodes get the engine's
-        predecessor/state block. Preserves the prior chat prompt layout while
-        letting FlowState slices flow through."""
+        """Root nodes get the latest user message + the attached context blocks
+        (entities and files), with the conversation itself carried alongside as
+        messages; downstream nodes get the engine's predecessor/state block."""
         has_pred = any(pid in node_outputs for pid in predecessors.get(node_id, []))
         # Project scope preamble leads every node prompt (root and downstream) so
         # each agent knows its file/task tools are confined to the project.
@@ -90,8 +91,10 @@ def build_chat_driver(
             base = build_agent_input(shared, node, node_id, predecessors, node_outputs, flow_state, node_task)
             parts.append(base)
         else:
-            parts += list(history_block_lines(history_lines))
-            parts += ["Latest user message:", user_message]
+            # A root node answers the user, so it gets the conversation — as
+            # messages, next to this turn's text, not folded into it.
+            state.node_history[node_id] = list(history_messages)
+            parts += [user_message]
             # Still surface any declared input-state slice for root nodes.
             state_block = build_agent_input("", node, node_id, predecessors, {}, flow_state, "")
             if state_block.strip():
@@ -195,7 +198,8 @@ def build_chat_driver(
                 create_agent, yaml_agent_id, workspace=workspace_abs, streaming=True
             )
             callback.bind_model(agent.provider or "", agent.model or "")
-            return await agent.arun(prompt, callbacks=[callback])
+            return await agent.arun(prompt, history=state.node_history.get(node_id),
+                                    callbacks=[callback])
 
         # Per-node artifact recorder so each node's file changes are attributed to
         # its own run. create_task copies the context, so set→create→reset here.

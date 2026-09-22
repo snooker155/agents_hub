@@ -489,7 +489,7 @@ def _drain_instance_inbox(node_id: str, agent_id: str, workspace: str | None) ->
     from agents.agent_factory import create_agent
     from agents.agent_invoke import invoke_agent
     from agents.callbacks import RunStopCallback
-    from chat.context import build_history_lines, history_block_lines
+    from chat.context import build_history_messages
     from managers.run_manager import (
         _update_run, _utc_now_iso, close_run_from_result, open_run, run_log_path,
     )
@@ -500,8 +500,10 @@ def _drain_instance_inbox(node_id: str, agent_id: str, workspace: str | None) ->
     log(f"Instance message for {instance_id[:12]} → run {run_id[:8]}")
 
     try:
-        history_lines = build_history_lines(build_instance_history(instance_id))
-        prompt = "\n".join([*history_block_lines(history_lines), body])
+        # The copy's prior turns travel as messages next to this one, so the
+        # prompt is the message that was written to it and nothing else.
+        history = build_history_messages(build_instance_history(instance_id))
+        prompt = body
 
         open_run(
             run_id, agent_id, pid=os.getpid(), session_id=session_id,
@@ -520,7 +522,8 @@ def _drain_instance_inbox(node_id: str, agent_id: str, workspace: str | None) ->
             lf.write(f"[{_now()}] Instance message run\n")
             lf.write(f"[{_now()}] node_id={node_id} instance_id={instance_id}\n\n")
             lf.write(f"=== MESSAGE ===\n{body}\n\n=== EXECUTION ===\n")
-        invocation = invoke_agent(agent, prompt, extra_callbacks=[stop_cb, *pub_cbs])
+        invocation = invoke_agent(agent, prompt, history=history,
+                                  extra_callbacks=[stop_cb, *pub_cbs])
         result = invocation.result
         for pub in pub_cbs:
             pub.publish_done(result, invocation, stopped=stop_cb.cancelled)

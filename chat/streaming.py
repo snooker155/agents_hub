@@ -162,14 +162,20 @@ async def drive_streaming_run(
     result.duration_ms = duration_ms
     result.usage = usage
     last_struct = getattr(callback, "_last_prompt_struct", None) or {}
-    # The prompt the agent ran on folds prior session turns into one string
-    # (build_chat_context). Recover them as dedicated history blocks so the
-    # stored input context shows the previous user/assistant turns and a clean
-    # latest user message — never the agent's own intra-run loop output ("middle
-    # response tokens"), which lives only in the live bubble and thinking trace.
+    # Prior turns now reach the model as real messages, so the callback's own
+    # split of the prompt (build_prompt_struct) already holds them and the latest
+    # user message is clean. A session recorded before that — history folded into
+    # the prompt text as a "Conversation history:" block — is read back apart
+    # here, so an old run still shows its turns rather than one blob. Either way
+    # the agent's own intra-run loop output ("middle response tokens") stays out:
+    # it belongs to the live bubble and the thinking trace.
     from chat.context import split_embedded_history
     prompt_text = last_struct.get("user_message") or full_prompt
-    history, user_message = split_embedded_history(prompt_text)
+    history = list(last_struct.get("history") or [])
+    if history:
+        user_message = prompt_text
+    else:
+        history, user_message = split_embedded_history(prompt_text)
     structured_response = None
     if response_obj is not None:
         try:

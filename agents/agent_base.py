@@ -9,11 +9,13 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, SerializeAsAny
 
+from langchain_core.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 
 from agents.agent_utils import build_chat_model
 from agents.agent_response import AgentResponse
+from providers.adapters import cacheable_content
 
 
 class ToolResult(BaseModel):
@@ -91,10 +93,43 @@ class AgentBase(ABC):
         # higher ceiling than the default.
         self.max_iterations = max_iterations
         self._executor: Optional[Any] = None
+        # The chat model behind the executor, kept so the effective provider can
+        # be read back when the agent was configured to inherit it.
+        self._llm: Optional[Any] = None
     
+    def effective_provider(self, llm: Any = None) -> str:
+        """The provider actually behind this agent's model, lowercased.
+
+        ``self.provider`` may be empty or ``inherit`` (the global default is
+        resolved inside ``build_chat_model``), so when a built model is at hand
+        its class name settles the question.
+        """
+        provider = (self.provider or "").strip().lower()
+        if provider and provider != "inherit":
+            return provider
+        llm = llm if llm is not None else self._llm
+        name = type(llm).__name__.lower() if llm is not None else ""
+        for known in ("anthropic", "openai", "google", "ollama"):
+            if known in name:
+                return known
+        return provider
+
+    def _system_message(self, llm: Any) -> Any:
+        """The prompt's leading system message.
+
+        A concrete ``SystemMessage`` rather than a template string: the system
+        prompt carries literal ``{`` / ``}`` (JSON examples, slot names, note
+        titles injected from memory) that a template would read as variables,
+        and a fixed message also lets the content be a block list, which is how
+        Anthropic is told the prefix is worth caching.
+        """
+        text = self.system_prompt or ""
+        content = cacheable_content(self.effective_provider(llm), text)
+        return SystemMessage(content=content)
+
     def build_executor(self) -> Any:
         """Build and return the LangChain AgentExecutor."""
-        
+
         llm = build_chat_model(
             provider=self.provider,
             model=self.model,
@@ -105,13 +140,16 @@ class AgentBase(ABC):
             streaming=self.streaming,
             thinking_level=self.thinking_level,
         )
+        self._llm = llm
         
-        # The system prompt may contain literal `{` / `}` (e.g. JSON examples,
-        # slot names, note titles injected from memory). Escape them so
-        # ChatPromptTemplate doesn't try to interpret them as variables.
-        safe_system = (self.system_prompt or "").replace("{", "{{").replace("}", "}}")
         prompt = ChatPromptTemplate.from_messages([
-            ("system", safe_system),
+            self._system_message(llm),
+            # Prior turns travel as real messages rather than as text folded into
+            # the human turn: the model reads them as a conversation, and the
+            # prefix stays byte-identical from turn to turn, which is what a
+            # provider prompt cache keys on. Optional, so a caller that passes no
+            # history (task runs, evals, delegation) invokes exactly as before.
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
             ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
