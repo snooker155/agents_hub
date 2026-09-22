@@ -52,15 +52,24 @@ export default function TelegramConnector() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Poll status every 5s so the running flag and last_poll/last_error stay fresh.
+  // Still a poll, and slower than it was.
+  //
+  // There is no live event to subscribe to here: the backend publishes
+  // `<resource>.changed` for tasks, runs, nodes, agents, flows, loops, teams
+  // and the playground, but the Telegram poller's liveness (running,
+  // last_poll, last_error) is not among them — a `telegram.changed`
+  // notification from the poller's own loop is what this would subscribe to if
+  // it existed. Until then this reads the status every 30 seconds instead of
+  // every 5: a connector's health is something you glance at, not something
+  // you watch, and a save already refreshes it outright.
   useEffect(() => {
     const id = setInterval(async () => {
       try {
         const { data } = await getTelegramStatus();
         setStatus(data);
         setConfig((c) => ({ ...c, running: data.running, bot_username: data.bot_username }));
-      } catch { /* a failed poll just waits for the next tick */ }
-    }, 5000);
+      } catch { /* a failed read just waits for the next one */ }
+    }, 30000);
     return () => clearInterval(id);
   }, []);
 

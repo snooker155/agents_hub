@@ -14,7 +14,7 @@ import EntityChat from '../components/EntityChat';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import { useWorkspace } from '../components/workspace';
-import { useChannel } from '../components/stream';
+import { useChannel, useLiveRefetch, useStream } from '../components/stream';
 import {
   MODE_BADGE, modeHelp, modeLabel, modeOptions, STATUS_STYLES, isLive,
 } from '../components/teamModes';
@@ -290,24 +290,50 @@ export default function TeamDetails() {
     }
   });
 
-  useEffect(() => {
-    if (!run?.team_run_id || !isLive(run.status)) return undefined;
-    const timer = setInterval(async () => {
-      try {
-        const since = messages.length ? messages[messages.length - 1].seq : 0;
-        const { data } = await getTeamMessages(run.team_run_id, since);
-        if (data.messages?.length) {
-          setMessages((prev) => {
-            const seen = new Set(prev.map((m) => m.seq));
-            return [...prev, ...data.messages.filter((m) => !seen.has(m.seq))];
-          });
-        }
-        setRun((prev) => ({ ...prev, ...data }));
-        if (!isLive(data.status)) loadRuns();
-      } catch { /* transient */ }
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [run?.team_run_id, run?.status, messages, loadRuns]);
+  // Read by the catch-up below, which must not be rebuilt every time a message
+  // lands: on a busy board that would restart the safety net continuously.
+  const messagesRef = useRef([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  // Board catch-up, replacing what used to be a 3-second poll.
+  //
+  // The board itself arrives on the `team:<run_id>` channel subscribed above,
+  // and `team_runs.changed` (teams/store.py `_notify`) fires when a run starts,
+  // finishes or is stopped — which is what makes the status shown here go
+  // stale. Individual board messages have no app-channel event of their own, so
+  // `fallbackMs` keeps a 30-second floor under them: enough that a dropped
+  // channel costs a delay rather than a frozen page, slow enough that it is not
+  // a poll.
+  const catchUpBoard = useCallback(async () => {
+    const runId = run?.team_run_id;
+    if (!runId) return;
+    try {
+      const seen = messagesRef.current;
+      const since = seen.length ? seen[seen.length - 1].seq : 0;
+      const { data } = await getTeamMessages(runId, since);
+      if (data.messages?.length) {
+        setMessages((prev) => {
+          const known = new Set(prev.map((m) => m.seq));
+          return [...prev, ...data.messages.filter((m) => !known.has(m.seq))];
+        });
+      }
+      setRun((prev) => ({ ...prev, ...data }));
+      if (!isLive(data.status)) loadRuns();
+    } catch { /* transient */ }
+  }, [run?.team_run_id, loadRuns]);
+
+  useLiveRefetch(catchUpBoard, {
+    type: 'team_runs.changed',
+    enabled: Boolean(run?.team_run_id) && isLive(run?.status),
+    fallbackMs: 30000,
+  });
+
+  // A reconnect that could not resume, or events dropped because this tab fell
+  // behind, leaves the board and the run list holding whatever they had. Both
+  // are derived state this page keeps itself, so both are reloaded outright.
+  const { onRefetch } = useStream();
+  useEffect(() => onRefetch(() => { loadRuns(); catchUpBoard(); }),
+    [onRefetch, loadRuns, catchUpBoard]);
 
   useEffect(() => {
     boardEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });

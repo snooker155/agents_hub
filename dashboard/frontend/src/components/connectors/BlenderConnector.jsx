@@ -64,9 +64,16 @@ export default function BlenderConnector() {
   }, []);
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
+  // Still a poll, and slower than it was.
+  //
+  // There is no live event to subscribe to here: the daemon registry is
+  // cross-process and nothing publishes a `<resource>.changed` for it, so
+  // there is no `blender_daemons.changed` for this to follow. The engines list
+  // is refreshed every 30 seconds rather than every 5, and the buttons on this
+  // card reload it themselves, so an action's result is immediate either way.
   useEffect(() => {
     loadDaemons();
-    const timer = setInterval(loadDaemons, 5000);
+    const timer = setInterval(loadDaemons, 30000);
     return () => clearInterval(timer);
   }, [loadDaemons]);
 

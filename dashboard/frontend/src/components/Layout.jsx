@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useWorkspace } from './workspace';
 import { useTheme } from './theme';
 import { useStream, useLiveRefetch } from './stream';
+import { useFeatures } from './features';
 import { getWorkspaces, getWorkspaceModel, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import {
   LayoutDashboard,
@@ -80,6 +81,9 @@ const Layout = ({ children }) => {
   const navigate = useNavigate();
   const { selectedWorkspace, setSelectedWorkspace, liveUpdates, toggleLiveUpdates } = useWorkspace();
   const { theme, setTheme } = useTheme();
+  // Optional features the backend reports at /api/health; a feature that is
+  // switched off has no sidebar row and no route (see App.jsx).
+  const { playground: playgroundEnabled } = useFeatures();
   const { t } = useI18n();
   const [workspaces, setWorkspaces] = useState([]);
   // workspaceModel: full model state returned by GET /api/workspaces/{name}/model
@@ -339,8 +343,8 @@ const Layout = ({ children }) => {
         { name: t('nav.memory'), path: '/memory', icon: Database },
         { name: t('nav.webLogs'), path: '/web-logs', icon: Globe },
         { name: t('nav.evals'), path: '/evals', icon: FlaskConical },
-        { name: t('nav.playground'), path: '/playground', icon: Gamepad2 },
-      ],
+        playgroundEnabled && { name: t('nav.playground'), path: '/playground', icon: Gamepad2 },
+      ].filter(Boolean),
     },
     {
       label: t('nav.groups.system'),

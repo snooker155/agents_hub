@@ -17,7 +17,7 @@ import InPanelNote from '../components/pageChat/InPanelNote';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useWorkspace } from '../components/workspace';
 import { useToast } from '../components/toast';
-import { useChannel } from '../components/stream';
+import { useChannel, useLiveRefetch, useStream } from '../components/stream';
 import WorldView from './playground/renderers';
 import { Combo } from './playground/combo';
 import { ScenarioTranscript, EventFeed } from './playground/transcript';
@@ -175,7 +175,6 @@ export default function PlaygroundScenario() {
   const [refreshing, setRefreshing] = useState(false);
   const [estimate, setEstimate] = useState(null);
   const [message, setMessage] = useState('');
-  const pollRef = useRef(null);
   // The build chat's send(), handed over by whichever EntityChat is mounted —
   // the sidebar tab or the floating panel. It is what lets a button on the page
   // ask the builder for something instead of making the user type it.
@@ -372,38 +371,56 @@ export default function PlaygroundScenario() {
     }
   });
 
-  // Read by the poll below, which must not be torn down and restarted every
-  // time a tick lands: on a world that ticks faster than the interval, an
-  // effect that depends on `ticks` never gets to fire at all.
+  // Read by the catch-up below, which must not be torn down and rebuilt every
+  // time a tick lands: on a world that ticks fast, a callback that depends on
+  // `ticks` would be replaced faster than it is ever called.
   const ticksRef = useRef([]);
   useEffect(() => { ticksRef.current = ticks; }, [ticks]);
 
-  useEffect(() => {
-    if (!run?.sim_run_id) return undefined;
-    if (!isLiveStatus(run.status)) return undefined;
-    pollRef.current = setInterval(async () => {
-      try {
-        const seen = ticksRef.current;
-        const since = seen.length ? seen[seen.length - 1].tick : -1;
-        const { data } = await getSimTicks(run.sim_run_id, since);
-        if (data.ticks?.length) {
-          setTicks((prev) => [...prev, ...data.ticks].sort((a, b) => a.tick - b.tick));
-          // A tick that arrived by poll rather than on the stream still ends
-          // every turn it contains: otherwise a dropped connection leaves
-          // bubbles spinning for agents that finished long ago.
-          const newest = data.ticks[data.ticks.length - 1].tick;
-          setInFlight((prev) => prev.filter((d) => d.tick > newest));
-          setActivity((prev) => prev.filter((a) => a.tick > newest));
-        }
-        // Without the tick list: `data.ticks` is only what arrived since the
-        // last poll, and folding it into the run would leave a `ticks` field
-        // on it that disagrees with the page's own.
-        const { ticks: _polled, ...meta } = data;
-        setRun((prev) => ({ ...prev, ...meta }));
-      } catch { /* transient */ }
-    }, 2500);
-    return () => clearInterval(pollRef.current);
-  }, [run?.sim_run_id, run?.status]);
+  // Tick catch-up, replacing what used to be a 2.5-second poll.
+  //
+  // Ticks themselves arrive on the `sim:<run_id>` channel subscribed above.
+  // On the app channel, `sim_runs.changed` (playground/store.py `_notify`)
+  // fires when a run starts, is stopped or ends — and deliberately NOT per
+  // tick: that file's own comment calls invalidating the catalogue once a
+  // second a refetch storm for a badge. So there is no per-tick notification
+  // to subscribe to, and `fallbackMs` carries that gap at a 30-second floor:
+  // a dropped channel costs a delay, not a frozen stage.
+  const catchUpTicks = useCallback(async () => {
+    const runId = run?.sim_run_id;
+    if (!runId) return;
+    try {
+      const seen = ticksRef.current;
+      const since = seen.length ? seen[seen.length - 1].tick : -1;
+      const { data } = await getSimTicks(runId, since);
+      if (data.ticks?.length) {
+        setTicks((prev) => [...prev, ...data.ticks].sort((a, b) => a.tick - b.tick));
+        // A tick that arrived this way rather than on the stream still ends
+        // every turn it contains: otherwise a dropped connection leaves
+        // bubbles spinning for agents that finished long ago.
+        const newest = data.ticks[data.ticks.length - 1].tick;
+        setInFlight((prev) => prev.filter((d) => d.tick > newest));
+        setActivity((prev) => prev.filter((a) => a.tick > newest));
+      }
+      // Without the tick list: `data.ticks` is only what arrived since the
+      // last read, and folding it into the run would leave a `ticks` field on
+      // it that disagrees with the page's own.
+      const { ticks: _fetched, ...meta } = data;
+      setRun((prev) => ({ ...prev, ...meta }));
+    } catch { /* transient */ }
+  }, [run?.sim_run_id]);
+
+  useLiveRefetch(catchUpTicks, {
+    type: 'sim_runs.changed',
+    enabled: Boolean(run?.sim_run_id) && isLiveStatus(run?.status),
+    fallbackMs: 30000,
+  });
+
+  // A reconnect that could not resume, or events dropped because this tab fell
+  // behind, leaves the stage and the run list holding whatever they had.
+  const { onRefetch } = useStream();
+  useEffect(() => onRefetch(() => { catchUpTicks(); refreshRuns(); }),
+    [onRefetch, catchUpTicks, refreshRuns]);
 
   // Following pins the scrubber to the newest tick until the user scrubs back.
   useEffect(() => {
