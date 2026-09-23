@@ -1,6 +1,10 @@
 """Alert rules: notifications a workspace raises on its own, without an
 agent or a person asking for one.
 
+Kinds: ``run_failed``, ``spend_run_over``, ``spend_daily_over`` fire on the
+spot; ``online_eval`` only queues a sampled run for grading, and the grading
+loop in ``evals/online.py`` fires it later when the score is too low.
+
 Evaluated from a single call site, :func:`evaluate_run_finished`, invoked by
 ``managers/runs/notifications.py`` at the chokepoint that already announces a
 run's terminal status. Delivery itself is not this module's job: firing a
@@ -104,6 +108,19 @@ def _evaluate_spend_daily_over(workspace: str, rule: Dict[str, Any], now: dateti
     notify_store.update_rule(workspace, str(rule.get("id")), {"last_fired_date": today})
 
 
+def _evaluate_online_eval(workspace: str, rule: Dict[str, Any], run: Dict[str, Any]) -> None:
+    """Queue the run for grading when the rule samples it. Only a row is
+    written here; the graders run later on the ``online_evals`` loop
+    (``evals/online.py``), and that loop is what calls :func:`_fire` when the
+    score is below the rule's ``min_score``."""
+    try:
+        from evals.online import maybe_enqueue
+
+        maybe_enqueue(workspace, rule, run)
+    except Exception:
+        log.debug("notify.rules: could not queue an online eval", exc_info=True)
+
+
 def evaluate_run_finished(run: Dict[str, Any]) -> None:
     """Check every enabled alert rule in a finished run's workspace.
 
@@ -127,5 +144,7 @@ def evaluate_run_finished(run: Dict[str, Any]) -> None:
                 _evaluate_spend_run_over(workspace, rule, run)
             elif kind == "spend_daily_over":
                 _evaluate_spend_daily_over(workspace, rule, now)
+            elif kind == "online_eval":
+                _evaluate_online_eval(workspace, rule, run)
     except Exception:
         log.debug("notify.rules: evaluation failed", exc_info=True)

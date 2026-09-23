@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 # effects are unknown here.
 
 NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
-    "run_shell", "git_publish", "git_commit", "git_push",
+    "run_shell", "run_code", "browser_act", "git_publish", "git_commit", "git_push",
     "write_file", "delete_file", "apply_unified_diff", "create_file", "move_file",
     "create_task", "add_subtask", "update_task", "set_task_dependencies",
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow",
@@ -84,6 +84,11 @@ CAPABILITY_LABELS: Dict[str, str] = {
 CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # ── execution: the whole trifecta in one tool ────────────────────────────
     "run_shell": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE, CAN_EXFILTRATE}),
+    # run_code's real grant depends on configuration and is answered by
+    # ``run_code_grants`` below: reads_private only in a no-network container,
+    # the whole trifecta when CODE_RUNNER_FALLBACK=local. This entry is the
+    # worst case, which is what a static reading of the table should see.
+    "run_code": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE, CAN_EXFILTRATE}),
 
     # ── filesystem reads ─────────────────────────────────────────────────────
     "read_file": frozenset({READS_PRIVATE}),
@@ -125,6 +130,16 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # a stolen secret can leave in the URL itself. Ingest and exfiltrate in one
     # tool, which is why it is the second, more restricted grant.
     "fetch_url": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
+    # The browser tools (tools/browser.py) are fetch_url with a real browser
+    # behind it, and carry the same claim. Opening a page sends the URL;
+    # reading returns page text; acting can type agent-chosen text into a
+    # form on a site the agent picked, and returns the page title; a
+    # screenshot is page content written into the workspace. browser_close
+    # moves no data and grants nothing (REVIEWED_NO_GRANT).
+    "browser_open": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
+    "browser_read": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
+    "browser_act": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
+    "browser_screenshot": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
 
     # ── evals ────────────────────────────────────────────────────────────────
     # A case carries operator-written input and the reference answer; a result
@@ -366,6 +381,10 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # neither private data nor untrusted input.
     "search_docs", "read_doc",
 
+    # ── browser ───────────────────────────────────────────────────────────────
+    # Ends this run's browser session; nothing is read or sent.
+    "browser_close",
+
     # ── service ops: pure metadata and destructive actions ───────────────────
     # service_health, list_containers, list_nodes and costs_summary are counts,
     # statuses and totals, not content. stop_run, stop_node, restart_node,
@@ -476,6 +495,32 @@ def mcp_grants(tool_id: str) -> Optional[FrozenSet[str]]:
             "— treating it as granting nothing.", server,
         )
         return frozenset()
+
+
+# ── Configuration-dependent grants ────────────────────────────────────────────
+#
+# run_code (tools/run_code.py) runs a snippet in a container with no network
+# and at most a read-only workspace mount: it can read private files but has
+# no way in for untrusted text and no way out. With CODE_RUNNER_FALLBACK=local
+# the same snippet runs as a host subprocess with the network and the host's
+# filesystem, which is run_shell's whole trifecta. The claim follows the
+# setting, looked up lazily the way ``mcp_grants`` reads a server's
+# configuration, and fails closed: if the setting cannot be read, the worst
+# case applies.
+
+_RUN_CODE_SANDBOXED: FrozenSet[str] = frozenset({READS_PRIVATE})
+
+
+def run_code_grants() -> FrozenSet[str]:
+    """What ``run_code`` grants under the current configuration."""
+    try:
+        from common.config import settings
+        fallback = str(getattr(settings, "code_runner_fallback", "") or "").strip().lower()
+    except Exception:
+        return CAPABILITY_GRANTS["run_code"]
+    if fallback == "local":
+        return CAPABILITY_GRANTS["run_code"]
+    return _RUN_CODE_SANDBOXED
 
 
 # ── Delegation ────────────────────────────────────────────────────────────────
@@ -858,6 +903,8 @@ def grants_of(tool_id: str) -> FrozenSet[str]:
     nothing — but is logged, because silently granting nothing to a typo'd or
     newly-added tool is how a guard fails open.
     """
+    if tool_id == "run_code":
+        return run_code_grants()
     if tool_id in CAPABILITY_GRANTS:
         return CAPABILITY_GRANTS[tool_id]
     if tool_id in CAPABILITY_GRANTS_EXTRA:
@@ -987,4 +1034,5 @@ __all__ = [
     "effective_capabilities", "effective_capability_sources",
     "check_effective_combination",
     "SECRET_GRANT_PREFIX", "secret_grant_ids",
+    "run_code_grants",
 ]

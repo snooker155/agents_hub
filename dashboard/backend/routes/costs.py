@@ -37,6 +37,22 @@ def _in_range(ts: str, since: Optional[str], until: Optional[str]) -> bool:
     return True
 
 
+def _run_cost(run: dict, prices) -> float:
+    """A run's spend: its own reported cost when it has one, catalog pricing
+    otherwise.
+
+    A remote agent (``agents.remote_agent``) may credit ``reported_cost_usd``
+    onto the run record when the service it wraps prices its own call: a CLI
+    such as Claude Code prints ``total_cost_usd`` and that figure is exact,
+    where pricing token counts against this hub's catalog is an estimate and
+    reads as zero for a model the catalog does not list at all.
+    """
+    reported = run.get("reported_cost_usd")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+        return float(reported)
+    return run_cost_usd(run, prices)
+
+
 @router.get("")
 async def get_costs(
     workspace: Optional[str] = None,
@@ -106,7 +122,7 @@ async def get_costs(
 
         inbound, outbound = run_tokens(r)
         cached = max(0, min(run_cached_tokens(r), inbound))
-        cost = run_cost_usd(r, prices)
+        cost = _run_cost(r, prices)
 
         agent_id = (r.get("agent_id") or "").strip() or "(unknown)"
         model = (r.get("model") or "").strip() or "(untracked)"

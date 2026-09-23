@@ -29,7 +29,6 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 from rich.panel import Panel
-from rich.text import Text
 
 # The checkout that holds this package: <repo>/cli/main.py. Resolve the
 # service's modules before anything below imports them, so the CLI runs from any
@@ -55,11 +54,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-agent_app = typer.Typer(help="Agent management commands.", no_args_is_help=True)
-task_app = typer.Typer(help="Task management commands.", no_args_is_help=True)
-workspace_app = typer.Typer(help="Workspace management commands.", no_args_is_help=True)
-node_app = typer.Typer(help="Node management commands.", no_args_is_help=True)
-project_app = typer.Typer(help="Project management commands.", no_args_is_help=True)
 server_app = typer.Typer(help="Backend server commands.", no_args_is_help=True)
 db_app = typer.Typer(help="Database commands: which backend is in use, moving state between backends.",
                      no_args_is_help=True)
@@ -69,14 +63,14 @@ auth_keys_app = typer.Typer(help="Personal API keys: list, create, revoke (docs/
                             no_args_is_help=True)
 auth_app.add_typer(auth_keys_app, name="keys")
 
-app.add_typer(agent_app, name="agent")
-app.add_typer(task_app, name="task")
-app.add_typer(workspace_app, name="workspace")
-app.add_typer(project_app, name="project")
-app.add_typer(node_app, name="node")
 app.add_typer(server_app, name="server")
 app.add_typer(auth_app, name="auth")
 app.add_typer(db_app, name="db")
+
+# agent/task/workspace/project/node (cli/commands/), flow/loop/team/eval/mcp/user
+# (also cli/commands/), the `api` escape hatch and the OpenAPI-generated groups
+# (cli/openapi.py) are registered at the bottom of this file, once every helper
+# they import from here (hub, call, console, the selection functions) exists.
 
 console = Console()
 
@@ -867,397 +861,12 @@ def up(
 
 
 # ---------------------------------------------------------------------------
-# agent commands
+# agent / task / workspace / project / node commands
 # ---------------------------------------------------------------------------
-
-
-@agent_app.command("list")
-def agent_list(
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Defaults to the selected workspace."),
-):
-    """List all available agents."""
-    workspace = _active_workspace(workspace)
-    agents = call(hub().list_agents, workspace)
-
-    table = Table(title="Agents", box=box.ROUNDED, show_lines=False)
-    table.add_column("ID", style="bold cyan", no_wrap=True)
-    table.add_column("Name")
-    table.add_column("Domain")
-    table.add_column("Type")
-
-    for a in agents:
-        table.add_row(
-            a.get("id", ""),
-            a.get("name", ""),
-            a.get("domain", ""),
-            a.get("type", ""),
-        )
-
-    console.print(table)
-    console.print(f"[dim]{len(agents)} agent(s)[/dim]")
-
-
-@agent_app.command("get")
-def agent_get(agent_id: str = typer.Argument(..., help="Agent ID.")):
-    """Show details for a specific agent."""
-    a = call(hub().get_agent, agent_id)
-
-    console.print(Panel(
-        "\n".join([
-            f"[bold]ID:[/bold]          {a.get('id')}",
-            f"[bold]Name:[/bold]        {a.get('name')}",
-            f"[bold]Domain:[/bold]      {a.get('domain', '-')}",
-            f"[bold]Type:[/bold]        {a.get('type', '-')}",
-            f"[bold]Description:[/bold] {a.get('description', '-')}",
-            f"[bold]Capacity:[/bold]    {a.get('capacity', '-')}",
-            f"[bold]Memory:[/bold]      {a.get('memory_type', '-')}",
-            f"[bold]Tools:[/bold]       {', '.join(a.get('tools') or []) or '-'}",
-        ]),
-        title=f"Agent — {a.get('id')}",
-        border_style="cyan",
-    ))
-
-
-@agent_app.command("run")
-def agent_run(
-    agent_id: str = typer.Argument(..., help="Agent ID."),
-    instruction: str = typer.Argument(..., help="Instruction / prompt for the agent."),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
-):
-    """Run an agent with a one-shot instruction."""
-    # No node is started: /api/chat/message builds the agent and runs it inside
-    # the server process. A node would be a second, idle copy of the agent.
-    workspace = _active_workspace(workspace)
-    body: dict = {
-        "agent_id": agent_id,
-        "message": instruction,
-        "history": [],
-        # Recorded as the run's message_origin, so these show up as CLI runs
-        # rather than web-chat runs in Sessions and Messages.
-        "source": "cli",
-    }
-    if workspace:
-        body["workspace"] = workspace
-    project = _active_project()
-    if project:
-        body["project_id"] = project
-
-    console.print(f"[bold]Running agent:[/bold] {agent_id}")
-    console.rule()
-    result = call(hub().send_message, body)
-    console.print(result.get("response", result))
-
-
-# ---------------------------------------------------------------------------
-# task commands
-# ---------------------------------------------------------------------------
-
-
-@task_app.command("list")
-def task_list(
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Defaults to the selected workspace."),
-    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status."),
-):
-    """List all tasks."""
-    workspace = _active_workspace(workspace)
-    params = {}
-    if workspace:
-        params["workspace"] = workspace
-    tasks = call(hub().list_tasks, workspace)
-
-    if status:
-        tasks = [t for t in tasks if t.get("status") == status]
-
-    table = Table(title="Tasks", box=box.ROUNDED)
-    table.add_column("ID", style="dim", no_wrap=True, max_width=10)
-    table.add_column("Title")
-    table.add_column("Status", no_wrap=True)
-    table.add_column("Agent")
-    table.add_column("Workspace")
-
-    for t in tasks:
-        tid = str(t.get("id", ""))[:8]
-        s = t.get("status", "")
-        color = _task_color(s)
-        table.add_row(
-            tid,
-            _short(t.get("title"), 45),
-            Text(s, style=color),
-            t.get("assigned_agent") or "",
-            t.get("workspace") or "",
-        )
-
-    console.print(table)
-    console.print(f"[dim]{len(tasks)} task(s)[/dim]")
-
-
-@task_app.command("get")
-def task_get(task_id: str = typer.Argument(..., help="Task ID (full or prefix).")):
-    """Show full details of a task including subtasks."""
-    t = call(hub().get_task, _resolve_task_id(task_id))
-
-    subtasks = t.get("subtasks", [])
-    lines = [
-        f"[bold]ID:[/bold]          {t.get('id')}",
-        f"[bold]Title:[/bold]       {t.get('title')}",
-        f"[bold]Status:[/bold]      [{_task_color(t.get('status', ''))}]{t.get('status')}[/{_task_color(t.get('status', ''))}]",
-        f"[bold]Agent:[/bold]       {t.get('assigned_agent') or '-'}",
-        f"[bold]Workspace:[/bold]   {t.get('workspace') or '-'}",
-        f"[bold]Priority:[/bold]    {t.get('priority') or '-'}",
-        f"[bold]Description:[/bold] {t.get('description') or '-'}",
-    ]
-    if subtasks:
-        lines.append(f"[bold]Subtasks:[/bold]    {len(subtasks)}")
-        for st in subtasks:
-            sc = _task_color(st.get("status", ""))
-            lines.append(f"  • [{sc}]{st.get('status')}[/{sc}]  {_short(st.get('title'), 50)}")
-
-    console.print(Panel("\n".join(lines), title=f"Task — {str(t.get('id', ''))[:8]}", border_style="blue"))
-
-
-@task_app.command("create")
-def task_create(
-    title: str = typer.Argument(..., help="Task title."),
-    description: Optional[str] = typer.Option(None, "--desc", "-d", help="Task description."),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Defaults to the selected workspace."),
-    decompose: bool = typer.Option(False, "--decompose", help="Auto-decompose into subtasks."),
-):
-    """Create a new task."""
-    workspace = _active_workspace(workspace)
-    body: dict = {"title": title}
-    if description:
-        body["description"] = description
-    if workspace:
-        body["workspace_name"] = workspace
-    project = _active_project()
-    if project:
-        body["project_id"] = project
-    if decompose:
-        body["should_decompose"] = True
-
-    t = call(hub().create_task, body)
-    console.print(f"[green]Task created:[/green] [bold]{str(t.get('id', ''))[:8]}[/bold]  {t.get('title')}")
-
-
-@task_app.command("assign")
-def task_assign(
-    task_id: str = typer.Argument(..., help="Task ID (full or prefix)."),
-    agent_id: str = typer.Argument(..., help="Agent ID to assign."),
-):
-    """Assign an agent to a task and start execution.
-
-    Whether the run needs approval first is the workspace's assignment_mode, not
-    a per-call choice; this always assigns directly.
-    """
-    task_id = _resolve_task_id(task_id)
-    result = call(hub().assign_task, task_id, agent_id)
-    console.print(f"[green]Assigned[/green] agent [bold]{agent_id}[/bold] to task [bold]{task_id[:8]}[/bold]")
-    if result.get("run_id"):
-        console.print(f"[dim]Run ID: {result['run_id']}[/dim]")
-
-
-@task_app.command("decompose")
-def task_decompose(
-    task_id: str = typer.Argument(..., help="Task ID to decompose (full or prefix)."),
-):
-    """Break a task down into subtasks using the decomposer agent."""
-    task_id = _resolve_task_id(task_id)
-    result = call(hub().decompose_task, task_id)
-    subtasks = result.get("subtasks", [])
-    console.print(f"[green]Decomposed into {len(subtasks)} subtask(s):[/green]")
-    for st in subtasks:
-        console.print(f"  • {_short(st.get('title', ''), 60)}")
-
-
-@task_app.command("stop")
-def task_stop(task_id: str = typer.Argument(..., help="Task ID to stop (full or prefix).")):
-    """Stop a running task."""
-    task_id = _resolve_task_id(task_id)
-    call(hub().stop_task, task_id)
-    console.print(f"[yellow]Stopped[/yellow] task [bold]{task_id[:8]}[/bold]")
-
-
-@task_app.command("delete")
-def task_delete(
-    task_id: str = typer.Argument(..., help="Task ID to delete (full or prefix)."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
-):
-    """Delete a task."""
-    task_id = _resolve_task_id(task_id)
-    if not yes:
-        typer.confirm(f"Delete task {task_id[:8]}?", abort=True)
-    call(hub().delete_task, task_id)
-    console.print(f"[red]Deleted[/red] task [bold]{task_id[:8]}[/bold]")
-
-
-# ---------------------------------------------------------------------------
-# workspace commands
-# ---------------------------------------------------------------------------
-
-
-@workspace_app.command("list")
-def workspace_list():
-    """List all workspaces."""
-    workspaces = call(hub().list_workspaces)
-    active = _active_workspace()
-
-    table = Table(title="Workspaces", box=box.ROUNDED)
-    table.add_column("", no_wrap=True)           # active marker
-    table.add_column("Name", style="bold cyan")
-    table.add_column("Tasks", justify="right")
-    table.add_column("Location")
-
-    for ws in workspaces:
-        name = ws.get("name", "")
-        # An attached workspace is a link, so show where the real files are;
-        # a plain one lives under the state root and its path says nothing.
-        location = f"[dim]→[/dim] {ws['target']}" if ws.get("attached") else "[dim]managed[/dim]"
-        table.add_row(
-            "[green]*[/green]" if name == active else "",
-            name,
-            str(ws.get("tasks_count", 0)),
-            location,
-        )
-
-    console.print(table)
-    console.print(f"[dim]{len(workspaces)} workspace(s)[/dim]")
-    if active:
-        console.print(f"[dim]* selected — from {_workspace_source()}[/dim]")
-
-
-@workspace_app.command("create")
-def workspace_create(
-    name: str = typer.Argument(..., help="Workspace name."),
-    use: bool = typer.Option(False, "--use", help="Select it for subsequent commands."),
-):
-    """Create a new workspace under the service's own state directory."""
-    result = call(hub().create_workspace, name)
-    created = result.get("name", name)
-    console.print(f"[green]Workspace created:[/green] [bold]{created}[/bold]")
-    if use:
-        _write_state(workspace=created, project=None)
-        console.print(f"[green]Selected[/green] workspace [bold]{created}[/bold]")
-
-
-@workspace_app.command("init")
-def workspace_init(
-    path: Optional[str] = typer.Argument(None, help="Directory to register. Defaults to the current one."),
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Assert the resulting name (must match the folder)."),
-    use: bool = typer.Option(True, "--use/--no-use", help="Select it for subsequent commands."),
-):
-    """Register an existing directory as a workspace, in place.
-
-    Nothing is copied: the workspace becomes a link to this directory, so agents
-    read and write the real files and a git checkout keeps its history.
-
-    The path is resolved by the *backend*. With a local backend that is just this
-    machine; if the backend runs in a container, pass a path inside the container
-    and bind mount the directory there first.
-    """
-    target = str(Path(path or os.getcwd()).expanduser().resolve())
-    body: dict = {"path": target}
-    if name:
-        body["name"] = name
-    result = call(hub().attach_workspace, body["path"], body.get("name"))
-    ws = result.get("name", "")
-
-    console.print(
-        f"[green]Workspace[/green] [bold]{ws}[/bold] [green]now points at[/green] {result.get('target', target)}"
-    )
-    console.print("[dim]Nothing was copied. Detaching later removes only the link.[/dim]")
-    if use:
-        _write_state(workspace=ws, project=None)
-        console.print(f"[green]Selected[/green] workspace [bold]{ws}[/bold]")
-
-
-@workspace_app.command("use")
-def workspace_use(
-    name: str = typer.Argument(..., help="Workspace to select."),
-):
-    """Select a workspace, so later commands act on it without -w."""
-    workspaces = call(hub().list_workspaces)
-    names = [w.get("name") for w in workspaces]
-    if name not in names:
-        console.print(f"[red]No workspace '{name}'.[/red] Known: {', '.join(n for n in names if n)}")
-        raise typer.Exit(1)
-    _write_state(workspace=name, project=None)
-    console.print(f"[green]Selected[/green] workspace [bold]{name}[/bold]")
-    console.print(f"[dim]Stored in {_state_file()} — one selection per machine. "
-                  "For a per-shell one, source [bold]shell-init[/bold] and use the "
-                  "function it prints.[/dim]")
-
-
-@workspace_app.command("current")
-def workspace_current():
-    """Show the selected workspace, where it came from, and where it points."""
-    active = _active_workspace()
-    if not active:
-        console.print("[yellow]No workspace selected.[/yellow] Pick one with "
-                      "[bold]workspace use <name>[/bold], or register a folder with "
-                      "[bold]workspace init[/bold].")
-        return
-
-    lines = [f"[bold]Workspace:[/bold] {active}", f"[bold]Source:[/bold]    {_workspace_source()}"]
-    try:
-        match = next((w for w in call(hub().list_workspaces) if w.get("name") == active), None)
-    except typer.Exit:
-        match = None
-    if match is None:
-        lines.append("[red]Not present on the backend[/red] — it may have been deleted.")
-    elif match.get("attached"):
-        lines.append(f"[bold]Points at:[/bold] {match.get('target')}")
-    else:
-        lines.append("[bold]Points at:[/bold] the service's own state directory")
-
-    project = _active_project()
-    if project:
-        lines.append(f"[bold]Project:[/bold]   {project}")
-
-    console.print(Panel("\n".join(lines), title="Current", border_style="cyan"))
-
-
-@workspace_app.command("unuse")
-def workspace_unuse():
-    """Clear the selected workspace."""
-    _write_state(workspace=None, project=None)
-    console.print("[green]Cleared[/green] the workspace selection.")
-    detected, _ = _detect_from_cwd()
-    if detected:
-        console.print(f"[dim]This directory still selects [bold]{detected}[/bold] on its own.[/dim]")
-
-
-@workspace_app.command("detach")
-def workspace_detach(
-    name: str = typer.Argument(..., help="Attached workspace to unregister."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
-):
-    """Unregister an attached workspace. The directory itself is left alone."""
-    match = next((w for w in call(hub().list_workspaces) if w.get("name") == name), None)
-    if match is None:
-        console.print(f"[red]No workspace '{name}'.[/red]")
-        raise typer.Exit(1)
-    if not match.get("attached"):
-        console.print(
-            f"[red]'{name}' is not attached[/red] — it is a managed workspace, and detaching "
-            "does not apply. Deleting it would erase its contents, which this command will "
-            "not do; use the dashboard if that is what you want."
-        )
-        raise typer.Exit(1)
-
-    target = match.get("target")
-    if not yes:
-        typer.confirm(f"Detach '{name}'? {target} stays exactly as it is.", abort=True)
-    result = call(hub().delete_workspace, name) or {}
-    console.print(f"[green]Detached[/green] [bold]{name}[/bold]")
-    console.print(f"[dim]Left untouched: {result.get('target_kept') or target}[/dim]")
-    if _read_state().get("workspace") == name:
-        _write_state(workspace=None, project=None)
-        console.print("[dim]It was the selected workspace, so the selection was cleared.[/dim]")
-
-
-# ---------------------------------------------------------------------------
-# project commands
-# ---------------------------------------------------------------------------
+# Moved to cli/commands/{agent,task,workspace,project,node}.py, registered at
+# the bottom of this file. _require_workspace stays here: it is a helper the
+# selection model owns, not a command, and cli/commands/project.py imports it
+# the same way it imports hub()/call()/console.
 
 
 def _require_workspace(explicit: Optional[str]) -> str:
@@ -1269,210 +878,6 @@ def _require_workspace(explicit: Optional[str]) -> str:
         )
         raise typer.Exit(1)
     return ws
-
-
-@project_app.command("list")
-def project_list(
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Defaults to the selected workspace."),
-    all_workspaces: bool = typer.Option(False, "--all", "-a", help="List projects in every workspace."),
-):
-    """List projects in the selected workspace."""
-    projects = call(hub().list_projects)
-    ws = None if all_workspaces else _active_workspace(workspace)
-    if ws:
-        projects = [pr for pr in projects if (pr.get("workspace") or "") == ws]
-
-    active = _active_project()
-    table = Table(title="Projects", box=box.ROUNDED)
-    table.add_column("", no_wrap=True)
-    table.add_column("ID", style="dim", no_wrap=True, max_width=10)
-    table.add_column("Name", style="bold")
-    table.add_column("Workspace")
-    table.add_column("Tasks", justify="right")
-    table.add_column("Repo")
-
-    for pr in projects:
-        repo = pr.get("repo") or {}
-        repo_type = repo.get("type") or "none"
-        pid = str(pr.get("id", ""))
-        table.add_row(
-            "[green]*[/green]" if pid == active else "",
-            pid[:8],
-            _short(pr.get("name"), 30),
-            pr.get("workspace") or "",
-            str(pr.get("tasks_count", 0)),
-            "[dim]-[/dim]" if repo_type == "none" else repo_type,
-        )
-
-    console.print(table)
-    scope = "all workspaces" if not ws else f"workspace '{ws}'"
-    console.print(f"[dim]{len(projects)} project(s) in {scope}[/dim]")
-
-
-@project_app.command("add")
-def project_add(
-    path: Optional[str] = typer.Argument(None, help="Directory to register. Defaults to the current one."),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Defaults to the selected workspace."),
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Project name. Defaults to the folder's name."),
-    description: Optional[str] = typer.Option(None, "--desc", "-d"),
-    use: bool = typer.Option(True, "--use/--no-use", help="Select it for subsequent commands."),
-):
-    """Register an existing directory as a project in a workspace, in place.
-
-    Nothing is copied. If the directory is a git repo, it is recorded as one and
-    `git status` / pull work on it immediately — no clone step.
-    """
-    ws = _require_workspace(workspace)
-    target = str(Path(path or os.getcwd()).expanduser().resolve())
-    body: dict = {"workspace": ws, "path": target}
-    if name:
-        body["name"] = name
-    if description:
-        body["description"] = description
-
-    result = call(hub().attach_project, body)
-    pid = str(result.get("id", ""))
-    console.print(
-        f"[green]Project[/green] [bold]{result.get('name')}[/bold] "
-        f"[green]added to workspace[/green] [bold]{ws}[/bold]"
-    )
-    console.print(f"[dim]Points at {result.get('target', target)} — nothing was copied.[/dim]")
-    if result.get("is_git_repo"):
-        console.print("[dim]It is a git repo, so its branch and history came along.[/dim]")
-    else:
-        console.print("[dim]No .git found, so it is registered without a repo.[/dim]")
-    if use and pid:
-        _write_state(project=pid)
-        console.print(f"[green]Selected[/green] project [bold]{pid[:8]}[/bold]")
-
-
-@project_app.command("get")
-def project_get(
-    project_id: Optional[str] = typer.Argument(None, help="Project ID (full or prefix). Defaults to the selected one."),
-):
-    """Show a project, including git state when it has a repo."""
-    pid = _active_project(project_id)
-    if not pid:
-        console.print("[red]No project.[/red] Pass an ID or select one with [bold]project use[/bold].")
-        raise typer.Exit(1)
-
-    projects = call(hub().list_projects)
-    pid = _expand_id(pid, [str(x.get("id", "")) for x in projects], "project")
-    pr = next(x for x in projects if str(x.get("id")) == pid)
-    repo = pr.get("repo") or {}
-
-    lines = [
-        f"[bold]ID:[/bold]        {pr.get('id')}",
-        f"[bold]Name:[/bold]      {pr.get('name')}",
-        f"[bold]Workspace:[/bold] {pr.get('workspace')}",
-        f"[bold]Type:[/bold]      {pr.get('type') or '-'}",
-        f"[bold]Folder:[/bold]    {pr.get('folder') or '-'}",
-        f"[bold]Repo:[/bold]      {repo.get('type') or 'none'}"
-        + (f" ({repo.get('local_path')})" if repo.get("local_path") else ""),
-    ]
-    if pr.get("description"):
-        lines.append(f"[bold]About:[/bold]     {_short(pr.get('description'), 60)}")
-
-    if (repo.get("type") or "none") != "none":
-        try:
-            git = hub().project_git_status(pid)
-            lines.append(f"[bold]Branch:[/bold]    {git.get('branch') or '-'}")
-            status = (git.get("status") or "").strip()
-            lines.append(f"[bold]Changes:[/bold]   {len(status.splitlines()) if status else 0} file(s)")
-            for commit in (git.get("recent_commits") or "").splitlines()[:3]:
-                lines.append(f"  [dim]{commit}[/dim]")
-        except typer.Exit:
-            # A project can legitimately point at a folder that is not a repo (or
-            # not one any more); the rest of the panel is still worth printing.
-            lines.append("[dim]Git state unavailable[/dim]")
-
-    console.print(Panel("\n".join(lines), title=f"Project — {pid[:8]}", border_style="magenta"))
-
-
-@project_app.command("use")
-def project_use(
-    project_id: str = typer.Argument(..., help="Project ID (full or prefix)."),
-):
-    """Select a project, so later commands act inside it."""
-    projects = call(hub().list_projects)
-    pid = _expand_id(project_id, [str(x.get("id", "")) for x in projects], "project")
-    pr = next(x for x in projects if str(x.get("id")) == pid)
-    _write_state(workspace=pr.get("workspace"), project=pid)
-    console.print(
-        f"[green]Selected[/green] project [bold]{pr.get('name')}[/bold] "
-        f"in workspace [bold]{pr.get('workspace')}[/bold]"
-    )
-
-
-@project_app.command("unuse")
-def project_unuse():
-    """Clear the selected project, keeping the workspace."""
-    _write_state(project=None)
-    console.print("[green]Cleared[/green] the project selection.")
-
-
-# ---------------------------------------------------------------------------
-# node commands
-# ---------------------------------------------------------------------------
-
-
-@node_app.command("list")
-def node_list(
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w"),
-):
-    """List all running nodes."""
-    workspace = _active_workspace(workspace)
-    nodes = call(hub().list_nodes, workspace)
-
-    table = Table(title="Nodes", box=box.ROUNDED)
-    table.add_column("ID", style="dim", no_wrap=True, max_width=10)
-    table.add_column("Agent", style="bold")
-    table.add_column("Status", no_wrap=True)
-    table.add_column("Workspace")
-    table.add_column("Started")
-
-    for n in nodes:
-        nid = str(n.get("node_id", ""))[:8]
-        s = n.get("status", "")
-        color = _node_color(s)
-        started = (n.get("started_at") or "")[:16].replace("T", " ")
-        table.add_row(
-            nid,
-            n.get("agent_name") or n.get("agent_id", ""),
-            Text(s, style=color),
-            n.get("workspace") or "",
-            started,
-        )
-
-    console.print(table)
-    console.print(f"[dim]{len(nodes)} node(s)[/dim]")
-
-
-@node_app.command("start")
-def node_start(
-    agent_id: str = typer.Argument(..., help="Agent ID to start a node for."),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Defaults to the selected workspace."),
-    label: Optional[str] = typer.Option(None, "--label", "-l"),
-):
-    """Start a persistent node for an agent."""
-    workspace = _active_workspace(workspace)
-    body: dict = {"agent_id": agent_id}
-    if workspace:
-        body["workspace"] = workspace
-    if label:
-        body["label"] = label
-    node = call(hub().start_node, body)
-    console.print(f"[green]Node started:[/green] [bold]{str(node.get('node_id', ''))[:8]}[/bold]  agent={agent_id}")
-
-
-@node_app.command("stop")
-def node_stop(
-    node_id: str = typer.Argument(..., help="Node ID to stop (full or prefix)."),
-):
-    """Stop a running node."""
-    node_id = _resolve_node_id(node_id)
-    call(hub().stop_node, node_id)
-    console.print(f"[yellow]Stopped[/yellow] node [bold]{node_id[:8]}[/bold]")
 
 
 # ---------------------------------------------------------------------------
@@ -1906,6 +1311,79 @@ def secrets_delete(
 
 
 # ---------------------------------------------------------------------------
+# Entity command groups: registered here, defined in cli/commands/
+# ---------------------------------------------------------------------------
+# Every name below is imported only now, at the bottom of the module, because
+# each of cli/commands/*.py does `from cli.main import hub, call, console, ...`
+# at its own top level: by the time this import runs, this module (already
+# mid-import, present in sys.modules) has every one of those names defined,
+# so the import succeeds even though cli.main itself is not finished loading.
+
+from cli.commands.agent import agent_app  # noqa: E402
+from cli.commands.task import task_app  # noqa: E402
+from cli.commands.workspace import workspace_app  # noqa: E402
+from cli.commands.project import project_app  # noqa: E402
+from cli.commands.node import node_app  # noqa: E402
+from cli.commands.flow import flow_app  # noqa: E402
+from cli.commands.loop import loop_app  # noqa: E402
+from cli.commands.team import team_app  # noqa: E402
+from cli.commands.eval import eval_app  # noqa: E402
+from cli.commands.mcp import mcp_app  # noqa: E402
+from cli.commands.user import user_app  # noqa: E402
+from cli.commands.api import api_command  # noqa: E402
+
+app.add_typer(agent_app, name="agent")
+app.add_typer(task_app, name="task")
+app.add_typer(workspace_app, name="workspace")
+app.add_typer(project_app, name="project")
+app.add_typer(node_app, name="node")
+app.add_typer(flow_app, name="flow")
+app.add_typer(loop_app, name="loop")
+app.add_typer(team_app, name="team")
+app.add_typer(eval_app, name="eval")
+app.add_typer(mcp_app, name="mcp")
+app.add_typer(user_app, name="user")
+app.command("api")(api_command)
+
+# Every name `ah` already answers to without touching the OpenAPI schema: the
+# groups above, the ones defined earlier in this file, and the bare commands.
+# Used only to decide whether a generic, schema-driven group needs building
+# below: not a permission list, just a fast "have we already got this one".
+_KNOWN_TOP_LEVEL = {
+    "agent", "task", "workspace", "project", "node", "flow", "loop", "team",
+    "eval", "mcp", "user", "api", "server", "auth", "db", "secrets",
+    "worker", "deployment", "up", "chat", "config", "shell-init", "shell-export",
+}
+
+
+def _maybe_register_generated_groups() -> None:
+    """Add one typer group per remaining OpenAPI tag, but only when asked.
+
+    Building these needs the OpenAPI schema (cli/openapi.py): in direct mode
+    that means importing dashboard.backend.main, the whole route graph, which
+    is exactly the cost a plain `ah agent list` must not pay. So this looks at
+    the first word on the command line before doing any of that, and does
+    nothing when it already names a group above, the overwhelming majority of
+    invocations. Only a name this CLI does not already know (`ah flows list`,
+    `ah sessions list`, anything under a tag with no hand-written group) pays
+    for the schema fetch, and only once: cli/openapi.py caches it on disk.
+
+    The cost of this trade: `ah --help` does not list the generated groups,
+    since no argument has named one yet to justify the fetch. They are still
+    there: `ah <tag> --help` works, just not advertised at the top level. See
+    docs/cli.md.
+    """
+    if len(sys.argv) < 2:
+        return
+    first = sys.argv[1]
+    if first in _KNOWN_TOP_LEVEL or first.startswith("-"):
+        return
+    from cli.commands.api import generated_groups
+    for slug, sub in generated_groups():
+        app.add_typer(sub, name=slug)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 # Named rather than inline: `pip install -e .` points the `agents-hub` console
@@ -1913,6 +1391,7 @@ def secrets_delete(
 
 
 def main() -> None:
+    _maybe_register_generated_groups()
     app()
 
 

@@ -1,12 +1,26 @@
 """
-RAG query module — used by agents (subprocesses) to search the vector store.
+RAG query module — used by agents (subprocesses) to search a pool's indexed
+knowledge.
+
+``search_rag`` is hybrid: BM25 over the pool's chunks (``rag_chunks``, read
+through the backend's ``rag.bm25`` module) always runs, and vector similarity
+runs alongside it whenever a vector store and an embedding provider are both
+configured. The two rankings are fused with reciprocal rank fusion. When no
+vector store is configured, or the embedding call fails for any reason (the
+library is missing, the provider is unreachable), BM25 answers alone — a pool
+with RAG_VECTOR_DB=none still gets ranked keyword search with no torch and no
+running vector DB.
 
 Reads configuration from the .env file directly so it works correctly in
-subprocesses where os.environ is frozen at launch time.
+subprocesses where os.environ is frozen at launch time. The backend's own
+``rag`` package (chunk store, BM25, the shared Embedder, the vector store
+adapters) is imported by path when this runs outside the dashboard backend
+process, the same way ``delete_rag_vectors`` always has.
 """
 from __future__ import annotations
 
 import os
+import sys
 from typing import Optional
 
 from common.paths import PROJECT_ROOT
@@ -14,6 +28,11 @@ from common.dotenv import read_env as _read_dot_env
 
 _PROJECT_ROOT = PROJECT_ROOT
 _CHROMA_PATH = str(_PROJECT_ROOT / "chroma_db")
+
+# Reciprocal rank fusion constant — the same value memory/ranking.py uses to
+# fuse BM25 with a vector-store ranking at the pool level; here it fuses BM25
+# with vector similarity at the chunk level, one layer down.
+_RRF_K = 60
 
 
 # ---------------------------------------------------------------------------
@@ -35,60 +54,75 @@ def is_rag_configured() -> bool:
     )
 
 
+def _backend_module(name: str):
+    """Import ``dashboard/backend/rag/<name>.py``. Works unmodified when this
+    process already has the backend directory on ``sys.path`` (the dashboard
+    backend itself); an agent subprocess does not, so the directory is added
+    on first need — the same fallback ``delete_rag_vectors`` has always used,
+    generalised to any module of the package rather than just ``vector_store``.
+    """
+    try:
+        return __import__(f"rag.{name}", fromlist=["_"])
+    except Exception:
+        pass
+    backend = _PROJECT_ROOT / "dashboard" / "backend"
+    if backend.is_dir() and str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    return __import__(f"rag.{name}", fromlist=["_"])
+
+
 # ---------------------------------------------------------------------------
 # Embedding
 # ---------------------------------------------------------------------------
 
-# One SentenceTransformer per model name per process. Agents run in
-# subprocesses and embed a query on most recalls; loading the weights each time
-# cost seconds per call.
-_ST_MODELS: dict = {}
-
-
-def _sentence_transformer(model: str):
-    st = _ST_MODELS.get(model)
-    if st is None:
-        from sentence_transformers import SentenceTransformer
-        st = SentenceTransformer(model)
-        _ST_MODELS[model] = st
-    return st
-
-
 def embed_query(text: str) -> Optional[list]:
-    """Embed a single query text using the configured provider."""
+    """Embed a single query text using the configured provider, through the
+    process-wide :class:`~rag.embeddings.Embedder` so the model behind it
+    (sentence-transformers weights, mainly) is loaded once and shared with
+    ingestion rather than a second copy living in this module.
+
+    Returns None for no provider configured, a missing package, or any other
+    failure — the caller falls back to BM25-only search rather than raising.
+    """
     provider = _read_env("RAG_EMBEDDING_PROVIDER", "none")
     model = _read_env("RAG_EMBEDDING_MODEL", "")
     if provider in ("none", "") or not model:
         return None
     try:
-        if provider == "sentence-transformers":
-            return _sentence_transformer(model).encode([text])[0].tolist()
-
-        if provider == "ollama":
-            import requests
-            base = _read_env("RAG_EMBEDDING_BASE_URL", "http://localhost:11434")
-            resp = requests.post(
-                f"{base.rstrip('/')}/api/embeddings",
-                json={"model": model, "prompt": text},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return resp.json()["embedding"]
-
-        if provider == "openai":
-            import openai
-            key = _read_env("RAG_EMBEDDING_API_KEY") or _read_env("OPENAI_API_KEY")
-            client = openai.OpenAI(api_key=key)
-            return client.embeddings.create(input=[text], model=model).data[0].embedding
-
-        if provider == "google":
-            import google.generativeai as genai
-            key = _read_env("RAG_EMBEDDING_API_KEY") or _read_env("GOOGLE_API_KEY")
-            genai.configure(api_key=key)
-            return genai.embed_content(model=model, content=text, task_type="retrieval_query")["embedding"]
+        api_key = _read_env("RAG_EMBEDDING_API_KEY", "")
+        if not api_key and provider == "openai":
+            api_key = _read_env("OPENAI_API_KEY", "")
+        if not api_key and provider == "google":
+            api_key = _read_env("GOOGLE_API_KEY", "")
+        base_url = _read_env("RAG_EMBEDDING_BASE_URL", "http://localhost:11434")
+        Embedder = _backend_module("embeddings").Embedder
+        embedder = Embedder.for_config(provider, model, api_key=api_key, base_url=base_url)
+        return embedder.embed_one(text)
     except Exception:
         return None
-    return None
+
+
+# ---------------------------------------------------------------------------
+# Keyword (BM25) search
+# ---------------------------------------------------------------------------
+
+def _search_bm25(query: str, memory_id: str, top_k: int) -> list[dict]:
+    try:
+        bm25 = _backend_module("bm25")
+        hits = bm25.search_pool(str(memory_id), query, top_k=top_k)
+    except Exception:
+        return []
+    return [
+        {
+            "text": h.get("text", ""),
+            "file_id": h.get("file_id", ""),
+            "filename": h.get("filename", ""),
+            "chunk_idx": h.get("chunk_index", 0),
+            "heading_path": h.get("heading_path") or [],
+            "bm25_score": h.get("bm25_score", 0.0),
+        }
+        for h in hits
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -193,18 +227,14 @@ def _query_pinecone(query_vector: list, memory_id: str, top_k: int) -> list[dict
     return _filter_by_memory(rows, memory_id)[:top_k]
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-def search_rag(query: str, memory_id: str, top_k: int = 5) -> list[dict]:
-    """Embed *query* and return the top-k relevant chunks from *memory_id*."""
+def _search_vector(query: str, memory_id: str, top_k: int) -> list[dict]:
+    """Vector similarity search, or an empty list when unconfigured, the
+    embedding call failed, or the store adapter raised."""
     if not is_rag_configured():
         return []
     vec = embed_query(query)
     if vec is None:
         return []
-
     db = _read_env("RAG_VECTOR_DB", "none")
     try:
         if db == "chroma":
@@ -219,42 +249,126 @@ def search_rag(query: str, memory_id: str, top_k: int = 5) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Hybrid fusion
+# ---------------------------------------------------------------------------
+
+def _chunk_key(file_id: str, chunk_idx) -> str:
+    return f"{file_id}#{chunk_idx}"
+
+
+def _fuse(bm25_hits: list[dict], vector_hits: list[dict], top_k: int) -> list[dict]:
+    """Reciprocal rank fusion of the two ranked lists, by (file_id, chunk_idx).
+
+    Each result in the output carries ``matched``: which retriever(s) placed
+    it — ``["bm25"]``, ``["vector"]`` or both — so a caller can tell a result
+    both agreed on from one only a single retriever surfaced.
+    """
+    scores: dict[str, float] = {}
+    info: dict[str, dict] = {}
+    matched: dict[str, set] = {}
+
+    def add(hits: list[dict], source: str) -> None:
+        for rank, hit in enumerate(hits, start=1):
+            file_id = hit.get("file_id", "")
+            chunk_idx = hit.get("chunk_idx", 0)
+            key = _chunk_key(file_id, chunk_idx)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (_RRF_K + rank)
+            matched.setdefault(key, set()).add(source)
+            entry = info.setdefault(key, {
+                "text": hit.get("text", ""),
+                "file_id": file_id,
+                "filename": hit.get("filename") or file_id.rpartition("::")[2],
+                "chunk_idx": chunk_idx,
+                "heading_path": hit.get("heading_path") or [],
+            })
+            if not entry.get("text"):
+                entry["text"] = hit.get("text", "")
+
+    add(bm25_hits, "bm25")
+    add(vector_hits, "vector")
+
+    # A vector-only hit carries no heading_path (the vector store keeps only
+    # ids and vectors) — backfill it from the chunk store when that chunk is
+    # still indexed there.
+    missing = [k for k, v in matched.items() if "bm25" not in v and not info[k]["heading_path"]]
+    if missing:
+        try:
+            store = _backend_module("chunk_store")
+            for key in missing:
+                file_id, _, idx = key.rpartition("#")
+                row = store.get_chunk(file_id, int(idx))
+                if row:
+                    info[key]["heading_path"] = row["heading_path"]
+                    info[key]["filename"] = row["filename"]
+                    if not info[key]["text"]:
+                        info[key]["text"] = row["text"]
+        except Exception:
+            pass
+
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    out: list[dict] = []
+    for key, score in ranked[:max(1, int(top_k))]:
+        entry = info[key]
+        out.append({
+            "text": entry["text"],
+            "file_id": entry["file_id"],
+            "filename": entry["filename"],
+            "chunk_idx": entry["chunk_idx"],
+            "heading_path": entry["heading_path"],
+            "score": round(score, 6),
+            "matched": sorted(matched[key]),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def search_rag(query: str, memory_id: str, top_k: int = 5) -> list[dict]:
+    """Hybrid search over *memory_id*'s indexed chunks: BM25 always, vector
+    similarity when configured, fused by reciprocal rank fusion.
+
+    Each result carries ``text``, ``filename``, ``heading_path``,
+    ``chunk_idx``, ``score`` and ``matched`` (which retriever(s) found it).
+    Works with no vector store or embedding model configured at all — BM25
+    alone then answers directly from the chunk store.
+    """
+    fetch = max(int(top_k) * 4, 20)
+    bm25_hits = _search_bm25(query, memory_id, fetch)
+    vector_hits = _search_vector(query, memory_id, fetch)
+    return _fuse(bm25_hits, vector_hits, top_k)
+
+
+# ---------------------------------------------------------------------------
 # Deletion
 # ---------------------------------------------------------------------------
 
-def _vector_store_module():
-    """Import the backend's vector-store adapters from an agent subprocess.
+def delete_rag_vectors(memory_id: str, filename: Optional[str] = None) -> dict:
+    """Delete one indexed file's chunks and vectors, or every one of
+    *memory_id*'s.
 
-    The adapters are the single implementation of the delete logic; only the
-    configuration is read differently here (``.env`` rather than the live
-    environment), so the module is imported by path rather than duplicated.
+    Returns a metadata dict; a vector store that is not configured, not
+    installed or not reachable comes back as a skip rather than an exception,
+    because this runs inside `forget`, where a vector problem must not lose
+    the delete. The chunk-store side is a local table and always succeeds.
     """
     try:
-        from rag.vector_store import delete_vectors  # type: ignore
-        return delete_vectors
+        chunk_store = _backend_module("chunk_store")
+        bm25 = _backend_module("bm25")
+        if filename:
+            chunk_store.delete_file_chunks(f"{memory_id}::{filename}")
+        else:
+            chunk_store.delete_pool_chunks(str(memory_id))
+        bm25.invalidate_pool(str(memory_id))
     except Exception:
         pass
-    import sys
 
-    backend = _PROJECT_ROOT / "dashboard" / "backend"
-    if backend.is_dir() and str(backend) not in sys.path:
-        sys.path.insert(0, str(backend))
-    from rag.vector_store import delete_vectors  # type: ignore
-    return delete_vectors
-
-
-def delete_rag_vectors(memory_id: str, filename: Optional[str] = None) -> dict:
-    """Delete one indexed file's vectors, or every vector of *memory_id*.
-
-    Returns a metadata dict; a store that is not configured, not installed or
-    not reachable comes back as a skip rather than an exception, because this
-    runs inside `forget`, where a vector problem must not lose the delete.
-    """
     db = _read_env("RAG_VECTOR_DB", "none")
     if db in ("none", ""):
         return {"deleted": 0, "skipped": "no vector store configured"}
     try:
-        delete_vectors = _vector_store_module()
+        delete_vectors = _backend_module("vector_store").delete_vectors
         kwargs = (
             {"file_id": f"{memory_id}::{filename}"} if filename else {"pool_id": str(memory_id)}
         )

@@ -97,7 +97,13 @@ Two limits remain, and they follow from the process boundary:
 
 * Without a ``usage`` frame there is no token or cost accounting. LangChain
   callbacks observe nothing here, so a remote that reports no usage leaves the
-  cost columns at zero.
+  cost columns at zero. A remote that also knows its own dollar cost (for
+  example a CLI it wraps, such as Claude Code, prints one) may add an optional
+  ``cost_usd`` field to its ``usage`` frame, or nest ``usage`` with a
+  ``cost_usd`` field under its ``done`` frame. That figure is recorded on the
+  run as ``reported_cost_usd`` and is preferred over catalog pricing wherever
+  a run's cost is read, since the remote's own bill is more accurate than a
+  hub-side estimate priced from token counts alone.
 * Tools listed on the registry record are informational for a remote agent: the
   hub does not supply them, the remote's own tool layer does.
 """
@@ -305,6 +311,32 @@ def _parse_stream_line(line: str) -> Optional[Dict[str, Any]]:
     return event if isinstance(event, dict) else None
 
 
+def _extract_reported_cost(frame: Dict[str, Any]) -> Optional[float]:
+    """Read an optional ``cost_usd`` off a raw ``usage`` or ``done`` frame.
+
+    ``FrameTranslator.feed`` strips unrecognised fields on its way to producing
+    a hub event, so ``cost_usd`` is read from the *wire* frame here, before
+    translation, rather than off the event the translator produced. A ``usage``
+    frame carries it directly; a ``done`` frame that nests its usage (the
+    common shape for an agent that only knows its total at the very end)
+    carries it one level down, exactly where the token counts already are.
+    """
+    kind = str(frame.get("type") or "").strip()
+    if kind == "usage":
+        raw = frame.get("cost_usd")
+    elif kind in ("done", "final", "result"):
+        nested = frame.get("usage")
+        raw = nested.get("cost_usd") if isinstance(nested, dict) else None
+    else:
+        raw = None
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 class _StreamState:
     """One streamed run: the shared translation, plus where its events go.
 
@@ -316,7 +348,7 @@ class _StreamState:
     reads its cost off.
     """
 
-    def __init__(self, emitter: Optional[Any], usage_sinks: List[Any]):
+    def __init__(self, emitter: Optional[Any], usage_sinks: List[Any], run_id: Optional[str] = None):
         self._emitter = emitter
         self._usage_sinks = usage_sinks
         self.translator = FrameTranslator()
@@ -325,6 +357,17 @@ class _StreamState:
         # emitted so the chat does not print the reply twice, and used as the
         # output when the closing frame carries none.
         self.artifact_text = ""
+        # The run this stream belongs to, so a reported cost can be written
+        # straight to its record. None when the caller never had a run id to
+        # give (for example these tests exercise RemoteAgent directly); a
+        # reported cost is then still credited to the usage sinks' tokens but
+        # has nowhere durable to land.
+        self.run_id = str(run_id) if run_id else None
+        # The remote's own running total of what this run has cost, in USD,
+        # summed across every usage frame that reported one. None means no
+        # frame has reported a cost yet, which is different from a reported
+        # zero.
+        self.reported_cost_usd: Optional[float] = None
 
     @property
     def text_parts(self) -> List[str]:
@@ -358,15 +401,26 @@ class _StreamState:
         """Translate one frame from the remote and forward what it produced."""
         for event in self.translator.feed(frame):
             if event.get("type") == "usage":
-                self._credit(event)
+                self._credit(event, _extract_reported_cost(frame))
             self.emit(event)
 
-    def _credit(self, usage: Dict[str, Any]) -> None:
-        """Add remote-reported token usage to the run's counters.
+    def _credit(self, usage: Dict[str, Any], cost_usd: Optional[float] = None) -> None:
+        """Add remote-reported token usage, and optionally its dollar cost, to
+        the run.
 
-        The remote is the only party that can know these numbers — the model
-        call happened in its process — so when it reports them they are credited
-        exactly like a local call's, and the run's cost stops reading as zero.
+        The remote is the only party that can know these numbers, since the
+        model call happened in its process. When it reports them they are
+        credited exactly like a local call's, and the run's cost stops reading
+        as zero.
+
+        ``cost_usd`` is a further refinement some remotes can offer: a CLI such
+        as Claude Code prices its own call and reports the dollar figure
+        directly, which is more accurate than pricing token counts against this
+        hub's catalog. No model lookup is needed, and it is exact for whatever
+        pricing the CLI's own provider actually charged. When present it is
+        summed onto this stream's running total and written straight to the run
+        record, so ``managers.runs.groups.runs_cost`` and the Costs page can
+        prefer it over the catalog estimate.
         """
         prompt = int(usage.get("prompt_tokens") or 0)
         completion = int(usage.get("completion_tokens") or 0)
@@ -380,6 +434,18 @@ class _StreamState:
                 sink.cached_prompt_tokens = getattr(sink, "cached_prompt_tokens", 0) + cached
             except Exception:
                 continue
+        if cost_usd is not None:
+            self.reported_cost_usd = (self.reported_cost_usd or 0.0) + cost_usd
+            if self.run_id:
+                try:
+                    from managers.runs.store import update_run
+                    update_run(self.run_id, {"reported_cost_usd": self.reported_cost_usd})
+                except Exception:
+                    # A run record that cannot be found or updated yet (the
+                    # caller opened no run at all, or this is a test exercising
+                    # RemoteAgent directly) must not fail a run that is
+                    # otherwise working. The tokens are still credited above.
+                    pass
 
 
 class RemoteAgent(AgentBase):
@@ -876,7 +942,7 @@ class RemoteAgent(AgentBase):
         body, headers = self._request(instruction, kwargs, stream=streaming)
 
         if streaming:
-            state = _StreamState(emitter, sinks)
+            state = _StreamState(emitter, sinks, run_id=kwargs.get("run_id"))
             try:
                 with httpx.Client(timeout=self.timeout) as client:
                     with client.stream("POST", self.stream_url, json=body, headers=headers) as resp:
@@ -934,7 +1000,7 @@ class RemoteAgent(AgentBase):
         body = {"run_id": run_id, "value": value, "key": key,
                 "workspace": kwargs.get("workspace", self.workspace)}
 
-        state = _StreamState(emitter, sinks)
+        state = _StreamState(emitter, sinks, run_id=run_id)
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 with client.stream("POST", self.resume_url, json=body, headers=headers) as resp:
@@ -999,7 +1065,7 @@ class RemoteAgent(AgentBase):
                 return self._unreachable(exc, self.run_url)
             return self._map_response(resp.status_code, self._payload_of(resp), resp.text)
 
-        state = _StreamState(emitter, sinks)
+        state = _StreamState(emitter, sinks, run_id=run_id)
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 with client.stream("POST", self.stream_url, json=body, headers=headers) as resp:
@@ -1038,7 +1104,7 @@ class RemoteAgent(AgentBase):
         body, headers = self._request(instruction, kwargs, stream=streaming)
 
         if streaming:
-            state = _StreamState(emitter, sinks)
+            state = _StreamState(emitter, sinks, run_id=kwargs.get("run_id"))
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     async with client.stream("POST", self.stream_url, json=body, headers=headers) as resp:

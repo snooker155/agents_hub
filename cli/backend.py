@@ -323,6 +323,52 @@ class DirectBackend:
             raise BackendError(f"no such key for {username}: {key_id}")
         return {"revoked": True}
 
+    # ---- generic transport (cli/openapi.py, the entity groups that reuse it) ----
+    # Every command written against a hand-picked method above needs both
+    # backends touched to add one route. This one method covers the rest: the
+    # OpenAPI-generated commands and the hand-written flow/loop/team/eval/mcp/
+    # user groups all call it instead of growing DirectBackend one route at a
+    # time. It is imported here only when called, not at module load, so a
+    # plain `ah agent list` still pays nothing for it.
+
+    def request(self, method: str, path: str, *, params: Optional[dict] = None,
+               json: Optional[dict] = None) -> Any:
+        """Drive the FastAPI app in-process, over its real ASGI request cycle.
+
+        Deliberately not entered as a ``with TestClient(app) as client:``
+        block: that form also runs the app's lifespan (the singleton
+        supervisor, the plan scheduler, the run watchdog, the deployment
+        heartbeat), which is slow to start and stop for one CLI call and is
+        not needed for ordinary request/response routes. The limitation this
+        leaves: a route whose behaviour depends on something only the
+        lifespan starts will not work through this path. None of the
+        generated or hand-written entity commands do; see docs/cli.md.
+
+        Authenticates as the service credential
+        (``common.identity.service_token``), the same principal the hub's own
+        subprocess relays act as. In ``AUTH_MODE=single`` it is not read at
+        all (every request is the local operator regardless); in ``token`` and
+        ``multi`` it resolves to an admin principal, so a generic command run
+        locally acts as the operator running it rather than as nobody.
+        """
+        from fastapi.testclient import TestClient
+        from dashboard.backend.main import app
+        from common import identity
+
+        client = TestClient(app)
+        headers = {"Authorization": f"Bearer {identity.service_token()}"}
+        try:
+            r = client.request(method, path, params=params, json=json, headers=headers)
+        except Exception as e:
+            raise _fail(e)
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("detail", r.text)
+            except Exception:
+                detail = r.text
+            raise BackendError(f"{r.status_code}: {detail}")
+        return r.json() if r.content else None
+
 
 def _notify_workspaces() -> None:
     """Tell a running dashboard its workspace list changed."""
@@ -511,6 +557,12 @@ class HttpBackend:
     def revoke_api_key(self, key_id, username=None):
         self._request("DELETE", f"/api/auth/keys/{key_id}")
         return {"revoked": True}
+
+    # ---- generic transport: see DirectBackend.request ----
+
+    def request(self, method: str, path: str, *, params: Optional[dict] = None,
+               json: Optional[dict] = None) -> Any:
+        return self._request(method, path, params=params, json=json)
 
 
 # ---------------------------------------------------------------------------

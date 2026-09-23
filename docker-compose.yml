@@ -65,6 +65,12 @@ x-backend: &backend
     # So LM Studio / Ollama on the host stay reachable on plain Linux Docker
     # too, where this alias is not provided for us.
     - "host.docker.internal:host-gateway"
+  # `default` is the network every other service is on; `browser_net` is the
+  # one the `browser` service lives on alone, so the backend can reach it and
+  # it can reach nothing else of ours (see that service below).
+  networks:
+    - default
+    - browser_net
 
 services:
   backend:
@@ -365,6 +371,48 @@ services:
       disable: true
     deploy:
       replicas: 2
+
+  # Headless Chromium for the browser_* tools (tools/browser.py,
+  # deploy/browser/). Under the `browser` profile, so a plain `docker compose
+  # up` never builds or starts it:
+  #   docker compose --profile browser up --build
+  # .env needs, for the backend to use it:
+  #   AGENTS_HUB_BROWSER_URL=http://browser:3000
+  #   AGENTS_HUB_BROWSER_TOKEN=<a long random string>
+  # The service refuses to start without the token, and requires it on every
+  # call. No port is published: only the backend reaches it.
+  #
+  # Network isolation: the service sits alone on `browser_net`, which the
+  # backend services also join. Docker keeps separate bridge networks apart,
+  # so a page cannot reach postgres, redis, minio or anything else on the
+  # `default` network, not even by IP. What compose cannot express is "the
+  # internet but not the host's LAN": that part is the service's own check,
+  # which refuses every request (subresources and redirect hops included) to
+  # a loopback, private, link-local or metadata address. For a hard guarantee
+  # add an egress firewall rule for this network on the host.
+  browser:
+    build:
+      context: .
+      dockerfile: deploy/browser/Dockerfile
+    profiles:
+      - browser
+    environment:
+      BROWSER_TOKEN: ${AGENTS_HUB_BROWSER_TOKEN:-}
+      BROWSER_MAX_SESSIONS: ${BROWSER_MAX_SESSIONS:-8}
+      BROWSER_IDLE_TIMEOUT: ${BROWSER_IDLE_TIMEOUT:-300}
+    networks:
+      - browser_net
+    init: true
+    # Chromium uses /dev/shm heavily; Docker's 64 MB default crashes tabs.
+    shm_size: "1gb"
+    mem_limit: 2g
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+networks:
+  browser_net:
+    driver: bridge
 
 volumes:
   postgres_data:

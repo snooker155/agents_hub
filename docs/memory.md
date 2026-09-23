@@ -84,15 +84,67 @@ longer evict what the agent chose to remember.
 
 ## Getting knowledge in
 
-The **Memory Extractor** runs a two-step pipeline on documents, transcripts and
-journals: `extract_from_text` proposes, `save_extraction` persists after review.
-The review step is the point — extraction is lossy, and committing straight to
-the pool would bake in whatever it got wrong.
+Two paths put knowledge into a pool. The **Memory Extractor** runs a two-step
+pipeline on documents, transcripts and journals: `extract_from_text` proposes,
+`save_extraction` persists after review. The review step is the point:
+extraction is lossy, and committing straight to the pool would bake in
+whatever it got wrong. RAG, below, indexes whole files for retrieval instead
+of extracting facts from them.
 
-Indexed files live in the vector store under `{pool_id}::{filename}`, with a
-deterministic id per chunk, so re-indexing a file overwrites its chunks instead
-of storing a second copy. Removing a file, de-indexing it, `forget(file=…)` or
-deleting the pool removes its vectors too.
+## RAG
+
+A workspace knowledge file is indexed per pool under `{pool_id}::{filename}`.
+Indexing writes to two places that stay in step: the chunk store
+(`rag_chunks`, the source of truth for the chunk text, its headings and its
+character offsets) always, and the vector store (ids and vectors only)
+whenever one is configured.
+
+### Chunking
+
+Chunking (`dashboard/backend/rag/chunking.py`) reads the document's own
+structure before falling back to a raw character split. A markdown heading
+opens a new chunk and is tracked as a `heading_path`, a fenced code block is
+read whole and never split mid-fence even when that makes the chunk larger
+than the size target, and consecutive paragraphs are packed up to the size
+target with a configurable character overlap carried into the next chunk.
+Plain text with no headings or fences falls back to paragraph, then sentence,
+boundaries.
+
+### Search: keyword and vector, fused
+
+`search_rag` (`memory/rag_query.py`) runs two retrievers and fuses their
+rankings with reciprocal rank fusion:
+
+- **Keyword (BM25)** over the pool's chunks in `rag_chunks`, a pure-Python
+  implementation with no dependency. This retriever always runs: it needs
+  nothing installed and no external store.
+- **Vector similarity**, when `RAG_VECTOR_DB` and `RAG_EMBEDDING_PROVIDER` are
+  both configured and the embedding call succeeds.
+
+With no vector store configured, BM25 answers alone, so RAG works out of the
+box with no torch and no running vector database. Each result carries `text`,
+`filename`, `heading_path`, `chunk_idx`, `score` and `matched`: which
+retriever or retrievers found it.
+
+One `Embedder` (`dashboard/backend/rag/embeddings.py`) loads its model once
+per process and is shared by ingestion and query, so a query no longer pays
+for its own copy of the weights. A small LRU keeps recent query vectors, so
+the same question asked twice is not re-embedded.
+
+### Deletion and reindexing
+
+Deleting a file removes its rows from `rag_chunks` and its vectors from the
+configured store. Reindexing (`POST /api/shared-memory/{id}/rag/reindex`, the
+whole pool or one file with `?filename=`) replaces a file's chunks and vectors
+together, so a search never sees a mix of the old chunk set and the new one,
+and an edited file that shrinks leaves no stale chunk behind. A file whose
+content has not changed since it was last indexed (same sha256) is skipped
+unless `force=true`, so reindexing a whole pool does not re-embed a file that
+did not change. The file list endpoint reports each file's chunk count and
+content hash alongside its index status.
+
+Removing a file, de-indexing it, `forget(file=…)` or deleting the pool removes
+its chunks and vectors both.
 
 ## Gotchas
 

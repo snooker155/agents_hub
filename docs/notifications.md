@@ -149,7 +149,7 @@ one, evaluated whenever a run reaches a terminal status:
 }
 ```
 
-Three kinds:
+Four kinds:
 
 - **`run_failed`** fires when a run finishes `failed` or `error`. `agent_id`,
   if set, restricts it to that agent.
@@ -159,6 +159,16 @@ Three kinds:
   current UTC day meets or exceeds `threshold_usd`. It fires at most once per
   day: the rule remembers the date it last fired and stays quiet until
   tomorrow, however many more runs finish today.
+- **`online_eval`** grades a sample of finished runs and fires when a run
+  scores below `min_score`. Extra fields: `sample_rate` (0 to 1), `graders`
+  (grader specs in the form an eval set uses, so `exact`, `regex`,
+  `assertions`, the tool graders and `llm_judge` with a rubric all work),
+  `min_score` (0 to 1), `severity` (`info`, `warning` or `error`) and
+  optional `expected` / `rubric` for the graders that read them. Only a row
+  is queued when the run finishes; grading happens in the background and the
+  notification comes from there. Create and edit these on the agent's
+  **Live quality** card (Overview tab) or through `/api/notify/rules`; see
+  [evals](evals.md#online-evals).
 
 `channels` is the same list `create_notification` accepts: any of
 `dashboard`, `telegram`, `slack`, `webhook`. The inbox entry is written

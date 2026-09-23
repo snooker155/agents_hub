@@ -23,7 +23,7 @@ through the unchanged ``create_agent`` path (see :mod:`agents.remote_agent`).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agents import prompt_assembly, registry
 from agents.importer import a2a_import, checks, clone
@@ -35,6 +35,21 @@ from agents.remote_agent import DEFAULT_HEALTH_PATH, DEFAULT_RUN_PATH, RemoteAge
 # rather than a factory the loader calls — agent_factory branches on
 # ``type == "remote"`` before it ever resolves an entrypoint.
 REMOTE_ENTRYPOINT = "agents.remote_agent:RemoteAgent"
+
+# Where the bundled examples live. Presets are one of them, addressed by a
+# short id rather than a path so the frontend never has to know the
+# repository's own layout.
+EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples" / "imported-agents"
+
+# preset id -> example directory name. Kept as a small literal map (not
+# discovered from the filesystem) so an example can exist without being
+# offered as a one-click preset, and so the ids here are the ones the
+# frontend and the docs commit to rather than whatever a directory happens to
+# be named.
+PRESETS: Dict[str, str] = {
+    "claude-code": "claude-code-agenthub",
+    "codex": "codex-agenthub",
+}
 
 
 class ImportError_(Exception):
@@ -294,13 +309,107 @@ What is different:
     return instructions, capabilities, usage
 
 
+def list_presets() -> List[Dict[str, Any]]:
+    """Bundled examples ready to import as a one-click preset.
+
+    Reads each preset's own manifest rather than duplicating what it declares
+    here, so this list can never drift from what the example actually needs:
+    an operator adding ``CLAUDE_MODEL`` to the Claude Code example's manifest
+    sees it here on the next request, with no second place to update.
+    """
+    out: List[Dict[str, Any]] = []
+    for preset_id, dirname in PRESETS.items():
+        example_dir = EXAMPLES_DIR / dirname
+        manifest = parse_manifest(example_dir) if example_dir.is_dir() else AgentManifest(found=False)
+        out.append({
+            "id": preset_id,
+            "agent_id": manifest.id or preset_id,
+            "name": manifest.name or preset_id,
+            "description": manifest.description,
+            # False when the example directory is missing from this install
+            # (a stripped-down deployment) or its manifest failed to parse:
+            # the button should be disabled rather than offer an import that
+            # can only fail.
+            "available": example_dir.is_dir() and manifest.found and not manifest.problems,
+            "docker": bool(manifest.dockerfile),
+            "env": [e.to_dict() for e in manifest.env],
+        })
+    return out
+
+
+def _inspect_preset(
+    preset: str,
+    *,
+    agent_id: Optional[str] = None,
+    url: Optional[str] = None,
+    workspace: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Stage a bundled example and report whether it can run here.
+
+    Same shape as inspecting a repository, so the import dialog needs no
+    second code path: ``repo_url`` in the result is a ``preset:<id>``
+    provenance marker rather than a URL, which is what a re-import (and the id
+    collision check) compares against on a later import of the same preset.
+    """
+    dirname = PRESETS.get(preset)
+    if not dirname:
+        raise ImportError_(f"Unknown preset '{preset}'. Known presets: {', '.join(PRESETS) or 'none'}.")
+    example_dir = EXAMPLES_DIR / dirname
+    if not example_dir.is_dir():
+        raise ImportError_(
+            f"The bundled example for preset '{preset}' is missing from this install ({example_dir})."
+        )
+
+    provenance = f"preset:{preset}"
+    token, repo_dir = clone.stage_preset(example_dir)
+    try:
+        manifest = parse_manifest(repo_dir)
+        resolved_id = (agent_id or "").strip() or manifest.id
+        resolved_url = normalize_base_url((url or "").strip() or manifest.url)
+
+        descriptor = _descriptor(
+            manifest, url=resolved_url, repo_url=provenance,
+            branch="", commit="", clone_path="",
+        )
+        report = checks.evaluate(
+            repo_dir, manifest,
+            agent_id=resolved_id,
+            url=resolved_url,
+            workspace=workspace,
+            id_conflict=_conflict_for(resolved_id, provenance) if resolved_id else None,
+            remote=descriptor,
+        )
+        return {
+            "token": token,
+            "repo_url": provenance,
+            "preset": preset,
+            "branch": "",
+            "commit": "",
+            "manifest": manifest.to_dict(),
+            "report": report.to_dict(),
+            "suggested": {
+                "id": resolved_id,
+                "name": manifest.name or resolved_id,
+                "description": manifest.description,
+                "domain": manifest.domain or "external",
+                "url": resolved_url,
+                "run_path": manifest.run_path,
+                "health_path": manifest.health_path,
+            },
+        }
+    except Exception:
+        clone.discard(token)
+        raise
+
+
 def inspect(
-    repo_url: str,
+    repo_url: str = "",
     *,
     branch: Optional[str] = None,
     agent_id: Optional[str] = None,
     url: Optional[str] = None,
     workspace: Optional[str] = None,
+    preset: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Clone and analyse a repository without registering anything.
 
@@ -311,7 +420,13 @@ def inspect(
     ``repo_url`` may also be an A2A agent card URL. There is nothing to clone
     then: the card is the declaration, and the flow continues on the same
     manifest/report/suggested shape so the dialog needs no second code path.
+
+    ``preset`` selects a bundled example (see :data:`PRESETS`) instead of a
+    repository or a card; ``repo_url`` is ignored when it is given.
     """
+    if preset:
+        return _inspect_preset(preset, agent_id=agent_id, url=url, workspace=workspace)
+
     if a2a_import.is_card_url(repo_url):
         return _inspect_card(repo_url, agent_id=agent_id, url=url, workspace=workspace)
 
@@ -700,4 +815,5 @@ def cleanup(agent_id: str) -> bool:
     return clone.remove_clone(agent_id)
 
 
-__all__ = ["inspect", "register", "recheck", "cleanup", "ImportError_", "REMOTE_ENTRYPOINT"]
+__all__ = ["inspect", "register", "recheck", "cleanup", "list_presets", "PRESETS",
+           "ImportError_", "REMOTE_ENTRYPOINT"]

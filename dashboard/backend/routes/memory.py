@@ -17,7 +17,7 @@ from models import (
     MemoryNoteAdd, MemoryNoteUpdate,
     MemoryStructuredSlotUpsert,
 )
-from rag import get_rag_status, ingest_file, delete_file_vectors, delete_pool_vectors
+from rag import get_rag_status, ingest_file, delete_file_vectors, delete_pool_vectors, pool_file_index
 from common import access, identity
 from common.paths import workspace_knowledge_dir
 from chat.entity_chat import EntityChatSpec
@@ -508,7 +508,10 @@ def _rag_file_entry(mem: SharedMemory, filename: str) -> Optional[dict]:
 
 @router.get("/{memory_id}/files")
 async def list_rag_files(memory_id: UUID, workspace: str, request: Request):
-    """List all files in workspace knowledge dir, annotated with this pool's index status."""
+    """List all files in workspace knowledge dir, annotated with this pool's
+    index status. Chunk counts and content_hash come from ``rag_chunks``
+    (live, authoritative) when the file has chunk rows there, falling back to
+    the ``rag_files`` bookkeeping on the pool record otherwise."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
@@ -522,15 +525,18 @@ async def list_rag_files(memory_id: UUID, workspace: str, request: Request):
     ) if kdir.exists() else []
 
     indexed = {f["filename"]: f for f in mem.rag_files}
+    chunk_index = pool_file_index(str(memory_id))
     result = []
     for name in disk_files:
         entry = indexed.get(name)
+        live = chunk_index.get(name)
         result.append({
             "filename": name,
             "workspace": workspace,
             "status": entry["status"] if entry else "pending",
             "indexed_at": entry.get("indexed_at") if entry else None,
-            "chunks": entry.get("chunks", 0) if entry else 0,
+            "chunks": live["chunks"] if live else (entry.get("chunks", 0) if entry else 0),
+            "content_hash": live["content_hash"] if live else (entry.get("content_hash") if entry else None),
         })
     return {"files": result}
 
@@ -571,14 +577,15 @@ async def index_knowledge_file(memory_id: UUID, filename: str, workspace: str, r
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"File '{filename}' not found in workspace knowledge dir")
 
-    ok, err, chunk_count = ingest_file(path, str(memory_id))
+    ok, err, chunk_count, meta = ingest_file(path, str(memory_id))
     if not ok:
         raise HTTPException(status_code=500, detail=err)
 
     now = datetime.now(timezone.utc).isoformat()
     existing = _rag_file_entry(mem, filename)
     if existing:
-        existing.update({"status": "indexed", "indexed_at": now, "chunks": chunk_count, "workspace": workspace})
+        existing.update({"status": "indexed", "indexed_at": now, "chunks": chunk_count,
+                          "content_hash": meta.get("content_hash", ""), "workspace": workspace})
     else:
         mem.rag_files.append({
             "filename": filename,
@@ -586,9 +593,75 @@ async def index_knowledge_file(memory_id: UUID, filename: str, workspace: str, r
             "status": "indexed",
             "indexed_at": now,
             "chunks": chunk_count,
+            "content_hash": meta.get("content_hash", ""),
         })
     _persist_mem(store, mem)
-    return {"filename": filename, "status": "indexed", "chunks": chunk_count}
+    return {"filename": filename, "status": "indexed", "chunks": chunk_count, "skipped": meta.get("skipped", False)}
+
+
+@router.post("/{memory_id}/rag/reindex")
+async def reindex_rag(
+    memory_id: UUID,
+    workspace: str,
+    request: Request,
+    filename: Optional[str] = None,
+    force: bool = False,
+):
+    """Re-chunk and re-embed one file (``?filename=``) or every file this pool
+    has indexed. A file whose content has not changed since it was last
+    indexed (same content_hash) is skipped unless ``force=true`` — reindexing
+    a whole pool should not re-embed files that have not changed.
+
+    Replaces each file's chunks and vectors as one step (``ingest_file``), so
+    a search never sees a mix of the old chunk set and the new one, and an
+    edited file that shrank leaves no stale chunks behind — the same
+    guarantee a plain re-index has always had.
+    """
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
+
+    kdir = workspace_knowledge_dir(workspace)
+    if filename:
+        path = kdir / filename
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"File '{filename}' not found in workspace knowledge dir")
+        targets = [filename]
+    else:
+        targets = sorted({f["filename"] for f in mem.rag_files})
+
+    now = datetime.now(timezone.utc).isoformat()
+    results = []
+    for name in targets:
+        path = kdir / name
+        if not path.exists():
+            results.append({"filename": name, "ok": False, "error": "file not found on disk"})
+            continue
+
+        ok, err, chunk_count, meta = ingest_file(path, str(memory_id), force=force)
+        if not ok:
+            results.append({"filename": name, "ok": False, "error": err})
+            continue
+
+        entry = _rag_file_entry(mem, name)
+        if entry:
+            entry.update({"status": "indexed", "indexed_at": now, "chunks": chunk_count,
+                           "content_hash": meta.get("content_hash", ""), "workspace": workspace})
+        else:
+            mem.rag_files.append({
+                "filename": name, "workspace": workspace, "status": "indexed",
+                "indexed_at": now, "chunks": chunk_count,
+                "content_hash": meta.get("content_hash", ""),
+            })
+        results.append({
+            "filename": name, "ok": True, "chunks": chunk_count,
+            "skipped": meta.get("skipped", False),
+        })
+
+    _persist_mem(store, mem)
+    return {"results": results}
 
 
 @router.delete("/{memory_id}/files/{filename}/index")

@@ -2,7 +2,7 @@
 
     GET/POST/PATCH/DELETE /api/notify/endpoints      webhook/slack endpoints
     POST   /api/notify/endpoints/{id}/test           send a test event now
-    GET/POST/PATCH/DELETE /api/notify/rules          run_failed/spend alert rules
+    GET/POST/PATCH/DELETE /api/notify/rules          run_failed/spend/online_eval alert rules
     GET/POST            /api/notify/inbound-secret   the task webhook's secret
     POST   /api/webhooks/tasks                       file a task from outside
 
@@ -24,7 +24,7 @@ signature scheme both directions share.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -159,6 +159,14 @@ class CreateRule(BaseModel):
     agent_id: Optional[str] = None
     channels: List[str] = ["dashboard"]
     enabled: bool = True
+    # online_eval only (evals/online.py): which runs, how they are graded,
+    # and what counts as too low.
+    sample_rate: Optional[float] = None
+    graders: Optional[List[Dict[str, Any]]] = None
+    min_score: Optional[float] = None
+    severity: Optional[str] = None
+    expected: Optional[str] = None
+    rubric: Optional[str] = None
 
 
 class UpdateRule(BaseModel):
@@ -167,6 +175,12 @@ class UpdateRule(BaseModel):
     agent_id: Optional[str] = None
     channels: Optional[List[str]] = None
     enabled: Optional[bool] = None
+    sample_rate: Optional[float] = None
+    graders: Optional[List[Dict[str, Any]]] = None
+    min_score: Optional[float] = None
+    severity: Optional[str] = None
+    expected: Optional[str] = None
+    rubric: Optional[str] = None
 
 
 @router.get("/api/notify/rules")
@@ -194,7 +208,10 @@ async def create_rule(body: CreateRule, workspace: Optional[str] = None):
 async def update_rule(rule_id: str, body: UpdateRule, workspace: Optional[str] = None):
     ws = _workspace(workspace)
     changes = {k: v for k, v in body.model_dump().items() if v is not None}
-    record = notify_store.update_rule(ws, rule_id, changes)
+    try:
+        record = notify_store.update_rule(ws, rule_id, changes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if record is None:
         raise HTTPException(status_code=404, detail="Rule not found")
     return {"rule": record}

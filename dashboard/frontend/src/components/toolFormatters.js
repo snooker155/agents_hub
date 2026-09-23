@@ -83,9 +83,21 @@ const FORMATTERS = {
 
   // Execution / reasoning.
   run_shell: (a) => a.command ?? '',
+  // The language, then the first non-empty line of the snippet.
+  run_code: (a) => {
+    const first = String(a.code ?? '').split('\n').find((l) => l.trim()) ?? '';
+    return [a.language, first.trim()].filter(Boolean).join(': ');
+  },
   calculator: (a) => a.expression ?? '',
   think: (a) => a.thought ?? '',
   plan: (a) => a.plan ?? '',
+
+  // Browser (tools/browser.py): the page, or what was done on it.
+  browser_open: (a) => a.url ?? '',
+  browser_act: (a) => [a.action, a.selector].filter(Boolean).join(' '),
+  browser_read: (a) => (a.max_chars ? `${a.max_chars} chars` : ''),
+  browser_screenshot: (a) => (a.full_page ? 'full page' : ''),
+  browser_close: () => '',
 
   // Interaction / skills.
   ask_user: (a) => a.question ?? a.prompt ?? '',

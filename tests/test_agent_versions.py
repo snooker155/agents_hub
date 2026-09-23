@@ -253,3 +253,20 @@ def test_rollback_of_a_system_agent_sets_user_modified():
     restored = get_agent("sys_agent")
     assert restored.tools == ["a_tool"]
     assert restored.user_modified is True  # bootstrap sync must not revert this rollback
+
+
+# ── ensure_current_version (experiment arms) ─────────────────────────────────
+
+def test_ensure_current_version_snapshots_the_live_state_once():
+    add_agent(_spec("cur_agent", tools=["read_file"]))
+    prompt_assembly.write_instructions("cur_agent", "Live prompt")
+    v = av.ensure_current_version("cur_agent")
+    assert v == 1
+    assert av.get_version_row("cur_agent", 1)["hash"] == av.definition_fingerprint("cur_agent")["hash"]
+    # Already in history: the same row, nothing new written.
+    assert av.ensure_current_version("cur_agent") == 1
+    assert [x["version"] for x in av.list_versions("cur_agent")] == [1]
+
+
+def test_ensure_current_version_for_an_unknown_agent_is_none():
+    assert av.ensure_current_version("nobody_here") is None

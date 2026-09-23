@@ -27,4 +27,7 @@ export default {
   httpsGithubComOwnerMy: 'https://github.com/owner/my-agent  (или абсолютный локальный путь)',
   sourceUrl: 'URL репозитория или карточки агента',
   sourceUrlHint: 'URL репозитория или URL карточки агента A2A (заканчивается на /.well-known/agent-card.json). Карточке не нужен клон: хаб читает из неё адрес агента и его навыки.',
+  bundledPresets: 'Встроенные агенты, готовые к импорту',
+  usingPreset: 'Импортируется встроенный пример {{name}}. Репозиторий не нужен.',
+  useRepositoryInstead: 'Использовать репозиторий вместо этого',
 };

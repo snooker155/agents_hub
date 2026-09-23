@@ -4,9 +4,12 @@ Both steps are optional — if the provider is "none" the function
 returns success with vectorized=False so callers degrade gracefully.
 """
 from __future__ import annotations
+import hashlib
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
+from . import bm25, chunk_store
+from .chunking import Chunk, chunk_document
 from .config import rag_config
 from .embeddings import (
     embed_openai,
@@ -234,7 +237,13 @@ def _read_file_text(path: Path) -> Optional[str]:
 
 
 def _chunk_text(text: str, chunk_size: int = _CHUNK_SIZE, overlap: int = _CHUNK_OVERLAP) -> List[str]:
-    """Split text into overlapping character-level chunks."""
+    """Split text into overlapping character-level chunks.
+
+    Kept for callers that only want plain strings with no structure; ingestion
+    itself goes through :func:`dashboard.backend.rag.chunking.chunk_document`
+    (see :func:`ingest_file`), which respects headings, paragraphs and fenced
+    code instead of cutting blindly every *chunk_size* characters.
+    """
     chunks: List[str] = []
     start = 0
     while start < len(text):
@@ -244,29 +253,57 @@ def _chunk_text(text: str, chunk_size: int = _CHUNK_SIZE, overlap: int = _CHUNK_
     return [c for c in chunks if c]
 
 
-def ingest_file(file_path: Path, pool_id: str) -> Tuple[bool, str, int]:
-    """Read *file_path*, chunk it, and index into the vector store under *pool_id*.
+def _content_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    file_id in the vector store is ``{pool_id}::{filename}`` so queries can
-    filter by pool.
+
+def ingest_file(
+    file_path: Path,
+    pool_id: str,
+    *,
+    force: bool = False,
+    chunk_size: int = _CHUNK_SIZE,
+    overlap: int = _CHUNK_OVERLAP,
+) -> Tuple[bool, str, int, Dict]:
+    """Read *file_path*, chunk it structurally, and index into the vector
+    store and the chunk store (``rag_chunks``) under *pool_id*.
+
+    file_id is ``{pool_id}::{filename}`` in both stores, so queries and
+    deletes can filter or target by pool. A file whose content is unchanged
+    since it was last indexed (same sha256) is skipped unless *force* is set
+    — a reindex over a whole pool should not re-embed everything just because
+    one file changed.
 
     Returns:
-        (success, error_message, chunk_count)
+        (success, error_message, chunk_count, metadata). metadata carries at
+        least ``content_hash`` and, when the file was left alone, ``skipped:
+        True``.
     """
     text = _read_file_text(file_path)
     if text is None:
-        return False, f"Unsupported or unreadable file: {file_path.name}", 0
+        return False, f"Unsupported or unreadable file: {file_path.name}", 0, {}
 
     text = text.strip()
     if not text:
-        return False, "File is empty", 0
+        return False, "File is empty", 0, {}
 
-    chunks = _chunk_text(text)
     file_id = f"{pool_id}::{file_path.name}"
-    ok, err, _ = process_rag(chunks, file_id)
+    content_hash = _content_hash(text)
+
+    if not force and chunk_store.file_content_hash(file_id) == content_hash:
+        return True, "", chunk_store.file_chunk_count(file_id), {
+            "skipped": True, "content_hash": content_hash,
+        }
+
+    chunks: List[Chunk] = chunk_document(text, chunk_size=chunk_size, overlap=overlap)
+    chunk_texts = [c.text for c in chunks]
+    ok, err, _ = process_rag(chunk_texts, file_id)
     if not ok:
-        return False, err, 0
-    return True, "", len(chunks)
+        return False, err, 0, {"content_hash": content_hash}
+
+    chunk_store.replace_file_chunks(pool_id, file_path.name, file_id, chunks, content_hash)
+    bm25.invalidate_pool(pool_id)
+    return True, "", len(chunks), {"skipped": False, "content_hash": content_hash}
 
 
 # ---------------------------------------------------------------------------
@@ -279,16 +316,24 @@ def file_id_for(pool_id: str, filename: str) -> str:
 
 
 def delete_file_vectors(pool_id: str, filename: str) -> Tuple[bool, str, dict]:
-    """Remove one indexed file's vectors from the configured store.
+    """Remove one indexed file's chunks and vectors from the configured store.
 
-    Returns (success, error_message, metadata). An unconfigured store is a
-    success with nothing deleted, so callers can delete unconditionally.
+    The chunk-store side (``rag_chunks``) is deleted first and always
+    succeeds — it is a local table with no external dependency — so keyword
+    search stops seeing the file immediately even if the vector delete below
+    then fails. Returns (success, error_message, metadata) for the vector
+    side; an unconfigured vector store is a success with nothing deleted, so
+    callers can delete unconditionally.
     """
+    file_id = file_id_for(pool_id, filename)
+    chunk_store.delete_file_chunks(file_id)
+    bm25.invalidate_pool(pool_id)
+
     cfg = rag_config
     try:
         meta = delete_vectors(
             cfg.vector_db, cfg.vector_db_collection, cfg.vector_db_url,
-            cfg.vector_db_api_key, file_id=file_id_for(pool_id, filename),
+            cfg.vector_db_api_key, file_id=file_id,
         )
         return True, "", meta
     except Exception as exc:
@@ -296,7 +341,11 @@ def delete_file_vectors(pool_id: str, filename: str) -> Tuple[bool, str, dict]:
 
 
 def delete_pool_vectors(pool_id: str) -> Tuple[bool, str, dict]:
-    """Remove everything a pool ever indexed. Used when the pool is deleted."""
+    """Remove everything a pool ever indexed: its chunks and its vectors.
+    Used when the pool is deleted."""
+    chunk_store.delete_pool_chunks(str(pool_id))
+    bm25.invalidate_pool(str(pool_id))
+
     cfg = rag_config
     try:
         meta = delete_vectors(

@@ -433,6 +433,113 @@ async def rollback_agent_version(agent_id: str, version: int):
     return {"agent_id": agent_id, "restored_to": version, "agent": restored}
 
 
+# ── A/B experiments between stored versions (evals/experiments.py) ──────────
+
+class ExperimentArm(BaseModel):
+    # A version number from the history, or "current" for the live
+    # definition (snapshotted into history when it is not there yet).
+    version: Union[int, str]
+    share: float
+
+
+class ExperimentUpdate(BaseModel):
+    enabled: bool = True
+    arms: List[ExperimentArm]
+    note: Optional[str] = None
+
+
+@router.get("/{agent_id}/experiment")
+async def get_agent_experiment(agent_id: str):
+    """The agent's open experiment, or the last ended one (``active`` says
+    which), or ``experiment: null`` when it never had one."""
+    from evals import experiments
+
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    exp = experiments.get_latest(agent_id)
+    return {"agent_id": agent_id, "experiment": exp,
+            "active": bool(exp and not exp.get("ended_at"))}
+
+
+@router.put("/{agent_id}/experiment")
+async def put_agent_experiment(agent_id: str, data: ExperimentUpdate):
+    """Start, pause, resume or change the agent's experiment. Arms reference
+    stored versions and their shares must sum to 1; changing the arms ends
+    the open experiment and starts a new one."""
+    from evals import experiments
+
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    arms = []
+    for arm in data.arms:
+        version = arm.version
+        if isinstance(version, str):
+            if version.strip().lower() == "current":
+                version = agent_versions.ensure_current_version(agent_id, actor="dashboard")
+                if version is None:
+                    raise HTTPException(status_code=400, detail="Could not snapshot the current definition")
+            else:
+                try:
+                    version = int(version)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="version must be a number or 'current'")
+        arms.append({"version": version, "share": arm.share})
+    try:
+        exp = experiments.put_experiment(agent_id, enabled=data.enabled, arms=arms,
+                                         note=data.note or "", actor="dashboard")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"agent_id": agent_id, "experiment": exp, "active": True}
+
+
+@router.delete("/{agent_id}/experiment")
+async def end_agent_experiment(agent_id: str):
+    """End the open experiment. Its assignments and report stay readable."""
+    from evals import experiments
+
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    exp = experiments.end_experiment(agent_id)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="No experiment is running")
+    return {"agent_id": agent_id, "experiment": exp, "active": False}
+
+
+@router.get("/{agent_id}/experiment/report")
+async def agent_experiment_report(agent_id: str, experiment_id: Optional[str] = None):
+    """Per arm: runs, completed and failed, mean cost, tokens and duration,
+    and the online eval score of the arm's runs. Reads the open experiment,
+    else the last ended one, else the one named by ``experiment_id``."""
+    from evals import experiments
+
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    exp = (experiments.get_experiment(experiment_id) if experiment_id
+           else experiments.get_latest(agent_id))
+    if exp is None or exp.get("agent_id") != agent_id:
+        raise HTTPException(status_code=404, detail="No experiment for this agent")
+    return {"agent_id": agent_id, **experiments.report(exp)}
+
+
+# ── Online evals (evals/online.py) ──────────────────────────────────────────
+
+@router.get("/{agent_id}/online-evals")
+async def list_agent_online_evals(agent_id: str, limit: int = 50):
+    """The agent's most recent online eval results, newest first."""
+    from evals import online
+
+    return {"agent_id": agent_id, "results": online.recent_results(agent_id, limit)}
+
+
+@router.get("/{agent_id}/online-evals/summary")
+async def agent_online_evals_summary(agent_id: str):
+    """Count, mean score and pass rate, overall, by definition version and
+    by rule."""
+    from evals import online
+
+    return online.summary(agent_id)
+
+
 @router.put("/{agent_id}/description")
 async def update_agent_description(agent_id: str, data: AgentDescriptionUpdate):
     spec = registry.get_agent(agent_id)

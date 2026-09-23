@@ -15,7 +15,6 @@ export const ROUTE_TITLES = [
   { match: /^\/marketplace\/.+$/, titleKey: 'layout.titles.marketplaceAgent' },
   { match: /^\/skills$/, titleKey: 'layout.titles.skills' },
   { match: /^\/web-logs$/, titleKey: 'layout.titles.webLogs' },
-  { match: /^\/manifest$/, titleKey: 'layout.titles.manifest' },
   { match: /^\/tools$/, titleKey: 'layout.titles.tools' },
   { match: /^\/workspaces$/, titleKey: 'layout.titles.workspaces' },
   { match: /^\/workspaces\/.+$/, titleKey: 'layout.titles.workspaceDetails' },

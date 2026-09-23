@@ -47,7 +47,6 @@ export default {
     marketplaceAgent: 'Агент маркетплейса',
     skills: 'Каталог навыков',
     webLogs: 'Веб-запросы',
-    manifest: 'Применить YAML',
     tools: 'Набор инструментов',
     workspaces: 'Рабочие пространства',
     workspaceDetails: 'Детали пространства',

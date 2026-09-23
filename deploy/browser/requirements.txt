@@ -1,0 +1,5 @@
+# The Playwright Python package and Chromium come with the base image; keep the
+# image tag in the Dockerfile and this pin on the same version.
+playwright==1.49.0
+fastapi>=0.110,<1
+uvicorn>=0.29,<1

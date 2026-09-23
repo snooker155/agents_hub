@@ -60,7 +60,7 @@ class SharedMemory(BaseModel):
     notes: List[Dict[str, Any]] = Field(default_factory=list)   # [{id, title, content, created_at}]
     kv_pairs: List[Dict[str, Any]] = Field(default_factory=list) # legacy — migrated on load
     structured_data: Dict[str, Dict[str, Any]] = Field(default_factory=dict)  # slot -> data dict
-    rag_files: List[Dict[str, Any]] = Field(default_factory=list) # [{filename, workspace, status, indexed_at, chunks}]
+    rag_files: List[Dict[str, Any]] = Field(default_factory=list) # [{filename, workspace, status, indexed_at, chunks, content_hash}]
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

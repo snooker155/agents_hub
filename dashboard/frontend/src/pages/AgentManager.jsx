@@ -60,6 +60,10 @@ const AgentManager = () => {
   const [loading, setLoading] = useState(true);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  // Which bundled preset "Add Claude Code" / "Add Codex" opened the import
+  // dialog on, or '' for the plain "Import from repo" button. See
+  // agents.importer.service.PRESETS for the ids these must match.
+  const [importPreset, setImportPreset] = useState('');
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardType, setWizardType] = useState('custom'); // 'custom' | 'remote' | 'clone'
@@ -420,6 +424,22 @@ const AgentManager = () => {
             title={t('agentManager.importAnAgentThatAlready')}
           >
             <Download className="w-4 h-4" /> {t('agentManager.importFromRepo')}
+          </button>
+          {/* Bundled examples (examples/imported-agents/): the same import
+              dialog, preselected on a preset so there is nothing to type. */}
+          <button
+            onClick={() => { setImportPreset('claude-code'); setShowImportModal(true); }}
+            className="flex items-center gap-2 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 text-sm font-medium transition-colors"
+            title={t('agentManager.addClaudeCodeHint')}
+          >
+            <Sparkles className="w-4 h-4" /> {t('agentManager.addClaudeCode')}
+          </button>
+          <button
+            onClick={() => { setImportPreset('codex'); setShowImportModal(true); }}
+            className="flex items-center gap-2 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 text-sm font-medium transition-colors"
+            title={t('agentManager.addCodexHint')}
+          >
+            <Sparkles className="w-4 h-4" /> {t('agentManager.addCodex')}
           </button>
           {/* The other direction, and it belongs here because this is where
               someone stands when they think "the agent I want is not in this
@@ -1029,11 +1049,13 @@ const AgentManager = () => {
         </div>
       )}
 
-      {/* Import an agent that already lives in its own repository */}
+      {/* Import an agent that already lives in its own repository, or one of
+          the bundled presets (Claude Code, Codex) when a preset button opened it. */}
       {showImportModal && (
         <ImportAgentModal
           workspace={selectedWorkspace}
-          onClose={() => setShowImportModal(false)}
+          preselectPreset={importPreset}
+          onClose={() => { setShowImportModal(false); setImportPreset(''); }}
           onDone={() => fetchData()}
         />
       )}

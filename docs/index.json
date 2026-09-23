@@ -53,7 +53,7 @@
     {
       "id": "cli",
       "title": "The CLI",
-      "summary": "`ah` drives the service from a terminal: the same operations as the dashboard, either in this process or over REST against a backend elsewhere.",
+      "summary": "`ah` drives the service from a terminal: the same operations as the dashboard, either in this process or over REST against a backend elsewhere. Command groups for every entity, commands generated from the OpenAPI schema, `ah api` as the raw escape hatch, and a single-file binary for REST mode.",
       "surface": "Terminal",
       "related": [
         "installation",
@@ -62,7 +62,12 @@
         "tasks",
         "nodes",
         "workers",
-        "backup"
+        "backup",
+        "flows",
+        "loops",
+        "teams",
+        "evals",
+        "mcp"
       ],
       "headings": [
         "Two ways it reaches the service",
@@ -162,19 +167,39 @@
     {
       "id": "evals",
       "title": "Evals",
-      "summary": "Eval sets, graders and model sweeps: measure whether a prompt change helped instead of guessing.",
+      "summary": "Eval sets, graders and model sweeps: measure whether a prompt change helped instead of guessing. Online evals grade a sample of production runs by alert rule.",
       "surface": "Evals",
       "related": [
         "agents",
         "costs",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "experiments",
+        "notifications"
       ],
       "headings": [
         "The pieces",
         "Graders, cheapest first",
         "Cost",
         "The injection audit",
-        "Why bother"
+        "Why bother",
+        "Online evals"
+      ]
+    },
+    {
+      "id": "experiments",
+      "title": "Experiments",
+      "summary": "A/B experiments between stored versions of an agent's definition: traffic shares, deterministic routing per run or conversation, and a per-arm report of outcomes, cost and online eval scores.",
+      "surface": "Agents",
+      "related": [
+        "evals",
+        "agents",
+        "notifications"
+      ],
+      "headings": [
+        "What an experiment is",
+        "How routing works",
+        "Reading the report",
+        "Rollback and new versions during an experiment"
       ]
     },
     {
@@ -232,6 +257,7 @@
         "The shape of an agent",
         "Pausing to ask",
         "The import flow",
+        "Claude Code and Codex",
         "Importing an A2A agent",
         "What you give up",
         "Gotchas"
@@ -357,6 +383,7 @@
         "Ranking",
         "Episodes",
         "Getting knowledge in",
+        "RAG",
         "Gotchas"
       ]
     },
@@ -637,7 +664,7 @@
     {
       "id": "tools-and-capabilities",
       "title": "Tools and capabilities",
-      "summary": "Tools are granted to an agent by name. Nothing is granted by default, including the calculator.",
+      "summary": "Tools are granted to an agent by name. Nothing is granted by default, including the calculator. The browser tools (Playwright in its own container, browser_open, browser_read, browser_act, browser_screenshot) and run_code (a sandboxed code interpreter in a throwaway container) live here too.",
       "surface": "Agents",
       "related": [
         "agents",
@@ -651,6 +678,8 @@
         "The capability model",
         "Why capabilities and not tool names",
         "Consequences you will actually hit",
+        "The browser tools",
+        "run_code",
         "Group aliases",
         "Approval gates, which are a different thing"
       ]
@@ -737,14 +766,15 @@
       "id": "notifications",
       "title": "Notifications",
       "surface": "Connectors",
-      "summary": "Outbound webhooks and Slack endpoints, alert rules for a failed run or spend past a threshold, and the signed, idempotent inbound webhooks (the node runner, a flow trigger, and filing a task from outside).",
+      "summary": "Outbound webhooks and Slack endpoints, alert rules for a failed run, spend past a threshold or a low online eval score, and the signed, idempotent inbound webhooks (the node runner, a flow trigger, and filing a task from outside).",
       "related": [
         "connectors",
         "scheduling",
         "costs",
         "tasks",
         "nodes",
-        "flows"
+        "flows",
+        "evals"
       ],
       "headings": [
         "Outbound: webhooks and Slack",

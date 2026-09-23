@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
         from common.singletons import supervisor as _supervisor, telegram_service
         _supervisor.add(telegram_service())
         await _supervisor.start()
-        print("✓ Singleton supervisor started (telegram)")
+        print("✓ Singleton supervisor started (telegram, online_evals)")
     except Exception as e:
         print(f"⚠ Could not start the singleton supervisor: {e}")
 

@@ -252,3 +252,44 @@ jobs:
           push: false
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
+
+  # The REST-only `ah` binary (scripts/build_cli_binary.sh, cli/rest_main.py,
+  # scripts/ah_rest.spec): built with PyInstaller, in its own venv, with none
+  # of the service's own dependencies installed, so a build that accidentally
+  # pulled in the service (docs/cli.md) would fail right here rather than
+  # only showing up as a giant binary nobody noticed.
+  cli-binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build dist/ah
+        run: scripts/build_cli_binary.sh --venv .venv-cli-binary
+
+      - name: --help works with nothing configured
+        run: dist/ah --help
+
+      - name: An unreachable AGENTS_HUB_URL fails clearly, not with a traceback
+        run: |
+          set +e
+          out=$(AGENTS_HUB_URL=http://127.0.0.1:9 dist/ah agent list 2>&1)
+          status=$?
+          echo "$out"
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "expected a non-zero exit for an unreachable backend" >&2
+            exit 1
+          fi
+          if echo "$out" | grep -qi "Traceback (most recent call last)"; then
+            echo "got a traceback instead of a clean error" >&2
+            exit 1
+          fi
+          echo "$out" | grep -qi "cannot reach the backend" || {
+            echo "did not get the expected connection-error message" >&2
+            exit 1
+          }

@@ -47,7 +47,6 @@ export default {
     marketplaceAgent: 'Marketplace Agent',
     skills: 'Skills Catalog',
     webLogs: 'Web Requests',
-    manifest: 'Apply YAML',
     tools: 'Toolbox',
     workspaces: 'Workspaces',
     workspaceDetails: 'Workspace Details',

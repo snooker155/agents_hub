@@ -31,13 +31,17 @@ router = APIRouter(prefix="/api/agent-import", tags=["agent-import"])
 
 
 class InspectRequest(BaseModel):
-    repo_url: str
+    # Empty when ``preset`` is given instead: a preset needs no URL to clone.
+    repo_url: str = ""
     branch: Optional[str] = None
     # Optional overrides for what the manifest declares. Both are what make an
     # unmanifested repository importable by hand.
     agent_id: Optional[str] = None
     url: Optional[str] = None
     workspace: Optional[str] = None
+    # A bundled example id from GET /presets, in place of repo_url. See
+    # agents.importer.service.PRESETS for the known ids.
+    preset: Optional[str] = None
 
 
 class RegisterRequest(BaseModel):
@@ -89,6 +93,18 @@ EXAMPLE_MANIFEST = {
     },
     "capabilities": {"tools": ["edit_files", "run_tests"]},
 }
+
+
+@router.get("/presets")
+async def get_import_presets():
+    """Bundled examples (examples/imported-agents/) ready to import as-is.
+
+    Each is a working agent-import contract already: Claude Code and Codex
+    behind the hub's HTTP contract, packaged with their own Dockerfile. The
+    import dialog shows this list next to "Import from repo" so bringing one
+    of them in never requires typing a repository URL.
+    """
+    return {"presets": import_service.list_presets()}
 
 
 @router.get("/requirements")
@@ -164,7 +180,13 @@ async def inspect_repository(data: InspectRequest):
 
     Nothing is registered. The returned ``token`` refers to the scratch clone;
     pass it to ``/register`` to import without cloning a second time.
+
+    ``preset`` selects a bundled example (see ``GET /presets``) instead of
+    ``repo_url``, staged from this install's own ``examples/imported-agents``
+    rather than cloned.
     """
+    if not data.preset and not data.repo_url.strip():
+        raise HTTPException(status_code=400, detail="Provide either repo_url or preset")
     try:
         return import_service.inspect(
             data.repo_url,
@@ -172,8 +194,9 @@ async def inspect_repository(data: InspectRequest):
             agent_id=data.agent_id,
             url=data.url,
             workspace=data.workspace,
+            preset=data.preset,
         )
-    except ImportSourceError as exc:
+    except (ImportSourceError, import_service.ImportError_) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")

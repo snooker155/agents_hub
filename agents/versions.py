@@ -30,6 +30,10 @@ Public API:
 - ``list_versions`` / ``get_version_row`` / ``current_snapshot`` /
   ``diff_entries`` / ``rollback_to`` — read side and rollback for the
   ``/api/agents/{id}/versions*`` routes.
+- ``ensure_current_version(agent_id)`` — the stored version holding the live
+  definition, snapshotting it when needed, so an A/B experiment arm can name
+  "what runs now" (``evals/experiments.py``). Rows are never rewritten, so a
+  later snapshot or a rollback never changes what an arm builds.
 """
 from __future__ import annotations
 
@@ -213,6 +217,34 @@ def snapshot_if_changed(
         log.warning("agent_versions: snapshot of '%s' failed, continuing without it",
                     agent_id, exc_info=True)
         return None
+
+
+def ensure_current_version(agent_id: str, *, actor: Optional[str] = None) -> Optional[int]:
+    """The version number that holds the agent's live definition, writing a
+    snapshot first when history does not have it yet.
+
+    History records a state just before it is replaced, so the live state is
+    usually *not* in history. An A/B experiment arm must point at a stored
+    row (``evals/experiments.py``), which is what this is for: "the current
+    definition" as an arm becomes a real, immutable version. Returns None
+    when the agent does not exist or the snapshot could not be written.
+    """
+    from agents.registry import get_agent
+
+    spec = get_agent(agent_id)
+    if spec is None:
+        return None
+    fp = _fingerprint_spec(spec)
+    latest = _latest_version_row(agent_id)
+    if latest is not None and latest["hash"] == fp["hash"]:
+        return int(latest["version"])
+    written = snapshot_if_changed(agent_id, actor=actor, note="snapshot for an experiment")
+    if written is not None:
+        return int(written)
+    latest = _latest_version_row(agent_id)
+    if latest is not None and latest["hash"] == fp["hash"]:
+        return int(latest["version"])
+    return None
 
 
 def _row_to_entry(row) -> Dict[str, Any]:

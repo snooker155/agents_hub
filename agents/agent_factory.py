@@ -7,6 +7,7 @@ system prompt assembled from per-agent markdown files in
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -224,6 +225,9 @@ def resolve_streaming(definition_flag: Any, override_params: Dict[str, Any]) -> 
         return True
     from common.config import streaming_enabled
     return streaming_enabled()
+
+
+log = logging.getLogger(__name__)
 
 
 class AgentFactory:
@@ -550,11 +554,15 @@ class AgentFactory:
         # fetch_url are separately grantable on purpose — search is a far
         # smaller injection surface than page content. See tools/web.py.
         from tools.web import WEB_TOOLS
+        # Browser tools and sandboxed code execution: plain per-tool grants,
+        # like the web tools. See tools/browser.py and tools/run_code.py.
+        from tools.browser import BROWSER_TOOLS
+        from tools.run_code import run_code
 
         # NB: think/plan are intentionally NOT auto-included here. They are
         # added by create_agent() based on the agent's reasoning config, which
         # is the source of truth for the reasoning capabilities.
-        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS]
+        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly
@@ -584,6 +592,19 @@ class AgentFactory:
         inputs (markdown, registry spec, workspace/model settings) change.
         """
         from agents import agent_cache
+
+        # A/B experiment arm (evals/experiments.py): open_run pinned a stored
+        # version for this agent's run. Building with ``definition_version``
+        # both selects the snapshot in _build_agent and puts the version into
+        # the cache key (it is one of the overrides), so two arms never share
+        # a cached build. An explicit ``definition_version`` from the caller
+        # wins over the pin.
+        if "definition_version" not in override_params:
+            pin = _experiment_pin(agent_id)
+            if pin is not None:
+                override_params = {**override_params, "definition_version": int(pin["version"])}
+                _record_experiment_assignment(pin)
+
         return agent_cache.get_or_build(
             agent_id,
             workspace,
@@ -591,6 +612,51 @@ class AgentFactory:
             definitions_dir=self.definitions_dir,
             builder=lambda: self._build_agent(agent_id, workspace, **override_params),
         )
+
+    def _definition_from_snapshot(self, spec: Any, parts: Dict[str, Any]) -> Dict[str, Any]:
+        """``load_definition``'s shape, from a stored version instead of the
+        live registry record and markdown files (an experiment arm)."""
+        instructions = str(parts.get("instructions") or "")
+        prompt_parts = [instructions]
+        capabilities = str(parts.get("capabilities") or "").strip()
+        if capabilities:
+            prompt_parts.append("## Capabilities\n\n" + capabilities)
+        usage = str(parts.get("usage") or "").strip()
+        if usage:
+            prompt_parts.append("## Usage\n\n" + usage)
+        return {
+            "id": spec.id,
+            "name": spec.name,
+            "description": spec.description,
+            "system_prompt": "\n\n".join(prompt_parts),
+            "tools": list(spec.tools or []),
+            "provider": spec.provider,
+            "model": spec.model,
+            "base_url": spec.base_url,
+            "temperature": spec.temperature if spec.temperature is not None else 0.0,
+            "max_tokens": spec.max_tokens,
+            "api_key": spec.api_key,
+            "verbose": spec.verbose,
+            "streaming": spec.streaming,
+        }
+
+    def _load_snapshot(self, agent_id: str, version: Any) -> Optional[tuple]:
+        """``(spec, definition)`` for a stored version, or None (logged) when
+        the version row is missing or unreadable."""
+        try:
+            from agents import versions as agent_versions
+            from agents.registry import _validate_agent_dict
+            entry = agent_versions.get_version_row(agent_id, int(version))
+            if entry is None:
+                log.warning("agent '%s' has no version %s; building the current definition",
+                            agent_id, version)
+                return None
+            spec = _validate_agent_dict(entry["spec"])
+            return spec, self._definition_from_snapshot(spec, entry.get("definition") or {})
+        except Exception:
+            log.warning("could not load version %s of agent '%s'; building the current definition",
+                        version, agent_id, exc_info=True)
+            return None
 
     def _build_agent(self, agent_id: str, workspace: Optional[str] = None, **override_params) -> AgentBase:
         """Build an agent from its definition (uncached).
@@ -607,6 +673,15 @@ class AgentFactory:
         """
         from agents.registry import get_agent as _reg_get
         _spec = _reg_get(agent_id)
+
+        # A stored version to build from instead of the live definition (an
+        # experiment arm, see create_agent). Popped like memory_pool: it is
+        # not a definition field, and it already reached the cache key.
+        _definition_version = override_params.pop("definition_version", None)
+        _snapshot = (self._load_snapshot(agent_id, _definition_version)
+                     if _definition_version is not None else None)
+        if _snapshot is not None:
+            _spec = _snapshot[0]
 
         # Pinning the memory pool for this build. Taken out of the overrides
         # before they are merged into the config, because it is not a definition
@@ -631,7 +706,8 @@ class AgentFactory:
                 verbose=_spec.verbose,
             )
 
-        definition = self.load_definition(agent_id)
+        definition = (dict(_snapshot[1]) if _snapshot is not None
+                      else self.load_definition(agent_id))
 
         # Resolve model first — the provider drives auto defaults (e.g. episodic
         # write off for local providers). Injection below only changes tools and
@@ -940,6 +1016,23 @@ class AgentFactory:
                 "tools": list(spec.tools or []),
             })
         return agents
+
+
+def _experiment_pin(agent_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        from evals.experiments import take_pin
+        return take_pin(agent_id)
+    except Exception:
+        log.debug("experiment pin lookup failed for '%s'", agent_id, exc_info=True)
+        return None
+
+
+def _record_experiment_assignment(pin: Dict[str, Any]) -> None:
+    try:
+        from evals.experiments import record_assignment
+        record_assignment(pin)
+    except Exception:
+        log.debug("experiment assignment not recorded", exc_info=True)
 
 
 # Global factory instance

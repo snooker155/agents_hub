@@ -7,6 +7,7 @@ import {
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import { useWorkspace } from '../workspace';
+import { GRADER_FIELDS, graderSpec } from '../agent/onlineEvals';
 
 // ── Webhooks tab: outbound endpoints + alert rules ───────────────────────────
 //
@@ -17,7 +18,22 @@ import { useWorkspace } from '../workspace';
 // and when the workspace should raise one on its own (a failed run, spend
 // past a threshold) without an agent or a person asking for it.
 
-const RULE_KINDS = ['run_failed', 'spend_daily_over', 'spend_run_over'];
+const RULE_KINDS = ['run_failed', 'spend_daily_over', 'spend_run_over', 'online_eval'];
+// Graders the one-grader form here offers; the agent's Live quality card
+// (components/agent/LiveQualityCard.jsx) edits several at once.
+const GRADER_KINDS = Object.keys(GRADER_FIELDS);
+
+/** The threshold column: dollars for spend rules, sampling for online evals. */
+function ruleThreshold(rule, t) {
+  if (rule.kind === 'run_failed') return '—';
+  if (rule.kind === 'online_eval') {
+    return t('connectors.webhooks.onlineEvalSummary', {
+      rate: `${Math.round(Number(rule.sample_rate ?? 0) * 100)}%`,
+      min: Number(rule.min_score ?? 0).toFixed(2),
+    });
+  }
+  return `$${Number(rule.threshold_usd || 0).toFixed(2)}`;
+}
 const CHANNELS = ['dashboard', 'telegram', 'slack', 'webhook'];
 // What an endpoint can subscribe to: the notifications the inbox already
 // raises (create_notification, alert rules), and the audit trail
@@ -234,6 +250,10 @@ function RuleForm({ workspace, onCreated }) {
   const [threshold, setThreshold] = useState('1.00');
   const [agentId, setAgentId] = useState('');
   const [channels, setChannels] = useState(['dashboard']);
+  const [sampleRate, setSampleRate] = useState('20');
+  const [minScore, setMinScore] = useState('0.7');
+  const [grader, setGrader] = useState('llm_judge');
+  const [graderValue, setGraderValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -247,11 +267,16 @@ function RuleForm({ workspace, onCreated }) {
     try {
       const payload = {
         kind,
-        threshold_usd: kind === 'run_failed' ? 0 : parseFloat(threshold) || 0,
+        threshold_usd: kind === 'run_failed' || kind === 'online_eval' ? 0 : parseFloat(threshold) || 0,
         agent_id: agentId.trim() || null,
         channels: channels.length ? channels : ['dashboard'],
         enabled: true,
       };
+      if (kind === 'online_eval') {
+        payload.sample_rate = (parseFloat(sampleRate) || 0) / 100;
+        payload.min_score = parseFloat(minScore) || 0;
+        payload.graders = [graderSpec({ kind: grader, value: graderValue, weight: 1 })];
+      }
       const { data } = await createNotifyRule(payload, workspace);
       onCreated(data.rule);
       setAgentId('');
@@ -272,7 +297,35 @@ function RuleForm({ workspace, onCreated }) {
           ))}
         </select>
       </div>
-      {kind !== 'run_failed' && (
+      {kind === 'online_eval' && (
+        <>
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">{t('connectors.webhooks.sampleRate')}</label>
+            <input type="number" min="0" max="100" step="1" value={sampleRate}
+                   onChange={(e) => setSampleRate(e.target.value)} className={`${inputCls} w-20`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">{t('connectors.webhooks.minScore')}</label>
+            <input type="number" min="0" max="1" step="0.05" value={minScore}
+                   onChange={(e) => setMinScore(e.target.value)} className={`${inputCls} w-20`} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">{t('connectors.webhooks.grader')}</label>
+            <select value={grader} onChange={(e) => { setGrader(e.target.value); setGraderValue(''); }}
+                    className={`${inputCls} w-40`}>
+              {GRADER_KINDS.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          {GRADER_FIELDS[grader] && (
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">{t('connectors.webhooks.graderParam')}</label>
+              <input type="text" value={graderValue} onChange={(e) => setGraderValue(e.target.value)}
+                     className={`${inputCls} w-48`} />
+            </div>
+          )}
+        </>
+      )}
+      {kind !== 'run_failed' && kind !== 'online_eval' && (
         <div>
           <label className="text-xs font-medium text-gray-500 mb-1 block">{t('connectors.webhooks.threshold')}</label>
           <input
@@ -386,7 +439,7 @@ function RulesSection({ workspace }) {
               {rules.map((rule) => (
                 <tr key={rule.id} className="border-t border-gray-100">
                   <td className="py-2 pr-3 text-gray-800">{t(`connectors.webhooks.ruleKinds.${rule.kind}`)}</td>
-                  <td className="py-2 pr-3 text-gray-700">{rule.kind === 'run_failed' ? '—' : `$${Number(rule.threshold_usd || 0).toFixed(2)}`}</td>
+                  <td className="py-2 pr-3 text-gray-700">{ruleThreshold(rule, t)}</td>
                   <td className="py-2 pr-3 text-gray-500 font-mono text-xs">{rule.agent_id || '—'}</td>
                   <td className="py-2 pr-3 text-gray-500 text-xs">{(rule.channels || []).join(', ')}</td>
                   <td className="py-2 pr-3">

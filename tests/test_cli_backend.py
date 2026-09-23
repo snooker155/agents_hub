@@ -27,6 +27,7 @@ OPERATIONS = [
     "list_nodes", "start_node", "stop_node",
     "get_settings",
     "describe",
+    "request",
 ]
 
 

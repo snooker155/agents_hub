@@ -1,0 +1,49 @@
+{
+  "schema": "agents-hub/agent-manifest@1",
+  "id": "codex",
+  "name": "Codex",
+  "description": "OpenAI's own coding agent CLI, wrapped behind the Agents Hub HTTP contract. Edits files in a local git repository, runs shell commands, and reports its own token usage on every run.",
+  "domain": "Software Engineering",
+  "runtime": {
+    "kind": "http",
+    "port": 8440,
+    "run_path": "/run",
+    "stream_path": "/run/stream",
+    "health_path": "/health",
+    "timeout": 1800,
+    "docker": {
+      "dockerfile": "Dockerfile.agenthub",
+      "context": "."
+    },
+    "env": [
+      {
+        "name": "OPENAI_API_KEY",
+        "required": true,
+        "description": "Model key Codex uses for its own completions. Read by the CLI itself, not by the hub."
+      },
+      {
+        "name": "CODEX_MODEL",
+        "required": false,
+        "description": "Model passed to codex exec --model. Defaults to whatever the installed CLI picks."
+      },
+      {
+        "name": "CODEX_ARGS",
+        "required": false,
+        "description": "Extra flags appended to the codex exec invocation verbatim (shell-quoted), e.g. an approval-mode or sandbox flag your CLI version needs for unattended runs. Check `codex exec --help` in the built image."
+      },
+      {
+        "name": "CODEX_WORKDIR",
+        "required": false,
+        "description": "Git repository Codex edits when a run does not name a workspace. Defaults to /work."
+      }
+    ]
+  },
+  "capabilities": {
+    "tools": [
+      "edit_files",
+      "run_shell_commands",
+      "read_files"
+    ]
+  },
+  "docs": "README.md"
+}

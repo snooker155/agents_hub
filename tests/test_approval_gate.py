@@ -61,6 +61,15 @@ def test_the_default_list_holds_the_destructive_tools():
     assert not approval.needs_approval("read_file")
 
 
+def test_sandboxed_code_and_browser_actions_are_gated():
+    # run_code still executes what the model wrote; browser_act can submit a
+    # form on a live site. Opening and reading a page are not gated.
+    assert approval.needs_approval("run_code")
+    assert approval.needs_approval("browser_act")
+    assert not approval.needs_approval("browser_open")
+    assert not approval.needs_approval("browser_read")
+
+
 def test_reasoning_tools_and_ask_user_are_never_gated():
     # Gating the question tool would need approval to ask for approval.
     assert not approval.needs_approval("ask_user")

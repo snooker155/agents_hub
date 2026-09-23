@@ -395,6 +395,42 @@ class Settings(BaseSettings):
     web_log_body_chars: int = Field(
         default=20_000, validation_alias=AliasChoices("WEB_LOG_BODY_CHARS", "web_log_body_chars"))
 
+    # ── Browser service (tools/browser.py, deploy/browser/) ───────────────────
+    # Base URL of the browser service, e.g. http://browser:3000 under the
+    # compose `browser` profile. Empty (default) leaves the browser_* tools
+    # inert: they answer that the service is not configured.
+    browser_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BROWSER_URL", "browser_url"))
+    # Shared token the service requires on every call (its BROWSER_TOKEN).
+    # The _TOKEN suffix keeps it out of run_shell's environment (scrubbed_env).
+    browser_token: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TOKEN", "browser_token"))
+    # Seconds the hub waits for one call to the service.
+    browser_timeout: float = Field(
+        default=45.0, validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TIMEOUT", "browser_timeout"))
+
+    # ── Sandboxed code execution (tools/run_code.py) ──────────────────────────
+    # Image per language, as JSON ({"python": "python:3.12-slim"}) or as
+    # comma-separated lang=image pairs. Languages left out keep their default
+    # (python:3.12-slim, node:20-slim, bash:5).
+    code_runner_images: str = Field(
+        default="", validation_alias=AliasChoices("CODE_RUNNER_IMAGES", "code_runner_images"))
+    # What run_code does when docker is unavailable: "none" (default) returns
+    # an error; "local" runs the snippet as a plain subprocess in a temporary
+    # directory with the scrubbed environment. Local means no network or
+    # filesystem isolation at all, so it is an explicit opt-in.
+    code_runner_fallback: str = Field(
+        default="none", validation_alias=AliasChoices("CODE_RUNNER_FALLBACK", "code_runner_fallback"))
+    code_runner_memory: str = Field(
+        default="512m", validation_alias=AliasChoices("CODE_RUNNER_MEMORY", "code_runner_memory"))
+    code_runner_cpus: str = Field(
+        default="1", validation_alias=AliasChoices("CODE_RUNNER_CPUS", "code_runner_cpus"))
+    code_runner_pids_limit: int = Field(
+        default=128, validation_alias=AliasChoices("CODE_RUNNER_PIDS_LIMIT", "code_runner_pids_limit"))
+    # Upper bound on the per-call timeout an agent may ask for, in seconds.
+    code_runner_max_timeout: int = Field(
+        default=300, validation_alias=AliasChoices("CODE_RUNNER_MAX_TIMEOUT", "code_runner_max_timeout"))
+
     # ── Retention ─────────────────────────────────────────────────────────────
     # Daily maintenance deletes terminal run records (and their payloads/logs)
     # finished more than this many days ago. 0 disables run retention.

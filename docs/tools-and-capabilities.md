@@ -80,6 +80,124 @@ and `DELEGATING_TOOLS` (the six edges above). Every catalog tool id ends up in
 exactly one of them; a test enforces that, and `python -m agents.capability_guard`
 reports zero unclassified tools alongside the current roster's violations.
 
+## The browser tools
+
+`browser_open`, `browser_read`, `browser_act`, `browser_screenshot` and
+`browser_close` drive a real headless Chromium. Use them for what `fetch_url`
+cannot read: pages rendered by JavaScript, content behind a click, a search
+form. `fetch_url` stays the first choice for a plain page: it is faster and
+has nothing to execute.
+
+- `browser_open(url)` opens a page and returns its title.
+- `browser_read(max_chars)` returns the page text as it is now, after scripts
+  and after any action. Text is extracted exactly as `fetch_url` extracts it
+  (scripts, comments and hidden elements dropped, links followed by their
+  URL) and wrapped in the same untrusted-content envelope.
+- `browser_act(action, selector, text)` clicks, fills, presses a key, scrolls
+  or selects an option. A selector is CSS, or `text=Sign in` to match by
+  visible text.
+- `browser_screenshot(full_page)` saves a PNG under `screenshots/` in the
+  run's workspace and returns its path.
+- `browser_close()` ends the session. Idle sessions also close on their own.
+
+Each run gets its own browser session (its own cookies and storage), keyed by
+the run id.
+
+### Enabling it
+
+The browser runs as a separate service, `deploy/browser/`, in its own
+container. With compose:
+
+```
+# .env
+AGENTS_HUB_BROWSER_URL=http://browser:3000
+AGENTS_HUB_BROWSER_TOKEN=<a long random string>
+
+docker compose --profile browser up --build
+```
+
+Without those two settings the tools answer that the browser service is not
+configured, and the agent carries on. The service's own limits are
+environment variables on its container: `BROWSER_MAX_SESSIONS` (8),
+`BROWSER_IDLE_TIMEOUT` in seconds (300), `BROWSER_NAV_TIMEOUT_MS` (20000).
+
+### Security model
+
+The same rules as `fetch_url`, enforced twice:
+
+- **In the hub.** Every URL the agent names goes through `validate_url` (scheme,
+  the workspace's domain policy, the private-network block) before the service
+  is called at all, and the address the page ends up on after an open or an
+  action is checked again. A landing page that fails closes the session.
+- **In the service.** The session is created with the workspace's domain
+  policy (deny list, opt-in allow list, subdomain matching identical to
+  `fetch_url`). Every request the page makes, not only the one the agent asked
+  for, is routed through a filter: images, scripts, XHR, WebSockets and each
+  redirect hop. Redirects are fetched one hop at a time and the `Location` is
+  checked before the browser follows it. A request to a loopback, RFC1918,
+  link-local or cloud metadata address is refused on every address the host
+  resolves to. The check is the hub's own `common/ssrf.py`, copied into the
+  image at build time rather than rewritten. Service workers are blocked so
+  no request can bypass the filter, and downloads are off.
+- **Reachability.** The service requires the shared token on every call and
+  refuses to start without one. In compose it sits alone on its own network
+  with no published port, so pages cannot reach the database, Redis or any
+  other of our services.
+
+What remains: the host is resolved by the filter and then again by the
+browser, so a DNS answer that changes in between (rebinding) is not caught by
+the service alone. For a hard guarantee, add an egress firewall rule for the
+browser's network that drops private ranges.
+
+Capabilities: `browser_open`, `browser_read`, `browser_act` and
+`browser_screenshot` are classified exactly like `fetch_url`, ingesting
+untrusted content and able to send data out (the URL, and anything typed into
+a form). `browser_close` grants nothing. `browser_act` is not idempotent: an
+interrupted click is reported to a resumed run, never repeated blindly. With
+the approval gate on, it needs a yes every time.
+
+## run_code
+
+`run_code(language, code, timeout, stdin, mount_workspace)` runs a Python,
+Node or Bash snippet in a throwaway container and returns its exit code,
+duration, stdout and stderr, truncated like `run_shell`'s.
+
+The container has no network, a read-only filesystem apart from a small
+`/tmp`, no capabilities, runs as `nobody`, and is limited in memory, CPU and
+process count. It receives no environment from the hub. The workspace is not
+mounted unless the agent asks: `mount_workspace=True` mounts it read-only at
+`/work`, so the code can analyse files but not change them.
+
+### Why prefer it over run_shell
+
+`run_shell` runs on the hub's host, in the workspace, with the network: the
+right tool for building and testing a project the agent owns, and the wrong
+one for a snippet whose content came from a web page, a user or another
+model. `run_code` gives that snippet nothing to damage and nowhere to send
+what it finds. Its default timeout is 60 seconds, capped by
+`CODE_RUNNER_MAX_TIMEOUT` (300).
+
+### Settings
+
+- `CODE_RUNNER_IMAGES`: image per language, as JSON (`{"python":
+  "python:3.13-slim"}`) or `python=...,node=...`. Defaults: `python:3.12-slim`,
+  `node:20-slim`, `bash:5`. Pull them ahead of time: a pull counts against the
+  snippet's timeout.
+- `CODE_RUNNER_MEMORY` (`512m`), `CODE_RUNNER_CPUS` (`1`),
+  `CODE_RUNNER_PIDS_LIMIT` (`128`).
+- `CODE_RUNNER_FALLBACK`: what happens when docker is unavailable. `none`
+  (default) returns an error. `local` runs the snippet as a plain subprocess
+  in a temporary directory with the provider keys scrubbed from its
+  environment and the same timeout. That has no network or filesystem
+  isolation at all, so it is an opt-in for development machines.
+
+Capabilities: in its container `run_code` only reads private data (the
+optional workspace mount), since nothing can come in or go out without a
+network. With `CODE_RUNNER_FALLBACK=local` it is classified like `run_shell`,
+the whole trifecta, because the snippet then has the network and the host's
+filesystem. It is not idempotent, and with the approval gate on it needs a
+yes every time, like `run_shell`.
+
 ## Group aliases
 
 A tool list may name a group (`filesystem`, `task_management`, `service_ops`,

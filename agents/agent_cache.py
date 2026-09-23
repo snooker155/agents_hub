@@ -19,6 +19,11 @@ What the fingerprint covers (a change to any of these rebuilds):
 - the global ``.env`` (default provider/model)
 - the target workspace, the build override params, and project-scope
 
+The key (not only the fingerprint) carries the build overrides, and that is
+where an A/B experiment arm lands: the factory adds ``definition_version`` to
+the overrides of a run routed to an arm (``evals/experiments.py``), so each
+stored version gets its own cache entry and two arms never share a build.
+
 What it deliberately does NOT cover: live memory *contents*. The memory section
 injected into the prompt is only a set of hints ("these slots/notes exist") —
 the agent reads authoritative values through its tools at runtime, so a slightly

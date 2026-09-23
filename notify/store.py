@@ -17,10 +17,15 @@ Two lists live here, under separate metadata keys.
     When a run or the workspace's spend should raise a notification on its
     own, without an agent or a person asking for it::
 
-        {"id", "kind": "run_failed"|"spend_daily_over"|"spend_run_over",
+        {"id", "kind": "run_failed"|"spend_daily_over"|"spend_run_over"|"online_eval",
          "threshold_usd", "agent_id" (optional filter),
          "channels": ["dashboard", "telegram", "slack", "webhook"], "enabled",
          "last_fired_date"}
+
+    An ``online_eval`` rule also carries ``sample_rate`` (0..1), ``graders``
+    (grader specs as an eval set stores them), ``min_score`` (0..1),
+    ``severity`` and optional ``expected`` / ``rubric`` for the graders that
+    read them; see ``evals/online.py``.
 
 **Secrets.** A webhook's secret is stored as the operator typed it and never
 sent back in a GET: :func:`masked_endpoint` replaces it with its last four
@@ -51,7 +56,7 @@ RULES_KEY = "alert_rules"
 INBOUND_SECRET_KEY = "notify_inbound_secret"
 
 ENDPOINT_KINDS = ("webhook", "slack")
-RULE_KINDS = ("run_failed", "spend_daily_over", "spend_run_over")
+RULE_KINDS = ("run_failed", "spend_daily_over", "spend_run_over", "online_eval")
 CHANNELS = ("dashboard", "telegram", "slack", "webhook")
 
 _MASK = "••••"
@@ -214,6 +219,9 @@ def create_rule(workspace: str, data: Dict[str, Any]) -> Dict[str, Any]:
         "last_fired_date": None,
         "created_at": _utc_now_iso(),
     }
+    if kind == "online_eval":
+        from evals.online import normalize_rule_fields
+        record.update(normalize_rule_fields(data))
     items = list_rules(workspace)
     items.append(record)
     _save_rules(workspace, items)
@@ -234,6 +242,13 @@ def update_rule(workspace: str, rule_id: str, changes: Dict[str, Any]) -> Option
                 merged[key] = changes[key]
         if "channels" in changes and changes["channels"] is not None:
             merged["channels"] = [c for c in changes["channels"] if c in CHANNELS] or ["dashboard"]
+        if merged.get("kind") == "online_eval":
+            from evals.online import normalize_rule_fields
+            if item.get("kind") != "online_eval":
+                # Switching kind: every online_eval field is required now.
+                merged.update(normalize_rule_fields({**item, **changes}))
+            else:
+                merged.update(normalize_rule_fields(changes, partial=True))
         items[index] = merged
         updated = merged
         break

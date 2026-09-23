@@ -92,8 +92,28 @@ class RunGroup:
 
 # ── Cost ─────────────────────────────────────────────────────────────────────
 
+def _record_cost(rec: Dict[str, Any], prices: Any) -> float:
+    """One run's spend: the remote's own reported figure when it gave one,
+    catalog pricing from token counts otherwise.
+
+    A remote agent (see :mod:`agents.remote_agent`) may report its own dollar
+    cost: a CLI it wraps, such as Claude Code, prices its own call and knows
+    the exact figure, which beats a hub-side estimate priced from token counts
+    against a catalog that may not even list the model. ``reported_cost_usd``
+    is only ever written by that credit path, so its presence (including an
+    honestly reported zero) means "trust this number instead."
+    """
+    from common.pricing import run_cost_usd
+
+    reported = rec.get("reported_cost_usd")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+        return float(reported)
+    return run_cost_usd(rec, prices)
+
+
 def runs_cost(run_ids: List[str]) -> float:
-    """Catalog-priced spend of a set of agent runs.
+    """Priced spend of a set of agent runs: a remote's own reported cost where
+    it gave one, catalog pricing otherwise.
 
     Best effort by design: an unknown (provider, model) pair prices at zero and
     a broken price catalog returns zero, because a cost readout must never be
@@ -107,13 +127,13 @@ def runs_cost(run_ids: List[str]) -> float:
     if not ids:
         return 0.0
     try:
-        from common.pricing import load_price_map, run_cost_usd
+        from common.pricing import load_price_map
 
         from .store import get_runs_by_ids
 
         prices = load_price_map()
         records = get_runs_by_ids(ids)
-        return round(sum(run_cost_usd(rec, prices) for rec in records.values()), 6)
+        return round(sum(_record_cost(rec, prices) for rec in records.values()), 6)
     except Exception:
         return 0.0
 

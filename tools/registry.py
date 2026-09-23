@@ -113,6 +113,12 @@ _CATALOG_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "document_set": {"name": "Document: Set Body"},
     "view_compute": {"name": "Compute (precise)"},
     "fetch_url": {"name": "Fetch URL"},
+    "run_code": {"name": "Run Code (sandboxed)"},
+    "browser_open": {"name": "Browser: Open"},
+    "browser_read": {"name": "Browser: Read"},
+    "browser_act": {"name": "Browser: Act"},
+    "browser_screenshot": {"name": "Browser: Screenshot", "requires_workspace": True},
+    "browser_close": {"name": "Browser: Close"},
     "view_serve": {"name": "Serve (proxy)"},
     "list_evals_tool": {"name": "List Eval Sets"},
     "get_eval_tool": {"name": "Get Eval Set"},
@@ -311,7 +317,13 @@ def _reasoning_specs() -> List[ToolSpec]:
 
 def _execution_specs() -> List[ToolSpec]:
     from tools.shell import run_shell
-    return [spec_from_tool(run_shell, category="execution", requires_workspace=True)]
+    from tools.run_code import run_code
+    # run_code needs no workspace: it runs in a throwaway container and only
+    # mounts the workspace (read-only) when the agent asks for it.
+    return [
+        spec_from_tool(run_shell, category="execution", requires_workspace=True),
+        spec_from_tool(run_code, category="execution"),
+    ]
 
 
 def _calculator_specs() -> List[ToolSpec]:
@@ -442,6 +454,14 @@ def _web_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="web") for t in WEB_TOOLS]
 
 
+def _browser_specs() -> List[ToolSpec]:
+    # The browser tools are web access through a real browser (tools/browser.py),
+    # so they sit in the "web" category next to fetch_url rather than in a
+    # category of their own; the display names ("Browser: ...") group them.
+    from tools.browser import BROWSER_TOOLS
+    return [spec_from_tool(t, category="web") for t in BROWSER_TOOLS]
+
+
 def _service_ops_specs() -> List[ToolSpec]:
     from tools.service_ops import SERVICE_OPS_TOOLS
     return [spec_from_tool(t, category="service_ops") for t in SERVICE_OPS_TOOLS]
@@ -486,6 +506,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _git_publish_specs,
     _visualization_specs,
     _web_specs,
+    _browser_specs,
     _service_ops_specs,
     _evals_specs,
     _documentation_specs,

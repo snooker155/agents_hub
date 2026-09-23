@@ -36,6 +36,8 @@ import ConfigTab from '../components/agent/ConfigTab';
 import ModelTab from '../components/agent/ModelTab';
 import DockerTab from '../components/agent/DockerTab';
 import SkillsTab from '../components/agent/SkillsTab';
+import LiveQualityCard from '../components/agent/LiveQualityCard';
+import ExperimentCard from '../components/agent/ExperimentCard';
 
 // The thirteen tabs, the three overlays and the pieces they share live in
 // `components/agent/`; this file is what loads the agent and what the tabs
@@ -773,7 +775,14 @@ const AgentDetails = () => {
         )}
       </div>
 
-      {activeTab === 'overview' && <OverviewTab />}
+      {/* Live quality (online evals) sits under the overview; the experiment
+          card sits under the version history it picks its arms from. */}
+      {activeTab === 'overview' && (
+        <>
+          <OverviewTab />
+          <LiveQualityCard agentId={id} />
+        </>
+      )}
       {activeTab === 'instances' && <InstancesTab />}
       {activeTab === 'history' && <HistoryTab />}
       {activeTab === 'logs' && <LogsTab />}
@@ -782,7 +791,12 @@ const AgentDetails = () => {
       {activeTab === 'nodes' && <NodesTab />}
       {activeTab === 'tasks' && <TasksTab />}
       {activeTab === 'commands' && <CommandsTab />}
-      {activeTab === 'config' && <ConfigTab />}
+      {activeTab === 'config' && (
+        <>
+          <ConfigTab />
+          <ExperimentCard agentId={id} />
+        </>
+      )}
       {activeTab === 'model' && <ModelTab />}
       {activeTab === 'docker' && <DockerTab />}
       {activeTab === 'skills' && <SkillsTab />}

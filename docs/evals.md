@@ -157,10 +157,67 @@ The static half of that audit costs nothing: it checks that the web scanner
 flags each fixture and that hidden text is stripped before an agent sees it.
 That part is a property of the code, not of a model, so it belongs in CI.
 
+## Online evals
+
+An eval set measures an agent on cases you wrote. An online eval measures it
+on its real traffic: an alert rule of kind `online_eval` grades a share of the
+agent's production runs and raises a notification when one scores too low.
+
+```json
+{
+  "kind": "online_eval",
+  "agent_id": "support_agent",
+  "sample_rate": 0.1,
+  "graders": [
+    {"kind": "llm_judge", "params": {"rubric": "Does it answer the question asked?"}},
+    {"kind": "no_error_tool_results", "weight": 0.5}
+  ],
+  "min_score": 0.7,
+  "severity": "warning",
+  "channels": ["dashboard", "slack"]
+}
+```
+
+How it runs:
+
+1. When a run finishes `completed`, each enabled `online_eval` rule whose
+   agent filter matches decides whether the run is sampled. The decision is a
+   hash of the rule id and the run id against `sample_rate`, so it is the same
+   on every replica and on every re-evaluation. A sampled run becomes one row
+   in `online_eval_jobs`; nothing is graded on the finish path. Eval and
+   replay runs are never sampled, and failed runs are left to `run_failed`.
+2. The `online_evals` background loop grades pending jobs every ten seconds.
+   It runs on one replica at a time, under a lease held by the singleton
+   supervisor (the health page lists it). It loads the run's output and its
+   structured payload, the same way a trajectory grader does, and runs the
+   graders. Each grader gets a case built from the run: the input is the
+   message the run answered, and `expected` / `rubric` come from the grader's
+   params when set, else from the rule. The score is the weighted mean, and
+   the run passes only when every grader passes, as in an eval set.
+3. The result lands in `online_eval_results` with the run's definition hash
+   and, when known, the stored version it was built from (its experiment arm,
+   or the history row with the same hash). Below `min_score`, the rule's
+   notification fires with the rule's severity and channels.
+
+Jobs are rows, so a restart picks up where it stopped. A job whose grading
+fails is marked `failed` with the error and not retried; a job left `running`
+by a process that died is put back and given up after three attempts.
+
+An `llm_judge` grader costs a model call per graded run, so keep
+`sample_rate` low for busy agents.
+
+Reading it: the agent's **Overview** tab has a **Live quality** card with the
+count, mean score and pass rate, split by definition version, the latest
+graded runs and the rules themselves (with a form to add one). The same data
+is at `GET /api/agents/{agent_id}/online-evals?limit=` and
+`GET /api/agents/{agent_id}/online-evals/summary` (grouped by definition
+version and hash, and by rule). Comparing two versions under live traffic is
+what [experiments](experiments.md) are for.
+
 ## Why bother
 
 A prompt change that "feels better" on two examples is not a result. The whole
 point of this surface is to turn that into a number you can compare before and
 after.
 
-Related: [costs](costs.md), [agents](agents.md), [tools-and-capabilities](tools-and-capabilities.md).
+Related: [costs](costs.md), [agents](agents.md), [tools-and-capabilities](tools-and-capabilities.md), [experiments](experiments.md), [notifications](notifications.md).

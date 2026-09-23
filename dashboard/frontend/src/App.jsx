@@ -37,7 +37,6 @@ const MemoryManager = lazy(() => import('./pages/MemoryManager'));
 const AgentFlows = lazy(() => import('./pages/AgentFlows'));
 const FlowEditor = lazy(() => import('./pages/FlowEditor'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
-const AgentManifest = lazy(() => import('./pages/AgentManifest'));
 const ToolsExplorer = lazy(() => import('./pages/ToolsExplorer'));
 const Orchestrator = lazy(() => import('./pages/Orchestrator'));
 const Sessions = lazy(() => import('./pages/Sessions'));
@@ -132,7 +131,6 @@ function AppRoutes() {
         <Route path="/marketplace/:id" element={guard(<MarketplaceAgent />)} />
         <Route path="/skills" element={guard(<SkillsCatalog />)} />
         <Route path="/web-logs" element={guard(<WebLogs />)} />
-        <Route path="/manifest" element={guard(<AgentManifest />)} />
         <Route path="/tools" element={guard(<ToolsExplorer />)} />
         <Route path="/workspaces" element={guard(<WorkspaceManager />)} />
         <Route path="/workspaces/:name" element={guard(<WorkspaceDetails />)} />

@@ -40,8 +40,11 @@ from typing import Any, Dict, Optional
 # tools/registry.py are simply never matched, so the set can name a tool that
 # only some installations have.
 NEEDS_APPROVAL: frozenset[str] = frozenset({
-    # Arbitrary execution and destructive filesystem writes.
+    # Arbitrary execution and destructive filesystem writes. run_code runs in
+    # a sandbox, but it still executes whatever the model wrote, and with
+    # CODE_RUNNER_FALLBACK=local it runs on the host like run_shell.
     "run_shell",
+    "run_code",
     "delete_file",
     "apply_unified_diff",
     # Deleting a hub entity: the record and its history go with it.
@@ -64,6 +67,9 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     # Sends workspace content outside the system: a push, plus a PR/MR opened
     # from it. Not reversible from in here once GitHub/GitLab has it.
     "git_publish",
+    # Acts on a live website: a click can submit a form, buy, post or delete,
+    # and typed text leaves the system. Opening and reading pages stay free.
+    "browser_act",
 })
 
 # Reasoning scratchpad tools are never gated: they have no effect outside the

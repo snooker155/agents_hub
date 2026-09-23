@@ -170,6 +170,7 @@ def open_run(
         if dh:
             record["definition_hash"] = dh
     _upsert_run(record)
+    _route_experiment(run_id, agent_id, record)
     if link_to_session and session_id:
         try:
             from common.session_service import add_run_to_session as _link
@@ -178,6 +179,23 @@ def open_run(
             pass
     _notify_task_run_started(record)
     return run_id
+
+
+def _route_experiment(run_id: str, agent_id: Optional[str], record: Dict[str, Any]) -> None:
+    """Pick the run's arm when its agent has an A/B experiment running.
+
+    Every run path opens its record before it builds the agent, in the same
+    thread or a copy of its context, so this is where the arm is chosen; the
+    factory reads the pin when it builds (evals/experiments.py,
+    docs/experiments.md). Best-effort: a failure leaves the run on the live
+    definition.
+    """
+    try:
+        from evals.experiments import route_run
+        route_run(run_id, agent_id, task_id=record.get("task_id"),
+                  session_type=record.get("session_type"), channel=record.get("channel"))
+    except Exception:
+        log.debug("experiment routing failed for run %s", run_id, exc_info=True)
 
 
 def close_run(

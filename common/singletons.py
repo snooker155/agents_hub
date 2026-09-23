@@ -132,7 +132,33 @@ class SingletonSupervisor:
                 pass
 
 
-supervisor = SingletonSupervisor()
+def online_evals_service() -> LeasedService:
+    """The online eval grading loop (evals/online.py) as a leased service.
+
+    Registered on the supervisor below rather than from the backend's
+    startup, so every process that starts the supervisor grades; the lease
+    keeps it to one replica. Imports are deferred to the calls, so building
+    the service costs nothing at import time.
+    """
+    def _svc():
+        from evals.online import service
+        return service
+
+    async def _start() -> None:
+        await _svc().start()
+
+    async def _stop() -> None:
+        await _svc().stop()
+
+    return LeasedService(
+        role="online_evals",
+        start=_start,
+        stop=_stop,
+        is_running=lambda: _svc().is_running(),
+    )
+
+
+supervisor = SingletonSupervisor([online_evals_service()])
 
 
 def telegram_service() -> LeasedService:
@@ -149,4 +175,5 @@ def telegram_service() -> LeasedService:
     )
 
 
-__all__ = ["LeasedService", "SingletonSupervisor", "supervisor", "telegram_service"]
+__all__ = ["LeasedService", "SingletonSupervisor", "online_evals_service", "supervisor",
+           "telegram_service"]
