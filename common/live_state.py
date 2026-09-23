@@ -13,6 +13,7 @@ Channels:
 - ``containers``             → ``{type: "snapshot", data: [...]}``  (docker ps)
 - ``logs:node:<node_id>``    → ``{type: "logs", content: "..."}``
 - ``logs:container:<name>``  → ``{type: "logs", content: "..."}``
+- ``logs:member:<id>``       → ``{type: "logs", content: "..."}``  (a replica's or worker's own log)
 """
 from __future__ import annotations
 
@@ -52,6 +53,14 @@ def _node_log(node_id: str) -> Optional[str]:
         return "(no logs yet)"
     try:
         return Path(log_file).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _member_log(member_id: str) -> Optional[str]:
+    from common import members
+    try:
+        return members.read_log(member_id, tail=400)
     except Exception:
         return None
 
@@ -103,6 +112,8 @@ async def _publish_snapshots() -> None:
             content = await _run_blocking(_node_log, resource)
         elif kind == "container":
             content = await _run_blocking(_container_log, resource)
+        elif kind == "member":
+            content = await _run_blocking(_member_log, resource)
         else:
             continue
         if content is not None:

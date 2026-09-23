@@ -7,6 +7,7 @@ import { useFeatures } from './features';
 import { MULTI, isAdmin, useAuth } from './auth';
 import { getWorkspaces, getWorkspaceModel, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import {
+  Waypoints,
   LayoutDashboard,
   CheckSquare,
   LogOut,
@@ -358,6 +359,9 @@ const Layout = ({ children }) => {
         // The service looking at itself: the snapshot, and the agent that can
         // follow a symptom down from it.
         { name: t('nav.health'), path: '/health', icon: Activity },
+        // Where everything runs once there is more than one process: members,
+        // leases, the launch queue, runs and nodes by host.
+        { name: t('nav.deployment'), path: '/deployment', icon: Waypoints },
         { name: t('nav.models'), path: '/models', icon: Brain },
         { name: t('nav.costs'), path: '/costs', icon: DollarSign },
         { name: t('nav.docs'), path: '/docs', icon: BookOpen },

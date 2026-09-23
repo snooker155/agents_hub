@@ -111,6 +111,35 @@ differs from the compose profile:
   Once `AGENTS_HUB_BLOB_URL` is set, the PVC stops being load-bearing for
   correctness (see the next section) and can shrink or be turned off.
 
+## The deployment map
+
+Once processes run on several hosts, one page has to say where everything
+is. `GET /api/deployment` (the Deployment page in the dashboard, `ah
+deployment` in a terminal) is that page:
+
+- **Members.** Every backend replica and worker registers itself in the
+  `members` table on start and refreshes a heartbeat every 15 seconds with
+  a small load snapshot (SSE clients served, runs carried, launches
+  tracked). A member is live, stale (no beat for a minute, the process went
+  away without saying so) or stopped (a clean shutdown). Each row shows the
+  role, host, pid, commit, uptime and the singleton roles the member holds
+  (scheduler, watchdog, outbox, telegram, publisher).
+- **Queue and outbox.** How many launches wait, which worker holds each,
+  and how many webhook deliveries are pending.
+- **Entities by host.** Active agent runs with the age of their heartbeat
+  and their checkpoint step, flow runs, loops with the replica executing
+  them, nodes and containers, each with the host it lives on.
+- **Logs.** Each member writes its own log to `service_logs/<member>.log`
+  under the state root (rotating, 5 MB by 3), mirrored to the object store
+  when one is configured, and served as `GET
+  /api/deployment/members/<id>/logs` with a live tail over the stream on
+  `logs:member:<id>`, the same way a node's log is.
+
+Stale rows older than a day are pruned by the maintenance sweep; a stale
+or stopped row can also be dropped from the page. `AGENTS_HUB_INSTANCE_ID`
+gives a member a stable name across restarts; without it the name is
+`host:pid`.
+
 ## The shared-files caveat
 
 Both shapes above run into the same limit [scaling](scaling.md) already

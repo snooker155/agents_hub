@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import secrets
 import signal
 import subprocess
@@ -367,6 +368,9 @@ def start_node(
         "node_type": resolved_node_type,
         "execution_mode": execution_mode,
         "container_name": container_name,
+        # The host that spawned the process or container: a node is managed
+        # (stopped, restarted, probed) from there and nowhere else.
+        "host": socket.gethostname(),
         "started_at": _utc_now_iso(),
         "finished_at": None,
         "exit_code": None,

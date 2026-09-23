@@ -43,6 +43,7 @@ export default {
   comingSoonTitle: 'Demnächst verfügbar',
   comingSoonItem: '{{name}} — demnächst',
   health: 'Status',
+  deployment: 'Deployment',
   connections: 'Verbindungen',
   connectors: 'Konnektoren',
   mcp: 'MCP-Server',

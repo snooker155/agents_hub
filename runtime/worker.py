@@ -169,6 +169,13 @@ class Worker:
 
     def run_forever(self, *, install_signals: bool = True) -> None:
         from common import leases
+        from common.members import MemberBeat
+
+        beat = MemberBeat("worker", capabilities={
+            "http": False, "execution_modes": list(self.modes), "concurrency": self.concurrency,
+        }, load_fn=lambda: {"tracked": len(self.tracked), "launched": self.launched,
+                            "failed": self.failed, "stopping": self.stopping.is_set()})
+        beat.start()
 
         if install_signals:
             for sig in (signal.SIGTERM, signal.SIGINT):
@@ -198,6 +205,7 @@ class Worker:
             leases.release_all(self.owner)
         except Exception:
             pass
+        beat.stop()
         log.info("worker %s stopped (%d launched, %d failed)", self.owner, self.launched, self.failed)
 
     def request_stop(self) -> None:

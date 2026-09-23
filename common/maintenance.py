@@ -151,6 +151,12 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     pruned_runs = prune_old_runs(settings.run_retention_days)
     pruned_files = prune_orphan_files()
     summary = {"pruned_runs": pruned_runs, "pruned_files": pruned_files}
+    # Members that stopped beating a day ago are history, not the map.
+    try:
+        from common import members
+        summary["pruned_members"] = members.prune()
+    except Exception:
+        summary["pruned_members"] = 0
     # Connections are capped by run *count*, not by age: a graph reporting a few
     # hundred runs an hour outgrows a day-based limit long before the limit
     # notices. Isolated like the views pass below, so a connection store that

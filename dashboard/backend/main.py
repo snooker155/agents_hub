@@ -53,6 +53,7 @@ from routes import run_state as run_state_router
 from routes import settings as settings_router
 from routes import models as models_router
 from routes import ops as ops_router
+from routes import deployment as deployment_router
 
 # Settings: read at startup for the optional-feature checks below. The auth
 # guard reads the live settings object through common.identity instead, so a
@@ -101,6 +102,31 @@ async def lifespan(app: FastAPI):
         print("✓ Singleton supervisor started (telegram)")
     except Exception as e:
         print(f"⚠ Could not start the singleton supervisor: {e}")
+
+    # This replica's row on the deployment map (common/members.py): registered
+    # now, refreshed from a daemon thread with what the process is carrying.
+    try:
+        from common.members import MemberBeat
+        from common.session_broker import broker as _broker
+
+        def _load():
+            from common import db as _dbm
+            try:
+                running = _dbm.get_conn().execute(
+                    "SELECT COUNT(*) FROM runs WHERE status = 'running' AND host = ?",
+                    (__import__("socket").gethostname(),)).fetchone()[0]
+            except Exception:
+                running = None
+            return {"sse_clients": len(getattr(_broker, "_clients", {}) or {}),
+                    "running_runs_on_host": running}
+
+        app.state.member_beat = MemberBeat(hub_role(), capabilities={
+            "http": True, "execution_modes": ["local", "docker"],
+        }, load_fn=_load)
+        app.state.member_beat.start()
+        print("✓ Registered on the deployment map")
+    except Exception as e:
+        print(f"⚠ Could not register this replica: {e}")
 
     # Outbound webhook deliveries left in the outbox by an earlier process go
     # out as soon as this replica holds the ``outbox`` lease.
@@ -175,6 +201,12 @@ async def lifespan(app: FastAPI):
         _notify_outbound.shutdown()
     except Exception:
         pass
+    beat = getattr(app.state, "member_beat", None)
+    if beat is not None:
+        try:
+            beat.stop()
+        except Exception:
+            pass
     # Every role this replica held goes back to the pool at once, so a
     # restart is taken over by a sibling immediately, not after the TTL.
     try:
@@ -474,6 +506,10 @@ app.include_router(health.router)
 # Ops domain: liveness, readiness and Prometheus metrics — /livez, /readyz,
 # /metrics, unprefixed and open in every AUTH_MODE (see routes/ops.py).
 app.include_router(ops_router.router)
+
+# Deployment domain: the map of members, leases, queue and where everything
+# runs (docs/deployment.md, "The deployment map").
+app.include_router(deployment_router.router)
 
 # Views domain: rich agent-generated views + their assets and per-user state
 app.include_router(views.router)

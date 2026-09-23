@@ -414,6 +414,63 @@ def worker(
     raise typer.Exit(code=_worker_main(argv))
 
 
+@app.command("deployment")
+def deployment(
+    logs: Optional[str] = typer.Option(None, "--logs", help="Print the last lines of this member's log instead of the map."),
+    tail: int = typer.Option(200, help="Lines to print with --logs."),
+):
+    """The deployment map: members (replicas and workers), the roles each
+    holds, the launch queue, and where runs, nodes and containers live
+    (docs/deployment.md)."""
+    _require_direct_mode("ah deployment")
+    from dashboard.backend.routes.deployment import build_map
+    from common import members as _members
+
+    if logs:
+        text = _members.read_log(logs, tail=tail)
+        if text is None:
+            console.print(f"[red]no log for member {logs}[/red]")
+            raise typer.Exit(code=1)
+        console.print(text, markup=False, highlight=False)
+        return
+
+    m = build_map()
+    console.print(f"[bold]this process[/bold]: {m['self']['member_id']} ({m['self']['role']})")
+    table = Table(box=box.SIMPLE, show_header=True, title="members")
+    for col in ("member", "role", "host", "status", "beat", "uptime", "leases", "load", "version"):
+        table.add_column(col)
+    for mem in m["members"]:
+        age = mem.get("heartbeat_age_seconds")
+        up = mem.get("uptime_seconds")
+        table.add_row(
+            mem["member_id"], mem.get("role") or "", mem.get("host") or "",
+            mem.get("status") or "", f"{int(age)}s ago" if age is not None else "",
+            f"{int(up // 60)}m" if up is not None else "",
+            ",".join(mem.get("leases") or []),
+            ", ".join(f"{k}={v}" for k, v in (mem.get("load") or {}).items()),
+            mem.get("version") or "")
+    console.print(table)
+    q = m.get("queue") or {}
+    console.print(f"queue: queued {q.get('queued', 0)}, leased {q.get('leased', 0)}, running "
+                  f"{q.get('running', 0)}, failed {q.get('failed', 0)}; outbox pending "
+                  f"{(m.get('outbox') or {}).get('pending', 0)}")
+    hosts = Table(box=box.SIMPLE, show_header=True, title="by host")
+    for col in ("host", "members", "runs", "flow runs", "nodes", "containers"):
+        hosts.add_column(col)
+    for h in m["hosts"]:
+        hosts.add_row(h["host"], str(len(h["members"])), str(h["runs"]), str(h["flow_runs"]),
+                      str(h["nodes"]), str(h["containers"]))
+    console.print(hosts)
+    for run in m["runs"]:
+        age = run.get("heartbeat_age_seconds")
+        console.print(f"  run {str(run['run_id'])[:8]} {run.get('agent_id')} {run.get('status')} "
+                      f"on {run.get('host') or '?'}"
+                      + (f", beat {int(age)}s ago" if age is not None else ""))
+    for loop in m["loops"]:
+        console.print(f"  loop {str(loop['loop_run_id'])[:8]} iteration {loop.get('iterations_done')} "
+                      f"on {loop.get('owner') or '?'}")
+
+
 # ---------------------------------------------------------------------------
 # db commands
 # ---------------------------------------------------------------------------

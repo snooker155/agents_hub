@@ -871,17 +871,19 @@
     {
       "id": "deployment",
       "title": "Deploying for high availability",
-      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store.",
+      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store. The Deployment page and ah deployment show the map: members with their heartbeat, load and leases, the queue, and runs, loops, nodes and containers by host, with each process's own log.",
       "surface": "Installation",
       "related": [
         "scaling",
         "workers",
         "installation",
-        "storage"
+        "storage",
+        "service-health"
       ],
       "headings": [
         "The compose ha profile",
         "The Helm chart",
+        "The deployment map",
         "The shared-files caveat"
       ]
     },

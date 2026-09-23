@@ -253,6 +253,13 @@ export const getAgentHistory = (id, workspace) => api.get(`/agents/${id}/history
 export const getAgentLogs = (id, params) => api.get(`/agents/${id}/logs`, { params });
 // Service health, and the Service Agent's chat about it.
 export const getHealth = () => api.get('/health');
+// The deployment map: members (replicas and workers), leases, the launch
+// queue and where runs, nodes and containers live (docs/deployment.md).
+export const getDeployment = () => api.get('/deployment');
+export const getMemberLogs = (memberId, tail = 500) =>
+  api.get(`/deployment/members/${encodeURIComponent(memberId)}/logs`, { params: { tail } });
+export const forgetMember = (memberId) =>
+  api.delete(`/deployment/members/${encodeURIComponent(memberId)}`);
 export const getServiceChat = () => api.get('/health/chat');
 export const clearServiceChat = () => api.delete('/health/chat');
 export const stopServiceChat = () => api.post('/health/chat/stop');

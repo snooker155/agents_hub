@@ -43,6 +43,7 @@ export default {
   comingSoonTitle: 'Скоро будет',
   comingSoonItem: '{{name}} — скоро',
   health: 'Статус',
+  deployment: 'Деплой',
   connections: 'Подключения',
   connectors: 'Коннекторы',
   mcp: 'MCP-серверы',
