@@ -23,7 +23,12 @@ Three modes, chosen with ``AUTH_MODE`` (see docs/identity.md):
 ``multi``
     Named users with passwords, sessions, a global role (``admin`` /
     ``member``) and per-workspace membership roles (``owner`` / ``editor`` /
-    ``viewer``).
+    ``viewer``). Stage 3 adds, on top of the same tables: accounts linked to
+    an external identity (single sign-on, ``common/oidc.py``, or SCIM
+    provisioning), groups and the rules that turn them into roles
+    (``common/groups.py``), personal API keys that act as their owner
+    (``common/api_keys.py``), session metadata and revocation, a login
+    throttle, and the audit trail (``common/audit.py``).
 
 Why passwords are stored the way they are: PBKDF2-HMAC-SHA256 with a per-user
 salt and a per-user iteration count, from the standard library. It is not the
@@ -45,7 +50,7 @@ import secrets
 from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from common import db
 from common.auth import (
@@ -77,6 +82,20 @@ _SESSION_BYTES = 32
 
 #: Environment variable that carries the service credential to subprocesses.
 SERVICE_TOKEN_ENV = "AGENTS_HUB_SERVICE_TOKEN"
+
+#: Where an account came from.
+SOURCE_LOCAL = "local"
+SOURCE_OIDC = "oidc"
+SOURCE_SCIM = "scim"
+
+#: How a session was opened.
+SESSION_PASSWORD = "password"
+SESSION_OIDC = "oidc"
+SESSION_BOOTSTRAP = "bootstrap"
+
+
+class LoginThrottled(Exception):
+    """Too many failed logins for this account or address in the window."""
 
 #: The service credential's principal: admin, because the relays it
 #: authenticates (run state, stream notifications, session broker) write on
@@ -128,12 +147,27 @@ def mode_features() -> Dict[str, bool]:
     editing a chain of ``mode === 'multi'`` checks across the pages.
     """
     mode = current_mode()
+    from common.config import settings
+    oidc = bool((getattr(settings, "auth_oidc_issuer", "") or "").strip())
     return {
         "login": mode == MULTI,
         "users": mode == MULTI,
         "members": mode == MULTI,
         "api_token": mode == TOKEN,
+        "oidc": mode == MULTI and oidc,
+        # The password form is shown when passwords are on, or when there is
+        # no other way in.
+        "local_passwords": mode == MULTI and (local_passwords_enabled() or not oidc),
+        "api_keys": mode == MULTI,
+        "groups": mode == MULTI,
+        "audit": mode != SINGLE,
+        "scim": mode == MULTI and bool((getattr(settings, "auth_scim_token", "") or "").strip()),
     }
+
+
+def local_passwords_enabled() -> bool:
+    from common.config import settings
+    return bool(getattr(settings, "auth_local_passwords", True))
 
 
 # ── passwords ────────────────────────────────────────────────────────────────
@@ -165,6 +199,11 @@ def verify_password(password: str, *, password_hash: str, password_salt: str,
 
 def _row_to_user(row) -> Dict[str, Any]:
     """A user as the API returns it: everything but the password record."""
+    keys = row.keys() if hasattr(row, "keys") else ()
+
+    def col(name, default=None):
+        return row[name] if name in keys else default
+
     return {
         "id": row["user_id"],
         "username": row["username"],
@@ -173,6 +212,15 @@ def _row_to_user(row) -> Dict[str, Any]:
         "disabled": bool(row["disabled"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "email": col("email") or "",
+        "source": col("source") or SOURCE_LOCAL,
+        "external_issuer": col("external_issuer"),
+        "external_subject": col("external_subject"),
+        "external_id": col("external_id"),
+        "role_source": col("role_source") or "manual",
+        # Whether a password login is possible at all: an account provisioned
+        # by SSO or SCIM has no password until an admin sets one.
+        "has_password": bool(col("password_hash")),
     }
 
 
@@ -209,17 +257,61 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     return _row_to_user(row) if row else None
 
 
-def create_user(username: str, password: str, *, role: str = ROLE_MEMBER,
-                display_name: str = "") -> Dict[str, Any]:
-    """Add a user. Raises ValueError on a bad or taken username."""
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    row = db.get_conn().execute(
+        "SELECT * FROM users WHERE LOWER(email) = ?", (email,)).fetchone()
+    return _row_to_user(row) if row else None
+
+
+def get_user_by_external(issuer: str, subject: str) -> Optional[Dict[str, Any]]:
+    """The account linked to an external identity (``iss`` + ``sub``)."""
+    if not issuer or not subject:
+        return None
+    row = db.get_conn().execute(
+        "SELECT * FROM users WHERE external_issuer = ? AND external_subject = ?",
+        (str(issuer), str(subject))).fetchone()
+    return _row_to_user(row) if row else None
+
+
+def get_user_by_external_id(external_id: str) -> Optional[Dict[str, Any]]:
+    """The account a SCIM ``externalId`` names."""
+    if not external_id:
+        return None
+    row = db.get_conn().execute(
+        "SELECT * FROM users WHERE external_id = ?", (str(external_id),)).fetchone()
+    return _row_to_user(row) if row else None
+
+
+def _validate_username(username: str) -> str:
     username = (username or "").strip().lower()
     if not username:
         raise ValueError("username is required")
-    if len(username) > 64 or any(c.isspace() for c in username):
-        raise ValueError("username must be one word of at most 64 characters")
+    if len(username) > 128 or any(c.isspace() for c in username):
+        raise ValueError("username must be one word of at most 128 characters")
+    return username
+
+
+def create_user(username: str, password: Optional[str], *, role: str = ROLE_MEMBER,
+                display_name: str = "", email: str = "", source: str = SOURCE_LOCAL,
+                external_issuer: Optional[str] = None,
+                external_subject: Optional[str] = None,
+                external_id: Optional[str] = None) -> Dict[str, Any]:
+    """Add a user. Raises ValueError on a bad or taken username.
+
+    ``password`` may be None for an account that arrives from single sign-on
+    or SCIM: it then has no password at all (``has_password`` is false) until
+    an administrator sets one, and can only sign in through its provider.
+    """
+    username = _validate_username(username)
     if role not in (ROLE_ADMIN, ROLE_MEMBER):
         raise ValueError(f"unknown role '{role}'")
-    record = hash_password(password)
+    if password:
+        record = hash_password(password)
+    else:
+        record = {"password_hash": "", "password_salt": "", "password_iterations": 0}
     now = _iso(_now())
     user_id = secrets.token_hex(8)
     with db.transaction() as conn:
@@ -230,21 +322,33 @@ def create_user(username: str, password: str, *, role: str = ROLE_MEMBER,
         conn.execute(
             "INSERT INTO users (user_id, username, display_name, role, "
             "password_hash, password_salt, password_iterations, disabled, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
-            (user_id, username, display_name.strip() or username, role,
+            "created_at, updated_at, email, source, external_issuer, external_subject, "
+            "external_id, role_source) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, username, (display_name or "").strip() or username, role,
              record["password_hash"], record["password_salt"],
-             record["password_iterations"], now, now),
+             record["password_iterations"], now, now, (email or "").strip().lower(),
+             source or SOURCE_LOCAL, external_issuer, external_subject, external_id,
+             "manual"),
         )
     return get_user(user_id)  # type: ignore[return-value]
 
 
 def update_user(user_id: str, *, role: Optional[str] = None,
                 display_name: Optional[str] = None,
-                disabled: Optional[bool] = None) -> Optional[Dict[str, Any]]:
-    """Change a user's role, display name or enabled state.
+                disabled: Optional[bool] = None,
+                email: Optional[str] = None,
+                username: Optional[str] = None,
+                role_source: Optional[str] = None,
+                external_issuer: Optional[str] = None,
+                external_subject: Optional[str] = None,
+                external_id: Optional[str] = None,
+                source: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Change a user's role, display name, enabled state or identity fields.
 
     Refuses to remove the last admin: an installation with no admin has no way
-    back short of editing the database by hand.
+    back short of editing the database by hand. Disabling an account drops
+    its sessions and revokes its API keys, so a deprovisioned person is out
+    at once, not at their next expiry.
     """
     user = get_user(user_id)
     if user is None:
@@ -255,16 +359,82 @@ def update_user(user_id: str, *, role: Optional[str] = None,
                 and ((role is not None and role != ROLE_ADMIN) or disabled is True))
     if demoting and _admin_count() <= 1:
         raise ValueError("this is the last admin: promote another user first")
+    new_username = _validate_username(username) if username is not None else user["username"]
+    now_disabled = user["disabled"] if disabled is None else bool(disabled)
     with db.transaction() as conn:
+        if new_username != user["username"]:
+            taken = conn.execute("SELECT 1 FROM users WHERE username = ? AND user_id <> ?",
+                                 (new_username, str(user_id))).fetchone()
+            if taken:
+                raise ValueError(f"username '{new_username}' is already taken")
         conn.execute(
             "UPDATE users SET role = ?, display_name = ?, disabled = ?, "
-            "updated_at = ? WHERE user_id = ?",
+            "updated_at = ?, email = ?, username = ?, role_source = ?, "
+            "external_issuer = ?, external_subject = ?, external_id = ?, source = ? "
+            "WHERE user_id = ?",
             (role if role is not None else user["role"],
              display_name.strip() if display_name is not None else user["display_name"],
-             1 if (user["disabled"] if disabled is None else disabled) else 0,
-             _iso(_now()), str(user_id)),
+             1 if now_disabled else 0,
+             _iso(_now()),
+             email.strip().lower() if email is not None else user["email"],
+             new_username,
+             role_source if role_source is not None else (
+                 "manual" if role is not None else user["role_source"]),
+             external_issuer if external_issuer is not None else user["external_issuer"],
+             external_subject if external_subject is not None else user["external_subject"],
+             external_id if external_id is not None else user["external_id"],
+             source if source is not None else user["source"],
+             str(user_id)),
         )
+        if now_disabled and not user["disabled"]:
+            conn.execute("DELETE FROM auth_sessions WHERE user_id = ?", (str(user_id),))
+    if now_disabled and not user["disabled"]:
+        from common import api_keys
+        api_keys.revoke_all(user_id)
     return get_user(user_id)
+
+
+def upsert_external_user(issuer: str, subject: str, *, username: str = "",
+                         email: str = "", display_name: str = "",
+                         source: str = SOURCE_OIDC) -> Dict[str, Any]:
+    """The account an external identity maps to, created or linked on the way.
+
+    Lookup order: the ``iss``+``sub`` link; then, when
+    ``AUTH_OIDC_LINK_BY_EMAIL`` is on, an existing account with the same
+    email or username (a person who had a local account before SSO arrived
+    keeps it, with its memberships); else a new account with no password.
+    A disabled account is returned disabled: linking never re-enables.
+    """
+    from common.config import settings
+    user = get_user_by_external(issuer, subject)
+    if user is None and bool(getattr(settings, "auth_oidc_link_by_email", True)):
+        user = get_user_by_email(email) if email else None
+        if user is None and username:
+            user = get_user_by_username(username)
+        if user is not None and not user.get("external_issuer"):
+            user = update_user(user["id"], external_issuer=issuer, external_subject=subject)
+        elif user is not None:
+            # Linked to a different external identity already: a different
+            # person with the same email at another provider. Not ours.
+            user = None
+    if user is None:
+        base = _validate_username(username or email or f"{source}-{subject}")
+        candidate = base
+        n = 1
+        while get_user_by_username(candidate) is not None:
+            n += 1
+            candidate = f"{base}-{n}"
+        return create_user(candidate, None, display_name=display_name or candidate,
+                           email=email, source=source, external_issuer=issuer,
+                           external_subject=subject)
+    changes: Dict[str, Any] = {}
+    if email and email.strip().lower() != (user.get("email") or ""):
+        changes["email"] = email
+    if display_name and display_name != user["display_name"]:
+        changes["display_name"] = display_name
+    if changes:
+        user = update_user(user["id"], **changes) or user
+    return user
 
 
 def set_password(user_id: str, password: str) -> bool:
@@ -297,6 +467,8 @@ def delete_user(user_id: str) -> bool:
     with db.transaction() as conn:
         conn.execute("DELETE FROM auth_sessions WHERE user_id = ?", (str(user_id),))
         conn.execute("DELETE FROM workspace_members WHERE user_id = ?", (str(user_id),))
+        conn.execute("DELETE FROM group_members WHERE user_id = ?", (str(user_id),))
+        conn.execute("DELETE FROM api_keys WHERE user_id = ?", (str(user_id),))
         conn.execute("DELETE FROM users WHERE user_id = ?", (str(user_id),))
     return True
 
@@ -324,41 +496,122 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
-def login(username: str, password: str) -> Optional[Dict[str, Any]]:
-    """Check a password and open a session. Returns ``{token, expires_at, user}``.
+def open_session(user_id: str, *, kind: str = SESSION_PASSWORD, ip: Optional[str] = None,
+                 user_agent: Optional[str] = None,
+                 hours: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Open a session for a known, enabled user.
 
-    Returns None for a wrong username, a wrong password and a disabled account
-    alike: which of the three it was is information the caller has not earned.
+    Returns ``{token, expires_at, session_id, user}`` or None for an unknown
+    or disabled account. The credential check happens before this: a
+    verified password (:func:`login`), a verified id token
+    (``common/oidc.py``), or the bootstrap.
     """
-    row = db.get_conn().execute(
-        "SELECT * FROM users WHERE username = ?",
-        ((username or "").strip().lower(),)).fetchone()
+    row = db.get_conn().execute("SELECT * FROM users WHERE user_id = ?",
+                                (str(user_id),)).fetchone()
     if row is None or row["disabled"]:
-        # Still spend the hashing time, so a missing username and a wrong
-        # password take the same wall clock to answer.
-        hash_password(password or "x")
         return None
-    if not verify_password(password, password_hash=row["password_hash"],
-                           password_salt=row["password_salt"],
-                           password_iterations=row["password_iterations"]):
-        return None
-
     from common.config import settings
-    hours = max(1, int(getattr(settings, "auth_session_hours", 24 * 14) or 1))
+    if hours is None:
+        if kind == SESSION_OIDC:
+            hours = int(getattr(settings, "auth_oidc_session_hours", 8) or 8)
+        else:
+            hours = int(getattr(settings, "auth_session_hours", 24 * 14) or 1)
+    hours = max(1, int(hours))
     token = secrets.token_urlsafe(_SESSION_BYTES)
+    session_id = secrets.token_hex(8)
     now = _now()
     expires = now + timedelta(hours=hours)
     with db.transaction() as conn:
         conn.execute(
-            db.upsert_sql(
-                "auth_sessions",
-                ("token_hash", "user_id", "created_at", "expires_at", "last_seen_at"),
-                ("token_hash",),
-            ),
-            (_token_hash(token), row["user_id"], _iso(now), _iso(expires), _iso(now)),
+            "INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at, "
+            "last_seen_at, session_id, kind, ip, user_agent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (_token_hash(token), row["user_id"], _iso(now), _iso(expires), _iso(now),
+             session_id, kind, (ip or "")[:64] or None, (user_agent or "")[:256] or None),
         )
-    return {"token": token, "expires_at": _iso(expires),
-            "user": _row_to_user(row)}
+    return {"token": token, "expires_at": _iso(expires), "session_id": session_id,
+            "kind": kind, "user": _row_to_user(row)}
+
+
+def _login_window() -> Tuple[int, int]:
+    from common.config import settings
+    attempts = int(getattr(settings, "auth_login_max_attempts", 10) or 0)
+    minutes = int(getattr(settings, "auth_login_window_minutes", 15) or 15)
+    return max(0, attempts), max(1, minutes)
+
+
+def login_throttled(username: str, ip: Optional[str] = None) -> bool:
+    """Whether this account or address has failed too often lately."""
+    limit, minutes = _login_window()
+    if limit <= 0:
+        return False
+    since = _iso(_now() - timedelta(minutes=minutes))
+    conn = db.get_conn()
+    name = (username or "").strip().lower()
+    by_name = int(conn.execute(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = ? AND at >= ?",
+        (name, since)).fetchone()[0])
+    if by_name >= limit:
+        return True
+    if ip:
+        by_ip = int(conn.execute(
+            "SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND at >= ?",
+            (ip, since)).fetchone()[0])
+        # An address gets more room than an account: an office NAT is many
+        # people, and a wrong password by one must not lock out the rest.
+        if by_ip >= limit * 5:
+            return True
+    return False
+
+
+def _record_failed_login(username: str, ip: Optional[str]) -> None:
+    _, minutes = _login_window()
+    now = _now()
+    with db.transaction() as conn:
+        conn.execute("INSERT INTO login_attempts (username, ip, at) VALUES (?, ?, ?)",
+                     ((username or "").strip().lower(), ip, _iso(now)))
+        # Keep the table small: nothing older than the window matters.
+        conn.execute("DELETE FROM login_attempts WHERE at < ?",
+                     (_iso(now - timedelta(minutes=minutes * 2)),))
+
+
+def _clear_failed_logins(username: str) -> None:
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM login_attempts WHERE username = ?",
+                     ((username or "").strip().lower(),))
+
+
+def login(username: str, password: str, *, ip: Optional[str] = None,
+          user_agent: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Check a password and open a session. Returns ``{token, expires_at, user}``.
+
+    Returns None for a wrong username, a wrong password and a disabled account
+    alike: which of the three it was is information the caller has not earned.
+    Raises :class:`LoginThrottled` once the account (or the address) has
+    failed too often in the window. With ``AUTH_LOCAL_PASSWORDS`` off only
+    administrators may still sign in this way: the emergency door for when
+    the identity provider is down.
+    """
+    if login_throttled(username, ip):
+        raise LoginThrottled()
+    row = db.get_conn().execute(
+        "SELECT * FROM users WHERE username = ?",
+        ((username or "").strip().lower(),)).fetchone()
+    if row is None or row["disabled"] or not row["password_hash"]:
+        # Still spend the hashing time, so a missing username and a wrong
+        # password take the same wall clock to answer.
+        hash_password(password or "x")
+        _record_failed_login(username, ip)
+        return None
+    if not verify_password(password, password_hash=row["password_hash"],
+                           password_salt=row["password_salt"],
+                           password_iterations=row["password_iterations"]):
+        _record_failed_login(username, ip)
+        return None
+    if not local_passwords_enabled() and (row["role"] or ROLE_MEMBER) != ROLE_ADMIN:
+        return None
+    _clear_failed_logins(username)
+    return open_session(row["user_id"], kind=SESSION_PASSWORD, ip=ip, user_agent=user_agent)
 
 
 def logout(token: str) -> bool:
@@ -369,19 +622,26 @@ def logout(token: str) -> bool:
     return bool(cursor.rowcount)
 
 
-def user_for_session(token: str) -> Optional[Dict[str, Any]]:
-    """The user a session token belongs to, or None when it is unusable.
+def _session_row(token: str):
+    if not token:
+        return None
+    return db.get_conn().execute(
+        "SELECT s.expires_at AS expires_at, s.session_id AS session_id, "
+        "s.kind AS session_kind, s.last_seen_at AS last_seen_at, u.* "
+        "FROM auth_sessions s JOIN users u ON u.user_id = s.user_id "
+        "WHERE s.token_hash = ?", (_token_hash(token),)).fetchone()
+
+
+def session_for_token(token: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    """``(user, session)`` for a presented session token, or None when it is
+    unusable.
 
     Expired rows are deleted on the way past rather than by a sweeper: a
     session is only ever looked at when it is presented, so that is the one
-    moment its expiry is worth checking.
+    moment its expiry is worth checking. ``last_seen_at`` is refreshed at
+    most once a minute.
     """
-    if not token:
-        return None
-    row = db.get_conn().execute(
-        "SELECT s.expires_at AS expires_at, u.* FROM auth_sessions s "
-        "JOIN users u ON u.user_id = s.user_id WHERE s.token_hash = ?",
-        (_token_hash(token),)).fetchone()
+    row = _session_row(token)
     if row is None:
         return None
     try:
@@ -393,7 +653,71 @@ def user_for_session(token: str) -> Optional[Dict[str, Any]]:
             conn.execute("DELETE FROM auth_sessions WHERE token_hash = ?",
                          (_token_hash(token),))
         return None
-    return _row_to_user(row)
+    now = _now()
+    try:
+        seen = datetime.fromisoformat(row["last_seen_at"] or "")
+        stale = (now - seen) >= timedelta(seconds=60)
+    except (TypeError, ValueError):
+        stale = True
+    if stale:
+        try:
+            with db.transaction() as conn:
+                conn.execute("UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?",
+                             (_iso(now), _token_hash(token)))
+        except Exception:
+            pass
+    session = {"session_id": row["session_id"], "kind": row["session_kind"] or SESSION_PASSWORD,
+               "expires_at": row["expires_at"]}
+    return _row_to_user(row), session
+
+
+def user_for_session(token: str) -> Optional[Dict[str, Any]]:
+    """The user a session token belongs to, or None when it is unusable."""
+    found = session_for_token(token)
+    return found[0] if found else None
+
+
+def list_sessions(user_id: str) -> List[Dict[str, Any]]:
+    """Every live session of one user, newest first, without token hashes."""
+    rows = db.get_conn().execute(
+        "SELECT session_id, kind, ip, user_agent, created_at, expires_at, last_seen_at "
+        "FROM auth_sessions WHERE user_id = ? ORDER BY created_at DESC",
+        (str(user_id),)).fetchall()
+    now = _now()
+    out = []
+    for r in rows:
+        try:
+            if datetime.fromisoformat(r["expires_at"]) <= now:
+                continue
+        except (TypeError, ValueError):
+            continue
+        out.append({"id": r["session_id"], "kind": r["kind"] or SESSION_PASSWORD,
+                    "ip": r["ip"], "user_agent": r["user_agent"],
+                    "created_at": r["created_at"], "expires_at": r["expires_at"],
+                    "last_seen_at": r["last_seen_at"]})
+    return out
+
+
+def revoke_session(user_id: str, session_id: str) -> bool:
+    """Close one of a user's sessions by its id."""
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            "DELETE FROM auth_sessions WHERE user_id = ? AND session_id = ?",
+            (str(user_id), str(session_id)))
+    return bool(cursor.rowcount)
+
+
+def revoke_other_sessions(user_id: str, keep_session_id: Optional[str]) -> int:
+    """Close every session of a user but the one they are using."""
+    with db.transaction() as conn:
+        if keep_session_id:
+            cursor = conn.execute(
+                "DELETE FROM auth_sessions WHERE user_id = ? AND "
+                "COALESCE(session_id, '') <> ?", (str(user_id), str(keep_session_id)))
+        else:
+            cursor = conn.execute("DELETE FROM auth_sessions WHERE user_id = ?",
+                                  (str(user_id),))
+    return int(cursor.rowcount or 0)
 
 
 # ── workspace membership ─────────────────────────────────────────────────────
@@ -409,26 +733,35 @@ def membership_role(workspace: str, user_id: str) -> Optional[str]:
 def list_members(workspace: str) -> List[Dict[str, Any]]:
     """Everyone with a role in this workspace, with their account details."""
     rows = db.get_conn().execute(
-        "SELECT m.role AS ws_role, m.created_at AS joined_at, u.* "
+        "SELECT m.role AS ws_role, m.created_at AS joined_at, m.source AS ws_source, u.* "
         "FROM workspace_members m JOIN users u ON u.user_id = m.user_id "
         "WHERE m.workspace = ? ORDER BY u.username", (str(workspace),)).fetchall()
     return [{**_row_to_user(r), "workspace_role": r["ws_role"],
-             "joined_at": r["joined_at"]} for r in rows]
+             "joined_at": r["joined_at"], "source": r["ws_source"] or "manual"} for r in rows]
 
 
-def set_member(workspace: str, user_id: str, role: str) -> Dict[str, Any]:
-    """Add a member or change their role."""
+def set_member(workspace: str, user_id: str, role: str, *,
+               source: str = "manual") -> Dict[str, Any]:
+    """Add a member or change their role.
+
+    ``source`` says who granted it: ``manual`` (an owner or admin, through
+    the API) or ``group`` (``common/groups.py`` on a login). A manual grant
+    marks the row manual even when a group row existed, so the group's
+    later disappearance does not take the membership away.
+    """
     if role not in WORKSPACE_ROLES:
         raise ValueError(f"unknown workspace role '{role}'")
     if get_user(user_id) is None:
         raise ValueError(f"no such user: {user_id}")
     with db.transaction() as conn:
         conn.execute(
-            "INSERT INTO workspace_members (workspace, user_id, role, created_at) "
-            "VALUES (?, ?, ?, ?) ON CONFLICT(workspace, user_id) DO UPDATE SET role = excluded.role",
-            (str(workspace), str(user_id), role, _iso(_now())),
+            "INSERT INTO workspace_members (workspace, user_id, role, created_at, source) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace, user_id) DO UPDATE SET "
+            "role = excluded.role, source = excluded.source",
+            (str(workspace), str(user_id), role, _iso(_now()), source or "manual"),
         )
-    return {"workspace": str(workspace), "user_id": str(user_id), "role": role}
+    return {"workspace": str(workspace), "user_id": str(user_id), "role": role,
+            "source": source or "manual"}
 
 
 def remove_member(workspace: str, user_id: str) -> bool:
@@ -567,11 +900,25 @@ def current_principal(request) -> Optional[Principal]:
         return None
     if is_service_token(presented):
         return SERVICE_PRINCIPAL
-    user = user_for_session(presented)
-    if user is None:
+    from common import api_keys
+    if api_keys.looks_like_key(presented):
+        found = api_keys.resolve(presented)
+        if found is None:
+            return None
+        user, key = found
+        scope = key.get("workspaces")
+        return Principal(id=user["id"], username=user["username"], role=user["role"],
+                         kind="user", via="api_key",
+                         scope=tuple(scope) if scope is not None else None,
+                         credential_id=key["id"])
+    found = session_for_token(presented)
+    if found is None:
         return None
+    user, session = found
     return Principal(id=user["id"], username=user["username"],
-                     role=user["role"], kind="user")
+                     role=user["role"], kind="user",
+                     via=("oidc" if session.get("kind") == SESSION_OIDC else "session"),
+                     credential_id=session.get("session_id") or "")
 
 
 def authorize_request(request) -> tuple[bool, Optional[Principal]]:
@@ -620,6 +967,10 @@ def require_role(principal: Optional[Principal], *, admin: bool = False,
         raise HTTPException(status_code=401, detail="Authentication required")
     if admin and not principal.is_admin:
         raise HTTPException(status_code=403, detail="Administrator access required")
+    if workspace and not principal.reaches(workspace):
+        raise HTTPException(
+            status_code=403,
+            detail=f"this API key does not reach workspace '{workspace}'")
     if workspace and not principal.is_admin:
         from common.auth import role_satisfies
         if not role_satisfies(membership_role(workspace, principal.id), role):
@@ -638,19 +989,39 @@ def request_principal(request) -> Optional[Principal]:
 
 def principal_dict(principal: Optional[Principal]) -> Optional[Dict[str, Any]]:
     """A principal as JSON, for ``GET /api/auth/me``."""
-    return asdict(principal) if principal is not None else None
+    if principal is None:
+        return None
+    data = asdict(principal)
+    data["scope"] = list(principal.scope) if principal.scope is not None else None
+    return data
+
+
+def client_ip(request) -> Optional[str]:
+    """The caller's address, honouring the first ``X-Forwarded-For`` hop when
+    the hub sits behind a proxy."""
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded[:64]
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None) if client else None
+    return str(host)[:64] if host else None
 
 
 __all__ = [
-    "PBKDF2_ITERATIONS", "SERVICE_PRINCIPAL", "SERVICE_TOKEN_ENV",
-    "authorize_request", "bootstrap_required", "claim_workspace",
+    "LoginThrottled", "PBKDF2_ITERATIONS", "SERVICE_PRINCIPAL", "SERVICE_TOKEN_ENV",
+    "SESSION_BOOTSTRAP", "SESSION_OIDC", "SESSION_PASSWORD",
+    "SOURCE_LOCAL", "SOURCE_OIDC", "SOURCE_SCIM",
+    "authorize_request", "bootstrap_required", "claim_workspace", "client_ip",
     "create_first_admin", "create_user", "current_mode", "current_principal",
-    "current_user_id", "delete_user", "get_user", "get_user_by_username",
-    "hash_password", "is_service_token", "list_members", "list_users", "login",
-    "logout", "membership_role", "mode_features", "presented_credential",
+    "current_user_id", "delete_user", "get_user", "get_user_by_email",
+    "get_user_by_external", "get_user_by_external_id", "get_user_by_username",
+    "hash_password", "is_service_token", "list_members", "list_sessions", "list_users",
+    "local_passwords_enabled", "login", "login_throttled",
+    "logout", "membership_role", "mode_features", "open_session", "presented_credential",
     "principal_dict",
     "remove_member", "request_principal", "require_role", "reset_current_user",
-    "service_token", "set_current_user", "set_member", "set_password",
-    "update_user", "user_count", "user_for_session", "verify_password",
-    "workspaces_for_user", "required_workspace_role",
+    "revoke_other_sessions", "revoke_session",
+    "service_token", "session_for_token", "set_current_user", "set_member", "set_password",
+    "update_user", "upsert_external_user", "user_count", "user_for_session",
+    "verify_password", "workspaces_for_user", "required_workspace_role",
 ]

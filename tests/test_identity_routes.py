@@ -79,8 +79,11 @@ def test_single_mode_reports_itself_and_offers_nothing(single, client):
     body = client.get("/api/auth/mode").json()
     assert body["mode"] == "single"
     assert body["bootstrap_required"] is False
-    assert body["features"] == {"login": False, "users": False,
-                                "members": False, "api_token": False}
+    assert body["features"]["login"] is False
+    assert body["features"]["users"] is False
+    # Nothing at all is offered: every feature flag is off, the stage 3 ones
+    # (oidc, api keys, groups, audit, scim) included.
+    assert not any(body["features"].values())
 
 
 def test_single_mode_has_no_user_management(single, client):

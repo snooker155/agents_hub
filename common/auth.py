@@ -47,12 +47,19 @@ def auth_headers() -> Dict[str, str]:
     same way (``common.identity.service_token``). It is checked second so a
     deployment that has both keeps using the token it configured.
 
-    Empty when neither is configured, matching ``is_authorized``'s
+    ``AGENTS_HUB_API_KEY`` is a personal API key (``common.api_keys``): it is
+    what the CLI in REST mode, an A2A client or a CI job presents under
+    ``AUTH_MODE=multi`` instead of the shared token, and it acts as its owner.
+    It is checked last so a relay subprocess that was handed the service
+    credential keeps using that.
+
+    Empty when none is configured, matching ``is_authorized``'s
     open-by-default behaviour, so an unconfigured deployment posts exactly as
     it did before.
     """
     token = (os.environ.get("AGENTS_HUB_API_TOKEN", "").strip()
-             or os.environ.get("AGENTS_HUB_SERVICE_TOKEN", "").strip())
+             or os.environ.get("AGENTS_HUB_SERVICE_TOKEN", "").strip()
+             or os.environ.get("AGENTS_HUB_API_KEY", "").strip())
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
@@ -61,7 +68,12 @@ def auth_headers() -> Dict[str, str]:
 # (``connections/store.py``): an external service reporting its runs is given a
 # token that can only report, and requiring the global token instead would hand
 # every such service a key to the whole dashboard.
-SELF_AUTHENTICATING_PREFIXES = ("/api/ingest",)
+#
+# ``/scim/v2`` is the provisioning API an identity provider drives with its
+# own bearer token (``AUTH_SCIM_TOKEN``, see dashboard/backend/routes/scim.py):
+# it sits outside ``/api`` so the operator token never applies to it, and is
+# listed here so the intent is in one place.
+SELF_AUTHENTICATING_PREFIXES = ("/api/ingest", "/scim/v2")
 
 
 def _is_self_authenticating(path: str) -> bool:
@@ -142,6 +154,10 @@ PUBLIC_AUTH_ROUTES = frozenset({
     ("GET", "/api/auth/mode"),
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/bootstrap"),
+    # Single sign-on (common/oidc.py): the redirect to the provider, and the
+    # redirect back from it, both happen before there is a session.
+    ("GET", "/api/auth/oidc/start"),
+    ("GET", "/api/auth/oidc/callback"),
 })
 
 #: Carries its own credential in the path rather than as the operator, the same
@@ -152,7 +168,8 @@ EXTERNAL_PREFIXES = ("/api/external",)
 #: These configure how the workspace behaves rather than what is in it, so read
 #: access is restricted too: an env block is a list of secret *names*, and a
 #: policy is the shape of the guardrails somebody would have to get around.
-OWNER_SCOPED_SEGMENTS = frozenset({"policy", "env", "settings-overrides", "members"})
+OWNER_SCOPED_SEGMENTS = frozenset({"policy", "env", "settings-overrides", "members",
+                                   "secrets"})
 
 #: Path segments directly under ``/api/workspaces/`` that are routes, not
 #: workspace names. Without this, ``POST /api/workspaces/attach`` would be read
@@ -173,10 +190,31 @@ class Principal:
     username: str = ""
     role: str = ROLE_MEMBER
     kind: str = "user"
+    #: How the credential was presented: ``session`` (a login), ``api_key``,
+    #: ``oidc`` (a session opened by single sign-on), ``token``, ``service``
+    #: or ``local``. Informational, except that an ``api_key`` principal may
+    #: carry a ``scope``.
+    via: str = ""
+    #: For a personal API key narrowed to some workspaces: the tuple of names
+    #: it may reach. ``None`` means the owner's full reach. Checked before
+    #: everything else in :func:`authorize`, admin or not: a key never acts
+    #: wider than it was cut.
+    scope: Optional[tuple] = None
+    #: The row id of the session or key that authenticated this request, so a
+    #: route can name it (the "current session" marker on the sessions page)
+    #: without the credential ever being echoed.
+    credential_id: str = ""
 
     @property
     def is_admin(self) -> bool:
         return self.role == ROLE_ADMIN
+
+    def reaches(self, workspace: Optional[str]) -> bool:
+        """Whether this principal's credential is allowed to name ``workspace``
+        at all. Only a scoped API key ever says no."""
+        if self.scope is None or not workspace:
+            return True
+        return workspace in self.scope
 
 
 #: The one operator, in ``single`` mode. Admin, because in that mode there is
@@ -313,6 +351,9 @@ def authorize(
         return False
     if mode == TOKEN:
         return True
+    if not principal.reaches(workspace):
+        # A scoped API key naming a workspace outside its scope, admin or not.
+        return False
     if principal.is_admin:
         return True
     if not workspace:

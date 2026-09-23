@@ -21,7 +21,8 @@ import { AuthContext, DEFAULT_AUTH, MULTI, SINGLE } from './auth';
  */
 export function AuthProvider({ children }) {
   const [state, setState] = useState({
-    mode: SINGLE, bootstrapRequired: false, user: null, loading: true,
+    mode: SINGLE, bootstrapRequired: false, features: {}, oidc: null, user: null,
+    loading: true,
   });
 
   const loadUser = useCallback(async () => {
@@ -41,15 +42,21 @@ export function AuthProvider({ children }) {
     (async () => {
       let mode = SINGLE;
       let bootstrapRequired = false;
+      let features = {};
+      let oidc = null;
       try {
         const { data } = await getAuthMode();
         mode = data?.mode || SINGLE;
         bootstrapRequired = Boolean(data?.bootstrap_required);
+        features = data?.features || {};
+        oidc = data?.oidc || null;
       } catch {
         // An unreachable or older backend has no identity layer to render.
       }
       const user = mode === MULTI ? await loadUser() : null;
-      if (!cancelled) setState({ mode, bootstrapRequired, user, loading: false });
+      if (!cancelled) {
+        setState({ mode, bootstrapRequired, features, oidc, user, loading: false });
+      }
     })();
     return () => { cancelled = true; };
   }, [loadUser]);
@@ -81,9 +88,18 @@ export function AuthProvider({ children }) {
     setState((prev) => ({ ...prev, user: null }));
   }, []);
 
+  // A session opened elsewhere (the OIDC callback page stores the token it
+  // was handed, then calls this) becomes the viewer without a reload.
+  const adoptSession = useCallback(async (token) => {
+    setSessionToken(token);
+    const user = await loadUser();
+    setState((prev) => ({ ...prev, user, bootstrapRequired: false }));
+    return user;
+  }, [loadUser]);
+
   const value = useMemo(() => ({
-    ...DEFAULT_AUTH, ...state, login, bootstrap, logout,
-  }), [state, login, bootstrap, logout]);
+    ...DEFAULT_AUTH, ...state, login, bootstrap, logout, adoptSession,
+  }), [state, login, bootstrap, logout, adoptSession]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

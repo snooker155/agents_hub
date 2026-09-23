@@ -31,7 +31,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from common import identity
+from common import audit, identity
 from common.auth import MULTI, WORKSPACE_ROLES, WS_OWNER
 
 router = APIRouter(tags=["auth"])
@@ -52,15 +52,19 @@ class BootstrapRequest(BaseModel):
 
 class UserCreate(BaseModel):
     username: str
-    password: str
+    # Optional: an account without one can only sign in through single
+    # sign-on until an administrator sets a password.
+    password: Optional[str] = None
     role: str = "member"
     display_name: str = ""
+    email: str = ""
 
 
 class UserPatch(BaseModel):
     role: Optional[str] = None
     display_name: Optional[str] = None
     disabled: Optional[bool] = None
+    email: Optional[str] = None
 
 
 class PasswordReset(BaseModel):
@@ -100,15 +104,24 @@ async def get_mode():
     rather than by trying an endpoint and reading the failure.
     """
     mode = identity.current_mode()
-    return {
+    features = identity.mode_features()
+    body = {
         "mode": mode,
         "bootstrap_required": identity.bootstrap_required(),
-        "features": identity.mode_features(),
+        "features": features,
     }
+    if features.get("oidc"):
+        from common.config import settings
+        body["oidc"] = {
+            "provider_name": (getattr(settings, "auth_oidc_provider_name", "") or "").strip()
+            or "single sign-on",
+            "start_url": "/api/auth/oidc/start",
+        }
+    return body
 
 
 @router.post("/api/auth/bootstrap")
-async def bootstrap(payload: BootstrapRequest):
+async def bootstrap(request: Request, payload: BootstrapRequest):
     """Create the first administrator. Available exactly once.
 
     With no users there is no admin to create a user, so this route is open
@@ -120,17 +133,43 @@ async def bootstrap(payload: BootstrapRequest):
                                            payload.display_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    session = identity.login(payload.username, payload.password)
+    session = identity.open_session(
+        user["id"], kind=identity.SESSION_BOOTSTRAP, ip=identity.client_ip(request),
+        user_agent=request.headers.get("user-agent"))
+    audit.record("auth.bootstrap", actor={"actor_id": user["id"], "actor_kind": "user",
+                                          "actor_name": user["username"]},
+                 object_type="user", object_id=user["id"], ip=identity.client_ip(request))
     return {"user": user, **(session or {})}
 
 
 @router.post("/api/auth/login")
-async def login(payload: LoginRequest):
-    """Exchange a username and password for a session token."""
+async def login(request: Request, payload: LoginRequest):
+    """Exchange a username and password for a session token.
+
+    429 once the account or the address has failed too often in the window
+    (``AUTH_LOGIN_MAX_ATTEMPTS`` per ``AUTH_LOGIN_WINDOW_MINUTES``).
+    """
     _require_multi()
-    session = identity.login(payload.username, payload.password)
+    ip = identity.client_ip(request)
+    try:
+        session = identity.login(payload.username, payload.password, ip=ip,
+                                 user_agent=request.headers.get("user-agent"))
+    except identity.LoginThrottled:
+        audit.record("auth.login", actor={"actor_id": None, "actor_kind": "anonymous",
+                                          "actor_name": payload.username},
+                     result="throttled", ip=ip)
+        raise HTTPException(status_code=429,
+                            detail="Too many failed sign-ins. Try again later.")
     if session is None:
+        audit.record("auth.login", actor={"actor_id": None, "actor_kind": "anonymous",
+                                          "actor_name": payload.username},
+                     result="denied", ip=ip)
         raise HTTPException(status_code=401, detail="Wrong username or password")
+    user = session["user"]
+    audit.record("auth.login", actor={"actor_id": user["id"], "actor_kind": "user",
+                                      "actor_name": user["username"]},
+                 object_type="session", object_id=session.get("session_id"), ip=ip,
+                 details={"kind": session.get("kind")})
     return session
 
 
@@ -142,7 +181,13 @@ async def logout(request: Request):
     if identity.current_mode() != MULTI:
         return {"ok": True}
     presented = identity.presented_credential(request)
-    return {"ok": identity.logout(presented or "")}
+    principal = _principal(request)
+    closed = identity.logout(presented or "")
+    if closed:
+        audit.record("auth.logout", principal=principal, object_type="session",
+                     object_id=getattr(principal, "credential_id", None) or None,
+                     ip=identity.client_ip(request))
+    return {"ok": closed}
 
 
 @router.get("/api/auth/me")
@@ -158,6 +203,13 @@ async def me(request: Request):
     payload = identity.principal_dict(principal)
     if identity.current_mode() == MULTI and principal.kind == "user":
         payload["workspaces"] = identity.workspaces_for_user(principal.id)
+        user = identity.get_user(principal.id) or {}
+        payload["display_name"] = user.get("display_name") or principal.username
+        payload["email"] = user.get("email") or ""
+        payload["source"] = user.get("source") or "local"
+        payload["has_password"] = bool(user.get("has_password"))
+        from common import groups
+        payload["groups"] = groups.group_names_of_user(principal.id)
     return payload
 
 
@@ -175,11 +227,16 @@ async def post_user(request: Request, payload: UserCreate):
     _require_multi()
     identity.require_role(_principal(request), admin=True)
     try:
-        return identity.create_user(payload.username, payload.password,
+        user = identity.create_user(payload.username, payload.password or None,
                                     role=payload.role,
-                                    display_name=payload.display_name)
+                                    display_name=payload.display_name,
+                                    email=payload.email)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    audit.record("user.create", principal=_principal(request), object_type="user",
+                 object_id=user["id"], ip=identity.client_ip(request),
+                 details={"username": user["username"], "role": user["role"]})
+    return user
 
 
 @router.patch("/api/auth/users/{user_id}")
@@ -189,11 +246,15 @@ async def patch_user(request: Request, user_id: str, payload: UserPatch):
     try:
         user = identity.update_user(user_id, role=payload.role,
                                     display_name=payload.display_name,
-                                    disabled=payload.disabled)
+                                    disabled=payload.disabled, email=payload.email)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if user is None:
         raise HTTPException(status_code=404, detail="No such user")
+    changes = {k: v for k, v in payload.model_dump().items() if v is not None}
+    audit.record("user.role" if "role" in changes else "user.update",
+                 principal=_principal(request), object_type="user", object_id=user_id,
+                 ip=identity.client_ip(request), details=changes)
     return user
 
 
@@ -207,6 +268,8 @@ async def remove_user(request: Request, user_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
     if not removed:
         raise HTTPException(status_code=404, detail="No such user")
+    audit.record("user.delete", principal=_principal(request), object_type="user",
+                 object_id=user_id, ip=identity.client_ip(request))
     return {"deleted": True}
 
 
@@ -219,6 +282,8 @@ async def reset_password(request: Request, user_id: str, payload: PasswordReset)
         raise HTTPException(status_code=400, detail="A password is required")
     if not identity.set_password(user_id, payload.password):
         raise HTTPException(status_code=404, detail="No such user")
+    audit.record("user.password", principal=_principal(request), object_type="user",
+                 object_id=user_id, ip=identity.client_ip(request))
     return {"ok": True}
 
 
@@ -240,9 +305,13 @@ async def put_member(request: Request, name: str, payload: MemberPut):
         raise HTTPException(status_code=400,
                             detail=f"Unknown role '{payload.role}'")
     try:
-        return identity.set_member(name, payload.user_id, payload.role)
+        member = identity.set_member(name, payload.user_id, payload.role)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    audit.record("workspace.member", principal=_principal(request), object_type="user",
+                 object_id=payload.user_id, workspace=name, ip=identity.client_ip(request),
+                 details={"role": payload.role})
+    return member
 
 
 @router.delete("/api/workspaces/{name}/members/{user_id}")
@@ -256,4 +325,7 @@ async def delete_member(request: Request, name: str, user_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
     if not removed:
         raise HTTPException(status_code=404, detail="Not a member")
+    audit.record("workspace.member", principal=_principal(request), object_type="user",
+                 object_id=user_id, workspace=name, ip=identity.client_ip(request),
+                 details={"role": None})
     return {"deleted": True}

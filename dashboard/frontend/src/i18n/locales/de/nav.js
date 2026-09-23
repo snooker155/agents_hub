@@ -39,6 +39,8 @@ export default {
   docs: 'Dokumentation',
   settings: 'Einstellungen',
   users: 'Konten',
+  audit: 'Audit',
+  account: 'Konto',
   comingSoon: 'demnächst',
   comingSoonTitle: 'Demnächst verfügbar',
   comingSoonItem: '{{name}} — demnächst',

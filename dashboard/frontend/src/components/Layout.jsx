@@ -12,6 +12,7 @@ import {
   CheckSquare,
   LogOut,
   UserCog,
+  KeyRound,
   Folder,
   Database,
   Factory,
@@ -369,6 +370,10 @@ const Layout = ({ children }) => {
         // Accounts exist only under AUTH_MODE=multi, and only an administrator
         // manages them. In the single-operator modes there is nothing to show.
         isAdmin(auth) && { name: t('nav.users'), path: '/users', icon: UserCog },
+        // Who did what: outside single mode there is somebody to answer to.
+        auth.features?.audit && { name: t('nav.audit'), path: '/audit', icon: ScrollText },
+        // The viewer's own sessions and API keys.
+        auth.mode === MULTI && auth.user && { name: t('nav.account'), path: '/account', icon: KeyRound },
       ].filter(Boolean),
     },
   ];

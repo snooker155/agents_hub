@@ -20,6 +20,10 @@ export const MULTI = 'multi';
 export const DEFAULT_AUTH = {
   mode: SINGLE,
   bootstrapRequired: false,
+  // `features` and `oidc` come straight from GET /api/auth/mode: what to
+  // render (login form, accounts, audit, api keys) and the sign-in button.
+  features: {},
+  oidc: null,
   user: null,
   loading: true,
   login: async () => {},

@@ -39,6 +39,8 @@ export default {
   docs: 'Docs',
   settings: 'Settings',
   users: 'Accounts',
+  audit: 'Audit',
+  account: 'Account',
   comingSoon: 'coming soon',
   comingSoonTitle: 'Coming soon',
   comingSoonItem: '{{name}} — coming soon',

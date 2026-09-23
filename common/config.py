@@ -201,6 +201,76 @@ class Settings(BaseSettings):
         default=24 * 14,
         validation_alias=AliasChoices("AUTH_SESSION_HOURS", "auth_session_hours"),
     )
+    # ── Corporate identity (stage 3, docs/identity.md) ─────────────────────
+    # OIDC single sign-on, Authorization Code + PKCE. Setting the issuer turns
+    # it on; the client secret may be empty for a public client.
+    auth_oidc_issuer: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_OIDC_ISSUER", "auth_oidc_issuer"))
+    auth_oidc_client_id: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_OIDC_CLIENT_ID", "auth_oidc_client_id"))
+    auth_oidc_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("AUTH_OIDC_CLIENT_SECRET", "auth_oidc_client_secret"))
+    auth_oidc_scopes: str = Field(
+        default="openid profile email",
+        validation_alias=AliasChoices("AUTH_OIDC_SCOPES", "auth_oidc_scopes"))
+    # The id-token claim that carries group names (Keycloak: ``groups`` with
+    # the mapper on; Entra ID: ``groups``; Google Workspace has none, so map
+    # by ``email`` domain or provision with SCIM instead).
+    auth_oidc_groups_claim: str = Field(
+        default="groups",
+        validation_alias=AliasChoices("AUTH_OIDC_GROUPS_CLAIM", "auth_oidc_groups_claim"))
+    # A label for the sign-in button ("Sign in with Keycloak").
+    auth_oidc_provider_name: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_OIDC_PROVIDER_NAME", "auth_oidc_provider_name"))
+    # OIDC sessions are shorter than password ones: the provider's own
+    # session makes a re-login silent, so there is no cost to asking again.
+    auth_oidc_session_hours: int = Field(
+        default=8, validation_alias=AliasChoices("AUTH_OIDC_SESSION_HOURS", "auth_oidc_session_hours"))
+    # Link an OIDC login to an existing local account with the same email
+    # (or username) instead of creating a second account for the same person.
+    auth_oidc_link_by_email: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("AUTH_OIDC_LINK_BY_EMAIL", "auth_oidc_link_by_email"))
+    # Password login. Off, only administrators may still sign in with a
+    # password (the emergency door when the provider is down).
+    auth_local_passwords: bool = Field(
+        default=True, validation_alias=AliasChoices("AUTH_LOCAL_PASSWORDS", "auth_local_passwords"))
+    # Failed logins per account (or per address) inside the window before
+    # further attempts are refused with 429.
+    auth_login_max_attempts: int = Field(
+        default=10, validation_alias=AliasChoices("AUTH_LOGIN_MAX_ATTEMPTS", "auth_login_max_attempts"))
+    auth_login_window_minutes: int = Field(
+        default=15, validation_alias=AliasChoices("AUTH_LOGIN_WINDOW_MINUTES", "auth_login_window_minutes"))
+    # The URL the browser reaches this hub at, for OIDC redirect URIs behind a
+    # reverse proxy. Empty: derived from the request (honouring
+    # X-Forwarded-Proto and X-Forwarded-Host).
+    auth_public_url: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_PUBLIC_URL", "auth_public_url"))
+    # Mark the short-lived OIDC state cookie Secure. Auto: on when the public
+    # URL (or the request) is https.
+    auth_cookie_secure: str = Field(
+        default="auto", validation_alias=AliasChoices("AUTH_COOKIE_SECURE", "auth_cookie_secure"))
+    # SCIM 2.0 provisioning: the bearer token an identity provider presents on
+    # /scim/v2. Empty turns the endpoints off.
+    auth_scim_token: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_SCIM_TOKEN", "auth_scim_token"))
+    # Audit log: record every write request from the middleware. "auto" is on
+    # in token and multi mode, off in single (where the key points are still
+    # recorded: login, role changes, launches, approvals, policy, budget).
+    audit_requests: str = Field(
+        default="auto", validation_alias=AliasChoices("AUDIT_REQUESTS", "audit_requests"))
+    # Days an audit row is kept; 0 keeps everything.
+    audit_retention_days: int = Field(
+        default=365, validation_alias=AliasChoices("AUDIT_RETENTION_DAYS", "audit_retention_days"))
+    # Secrets at rest (common/secrets.py): the encryption key, and the backend
+    # ("local" encrypts into the database; "vault" reads from HashiCorp Vault's
+    # KV v2 at AGENTS_HUB_VAULT_URL / AGENTS_HUB_VAULT_TOKEN through the same
+    # interface).
+    secret_key: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_SECRET_KEY", "secret_key"))
+    secret_backend: str = Field(
+        default="local", validation_alias=AliasChoices("AGENTS_HUB_SECRET_BACKEND", "secret_backend"))
     # When true, ``run_shell`` only permits commands whose first word is in
     # ``allow_shell``. Off by default so existing agent shell usage is unchanged;
     # a workspace can opt in via its settings (shell_allowlist_enabled).

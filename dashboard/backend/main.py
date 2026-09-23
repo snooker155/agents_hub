@@ -48,6 +48,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
+from routes import oidc as oidc_router
+from routes import groups as groups_router
+from routes import scim as scim_router
+from routes import audit as audit_router
+from routes import account as account_router
+from routes import secrets as secrets_router
 from routes import run_groups as run_groups_router
 from routes import run_state as run_state_router
 from routes import settings as settings_router
@@ -279,9 +285,38 @@ async def _api_token_guard(request, call_next):
     request.state.principal = principal
     token = identity.set_current_user(principal.id if principal else None)
     try:
-        return await call_next(request)
+        response = await call_next(request)
     finally:
         identity.reset_current_user(token)
+
+    # The audit trail (common/audit.py): every write request by a person,
+    # with its outcome, in token and multi mode. The key points (login, role
+    # changes, launches, approvals, policy, budget) record themselves in
+    # every mode from their own routes. Recorded after the response so an
+    # audit failure can never turn into a failed request.
+    try:
+        from common import audit
+        if (audit.should_log_request(request.method, request.url.path, principal)
+                and audit.requests_enabled()):
+            audit.record(
+                f"http.{request.method.lower()}", principal=principal,
+                workspace=_workspace_of(request), ip=identity.client_ip(request),
+                method=request.method, path=request.url.path,
+                result=str(response.status_code),
+            )
+    except Exception:
+        pass
+    return response
+
+
+def _workspace_of(request) -> Optional[str]:
+    """The workspace a request names, for the audit row (same rule as the guard)."""
+    from common.auth import workspace_from_request
+    return workspace_from_request(
+        path=request.url.path,
+        query_workspace=request.query_params.get("workspace"),
+        header_workspace=request.headers.get("x-workspace"),
+    )
 
 
 app.add_middleware(BaseHTTPMiddleware, dispatch=_api_token_guard)
@@ -522,6 +557,17 @@ app.include_router(notify_router.router)
 # membership. Registered in every mode — ``GET /api/auth/mode`` is how the
 # frontend learns there is nothing to render.
 app.include_router(auth_router.router)
+
+# Stage 3 of the identity plan (docs/identity.md): single sign-on, groups
+# and their mappings, SCIM provisioning, the audit trail, the caller's own
+# account (sessions, API keys) and workspace secrets. Each router answers
+# 404 outside the mode it needs, the same way the accounts routes do.
+app.include_router(oidc_router.router)
+app.include_router(groups_router.router)
+app.include_router(scim_router.router)
+app.include_router(audit_router.router)
+app.include_router(account_router.router)
+app.include_router(secrets_router.router)
 
 # ============================================================================
 # Entry Point

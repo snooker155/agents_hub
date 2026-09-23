@@ -7,7 +7,7 @@ import { PageChatProvider } from './components/pageChat/PageChatContext';
 import { FeaturesProvider } from './components/FeaturesContext';
 import { useFeatures } from './components/features';
 import { AuthProvider } from './components/AuthContext';
-import { isAdmin, needsLogin, useAuth } from './components/auth';
+import { isAdmin, isMultiUser, needsLogin, useAuth } from './components/auth';
 import { useI18n } from './i18n';
 
 // ---------------------------------------------------------------------------
@@ -81,6 +81,9 @@ const Docs = lazy(() => import('./pages/Docs'));
 // never reached and the users route is not registered. See docs/identity.md.
 const Login = lazy(() => import('./pages/Login'));
 const Users = lazy(() => import('./pages/Users'));
+const Audit = lazy(() => import('./pages/Audit'));
+const Account = lazy(() => import('./pages/Account'));
+const OidcCallback = lazy(() => import('./pages/OidcCallback'));
 
 /** Centred spinner shown while a page's chunk is on the wire. */
 function RouteFallback() {
@@ -192,11 +195,26 @@ function AppRoutes() {
         ) : (
           <Route path="/users" element={<Navigate to="/dashboard" replace />} />
         )}
+        {/* The audit trail exists outside single mode (features.audit); an
+            administrator reads all of it, a workspace owner their own. */}
+        {auth.features?.audit ? (
+          <Route path="/audit" element={guard(<Audit />)} />
+        ) : (
+          <Route path="/audit" element={<Navigate to="/dashboard" replace />} />
+        )}
+        {/* The caller's own account: sessions and personal API keys. */}
+        {isMultiUser(auth) ? (
+          <Route path="/account" element={guard(<Account />)} />
+        ) : (
+          <Route path="/account" element={<Navigate to="/dashboard" replace />} />
+        )}
         <Route path="/docs" element={guard(<Docs />)} />
         <Route path="/docs/:section" element={guard(<Docs />)} />
         {/* The api client sends a browser whose session died to /login; once
             AuthGate has let it back in there is nothing to show at that path. */}
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+        {/* Where the OIDC callback lands the browser with its new session. */}
+        <Route path="/login/oidc" element={<OidcCallback />} />
       </Routes>
     </Suspense>
   );

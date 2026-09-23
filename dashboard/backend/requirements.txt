@@ -6,6 +6,10 @@ filelock>=3.25
 PyYAML>=6.0
 python-multipart>=0.0.22
 pypdf>=6.7
+# Stage 3 identity (docs/identity.md): OIDC single sign-on (Authorization Code
+# + PKCE, discovery, id-token verification) and the secrets store's encryption.
+authlib>=1.6
+cryptography>=42
 
 # Optional: only needed when AGENTS_HUB_BROKER_URL is set, for the
 # cross-replica session-broker bridge (common/broker_bridge.py, docs/scaling.md).
