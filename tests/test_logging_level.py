@@ -132,15 +132,37 @@ def test_marker_logger_ignores_the_configured_level(monkeypatch, _clean_marker_l
     assert "Running agent with instruction: do the thing" in capsys.readouterr().out
 
 
-def test_marker_logger_does_not_propagate_to_root(_clean_marker_logger, capsys, caplog):
-    """propagate=False: a handler configure_logging installs on the root
-    logger (stderr, timestamp + level prefix) must never see — and reprint —
-    a marker line the logger already put on stdout."""
-    log = logging_config.marker_logger(_clean_marker_logger)
-    with caplog.at_level(logging.INFO):
-        log.info("[flow_done] flow_id=f1 nodes_completed=1 nodes_failed=0")
+class _RootProbe(logging.Handler):
+    """Collects every record the root logger is handed."""
 
-    assert not caplog.records
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+def test_marker_logger_does_not_propagate_to_root(_clean_marker_logger, capsys):
+    """propagate=False: a handler configure_logging installs on the root
+    logger (stderr, timestamp plus level prefix) must never see, and reprint,
+    a marker line the logger already put on stdout. A handler is attached to
+    the root logger by hand rather than through caplog: pytest 9.1 made caplog
+    capture from non-propagating loggers too, so caplog no longer tells the two
+    apart."""
+    root = logging.getLogger()
+    probe = _RootProbe()
+    before = root.level
+    root.addHandler(probe)
+    root.setLevel(logging.DEBUG)
+    try:
+        log = logging_config.marker_logger(_clean_marker_logger)
+        log.info("[flow_done] flow_id=f1 nodes_completed=1 nodes_failed=0")
+    finally:
+        root.removeHandler(probe)
+        root.setLevel(before)
+
+    assert probe.records == []
     assert capsys.readouterr().out.count("[flow_done]") == 1
 
 
