@@ -1,6 +1,7 @@
 import { updateAgentClarifyGate, updateAgentReasoning, updateAgentResponseFormat, updateAgentSelfDelegation } from '../../api';
 import { CAPABILITY_LABELS } from '../../lib/capabilities';
 import SystemAgentWarning from './SystemAgentWarning';
+import AgentSecretsCard from './AgentSecretsCard';
 import { AlertTriangle, BrainCircuit, HelpCircle, Layers, Loader, MessageSquare, Repeat, Save, Share2, Wrench } from 'lucide-react';
 import { useAgentPage } from './context';
 
@@ -533,6 +534,9 @@ export default function ToolsTab() {
               )}
             </div>
           )}
+
+          {/* The secret names a run of this agent may receive (docs/secrets.md). */}
+          <AgentSecretsCard agentId={id} readOnly={Boolean(agent.system)} />
 
         </div>
   );

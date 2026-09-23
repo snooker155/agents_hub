@@ -499,9 +499,17 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
             input=input,
         )
 
+        # A delegate runs under its own secret scope: its own allowlist, the
+        # same workspace and the same person as the delegating run.
+        from common import secrets as _secrets
+        _parent_scope = _secrets.active_scope()
+        _scope = _secrets.activate(ws or "", agent_id,
+                                   _parent_scope[2] if _parent_scope else None)
+        _scope.__enter__()
         try:
             worker = create_agent(agent_id, workspace=ws_path)
         except Exception as e:
+            _scope.__exit__(None, None, None)
             # Close the record here, or a build failure leaves it "running" forever.
             close_run(run_id, status="failed", exit_code=1, error=f"create_agent failed: {e}")
             return _json_err(
@@ -564,6 +572,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
             # delegation's depth/parent bookkeeping is fully unwound.
             if deleg_scope is not None:
                 stream_sink.reset_scope(deleg_scope)
+            _scope.__exit__(None, None, None)
         result = invocation.result
         stopped = stop_cb.cancelled
         if stopped:

@@ -82,9 +82,14 @@ flow locally.
 1. App registrations, New registration. Redirect URI, platform **Web**:
    `https://hub.example.com/api/auth/oidc/callback`.
 2. Certificates & secrets: add a client secret.
-3. Token configuration, **Add groups claim**: security groups, and for the ID
-   token choose **sAMAccountName** (on-premises synced groups) or leave
-   **Group ID** (cloud groups).
+3. Token configuration, **Add groups claim**. Choose **Groups assigned to
+   the application**, not "Security groups": Entra caps the claim at about
+   200 groups and a person past the cap gets no groups at all (see below),
+   whereas the assigned set stays small and is the one you meant anyway.
+   For the ID token choose **sAMAccountName** (on-premises synced groups) or
+   leave **Group ID** (cloud groups).
+4. Enterprise applications, your app, **Users and groups**: assign the groups
+   that should reach the hub. Only those appear in the claim.
 
 ```
 AUTH_OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0
@@ -94,10 +99,18 @@ AUTH_OIDC_PROVIDER_NAME=Microsoft
 ```
 
 With Group ID, the `groups` claim carries object ids, not names: write the
-mappings with the ids (`3f2b…`) as group names. A person in more than 200
-groups gets no `groups` claim at all (Entra sends a pointer to Graph instead);
-the hub then leaves their groups unchanged. Use SCIM provisioning
-([scim](scim.md)) or assign the app to fewer groups in that case.
+mappings with the ids (`3f2b…`) as group names.
+
+**The overage case.** With the claim set to all security groups, a person in
+more than about 200 groups gets no `groups` claim at all: Entra sends
+`_claim_names` and `_claim_sources` with a Microsoft Graph URL instead, and
+expects the application to call Graph with permissions of its own. The hub
+does not make that call. It recognises the pointer, leaves the person's
+groups exactly as they were at their last sign-in, logs a warning, and marks
+the `auth.login` audit row with `groups_overage: true`, so the Audit page
+shows who is affected. The fix is the setting above (groups assigned to the
+application); SCIM provisioning ([scim](scim.md)) is the other way to keep
+groups in step, and has no cap.
 
 ## Google Workspace
 

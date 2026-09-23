@@ -364,20 +364,27 @@ async def run_entity_chat_turn(
             loop = asyncio.get_running_loop()
             callback = ChatStreamCallback(loop, queue, log_lines, log_file,
                                           session_id=session_id)
-            agent = await asyncio.to_thread(
-                create_agent, spec.agent_id,
-                workspace=spec.workspace_path, streaming=True,
-                max_tool_repeats=spec.max_tool_repeats,
-                max_iterations=spec.max_iterations,
-                **dict(spec.agent_overrides or {}),
-            )
-            _update_run(run_id, {"provider": agent.provider or "",
-                                 "model": agent.model or ""})
-            callback.bind_model(agent.provider or "", agent.model or "")
-            await emit({"type": "agent", "agent_id": spec.agent_id,
-                        "provider": agent.provider or "", "model": agent.model or ""})
+            # The secret scope is entered before the run task is created:
+            # a task copies the context it is created in, so the tools the
+            # agent calls inside ``arun`` see the same scope a subprocess run
+            # would get through its environment (docs/secrets.md).
+            from common import secrets as _secrets
+            from common.identity import current_user_id
+            with _secrets.activate(spec.workspace or "", spec.agent_id, current_user_id()):
+                agent = await asyncio.to_thread(
+                    create_agent, spec.agent_id,
+                    workspace=spec.workspace_path, streaming=True,
+                    max_tool_repeats=spec.max_tool_repeats,
+                    max_iterations=spec.max_iterations,
+                    **dict(spec.agent_overrides or {}),
+                )
+                _update_run(run_id, {"provider": agent.provider or "",
+                                     "model": agent.model or ""})
+                callback.bind_model(agent.provider or "", agent.model or "")
+                await emit({"type": "agent", "agent_id": spec.agent_id,
+                            "provider": agent.provider or "", "model": agent.model or ""})
 
-            task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))
+                task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))
             register_entity_run(spec.kind, entity_id, task)
 
             # The callback pushes token/tool events straight onto `queue` and the

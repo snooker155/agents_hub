@@ -100,12 +100,25 @@ A lookup failure (no key, Vault unreachable, a value that no longer decrypts)
 is logged by name and hands out nothing. It never stops the launch and never
 falls back to handing out more.
 
+**In-process runs.** A chat turn, an entity build chat, the decomposer and a
+delegated worker run inside the backend process, where there is no
+environment to build. They enter the agent's *secret scope* instead
+(`common.secrets.activate`): for the duration of the turn, a tool that asks
+`common.secrets.get(name)` receives the declared names resolved for the
+person who sent the message, and nothing else. The git connector reads the
+run's `GITHUB_TOKEN` this way, so a pull request opened from chat carries the
+same identity as one opened from a task run. A delegate gets a scope of its
+own, with its own allowlist, in the same workspace and for the same person.
+
 ## Managing them
 
 In the dashboard: a workspace's Agents tab has a Secrets card, in every mode.
 It lists name, scope, the last four characters of the value (only for values
 longer than eight characters), and when it was set. In `multi` mode only the
-workspace owner or an administrator sees it.
+workspace owner or an administrator sees it. The agent side is on the agent's
+Tools tab: a Secrets card with the names this agent may receive, offering the
+names the current workspace holds as one-click suggestions. Saving it goes
+through the capability guard like the tools list does.
 
 From the terminal:
 

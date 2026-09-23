@@ -23,7 +23,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from common import audit, identity
+import logging
+
 from common import oidc
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["oidc"])
 
@@ -106,10 +110,15 @@ async def oidc_callback(request: Request, code: str = "", state: str = "",
                        username=user["username"], user_id=user["id"])
 
     group_names = result["groups"]
+    overage = group_names is None and oidc.groups_overage(result.get("claims") or {})
     if group_names is not None:
         # Present (even empty): the provider is the source of truth for the
         # groups it names. Absent: it said nothing, so nothing changes.
         oidc.sync_groups(user["id"], group_names)
+    elif overage:
+        log.warning("oidc: %s is in too many groups for the id token; groups left "
+                    "unchanged. Restrict the claim to groups assigned to the "
+                    "application (docs/sso.md).", user["username"])
 
     ip = identity.client_ip(request)
     session = identity.open_session(user["id"], kind=identity.SESSION_OIDC, ip=ip,
@@ -121,6 +130,7 @@ async def oidc_callback(request: Request, code: str = "", state: str = "",
                                       "actor_name": user["username"]},
                  object_type="session", object_id=session.get("session_id"), ip=ip,
                  details={"kind": "oidc", "issuer": result["issuer"],
-                          "groups": group_names})
+                          "groups": group_names,
+                          **({"groups_overage": True} if overage else {})})
     return _landing(request, token=session["token"], expires_at=session["expires_at"],
                     next=result["next"])

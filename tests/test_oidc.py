@@ -445,3 +445,34 @@ def test_claim_helpers():
     assert who == {"username": "ann", "email": "ann@x.io", "display_name": "Ann Lee"}
     assert oidc.safe_next("/a/b?c=d") == "/a/b?c=d"
     assert oidc.safe_next("") == "/"
+
+
+# ── Entra ID groups overage ──────────────────────────────────────────────────
+
+def test_groups_overage_is_detected_and_reported(provider, client):
+    """Entra ID drops the groups claim past its cap and sends a Graph pointer
+    instead. The hub follows nothing: the person's groups stay as they were,
+    and the login row says why."""
+    from common import db, groups, identity, oidc
+    _bootstrap_admin(client)
+    groups.add_mapping("devs", target="workspace", role="editor", workspace="w1")
+    first = _sign_in(client, provider, {"sub": "carol-sub", "preferred_username": "carol",
+                                        "groups": ["devs"]})
+    user = identity.get_user_by_username("carol")
+    assert identity.membership_role("w1", user["id"]) == "editor"
+
+    overage_claims = {
+        "sub": "carol-sub", "preferred_username": "carol",
+        "_claim_names": {"groups": "src1"},
+        "_claim_sources": {"src1": {"endpoint": "https://graph.microsoft.com/v1.0/users/x/getMemberObjects"}},
+    }
+    assert oidc.groups_overage(overage_claims) is True
+    assert oidc.groups_from_claims(overage_claims) is None
+    second = _sign_in(client, provider, overage_claims)
+    assert second["token"] and first["token"] != second["token"]
+    # Nothing changed: the membership the earlier claim granted is still there.
+    assert identity.membership_role("w1", user["id"]) == "editor"
+    row = db.get_conn().execute(
+        "SELECT details FROM audit_log WHERE action = 'auth.login' AND result = 'ok' "
+        "ORDER BY id DESC").fetchone()
+    assert '"groups_overage": true' in row["details"]

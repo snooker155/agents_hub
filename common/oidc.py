@@ -378,6 +378,25 @@ def claim_at(claims: Dict[str, Any], path: str) -> Any:
     return current
 
 
+def groups_overage(claims: Dict[str, Any]) -> bool:
+    """Whether the provider left the groups out because there were too many.
+
+    Microsoft Entra ID caps the groups claim (about 200 groups in an id
+    token). Past that it sends no ``groups`` claim at all but a pointer to
+    Microsoft Graph instead: ``_claim_names`` maps the claim name to a source
+    listed under ``_claim_sources``. The hub does not follow the pointer (it
+    would need Graph permissions of its own); it reports the case so the
+    administrator can restrict the claim to the groups assigned to the
+    application, which is the Entra setting that keeps it under the cap
+    (docs/sso.md).
+    """
+    names = claims.get("_claim_names")
+    if not isinstance(names, dict):
+        return False
+    leaf = (groups_claim() or "groups").split(".")[-1]
+    return leaf in names or "groups" in names
+
+
 def groups_from_claims(claims: Dict[str, Any]) -> Optional[List[str]]:
     """Group names from the configured claim, or None when the claim is absent
     (which means "the provider says nothing", not "no groups")."""
@@ -471,7 +490,7 @@ def complete(request, *, code: str, state: str, cookie_value: Optional[str]) -> 
 __all__ = [
     "CLOCK_SKEW_SECONDS", "OidcError", "STATE_COOKIE", "STATE_COOKIE_PATH",
     "STATE_TTL_SECONDS", "begin", "claim_at", "client_id", "complete", "cookie_secure",
-    "discovery", "enabled", "exchange_code", "groups_from_claims", "identity_from_claims",
+    "discovery", "enabled", "exchange_code", "groups_from_claims", "groups_overage", "identity_from_claims",
     "issuer", "jwks", "public_url", "read_state", "redirect_uri", "reset_caches",
     "safe_next", "sign_state", "sync_groups", "verify_id_token",
 ]

@@ -146,9 +146,20 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
 
     from common.config import settings as _cfg
     chat_timeout = max(_cfg.chat_request_timeout, _cfg.llm_request_timeout + 60)
+    def _run_agent_scoped():
+        # The chat turn runs in this process, so the agent's secrets cannot
+        # arrive through the environment the way a subprocess run's do. The
+        # active secret scope binds them for the thread instead: a tool asks
+        # common.secrets.get(name) and receives only what this agent declares,
+        # resolved for the person who sent the message (docs/secrets.md).
+        from common import secrets as _secrets
+        from common.identity import current_user_id
+        with _secrets.activate(ws_name, request.agent_id, current_user_id()):
+            return _run_agent()
+
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(_run_agent),
+            asyncio.to_thread(_run_agent_scoped),
             timeout=chat_timeout,
         )
     except asyncio.TimeoutError:

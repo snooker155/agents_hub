@@ -916,8 +916,18 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
     except Exception:
         pass
 
+    # The worker is a plain thread, which inherits no context: the secret
+    # scope (and who asked) are captured here and re-entered inside it.
+    from common import secrets as _secrets
+    from common.identity import current_user_id as _current_user_id
+    launched_by = _current_user_id()
+
     # Background worker to run decomposer and write logs
     def _worker():
+        with _secrets.activate(t.workspace or root.name, "decomposer", launched_by):
+            _worker_body()
+
+    def _worker_body():
         try:
             with log_file.open("w", encoding="utf-8") as fh:
                 fh.write("[decomposer] start\n")
