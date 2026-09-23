@@ -179,7 +179,8 @@ export const deleteWorkspaceSecret = (name, secret, params) =>
   api.delete(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, { params });
 // An agent's allowlist: the secret names a run of it may receive.
 export const getAgentSecrets = (id) => api.get(`/agents/${id}/secrets`);
-export const updateAgentSecrets = (id, secrets) => api.put(`/agents/${id}/secrets`, { secrets });
+export const updateAgentSecrets = (id, secrets, extra = {}) =>
+  api.put(`/agents/${id}/secrets`, { secrets, ...extra });
 export const setWorkspaceMember = (name, data) => api.put(`/workspaces/${name}/members`, data);
 export const removeWorkspaceMember = (name, userId) =>
   api.delete(`/workspaces/${name}/members/${userId}`);
@@ -1147,5 +1148,22 @@ export const getTeamRun = (runId) => api.get(`/teams/runs/${runId}`);
 export const getTeamMessages = (runId, since = 0) =>
   api.get(`/teams/runs/${runId}/messages`, { params: { since } });
 export const stopTeamRun = (runId) => api.post(`/teams/runs/${runId}/stop`);
+
+// The GitHub App (routes/github_app.py, docs/github-app.md): installations and
+// their workspace binding for the Git connector page, and a person's own
+// GitHub account for the Account page.
+export const getGitHubApp = () => api.get('/git/github-app');
+export const syncGitHubApp = () => api.post('/git/github-app/sync');
+export const setWorkspaceGitHubInstallation = (workspace, installationId) =>
+  api.put(`/workspaces/${encodeURIComponent(workspace)}/github-installation`,
+    { installation_id: installationId ?? null });
+export const getMyGitHub = () => api.get('/auth/github');
+export const disconnectMyGitHub = () => api.delete('/auth/github');
+// A plain link (the browser leaves for github.com), so the credential rides
+// in the query the way auditExportUrl does.
+export const githubConnectUrl = () => {
+  const token = activeToken();
+  return `${API_ORIGIN}/api/auth/github/connect${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+};
 
 export default api;

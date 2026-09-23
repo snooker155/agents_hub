@@ -37,6 +37,11 @@ vi.mock('../../api', () => ({
   getBlenderDaemons: () => ok({ daemons: [], running: 0, max_daemons: 2 }),
   stopBlenderDaemon: () => ok({}),
   stopAllBlenderDaemons: () => ok({}),
+  // The GitHub App card (components/connectors/GitHubAppCard.jsx).
+  getGitHubApp: () => ok({ configured: false, installations: [] }),
+  syncGitHubApp: () => ok({ installations: [] }),
+  setWorkspaceGitHubInstallation: () => ok({}),
+  getWorkspaces: () => ok([]),
 }));
 
 const EVIDENCE = {

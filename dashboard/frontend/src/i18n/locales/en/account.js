@@ -88,4 +88,23 @@ export default {
     scopeFull: 'Full reach',
     adminHint: 'This lists your own keys only. An administrator revokes someone else\'s through the API or the CLI (ah auth keys revoke), not from this page.',
   },
+
+  github: {
+    title: 'Connected accounts',
+    description: 'Connect your GitHub account so agents set to act as the launching user push and open pull requests as you.',
+    name: 'GitHub',
+    connectedAs: 'Connected as {{login}}',
+    until: 'token valid until {{date}}, renewed automatically',
+    renewUntil: 'reconnect before {{date}}',
+    notConnected: 'Not connected',
+    connect: 'Connect',
+    disconnect: 'Disconnect',
+    disconnectConfirm: 'Disconnect your GitHub account? Agents that act as you fall back to the app identity.',
+    notConfigured: 'The GitHub App is not configured on this hub, so there is nothing to connect.',
+    noKey: 'Connecting needs a secret key on the hub (AGENTS_HUB_SECRET_KEY). Ask an administrator.',
+    connectedToast: 'Your GitHub account is connected.',
+    errorToast: 'Connecting GitHub failed: {{reason}}',
+    loadFailed: 'Could not load your GitHub connection.',
+    disconnectFailed: 'Could not disconnect GitHub.',
+  },
 };

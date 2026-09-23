@@ -180,6 +180,12 @@ class AgentSpec:
     # listed here, as environment variables. A non-empty list counts as
     # reading private data for the capability guard (tools/capabilities.py).
     secrets: List[str] = field(default_factory=list)
+    # Whose GitHub identity a declared ``GITHUB_TOKEN`` falls back to when no
+    # explicit secret holds one (connectors/git/github_app.py): "app" (the
+    # default) hands out the installation token of the workspace's GitHub App,
+    # so pull requests come from the app's bot; "user" hands out the token of
+    # the person who launched the run, when they connected their account.
+    github_identity: str = "app"
     # External-agent descriptor — empty for built-in agents. When ``type`` is
     # "remote" this holds everything needed to reach the agent over HTTP
     # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
@@ -322,6 +328,8 @@ class AgentSpec:
             d["approval_exempt"] = list(self.approval_exempt)
         if self.secrets:
             d["secrets"] = list(self.secrets)
+        if self.github_identity and self.github_identity != "app":
+            d["github_identity"] = self.github_identity
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
@@ -564,6 +572,9 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     approval_tools = _id_list(ad.get("approval_tools"))
     approval_exempt = _id_list(ad.get("approval_exempt"))
     secrets = _id_list(ad.get("secrets"))
+    github_identity = str(ad.get("github_identity") or "app").strip().lower()
+    if github_identity not in ("app", "user"):
+        github_identity = "app"
 
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
@@ -614,6 +625,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         approval_tools=approval_tools,
         approval_exempt=approval_exempt,
         secrets=secrets,
+        github_identity=github_identity,
         remote=remote,
     )
 

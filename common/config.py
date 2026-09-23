@@ -271,6 +271,31 @@ class Settings(BaseSettings):
         default="", validation_alias=AliasChoices("AGENTS_HUB_SECRET_KEY", "secret_key"))
     secret_backend: str = Field(
         default="local", validation_alias=AliasChoices("AGENTS_HUB_SECRET_BACKEND", "secret_backend"))
+    # GitHub App (connectors/git/github_app.py, docs/github-app.md): the hub
+    # issues installation tokens and user-to-server tokens itself. Configured
+    # when the app id, the private key and the client id are set. The private
+    # key is PEM text, or a path to the .pem file in GITHUB_APP_PRIVATE_KEY_FILE.
+    github_app_id: str = Field(
+        default="", validation_alias=AliasChoices("GITHUB_APP_ID", "github_app_id"))
+    github_app_slug: str = Field(
+        default="", validation_alias=AliasChoices("GITHUB_APP_SLUG", "github_app_slug"))
+    github_app_client_id: str = Field(
+        default="", validation_alias=AliasChoices("GITHUB_APP_CLIENT_ID", "github_app_client_id"))
+    github_app_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("GITHUB_APP_CLIENT_SECRET", "github_app_client_secret"))
+    github_app_private_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GITHUB_APP_PRIVATE_KEY", "github_app_private_key"))
+    github_app_private_key_file: str = Field(
+        default="",
+        validation_alias=AliasChoices("GITHUB_APP_PRIVATE_KEY_FILE", "github_app_private_key_file"))
+    # GitHub Enterprise Server: https://<host>/api/v3 and https://<host>.
+    github_api_url: str = Field(
+        default="https://api.github.com",
+        validation_alias=AliasChoices("GITHUB_API_URL", "github_api_url"))
+    github_url: str = Field(
+        default="https://github.com", validation_alias=AliasChoices("GITHUB_URL", "github_url"))
     # When true, ``run_shell`` only permits commands whose first word is in
     # ``allow_shell``. Off by default so existing agent shell usage is unchanged;
     # a workspace can opt in via its settings (shell_allowlist_enabled).

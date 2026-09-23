@@ -88,4 +88,23 @@ export default {
     scopeFull: 'Полный доступ',
     adminHint: 'Здесь показаны только ваши ключи. Ключи другого пользователя администратор отзывает через API или CLI (ah auth keys revoke), не с этой страницы.',
   },
+
+  github: {
+    title: 'Подключённые аккаунты',
+    description: 'Подключите аккаунт GitHub, и агенты, которые действуют от имени запустившего, будут пушить и открывать pull request от вашего имени.',
+    name: 'GitHub',
+    connectedAs: 'Подключён как {{login}}',
+    until: 'токен действует до {{date}}, продлевается автоматически',
+    renewUntil: 'подключите заново до {{date}}',
+    notConnected: 'Не подключён',
+    connect: 'Подключить',
+    disconnect: 'Отключить',
+    disconnectConfirm: 'Отключить аккаунт GitHub? Агенты, действующие от вашего имени, перейдут на идентичность приложения.',
+    notConfigured: 'На этом хабе не настроено GitHub App, подключать нечего.',
+    noKey: 'Для подключения на хабе нужен секретный ключ (AGENTS_HUB_SECRET_KEY). Обратитесь к администратору.',
+    connectedToast: 'Аккаунт GitHub подключён.',
+    errorToast: 'Не удалось подключить GitHub: {{reason}}',
+    loadFailed: 'Не удалось загрузить подключение GitHub.',
+    disconnectFailed: 'Не удалось отключить GitHub.',
+  },
 };

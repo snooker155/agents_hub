@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Check, Copy, KeyRound, Laptop, Loader, Lock, LogOut, Plus, RefreshCw,
-  Trash2, User as UserIcon,
+  AlertTriangle, Check, Copy, Github, KeyRound, Laptop, Link2, Loader, Lock, LogOut, Plus,
+  RefreshCw, Trash2, User as UserIcon,
 } from 'lucide-react';
 import {
-  changeMyPassword, createMyApiKey, getMyApiKeys, getMySessions, getWorkspaces,
-  revokeMyApiKey, revokeMySession, revokeOtherSessions,
+  changeMyPassword, createMyApiKey, disconnectMyGitHub, getMyApiKeys, getMyGitHub,
+  getMySessions, getWorkspaces, githubConnectUrl, revokeMyApiKey, revokeMySession,
+  revokeOtherSessions,
 } from '../api';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { SectionCard, inputCls } from '../components/settingsUi';
@@ -52,6 +53,7 @@ export default function Account() {
           <PasswordSection t={t} onChanged={onPasswordChanged} />
         )}
         <ApiKeysSection t={t} isAdmin={user?.role === 'admin'} />
+        <GitHubSection t={t} />
       </div>
     </PageContainer>
   );
@@ -212,6 +214,124 @@ function SessionsSection({ t }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ── connected accounts ───────────────────────────────────────────────────────
+
+/** Read and clear the `#github=connected|error&reason=…` the backend's
+ *  callback (routes/github_app.py) lands the browser on. */
+function takeGitHubOutcome() {
+  if (typeof window === 'undefined') return null;
+  const hash = (window.location.hash || '').replace(/^#/, '');
+  if (!hash.includes('github=')) return null;
+  const params = new URLSearchParams(hash);
+  try {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  } catch { /* a test DOM without history: leaving the hash is harmless */ }
+  return { outcome: params.get('github'), reason: params.get('reason') || '' };
+}
+
+function GitHubSection({ t }) {
+  const { formatDate } = useFormatters();
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await getMyGitHub();
+      setStatus(data || null);
+      setError('');
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('account.github.loadFailed'));
+    }
+  }, [t]);
+
+  useEffect(() => {
+    const back = takeGitHubOutcome();
+    if (back?.outcome === 'connected') setNotice({ ok: true, text: t('account.github.connectedToast') });
+    else if (back) setNotice({ ok: false, text: t('account.github.errorToast', { reason: back.reason || back.outcome }) });
+    load();
+  }, [load, t]);
+
+  const disconnect = async () => {
+    if (!window.confirm(t('account.github.disconnectConfirm'))) return;
+    setBusy(true);
+    try {
+      await disconnectMyGitHub();
+      setNotice(null);
+      await load();
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('account.github.disconnectFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connected = Boolean(status?.connected);
+  const canConnect = Boolean(status?.configured && status?.key_configured);
+
+  return (
+    <SectionCard title={t('account.github.title')}>
+      <p className="text-sm text-gray-600">{t('account.github.description')}</p>
+      {notice && (
+        <p className={`text-sm rounded-lg px-3 py-2 border ${notice.ok
+          ? 'text-green-700 bg-green-50 border-green-100'
+          : 'text-red-600 bg-red-50 border-red-100'}`}>
+          {notice.text}
+        </p>
+      )}
+      {error && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+      )}
+      {status === null && !error ? (
+        <p className="text-sm text-gray-500 flex items-center gap-2">
+          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
+        </p>
+      ) : status && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border border-gray-100 rounded-lg px-3 py-2.5">
+          <div className="flex items-start gap-2 text-sm">
+            <Github className="w-4 h-4 mt-0.5 text-gray-700" />
+            <div>
+              <div className="font-medium text-gray-800">{t('account.github.name')}</div>
+              {connected ? (
+                <div className="text-gray-600">
+                  {t('account.github.connectedAs', { login: status.login || '?' })}
+                  {status.access_expires_at && (
+                    <span className="text-gray-400">
+                      {', '}{t('account.github.until', { date: formatDate(status.access_expires_at) })}
+                    </span>
+                  )}
+                  {status.refresh_expires_at && (
+                    <div className="text-xs text-gray-400">
+                      {t('account.github.renewUntil', { date: formatDate(status.refresh_expires_at) })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-gray-500">
+                  {!status.configured ? t('account.github.notConfigured')
+                    : !status.key_configured ? t('account.github.noKey')
+                      : t('account.github.notConnected')}
+                </div>
+              )}
+            </div>
+          </div>
+          {connected ? (
+            <button type="button" onClick={disconnect} disabled={busy} className={btnGhost}>
+              {busy ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              {t('account.github.disconnect')}
+            </button>
+          ) : canConnect && (
+            <a href={githubConnectUrl()} className={btnPrimary}>
+              <Link2 className="w-3.5 h-3.5" /> {t('account.github.connect')}
+            </a>
+          )}
         </div>
       )}
     </SectionCard>

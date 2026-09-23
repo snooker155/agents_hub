@@ -4,6 +4,7 @@ import {
   getGitConfig, updateGitConfig, testGitConnection,
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
+import GitHubAppCard from './GitHubAppCard';
 import { useI18n } from '../../i18n';
 
 // Moved out of the Settings page, which is where nobody looked for it: a
@@ -173,6 +174,7 @@ export default function GitConnector() {
         config={config.github || {}}
         onSaved={setConfig}
       />
+      <GitHubAppCard />
       <GitProviderSection
         provider="gitlab"
         label={t('settings.gitlab')}

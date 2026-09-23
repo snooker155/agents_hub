@@ -432,10 +432,11 @@ def test_agent_allowlist_route_validates_and_guards(single, client, monkeypatch)
     from common.config import settings
     monkeypatch.setattr(settings, "capability_guard", "block", raising=False)
     _agent("worker")
-    assert client.get("/api/agents/worker/secrets").json() == {"secrets": []}
+    assert client.get("/api/agents/worker/secrets").json() == {"secrets": [],
+                                                               "github_identity": "app"}
     assert client.put("/api/agents/worker/secrets", json={"secrets": ["bad name"]}).status_code == 400
     ok = client.put("/api/agents/worker/secrets", json={"secrets": ["TOKEN", "TOKEN"]})
-    assert ok.status_code == 200 and ok.json() == {"secrets": ["TOKEN"]}
+    assert ok.status_code == 200 and ok.json()["secrets"] == ["TOKEN"]
     from agents.registry import get_agent
     assert get_agent("worker").secrets == ["TOKEN"]
     _agent("fetcher", tools=["fetch_url"])

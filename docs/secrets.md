@@ -161,6 +161,14 @@ Stored as a user-scoped one, the same agent acts on behalf of whoever launched
 the run. The git tools read the token the run holds before falling back to
 the one configured under Settings, Connectors.
 
+With a GitHub App configured, the hub issues these tokens itself: an agent
+that declares `GITHUB_TOKEN` and has no explicit secret of that name receives
+the installation token of the app installation bound to its workspace (pull
+requests come from the app's bot), or, with `github_identity: "user"`, the
+token of the person who launched it, when they connected their GitHub account
+on the Account page. An explicit secret always wins. See
+[github-app](github-app.md).
+
 ## Gotchas
 
 - **Rotating the key re-encrypts nothing.** Values written under the old key
@@ -191,3 +199,4 @@ the one configured under Settings, Connectors.
 - [settings](settings.md): where `.env` values and the git connector token live
 - [containers](containers.md): how a docker run gets its environment
 - [cli](cli.md): the `ah` command
+- [github-app](github-app.md): GitHub tokens the hub issues itself

@@ -961,7 +961,8 @@
         "workspaces",
         "settings",
         "containers",
-        "cli"
+        "cli",
+        "github-app"
       ],
       "headings": [
         "Why this exists",
@@ -1021,6 +1022,31 @@
         "Revocation",
         "The login throttle",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "github-app",
+      "title": "GitHub App",
+      "summary": "The hub holds a GitHub App and issues GitHub tokens itself: an installation token for the workspace an installation is bound to (pull requests come from the app's bot) and a user token for each person who connected their GitHub account (pull requests come from them), handed to runs whose agent declares GITHUB_TOKEN when no explicit secret supplies one.",
+      "surface": "Connectors, Git, GitHub App card; Account, Connected accounts",
+      "related": [
+        "secrets",
+        "identity",
+        "sso",
+        "settings",
+        "audit"
+      ],
+      "headings": [
+        "Why an app",
+        "Creating the app",
+        "Configuration",
+        "Installing and binding to a workspace",
+        "Connecting your own account",
+        "The agent side",
+        "Token lifetimes",
+        "GitHub Enterprise Server",
+        "Gotchas",
+        "Related"
       ]
     }
   ]

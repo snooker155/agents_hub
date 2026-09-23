@@ -88,4 +88,23 @@ export default {
     scopeFull: 'Volle Reichweite',
     adminHint: 'Hier stehen nur Ihre eigenen Schlüssel. Die eines anderen Kontos widerruft ein Administrator über die API oder die CLI (ah auth keys revoke), nicht auf dieser Seite.',
   },
+
+  github: {
+    title: 'Verbundene Konten',
+    description: 'Verbinden Sie Ihr GitHub-Konto, damit Agenten, die als startende Person handeln, in Ihrem Namen pushen und Pull Requests öffnen.',
+    name: 'GitHub',
+    connectedAs: 'Verbunden als {{login}}',
+    until: 'Token gültig bis {{date}}, wird automatisch erneuert',
+    renewUntil: 'vor dem {{date}} neu verbinden',
+    notConnected: 'Nicht verbunden',
+    connect: 'Verbinden',
+    disconnect: 'Trennen',
+    disconnectConfirm: 'GitHub-Konto trennen? Agenten, die als Sie handeln, nutzen dann die Identität der App.',
+    notConfigured: 'Auf diesem Hub ist keine GitHub App eingerichtet, es gibt nichts zu verbinden.',
+    noKey: 'Zum Verbinden braucht der Hub einen geheimen Schlüssel (AGENTS_HUB_SECRET_KEY). Wenden Sie sich an einen Administrator.',
+    connectedToast: 'Ihr GitHub-Konto ist verbunden.',
+    errorToast: 'GitHub konnte nicht verbunden werden: {{reason}}',
+    loadFailed: 'Die GitHub-Verbindung konnte nicht geladen werden.',
+    disconnectFailed: 'GitHub konnte nicht getrennt werden.',
+  },
 };

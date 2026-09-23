@@ -54,6 +54,7 @@ from routes import scim as scim_router
 from routes import audit as audit_router
 from routes import account as account_router
 from routes import secrets as secrets_router
+from routes import github_app as github_app_router
 from routes import run_groups as run_groups_router
 from routes import run_state as run_state_router
 from routes import settings as settings_router
@@ -568,6 +569,9 @@ app.include_router(scim_router.router)
 app.include_router(audit_router.router)
 app.include_router(account_router.router)
 app.include_router(secrets_router.router)
+# The GitHub App: installations bound to workspaces, and people connecting
+# their own GitHub account (connectors/git/github_app.py).
+app.include_router(github_app_router.router)
 
 # ============================================================================
 # Entry Point

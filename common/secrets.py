@@ -446,6 +446,31 @@ def allowed_for_agent(agent_id: str) -> List[str]:
     return list(getattr(spec, "secrets", None) or []) if spec else []
 
 
+#: The one name the GitHub App (connectors/git/github_app.py) can supply when
+#: no secret of that name exists for the run's scope.
+GITHUB_TOKEN_NAME = "GITHUB_TOKEN"
+
+
+def _with_github_app(out: Dict[str, str], allowed: Iterable[str], workspace: str,
+                     agent_id: Optional[str], user_id: Optional[str]) -> Dict[str, str]:
+    """Fill a declared but unresolved ``GITHUB_TOKEN`` from the GitHub App.
+
+    An explicit secret always wins, so an operator who stored a token keeps
+    control. Imported lazily: this module must stay importable without the
+    connector package, and ``token_for_run`` itself never raises.
+    """
+    if GITHUB_TOKEN_NAME in out or GITHUB_TOKEN_NAME not in allowed:
+        return out
+    try:
+        from connectors.git import github_app
+    except Exception:
+        return out
+    token = github_app.token_for_run(workspace, agent_id, user_id)
+    if token:
+        out[GITHUB_TOKEN_NAME] = token
+    return out
+
+
 def env_for_run(workspace: str, agent_id: Optional[str],
                 user_id: Optional[str] = None) -> Dict[str, str]:
     """The environment entries one agent run receives. Never raises.
@@ -459,7 +484,8 @@ def env_for_run(workspace: str, agent_id: Optional[str],
         allowed = allowed_for_agent(agent_id)
         if not allowed:
             return {}
-        return resolve_for_run(workspace, agent_id, user_id, allowed)
+        return _with_github_app(resolve_for_run(workspace, agent_id, user_id, allowed),
+                                allowed, workspace, agent_id, user_id)
     except Exception as exc:
         log.warning("secrets: nothing handed to %s in %s: %s", agent_id, workspace,
                     type(exc).__name__)
@@ -488,7 +514,10 @@ def env_for_flow(workspace: str, flow_id: Optional[str],
                     names.append(name)
         if not names:
             return {}
-        return resolve_for_run(workspace, "", user_id, names)
+        # The app identity for a flow: one environment serves every node, so
+        # no single agent's github_identity can speak for all of them.
+        return _with_github_app(resolve_for_run(workspace, "", user_id, names),
+                                names, workspace, None, user_id)
     except Exception as exc:
         log.warning("secrets: nothing handed to flow %s in %s: %s", flow_id, workspace,
                     type(exc).__name__)
@@ -533,7 +562,8 @@ def get(name: str) -> Optional[str]:
     try:
         if name not in allowed_for_agent(agent_id):
             return None
-        return resolve_for_run(workspace, agent_id, user_id, [name]).get(name)
+        return _with_github_app(resolve_for_run(workspace, agent_id, user_id, [name]),
+                                [name], workspace, agent_id, user_id).get(name)
     except Exception as exc:
         log.warning("secrets: could not read %s: %s", name, type(exc).__name__)
         return None

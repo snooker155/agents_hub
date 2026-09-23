@@ -21,8 +21,13 @@ const getMyApiKeys = vi.fn();
 const createMyApiKey = vi.fn();
 const revokeMyApiKey = vi.fn(() => ok({ deleted: true }));
 const getWorkspaces = vi.fn(() => ok([{ name: 'default' }, { name: 'acme' }]));
+const getMyGitHub = vi.fn();
+const disconnectMyGitHub = vi.fn(() => ok({ deleted: true }));
 
 vi.mock('../../api', () => ({
+  getMyGitHub: (...a) => getMyGitHub(...a),
+  disconnectMyGitHub: (...a) => disconnectMyGitHub(...a),
+  githubConnectUrl: () => '/api/auth/github/connect?token=t0k',
   getMySessions: (...a) => getMySessions(...a),
   revokeMySession: (...a) => revokeMySession(...a),
   revokeOtherSessions: (...a) => revokeOtherSessions(...a),
@@ -82,6 +87,7 @@ beforeEach(() => {
   getMySessions.mockImplementation(() => ok(SESSIONS));
   getMyApiKeys.mockImplementation(() => ok(KEYS));
   getWorkspaces.mockImplementation(() => ok([{ name: 'default' }, { name: 'acme' }]));
+  getMyGitHub.mockImplementation(() => ok({ configured: true, key_configured: true, connected: false }));
 });
 
 describe('Account', () => {
@@ -166,5 +172,31 @@ describe('Account', () => {
     fireEvent.click(screen.getByText(/^revoke$/i));
     await waitFor(() => expect(revokeMyApiKey).toHaveBeenCalledWith('k1'));
     confirmSpy.mockRestore();
+  });
+
+  it('offers to connect GitHub with the credential in the link', async () => {
+    show();
+    const link = await screen.findByText(/^connect$/i);
+    expect(link.closest('a').getAttribute('href')).toBe('/api/auth/github/connect?token=t0k');
+  });
+
+  it('shows the connected GitHub login and disconnects', async () => {
+    getMyGitHub.mockImplementation(() => ok({
+      configured: true, key_configured: true, connected: true, login: 'alice-gh',
+      access_expires_at: '2026-09-23T18:00:00Z', refresh_expires_at: '2027-03-23T10:00:00Z',
+    }));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    show();
+    await waitFor(() => expect(screen.getByText(/connected as alice-gh/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(/^disconnect$/i));
+    await waitFor(() => expect(disconnectMyGitHub).toHaveBeenCalled());
+    confirmSpy.mockRestore();
+  });
+
+  it('reports the outcome the GitHub callback left in the hash', async () => {
+    window.location.hash = '#github=error&reason=bad_state';
+    show();
+    await waitFor(() => expect(screen.getByText(/connecting github failed: bad_state/i)).toBeInTheDocument());
+    expect(window.location.hash).toBe('');
   });
 });

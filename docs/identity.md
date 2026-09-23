@@ -170,6 +170,14 @@ resolved for the user who launched it. That is how an agent gets its own
 GitHub identity, or acts on behalf of the user who started it. See
 [secrets](secrets.md).
 
+**GitHub as an identity the hub manages.** With a GitHub App configured, an
+installation bound to a workspace hands its runs a short-lived installation
+token, so pull requests come from the app's bot. A person who connects their
+GitHub account on the Account page lets agents with `github_identity: "user"`
+act as them instead. Binding an installation needs the workspace's owner, the
+installation list is an administrator's, and every connect, disconnect, bind
+and unbind is audited. See [github-app](github-app.md).
+
 **A credential never acts wider than its owner.** Each signed-in person has
 an Account page (`/account`): every live session with a sign-out button and
 "sign out everywhere else", a password change that drops every session, and
@@ -289,7 +297,7 @@ along with a note on where it is set.
 ## Related
 
 - [sso](sso.md), [scim](scim.md), [audit](audit.md), [api-keys](api-keys.md),
-  [secrets](secrets.md): the corporate features that build on `multi` mode
+  [secrets](secrets.md), [github-app](github-app.md): the corporate features that build on `multi` mode
 - [settings](settings.md): where `AUTH_MODE` and the API token live
 - [workspaces](workspaces.md): what membership is membership *of*
 - [installation](installation.md): Docker and exposing the port
