@@ -9,7 +9,10 @@ never block the event loop.
 Agent subprocesses that create jobs via tools write to the same store, so
 their jobs are picked up on the next tick without any IPC; the claim is a
 database lease, so several backend replicas ticking at once never fire the
-same job twice.
+same job twice. On top of that, only the replica holding the ``scheduler``
+service lease (common/leases.py) ticks at all: the maintenance sweep and the
+escalation sweep it also drives are not per-job leased, and one process
+doing them is enough.
 """
 from __future__ import annotations
 
@@ -27,13 +30,19 @@ class PlanScheduler:
     # keeps the 20s job tick cheap.
     ESCALATION_INTERVAL_SECONDS = 300.0
 
+    LEASE_ROLE = "scheduler"
+
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
         self._last_escalation: float = 0.0
+        self._leader = False
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def holds_lease(self) -> bool:
+        return self._leader
 
     async def start(self) -> None:
         if self.is_running():
@@ -50,12 +59,31 @@ class PlanScheduler:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._task.cancel()
         self._task = None
+        if self._leader:
+            self._leader = False
+            try:
+                from common import leases
+                await asyncio.to_thread(leases.release, self.LEASE_ROLE)
+            except Exception:
+                pass
 
     async def _loop(self) -> None:
         from plans import service
+        from common import leases
 
         owner = service._default_owner()
+        ttl = max(self.TICK_SECONDS * 3, leases.DEFAULT_TTL_SECONDS)
         while not self._stop.is_set():
+            try:
+                self._leader = await asyncio.to_thread(leases.hold, self.LEASE_ROLE, ttl)
+            except Exception:
+                self._leader = False
+            if not self._leader:
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=self.TICK_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+                continue
             try:
                 results = await asyncio.to_thread(service.run_due_jobs, owner)
                 for r in results:

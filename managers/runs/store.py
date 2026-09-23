@@ -160,7 +160,7 @@ _RUN_LIST_COLUMNS = (
     "execution_mode", "node_id", "container_name", "workspace", "title",
     "provider", "model", "status", "message_origin", "pid", "exit_code",
     "error", "created_at", "started_at", "finished_at", "log_file",
-    "input", "output", "instance_id",
+    "input", "output", "instance_id", "heartbeat_at",
     "prompt_tokens", "cached_prompt_tokens", "completion_tokens", "total_tokens",
     "duration_ms", "extra",
 )
@@ -441,6 +441,49 @@ def _update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]
     _sync_instance(old, new)
     _notify_task_run_finished(old or {}, new)
     return new
+
+
+def touch_heartbeat(run_id: str, when: Optional[str] = None) -> Optional[str]:
+    """Stamp ``heartbeat_at`` and return the run's current status, or None
+    when there is no such run. One UPDATE, no merge, no notifications: this
+    runs every few seconds for every live run and must cost nothing a tab
+    can notice."""
+    with db.transaction() as conn:
+        conn.execute("UPDATE runs SET heartbeat_at = ? WHERE run_id = ?",
+                     (when or _utc_now_iso(), str(run_id)))
+        row = conn.execute("SELECT status FROM runs WHERE run_id = ?", (str(run_id),)).fetchone()
+    return str(row["status"]) if row is not None and row["status"] is not None else None
+
+
+def save_run_checkpoint(run_id: str, checkpoint: Dict[str, Any]) -> None:
+    """Write the agent loop's checkpoint (agents/checkpoint.py) beside the
+    run's payload, and note on the record that one exists."""
+    now = _utc_now_iso()
+    with db.transaction() as conn:
+        conn.execute(
+            db.upsert_sql("run_payloads", ("run_id", "checkpoint", "updated_at"), ("run_id",)),
+            (str(run_id), db.dumps(checkpoint), now))
+        row = conn.execute("SELECT extra FROM runs WHERE run_id = ?", (str(run_id),)).fetchone()
+        if row is not None:
+            extra = db.loads(row["extra"], {}) or {}
+            extra["checkpoint_at"] = now
+            extra["checkpoint_step"] = int(checkpoint.get("step") or 0)
+            conn.execute("UPDATE runs SET extra = ? WHERE run_id = ?",
+                         (db.dumps(extra), str(run_id)))
+
+
+def load_run_checkpoint(run_id: str) -> Optional[Dict[str, Any]]:
+    row = db.get_conn().execute(
+        "SELECT checkpoint FROM run_payloads WHERE run_id = ?", (str(run_id),)).fetchone()
+    if row is None:
+        return None
+    data = db.loads(row["checkpoint"], None)
+    return data if isinstance(data, dict) else None
+
+
+def clear_run_checkpoint(run_id: str) -> None:
+    with db.transaction() as conn:
+        conn.execute("UPDATE run_payloads SET checkpoint = NULL WHERE run_id = ?", (str(run_id),))
 
 
 # -------------------- Structured payload access --------------------

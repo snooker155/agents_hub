@@ -137,6 +137,37 @@ async def close_run_route(run_id: str, body: CloseRunBody):
     return {"ok": True}
 
 
+@router.post("/runs/{run_id}/heartbeat")
+async def heartbeat_route(run_id: str):
+    """Stamp the run's sign of life and hand back its status, so a run whose
+    stop was requested from another host learns of it (the watchdog and
+    ``managers.runs.store.touch_heartbeat`` are the other half)."""
+    from managers.runs.store import touch_heartbeat
+
+    status = touch_heartbeat(run_id)
+    return {"ok": status is not None, "status": status}
+
+
+class CheckpointBody(BaseModel):
+    checkpoint: Dict[str, Any] = {}
+
+
+@router.post("/runs/{run_id}/checkpoint")
+async def save_checkpoint_route(run_id: str, body: CheckpointBody):
+    """Store the agent loop's checkpoint (agents/checkpoint.py)."""
+    from managers.runs.store import save_run_checkpoint
+
+    save_run_checkpoint(run_id, body.checkpoint)
+    return {"ok": True}
+
+
+@router.get("/runs/{run_id}/checkpoint")
+async def load_checkpoint_route(run_id: str):
+    from managers.runs.store import load_run_checkpoint
+
+    return {"checkpoint": load_run_checkpoint(run_id)}
+
+
 # ── task-side transitions ────────────────────────────────────────────────────
 
 class PersistTaskResultBody(BaseModel):

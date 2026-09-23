@@ -1,6 +1,9 @@
 import argparse
 import os
+import signal
+import socket
 import sys
+import threading
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -59,6 +62,50 @@ def _setup_docker_log_tee(log_path: str) -> None:
         pass
 
 
+# -------------------- Heartbeat --------------------
+
+#: Seconds between heartbeats. The watchdog treats a run quiet for
+#: RUN_HEARTBEAT_STALE_SECONDS (default 180) as dead, so this must be several
+#: times shorter.
+HEARTBEAT_SECONDS = float(os.environ.get("RUN_HEARTBEAT_SECONDS", "15"))
+
+
+class _Heartbeat(threading.Thread):
+    """Stamps the run's ``heartbeat_at`` every few seconds for as long as the
+    process lives, through the same transport the run's other writes use.
+
+    A stop requested from another host cannot signal this process, so it sets
+    the record's status to ``stop`` instead; the beat reads the status back
+    and delivers the signal locally, exactly what a same-host stop would have
+    sent (``managers.runs.lifecycle._stop_run_record``).
+    """
+
+    def __init__(self, run_id: str, state) -> None:
+        super().__init__(name=f"heartbeat-{run_id[:8]}", daemon=True)
+        self.run_id = run_id
+        self._state = state
+        self._stop = threading.Event()
+        self.beats = 0
+
+    def run(self) -> None:
+        while not self._stop.wait(HEARTBEAT_SECONDS):
+            try:
+                status = self._state.heartbeat(self.run_id)
+            except Exception:
+                continue
+            self.beats += 1
+            if status == "stop":
+                print(f"[heartbeat] stop requested for run {self.run_id}; terminating", flush=True)
+                try:
+                    os.kill(os.getpid(), signal.SIGTERM)
+                except Exception:
+                    os._exit(143)
+                return
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
 # -------------------- Run lifecycle --------------------
 
 def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[str]) -> Optional[str]:
@@ -84,6 +131,11 @@ def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[s
             # The live copy this process *is*. The launcher pre-registered it and
             # passed the id down; a bare CLI run has none and stays unlinked.
             instance_id=os.environ.get("AGENT_INSTANCE_ID") or None,
+            # Where the process runs, so a watchdog on another host knows not
+            # to probe this pid, and the first beat, so a run is never judged
+            # by a pid at all once it has started (managers/run_watchdog.py).
+            host=socket.gethostname(),
+            heartbeat_at=_utc_now_iso(),
         )
         return run_id
     except Exception:
@@ -158,6 +210,11 @@ def main():
     ap.add_argument("--resume-key", help="The agent's own id for the question, when it gave one")
     ap.add_argument("--write-stdout-to-log", action="store_true",
                      help="Mirror stdout/stderr into AGENT_LOG_FILE (used for Docker task runs)")
+    # Continuing a run whose process died: the checkpoint written after every
+    # tool call (agents/checkpoint.py) becomes the conversation so far, and
+    # the loop carries on from it under the same run id.
+    ap.add_argument("--resume-checkpoint", metavar="RUN_ID",
+                     help="Resume this run from its stored checkpoint")
 
     args = ap.parse_args()
 
@@ -217,6 +274,10 @@ def main():
     # immediately, before the (potentially slow) agent build below.
     _register_run_start(run_id, agent_id, ws, args.task_id)
 
+    _state = get_state_transport()
+    _heartbeat = _Heartbeat(run_id, _state)
+    _heartbeat.start()
+
     instruction = args.action or args.desc or ""
 
     # If task_id is provided, enrich the instruction with task context
@@ -227,6 +288,29 @@ def main():
         from common.agent_context import current_task_id
         current_task_id.set(str(args.task_id))
         instruction = build_task_instruction(args.task_id, instruction)
+
+    # A resume replays the checkpointed tool trail as the conversation before
+    # this turn and asks the model to carry on; the instruction it was started
+    # with is the first message of that history.
+    _history = None
+    _prior_steps = None
+    if args.resume_checkpoint:
+        from agents import checkpoint as _ckpt
+        _cp = None
+        try:
+            _cp = _state.load_checkpoint(args.resume_checkpoint)
+        except Exception:
+            _cp = None
+        if _cp and _cp.get("steps"):
+            _history = _ckpt.history_messages(_cp)
+            _prior_steps = _ckpt.resume_steps(_cp)
+            if not instruction:
+                instruction = str(_cp.get("instruction") or "")
+            print(f"[resume] continuing run {run_id} from step {_cp.get('step')} "
+                  f"({len(_prior_steps)} tool call(s) replayed)")
+            instruction = _ckpt.resume_instruction(_cp)
+        else:
+            print(f"[resume] no checkpoint for run {args.resume_checkpoint}; starting over")
 
     print(f"Running agent with instruction: {instruction}")
 
@@ -244,7 +328,15 @@ def main():
         _pub_cb = _SessionPublishCallback(_sess_id, run_id, agent_id, _port)
         _extra_callbacks.append(_pub_cb)
 
-    _state = get_state_transport()
+    # Checkpoint after every tool boundary, so a process death mid-run is a
+    # resume, not a failure. Best-effort like every other write here.
+    from agents.checkpoint import RunCheckpointCallback
+    _extra_callbacks.append(RunCheckpointCallback(
+        run_id, _state.save_checkpoint,
+        instruction=(str(_cp.get("instruction") or "") if args.resume_checkpoint and _cp
+                     else instruction),
+        prior_steps=_prior_steps,
+    ))
 
     def _after_build(agent) -> None:
         print(
@@ -334,16 +426,20 @@ def main():
             value = args.resume_value
         resume = {"run_id": args.resume_run, "value": value, "key": args.resume_key or ""}
 
-    run_agent_lifecycle(
-        agent_id, ws, instruction,
-        resume=resume,
-        overrides=agent_overrides,
-        extra_callbacks=_extra_callbacks,
-        after_build=_after_build,
-        on_build_error=_on_build_error,
-        on_success=_on_success,
-        on_failure=_on_failure,
-    )
+    try:
+        run_agent_lifecycle(
+            agent_id, ws, instruction,
+            resume=resume,
+            history=_history,
+            overrides=agent_overrides,
+            extra_callbacks=_extra_callbacks,
+            after_build=_after_build,
+            on_build_error=_on_build_error,
+            on_success=_on_success,
+            on_failure=_on_failure,
+        )
+    finally:
+        _heartbeat.stop()
 
 
 if __name__ == "__main__":

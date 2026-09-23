@@ -8,10 +8,17 @@ one tied to the task for finalization purposes.
 
 Public API:
 - start_flow_run(task_id, flow_id, params) -> (run_id, session_id)
+
+Like a task run (agents/agent_launcher.py), a flow launch is a database half
+and a process half. ``start_flow_run`` and ``resume_flow_run`` do the first
+and, in the default role, the second right away; in the ``api`` role they put
+a launch spec on the queue (``common/run_queue.py``) and a worker calls
+:func:`launch_prepared` with it. See docs/workers.md.
 """
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 from typing import Any, Dict, Optional, Tuple
@@ -93,8 +100,6 @@ def start_flow_run(
         title=task.title, log_file=str(log_file), status="pending",
     )
 
-    env = _build_env(ws_name, session_id, str(log_file))
-
     args = [
         sys.executable,
         str(PROJECT_ROOT / "runtime" / "flow_run.py"),
@@ -116,13 +121,59 @@ def start_flow_run(
         import json as _json
         args += ["--seed", _json.dumps(seed)]
 
-    pid = _spawn_flow_process(args, log_file, env, flow_id, header="Flow run started")
+    _dispatch({
+        "kind": QUEUE_KIND, "run_id": run_id, "flow_id": flow_id, "task_id": str(task_id),
+        "session_id": session_id, "workspace": ws_name, "args": args,
+        "log_file": str(log_file), "header": "Flow run started", "mode": "w",
+        "resume": False,
+    })
+    return run_id, session_id
+
+
+#: What a flow launch is called on the queue.
+QUEUE_KIND = "flow"
+
+
+def _dispatch(spec: Dict[str, Any]) -> None:
+    """Spawn here, or hand the spec to a worker, by this process's role."""
+    from common.config import hub_role
+
+    if hub_role() == "api":
+        from common import run_queue
+        run_queue.enqueue(spec["run_id"], QUEUE_KIND, spec, workspace=spec.get("workspace"),
+                          execution_mode="local")
+        return
+    launch_prepared(spec)
+
+
+def launch_prepared(spec: Dict[str, Any]) -> None:
+    """The process half of a flow launch: spawn ``runtime/flow_run.py`` on
+    this host from a spec :func:`start_flow_run` or :func:`resume_flow_run`
+    prepared, and record the pid, the host and the flow's running marker."""
+    from flow import run_store
+
+    flow_run_id = str(spec["run_id"])
+    flow_id = str(spec.get("flow_id") or "")
+    env = _build_env(str(spec.get("workspace") or ""), str(spec.get("session_id") or ""),
+                     str(spec["log_file"]))
+    pid = _spawn_flow_process(list(spec["args"]), spec["log_file"], env, flow_id,
+                              header=str(spec.get("header") or "Flow run started"),
+                              mode=str(spec.get("mode") or "w"))
 
     # Record the orchestrator pid on the flow-run record so a stop request can
     # terminate this specific instance, and flip the flow's coarse running marker.
-    run_store.mark_running(run_id, pid)
+    run_store.mark_running(flow_run_id, pid)
+    run_store.update_flow_run(flow_run_id, {"host": socket.gethostname()})
     _set_flow_running(flow_id, True)
-    return run_id, session_id
+    if spec.get("resume"):
+        try:
+            from tasks import service as _ts
+            from uuid import UUID
+            task_id = str(spec.get("task_id") or "")
+            if task_id:
+                _ts.update_task(UUID(task_id), status=_ts.TaskStatus.in_progress, pending_question=None)
+        except Exception:
+            pass
 
 
 def _spawn_flow_process(args, log_file, env, flow_id: str, *, header: str, mode: str = "w") -> int:
@@ -252,18 +303,16 @@ def resume_flow_run(
         "--session-id", session_id,
         "--resume-from", flow_run_id,
     ]
-    env = _build_env(ws_name, session_id, str(log_file))
-    pid = _spawn_flow_process(args, log_file, env, flow_id, header="Flow run resumed", mode="a")
-
-    run_store.mark_running(flow_run_id, pid)
-    _set_flow_running(flow_id, True)
-    try:
-        _ts.update_task(task.id, status=_ts.TaskStatus.in_progress, pending_question=None)
-    except Exception:
-        pass
+    _dispatch({
+        "kind": QUEUE_KIND, "run_id": flow_run_id, "flow_id": flow_id, "task_id": task_id,
+        "session_id": session_id, "workspace": ws_name, "args": args,
+        "log_file": str(log_file), "header": "Flow run resumed", "mode": "a",
+        "resume": True,
+    })
+    rec = run_store.get_flow_run(flow_run_id) or {}
     return {
         "flow_run_id": flow_run_id, "flow_id": flow_id, "task_id": task_id,
-        "session_id": session_id, "pid": pid, "resume_attempts": attempts,
+        "session_id": session_id, "pid": rec.get("pid"), "resume_attempts": attempts,
         "resumed_nodes": len(checkpoint.get("done") or []),
     }
 

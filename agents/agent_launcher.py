@@ -9,18 +9,32 @@ stays free of the agent-build / spec-building dependency stack.
 Run record creation and completion updates for local subprocess runs are
 handled by agent_run.py (which receives --run-id and manages its own lifecycle).
 
-This module resolves the workspace/project, assembles the environment and the
-``python agent_run.py ...`` command line, then spawns it. It never builds or
-invokes an agent — that happens in the spawned subprocess (which calls
-``agents.agent_factory.create_agent``).
+A launch has two halves, and since stage 2 of the scaling plan they may run
+in different processes on different hosts (docs/workers.md):
+
+- :func:`prepare_run` does the database side: resolves the workspace and
+  project, the session, the instance, the log path, and writes the
+  ``pending`` run record. It returns a JSON-serialisable *launch spec*.
+- :func:`launch_prepared` does the process side: builds the child's
+  environment from this process's own configuration and spawns the
+  subprocess or the container.
+
+:func:`start_run` is both halves in order. With the default role
+(``AGENTS_HUB_ROLE=all``) it spawns right here, exactly as it always has.
+In the ``api`` role it puts the spec on the launch queue
+(``common/run_queue.py``) instead, and a worker anywhere calls
+:func:`launch_prepared` with it.
 
 Public API:
 - preregister_run(task_id, agent_id, session_id) -> run_id
 - start_run(task_id, agent_id, params, run_id) -> (run_id, session_id)
+- prepare_run(...) -> spec; launch_prepared(spec) -> None
 """
 from __future__ import annotations
 
+import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +43,9 @@ from uuid import uuid4
 
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from managers.run_manager import preopen_run, _utc_now_iso, _update_run, finalize_task_from_run
+
+#: What a task launch is called on the queue.
+QUEUE_KIND = "task"
 
 
 def preregister_run(task_id: str, agent_id: str, session_id: Optional[str] = None) -> str:
@@ -47,6 +64,7 @@ def preregister_run(task_id: str, agent_id: str, session_id: Optional[str] = Non
         channel="local",
     )
 
+
 def start_run(
     task_id: str,
     agent_id: str,
@@ -59,12 +77,36 @@ def start_run(
     Returns (run_id, session_id). For local subprocess runs, the run record is
     created by agent_run.py at startup (it receives --run-id). For remote runs
     the record is created here since agent_run.py is not involved.
+
+    In the ``api`` role the spawn is handed to a worker through the launch
+    queue; the run record then reads ``queued`` until a worker picks it up.
+    """
+    spec = prepare_run(task_id, agent_id, params, run_id)
+    from common.config import hub_role
+
+    if hub_role() == "api":
+        enqueue_prepared(spec)
+    else:
+        launch_prepared(spec)
+    return spec["run_id"], spec.get("session_id")
+
+
+def prepare_run(
+    task_id: str,
+    agent_id: str,
+    params: Optional[Dict[str, Any]] = None,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Everything a launch needs from the database, as a launch spec.
+
+    The spec is plain JSON (paths as strings, no environment, no secrets): the
+    process that spawns the run rebuilds the child's environment from its own
+    configuration in :func:`launch_prepared`.
     """
     from tasks import service as _ts
     from agents.registry import get_agent
     from workspace import as_param_dict, resolve_task_workspace
     from common.session_service import get_or_create_task_session
-
 
     if not get_agent(agent_id):
         raise ValueError(f"Unknown agent_id: {agent_id}")
@@ -134,8 +176,6 @@ def start_run(
         workspace=ws_name,
     )
 
-    env = _build_env(ws_name, session_id, str(log_file), instance_id)
-
     # agent_run.py's CLI: positional `agent` and optional positional `action`,
     # plus --desc/--task-id/--run-id/--workspace flags. The session id is passed
     # via AGENT_SESSION_ID in the env (see _build_env), not as a flag. Built once
@@ -163,11 +203,15 @@ def start_run(
     # back out of the task record on the other side.
     resume = params.get("resume") or {}
     if resume.get("run_id"):
-        import json as _json
         cli_args.extend(["--resume-run", str(resume["run_id"]),
-                         "--resume-value", _json.dumps(resume.get("value"))])
+                         "--resume-value", json.dumps(resume.get("value"))])
         if resume.get("key"):
             cli_args.extend(["--resume-key", str(resume["key"])])
+
+    # Continuing a run whose process died, from the checkpoint it wrote after
+    # its last tool call (agents/checkpoint.py; the watchdog sets this).
+    if params.get("resume_checkpoint"):
+        cli_args.extend(["--resume-checkpoint", str(params["resume_checkpoint"])])
 
     # Execution mode resolution mirrors node_manager.start_node exactly: a
     # workspace's own override (Settings → workspace → agent_mode) wins over
@@ -183,9 +227,59 @@ def start_run(
             pass
     execution_mode = _ws_agent_mode or agent_execution_mode()
 
+    return {
+        "kind": QUEUE_KIND,
+        "run_id": run_id,
+        "task_id": str(task_id),
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "instance_id": instance_id,
+        "workspace": ws_name,
+        "ws_path": str(ws_path),
+        "log_file": str(log_file),
+        "cli_args": cli_args,
+        "execution_mode": execution_mode,
+        "priority": int(params.get("priority") or 0) if str(params.get("priority") or "").lstrip("-").isdigit() else 0,
+    }
+
+
+def enqueue_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Hand a prepared launch to the workers (``api`` role)."""
+    from common import run_queue
+
+    _update_run(spec["run_id"], {"status": "queued"})
+    return run_queue.enqueue(
+        spec["run_id"], QUEUE_KIND, spec,
+        workspace=spec.get("workspace"), execution_mode=spec.get("execution_mode"),
+        priority=int(spec.get("priority") or 0),
+    )
+
+
+def launch_prepared(spec: Dict[str, Any]) -> None:
+    """Spawn the process for a prepared launch, on this host.
+
+    Rebuilds the environment here (it carries provider keys and the relay
+    token, which never travel through the queue) and records on the run which
+    host started it, so only this host ever probes its pid or container.
+    """
+    run_id = str(spec["run_id"])
+    agent_id = str(spec["agent_id"])
+    ws_name = str(spec.get("workspace") or "")
+    ws_path = Path(str(spec.get("ws_path") or "."))
+    log_file = Path(str(spec["log_file"]))
+    instance_id = spec.get("instance_id")
+    cli_args = list(spec.get("cli_args") or [])
+    session_id = str(spec.get("session_id") or "")
+    execution_mode = str(spec.get("execution_mode") or "local")
+
+    from instances import registry as instance_registry
+
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    env = _build_env(ws_name, session_id, str(log_file), instance_id)
+
     if execution_mode == "docker":
         _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id)
-        return run_id, session_id
+        return
 
     args = [sys.executable, str(PROJECT_ROOT / "runtime" / "agent_run.py")] + cli_args
 
@@ -194,7 +288,7 @@ def start_run(
             f"--- Run started at {_utc_now_iso()} ---\n"
             f"Agent ID : {agent_id}\n"
         )
-        lf.write(f"Command: {args}\nCWD: {str(ws_path)}\n\n")
+        lf.write(f"Command: {args}\nCWD: {str(ws_path)}\nHost: {socket.gethostname()}\n\n")
         lf.flush()
 
         creationflags = 0
@@ -214,10 +308,10 @@ def start_run(
             stderr=subprocess.STDOUT,
         )
 
-    _update_run(run_id, {"pid": proc.pid, "status": "running", "started_at": _utc_now_iso()})
+    _update_run(run_id, {"pid": proc.pid, "status": "running", "started_at": _utc_now_iso(),
+                         "host": socket.gethostname()})
     instance_registry.ensure_instance(
         agent_id, instance_id=instance_id, workspace=ws_name, pid=proc.pid, state="active")
-    return run_id, session_id
 
 
 def _start_run_in_docker(
@@ -276,7 +370,8 @@ def _start_run_in_docker(
             f"--- Run started at {_utc_now_iso()} ---\n"
             f"Agent ID : {agent_id}\n"
         )
-        lf.write(f"Command (in container): {inner_cmd}\nWorkspace: {str(ws_path)}\n\n")
+        lf.write(f"Command (in container): {inner_cmd}\nWorkspace: {str(ws_path)}\n"
+                 f"Host: {socket.gethostname()}\n\n")
 
     result = docker_runner.start_run_container(
         run_id, agent_id, inner_cmd, cwd=str(ws_path), env=docker_env,
@@ -304,11 +399,18 @@ def _start_run_in_docker(
         "container_name": container_name,
         "status": "running",
         "started_at": _utc_now_iso(),
+        "host": socket.gethostname(),
     })
     if instance_id:
         instance_registry.ensure_instance(
             agent_id, instance_id=instance_id, workspace=ws_name,
             container_name=container_name, state="active")
+    try:
+        from managers.container_manager import register_container
+        register_container(str(container_name), kind="run", agent_id=agent_id, run_id=run_id,
+                           image=result.get("image"))
+    except Exception:
+        pass
 
 
 def _build_env(ws_name: str, session_id: str, log_file: str,
@@ -325,5 +427,3 @@ def _build_env(ws_name: str, session_id: str, log_file: str,
     if instance_id:
         env[ENV_INSTANCE_ID] = str(instance_id)
     return env
-
-

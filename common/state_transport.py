@@ -75,6 +75,19 @@ class StateTransport:
     def finalize_task_from_run(self, run_id: str, status: str, exit_code: int) -> None:
         raise NotImplementedError
 
+    def heartbeat(self, run_id: str) -> Optional[str]:
+        """Stamp the run's ``heartbeat_at`` and return its current status (so
+        the run learns of a stop requested from another host). Best-effort:
+        None when the call did not go through."""
+        raise NotImplementedError
+
+    def save_checkpoint(self, run_id: str, checkpoint: Dict[str, Any]) -> None:
+        """Store the agent loop's checkpoint (agents/checkpoint.py)."""
+        raise NotImplementedError
+
+    def load_checkpoint(self, run_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
 
 class DirectStateTransport(StateTransport):
     """Calls the existing manager/task functions in-process. The default, and
@@ -113,6 +126,21 @@ class DirectStateTransport(StateTransport):
         from managers.run_manager import finalize_task_from_run as _finalize
         _finalize(run_id, status, exit_code)
 
+    def heartbeat(self, run_id: str) -> Optional[str]:
+        from managers.runs.store import touch_heartbeat
+        try:
+            return touch_heartbeat(run_id)
+        except Exception:
+            return None
+
+    def save_checkpoint(self, run_id: str, checkpoint: Dict[str, Any]) -> None:
+        from managers.runs.store import save_run_checkpoint
+        save_run_checkpoint(run_id, checkpoint)
+
+    def load_checkpoint(self, run_id: str) -> Optional[Dict[str, Any]]:
+        from managers.runs.store import load_run_checkpoint
+        return load_run_checkpoint(run_id)
+
 
 class HttpStateTransport(StateTransport):
     """Posts the same calls to the backend's ``/api/run-state`` routes.
@@ -143,16 +171,21 @@ class HttpStateTransport(StateTransport):
         from common.hostnet import host_service_url
         self._base = host_service_url(f"http://localhost:{port}") + "/api/run-state"
 
-    def _call(self, method: str, path: str, body: Dict[str, Any]) -> None:
+    def _call(self, method: str, path: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             import requests
             from common.auth import auth_headers
-            requests.request(
+            resp = requests.request(
                 method, f"{self._base}{path}", json=body,
                 headers=auth_headers(), timeout=self._timeout,
             )
+            try:
+                data = resp.json()
+            except Exception:
+                return None
+            return data if isinstance(data, dict) else None
         except Exception:
-            pass
+            return None
 
     def open_run(self, run_id: str, agent_id: str, **kwargs: Any) -> None:
         self._call("POST", f"/runs/{run_id}/open", {"agent_id": agent_id, **kwargs})
@@ -200,6 +233,19 @@ class HttpStateTransport(StateTransport):
     def finalize_task_from_run(self, run_id: str, status: str, exit_code: int) -> None:
         self._call("POST", f"/runs/{run_id}/finalize-task",
                     {"status": status, "exit_code": exit_code})
+
+    def heartbeat(self, run_id: str) -> Optional[str]:
+        data = self._call("POST", f"/runs/{run_id}/heartbeat", {})
+        status = (data or {}).get("status")
+        return str(status) if status else None
+
+    def save_checkpoint(self, run_id: str, checkpoint: Dict[str, Any]) -> None:
+        self._call("POST", f"/runs/{run_id}/checkpoint", {"checkpoint": checkpoint})
+
+    def load_checkpoint(self, run_id: str) -> Optional[Dict[str, Any]]:
+        data = self._call("GET", f"/runs/{run_id}/checkpoint", {})
+        cp = (data or {}).get("checkpoint")
+        return cp if isinstance(cp, dict) else None
 
 
 def get_state_transport() -> StateTransport:

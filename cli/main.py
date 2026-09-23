@@ -388,6 +388,33 @@ def server_start(
 
 
 # ---------------------------------------------------------------------------
+# worker
+# ---------------------------------------------------------------------------
+
+
+@app.command("worker")
+def worker(
+    concurrency: Optional[int] = typer.Option(None, help="Launches kept alive at once."),
+    modes: Optional[str] = typer.Option(None, help="What this host can run: local, docker, or both (comma-separated)."),
+    once: bool = typer.Option(False, "--once", help="One tick, then exit."),
+):
+    """Claim launches from the run queue and spawn them on this host.
+
+    The other half of a backend running with AGENTS_HUB_ROLE=api (docs/workers.md).
+    Needs the same database and the same .env as the backend; serves no HTTP."""
+    _require_direct_mode("ah worker")
+    from runtime.worker import main as _worker_main
+    argv = []
+    if concurrency is not None:
+        argv += ["--concurrency", str(concurrency)]
+    if modes:
+        argv += ["--modes", modes]
+    if once:
+        argv.append("--once")
+    raise typer.Exit(code=_worker_main(argv))
+
+
+# ---------------------------------------------------------------------------
 # db commands
 # ---------------------------------------------------------------------------
 # Direct mode only: these open the database this process is configured with

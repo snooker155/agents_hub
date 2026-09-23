@@ -112,11 +112,35 @@ async def _publish_snapshots() -> None:
         _forget(ch)
 
 
+LEASE_ROLE = "publisher"
+
+
+def _bridged() -> bool:
+    """Whether events reach every replica (common/broker_bridge.py). Only then
+    can one publisher serve all of them; without the bridge each replica must
+    poll for its own subscribers."""
+    try:
+        from common.config import settings
+        return bool((settings.broker_url or "").strip())
+    except Exception:
+        return False
+
+
 async def run_external_publisher() -> None:
-    """Background loop — cancel on shutdown."""
+    """Background loop — cancel on shutdown.
+
+    With the event bridge on, only the holder of the ``publisher`` lease polls
+    Docker and the node registry; the snapshots it publishes reach every
+    replica's subscribers through the bridge. Without it, every replica polls
+    for its own subscribers, as before.
+    """
+    from common import leases
+
+    bridged = _bridged()
     while True:
         try:
-            await _publish_snapshots()
+            if not bridged or await asyncio.to_thread(leases.hold, LEASE_ROLE, INTERVAL * 20):
+                await _publish_snapshots()
         except asyncio.CancelledError:
             raise
         except Exception:

@@ -85,20 +85,29 @@ async def lifespan(app: FastAPI):
 
     # The orchestrator node is started on demand by the user, not at startup.
 
-    # Auto-start the Telegram poller if it's been configured + enabled.
+    from common.config import hub_role
+    print(f"✓ Role: {hub_role()}"
+          + ("  (launches go to the run queue for workers)" if hub_role() == "api" else ""))
+
+    # The Telegram poller runs on exactly one replica: the supervisor holds
+    # the ``telegram`` lease and starts the poller when it gets it, stops it
+    # when it loses it (common/singletons.py). Configured-and-enabled is
+    # re-read on every check, so the Connectors page still applies live.
     try:
-        from connectors.telegram.telegram_runner import service as _tg_service
-        from connectors.telegram import telegram_store
-        if telegram_store.is_enabled() and telegram_store.has_token():
-            await _tg_service.start()
-            if _tg_service.is_running():
-                uname = _tg_service.status.get("bot_username") or "?"
-                print(f"✓ Telegram poller started  (@{uname})")
-            else:
-                err = _tg_service.status.get("last_error") or "unknown"
-                print(f"⚠ Telegram poller did not start: {err}")
+        from common.singletons import supervisor as _supervisor, telegram_service
+        _supervisor.add(telegram_service())
+        await _supervisor.start()
+        print("✓ Singleton supervisor started (telegram)")
     except Exception as e:
-        print(f"⚠ Could not start Telegram poller: {e}")
+        print(f"⚠ Could not start the singleton supervisor: {e}")
+
+    # Outbound webhook deliveries left in the outbox by an earlier process go
+    # out as soon as this replica holds the ``outbox`` lease.
+    try:
+        from notify import outbound as _notify_outbound
+        _notify_outbound.start()
+    except Exception as e:
+        print(f"⚠ Could not start the outbox drainer: {e}")
 
     # Start the plan scheduler (fires due scheduled jobs / notifications).
     try:
@@ -156,13 +165,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     try:
-        from connectors.telegram.telegram_runner import service as _tg_service
-        await _tg_service.stop()
+        from common.singletons import supervisor as _supervisor
+        await _supervisor.stop()
     except Exception:
         pass
     try:
         from notify import outbound as _notify_outbound
         _notify_outbound.shutdown()
+    except Exception:
+        pass
+    # Every role this replica held goes back to the pool at once, so a
+    # restart is taken over by a sibling immediately, not after the TTL.
+    try:
+        from common import leases as _leases
+        _leases.release_all()
     except Exception:
         pass
     try:

@@ -29,6 +29,31 @@ from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set
 log = logging.getLogger(__name__)
 
 
+# ── Idempotency ───────────────────────────────────────────────────────────────
+#
+# A run that died mid-tool-call is resumed from its checkpoint
+# (agents/checkpoint.py). A read, a search or a listing can simply be issued
+# again; a call that changes something outside the run cannot be repeated
+# blindly, because it may already have happened. These are the tools whose
+# interrupted call the resumed model is told about instead of retrying. Every
+# MCP tool (``mcp__*``) is treated the same way: a foreign server's side
+# effects are unknown here.
+
+NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
+    "run_shell", "git_publish", "git_commit", "git_push",
+    "write_file", "delete_file", "apply_unified_diff", "create_file", "move_file",
+    "create_task", "add_subtask", "update_task", "set_task_dependencies",
+    "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow",
+    "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
+    "schedule_job", "create_view", "view_serve", "delegate",
+    "stop_run", "stop_node", "restart_node", "stop_container", "prune_run_logs",
+})
+
+
+def is_idempotent(tool_id: str) -> bool:
+    return tool_id not in NON_IDEMPOTENT_TOOLS and not tool_id.startswith(("mcp__", "mcp:"))
+
+
 # ── The three capabilities ────────────────────────────────────────────────────
 
 INGESTS_UNTRUSTED = "ingests_untrusted"

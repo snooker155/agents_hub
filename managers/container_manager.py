@@ -795,7 +795,32 @@ def get_logs(container_name: str, tail: int = 200) -> str:
 
 
 def list_containers() -> List[Dict[str, Any]]:
-    """Return all agents-hub containers (running and stopped)."""
+    """Every agents-hub container: this host's daemon's view, plus what other
+    hosts registered in the ``containers`` table (``host`` says where)."""
+    import socket
+    local = _list_local_containers()
+    host = socket.gethostname()
+    for c in local:
+        c["host"] = host
+    seen = {c["name"] for c in local}
+    for rec in registered_containers():
+        name = str(rec.get("name") or "")
+        if not name or name in seen:
+            continue
+        if str(rec.get("host") or "") == host:
+            # Registered by this host but gone from its daemon: stale.
+            continue
+        local.append({
+            "id": "", "name": name, "image": rec.get("image") or "",
+            "status": rec.get("status") or "", "state": rec.get("status") or "",
+            "created": rec.get("started_at") or "", "agent_id": rec.get("agent_id") or "",
+            "host": rec.get("host") or "", "remote": True,
+        })
+    return local
+
+
+def _list_local_containers() -> List[Dict[str, Any]]:
+    """Return all agents-hub containers this host's daemon knows (running and stopped)."""
     # A short timeout, not the five-minute default: this is a read-only listing
     # that callers treat as cheap. An installed CLI with no daemon behind it
     # blocks until the timeout rather than failing, so the default would stall
@@ -834,6 +859,97 @@ def list_containers() -> List[Dict[str, Any]]:
         except Exception:
             pass
     return containers
+
+
+# ── The containers table ──────────────────────────────────────────────────────
+#
+# ``docker ps`` only knows the daemon this process talks to. With workers on
+# several hosts each starting containers, the Containers page needs a record
+# that every host writes to: whoever starts a container registers it here
+# and refreshes its status while it runs (managers/run_watchdog.py sweeps
+# rows whose host stopped reporting). ``list_containers`` merges the local
+# daemon's view with the table, local rows winning.
+
+def register_container(name: str, *, kind: str, agent_id: str = "",
+                       run_id: Optional[str] = None, node_id: Optional[str] = None,
+                       image: Optional[str] = None, status: str = "running",
+                       extra: Optional[Dict[str, Any]] = None) -> None:
+    """Record a container this host started. Never raises."""
+    import socket
+    from common import db
+    try:
+        now = _utc_now_iso()
+        with db.transaction() as conn:
+            conn.execute(
+                db.upsert_sql("containers", ("name", "host", "kind", "agent_id", "run_id", "node_id",
+                                             "image", "status", "started_at", "updated_at", "extra"),
+                              ("name",)),
+                (name, socket.gethostname(), kind, agent_id or "", run_id, node_id, image or "",
+                 status, now, now, db.dumps(extra or {})))
+    except Exception:
+        pass
+
+
+def update_container_status(name: str, status: str) -> None:
+    from common import db
+    try:
+        with db.transaction() as conn:
+            conn.execute("UPDATE containers SET status = ?, updated_at = ? WHERE name = ?",
+                         (status, _utc_now_iso(), name))
+    except Exception:
+        pass
+
+
+def forget_container(name: str) -> None:
+    from common import db
+    try:
+        with db.transaction() as conn:
+            conn.execute("DELETE FROM containers WHERE name = ?", (name,))
+    except Exception:
+        pass
+
+
+def registered_containers() -> List[Dict[str, Any]]:
+    """Every container any host registered, newest first."""
+    from common import db
+    try:
+        rows = db.get_conn().execute(
+            "SELECT * FROM containers ORDER BY started_at DESC LIMIT 500").fetchall()
+    except Exception:
+        return []
+    out = []
+    for row in rows:
+        rec = dict(row)
+        rec["extra"] = db.loads(rec.get("extra"), {}) or {}
+        out.append(rec)
+    return out
+
+
+def refresh_registered_containers() -> int:
+    """Reconcile this host's rows with its daemon: mark exited ones, drop the
+    ones the daemon no longer has. Returns how many rows changed."""
+    import socket
+    host = socket.gethostname()
+    mine = [c for c in registered_containers() if str(c.get("host") or "") == host]
+    if not mine:
+        return 0
+    try:
+        local = {c["name"]: c for c in _list_local_containers()}
+    except Exception:
+        return 0
+    changed = 0
+    for rec in mine:
+        name = str(rec["name"])
+        seen = local.get(name)
+        if seen is None:
+            forget_container(name)
+            changed += 1
+            continue
+        state = str(seen.get("state") or "").lower() or "running"
+        if state != str(rec.get("status") or ""):
+            update_container_status(name, state)
+            changed += 1
+    return changed
 
 
 # ── Path translation ───────────────────────────────────────────────────────────

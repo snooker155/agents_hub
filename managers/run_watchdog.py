@@ -47,6 +47,22 @@ is its ``heartbeat_at``, refreshed every node and at least every 15 seconds
 while an agent node runs, because a pid says only that *a* process exists: the
 pid of a crashed-and-reused number is alive, and a hung orchestrator's pid is
 alive too, while a heartbeat that stopped moving is the run itself going quiet.
+
+Agent runs carry the same sign of life since stage 2 of the scaling plan:
+``runtime/agent_run.py`` refreshes ``runs.heartbeat_at`` every few seconds
+through its state transport, so a run launched by a worker on another host is
+judged by its heartbeat, never by a pid this process cannot see. The pid and
+container probes remain for records without a heartbeat (older runs, or a
+process that died before its first beat) and only on the host that started
+them (``host`` on the record). A dead run with a checkpoint
+(``run_payloads.checkpoint``) is put back on its way with ``--resume-checkpoint``
+instead of failed, up to :data:`MAX_AUTO_RESUMES` times, the same rule flows
+and loops follow.
+
+With several backend replicas only the holder of the ``watchdog`` lease
+(``common/leases.py``) sweeps; the others tick and try to take the lease. The
+sweep also reconciles the launch queue (``common/run_queue.py``): rows whose
+worker stopped renewing are closed or handed back.
 """
 from __future__ import annotations
 
@@ -74,6 +90,12 @@ FLOW_HEARTBEAT_STALE_SECONDS = float(os.environ.get("FLOW_HEARTBEAT_STALE_SECOND
 LOOP_HEARTBEAT_STALE_SECONDS = float(os.environ.get("LOOP_HEARTBEAT_STALE_SECONDS", "900"))
 # How many times the watchdog may resume the same run by itself.
 MAX_AUTO_RESUMES = int(os.environ.get("RUN_MAX_AUTO_RESUMES", "2"))
+# An agent run beats every RUN_HEARTBEAT_SECONDS (runtime/agent_run.py); a run
+# quiet for this long is gone. Generous, because a beat is one database write
+# that may itself wait on a busy database.
+RUN_HEARTBEAT_STALE_SECONDS = float(os.environ.get("RUN_HEARTBEAT_STALE_SECONDS", "180"))
+# The lease role this loop runs under, and its length.
+LEASE_ROLE = "watchdog"
 
 
 def _age_seconds(iso_ts: str) -> Optional[float]:
@@ -93,6 +115,89 @@ def _task_owns_run(task_id: str, run_id: str) -> bool:
         task = _ts.get_task(UUID(task_id))
         return bool(task) and str(getattr(task, "assigned_agent_run_id", "") or "") == run_id
     except Exception:
+        return False
+
+
+def _carried_here(rec: Dict[str, Any]) -> bool:
+    """Whether this process may probe the run's pid or container: the record
+    names no host (an older record) or names this one."""
+    import socket
+    host = str(rec.get("host") or "")
+    return not host or host == socket.gethostname()
+
+
+def _run_is_dead(rec: Dict[str, Any]) -> Optional[bool]:
+    """True when a running agent run's process is gone, False when it is
+    alive, None when this process cannot tell (another host, no heartbeat)."""
+    from managers import run_manager as rm
+
+    heartbeat = str(rec.get("heartbeat_at") or "")
+    if heartbeat:
+        age = _age_seconds(heartbeat)
+        if age is None:
+            return None
+        return age > RUN_HEARTBEAT_STALE_SECONDS
+    if not _carried_here(rec):
+        return None
+    container_name = rec.get("container_name")
+    if container_name:
+        # A container-hosted run: liveness is the container, not a pid — the
+        # container's own agent_run.py runs with a pid that only means
+        # something inside its own namespace. See the comment on
+        # run_manager._stop_run_record for why container_name (not
+        # execution_mode) is what identifies one.
+        from managers.container_manager import container_running
+        return not container_running(str(container_name))
+    pid = int(rec.get("pid") or 0)
+    if pid > 0:
+        return not rm._pid_exists(pid)
+    return None
+
+
+def _try_resume_from_checkpoint(rec: Dict[str, Any]) -> bool:
+    """Relaunch a dead run from its checkpoint (agents/checkpoint.py), under
+    the same run id. False when there is no checkpoint, the cap is reached,
+    the task moved on, or the launch itself fails."""
+    from managers import run_manager as rm
+
+    run_id = str(rec.get("run_id") or "")
+    task_id = str(rec.get("task_id") or "")
+    agent_id = str(rec.get("agent_id") or "")
+    attempts = int(rec.get("resume_attempts") or 0)
+    if not run_id or not task_id or not agent_id or attempts >= MAX_AUTO_RESUMES:
+        return False
+    try:
+        from agents.checkpoint import load_checkpoint
+        checkpoint = load_checkpoint(run_id)
+    except Exception:
+        return False
+    if not checkpoint or not checkpoint.get("steps"):
+        return False
+    if not _task_owns_run(task_id, run_id):
+        return False
+    try:
+        from uuid import UUID
+        from tasks import service as _ts
+        task = _ts.get_task(UUID(task_id))
+        if task is None or task.status in (_ts.TaskStatus.stopped, _ts.TaskStatus.done,
+                                           _ts.TaskStatus.blocked):
+            return False
+        params = dict(getattr(task, "assigned_agent_params", None) or {})
+        params["resume_checkpoint"] = run_id
+        rm.update_run(run_id, {"resume_attempts": attempts + 1, "heartbeat_at": None})
+        from agents import agent_launcher
+        agent_launcher.start_run(task_id, agent_id, params, run_id=run_id)
+        _ts.append_task_activity_log(
+            UUID(task_id), "watchdog_resume",
+            f"Run process died after step {checkpoint.get('step')}; resumed from its checkpoint "
+            f"(attempt {attempts + 1} of {MAX_AUTO_RESUMES})",
+            run_id=run_id, agent_id=agent_id,
+        )
+        log.warning("watchdog resumed run %s (%s) from its checkpoint (attempt %d)",
+                    run_id[:8], agent_id, attempts + 1)
+        return True
+    except Exception:
+        log.exception("watchdog could not resume run %s", run_id[:8])
         return False
 
 
@@ -203,27 +308,65 @@ def sweep_once() -> int:
                 closed += 1
 
         elif status == "running":
-            container_name = rec.get("container_name")
-            if container_name:
-                # A container-hosted run: liveness is the container, not a
-                # pid — the container's own agent_run.py runs with a pid that
-                # only means something inside its own namespace. See the
-                # comment on run_manager._stop_run_record for why
-                # container_name (not execution_mode) is what identifies one.
-                from managers.container_manager import container_running
-                if not container_running(container_name):
+            if _run_is_dead(rec):
+                if _try_resume_from_checkpoint(rec):
+                    closed += 1
+                elif rec.get("heartbeat_at"):
+                    _fail_run(rec, (
+                        "Run stopped reporting a heartbeat "
+                        f"(quiet for more than {int(RUN_HEARTBEAT_STALE_SECONDS)}s): "
+                        "its process is gone without finalizing."
+                    ))
+                    closed += 1
+                elif rec.get("container_name"):
                     _fail_run(rec, "Run container exited without finalizing (crash or external kill).")
                     closed += 1
-            else:
-                pid = int(rec.get("pid") or 0)
-                if pid > 0 and not rm._pid_exists(pid):
+                else:
                     _fail_run(rec, "Run process died without finalizing (crash or external kill).")
                     closed += 1
 
+        elif status == "queued":
+            closed += _check_queued_run(rec)
+
+    closed += _sweep_queue()
     closed += _sweep_flow_runs()
     closed += _sweep_loop_runs()
     closed += _sweep_instances()
     return closed
+
+
+def _check_queued_run(rec: Dict[str, Any]) -> int:
+    """A run waiting for a worker. The queue row is the truth about it: gone
+    or failed means no worker will ever start it, so the run fails now."""
+    from common import run_queue
+
+    run_id = str(rec.get("run_id") or "")
+    try:
+        row = run_queue.get(run_id)
+    except Exception:
+        return 0
+    if row is None:
+        _fail_run(rec, "Run was queued for a worker but its queue entry is gone.")
+        return 1
+    if row.get("status") == run_queue.STATUS_FAILED:
+        _fail_run(rec, "No worker could start this run: "
+                  + str(row.get("last_error") or "launch failed"))
+        return 1
+    return 0
+
+
+def _sweep_queue() -> int:
+    """Close or hand back launch rows whose worker stopped renewing."""
+    try:
+        from common import run_queue
+        done = run_queue.sweep()
+    except Exception:
+        log.exception("run queue sweep failed")
+        return 0
+    n = int(done.get("requeued", 0)) + int(done.get("failed", 0))
+    if n or done.get("closed"):
+        log.info("run queue sweep: %s", done)
+    return n
 
 
 def _flow_run_is_dead(rec: Dict[str, Any]) -> bool:
@@ -239,6 +382,8 @@ def _flow_run_is_dead(rec: Dict[str, Any]) -> bool:
     if heartbeat:
         age = _age_seconds(heartbeat)
         return age is not None and age > FLOW_HEARTBEAT_STALE_SECONDS
+    if not _carried_here(rec):
+        return False
     pid = int(rec.get("pid") or 0)
     return pid > 0 and not rm._pid_exists(pid)
 
@@ -382,6 +527,7 @@ class RunWatchdog:
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
+        self._leader = False
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
@@ -401,13 +547,28 @@ class RunWatchdog:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._task.cancel()
         self._task = None
+        if self._leader:
+            self._leader = False
+            try:
+                from common import leases
+                await asyncio.to_thread(leases.release, LEASE_ROLE)
+            except Exception:
+                pass
+
+    def holds_lease(self) -> bool:
+        return self._leader
 
     async def _loop(self) -> None:
+        from common import leases
+
+        ttl = max(TICK_SECONDS * 3, leases.DEFAULT_TTL_SECONDS)
         while not self._stop.is_set():
             try:
-                closed = await asyncio.to_thread(sweep_once)
-                if closed:
-                    log.info("watchdog closed %d dead run(s)", closed)
+                self._leader = await asyncio.to_thread(leases.hold, LEASE_ROLE, ttl)
+                if self._leader:
+                    closed = await asyncio.to_thread(sweep_once)
+                    if closed:
+                        log.info("watchdog closed %d dead run(s)", closed)
             except Exception:
                 log.exception("watchdog tick failed")
             # Messages written to a busy instance wait in its mailbox: the

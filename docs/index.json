@@ -60,7 +60,8 @@
         "workspaces",
         "projects",
         "tasks",
-        "nodes"
+        "nodes",
+        "workers"
       ],
       "headings": [
         "Two ways it reaches the service",
@@ -127,7 +128,8 @@
       "related": [
         "nodes",
         "settings",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "workers"
       ],
       "headings": [
         "Execution modes",
@@ -491,7 +493,8 @@
         "system-agents",
         "tools-and-capabilities",
         "troubleshooting",
-        "web-logs"
+        "web-logs",
+        "workers"
       ],
       "headings": [
         "The snapshot",
@@ -508,7 +511,8 @@
       "related": [
         "costs",
         "instances",
-        "service-health"
+        "service-health",
+        "workers"
       ],
       "headings": [
         "Run",
@@ -757,7 +761,8 @@
         "notifications",
         "scheduling",
         "cli",
-        "containers"
+        "containers",
+        "workers"
       ],
       "headings": [
         "Per replica vs. shared",
@@ -809,6 +814,31 @@
         "State mapping",
         "Importing an A2A agent",
         "What is not implemented"
+      ]
+    },
+    {
+      "id": "workers",
+      "title": "Roles, workers and the launch queue",
+      "surface": "Installation",
+      "summary": "AGENTS_HUB_ROLE splits one process into an api backend that queues launches and ah worker processes that spawn them on any host; runs report a heartbeat instead of a pid, write a checkpoint after every tool call and are resumed from it, and singletons (scheduler, watchdog, Telegram, outbox) run under database leases.",
+      "related": [
+        "scaling",
+        "service-health",
+        "sessions-and-runs",
+        "containers",
+        "notifications",
+        "scheduling",
+        "cli"
+      ],
+      "headings": [
+        "Roles",
+        "The queue",
+        "Heartbeats instead of pids",
+        "Checkpoint and resume",
+        "Singletons under leases",
+        "Outbox",
+        "Containers across hosts",
+        "What still needs one host"
       ]
     }
   ]

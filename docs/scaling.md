@@ -164,6 +164,17 @@ is in the backend image; on a host install add it with `pip install -e
 python -m pytest tests/` does the same against a database the suite may
 empty.
 
+## Workers on other hosts
+
+Postgres takes the database off the host; the launch queue takes the agent
+processes off it. With `AGENTS_HUB_ROLE=api` a backend prepares a run and
+puts the launch on `run_queue`; `ah worker` on any host claims it and spawns
+it there. Runs report a heartbeat instead of a pid, write a checkpoint after
+every tool call and are resumed from it when their process dies, and the
+singleton loops (scheduler, watchdog, Telegram poller, outbox drainer) run
+under database leases so N replicas never run them twice. All of it is on
+its own page: [workers](workers.md).
+
 ## Limits
 
 - **State beside the database is still one host.** Run logs, workspaces,

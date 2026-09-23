@@ -248,6 +248,16 @@ def close_run_from_result(
     )
 
 
+def _carried_here(rec: Dict[str, Any]) -> bool:
+    """Whether this process may probe the run's pid or container: the record
+    names no host (an older record, or one started before hosts were
+    recorded) or names this one. A run launched by a worker on another host
+    is judged by its heartbeat instead (see managers/run_watchdog.py)."""
+    import socket
+    host = str(rec.get("host") or "")
+    return not host or host == socket.gethostname()
+
+
 def _pid_exists(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -420,6 +430,15 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
         return sent
 
     pid = int(rec.get("pid") or 0)
+    if pid > 0 and not _carried_here(rec):
+        # The process lives on another host: no signal can reach it from
+        # here. The run's heartbeat reads the status back every few seconds
+        # (runtime/agent_run.py) and sends itself the signal.
+        _update_run(run_id, {"status": "stop", "finished_at": _utc_now_iso(),
+                             "error": "stop requested by user"})
+        _mark_task_stopped()
+        return True
+
     if pid <= 0:
         # Node-managed run: mark stop request and let node_run finalize.
         if rec.get("node_id"):
@@ -514,7 +533,11 @@ def get_status(task_id: str, run_id: Optional[str] = None) -> Optional[Dict[str,
     if rec:
         # See the comment in _stop_run_record: container_name, not
         # execution_mode, is the reliable signal for a container-hosted run.
-        if rec.get("container_name"):
+        if not _carried_here(rec):
+            # Another host's process: only its heartbeat says anything, and
+            # the watchdog is the one that acts on a stale one.
+            pass
+        elif rec.get("container_name"):
             from ..container_manager import container_running
             if not container_running(rec["container_name"]):
                 rec = _update_run(rec["run_id"], {

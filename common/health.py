@@ -85,6 +85,11 @@ def _services(app_state: Any = None) -> Dict[str, Optional[bool]]:
         services["telegram_poller"] = tg.is_running()
     except Exception:
         services["telegram_poller"] = None
+    try:
+        from common.singletons import supervisor
+        services["singleton_supervisor"] = supervisor.is_running()
+    except Exception:
+        services["singleton_supervisor"] = None
     # The external-state publisher is an asyncio task on the app, so it is only
     # observable when a running app hands us its state.
     pub = getattr(app_state, "external_publisher", None) if app_state is not None else None
@@ -175,6 +180,32 @@ def _agent_cache() -> Dict[str, Any]:
         return {"enabled": None}
 
 
+def _cluster() -> Dict[str, Any]:
+    """This process's role, who holds which singleton role, the launch queue
+    and the outbox: the parts that only exist once a deployment has more
+    than one process (docs/workers.md, docs/scaling.md)."""
+    out: Dict[str, Any] = {}
+    try:
+        from common.config import hub_role
+        from common import leases
+        out["role"] = hub_role()
+        out["instance"] = leases.owner_id()
+        out["leases"] = leases.all_leases()
+    except Exception as e:
+        out["leases_error"] = str(e)
+    try:
+        from common import run_queue
+        out["queue"] = run_queue.stats()
+    except Exception as e:
+        out["queue_error"] = str(e)
+    try:
+        from notify import outbound
+        out["outbox"] = outbound.stats()
+    except Exception as e:
+        out["outbox_error"] = str(e)
+    return out
+
+
 def snapshot(app_state: Any = None) -> Dict[str, Any]:
     """Liveness plus a state snapshot.
 
@@ -191,4 +222,5 @@ def snapshot(app_state: Any = None) -> Dict[str, Any]:
         "providers": _providers(),
         "blender": _blender(),
         "agent_cache": _agent_cache(),
+        "cluster": _cluster(),
     }

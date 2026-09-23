@@ -379,6 +379,24 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(
         default=10, validation_alias=AliasChoices("AGENTS_HUB_DB_POOL_SIZE", "db_pool_size"))
 
+    # ── Process role (docs/workers.md) ────────────────────────────────────────
+    # "all" (default): this backend launches runs itself, exactly as it always
+    # has; one process does everything a laptop needs. "api": the backend only
+    # prepares runs and puts the launch on the queue (common/run_queue.py) for
+    # a worker on any host. "worker": a process started with `ah worker` that
+    # claims launches from that queue and spawns them; it serves no HTTP.
+    role: str = Field(
+        default="all", validation_alias=AliasChoices("AGENTS_HUB_ROLE", "role"))
+    # What a worker can run, comma separated: "local", "docker" or both. A
+    # worker without a Docker socket says "local" and never claims a run that
+    # wants a container.
+    worker_modes: str = Field(
+        default="local,docker",
+        validation_alias=AliasChoices("AGENTS_HUB_WORKER_MODES", "worker_modes"))
+    # How many launches one worker keeps alive at once.
+    worker_concurrency: int = Field(
+        default=4, validation_alias=AliasChoices("AGENTS_HUB_WORKER_CONCURRENCY", "worker_concurrency"))
+
     model_config = SettingsConfigDict(
         case_sensitive=False,
         env_file=str(PROJECT_ROOT / ".env"),
@@ -508,6 +526,24 @@ def run_state_transport() -> str:
     except Exception:
         pass
     return settings.run_state_transport if settings.run_state_transport in ("db", "http") else "db"
+
+
+def hub_role() -> str:
+    """This process's role: "all", "api" or "worker" (docs/workers.md).
+
+    Read from the environment first so a worker started with
+    ``AGENTS_HUB_ROLE=worker ah worker`` never inherits the backend's ``.env``
+    value, then from settings. Anything unrecognised is "all", the mode that
+    needs nothing else running.
+    """
+    raw = (os.environ.get("AGENTS_HUB_ROLE") or settings.role or "all").strip().lower()
+    return raw if raw in ("all", "api", "worker") else "all"
+
+
+def worker_execution_modes() -> list:
+    raw = os.environ.get("AGENTS_HUB_WORKER_MODES") or settings.worker_modes or "local,docker"
+    modes = [m.strip().lower() for m in raw.split(",") if m.strip()]
+    return [m for m in modes if m in ("local", "docker")] or ["local"]
 
 
 # Convenience accessors to align with previous orchestrator.config API
