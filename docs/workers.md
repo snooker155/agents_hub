@@ -35,7 +35,7 @@ AGENTS_HUB_WORKER_MODES=local ah worker --concurrency 8
 ## The queue
 
 `run_queue` is one table. A row is a launch request: the run id, its kind
-(`task`, `flow`, `team` or `scenario`), the workspace, whether it wants a
+(`task`, `flow`, `loop`, `team` or `scenario`), the workspace, whether it wants a
 container, a priority, and a JSON spec that is everything the launcher needs.
 A worker claims the highest-priority oldest row it can run under a lease it
 renews every couple of seconds while the child is alive, then closes the row

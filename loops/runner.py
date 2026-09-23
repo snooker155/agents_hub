@@ -263,11 +263,23 @@ def run_loop(
     on_iteration: Optional[Callable[[Iteration], None]] = None,
     resume_run: Optional[LoopRun] = None,
     resumed_from_status: Optional[str] = None,
+    run: Optional[LoopRun] = None,
+    own_process: bool = True,
 ) -> LoopRun:
     """Run a loop to convergence, or to whichever ceiling it hits first.
 
-    Synchronous and long-running (iterations of a whole flow), so callers start
-    it on a background thread and follow the ``loop:<loop_run_id>`` channel.
+    Synchronous and long-running (iterations of a whole flow). The normal way
+    to start one is ``loops.launcher.start_loop_run``, which creates the
+    record and spawns ``runtime/loop_run.py`` (locally or on a worker); that
+    process calls this with the pre-created record as ``run``. Called without
+    ``run`` (a tool, a test) it mints its own record and runs right here, and
+    then marks the record with this process's pid and host and beats its own
+    heartbeat, so the watchdog treats it like every other run.
+
+    ``own_process`` says whether this call is the run's process: when False
+    (the subprocess entrypoint, which already beats a heartbeat and whose
+    launcher already marked the record running) no heartbeat thread is
+    started here.
 
     ``resume_run`` continues an existing run from its stored position instead of
     starting a new one: the iterations it already completed keep their rows and
@@ -294,11 +306,11 @@ def run_loop(
     goal = (goal or "").strip() or (loop.description or "").strip() or (flow.get("description") or "")
     ws_name, ws_path, task_id, session_id = _prepare_context(loop, workspace, task_id, goal)
 
-    # Publish the workspace on the context var the agent tools read. A
-    # subprocess flow run sets AGENT_WORKSPACE instead, but this runs inside the
-    # backend process, where a process-wide env var would race with every
-    # concurrent chat request. asyncio.to_thread copies the context, so the value
-    # set here reaches the node executions.
+    # Publish the workspace on the context var the agent tools read. The
+    # subprocess entrypoint sets AGENT_WORKSPACE too, but the in-process door
+    # (a tool, a test) runs inside a process serving other requests, where a
+    # process-wide env var would race with them. asyncio.to_thread copies the
+    # context, so the value set here reaches the node executions.
     from common.workspace_context import _workspace_ctx
     _workspace_ctx.set(ws_name)
 
@@ -309,12 +321,33 @@ def run_loop(
         run.stop_reason = ""
         run.error = None
         run.session_id = run.session_id or session_id
+    elif run is not None:
+        # A record the launcher created as ``pending``; the process half
+        # (runtime.entity_launch.launch_prepared) already moved it to running.
+        run.status = "running"
+        run.workspace = run.workspace or ws_name
+        run.goal = run.goal or goal
+        run.task_id = run.task_id or task_id
+        run.session_id = run.session_id or session_id
     else:
         run = LoopRun(
             loop_id=loop_id, workspace=ws_name, goal=goal,
             task_id=task_id, session_id=session_id,
         )
     store.save_run(run)
+    heartbeat = None
+    if own_process:
+        # This process is the run: say so on the record and beat, exactly as
+        # the subprocess entrypoint does for a launched run.
+        try:
+            from common import entity_runs
+            from runtime.entity_heartbeat import EntityHeartbeat
+            entity_runs.mark_running(run.loop_run_id, pid=os.getpid(), host=_hostname(),
+                                     execution_mode="local")
+            heartbeat = EntityHeartbeat(run.loop_run_id)
+            heartbeat.start()
+        except Exception:  # noqa: BLE001 - a run without a heartbeat thread still beats per node
+            log.debug("could not start the loop heartbeat for %s", run.loop_run_id, exc_info=True)
     if task_id:
         # Point the task at this run: the executor was recorded by
         # _prepare_context before the run id existed.
@@ -364,90 +397,98 @@ def run_loop(
         pass
 
     try:
-        if done_iterations >= max_iterations:
+        try:
+            if done_iterations >= max_iterations:
+                raise LoopStopped("max_iterations", f"reached the cap of {max_iterations} iterations")
+            for iteration in range(done_iterations + 1, max_iterations + 1):
+                _check_between_iterations(run.loop_run_id, started, wall_cap, spend, loop, ws_name)
+
+                it = _execute_iteration(
+                    loop=loop, flow=flow, run=run, iteration=iteration,
+                    max_iterations=max_iterations, goal=goal,
+                    previous_output=previous_output, verdict=verdict,
+                    history=history, seed=seed, ws_name=ws_name, ws_path=ws_path,
+                    task_id=task_id, session_id=session_id,
+                )
+                spend = round(spend + it.cost, 6)
+                previous_output = it.output or previous_output
+                verdict = Verdict(
+                    score=it.score, verdict=it.verdict or "continue", reason=it.reason,
+                    feedback=it.feedback, raw=it.evaluator_raw, agent=it.evaluator_agent,
+                )
+                history.append({"iteration": iteration, "score": it.score, "reason": it.reason})
+
+                run.iterations_done = iteration
+                run.final_score = it.score
+                run.total_cost = spend
+                run.result = it.output
+                if it.score is not None and (best_score is None or it.score > best_score):
+                    best_score, stale = it.score, 0
+                elif it.score is not None:
+                    stale += 1
+                run.best_score = best_score
+                run.position = {
+                    "iterations_done": iteration,
+                    "previous_output": previous_output,
+                    "best_score": best_score,
+                    "stale": stale,
+                    "spend": spend,
+                    "history": history,
+                    "verdict": verdict.to_dict() if verdict else None,
+                    "goal": goal,
+                    "resume_attempts": run.resume_attempts,
+                    "heartbeat_at": utc_iso(),
+                    "updated_at": utc_iso(),
+                    # Which replica is executing this loop (a loop is a thread in
+                    # the backend, not a queued process), for the deployment map.
+                    "owner": _owner_id(),
+                    "host": _hostname(),
+                }
+                store.update_progress(
+                    run.loop_run_id, iterations_done=run.iterations_done,
+                    best_score=run.best_score, final_score=run.final_score,
+                    result=run.result, total_cost=run.total_cost,
+                    position=run.position,
+                )
+
+                _publish(run.loop_run_id, {"type": "iteration", **it.to_dict()})
+                if on_iteration:
+                    try:
+                        on_iteration(it)
+                    except Exception:
+                        pass
+
+                if it.status == "stopped":
+                    raise LoopStopped("stopped", "stop requested during the flow run")
+                _check_convergence(loop, it, iteration, stale)
+
             raise LoopStopped("max_iterations", f"reached the cap of {max_iterations} iterations")
-        for iteration in range(done_iterations + 1, max_iterations + 1):
-            _check_between_iterations(run.loop_run_id, started, wall_cap, spend, loop, ws_name)
 
-            it = _execute_iteration(
-                loop=loop, flow=flow, run=run, iteration=iteration,
-                max_iterations=max_iterations, goal=goal,
-                previous_output=previous_output, verdict=verdict,
-                history=history, seed=seed, ws_name=ws_name, ws_path=ws_path,
-                task_id=task_id, session_id=session_id,
-            )
-            spend = round(spend + it.cost, 6)
-            previous_output = it.output or previous_output
-            verdict = Verdict(
-                score=it.score, verdict=it.verdict or "continue", reason=it.reason,
-                feedback=it.feedback, raw=it.evaluator_raw, agent=it.evaluator_agent,
-            )
-            history.append({"iteration": iteration, "score": it.score, "reason": it.reason})
-
-            run.iterations_done = iteration
-            run.final_score = it.score
-            run.total_cost = spend
-            run.result = it.output
-            if it.score is not None and (best_score is None or it.score > best_score):
-                best_score, stale = it.score, 0
-            elif it.score is not None:
-                stale += 1
-            run.best_score = best_score
-            run.position = {
-                "iterations_done": iteration,
-                "previous_output": previous_output,
-                "best_score": best_score,
-                "stale": stale,
-                "spend": spend,
-                "history": history,
-                "verdict": verdict.to_dict() if verdict else None,
-                "goal": goal,
-                "resume_attempts": run.resume_attempts,
-                "heartbeat_at": utc_iso(),
-                "updated_at": utc_iso(),
-                # Which replica is executing this loop (a loop is a thread in
-                # the backend, not a queued process), for the deployment map.
-                "owner": _owner_id(),
-                "host": _hostname(),
-            }
-            store.update_progress(
-                run.loop_run_id, iterations_done=run.iterations_done,
-                best_score=run.best_score, final_score=run.final_score,
-                result=run.result, total_cost=run.total_cost,
-                position=run.position,
-            )
-
-            _publish(run.loop_run_id, {"type": "iteration", **it.to_dict()})
-            if on_iteration:
-                try:
-                    on_iteration(it)
-                except Exception:
-                    pass
-
-            if it.status == "stopped":
-                raise LoopStopped("stopped", "stop requested during the flow run")
-            _check_convergence(loop, it, iteration, stale)
-
-        raise LoopStopped("max_iterations", f"reached the cap of {max_iterations} iterations")
-
-    except LoopStopped as e:
-        # Hitting a ceiling is a completed run with a reason, not a failure: the
-        # iterations it did produce are real work. Only a loop that could not
-        # run its flow, or one the user stopped, is anything else.
-        run.stop_reason = e.reason
-        if e.reason == "stopped":
-            run.status = "stopped"
-        elif e.reason in ("flow_failed", "error"):
+        except LoopStopped as e:
+            # Hitting a ceiling is a completed run with a reason, not a failure: the
+            # iterations it did produce are real work. Only a loop that could not
+            # run its flow, or one the user stopped, is anything else.
+            run.stop_reason = e.reason
+            if e.reason == "stopped":
+                run.status = "stopped"
+            elif e.reason in ("flow_failed", "error"):
+                run.status = "failed"
+                run.error = e.detail
+            else:
+                run.status = "completed"
+            log.info("loop %s finished: %s (%s)", run.loop_run_id, e.reason, e.detail)
+        except Exception as e:  # noqa: BLE001
+            log.exception("loop run failed")
             run.status = "failed"
-            run.error = e.detail
-        else:
-            run.status = "completed"
-        log.info("loop %s finished: %s (%s)", run.loop_run_id, e.reason, e.detail)
-    except Exception as e:  # noqa: BLE001
-        log.exception("loop run failed")
-        run.status = "failed"
-        run.stop_reason = "error"
-        run.error = f"{type(e).__name__}: {e}"
+            run.stop_reason = "error"
+            run.error = f"{type(e).__name__}: {e}"
+
+    finally:
+        # Whatever ends the loop, including a killed process's own
+        # unwinding, the beat must not outlive the run: a lingering thread
+        # would keep a finished run looking alive.
+        if heartbeat is not None:
+            heartbeat.stop()
 
     run.total_cost = spend
     run.finished_at = utc_iso()
@@ -670,6 +711,7 @@ def resume_loop_run(
     *,
     auto: bool = False,
     on_iteration: Optional[Callable[[Iteration], None]] = None,
+    own_process: bool = True,
 ) -> LoopRun:
     """Continue a loop run from the iteration after its last completed one.
 
@@ -705,6 +747,7 @@ def resume_loop_run(
     return run_loop(
         run.loop_id, goal=run.goal, workspace=run.workspace, task_id=run.task_id,
         on_iteration=on_iteration, resume_run=run, resumed_from_status=resumed_from_status,
+        own_process=own_process,
     )
 
 

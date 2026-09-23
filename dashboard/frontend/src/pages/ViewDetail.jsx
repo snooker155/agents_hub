@@ -61,14 +61,14 @@ function dataSource(view) {
 // run (a row in `runs`, MessageDetails' route); the rest are entity runs
 // (common/entity_runs.py), whose own page takes the entity's id, not the
 // run's, so it needs `owner.entity_id` (dashboard/backend/routes/views.py
-// resolves it). Only the scenario page can be pointed at one run in
-// particular (its `?run=` param); the others just open the entity's page.
+// resolves it). Every entity page takes the run in its `?run=` parameter
+// (the loops page also names the loop with `?loop=`).
 const OWNER_ROUTE = {
   run: (o) => `/messages/${o.id}`,
-  team: (o) => (o.entity_id ? `/teams/${o.entity_id}` : null),
-  flow: (o) => (o.entity_id ? `/flows/${o.entity_id}` : null),
+  team: (o) => (o.entity_id ? `/teams/${o.entity_id}?run=${o.id}` : null),
+  flow: (o) => (o.entity_id ? `/flows/${o.entity_id}?run=${o.id}` : null),
   scenario: (o) => (o.entity_id ? `/playground/${o.entity_id}?run=${o.id}` : null),
-  loop: () => '/loops',
+  loop: (o) => (o.entity_id ? `/loops?loop=${o.entity_id}&run=${o.id}` : '/loops'),
 };
 
 // A view's owner as the backend returns it, falling back to the older

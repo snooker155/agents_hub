@@ -94,6 +94,18 @@ def fresh_db(tmp_path, monkeypatch):
 
     yield
 
+    # A heartbeat thread a test left behind (a run killed mid-flight) would
+    # touch the database of a later test and, worse, run the schema setup on
+    # its own connection and mark the schema ready for a file that has none.
+    # Stop every one before the next test gets a fresh database.
+    try:
+        from runtime.entity_heartbeat import EntityHeartbeat
+        for thread in threading.enumerate():
+            if isinstance(thread, EntityHeartbeat):
+                thread.stop()
+    except Exception:  # noqa: BLE001 - a teardown guard, never a failure of its own
+        pass
+
     db._schema_ready = False
     db._local = threading.local()
 

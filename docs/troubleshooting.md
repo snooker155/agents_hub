@@ -21,7 +21,7 @@ checked at launch, so nothing was half-run. See [costs](costs.md).
 its next tick. If it does not, `GET /api/health` says whether the watchdog is
 running at all.
 
-**A flow, team or scenario run stays in pending status.** In the `api` role, the
+**A flow, loop, team or scenario run stays in pending status.** In the `api` role, the
 launch is queued for a worker. With no worker running (`ah worker`), the launch
 waits in `pending` until one appears. Start a worker on the same or another host,
 or use the `all` role (default) to launch runs in-process.
@@ -45,11 +45,12 @@ mailbox until the copy goes idle. A copy carried by a node or a container
 answers in its own process, so nothing happens if that process is gone; the
 watchdog reconciles instances whose carrier died. See [instances](instances.md).
 
-**A team or scenario run was stopped and needs to resume.** `POST
-/api/teams/runs/{id}/resume` or `POST /api/playground/runs/{id}/resume`
-relaunches the run from its checkpoint. The run record shows `has_checkpoint:
-true` when resumption is possible. Both endpoints return 400 when there is
-nothing to resume.
+**A loop, team or scenario run was stopped and needs to resume.** `POST
+/api/loops/runs/{id}/resume`, `POST /api/teams/runs/{id}/resume` or `POST
+/api/playground/runs/{id}/resume` relaunches the run from its checkpoint (for
+a loop, its position: the iteration after the last one it finished). A team or
+scenario run record shows `has_checkpoint: true` when resumption is possible.
+The endpoints return 400 when there is nothing to resume.
 
 **A scheduled job never fired.** Jobs fire from a scheduler inside the backend,
 so nothing fires while the backend is down. `GET /api/health` reports whether

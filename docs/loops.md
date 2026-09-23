@@ -32,7 +32,7 @@ ends it.
 
 ## Checkpoint and resume
 
-A loop runs on a thread of the backend that started it and launches one flow process per iteration; it stamps its heartbeat as each flow node finishes.
+A loop runs as a process of its own, launched through the same envelope as a flow, a team and a scenario: `POST /api/loops/{id}/run` writes a `pending` record and spawns `runtime/loop_run.py` right there, or queues it for a worker in the `api` role, so a loop keeps running whatever happens to the backend that started it. The iterations run the flow engine inside that process. The run beats a heartbeat every 15 seconds and again as each flow node finishes.
 After every iteration the run records its position (a checkpoint) with how many
 passes are done, the last output, the reviewer's last verdict, the best score,
 the patience counter and spend.

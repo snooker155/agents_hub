@@ -15,16 +15,16 @@ import { useToast, errorDetail } from '../components/toast';
 const STUDIO_KINDS = new Set(['graph', 'scene3d', 'simulation', 'math', 'process', 'chart', 'table', 'html', 'diagram', 'latex', 'slides', 'document']);
 
 // Where each owner kind's own page lives (App.jsx routes), mirroring
-// ViewDetail.jsx's OWNER_ROUTE. `row.owner_entity_id` is the flow/team/
+// ViewDetail.jsx's OWNER_ROUTE. `row.owner_entity_id` is the flow/loop/team/
 // scenario id the list route resolves alongside owner_kind/owner_id
-// (dashboard/backend/routes/views.py), since none of those pages address a
-// specific run by its run id, only by the entity's own id.
+// (dashboard/backend/routes/views.py): each entity page takes the entity's
+// own id in its path and the run in its ?run= parameter.
 const OWNER_ROUTE = {
   run: (row) => `/messages/${row.owner_id}`,
-  team: (row) => (row.owner_entity_id ? `/teams/${row.owner_entity_id}` : null),
-  flow: (row) => (row.owner_entity_id ? `/flows/${row.owner_entity_id}` : null),
+  team: (row) => (row.owner_entity_id ? `/teams/${row.owner_entity_id}?run=${row.owner_id}` : null),
+  flow: (row) => (row.owner_entity_id ? `/flows/${row.owner_entity_id}?run=${row.owner_id}` : null),
   scenario: (row) => (row.owner_entity_id ? `/playground/${row.owner_entity_id}?run=${row.owner_id}` : null),
-  loop: () => '/loops',
+  loop: (row) => (row.owner_entity_id ? `/loops?loop=${row.owner_entity_id}&run=${row.owner_id}` : '/loops'),
 };
 
 function ownerChip(row) {

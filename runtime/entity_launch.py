@@ -1,5 +1,5 @@
 """
-The one launch envelope for the runs of flows, teams and scenarios.
+The one launch envelope for the runs of flows, loops, teams and scenarios.
 
 An agent's task run has had this shape since stage 2 of the scaling plan
 (agents/agent_launcher.py): a *database half* prepares the run (its record,
@@ -11,7 +11,7 @@ process with no sandbox, no heartbeat, no place in the queue, and stayed
 ``running`` forever after a restart.
 
 This module is the process half for every entity kind. A launcher
-(flow/launcher.py, teams/launcher.py, playground/launcher.py) prepares its
+(flow/launcher.py, loops/launcher.py, teams/launcher.py, playground/launcher.py) prepares its
 record in ``entity_runs`` (common/entity_runs.py) and calls :func:`dispatch`
 with a spec; from there the run is queued or spawned, locally or in a
 container, exactly the way a task run is.
@@ -19,7 +19,7 @@ container, exactly the way a task run is.
 The spec, plain JSON and nothing secret::
 
     {
-      "kind": "team",                 # flow | team | scenario
+      "kind": "team",                 # flow | loop | team | scenario
       "run_id": "...",                # the entity_runs key
       "entity_id": "...",             # flow_id, team_id, scenario_id
       "entrypoint": "team_run",       # runtime/<entrypoint>.py, -m runtime.<entrypoint>
@@ -43,9 +43,9 @@ and never by a pid on another host.
 Docker applies to a team or a scenario by the same rule as to an agent:
 ``execution_mode`` on the spec, decided by the launcher from the workspace's
 agent execution mode, and the same hardened run container
-(runtime/docker_runner.py) with the same state transport. Flows always run as
-a local subprocess: their nodes execute agents in-process, and the flow
-process is the orchestrator, not the sandbox.
+(runtime/docker_runner.py) with the same state transport. Flows and loops
+always run as a local subprocess: their nodes execute agents in-process, and
+the process is the orchestrator, not the sandbox.
 """
 from __future__ import annotations
 
@@ -64,6 +64,7 @@ log = logging.getLogger("runtime.entity_launch")
 #: Kind -> the module under ``runtime/`` that runs it.
 ENTRYPOINTS: Dict[str, str] = {
     "flow": "flow_run",
+    "loop": "loop_run",
     "team": "team_run",
     "scenario": "scenario_run",
 }
@@ -73,6 +74,7 @@ ENTRYPOINTS: Dict[str, str] = {
 #: bookkeeping (a flow flips its definition's running marker, say).
 LAUNCHERS: Dict[str, str] = {
     "flow": "flow.launcher",
+    "loop": "loops.launcher",
     "team": "teams.launcher",
     "scenario": "playground.launcher",
 }

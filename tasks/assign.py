@@ -12,7 +12,6 @@ call this, so an assignment means the same thing whichever one made it.
 """
 from __future__ import annotations
 
-import time
 from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
@@ -289,40 +288,15 @@ def _assign_team_to_task(
 def _assign_loop_to_task(
     task_id: UUID, loop_id: str, params: Optional[Dict[str, Any]], *, task_to_dict,
 ) -> Dict[str, Any]:
-    """Start a loop run on a task.
-
-    ``loops.runner.run_loop`` is synchronous (an iterative flow, minutes
-    long), so it runs on a daemon thread, mirroring
-    ``dashboard/backend/routes/loops.py``'s own run route: wait briefly for
-    the run row to appear, then read its id back with
-    ``loops.store.list_runs(loop_id, limit=1)``. ``run_loop`` claims the task
-    itself early on (``loops.runner._prepare_context``, kind "agent", no run
-    id yet) before the run row exists; the wait here is what makes this
-    call's own ``assign_executor`` (kind "loop", with the run id) land last
-    and win, the same fix-up ``_assign_team_to_task`` does for a team.
-    """
+    """Start a loop run on a task through ``loops.launcher.start_loop_run``:
+    the record is written, the task recorded as executor kind ``loop`` with
+    the run id, and the process spawned (or queued) before this returns."""
     t = _assign_common_checks(task_id)
 
     goal = str((params or {}).get("goal") or t.description or t.title or "")
-    import threading
-    from loops.runner import run_loop as _run_loop
-
-    def _worker():
-        try:
-            _run_loop(loop_id, goal=goal, workspace=t.workspace, task_id=str(task_id))
-        except Exception:
-            pass
-
-    threading.Thread(target=_worker, name=f"loop-assign-{loop_id}", daemon=True).start()
-
-    from loops import store as loop_store
-    run_id = None
-    for _ in range(60):
-        runs = loop_store.list_runs(loop_id, limit=1)
-        if runs and str(getattr(runs[0], "task_id", "")) == str(task_id):
-            run_id = getattr(runs[0], "loop_run_id", None)
-            break
-        time.sleep(0.05)
+    from loops.launcher import start_loop_run
+    run = start_loop_run(loop_id, goal, workspace=t.workspace, task_id=str(task_id))
+    run_id = getattr(run, "loop_run_id", None)
 
     loop_params = {"loop_id": loop_id, "workspace": t.workspace, **(params or {})}
     tasks_service.assign_executor(task_id, Executor(kind="loop", id=loop_id), loop_params, run_id=run_id)

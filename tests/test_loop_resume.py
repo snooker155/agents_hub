@@ -252,22 +252,28 @@ def test_resuming_a_stopped_run_is_recorded_as_a_resume_from_a_stop(
     assert resume_events[0]["resumed_from_status"] == "stopped"
 
 
-def test_precheck_resumable_allows_stopped_and_refuses_only_completed():
-    import sys
-    from pathlib import Path
+def test_the_launcher_resumes_a_stopped_run_and_refuses_a_completed_one(monkeypatch):
+    """The route's resume goes through loops.launcher, which relaunches the
+    run as its own process; a completed run has nothing left to continue."""
+    from common import entity_runs
+    from loops.launcher import resume_loop_run as launch_resume
 
-    backend = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
-    if backend not in sys.path:
-        sys.path.insert(0, backend)
-    from routes.loops import _precheck_resumable
-    from loops.runner import LoopResumeError as RouteLoopResumeError
+    launched = []
+    monkeypatch.setattr("loops.launcher.launch_prepared", lambda spec: launched.append(spec))
+    monkeypatch.setattr("flow.store.get_flow", lambda fid: {"nodes": [], "edges": []})
+    loop = store.save_loop(Loop(name="L", flow_id="f", exit_criterion="c"))
 
-    stopped_run = LoopRun(loop_id="l", status="stopped", position={"iterations_done": 1})
-    _precheck_resumable(stopped_run)  # does not raise
+    stopped = store.save_run(LoopRun(loop_id=loop.loop_id, status="running",
+                                     position={"iterations_done": 1}))
+    entity_runs.close(stopped.loop_run_id, status="stopped", exit_code=1)
+    launch_resume(stopped.loop_run_id)
+    assert launched and launched[-1]["cli_args"][-1] == "--resume"
 
-    completed_run = LoopRun(loop_id="l", status="completed", position={"iterations_done": 1})
-    with pytest.raises(RouteLoopResumeError, match="already finished"):
-        _precheck_resumable(completed_run)
+    done = store.save_run(LoopRun(loop_id=loop.loop_id, status="running",
+                                  position={"iterations_done": 1}))
+    entity_runs.close(done.loop_run_id, status="completed", exit_code=0)
+    with pytest.raises(LoopResumeError, match="completed"):
+        launch_resume(done.loop_run_id)
 
 
 def test_an_automatic_resume_counts_itself(monkeypatch, stub_flow):

@@ -18,7 +18,6 @@ rows, so watching live and reviewing afterwards look identical.
 from __future__ import annotations
 
 import json
-import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -26,7 +25,7 @@ from pydantic import BaseModel
 
 from loops import store
 from loops.models import EVALUATOR_MODES, Loop
-from loops.runner import LoopResumeError, estimate_cost, resume_loop_run, run_loop
+from loops.runner import LoopResumeError, estimate_cost
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
@@ -182,58 +181,26 @@ async def get_iterations(loop_run_id: str, since: int = 0):
 async def resume_run(loop_run_id: str):
     """Continue a loop run from the iteration after its last completed one.
 
-    A loop runs inside the backend process, so a restart ends it mid-run. Every
-    finished iteration is a whole flow's worth of work, and the run's stored
-    position is what makes picking it up cheaper than starting over. Runs on a
-    background thread, like the initial start, and returns the run record.
+    Every finished iteration is a whole flow's worth of work, and the run's
+    stored position is what makes picking it up cheaper than starting over.
+    The run is relaunched as its own process (loops/launcher.py), under the
+    same id; 400 when there is nothing to resume.
     """
-    run = store.get_run(loop_run_id)
-    if not run:
+    from loops.launcher import resume_loop_run as _resume
+    if not store.get_run(loop_run_id):
         raise HTTPException(status_code=404, detail="Loop run not found")
-
-    failure: Dict[str, Any] = {}
-    ready = threading.Event()
-
-    def _worker():
-        try:
-            resume_loop_run(loop_run_id, on_iteration=lambda _it: ready.set())
-        except Exception as e:  # noqa: BLE001
-            failure["error"] = f"{type(e).__name__}: {e}"
-        finally:
-            ready.set()
-
-    # Refuse before starting the thread when the run is plainly not resumable,
-    # so the caller gets the reason instead of a silently dead background task.
     try:
-        _precheck_resumable(run)
+        return _resume(loop_run_id).to_dict()
     except LoopResumeError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-    threading.Thread(target=_worker, name=f"loop-resume-{loop_run_id}", daemon=True).start()
-    ready.wait(timeout=1.0)
-    if failure:
-        raise HTTPException(status_code=400, detail=failure["error"])
-    return (store.get_run(loop_run_id) or run).to_dict()
-
-
-def _precheck_resumable(run) -> None:
-    """Raise :class:`LoopResumeError` when this run cannot be resumed at all.
-
-    ``stopped`` is resumable (see loops.runner.resume_loop_run): a stop leaves
-    the run at a valid position, so only ``completed`` has nothing left to
-    continue.
-    """
-    if run.status == "completed":
-        raise LoopResumeError(f"Loop run already finished ({run.status})")
-    if not (run.position or {}).get("iterations_done"):
-        raise LoopResumeError("Loop run has no position to resume from")
 
 
 @router.post("/runs/{loop_run_id}/stop")
 async def stop_run(loop_run_id: str):
     """Ask a running loop to stop. It is checked between nodes and between
     iterations, so the flow is never left half-applied."""
-    if not store.request_stop(loop_run_id):
+    from loops.launcher import stop_loop_run
+    if not stop_loop_run(loop_run_id):
         raise HTTPException(status_code=400, detail="Run is not running")
     return {"ok": True}
 
@@ -278,50 +245,29 @@ async def estimate(loop_id: str):
 
 @router.post("/{loop_id}/run")
 async def start_run(loop_id: str, data: RunIn):
-    """Start a loop run on a background thread and return its record.
+    """Start a loop run as its own process and return its record.
 
-    The client needs a run id to follow, and only ``run_loop`` mints one, so we
-    wait for the row to appear rather than duplicating the id logic here. The
-    loop keeps running regardless of when this returns.
+    The record is written and the process spawned (or queued for a worker in
+    the ``api`` role) before this returns, so the client has an id to follow
+    at once (loops/launcher.py).
     """
+    from loops.launcher import start_loop_run
     loop = store.get_loop(loop_id)
     if not loop:
         raise HTTPException(status_code=404, detail="Loop not found")
-
     if not _load_flow(loop.flow_id):
         raise HTTPException(
             status_code=400,
             detail=f"Loop references a flow that is missing or unreadable: {loop.flow_id}",
         )
-
-    ready = threading.Event()
-    failure: Dict[str, Any] = {}
-
-    def _worker():
-        try:
-            run_loop(
-                loop_id, goal=data.goal, workspace=data.workspace or loop.workspace,
-                task_id=data.task_id, seed=dict(data.seed or {}),
-                on_iteration=lambda _it: ready.set(),
-            )
-        except Exception as e:  # noqa: BLE001
-            failure["error"] = f"{type(e).__name__}: {e}"
-        finally:
-            ready.set()
-
-    threading.Thread(target=_worker, name=f"loop-{loop_id}", daemon=True).start()
-
-    for _ in range(60):
-        runs = store.list_runs(loop_id, limit=1)
-        if runs:
-            return runs[0].to_dict()
-        if failure:
-            raise HTTPException(status_code=400, detail=failure["error"])
-        ready.wait(timeout=0.05)
-
-    if failure:
-        raise HTTPException(status_code=400, detail=failure["error"])
-    return {"loop_id": loop_id, "status": "starting"}
+    try:
+        run = start_loop_run(
+            loop_id, data.goal or "", workspace=data.workspace or loop.workspace,
+            task_id=data.task_id, seed=dict(data.seed or {}),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return run.to_dict()
 
 
 # ── Loop build chat ───────────────────────────────────────────────────────────

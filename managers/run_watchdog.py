@@ -46,9 +46,9 @@ and a checkpoint, whatever store its own adapter (flow.run_store, loops.store,
 teams.store, playground.store) wraps it in. For every one of them death is not
 the end: each writes a checkpoint as it goes, so a run whose process is gone is
 **resumed** from it rather than failed, through the kind's own resumer
-(flow.launcher.resume_flow_run, loops.runner.resume_loop_run on a thread, since
-a loop lives in the backend process and resuming it must not block the sweep,
-teams.launcher.resume_team_run, playground.launcher.resume_scenario_run). Only
+(flow.launcher.resume_flow_run, loops.launcher.resume_loop_run,
+teams.launcher.resume_team_run, playground.launcher.resume_scenario_run, each
+a relaunch of the kind's own process under the same run id). Only
 a run with no checkpoint (for a loop, one with no ``iterations_done`` yet), or
 one that has already been resumed :data:`MAX_AUTO_RESUMES` times, is closed as
 failed: a run that cannot get past its next step must not be restarted
@@ -461,18 +461,11 @@ def _resume_flow_run(rec: Dict[str, Any]) -> None:
 
 
 def _resume_loop_run(rec: Dict[str, Any]) -> None:
-    # A loop lives in the backend process (loops/runner.py), so resuming it is
-    # a synchronous run_loop() call under the hood, exactly as slow as the
-    # loop itself. Firing it on a daemon thread is what keeps one stuck loop
-    # from stalling the rest of a sweep tick, the same as before this module
-    # had one sweep for every kind.
-    import threading
-    run_id = str(rec["run_id"])
-    from loops.runner import resume_loop_run
-    threading.Thread(
-        target=resume_loop_run, args=(run_id,), kwargs={"auto": True},
-        daemon=True, name=f"loop-resume-{run_id}",
-    ).start()
+    # A loop is a process of its own since stage 0a (loops/launcher.py), so a
+    # resume is a relaunch under the same id, spawned here or queued for a
+    # worker, never a thread of this process.
+    from loops.launcher import resume_loop_run
+    resume_loop_run(str(rec["run_id"]), auto=True)
 
 
 def _resume_team_run(rec: Dict[str, Any]) -> None:
@@ -526,7 +519,7 @@ def _entity_checkpoint_resumable(rec: Dict[str, Any]) -> bool:
     Any non-empty checkpoint qualifies, except a loop's: its checkpoint *is*
     its position (loops/store.py), and a position written before the first
     iteration finished has nothing in it a resume could pick up from. The
-    same guard ``loops.runner.resume_loop_run`` applies itself, checked here
+    same guard ``loops.launcher.resume_loop_run`` applies itself, checked here
     first so the sweep does not even try.
     """
     checkpoint = rec.get("checkpoint") or {}
@@ -587,6 +580,17 @@ def _resume_or_fail_entity_run(rec: Dict[str, Any]) -> int:
         resumer = _RESUMERS.get(kind)
         if resumer is not None:
             try:
+                # The record says running but the process is gone: say so
+                # before relaunching. The launchers' resume accepts a stopped
+                # or failed run only (a live one must never be relaunched on
+                # top of itself), and running -> failed -> running is what
+                # the transition table allows; the flow resumer moves the
+                # record back to running itself.
+                from common import entity_runs
+                entity_runs.update(run_id, {
+                    "status": "failed", "finished_at": entity_runs.utc_now_iso(),
+                    "error": "Run process stopped without finalizing; resuming from its checkpoint.",
+                }, notify=False)
                 resumer(rec)
                 log.warning(
                     "watchdog resumed %s run %s from its checkpoint (attempt %d)",

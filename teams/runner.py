@@ -558,51 +558,57 @@ def run_team(
     driver = _driver_for(team)
 
     try:
-        for round_no in range(resume_round + 1, max_rounds + 1):
-            _check_between_rounds(run.team_run_id, started, wall_cap, spend, team, ws_name)
-            _publish(run.team_run_id, {"type": "round_start", "round": round_no})
+        try:
+            for round_no in range(resume_round + 1, max_rounds + 1):
+                _check_between_rounds(run.team_run_id, started, wall_cap, spend, team, ws_name)
+                _publish(run.team_run_id, {"type": "round_start", "round": round_no})
 
-            round_cost, finished, answer = driver(
-                team=team, run=run, board=board, goal=goal, round_no=round_no,
-                workspace=ws_path, task_id=task_id, session_id=session_id,
-                state=state, member_in_process=member_in_process,
-            )
-            spend = round(spend + round_cost, 6)
-            run.rounds_done = round_no
-            run.total_cost = spend
-            store.update_progress(
-                run.team_run_id, rounds_done=run.rounds_done,
-                total_cost=run.total_cost,
-            )
-            # Written once the round has fully finished — see _run_turns and
-            # _resume_turn for what a round that died before reaching here
-            # means for the resume that follows it.
-            entity_runs.save_checkpoint(run.team_run_id, {
-                "round": round_no, "state": state, "spend": spend,
-                "final_answer": final_answer,
-                "board_seq": board.messages[-1].seq if board.messages else 0,
-                "updated_at": utc_iso(),
-            })
+                round_cost, finished, answer = driver(
+                    team=team, run=run, board=board, goal=goal, round_no=round_no,
+                    workspace=ws_path, task_id=task_id, session_id=session_id,
+                    state=state, member_in_process=member_in_process,
+                )
+                spend = round(spend + round_cost, 6)
+                run.rounds_done = round_no
+                run.total_cost = spend
+                store.update_progress(
+                    run.team_run_id, rounds_done=run.rounds_done,
+                    total_cost=run.total_cost,
+                )
+                # Written once the round has fully finished — see _run_turns and
+                # _resume_turn for what a round that died before reaching here
+                # means for the resume that follows it.
+                entity_runs.save_checkpoint(run.team_run_id, {
+                    "round": round_no, "state": state, "spend": spend,
+                    "final_answer": final_answer,
+                    "board_seq": board.messages[-1].seq if board.messages else 0,
+                    "updated_at": utc_iso(),
+                })
 
-            # A stop that landed mid-round already cut the turns short; ending
-            # here keeps a half-finished round from being read as a result.
-            if control.is_stopped(run.team_run_id):
-                raise TeamStopped("stopped", "stopped by request")
-            if finished:
-                final_answer = answer
-                raise TeamStopped("goal_met", "the team reported the goal met")
+                # A stop that landed mid-round already cut the turns short; ending
+                # here keeps a half-finished round from being read as a result.
+                if control.is_stopped(run.team_run_id):
+                    raise TeamStopped("stopped", "stopped by request")
+                if finished:
+                    final_answer = answer
+                    raise TeamStopped("goal_met", "the team reported the goal met")
 
-        raise TeamStopped("max_rounds", f"reached the cap of {max_rounds} rounds")
+            raise TeamStopped("max_rounds", f"reached the cap of {max_rounds} rounds")
 
-    except TeamStopped as e:
-        run.stop_reason = e.reason
-        run.status = "stopped" if e.reason == "stopped" else "completed"
-        log.info("team run %s finished: %s (%s)", run.team_run_id, e.reason, e.detail)
-    except Exception as e:  # noqa: BLE001
-        log.exception("team run failed")
-        run.status = "failed"
-        run.stop_reason = "error"
-        run.error = f"{type(e).__name__}: {e}"
+        except TeamStopped as e:
+            run.stop_reason = e.reason
+            run.status = "stopped" if e.reason == "stopped" else "completed"
+            log.info("team run %s finished: %s (%s)", run.team_run_id, e.reason, e.detail)
+        except Exception as e:  # noqa: BLE001
+            log.exception("team run failed")
+            run.status = "failed"
+            run.stop_reason = "error"
+            run.error = f"{type(e).__name__}: {e}"
+    finally:
+        # Whatever ends the rounds, the beat must not outlive the run: a
+        # lingering thread would keep a finished run looking alive.
+        if own_heartbeat is not None:
+            own_heartbeat.stop()
 
     # One answer, not a transcript — unless the team was stopped mid-flight, in
     # which case another paid call to summarise an interrupted run is not what
@@ -627,8 +633,6 @@ def run_team(
     store.save_run(run)
     _finalize_task(run)
     control.release(run.team_run_id)
-    if own_heartbeat is not None:
-        own_heartbeat.stop()
     _publish(run.team_run_id, {"type": "team_done", **run.to_dict()})
     return run
 

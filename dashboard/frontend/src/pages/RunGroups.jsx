@@ -64,17 +64,17 @@ function KindBadge({ kind }) {
   );
 }
 
-/** The owning record's own page, when it has one. A loop's "detail" is the
- * Loops page itself (there is no per-run route for one), so it links there
- * rather than to nothing. */
+/** The owning record's own page, opened on this run: every entity page takes
+ * the run in its ?run= parameter (the loops page also names the loop with
+ * ?loop=). */
 function entityLink(group) {
   switch (group.kind) {
     case 'flow':
-      return group.parent_id ? `/flows/${group.parent_id}` : null;
+      return group.parent_id ? `/flows/${group.parent_id}?run=${group.id}` : null;
     case 'team':
-      return group.parent_id ? `/teams/${group.parent_id}` : null;
+      return group.parent_id ? `/teams/${group.parent_id}?run=${group.id}` : null;
     case 'loop':
-      return '/loops';
+      return group.parent_id ? `/loops?loop=${group.parent_id}&run=${group.id}` : '/loops';
     case 'container':
       return `/tasks/${group.id}`;
     case 'scenario':

@@ -3,7 +3,7 @@ import {
   Repeat, Plus, Play, Square, Trash2, Loader, Save, AlertTriangle, X,
   ChevronDown, ChevronRight, Target, Gauge, DollarSign, ExternalLink,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   getLoops, createLoop, getLoop, updateLoop, deleteLoop, estimateLoop,
   startLoop, getLoopRuns, getLoopRun, getLoopIterations, stopLoopRun, resumeLoopRun,
@@ -174,6 +174,10 @@ export default function Loops() {
   const [loops, setLoops] = useState([]);
   const [flows, setFlows] = useState([]);
   const [agents, setAgents] = useState([]);
+  // ?loop=<loop_id>&run=<loop_run_id> opens one run in particular: the owner
+  // chip on a view, a run group, a link someone pasted. Written back when the
+  // user picks a loop or a run here, so the address stays shareable.
+  const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState(null);
   const [draft, setDraft] = useState(null);
   const [mode, setMode] = useState('watch');        // 'setup' | 'watch'
@@ -209,11 +213,13 @@ export default function Loops() {
 
   useEffect(() => { loadLoops(); }, [loadLoops]);
 
-  const loadRun = async (loopRunId) => {
+  const loadRun = async (loopRunId, loopId) => {
     try {
       const { data } = await getLoopRun(loopRunId);
       setRun(data);
       setIterations(data.iterations || []);
+      const next = { loop: loopId || data.loop_id || selectedRef.current?.loop_id, run: loopRunId };
+      setParams(Object.fromEntries(Object.entries(next).filter(([, v]) => v)), { replace: true });
     } catch {
       setMessage(t('loops.loadRunFailed'));
     }
@@ -225,7 +231,7 @@ export default function Loops() {
   const selectedRef = useRef(null);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
-  const selectLoop = async (id) => {
+  const selectLoop = async (id, preferredRunId) => {
     setMessage(''); setEstimate(null); setRun(null); setIterations([]);
     try {
       const [{ data: loop }, { data: hist }] = await Promise.all([getLoop(id), getLoopRuns(id)]);
@@ -234,11 +240,27 @@ export default function Loops() {
       setGoal(loop.description || '');
       setRuns(hist.runs || []);
       setMode(loop.flow_id ? 'watch' : 'setup');
-      if (hist.runs?.length) loadRun(hist.runs[0].loop_run_id);
+      const history = hist.runs || [];
+      const wanted = preferredRunId && history.some((r) => r.loop_run_id === preferredRunId)
+        ? preferredRunId : history[0]?.loop_run_id;
+      if (wanted) loadRun(wanted, id);
+      else setParams({ loop: id }, { replace: true });
     } catch {
       setMessage(t('loops.loadLoopFailed'));
     }
   };
+
+  // Open the loop (and run) the address names, once the catalogue is here.
+  const openedFromUrl = useRef(false);
+  useEffect(() => {
+    if (openedFromUrl.current) return;
+    const loopId = params.get('loop');
+    if (!loopId || !loops.length) return;
+    if (!loops.some((l) => l.loop_id === loopId)) return;
+    openedFromUrl.current = true;
+    selectLoop(loopId, params.get('run'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loops]);
 
   // Iterations arrive on the loop channel; polling is the fallback so a dropped
   // stream degrades to a slower page rather than a frozen one.
@@ -337,8 +359,9 @@ export default function Loops() {
     } catch { /* already finished */ }
   };
 
-  // A loop runs inside the backend process, so a restart ends it mid-run. The
-  // stored position is what makes picking it up cheaper than starting over; a
+  // A loop is a process of its own; when it dies the watchdog relaunches it,
+  // and a person can too. The stored position is what makes picking it up
+  // cheaper than starting over; a
   // run that never finished an iteration has nothing to resume from. A
   // completed run has nothing left to do, so only a failed or a deliberately
   // stopped run is offered.

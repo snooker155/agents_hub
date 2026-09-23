@@ -489,7 +489,7 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
     """
     try:
         from loops import store
-        from loops.runner import estimate_cost, run_loop
+        from loops.runner import estimate_cost
 
         loop = store.get_loop(loop_id)
         if not loop:
@@ -528,26 +528,14 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
 
         run_ws = loop.workspace or active_ws
 
-        def _worker(mark_ready: Callable[[], None]) -> None:
-            run_loop(loop_id, goal=request, workspace=run_ws,
-                     on_iteration=lambda _i: mark_ready())
-
-        def _poll() -> Optional[Dict[str, Any]]:
-            runs = store.list_runs(loop_id, limit=1)
-            return runs[0].to_dict() if runs else None
-
-        record, error = _start_background_run(
-            _worker, _poll, thread_name=f"loop-{loop_id}")
-
-        if record is None:
-            if error:
-                return _json_err(f"Failed to start the loop run: {error}",
-                                 code="start_failed", extra={"loop_id": loop_id})
-            return _json_ok({
-                "message": (f"Loop '{loop.name}' is starting. Check back with "
-                            "get_loop_run_tool."),
-                "loop_id": loop_id, "status": "pending",
-            })
+        # The launch is the shared envelope (loops/launcher.py): the record is
+        # written and the process spawned or queued before this returns.
+        from loops.launcher import start_loop_run
+        try:
+            record = start_loop_run(loop_id, request, workspace=run_ws).to_dict()
+        except Exception as e:  # noqa: BLE001 - reported to the caller, not raised
+            return _json_err(f"Failed to start the loop run: {type(e).__name__}: {e}",
+                             code="start_failed", extra={"loop_id": loop_id})
 
         record_entity("loop", loop_id, "viewed", loop.name)
         payload = _started("loop", loop.name, record, "loop_run_id", "get_loop_run_tool")

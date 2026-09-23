@@ -53,8 +53,15 @@ def _write_run(kind: str, run_id: str, *, entity_id: str = "def-1", task_id="t1"
 def test_a_dead_team_run_with_a_checkpoint_is_resumed(monkeypatch):
     _write_run("team", "team-run-1", checkpoint={"rounds_done": 1})
     calls = []
-    _stub_module(monkeypatch, "teams.launcher",
-                 resume_team_run=lambda run_id, **kw: calls.append((run_id, kw)))
+    # A real resumer relaunches the process, whose launch moves the record
+    # back to running (runtime.entity_launch.launch_prepared); the stub does
+    # that part by hand. Before the relaunch the watchdog closes the dead
+    # run as failed, the only legal way from running back to running.
+    def _resume(run_id, **kw):
+        calls.append((run_id, kw))
+        assert entity_runs.get(run_id)["status"] == "failed"
+        entity_runs.mark_running(run_id, pid=1, host="h")
+    _stub_module(monkeypatch, "teams.launcher", resume_team_run=_resume)
 
     assert run_watchdog._sweep_entity_runs(kinds=("team",)) == 1
     assert calls == [("team-run-1", {"auto": True})]

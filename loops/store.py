@@ -224,6 +224,11 @@ def save_run(run: LoopRun) -> LoopRun:
     rec = run.to_dict()
     rec.pop("position", None)
     rec["checkpoint"] = run.position or {}
+    # The launcher and the heartbeat own where the run lives; a runner that
+    # does not know them must not blank them (a merge lays None over a value).
+    for key in ("host", "heartbeat_at", "parent_run_id"):
+        if rec.get(key) is None:
+            rec.pop(key, None)
     _RUNS.upsert(rec, merge=True)
     return run
 

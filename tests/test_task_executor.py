@@ -169,26 +169,18 @@ def test_assign_executor_to_task_fixes_up_a_stale_agent_claim_for_team(monkeypat
 def test_assign_executor_to_task_dispatches_loop(monkeypatch):
     started = []
 
-    def fake_run_loop(loop_id, *, goal="", workspace=None, task_id=None, **kw):
+    def fake_start_loop_run(loop_id, goal="", *, workspace=None, task_id=None, **kw):
         started.append((loop_id, task_id))
+        return SimpleNamespace(loop_run_id="loop-run-1", task_id=task_id)
 
-    import loops.runner as loops_runner
-    monkeypatch.setattr(loops_runner, "run_loop", fake_run_loop)
-
-    fake_run = SimpleNamespace(loop_run_id="loop-run-1", task_id=None)
-
-    def fake_list_runs(loop_id, limit=1):
-        return [fake_run]
-
-    import loops.store as loops_store
-    monkeypatch.setattr(loops_store, "list_runs", fake_list_runs)
+    import loops.launcher as loops_launcher
+    monkeypatch.setattr(loops_launcher, "start_loop_run", fake_start_loop_run)
 
     t = ts.create_task("work")
-    fake_run.task_id = str(t.id)
-
     result = assign_executor_to_task(t.id, Executor(kind="loop", id="loop-a"), None,
                                      task_to_dict=task_to_dict)
 
+    assert started == [("loop-a", str(t.id))]
     assert result["run_id"] == "loop-run-1"
     updated = ts.get_task(t.id)
     assert updated.executor == Executor(kind="loop", id="loop-a")

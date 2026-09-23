@@ -16,9 +16,8 @@ scenario tick, every delegation is a run, and each carries:
 
 ## Entity runs
 
-Flows, teams and scenarios run as processes of their own, a loop on a thread of
-the backend that launches a flow process per iteration, and all four share one
-lifecycle. An entity run is one execution of any of these four kinds, recorded in
+Flows, loops, teams and scenarios run as processes of their own, spawned
+where the request landed or by a worker, and all four share one lifecycle. An entity run is one execution of any of these four kinds, recorded in
 the `entity_runs` table alongside agent runs in the `runs` table.
 
 Entity runs share one status vocabulary:

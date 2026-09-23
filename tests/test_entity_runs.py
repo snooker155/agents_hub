@@ -294,21 +294,18 @@ def loop(one_flow):
 def loop_runner(monkeypatch, loop):
     from loops import store
     from loops.models import LoopRun
-    import loops.runner as runner
+    import loops.launcher as launcher
 
     started = {}
 
-    def _fake_run(loop_id, *, goal="", workspace=None, task_id=None, seed=None,
-                  on_iteration=None):
-        run = store.save_run(LoopRun(loop_id=loop_id, goal=goal, status="running",
+    def _fake_start(loop_id, goal="", *, workspace=None, **kwargs):
+        run = store.save_run(LoopRun(loop_id=loop_id, goal=goal, status="pending",
                                      workspace=workspace))
         started["run"] = run
         started["goal"] = goal
-        if on_iteration:
-            on_iteration(None)
         return run
 
-    monkeypatch.setattr(runner, "run_loop", _fake_run)
+    monkeypatch.setattr(launcher, "start_loop_run", _fake_start)
     return started
 
 

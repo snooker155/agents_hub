@@ -223,7 +223,16 @@ export default function TeamDetails() {
   const { selectedWorkspace } = useWorkspace();
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') || 'work';
-  const setTab = (next) => setParams(next === 'work' ? {} : { tab: next }, { replace: true });
+  // ?run=<team_run_id> opens one run in particular (the owner chip on a view,
+  // a run group); it survives a tab change and is written back when the user
+  // picks a run here, so the address stays shareable.
+  const setTab = (next) => {
+    const nextParams = {};
+    if (next !== 'work') nextParams.tab = next;
+    const runId = params.get('run');
+    if (runId) nextParams.run = runId;
+    setParams(nextParams, { replace: true });
+  };
   const chat = useChatColumn(false);
 
   const [team, setTeam] = useState(null);
@@ -266,10 +275,15 @@ export default function TeamDetails() {
       const { data } = await getTeamRun(teamRunId);
       setRun(data);
       setMessages(data.messages || []);
+      setParams((prev) => {
+        const next = Object.fromEntries(prev.entries());
+        next.run = teamRunId;
+        return next;
+      }, { replace: true });
     } catch {
       setMessage(t('teamDetails.loadRunFailed'));
     }
-  }, [t]);
+  }, [t, setParams]);
 
   const loadRuns = useCallback(async () => {
     try {
@@ -287,11 +301,15 @@ export default function TeamDetails() {
         const { data } = await getTeam(teamId);
         setTeam(data); setDraft(data);
         const history = await loadRuns();
-        if (history.length) loadRun(history[0].team_run_id);
+        const wanted = params.get('run');
+        const first = wanted && history.some((r) => r.team_run_id === wanted)
+          ? wanted : history[0]?.team_run_id;
+        if (first) loadRun(first);
       } catch {
         setMessage(t('teamDetails.loadTeamFailed'));
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId, loadRuns, loadRun, t]);
 
   // The board arrives live; polling is the fallback so a dropped stream slows
