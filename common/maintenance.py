@@ -67,8 +67,11 @@ def prune_old_runs(retention_days: int) -> int:
             lf = r["log_file"]
             if lf:
                 try:
-                    from pathlib import Path
-                    Path(lf).unlink(missing_ok=True)
+                    # Local file and any mirrored copy (common/blobs.py): a
+                    # pruned run's log must not linger in the object store
+                    # either.
+                    from common import blobs
+                    blobs.delete(blobs.rel(lf))
                 except Exception:
                     pass
             removed += 1
@@ -91,6 +94,11 @@ def prune_orphan_files() -> int:
                 try:
                     f.unlink()
                     removed += 1
+                except Exception:
+                    pass
+                try:
+                    from common import blobs
+                    blobs.delete(blobs.rel(f))
                 except Exception:
                     pass
 

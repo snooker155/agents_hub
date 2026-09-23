@@ -23,13 +23,38 @@ Two feeds keep it filled, and each event passes through exactly one of them:
 
 Anything not on those paths simply has no live snapshot, which every reader
 already has to handle: a run that finished before the page opened never has one.
+
+Cross-replica mirror (optional)
+--------------------------------
+Everything above is this one process's memory, which is fine on the default
+single-replica deployment but leaves a gap once ``docker compose --scale
+backend=N`` is in play (see docs/scaling.md): a run relayed from a subprocess
+(``record_run_event``) can just as easily be watched from a browser tab
+pinned to a *different* replica than the one actually running it, and that
+replica's own ``_turns`` dict has never heard of it.
+
+When the cross-replica broker bridge is on (``common/broker_bridge.py``,
+``AGENTS_HUB_BROKER_URL`` set), every turn that has a ``run_id`` is also
+mirrored into Redis as it is folded (``_mirror_write``, throttled to a few
+writes a second per run — a token stream folds an event every few
+milliseconds, and mirroring each one would flood Redis for no visible gain
+over the throttled version), keyed by that run id with a TTL of
+``KEEP_FINISHED_SECONDS`` plus a margin so a mirrored snapshot does not
+outlive what this module itself would still consider current. :func:`by_run`
+stays exactly as it always was — in-process only, so its behaviour is
+unchanged with the bridge off or on — and :func:`by_run_async` is the same
+lookup with a Redis fallback for when this process's own memory has
+nothing, for callers able to await it. Bridge off, or no mirror for that run
+yet: both simply behave like :func:`by_run` alone.
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
+import json
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 #: Streamed answer text kept per run. A live tail, not the archive — the run log
 #: holds the whole thing.
@@ -136,6 +161,8 @@ def record(turn_id: str, event: Dict[str, Any]) -> None:
         if turn is None:
             return
         _apply(turn, event)
+        snapshot = _public(turn)
+    _mirror_write(snapshot)
 
 
 def finish(turn_id: str, *, status: str = "finished", **fields) -> None:
@@ -148,6 +175,12 @@ def finish(turn_id: str, *, status: str = "finished", **fields) -> None:
         for key, value in fields.items():
             if value is not None:
                 turn[key] = value
+        snapshot = _public(turn)
+    # Unthrottled: finish() is called once per turn, not at token-stream
+    # frequency, and the final status/error/usage is worth a write of its
+    # own rather than risking it land inside the throttle window and never
+    # get mirrored before the in-memory turn itself is swept away.
+    _mirror_write(snapshot, force=True)
 
 
 # ── the relay feed (runs in another process) ─────────────────────────────────
@@ -176,6 +209,8 @@ def record_run_event(event: Dict[str, Any], *, session_id: Optional[str] = None)
         elif session_id and not turn.get("session_id"):
             turn["session_id"] = session_id
         _apply(turn, event)
+        snapshot = _public(turn)
+    _mirror_write(snapshot)
 
 
 # ── folding ──────────────────────────────────────────────────────────────────
@@ -252,6 +287,82 @@ def _apply(turn: Dict[str, Any], event: Dict[str, Any]) -> None:
         turn["finished_at"] = _now()
 
 
+# ── cross-replica mirror (optional) ─────────────────────────────────────────
+# See the module docstring. Every write below is a complete no-op unless the
+# broker bridge is on: get_redis() returns None and nothing else runs.
+
+#: Extra seconds past KEEP_FINISHED_SECONDS a mirrored snapshot is kept, so a
+#: read racing the in-process sweep never finds the mirror gone first.
+MIRROR_TTL_MARGIN = 30.0
+#: Throttle: about 3 writes a second per run, independent of how often
+#: record()/record_run_event() themselves are called.
+MIRROR_MIN_INTERVAL = 0.34
+
+_mirror_last: Dict[str, float] = {}
+_pending_mirrors: Set[asyncio.Task] = set()
+
+
+def _mirror_key(run_id: str) -> str:
+    return f"agents_hub:live_run:{run_id}"
+
+
+def _schedule(coro) -> None:
+    """Run a fire-and-forget coroutine on the running event loop, or drop it
+    if there is none. A mirror write must never be why a caller crashes or
+    blocks: record_run_event(), in particular, is reached from a plain HTTP
+    route handler, which does have a loop, but that must not be assumed."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(coro)
+    # Held onto until it finishes so it is not garbage-collected mid-flight —
+    # the same asyncio footgun common/broker_bridge.py guards against for
+    # its own fire-and-forget tasks.
+    _pending_mirrors.add(task)
+    task.add_done_callback(_pending_mirrors.discard)
+
+
+def _mirror_write(turn: Optional[Dict[str, Any]], *, force: bool = False) -> None:
+    """Mirror ``turn`` (already the public, lock-free copy) into Redis, keyed
+    by its run id, when the bridge is on and (unless ``force``) it has not
+    been mirrored in the last MIRROR_MIN_INTERVAL seconds. A turn with no
+    run_id yet (a chat turn never bound to a run — see _bind_run) has
+    nothing to key it by and is silently skipped: this mirror only ever
+    promises cross-replica visibility for run ids, the same scope
+    :func:`by_run_async` reads back."""
+    if not turn:
+        return
+    run_id = turn.get("run_id")
+    if not run_id:
+        return
+    try:
+        from common.broker_bridge import get_redis
+        redis_conn = get_redis()
+    except Exception:
+        return
+    if redis_conn is None:
+        return
+    now = _now()
+    if not force and now - _mirror_last.get(run_id, 0.0) < MIRROR_MIN_INTERVAL:
+        return
+    _mirror_last[run_id] = now
+    try:
+        payload = json.dumps(turn, default=str)
+    except (TypeError, ValueError):
+        return
+    ttl = int(KEEP_FINISHED_SECONDS + MIRROR_TTL_MARGIN)
+    key = _mirror_key(run_id)
+
+    async def _write() -> None:
+        try:
+            await redis_conn.set(key, payload, ex=ttl)
+        except Exception:
+            pass
+
+    _schedule(_write())
+
+
 # ── reads ────────────────────────────────────────────────────────────────────
 
 def _public(turn: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -261,8 +372,42 @@ def _public(turn: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 
 def by_run(run_id: str) -> Optional[Dict[str, Any]]:
+    """In-process only, unaffected by the bridge either way — see
+    :func:`by_run_async` for the cross-replica fallback."""
     with _lock:
         return _public(_turns.get(_by_run.get(str(run_id), ""), None))
+
+
+async def by_run_async(run_id: str) -> Optional[Dict[str, Any]]:
+    """Like :func:`by_run`, but when this process has never heard of the run
+    (nothing in ``_turns``), also asks Redis for a mirrored snapshot instead
+    of giving up — the run may be executing on, or have just finished on, a
+    different replica. Callers must be able to await it, which the plain
+    in-process getters deliberately are not (see the module docstring for
+    why the mirror write is necessarily async while by_run() stays sync)."""
+    local = by_run(run_id)
+    if local is not None:
+        return local
+    try:
+        from common.broker_bridge import get_redis
+        redis_conn = get_redis()
+    except Exception:
+        return None
+    if redis_conn is None:
+        return None
+    try:
+        raw = await redis_conn.get(_mirror_key(str(run_id)))
+    except Exception:
+        return None
+    if not raw:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def by_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
@@ -283,7 +428,8 @@ def reset() -> None:
         _turns.clear()
         _by_run.clear()
         _by_conversation.clear()
+    _mirror_last.clear()
 
 
-__all__ = ["start_turn", "record", "finish", "record_run_event", "by_run",
+__all__ = ["start_turn", "record", "finish", "record_run_event", "by_run", "by_run_async",
            "by_conversation", "active", "reset", "MAX_TEXT", "KEEP_FINISHED_SECONDS"]

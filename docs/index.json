@@ -61,7 +61,8 @@
         "projects",
         "tasks",
         "nodes",
-        "workers"
+        "workers",
+        "backup"
       ],
       "headings": [
         "Two ways it reaches the service",
@@ -247,7 +248,9 @@
         "models",
         "service-health",
         "settings",
-        "troubleshooting"
+        "troubleshooting",
+        "deployment",
+        "backup"
       ],
       "headings": [
         "Prerequisites",
@@ -499,6 +502,8 @@
       "headings": [
         "The snapshot",
         "Reading it correctly",
+        "Probes and metrics",
+        "Exporting runs as spans",
         "The usual diagnoses",
         "The Service Agent"
       ]
@@ -753,7 +758,7 @@
       "id": "scaling",
       "title": "Running more than one backend",
       "surface": "Installation",
-      "summary": "docker compose --scale backend=N needs the cross-replica broker bridge (AGENTS_HUB_BROKER_URL) or SSE clients pinned to another replica stop seeing live updates; AGENTS_HUB_DATABASE_URL puts the database in Postgres (ah db migrate moves an existing one); the default single replica on SQLite needs none of this.",
+      "summary": "docker compose --scale backend=N needs the cross-replica broker bridge (AGENTS_HUB_BROKER_URL, a Redis Stream that also lets a browser reconnecting to another replica catch up by Last-Event-ID) or SSE clients pinned to another replica stop seeing live updates; AGENTS_HUB_DATABASE_URL puts the database in Postgres (ah db migrate moves an existing one); AGENTS_HUB_ROLE=api plus ah worker runs agents on other hosts (workers.md); the default single replica on SQLite needs none of this.",
       "related": [
         "installation",
         "service-health",
@@ -762,13 +767,17 @@
         "scheduling",
         "cli",
         "containers",
-        "workers"
+        "workers",
+        "storage",
+        "deployment",
+        "backup"
       ],
       "headings": [
         "Per replica vs. shared",
         "The broker bridge",
         "Running it",
         "Postgres",
+        "Workers on other hosts",
         "Limits",
         "Staying on one replica (the default)"
       ]
@@ -828,7 +837,9 @@
         "containers",
         "notifications",
         "scheduling",
-        "cli"
+        "cli",
+        "storage",
+        "deployment"
       ],
       "headings": [
         "Roles",
@@ -839,6 +850,57 @@
         "Outbox",
         "Containers across hosts",
         "What still needs one host"
+      ]
+    },
+    {
+      "id": "storage",
+      "title": "Files and the object store",
+      "summary": "AGENTS_HUB_BLOB_URL (an s3://bucket/prefix, optionally with AGENTS_HUB_BLOB_ENDPOINT for MinIO) mirrors run logs, node logs, flow logs and view assets into an object store via common/blobs.py, so a backend replica or worker on another host can read a file it did not write; empty (default) keeps every read and write local, exactly as before.",
+      "surface": "Installation",
+      "related": [
+        "scaling",
+        "workers"
+      ],
+      "headings": [
+        "What lives where",
+        "The setting",
+        "What is mirrored, and when",
+        "What still needs a shared mount"
+      ]
+    },
+    {
+      "id": "deployment",
+      "title": "Deploying for high availability",
+      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store.",
+      "surface": "Installation",
+      "related": [
+        "scaling",
+        "workers",
+        "installation",
+        "storage"
+      ],
+      "headings": [
+        "The compose ha profile",
+        "The Helm chart",
+        "The shared-files caveat"
+      ]
+    },
+    {
+      "id": "backup",
+      "title": "Backup and recovery",
+      "surface": "Installation",
+      "summary": "ah db backup writes one archive (a self-contained SQLite file plus, by default, the state directories beside it); ah db restore loads it back; ah db verify checks it without touching the live database.",
+      "related": [
+        "scaling",
+        "workers",
+        "installation",
+        "cli"
+      ],
+      "headings": [
+        "What the archive holds",
+        "The three commands",
+        "Losing the host",
+        "How often"
       ]
     }
   ]

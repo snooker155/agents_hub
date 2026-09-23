@@ -52,6 +52,7 @@ from routes import run_groups as run_groups_router
 from routes import run_state as run_state_router
 from routes import settings as settings_router
 from routes import models as models_router
+from routes import ops as ops_router
 
 # Settings: read at startup for the optional-feature checks below. The auth
 # guard reads the live settings object through common.identity instead, so a
@@ -469,6 +470,10 @@ app.include_router(stream.router)
 
 # Health domain: liveness, store counts, background-service status, state sizes
 app.include_router(health.router)
+
+# Ops domain: liveness, readiness and Prometheus metrics — /livez, /readyz,
+# /metrics, unprefixed and open in every AUTH_MODE (see routes/ops.py).
+app.include_router(ops_router.router)
 
 # Views domain: rich agent-generated views + their assets and per-user state
 app.include_router(views.router)

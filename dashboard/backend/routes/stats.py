@@ -86,9 +86,20 @@ async def list_runs(workspace: Optional[str] = None):
     return runs
 
 
-@router.get("/api/logs/{run_id}")
-async def get_logs(run_id: str):
-    # Prefer explicit log_file path from the run state if available
+def _read_run_log_text(run_id: str) -> Optional[str]:
+    """Best-effort text of a run's log, wherever it lives.
+
+    Tries the run record's own ``log_file``, the canonical ``run_logs/``
+    location and each workspace's ``.logs/``, in that order — the same search
+    ``get_logs`` always did. Each local check now falls back to the blob store
+    (``common/blobs.py``) before moving on, so a run whose process ran on a
+    different worker or backend replica (Postgres, docs/workers.md) is still
+    served: its log was mirrored there even though this host never wrote it.
+    Returns None when the log is not found anywhere.
+    """
+    from common import blobs
+
+    # Prefer explicit log_file path from the run state if available.
     try:
         run = getattr(run_manager, "get_run_by_id", None)
         run_rec = run(run_id) if callable(run) else None
@@ -97,19 +108,31 @@ async def get_logs(run_id: str):
 
     if isinstance(run_rec, dict):
         log_path = run_rec.get("log_file")
-        if isinstance(log_path, str) and Path(log_path).exists():
-            return {"logs": Path(log_path).read_text(encoding="utf-8")}
+        if isinstance(log_path, str) and log_path:
+            p = Path(log_path)
+            if p.exists():
+                return p.read_text(encoding="utf-8")
+            try:
+                text = blobs.read_text(blobs.rel(p))
+            except Exception:
+                text = None
+            if text is not None:
+                return text
 
     # Fallback search: state logs and workspaces
     log_name = f"agent_run_{run_id}.log"
 
     state_logs = AGENTS_HUB_ROOT / "logs" / log_name
     if state_logs.exists():
-        return {"logs": state_logs.read_text(encoding="utf-8")}
+        return state_logs.read_text(encoding="utf-8")
 
-    run_logs_file = AGENTS_HUB_ROOT / "run_logs" / log_name
+    run_logs_rel = f"run_logs/{log_name}"
+    run_logs_file = AGENTS_HUB_ROOT / run_logs_rel
     if run_logs_file.exists():
-        return {"logs": run_logs_file.read_text(encoding="utf-8")}
+        return run_logs_file.read_text(encoding="utf-8")
+    text = blobs.read_text(run_logs_rel)
+    if text is not None:
+        return text
 
     from workspace import create_workspace_folder
     for t in tasks_service.list_tasks():
@@ -119,11 +142,19 @@ async def get_logs(run_id: str):
                 root = create_workspace_folder(str(t.workspace))
                 ws_logs = root / ".logs" / log_name
                 if ws_logs.exists():
-                    return {"logs": ws_logs.read_text(encoding="utf-8")}
+                    return ws_logs.read_text(encoding="utf-8")
             except Exception:
                 continue
 
-    raise HTTPException(status_code=404, detail="Log file not found")
+    return None
+
+
+@router.get("/api/logs/{run_id}")
+async def get_logs(run_id: str):
+    text = _read_run_log_text(run_id)
+    if text is None:
+        raise HTTPException(status_code=404, detail="Log file not found")
+    return {"logs": text}
 
 
 @router.get("/api/orchestrator/settings")

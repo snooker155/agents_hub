@@ -111,17 +111,46 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
     flow_logs/<flow_id>.json (older runs), then sorts by timestamp so the merged
     stream stays chronological. Per-run separation is preserved by each event's
     run_group tag, which the dashboard groups on.
+
+    A per-run file this host does not have locally (its run finished on a
+    different worker or backend replica, common/blobs.py) is fetched from the
+    blob store instead of silently skipped: the store is listed by the
+    ``flow_logs/<flow_id>/`` prefix and any file not already found on disk is
+    downloaded before it is read.
     """
+    from common import blobs
+
     events: List[Dict[str, Any]] = []
     run_dir = FLOW_LOGS_DIR / str(flow_id)
+    local_names = set()
     if run_dir.is_dir():
         for f in run_dir.glob("*.json"):
+            local_names.add(f.name)
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 if isinstance(data, list):
                     events.extend(data)
             except Exception:
                 continue
+
+    try:
+        remote_keys = blobs.list(f"flow_logs/{flow_id}/")
+    except Exception:
+        remote_keys = []
+    for key in remote_keys:
+        name = key.rsplit("/", 1)[-1]
+        if not name.endswith(".json") or name in local_names:
+            continue
+        path = blobs.ensure_local(key)
+        if path is None:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                events.extend(data)
+        except Exception:
+            continue
+
     legacy = FLOW_LOGS_DIR / f"{flow_id}.json"
     if legacy.exists():
         try:
@@ -320,10 +349,22 @@ def close_flow_run(
     exit_code: int = 0,
     error: Optional[str] = None,
 ) -> None:
-    """Finalize a flow-run record (completed / failed / stopped)."""
-    update_flow_run(flow_run_id, {
+    """Finalize a flow-run record (completed / failed / stopped).
+
+    Also mirrors the run's log file (best-effort), so a backend replica or
+    worker on another host can serve it once the run is done, even though it
+    never ran the orchestrator subprocess itself (common/blobs.py).
+    """
+    rec = update_flow_run(flow_run_id, {
         "status": status,
         "exit_code": exit_code,
         "error": error,
         "finished_at": _utc_now_iso(),
     })
+    log_file = rec.get("log_file") if rec else None
+    if log_file:
+        try:
+            from common import blobs
+            blobs.mirror(blobs.rel(log_file))
+        except Exception:
+            pass

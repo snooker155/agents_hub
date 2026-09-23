@@ -1,0 +1,120 @@
+# Default values for the agents-hub chart. See README.md for the install
+# commands and for what each of these blocks assumes is already there
+# (Postgres, Redis, an S3 compatible bucket): this chart runs none of them
+# itself.
+
+# The backend and worker images are the same one this repository's
+# Dockerfile builds (target: backend); only the command and AGENTS_HUB_ROLE
+# differ between the two Deployments below.
+image:
+  repository: agents-hub/backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+frontend:
+  # dashboard/frontend/Dockerfile, target: nginx.
+  image:
+    repository: agents-hub/frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
+
+backend:
+  replicas: 2
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+  # /livez and /readyz are landing in dashboard/backend/main.py alongside this
+  # chart; these probe paths already point at them, matching docs/deployment.md.
+  livenessProbe:
+    path: /livez
+    initialDelaySeconds: 20
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 5
+  readinessProbe:
+    path: /readyz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+worker:
+  replicas: 2
+  resources: {}
+  # A worker pod has no Docker socket to mount: there is no single host
+  # daemon in a cluster, and mounting a node's own socket into a pod is a
+  # privilege escalation most clusters correctly refuse to allow. So a
+  # cluster worker only ever runs agents as local subprocesses.
+  workerModes: "local"
+  workerConcurrency: 4
+
+# Plain (non-secret) environment, applied to the backend, worker and frontend
+# pods via a ConfigMap. Anything provider- or credential-shaped belongs in
+# `secret` below instead.
+env:
+  DEFAULT_PROVIDER: "openai"
+  OPENAI_MODEL: "gpt-5"
+  AGENT_EXECUTION_MODE: "local"
+  ALLOW_ORIGINS: ""
+  # Where a pod keeps .agents_hub/ (run logs, workspaces, view assets, and
+  # SQLite if AGENTS_HUB_DATABASE_URL below is left empty, which is not the
+  # recommended shape for this chart — see the persistence block and
+  # README.md). Pointed at the shared volume's mount path.
+  AGENTS_HUB_ROOT: "/data/agents_hub"
+  BACKEND_SERVERS: "agents-hub-backend:8000"
+
+# Secrets: provider keys, the database URL, the broker URL and the MinIO/S3
+# credentials. Every value here defaults to empty and is rendered into a
+# Kubernetes Secret (templates/secret.yaml); fill them with --set or, better,
+# a values file you do not commit (README.md).
+secret:
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  GOOGLE_API_KEY: ""
+  AGENTS_HUB_API_TOKEN: ""
+  # postgresql://user:pass@host:5432/agents_hub — an external Postgres. This
+  # chart runs no database of its own (docs/scaling.md); point it at a
+  # managed instance or a separately installed chart such as Bitnami's
+  # postgresql.
+  AGENTS_HUB_DATABASE_URL: ""
+  # redis://host:6379/0 — an external Redis for the cross-replica broker
+  # bridge (docs/scaling.md). Same story: no Redis is installed by this
+  # chart.
+  AGENTS_HUB_BROKER_URL: ""
+  # s3://bucket/prefix and the endpoint of an S3 compatible store (MinIO or a
+  # cloud bucket), read by common/blobs.py. Needed once more than one node
+  # runs pods for this release, since the shared PVC below is the only other
+  # way .agents_hub/ files stay visible to every pod.
+  AGENTS_HUB_BLOB_URL: ""
+  AGENTS_HUB_BLOB_ENDPOINT: ""
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""
+
+# Shared state directory (.agents_hub/: run logs, workspaces, view assets,
+# generated Dockerfiles). Every backend and worker pod mounts the same
+# volume at env.AGENTS_HUB_ROOT, so it must support being written from
+# several pods on several nodes at once: ReadWriteMany, from a storage class
+# that actually offers it (NFS, EFS, Filestore, CephFS; the default
+# in-tree/CSI block storage classes on most clouds are ReadWriteOnce and will
+# not schedule a second pod on another node). If AGENTS_HUB_BLOB_URL is set
+# instead, these files move to the object store and this volume is no longer
+# load-bearing for correctness, only for local caches; you can shrink it or
+# turn it off once that migration is complete (README.md).
+persistence:
+  enabled: true
+  storageClassName: ""
+  accessMode: ReadWriteMany
+  size: 20Gi
+
+ingress:
+  enabled: false
+  className: ""
+  host: agents-hub.example.com
+  annotations: {}
+  tls: []

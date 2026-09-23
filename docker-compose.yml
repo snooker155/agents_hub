@@ -1,9 +1,74 @@
+# Shared build and runtime settings for every service built from the backend
+# image (`backend`, `backend-api`, `worker`; see the `ha` profile below).
+# Pulled into one anchor so the three stay in step instead of drifting apart:
+# a change to the Dockerfile target, the bind mount or the docker-socket note
+# only needs to be made once.
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: backend
+  env_file:
+    # Optional so a fresh clone comes up without one; copy .env.example to
+    # .env to supply provider keys.
+    - path: .env
+      required: false
+  volumes:
+    - .:/app
+    # Lets this container drive the host daemon to build agent images and run
+    # agent containers. Drop this line to forbid that outright: with it
+    # mounted, anything running in this container has host-root-equivalent
+    # access to the daemon. A worker with the line dropped still works, as
+    # long as its AGENTS_HUB_WORKER_MODES is "local" (docs/workers.md), so it
+    # never claims a launch that wants a container.
+    - /var/run/docker.sock:/var/run/docker.sock
+    # ---- Named volume for .agents_hub: opt-in only, read this first ----
+    # It is tempting to replace the whole-repo bind mount above with a named
+    # volume for just the state directory, so state does not sit inside the
+    # checkout on the host. Do NOT do this: managers/container_manager.py
+    # bind-mounts .agents_hub/workspaces/<name> (and .agents_hub itself, and
+    # tasks/) into each agent container, and it resolves the host side of
+    # that mount by rebasing the in-container path onto HOST_PROJECT_ROOT
+    # (see the env var below), i.e. it assumes .agents_hub lives at a real
+    # path under the repo checkout on the host. A named volume's data lives
+    # in Docker's own volume storage instead, so that rebased path would not
+    # exist on the host, and every agent container's workspace/state mount
+    # would silently point at an empty directory instead of the real state.
+    # If you still want state off the host checkout, the correct opt-in
+    # change is to also point AGENTS_HUB_ROOT (see common/paths.py) at a host
+    # directory outside the repo and mount that directory here and as
+    # HOST_PROJECT_ROOT's sibling, e.g.:
+    #   environment:
+    #     AGENTS_HUB_ROOT: /data/agents_hub
+    #   volumes:
+    #     - ${AGENTS_HUB_DATA_DIR:-./.agents_hub}:/data/agents_hub
+    # keeping it a bind mount (not a named volume) so the rebasing above
+    # still finds a real host path. Under the `ha` profile, several backend
+    # and worker replicas share this one mount, which is exactly what keeps
+    # them all seeing the same .agents_hub/ (docs/scaling.md's "one host"
+    # limit): the `ha` profile is several processes on one host, not several
+    # hosts, unless AGENTS_HUB_BLOB_URL also moves the files themselves onto
+    # an object store (docs/deployment.md).
+  # The image runs as a non-root user (hub, uid 1000), so it needs to be in
+  # the socket's group to use the mounted /var/run/docker.sock above. Find
+  # the group id as the container sees it: `docker compose run --rm --no-deps
+  # backend ls -ln /var/run/docker.sock` (often 999 or 998 on Linux; on macOS
+  # with Docker Desktop the socket inside the VM is root:root, mode 660, so
+  # DOCKER_GID=0 is required there, verified 2026-09-22) and set DOCKER_GID
+  # in .env if it differs from the default below. Harmless to leave in place
+  # when the socket line above is removed: it just adds an unused
+  # supplementary group.
+  group_add:
+    - "${DOCKER_GID:-999}"
+  working_dir: /app
+  extra_hosts:
+    # So LM Studio / Ollama on the host stay reachable on plain Linux Docker
+    # too, where this alias is not provided for us.
+    - "host.docker.internal:host-gateway"
+
 services:
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: backend
+    <<: *backend
     # No --reload. The repository is bind-mounted below, so a reloader would
     # watch the whole tree, state directories included, and restart the backend
     # on writes it makes itself. `docker compose restart backend` picks up code.
@@ -16,11 +81,6 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
-    env_file:
-      # Optional so a fresh clone comes up without one; copy .env.example to
-      # .env to supply provider keys.
-      - path: .env
-        required: false
     environment:
       PYTHONPATH: /app
       # The host path mounted at /app. Bind mounts for agent containers are
@@ -44,51 +104,6 @@ services:
       AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
-    volumes:
-      - .:/app
-      # Lets this container drive the host daemon to build agent images and run
-      # agent containers. Drop this line to forbid that outright: with it
-      # mounted, anything running in this container has host-root-equivalent
-      # access to the daemon.
-      - /var/run/docker.sock:/var/run/docker.sock
-      # ---- Named volume for .agents_hub: opt-in only, read this first ----
-      # It is tempting to replace the whole-repo bind mount above with a named
-      # volume for just the state directory, so state does not sit inside the
-      # checkout on the host. Do NOT do this: managers/container_manager.py
-      # bind-mounts .agents_hub/workspaces/<name> (and .agents_hub itself, and
-      # tasks/) into each agent container, and it resolves the host side of
-      # that mount by rebasing the in-container path onto HOST_PROJECT_ROOT
-      # (see the env var above), i.e. it assumes .agents_hub lives at a real
-      # path under the repo checkout on the host. A named volume's data lives
-      # in Docker's own volume storage instead, so that rebased path would not
-      # exist on the host, and every agent container's workspace/state mount
-      # would silently point at an empty directory instead of the backend's
-      # actual state. If you still want state off the host checkout, the
-      # correct opt-in change is to also point AGENTS_HUB_ROOT (see
-      # common/paths.py) at a host directory outside the repo and mount that
-      # directory here and as HOST_PROJECT_ROOT's sibling, e.g.:
-      #   environment:
-      #     AGENTS_HUB_ROOT: /data/agents_hub
-      #   volumes:
-      #     - ${AGENTS_HUB_DATA_DIR:-./.agents_hub}:/data/agents_hub
-      # keeping it a bind mount (not a named volume) so the rebasing above
-      # still finds a real host path.
-    # The image runs as a non-root user (hub, uid 1000), so it needs to be in
-    # the socket's group to use the mounted /var/run/docker.sock above. Find
-    # the group id as the container sees it: `docker compose run --rm --no-deps
-    # backend ls -ln /var/run/docker.sock` (often 999 or 998 on Linux; on macOS
-    # with Docker Desktop the socket inside the VM is root:root, mode 660, so
-    # DOCKER_GID=0 is required there, verified 2026-09-22) and set DOCKER_GID
-    # in .env if it differs from the default below. Harmless to leave in place
-    # when the socket line above is removed: it just adds an unused
-    # supplementary group.
-    group_add:
-      - "${DOCKER_GID:-999}"
-    working_dir: /app
-    extra_hosts:
-      # So LM Studio / Ollama on the host stay reachable on plain Linux Docker
-      # too, where this alias is not provided for us.
-      - "host.docker.internal:host-gateway"
 
   # Dashboard: the built bundle behind nginx, which also proxies /api and
   # balances it over however many backend replicas are up.
@@ -117,6 +132,16 @@ services:
   # updating until its next full refetch. The default (this file, no
   # --scale, no AGENTS_HUB_BROKER_URL) is one backend replica, which needs
   # none of this and is the supported default.
+  #
+  # ---- The `ha` profile (several backends, several workers, one Postgres) ----
+  # This service is shared between the default topology and the `ha` profile
+  # below (docker compose --profile ha up --build; docs/deployment.md walks
+  # through it end to end). Under `ha` the backends nginx should balance over
+  # are the `backend-api` replicas, not this single `backend`, because compose
+  # cannot give one service two different values of AGENTS_HUB_ROLE for two
+  # different profiles. Put this in .env before starting the `ha` profile:
+  #   BACKEND_SERVERS=backend-api:8000
+  # (added to the variable list in the plain comment block below this one).
   frontend:
     build:
       context: ./dashboard/frontend
@@ -130,7 +155,10 @@ services:
     environment:
       # Space-separated host:port list. With `--scale backend=N` compose gives
       # every replica the same `backend` DNS name, so one entry is still
-      # correct; name replicas explicitly to pin the set instead.
+      # correct; name replicas explicitly to pin the set instead. Under the
+      # `ha` profile, set this to `backend-api:8000` in .env so nginx balances
+      # over the `backend-api` replicas instead of this file's single
+      # `backend`.
       BACKEND_SERVERS: ${BACKEND_SERVERS:-backend:8000}
       # Shared cache TTL for generated view assets. 0 turns it off.
       API_ASSET_CACHE_SECONDS: ${API_ASSET_CACHE_SECONDS:-30}
@@ -139,6 +167,8 @@ services:
   # Only needed, and only started, when running more than one backend replica
   # (see the note above the `frontend` service and docs/scaling.md); under the
   # `scale` profile so a plain `docker compose up` never pulls or starts it.
+  # Also part of the `ha` profile below, which needs the same bridge for the
+  # same reason: several `backend-api` replicas behind one `frontend`.
   #   docker compose --profile scale up --build --scale backend=3
   # No port published: only the backend replicas on this compose network talk
   # to it. Not exposed to the host, and not meant to be.
@@ -146,6 +176,7 @@ services:
     image: redis:7-alpine
     profiles:
       - scale
+      - ha
     # Uncomment to persist queued pub/sub state across a restart. Pub/sub
     # itself is fire-and-forget and needs no persistence, so this is optional.
     # volumes:
@@ -160,10 +191,14 @@ services:
   # Combine with `--profile scale` (Redis) to run several backend replicas.
   # Data lives in the named volume; no port is published, only the compose
   # network reaches it. Publish 5432 yourself if you want psql from the host.
+  # Also part of the `ha` profile below: Postgres is required there, not
+  # optional, since `backend-api` and `worker` replicas only stay consistent
+  # through one shared database.
   postgres:
     image: postgres:17-alpine
     profiles:
       - postgres
+      - ha
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-agents_hub}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
@@ -177,7 +212,163 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # ── The `ha` profile: postgres + redis + minio + two backend-api replicas
+  # ── + two worker replicas, everything docs/scaling.md and docs/workers.md
+  # ── describe, wired together in one command:
+  #
+  #   docker compose --profile ha up --build
+  #
+  # It still starts this file's default `backend` and `frontend` too (a
+  # profile only adds services, it cannot remove the ones with no profile at
+  # all), so a deployment that wants only the HA services running scales the
+  # single-role backend to zero once the rest is healthy:
+  #
+  #   docker compose --profile ha up --build --scale backend=0
+  #
+  # .env needs, beyond the plain compose variables above:
+  #   AGENTS_HUB_DATABASE_URL=postgresql://agents_hub:agents_hub@postgres:5432/agents_hub
+  #   AGENTS_HUB_BROKER_URL=redis://redis:6379/0
+  #   AGENTS_HUB_BLOB_URL=s3://agents-hub/
+  #   AGENTS_HUB_BLOB_ENDPOINT=http://minio:9000
+  #   AWS_ACCESS_KEY_ID=agents_hub          # same as MINIO_ROOT_USER below
+  #   AWS_SECRET_ACCESS_KEY=agents_hub_minio # same as MINIO_ROOT_PASSWORD below
+  #   BACKEND_SERVERS=backend-api:8000
+  # AGENTS_HUB_BLOB_URL and AGENTS_HUB_BLOB_ENDPOINT are read by
+  # common/blobs.py (not imported here); this file only sets the two
+  # environment variables through to `backend-api` and `worker` and starts
+  # the MinIO server they point at. Liveness and readiness for `backend-api`
+  # are the same image-level HEALTHCHECK the Dockerfile already defines
+  # (`curl http://localhost:8000/`); dedicated `/livez` and `/readyz` routes
+  # are landing separately and this file will switch to them once they are
+  # in, rather than depend on an endpoint that may not exist yet.
+  #
+  # MinIO is the bundled S3-compatible object store for AGENTS_HUB_BLOB_URL
+  # (docs/deployment.md): the step that takes .agents_hub/ files (run logs,
+  # workspaces, view assets) off the one shared host bind mount, which is
+  # otherwise the last thing keeping every replica above on one machine. No
+  # port is published by default — only the compose network reaches it —
+  # since the console (9001) and API (9000) have no business being open on
+  # the host in a default setup; add "9001:9001" yourself to browse it.
+  minio:
+    image: minio/minio
+    profiles:
+      - ha
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-agents_hub}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-agents_hub_minio}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: waits for `minio` to answer healthy, creates the `agents-hub`
+  # bucket AGENTS_HUB_BLOB_URL=s3://agents-hub/ names, and exits. `mc mb
+  # --ignore-existing` no-ops when the bucket is already there, so this is
+  # safe to run on every `up`. `backend-api` and `worker` wait for it to exit
+  # 0 before they start (see their `depends_on` below), so the bucket always
+  # exists before anything tries to write a blob into it.
+  minio-init:
+    image: minio/mc
+    profiles:
+      - ha
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-agents_hub} ${MINIO_ROOT_PASSWORD:-agents_hub_minio} &&
+      mc mb --ignore-existing local/agents-hub
+      "
+    restart: "no"
+
+  # The `api` half of the `ha` topology: the same image and mounts as
+  # `backend` (via the `x-backend` anchor at the top of this file), but
+  # AGENTS_HUB_ROLE=api, so it only prepares each run and puts the launch on
+  # the queue (common/run_queue.py, docs/workers.md) instead of spawning it
+  # itself. No host port published — several replicas cannot share one fixed
+  # host port, and nothing outside this compose network needs to reach one
+  # replica directly; `frontend`'s nginx reaches all of them by the shared
+  # DNS name `backend-api` once BACKEND_SERVERS names it (see the `frontend`
+  # service above). Two replicas by default; change with
+  # `docker compose --profile ha up --build --scale backend-api=N`.
+  backend-api:
+    <<: *backend
+    profiles:
+      - ha
+    command:
+      - python
+      - -m
+      - uvicorn
+      - dashboard.backend.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      PYTHONPATH: /app
+      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:-$PWD}
+      AGENTS_HUB_ROLE: api
+      AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-redis://redis:6379/0}
+      AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-postgresql://agents_hub:agents_hub@postgres:5432/agents_hub}
+      AGENTS_HUB_BLOB_URL: ${AGENTS_HUB_BLOB_URL:-}
+      AGENTS_HUB_BLOB_ENDPOINT: ${AGENTS_HUB_BLOB_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 2
+
+  # The `worker` half: claims launches `backend-api` put on the queue and
+  # spawns them on its own host (docs/workers.md). `ah worker` needs the
+  # package installed editable to be a command on PATH, and the Dockerfile
+  # deliberately does not `pip install -e .` (it copies the source and runs
+  # it with `python -m`), so this runs the module directly instead of `ah
+  # worker`; both do the same thing. Same docker-socket note as `backend`
+  # applies here through the shared `x-backend` anchor: with the socket
+  # mounted, this worker can also run agent containers; drop that one line
+  # in an override file and set AGENTS_HUB_WORKER_MODES=local below to run a
+  # worker that only ever launches agents as local subprocesses. The image's
+  # HEALTHCHECK (`curl http://localhost:8000/`) is disabled here because a
+  # worker serves no HTTP and would otherwise sit "unhealthy" forever without
+  # that meaning anything.
+  worker:
+    <<: *backend
+    profiles:
+      - ha
+    command:
+      - python
+      - -m
+      - runtime.worker
+    environment:
+      PYTHONPATH: /app
+      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:-$PWD}
+      AGENTS_HUB_ROLE: worker
+      AGENTS_HUB_WORKER_MODES: ${AGENTS_HUB_WORKER_MODES:-local,docker}
+      AGENTS_HUB_WORKER_CONCURRENCY: ${AGENTS_HUB_WORKER_CONCURRENCY:-4}
+      AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-redis://redis:6379/0}
+      AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-postgresql://agents_hub:agents_hub@postgres:5432/agents_hub}
+      AGENTS_HUB_BLOB_URL: ${AGENTS_HUB_BLOB_URL:-}
+      AGENTS_HUB_BLOB_ENDPOINT: ${AGENTS_HUB_BLOB_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    deploy:
+      replicas: 2
+
 volumes:
   postgres_data:
+  # MinIO's object data, used only under the `ha` profile.
+  minio_data:
 # Uncomment together with the redis volume above to persist Redis too.
 #   redis_data:

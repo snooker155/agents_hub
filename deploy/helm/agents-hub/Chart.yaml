@@ -1,0 +1,11 @@
+apiVersion: v2
+name: agents-hub
+description: >-
+  Agents Hub in the high availability shape: an api backend (several
+  replicas), worker pods that claim launches from the queue, and the
+  dashboard frontend, all pointed at an external Postgres, an external Redis
+  and an S3 compatible object store. See docs/deployment.md in the main
+  repository and this chart's README.md.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

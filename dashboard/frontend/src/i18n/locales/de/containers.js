@@ -38,6 +38,8 @@ export default {
   viewLogs: 'Logs ansehen',
   stopContainer: 'Container stoppen',
   removeContainer: 'Container entfernen',
+  remote: 'Extern',
+  remoteCannotManage: 'Dieser Container läuft auf einem anderen Host und kann von hier aus nicht gestoppt oder entfernt werden.',
   agentsHubDockerNetwork: 'agents-hub Docker-Netzwerk',
   networkIntro: 'Alle Agenten-Container verbinden sich mit einem eigenen Docker-Bridge-Netzwerk namens',
   networkReachBefore: 'Container erreichen einander über den Containernamen (z. B.',

@@ -59,22 +59,48 @@ connection attempt, no behaviour change from a single-replica deployment.
 
 Set it to a Redis URL and, once the backend starts:
 
-- Every event the local broker publishes (`apublish` / `publish_threadsafe`)
-  is also published onto one shared Redis channel, tagged with this
-  replica's id (`AGENTS_HUB_INSTANCE_ID`, or `hostname:pid` if that is
-  unset) as its `origin`.
-- A background task subscribes to that channel. A message whose `origin` is
-  a *different* replica is re-published into the local broker, so this
-  replica's own SSE clients receive it too. A message whose `origin` is this
-  replica's own id is dropped (Redis pub/sub echoes a publisher's own
-  message back to its own subscription). An event delivered this way is
-  never sent back out, so three or more replicas never echo one event
-  forever.
+- Every genuinely local event the broker publishes (`apublish` /
+  `publish_threadsafe`) is appended to one shared Redis **Stream**
+  (`agents_hub:events`, `XADD ... MAXLEN ~ N`), tagged with this replica's id
+  (`AGENTS_HUB_INSTANCE_ID`, or `hostname:pid` if that is unset) as its
+  `origin`. `N` is `AGENTS_HUB_BROKER_STREAM_MAXLEN` (default 10000) — a
+  count, not a duration: the stream keeps approximately the last N entries
+  regardless of how long that took to accumulate, because what actually
+  bounds a useful replay is "how much just happened", which a count tracks
+  directly and a clock does not. Redis hands back the id it assigned the
+  entry, and that id becomes the event's `id` for every subscriber on this
+  replica too (including the ones on the very replica that published it) —
+  not the old per-client counter — so a browser's `Last-Event-ID` means the
+  same thing on every replica.
+- A background task reads that stream with `XREAD BLOCK`, picking up from
+  wherever it last left off. An entry whose `origin` is a *different*
+  replica is re-published into the local broker, so this replica's own SSE
+  clients receive it too, carrying the same id it arrived with. An entry
+  whose `origin` is this replica's own id is skipped: this replica already
+  delivered it directly, at publish time, above. An event delivered this way
+  is never written back onto the stream, so three or more replicas never
+  echo one event forever.
+- A browser that reconnects to a *different* replica than the one that
+  issued its client id (or to the same one after a restart) is no longer
+  limited to a refetch: if its `Last-Event-ID` is still a live Redis stream
+  id, `routes/stream.py` asks `BrokerBridge.replay` to read the stream with
+  `XRANGE` from just after it, filtered to the channels that browser tab
+  actually wants (its usual defaults plus a `channels` query parameter the
+  frontend sends on every reconnect), and answers `_meta ready` with
+  `resumed: true, source: "stream"` instead of starting the tab over. This
+  only reaches as far back as `MAXLEN` still holds — see Limits below.
+- `common/live_runs.py`'s live-turn snapshots (what a run in progress is
+  saying right now, used by a page that opens mid-run) are mirrored into
+  Redis the same way, keyed by run id with a short TTL, so a run watched
+  from a different replica than the one running it still shows live
+  progress rather than nothing until the run finishes. Bridge off, or no
+  mirror yet for that run: unaffected, exactly as before.
 
 If `AGENTS_HUB_BROKER_URL` is set but the `redis` package is not installed,
 or the initial connection fails, the backend logs one error and keeps
 running with the bridge off: a Redis outage is never a backend outage. A
-subscription that later drops reconnects with backoff.
+dropped stream read reconnects with backoff and resumes from where it left
+off rather than skipping straight to "now".
 
 ## Running it
 
@@ -184,23 +210,32 @@ its own page: [workers](workers.md).
   the next boundary (an object store behind `common/blobs.py` is the planned
   step), so replicas on different hosts today would each see their own
   copies of them.
-- **Replay after a reconnect that lands on a different replica is a lagged
-  refetch, not a seamless resume.** A browser's `EventSource` reconnect
-  sends back its `client_id` and `Last-Event-ID`; `SessionBroker.resume_client`
-  can only find that client id if it lands back on the *same* replica that
-  issued it (the client id and its replay ring buffer are per-process state,
-  and the bridge deliberately does not try to share them, since doing so would
-  mean shipping every client's buffered event history through Redis too,
-  for a reconnect race that is already handled). When the reconnect lands
-  on a different replica, `resume_client` reports the client id as unknown,
-  `routes/stream.py`'s `stream()` opens a fresh client and answers with
-  `{"channel": "_meta", "type": "ready", "resumed": false, ...}` instead of
-  replaying anything, and the frontend (`StreamContext.jsx`) treats
-  `resumed: false` as a signal to refetch rather than trust a stream that
-  may have skipped a beat. This behaviour already exists for the
-  single-replica case (a restarted backend also does not recognize an old
-  client id) and needed no change for multiple replicas; it just now also
-  covers "reconnected to a different replica."
+- **Replay after a reconnect that lands on a different replica reaches back
+  as far as the shared stream, not the per-process ring buffer.** A
+  browser's `EventSource` reconnect sends back its `client_id` and
+  `Last-Event-ID`; `SessionBroker.resume_client` can only find that client
+  id if it lands back on the *same* replica that issued it (the client id
+  and its in-memory ring buffer are per-process state, and stay that way —
+  sharing them would mean shipping every client's buffered event history
+  through Redis too, for a reconnect race the stream catch-up below already
+  covers more generally). When the reconnect lands on a different replica
+  (or the same one after a restart), `resume_client` reports the client id
+  as unknown, and `routes/stream.py`'s `stream()` falls back to
+  `BrokerBridge.replay`: if the bridge is on and `Last-Event-ID` is still a
+  live Redis stream id, it reads the shared stream with `XRANGE` instead,
+  filtered to the channels this client asked for, and answers
+  `{"channel": "_meta", "type": "ready", "resumed": true, "source": "stream", ...}`
+  — a real resume, just from Redis instead of memory. Only when *that* also
+  cannot help — no bridge running, or `Last-Event-ID` predates what
+  `AGENTS_HUB_BROKER_STREAM_MAXLEN` still holds — does it open a fresh
+  client and answer `resumed: false`, and the frontend (`StreamContext.jsx`)
+  treats that as a signal to refetch rather than trust a stream that may
+  have skipped a beat. This is a probabilistic guarantee, not an absolute
+  one: the stream is trimmed by count, so a replica that is down, or a
+  browser tab that is backgrounded, for longer than it takes the rest of the
+  deployment to produce `AGENTS_HUB_BROKER_STREAM_MAXLEN` events will still
+  fall through to a refetch — the same outcome the single-replica case
+  already had for a restarted backend, just pushed further out.
 
 ## Staying on one replica (the default)
 

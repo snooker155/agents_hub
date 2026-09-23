@@ -379,6 +379,22 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(
         default=10, validation_alias=AliasChoices("AGENTS_HUB_DB_POOL_SIZE", "db_pool_size"))
 
+    # ── Object store mirror (common/blobs.py) ─────────────────────────────────
+    # Empty (default): run logs, node logs, flow logs, view assets and generated
+    # Dockerfiles live only under AGENTS_HUB_ROOT on the one host that wrote
+    # them, exactly as today. Set to an s3://bucket/prefix URL (real AWS S3, or
+    # MinIO via blob_endpoint below) and every writer also mirrors its file
+    # there, so a backend replica or worker on another host can read a
+    # finished run's log or a view's asset it does not have locally. See
+    # docs/storage.md.
+    blob_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BLOB_URL", "blob_url"))
+    # MinIO (or any other S3-compatible) endpoint; empty targets real AWS S3.
+    # Region and credentials come from the usual AWS env vars (AWS_ACCESS_KEY_ID,
+    # AWS_SECRET_ACCESS_KEY, AWS_REGION / AWS_DEFAULT_REGION), not a setting here.
+    blob_endpoint: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BLOB_ENDPOINT", "blob_endpoint"))
+
     # ── Process role (docs/workers.md) ────────────────────────────────────────
     # "all" (default): this backend launches runs itself, exactly as it always
     # has; one process does everything a laptop needs. "api": the backend only
@@ -396,6 +412,20 @@ class Settings(BaseSettings):
     # How many launches one worker keeps alive at once.
     worker_concurrency: int = Field(
         default=4, validation_alias=AliasChoices("AGENTS_HUB_WORKER_CONCURRENCY", "worker_concurrency"))
+
+    # ── OTel export (common/otel_export.py) ───────────────────────────────────
+    # Empty (default, off): finished runs are recorded here and nowhere else.
+    # Set to a collector's OTLP/HTTP traces URL (including another Agents Hub's
+    # own .../api/ingest/v1/traces) and every run that reaches a terminal
+    # status is also posted there as one span, best-effort. See
+    # docs/service-health.md, "Exporting runs as spans".
+    otel_export_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_OTEL_EXPORT_URL", "otel_export_url"))
+    # Extra headers the export POST carries, as "k=v,k=v" (a collector token,
+    # say). Empty sends none beyond Content-Type.
+    otel_export_headers: str = Field(
+        default="",
+        validation_alias=AliasChoices("AGENTS_HUB_OTEL_EXPORT_HEADERS", "otel_export_headers"))
 
     model_config = SettingsConfigDict(
         case_sensitive=False,
@@ -490,6 +520,15 @@ def playground_enabled() -> bool:
     default = "true" if settings.playground_enabled else "false"
     raw = live_setting("PLAYGROUND_ENABLED", default)
     return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def blob_url() -> str:
+    """Effective ``AGENTS_HUB_BLOB_URL``, resolved live like the other
+    .env-backed settings (see :func:`live_setting`). Empty means the local,
+    no-op mirror (``common.blobs.LocalBlobStore``); an ``s3://bucket/prefix``
+    value is what ``common.blobs.store()`` builds an ``S3BlobStore`` from.
+    """
+    return live_setting("AGENTS_HUB_BLOB_URL", settings.blob_url)
 
 
 def agent_execution_mode() -> str:

@@ -434,12 +434,26 @@ def _upsert_run(run: Dict[str, Any]) -> None:
         _sync_instance(old, new)
 
 
+def _export_run_finished(old: Dict[str, Any], new: Dict[str, Any]) -> None:
+    """Send a finished run to the optional OTel export target
+    (common/otel_export.py). Guarded here rather than left to that module
+    alone, so a missing or misconfigured export target is a no-op for run
+    recording, the same guarantee _notify_task_run_finished gives."""
+    try:
+        from common.otel_export import export_run_finished
+        export_run_finished(old, new)
+    except Exception:
+        # Export must never break run recording.
+        pass
+
+
 def _update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     old, new = _apply(str(run_id), updates, insert_if_missing=False)
     if new is None:
         return None
     _sync_instance(old, new)
     _notify_task_run_finished(old or {}, new)
+    _export_run_finished(old or {}, new)
     return new
 
 

@@ -467,6 +467,10 @@ export default function Containers() {
                     <p className="text-sm font-medium text-gray-800 flex items-center gap-1">
                       {stateIcon(c.state)}
                       {c.name}
+                      {c.host && <Badge color="gray">{c.host}</Badge>}
+                      {c.remote && (
+                        <Badge color="yellow">{t('containers.remote')}</Badge>
+                      )}
                     </p>
                     <p className="text-xs text-gray-400">
                       {c.image} · {c.status || c.state}
@@ -495,9 +499,9 @@ export default function Containers() {
                     {c.state === 'running' && (
                       <button
                         onClick={() => stopContainer(c.name)}
-                        disabled={stopping[c.name]}
-                        title={t('containers.stopContainer')}
-                        className="text-yellow-600 hover:text-yellow-700 p-1.5 rounded hover:bg-yellow-50 disabled:opacity-40"
+                        disabled={stopping[c.name] || c.remote}
+                        title={c.remote ? t('containers.remoteCannotManage') : t('containers.stopContainer')}
+                        className="text-yellow-600 hover:text-yellow-700 p-1.5 rounded hover:bg-yellow-50 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {stopping[c.name] ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
                       </button>
@@ -505,9 +509,9 @@ export default function Containers() {
                     {c.state !== 'running' && (
                       <button
                         onClick={() => removeContainer(c.name)}
-                        disabled={removing[c.name]}
-                        title={t('containers.removeContainer')}
-                        className="text-red-500 hover:text-red-600 p-1.5 rounded hover:bg-red-50 disabled:opacity-40"
+                        disabled={removing[c.name] || c.remote}
+                        title={c.remote ? t('containers.remoteCannotManage') : t('containers.removeContainer')}
+                        className="text-red-500 hover:text-red-600 p-1.5 rounded hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {removing[c.name] ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                       </button>

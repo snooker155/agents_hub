@@ -97,6 +97,36 @@ def _queue_maxsize() -> int:
         return DEFAULT_SSE_QUEUE_MAX
 
 
+def _stream_id_tuple(value: Any) -> Optional[Tuple[int, int]]:
+    """Parse a Redis stream id ("<ms>-<seq>") into a comparable tuple, or
+    None if ``value`` is not shaped like one (the plain per-client integers
+    used when the cross-replica bridge is off)."""
+    if not isinstance(value, str) or "-" not in value:
+        return None
+    ms, _, seq = value.partition("-")
+    if not (ms.isdigit() and seq.isdigit()):
+        return None
+    return (int(ms), int(seq))
+
+
+def _id_greater(a: Any, b: Any) -> bool:
+    """True if event id ``a`` is after event id ``b``. Both are either plain
+    ints (bridge off) or Redis stream id strings (bridge on): a stream id
+    must be compared numerically, not lexicographically ("12-10" sorts
+    before "12-9" as plain strings but is the later entry), which is the
+    only reason this is not just ``a > b``. Mixed types (a client whose very
+    first delivered event happened to be a synthetic frame, before the
+    bridge ever assigned it a real id) fall back to plain comparison, which
+    itself falls back to False rather than raising if the types disagree."""
+    ta, tb = _stream_id_tuple(a), _stream_id_tuple(b)
+    if ta is not None and tb is not None:
+        return ta > tb
+    try:
+        return a > b
+    except TypeError:
+        return False
+
+
 @dataclass
 class _ClientState:
     """Everything the broker keeps for one multiplexed (or legacy single-
@@ -107,6 +137,10 @@ class _ClientState:
     maxsize: int
     channels: Set[str] = field(default_factory=set)
     next_id: int = 1
+    # The most recently assigned id (int normally, a Redis stream id string
+    # once the cross-replica bridge is on) — see _enqueue and _deliver's
+    # handling of the synthetic "lagged" frame.
+    last_id: Optional[Any] = None
     ring: Deque[dict] = field(default_factory=lambda: deque(maxlen=RING_BUFFER_MAX))
     # channel → the token event currently sitting in the queue for it, eligible
     # to absorb the next token instead of getting a frame of its own.
@@ -130,36 +164,28 @@ class SessionBroker:
         # client_id → state, for multiplexed connections
         self._clients: Dict[str, _ClientState] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        # Cross-replica fan-out hook (see common/broker_bridge.py): a plain
-        # list of callables invoked with (channel, tagged_event) on every
-        # locally-published event, unless the publish call passed
-        # skip_sinks=True. The broker has no idea what a sink does with an
-        # event, or that Redis exists, so this stays a single process's
-        # in-memory hub either way.
-        self.outbound_sinks: List[Callable[[str, dict], None]] = []
+        # Cross-replica id hook (see common/broker_bridge.py): when set, a
+        # genuinely local publish (skip_sinks=False, no explicit event_id) is
+        # awaited through this before being delivered, and the id it returns
+        # becomes the event's "id" for every subscriber on this replica,
+        # instead of each client's own counter below. It also doubles as the
+        # outbound side of the bridge: the hook's job is to publish the event
+        # onto the shared Redis stream and hand back the id Redis assigned
+        # it, so this is the only place that needs to know the bridge
+        # exists. None (the default) leaves this a single process's
+        # in-memory hub, ids and all, exactly as before the bridge existed.
+        self._id_provider: Optional[Callable[[str, dict], Any]] = None
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Called once at FastAPI startup to store the running event loop."""
         self._loop = loop
 
-    def add_sink(self, sink: Callable[[str, dict], None]) -> None:
-        """Register a callable for cross-replica fan-out. See ``outbound_sinks``."""
-        self.outbound_sinks.append(sink)
-
-    def remove_sink(self, sink: Callable[[str, dict], None]) -> None:
-        try:
-            self.outbound_sinks.remove(sink)
-        except ValueError:
-            pass
-
-    def _notify_sinks(self, channel: str, event: dict) -> None:
-        for sink in list(self.outbound_sinks):
-            try:
-                sink(channel, event)
-            except Exception:
-                # A sink's own failure (Redis briefly down, a bad payload)
-                # must never break delivery to this replica's own clients.
-                pass
+    def set_id_provider(self, provider: Optional[Callable[[str, dict], Any]]) -> None:
+        """Register (``provider``) or clear (``None``) the cross-replica id
+        hook described above. ``provider(channel, tagged_event)`` must be an
+        awaitable returning the id to use, or None to fall back to this
+        client's own counter for that one event."""
+        self._id_provider = provider
 
     # ── publish ──────────────────────────────────────────────────────────────
 
@@ -169,27 +195,50 @@ class SessionBroker:
         Safe to call from any thread; uses call_soon_threadsafe to hand off
         to the event loop without blocking. ``skip_sinks`` is set by
         common/broker_bridge.py when re-injecting an event another replica
-        already fanned out, so it is delivered here but not sent out again.
+        already fanned out, so it is delivered here but not published there
+        again.
+
+        When a cross-replica id provider is registered (the bridge is on)
+        and this is a genuinely local publish, the whole publish is instead
+        handed to the event loop as one ``apublish`` coroutine:  assigning a
+        global id needs an awaited Redis round trip, and this calling thread
+        must not block on that, but delivery still has to happen after the
+        id comes back, not before — so it cannot stay the two independent
+        call_soon_threadsafe hops below, one for the (now nonexistent) sink
+        notification and one for delivery.
         """
         loop = self._loop
         if not loop or not loop.is_running():
             return
+        if not skip_sinks and self._id_provider is not None:
+            asyncio.run_coroutine_threadsafe(
+                self.apublish(channel, event, skip_sinks=skip_sinks), loop
+            )
+            return
         tagged = {**event, "channel": channel}
-        if not skip_sinks:
-            loop.call_soon_threadsafe(self._notify_sinks, channel, tagged)
         for state in list(self._queues.get(channel, [])):
             loop.call_soon_threadsafe(self._deliver, state, tagged)
 
-    async def apublish(self, channel: str, event: dict, *, skip_sinks: bool = False) -> None:
+    async def apublish(self, channel: str, event: dict, *, skip_sinks: bool = False,
+                        event_id: Optional[Any] = None) -> None:
         """Publish from an async context. ``skip_sinks`` is set by
         common/broker_bridge.py when re-injecting an event another replica
-        already fanned out, so it is delivered here but not sent out again.
+        already fanned out, so it is delivered here but not published there
+        again. ``event_id`` lets a caller (again, only the bridge) hand this
+        event the id it already has — an event read back off the Redis
+        stream — instead of asking the id provider for a fresh one.
         """
         tagged = {**event, "channel": channel}
-        if not skip_sinks:
-            self._notify_sinks(channel, tagged)
+        if event_id is None and not skip_sinks and self._id_provider is not None:
+            try:
+                event_id = await self._id_provider(channel, tagged)
+            except Exception:
+                # The id provider's own failure (Redis briefly down, a
+                # timeout) must never break delivery to this replica's own
+                # clients — it just falls back to this client's own counter.
+                event_id = None
         for state in list(self._queues.get(channel, [])):
-            self._deliver(state, tagged)
+            self._deliver(state, tagged, event_id=event_id)
 
     def has_subscribers(self, channel: str) -> bool:
         """True if at least one connection is listening on ``channel``.
@@ -218,12 +267,23 @@ class SessionBroker:
         if state.pending_token.get(channel) is dropped_entry:
             state.pending_token.pop(channel, None)
 
-    def _enqueue(self, state: _ClientState, entry: dict) -> None:
+    def _enqueue(self, state: _ClientState, entry: dict, *, event_id: Optional[Any] = None) -> None:
         """Number, buffer and queue one event for one client. Caller must have
         made room for it first. ``entry`` must already be a per-client copy —
-        callers must not pass a dict shared with another client's delivery."""
-        entry["id"] = state.next_id
-        state.next_id += 1
+        callers must not pass a dict shared with another client's delivery.
+
+        ``event_id``, when given (the cross-replica bridge is on and this
+        event has a stream id), is used as-is instead of this client's own
+        counter, so the id means the same thing on every replica. Whichever
+        kind of id this entry gets, it is remembered as ``state.last_id`` so
+        a synthetic frame this client generates for itself (the ``lagged``
+        meta event just below) can reuse it rather than mixing id spaces
+        within one client's ring buffer.
+        """
+        entry["id"] = state.next_id if event_id is None else event_id
+        if event_id is None:
+            state.next_id += 1
+        state.last_id = entry["id"]
         state.ring.append(entry)
         channel = entry.get("channel")
         if entry.get("type") == "token":
@@ -232,32 +292,44 @@ class SessionBroker:
             state.pending_token.pop(channel, None)
         state.queue.put_nowait(entry)
 
-    def _deliver(self, state: _ClientState, source_event: dict) -> None:
+    def _deliver(self, state: _ClientState, source_event: dict, *, event_id: Optional[Any] = None) -> None:
         """Hand one published event to one subscriber. Runs on the event loop
         thread (directly from ``apublish``, or scheduled via
-        ``call_soon_threadsafe`` from ``publish_threadsafe``), so the
-        coalescing and drop bookkeeping below never races a concurrent call
-        for the same client."""
+        ``call_soon_threadsafe``/``run_coroutine_threadsafe`` from
+        ``publish_threadsafe``), so the coalescing and drop bookkeeping below
+        never races a concurrent call for the same client."""
         channel = source_event.get("channel")
         if source_event.get("type") == "token" and state.queue.qsize() * 2 >= state.maxsize:
             pending = state.pending_token.get(channel)
             if pending is not None:
                 # Merge into the copy still waiting in the queue rather than
                 # adding a second frame — the client sees one bigger token
-                # event instead of falling further behind.
+                # event instead of falling further behind. The merged copy
+                # keeps the id it already had.
                 pending["token"] = str(pending.get("token", "")) + str(source_event.get("token", ""))
                 return
         if state.dropped:
             # Make room for the lag frame and finalize its count in the same
             # step: a drop caused by fitting the lag frame itself belongs in
-            # this report, not silently left for a later one.
+            # this report, not silently left for a later one. This frame is
+            # this client's own bookkeeping, not something the bridge ever
+            # saw, so it has no stream id of its own. With the bridge on
+            # (state.last_id is a stream-id string) it reuses that last real
+            # id rather than mixing id spaces — a plain incrementing integer
+            # next to Redis stream ids would break the numeric ordering
+            # resume_client and replay both rely on. With the bridge off
+            # (state.last_id is a plain int, or nothing has been delivered
+            # yet) this is None and the frame gets its own next_id exactly
+            # as it always has — the per-client counter is unaffected.
             self._make_room(state)
             dropped_count, state.dropped = state.dropped, 0
-            self._enqueue(state, {"channel": "_meta", "type": "lagged", "dropped": dropped_count})
+            lagged_id = state.last_id if isinstance(state.last_id, str) else None
+            self._enqueue(state, {"channel": "_meta", "type": "lagged", "dropped": dropped_count},
+                          event_id=lagged_id)
         # Any drop caused by fitting the event itself is new and is reported
         # ahead of the next delivery instead.
         self._make_room(state)
-        self._enqueue(state, dict(source_event))
+        self._enqueue(state, dict(source_event), event_id=event_id)
 
     # ── single-channel subscribe (legacy) ──────────────────────────────────────
 
@@ -306,7 +378,7 @@ class SessionBroker:
             self.add_channel(client_id, ch)
         return client_id, state.queue
 
-    def resume_client(self, client_id: str, last_event_id: Optional[int]) -> Optional[List[dict]]:
+    def resume_client(self, client_id: str, last_event_id: Optional[Any]) -> Optional[List[dict]]:
         """Reattach to a client that may have briefly disconnected, replaying
         what it missed.
 
@@ -316,6 +388,10 @@ class SessionBroker:
         within its replay window. Returns ``None`` when it is unknown or has
         aged out — the caller must then open a fresh client, and the browser's
         own view is stale and needs a refetch.
+
+        ``last_event_id`` is a plain int with the bridge off, or a Redis
+        stream id string ("1695400000000-0") with it on — see
+        ``_id_greater``, which compares either kind correctly.
         """
         state = self._clients.get(client_id)
         if not state:
@@ -324,7 +400,9 @@ class SessionBroker:
             self.close_client(client_id)
             return None
         state.disconnected_at = None
-        replay = [] if last_event_id is None else [e for e in state.ring if e.get("id", 0) > last_event_id]
+        replay = [] if last_event_id is None else [
+            e for e in state.ring if _id_greater(e.get("id", 0), last_event_id)
+        ]
         # The live queue holds the same events the ring buffer is about to
         # replay explicitly. Drain it (and forget any in-flight coalescing
         # target) so the resumed stream does not repeat them.

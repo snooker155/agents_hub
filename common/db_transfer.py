@@ -19,13 +19,20 @@ The target must be empty (every table, ``meta`` and the ledger excepted), or
 the caller passes ``force=True`` to have it emptied first. A mismatch in any
 table's count aborts before commit, so a target is either fully loaded or
 untouched.
+
+``transfer`` also takes an optional ``source``: a URL or SQLite path to copy
+from instead of the database this process is configured with. Nothing in
+``ah db migrate`` uses it (the CLI command always copies from "here"), but
+``common.db_backup`` does: a restore loads an archived SQLite file into the
+configured database, which is the same operation with the two sides of the
+usual direction swapped.
 """
 from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from common import db
 from common import migrations
@@ -153,9 +160,14 @@ def _reset_sequences(conn: Any, tables: List[str]) -> None:
             f"COALESCE((SELECT MAX({column}) FROM {table}), 0) + 1, false)")
 
 
-def transfer(target: str, *, force: bool = False, batch: int = BATCH,
-             log: Any = None) -> Dict[str, Any]:
-    """Copy every table of the configured database into ``target``.
+def transfer(target: str, *, source: Optional[str] = None, force: bool = False,
+             batch: int = BATCH, log: Any = None) -> Dict[str, Any]:
+    """Copy every table of ``source`` into ``target``.
+
+    ``source`` defaults to the database this process is configured with
+    (``AGENTS_HUB_DATABASE_URL``, or the SQLite file); passing a URL or a
+    SQLite path instead copies from there, without this process needing to be
+    configured to open it first.
 
     Returns ``{"target": ..., "applied": [...], "tables": {name: {"source":
     n, "target": n}}}``. Raises ``RuntimeError`` when the target is not empty
@@ -163,14 +175,25 @@ def transfer(target: str, *, force: bool = False, batch: int = BATCH,
     to its pre-copy state (schema only).
     """
     say = log or (lambda *_: None)
-    source = db.get_conn()
-    src_dialect = db.dialect()
+    own_source = source is None
+    if own_source:
+        src_conn = db.get_conn()
+        src_dialect = db.dialect()
+    else:
+        src_dialect = target_dialect(source)
+        src_conn = open_target(source)
+
     tgt_dialect = target_dialect(target)
-    if tgt_dialect == "sqlite" and src_dialect == "sqlite":
-        if Path(target).expanduser().resolve() == Path(db.DB_FILE).resolve():
+
+    if own_source:
+        source_ref = str(db.DB_FILE) if src_dialect == "sqlite" else db.database_url()
+    else:
+        source_ref = source
+    if tgt_dialect == src_dialect:
+        same = (Path(target).expanduser().resolve() == Path(source_ref).expanduser().resolve()
+                if tgt_dialect == "sqlite" else target.strip() == source_ref.strip())
+        if same:
             raise RuntimeError("the target is the source database itself")
-    if tgt_dialect == "postgres" and src_dialect == "postgres" and target.strip() == db.database_url():
-        raise RuntimeError("the target is the source database itself")
 
     tconn = open_target(target)
     try:
@@ -178,9 +201,9 @@ def transfer(target: str, *, force: bool = False, batch: int = BATCH,
         if applied:
             say(f"target schema created: migrations {applied}")
 
-        tables = [t for t in _table_names(source, src_dialect)
+        tables = [t for t in _table_names(src_conn, src_dialect)
                   if migrations.table_exists(tconn, tgt_dialect, t)]
-        missing = [t for t in _table_names(source, src_dialect) if t not in tables]
+        missing = [t for t in _table_names(src_conn, src_dialect) if t not in tables]
         if missing:
             raise RuntimeError(f"the target schema has no table(s) {missing}; "
                                "is the source from a newer build?")
@@ -197,12 +220,12 @@ def transfer(target: str, *, force: bool = False, batch: int = BATCH,
 
             report: Dict[str, Dict[str, int]] = {}
             for table in tables:
-                columns = sorted(migrations.table_columns(source, src_dialect, table))
+                columns = sorted(migrations.table_columns(src_conn, src_dialect, table))
                 tcolumns = migrations.table_columns(tconn, tgt_dialect, table)
                 columns = [c for c in columns if c in tcolumns]
                 if not columns:
                     continue
-                cur = source.execute(f"SELECT {', '.join(columns)} FROM {table}")
+                cur = src_conn.execute(f"SELECT {', '.join(columns)} FROM {table}")
                 sql = (f"INSERT INTO {table} ({', '.join(columns)}) "
                        f"VALUES ({', '.join('?' * len(columns))})")
                 n = 0
@@ -226,6 +249,11 @@ def transfer(target: str, *, force: bool = False, batch: int = BATCH,
             tconn.close()
         except Exception:
             pass
+        if not own_source:
+            try:
+                src_conn.close()
+            except Exception:
+                pass
 
     return {"target": describe(target), "dialect": tgt_dialect,
             "applied": applied, "tables": report}

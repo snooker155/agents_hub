@@ -65,6 +65,12 @@ A run row saying `running` long after anything could still be running is an
 orphan left by a process that died, not live work. They are counted separately
 from real failures because they mean something different.
 
+A running agent run stamps `heartbeat_at` every few seconds; the watchdog
+fails a run quiet for three minutes, or resumes it from its checkpoint when
+it has one, and only probes a pid on the host that started the run. The
+details, and the queue a run waits in before a worker picks it up, are on
+the [workers](workers.md) page.
+
 ## Live updates
 
 Sessions and runs reach the dashboard over one shared SSE connection

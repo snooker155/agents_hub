@@ -82,6 +82,68 @@ jobs:
           AGENTS_HUB_TEST_DATABASE_URL: postgresql://ah:ah@localhost:5432/agents_hub_test
         run: python -m pytest tests/ -q
 
+  # docs/backup.md: `ah db backup` / `restore` end to end, on a real install
+  # (the `ah` console script, not `python -m cli.main`) so a regression in the
+  # packaging — not just the Python — would show up here.
+  backup-restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r dashboard/backend/requirements.txt
+          pip install -r requirements-agents.txt
+          pip install -r requirements-cli.txt
+          pip install -e .
+
+      - name: Seed a state root
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_backup_src
+        run: |
+          python - <<'PY'
+          from tasks.service import create_task
+          from managers import run_manager as rm
+          from common.paths import AGENTS_HUB_ROOT
+
+          create_task("backup smoke test")
+          rm.upsert_run({"run_id": "backup-smoke", "agent_id": "a", "status": "completed"})
+
+          log_dir = AGENTS_HUB_ROOT / "run_logs"
+          log_dir.mkdir(parents=True, exist_ok=True)
+          (log_dir / "agent_run_backup-smoke.log").write_text("hello from ci\n")
+          PY
+
+      - name: Back it up
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_backup_src
+        run: |
+          mkdir -p /tmp/b
+          ah db backup --to /tmp/b
+
+      - name: Lose the host
+        run: rm -rf ${{ runner.temp }}/agents_hub_backup_src
+
+      - name: Restore onto a fresh root
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_backup_dst
+        run: ah db restore /tmp/b/agents_hub_backup_*.tar.gz
+
+      - name: Check what came back
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_backup_dst
+        run: |
+          ah db status | tee /tmp/status.txt
+          grep -E "^\s*tasks\s+1\s*$" /tmp/status.txt
+          grep -E "^\s*runs\s+1\s*$" /tmp/status.txt
+          test -f "${{ runner.temp }}/agents_hub_backup_dst/run_logs/agent_run_backup-smoke.log"
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

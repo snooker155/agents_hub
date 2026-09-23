@@ -440,6 +440,17 @@ def main():
         )
     finally:
         _heartbeat.stop()
+        # Best-effort: a replica or worker on another host can then serve this
+        # run's finished log even though it never ran the process itself
+        # (common/blobs.py, docs/storage.md). Never raises, so it cannot turn a
+        # finished run into a reported failure.
+        try:
+            from common import blobs
+            _log_file = os.environ.get("AGENT_LOG_FILE")
+            if _log_file:
+                blobs.mirror(blobs.rel(_log_file))
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

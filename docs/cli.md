@@ -42,6 +42,7 @@ ah workspace list
 ah node list
 ah db status                            # which database backend, schema version, row counts
 ah db migrate --to postgresql://...     # copy the database into Postgres (or back to a file)
+ah worker                               # claim launches from the run queue and spawn them here (see workers.md)
 ah config
 ```
 

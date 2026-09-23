@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import blobs, db
 from common.paths import workspace_views_dir
 from views.models import ViewEnvelope, normalize_envelope, base_spec_for
 from views import ops as vops
@@ -50,6 +50,22 @@ def _json_bytes(value: Any) -> int:
         return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
     except Exception:
         return 0
+
+
+def _mirror_view_file(path: Path) -> None:
+    """Mirror one view file to the blob store, best-effort (common/blobs.py)."""
+    try:
+        blobs.mirror(blobs.rel(path))
+    except Exception:
+        pass
+
+
+def _mirror_view_dir(view_dir: Path) -> None:
+    """Mirror every file currently in a view's dir, so a backend replica or
+    worker on another host can serve it even though this host wrote it."""
+    for f in view_dir.rglob("*"):
+        if f.is_file():
+            _mirror_view_file(f)
 
 
 def _dir_size(path: Path) -> int:
@@ -133,6 +149,7 @@ def create_view(
             (env.view_id, workspace or None, run_id, task_id, env.kind, env.title,
              env.summary, None, _dir_size(view_dir), now, now),
         )
+    _mirror_view_dir(view_dir)
     return env
 
 
@@ -173,7 +190,15 @@ def get_view(view_id: str) -> Optional[Dict[str, Any]]:
     view_dir = _view_dir(row.get("workspace"), view_id)
     view_file = view_dir / "view.json"
     if not view_file.exists():
-        return None
+        # Not on this host: a backend replica or worker elsewhere may have
+        # written it and mirrored it to the blob store (common/blobs.py).
+        try:
+            fetched = blobs.ensure_local(blobs.rel(view_file))
+        except Exception:
+            fetched = None
+        if fetched is None:
+            return None
+        view_file = fetched
     try:
         env = json.loads(view_file.read_text(encoding="utf-8"))
     except Exception:
@@ -233,7 +258,10 @@ def set_view_state(view_id: str, state: Dict[str, Any]) -> bool:
 
 
 def delete_view(view_id: str) -> bool:
-    """Remove a view's dir and index row. Returns False for an unknown id."""
+    """Remove a view's dir (local and mirrored) and index row.
+
+    Returns False for an unknown id.
+    """
     row = _row(view_id)
     if not row:
         return False
@@ -243,8 +271,18 @@ def delete_view(view_id: str) -> bool:
     except Exception:
         pass
     view_dir = _view_dir(row.get("workspace"), view_id)
+    try:
+        mirrored_prefix = blobs.rel(view_dir) + "/"
+    except Exception:
+        mirrored_prefix = None
     if view_dir.exists():
         shutil.rmtree(view_dir, ignore_errors=True)
+    if mirrored_prefix:
+        try:
+            for key in blobs.list(mirrored_prefix):
+                blobs.delete(key)
+        except Exception:
+            pass
     with db.transaction() as conn:
         conn.execute("DELETE FROM views WHERE view_id = ?", (view_id,))
     return True
@@ -287,6 +325,7 @@ def add_asset(view_id: str, src_abs: str, dest_name: Optional[str] = None) -> st
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(view_dir), view_id))
+    _mirror_view_file(dest)
     return f"asset://{rel}"
 
 
@@ -313,6 +352,8 @@ def set_snapshot(view_id: str, png_bytes: bytes) -> Optional[str]:
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(view_dir), view_id))
+    _mirror_view_file(view_dir / "snapshot.png")
+    _mirror_view_file(view_file)
     return "asset://snapshot.png"
 
 
@@ -328,10 +369,12 @@ def save_clip(view_id: str, name: str, clip: Dict[str, Any]) -> Optional[str]:
     safe = "".join(c for c in str(name) if c.isalnum() or c in "-_") or "clip"
     clips_dir = _view_dir(row.get("workspace"), view_id) / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
-    (clips_dir / f"{safe}.json").write_text(json.dumps(clip, ensure_ascii=False), encoding="utf-8")
+    clip_file = clips_dir / f"{safe}.json"
+    clip_file.write_text(json.dumps(clip, ensure_ascii=False), encoding="utf-8")
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(_view_dir(row.get("workspace"), view_id)), view_id))
+    _mirror_view_file(clip_file)
     return f"clip://{safe}"
 
 
@@ -367,7 +410,10 @@ def view_asset_path(view_id: str, rel_path: str) -> Optional[Path]:
     """Resolve an asset path inside a view dir, guarding against traversal.
 
     Returns the absolute path if it exists and is contained within the view
-    dir; ``None`` otherwise. ``view.json`` is not served as an asset.
+    dir; ``None`` otherwise. ``view.json`` is not served as an asset. An asset
+    not on this host is fetched from the blob store first (common/blobs.py):
+    a view created on another worker or backend replica mirrors its assets
+    there, and a different replica may be the one serving them.
     """
     row = _row(view_id)
     if not row:
@@ -377,9 +423,14 @@ def view_asset_path(view_id: str, rel_path: str) -> Optional[Path]:
         target = _contained(view_dir, rel_path)
     except ValueError:
         return None
-    if target.name == "view.json" or not target.is_file():
+    if target.name == "view.json":
         return None
-    return target
+    if target.is_file():
+        return target
+    try:
+        return blobs.ensure_local(blobs.rel(target))
+    except Exception:
+        return None
 
 
 def _contained(base: Path, rel_path: str) -> Path:
@@ -554,6 +605,7 @@ def save_checkpoint(view_id: str, name: str) -> Optional[int]:
     f = _checkpoints_file(view_id, row.get("workspace"))
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(cps, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_view_file(f)
     return seq
 
 

@@ -476,6 +476,83 @@ def db_migrate(
                       "the default one, point AGENTS_HUB_ROOT at its directory) and restart.")
 
 
+@db_app.command("backup")
+def db_backup_cmd(
+    to: str = typer.Option(".", "--to", help="Archive path, or a directory to name a timestamped archive in."),
+    no_files: bool = typer.Option(False, "--no-files", help="Database only: skip run logs, workspaces, and the rest."),
+):
+    """Write one archive with the database and, by default, the state
+    directories beside it (run logs, workspaces, views, and the rest;
+    docs/backup.md). Works whatever backend is configured: the archive
+    always holds a plain SQLite file."""
+    _require_direct_mode("ah db backup")
+    from common import db_backup
+    try:
+        report = db_backup.backup(Path(to), include_files=not no_files,
+                                  log=lambda line: console.print(f"  {line}"))
+    except Exception as exc:  # noqa: BLE001 - the CLI reports, it does not recover
+        console.print(f"[red]failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+    manifest = report["manifest"]
+    console.print(f"[green]done[/green]: [bold]{report['archive']}[/bold]")
+    console.print(f"source: {manifest['source']['dialect']} at {manifest['source']['location']}, "
+                  f"schema_version {manifest['schema_version']}")
+    total = sum(manifest["counts"].values())
+    console.print(f"{total} row(s) across {len(manifest['counts'])} table(s)")
+    if manifest["files"]:
+        console.print(f"files: {', '.join(manifest['files'])}")
+    else:
+        console.print("files: none (database only)")
+
+
+@db_app.command("restore")
+def db_restore_cmd(
+    archive: str = typer.Argument(..., help="An archive written by `ah db backup`."),
+    force: bool = typer.Option(False, "--force", help="Overwrite a configured database that already holds rows."),
+    no_files: bool = typer.Option(False, "--no-files", help="Database only: leave run logs, workspaces, and the rest untouched."),
+):
+    """Load an archive into the database this process is configured with,
+    and, by default, extract its files into AGENTS_HUB_ROOT (existing files
+    overwritten, nothing else deleted). Refuses a database that already
+    holds rows unless --force."""
+    _require_direct_mode("ah db restore")
+    from common import db_backup
+    try:
+        report = db_backup.restore(Path(archive), force=force, include_files=not no_files,
+                                   log=lambda line: console.print(f"  {line}"))
+    except Exception as exc:  # noqa: BLE001 - the CLI reports, it does not recover
+        console.print(f"[red]failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+    total = sum(v["target"] for v in report["tables"].values())
+    console.print(f"[green]done[/green]: {total} row(s) in {len(report['tables'])} table(s), "
+                  f"{report['files_restored']} file(s) restored")
+    if report["mismatches"]:
+        console.print(f"[red]row counts do not match the manifest:[/red] {report['mismatches']}")
+        raise typer.Exit(code=1)
+    console.print("counts match the archive's manifest")
+
+
+@db_app.command("verify")
+def db_verify_cmd(archive: str = typer.Argument(..., help="An archive written by `ah db backup`.")):
+    """Check an archive without touching the live database: the manifest
+    parses, database.sqlite opens, and its row counts match the manifest."""
+    _require_direct_mode("ah db verify")
+    from common import db_backup
+    try:
+        report = db_backup.verify(Path(archive))
+    except Exception as exc:  # noqa: BLE001 - the CLI reports, it does not recover
+        console.print(f"[red]failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+    manifest = report["manifest"]
+    console.print(f"created_at {manifest['created_at']}, "
+                  f"source {manifest['source']['dialect']} at {manifest['source']['location']}")
+    if report["ok"]:
+        console.print(f"[green]ok[/green]: {sum(report['counts'].values())} row(s) match the manifest")
+    else:
+        console.print(f"[red]mismatch:[/red] {report['mismatches']}")
+        raise typer.Exit(code=1)
+
+
 # ---------------------------------------------------------------------------
 # top-level up command
 # ---------------------------------------------------------------------------

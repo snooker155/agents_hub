@@ -154,6 +154,16 @@ class Worker:
             if alive is False or (alive is None and time.time() - spec.get("_claimed", 0) > 60):
                 run_queue.finish(run_id)
                 self.tracked.pop(run_id, None)
+                # Mirror the finished child's log so a replica that reads the run
+                # (dashboard, another worker) does not need this host
+                # (common/blobs.py). Best-effort: never blocks the reap.
+                log_file = spec.get("log_file")
+                if log_file:
+                    try:
+                        from common import blobs
+                        blobs.mirror(blobs.rel(log_file))
+                    except Exception:
+                        pass
 
     # ── the loop ─────────────────────────────────────────────────────────────
 

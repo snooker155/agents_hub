@@ -95,17 +95,29 @@ async def get_node(node_id: str):
 
 @router.get("/{node_id}/logs")
 async def get_node_logs(node_id: str):
-    """Return the node's stdout/stderr log."""
+    """Return the node's stdout/stderr log.
+
+    Falls back to the blob store (common/blobs.py) when the file is not on
+    this host: a node started by a worker on another host mirrors its log
+    there, and a dashboard reading it back may be a different replica.
+    """
     node = node_manager.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     log_file = node.get("log_file")
-    if not log_file or not Path(log_file).exists():
+    if not log_file:
         return {"logs": "(no logs yet)"}
+    if Path(log_file).exists():
+        try:
+            return {"logs": Path(log_file).read_text(encoding="utf-8", errors="replace")}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
     try:
-        return {"logs": Path(log_file).read_text(encoding="utf-8", errors="replace")}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        from common import blobs
+        text = blobs.read_text(blobs.rel(log_file))
+    except Exception:
+        text = None
+    return {"logs": text if text is not None else "(no logs yet)"}
 
 
 @router.post("/{node_id}/stop")

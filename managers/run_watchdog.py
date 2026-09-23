@@ -329,6 +329,7 @@ def sweep_once() -> int:
             closed += _check_queued_run(rec)
 
     closed += _sweep_queue()
+    _sweep_containers()
     closed += _sweep_flow_runs()
     closed += _sweep_loop_runs()
     closed += _sweep_instances()
@@ -367,6 +368,17 @@ def _sweep_queue() -> int:
     if n or done.get("closed"):
         log.info("run queue sweep: %s", done)
     return n
+
+
+def _sweep_containers() -> None:
+    """Keep this host's rows in the ``containers`` table honest: a container
+    the daemon no longer has is dropped, an exited one is marked. Cheap when
+    this host registered nothing (no daemon call at all)."""
+    try:
+        from managers.container_manager import refresh_registered_containers
+        refresh_registered_containers()
+    except Exception:
+        log.debug("container registry sweep failed", exc_info=True)
 
 
 def _flow_run_is_dead(rec: Dict[str, Any]) -> bool:

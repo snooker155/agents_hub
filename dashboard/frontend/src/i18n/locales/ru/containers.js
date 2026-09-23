@@ -38,6 +38,8 @@ export default {
   viewLogs: 'Смотреть логи',
   stopContainer: 'Остановить контейнер',
   removeContainer: 'Удалить контейнер',
+  remote: 'Удалённый',
+  remoteCannotManage: 'Этот контейнер работает на другом хосте, отсюда его нельзя остановить или удалить.',
   agentsHubDockerNetwork: 'Docker-сеть agents-hub',
   networkIntro: 'Все контейнеры агентов подключаются к выделенной Docker bridge-сети с именем',
   networkReachBefore: 'Контейнеры могут обращаться друг к другу по имени (например,',

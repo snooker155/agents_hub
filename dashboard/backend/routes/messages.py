@@ -143,7 +143,9 @@ async def get_message_live(run_id: str):
     ``{"turn": null}`` when nothing live is known: the run is over, or it was
     never one of the kinds that report (see the module docstring there).
     """
-    return {"turn": live_runs.by_run(run_id)}
+    # Async on purpose: a run executing on another replica has its live tail
+    # only in the Redis mirror (common/live_runs.py), which is read awaited.
+    return {"turn": await live_runs.by_run_async(run_id)}
 
 
 @router.get("/{run_id}/insights")

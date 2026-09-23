@@ -105,20 +105,29 @@ export function StreamProvider({ children }) {
       // `since` rather than a real Last-Event-ID header: only the browser's
       // own silent retry can set that, and this provider replaces the
       // connection itself instead.
+      //
+      // `channels` carries the current dynamic channel set on every (re)connect
+      // too: with the cross-replica broker bridge on, a client id this replica
+      // does not recognise can still be caught up from the shared Redis stream
+      // (see docs/scaling.md), but only for the channels this tab actually
+      // wants, and only this provider knows what those are right now.
       const token = getAuthToken();
       const params = [];
       if (token) params.push(`token=${encodeURIComponent(token)}`);
       if (clientIdRef.current) params.push(`client=${encodeURIComponent(clientIdRef.current)}`);
       if (lastEventIdRef.current != null) params.push(`since=${encodeURIComponent(lastEventIdRef.current)}`);
+      const dynamicChannels = [...channelsRef.current.keys()];
+      if (dynamicChannels.length) params.push(`channels=${encodeURIComponent(dynamicChannels.join(','))}`);
       const url = `${API_ORIGIN}/api/stream${params.length ? `?${params.join('&')}` : ''}`;
       es = new EventSource(url);
       es.onmessage = (e) => {
         let ev;
         try { ev = JSON.parse(e.data); } catch { return; }
-        if (e.lastEventId) {
-          const id = Number(e.lastEventId);
-          if (Number.isFinite(id)) lastEventIdRef.current = id;
-        }
+        // The id is a plain counter with the bridge off, or a Redis stream id
+        // ("1695400000000-0") with it on — kept as the string EventSource
+        // itself hands back rather than coerced with Number(), which would
+        // silently turn every stream id into NaN and break catch-up.
+        if (e.lastEventId) lastEventIdRef.current = e.lastEventId;
         if (ev.channel === '_meta') {
           if (ev.type === 'ready') {
             clientIdRef.current = ev.client_id;
