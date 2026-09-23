@@ -1,24 +1,20 @@
 """
 Cost aggregation, pricing lookup and per-workspace budget enforcement.
 """
-import json
-
 import pytest
 
 from managers import run_manager as rm
 from common import pricing, budget
+from providers import catalog as model_catalog
 
 
-def _seed_prices(monkeypatch, tmp_path):
-    """Point the pricing catalog at a temp models.json with known prices."""
-    models_file = tmp_path / "models.json"
-    models_file.write_text(json.dumps({
+def _seed_prices(monkeypatch=None, tmp_path=None):
+    """Seed the model catalog (database-backed) with known prices."""
+    model_catalog.save_catalog_raw({
         "openai": {"default": "gpt-4o", "models": [
             {"id": "gpt-4o", "enabled": True, "input_price": 2.50, "output_price": 10.00},
         ]},
-    }), encoding="utf-8")
-    monkeypatch.setattr(pricing, "MODELS_FILE", models_file)
-    return models_file
+    })
 
 
 def _make_run(run_id, *, workspace, inbound, outbound, provider="openai",
@@ -77,14 +73,12 @@ def test_a_run_without_cache_data_prices_as_all_fresh_input(monkeypatch, tmp_pat
 
 
 def test_an_explicit_cached_price_beats_the_discount_default(monkeypatch, tmp_path):
-    models_file = tmp_path / "models.json"
-    models_file.write_text(json.dumps({
+    model_catalog.save_catalog_raw({
         "openai": {"default": "gpt-4o", "models": [
             {"id": "gpt-4o", "enabled": True, "input_price": 2.50,
              "output_price": 10.00, "cached_input_price": 0.0},
         ]},
-    }), encoding="utf-8")
-    monkeypatch.setattr(pricing, "MODELS_FILE", models_file)
+    })
     prices = pricing.load_price_map()
     run = {"provider": "openai", "model": "gpt-4o",
            "process": {"token_usage": {

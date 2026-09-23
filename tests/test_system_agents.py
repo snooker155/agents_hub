@@ -28,15 +28,12 @@ def live_registry():
     agents.json would leak into the next one. Also clears the sync's one-time
     backup, whose whole contract is that it is written once.
     """
-    import shutil
 
-    from agents.registry import _REGISTRY_CACHE
+    from common.bootstrap import seed_registry_from_bootstrap
     from common.paths import AGENTS_FILE
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
+    seed_registry_from_bootstrap()
     AGENTS_FILE.with_suffix(".json.pre-sync-backup").unlink(missing_ok=True)
-    _REGISTRY_CACHE["mtime"] = None
     yield
 
 
@@ -273,18 +270,15 @@ def test_existing_workspace_is_backfilled_but_keeps_an_explicit_choice():
 # ── the bootstrap sync ───────────────────────────────────────────────────────
 
 def _write_registry(agents: list[dict]) -> None:
-    from common.paths import AGENTS_FILE
-    from agents.registry import _REGISTRY_CACHE
+    from agents.registry import replace_all_raw
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    AGENTS_FILE.write_text(json.dumps({"agents": agents}, ensure_ascii=False, indent=2))
-    _REGISTRY_CACHE["mtime"] = None
+    replace_all_raw(agents)
 
 
 def _read_registry() -> dict[str, dict]:
-    from common.paths import AGENTS_FILE
+    from agents.registry import load_all_raw
 
-    return {a["id"]: a for a in json.loads(AGENTS_FILE.read_text())["agents"]}
+    return {a["id"]: a for a in load_all_raw()}
 
 
 @pytest.fixture

@@ -8,7 +8,7 @@ agent_creator, decomposer).
 
 Operator state is never overwritten. Bootstrap is per-entity additive, with one
 deliberate exception (the last bullet):
-- `.agents_hub/agents.json` is copied from `bootstrap/agents.json` only when
+- the agent registry is seeded from `bootstrap/agents.json` only when
   it does not exist.
 - `.agents_hub/workspaces/default/` is created from
   `bootstrap/workspaces/default/` only when it does not exist.
@@ -38,13 +38,39 @@ BOOTSTRAP_WORKSPACES_ROOT = BOOTSTRAP_ROOT / "workspaces"
 
 
 def _seed_agents_file() -> bool:
-    if AGENTS_FILE.exists():
-        return False
+    """Seed the registry from ``bootstrap/agents.json`` when it is empty.
+
+    An install that still has a legacy ``agents.json`` is not empty: the
+    registry imports that file on first use, before this check runs, so the
+    seed only ever lands on a genuinely fresh state directory."""
     if not BOOTSTRAP_AGENTS_FILE.is_file():
         return False
+    from agents.registry import load_all_raw, replace_all_raw
+    if load_all_raw():
+        return False
+    try:
+        import json
+        raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    records = [a for a in (raw.get("agents") or []) if isinstance(a, dict) and a.get("id")]
+    if not records:
+        return False
     ensure_agents_hub_root()
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
+    replace_all_raw(records)
     return True
+
+
+def seed_registry_from_bootstrap() -> int:
+    """Replace the registry with the shipped seed, whatever it holds now.
+    For tests and for a deliberate reset; ``ensure_initial_state`` only seeds
+    an empty registry. Returns the number of records loaded."""
+    import json
+    from agents.registry import replace_all_raw
+    raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
+    records = [a for a in (raw.get("agents") or []) if isinstance(a, dict) and a.get("id")]
+    replace_all_raw(records)
+    return len(records)
 
 
 def _seed_default_workspace() -> bool:
@@ -108,7 +134,7 @@ def ensure_system_agent(agent_id: str) -> bool:
         if get_agent(agent_id) is not None:
             return True
     except Exception:
-        # A missing or unreadable agents.json is a broken install, not a crash
+        # An unreadable registry is a broken install, not a crash
         # for the caller: a surface that needs this agent should report it as
         # unavailable rather than 500 on the lookup itself.
         return False
@@ -167,17 +193,20 @@ def _sync_system_agents() -> list[str]:
     """
     import json
     import logging
-    import shutil
-    from common.paths import AGENTS_FILE
+    from agents.registry import load_all_raw, replace_all_raw
 
     log = logging.getLogger(__name__)
-    if not (AGENTS_FILE.is_file() and BOOTSTRAP_AGENTS_FILE.is_file()):
+    if not BOOTSTRAP_AGENTS_FILE.is_file():
         return []
     try:
         seed_raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
-        live_raw = json.loads(AGENTS_FILE.read_text(encoding="utf-8"))
+        live_raw = {"agents": load_all_raw()}
     except Exception:
         return []
+    if not live_raw["agents"]:
+        return []
+    import copy
+    before = copy.deepcopy(live_raw["agents"])
 
     seed_by_id = {
         a["id"]: a for a in (seed_raw.get("agents") or [])
@@ -290,11 +319,14 @@ def _sync_system_agents() -> list[str]:
     if not changed:
         return []
 
-    # One-time safety net: the pre-sync registry, kept next to the live one.
+    # One-time safety net: the pre-sync registry, written out as a file next
+    # to where agents.json used to live. A backup is an export, not state.
     backup = AGENTS_FILE.with_suffix(".json.pre-sync-backup")
     if not backup.exists():
         try:
-            shutil.copyfile(AGENTS_FILE, backup)
+            ensure_agents_hub_root()
+            backup.write_text(json.dumps({"agents": before}, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
             log.warning(
                 "system agent sync: wrote a one-time registry backup to %s "
                 "before updating %d agent(s) from the seed.", backup, len(changed),
@@ -302,14 +334,7 @@ def _sync_system_agents() -> list[str]:
         except Exception:
             pass
 
-    AGENTS_FILE.write_text(
-        json.dumps(live_raw, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    try:
-        from agents.registry import _REGISTRY_CACHE
-        _REGISTRY_CACHE["mtime"] = None
-    except Exception:
-        pass
+    replace_all_raw(live_raw["agents"])
     return changed
 
 
@@ -328,16 +353,13 @@ def _grandfather_capability_violations() -> list[str]:
     violates, is left alone. New violations still hard-block — the override is
     only granted to combinations that were already on disk.
     """
-    import json
     import logging
-    from common.paths import AGENTS_FILE
+    from agents.registry import load_all_raw, replace_all_raw
 
     log = logging.getLogger(__name__)
-    if not AGENTS_FILE.is_file():
-        return []
     try:
         from tools.capabilities import check_combination
-        raw = json.loads(AGENTS_FILE.read_text(encoding="utf-8"))
+        raw = {"agents": load_all_raw()}
     except Exception:
         return []
 
@@ -357,14 +379,7 @@ def _grandfather_capability_violations() -> list[str]:
         )
 
     if stamped:
-        AGENTS_FILE.write_text(
-            json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        try:
-            from agents.registry import _REGISTRY_CACHE
-            _REGISTRY_CACHE["mtime"] = None
-        except Exception:
-            pass
+        replace_all_raw(raw["agents"])
     return stamped
 
 

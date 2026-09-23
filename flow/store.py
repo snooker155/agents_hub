@@ -1,21 +1,28 @@
 """
-Centralized flow storage with a YAML (logic) + JSON (visual) split.
+Centralized flow storage, in the ``flows`` document collection
+(:class:`common.docstore.DocStore`, one row per flow, keyed by flow id).
 
-Each flow is persisted as a pair of files under ``.agents_hub/flows/``::
+A flow's document is the combined dict the rest of the codebase already
+expects: nodes carry ``data`` (label/description, agent_id/entity_id,
+config, ...) plus their visual ``position``/``style``, and edges carry
+``source``/``target`` plus their visual fields. Nothing is split on write or
+merged on read any more — ``save_flow``/``get_flow`` pass the document
+straight through the store.
 
-    <flow_id>.yaml   # source of truth: meta, state, node logic, edges
-    <flow_id>.json   # visual layer: per-node position/style/label (React Flow)
+The YAML *logic* skeleton (meta, state, node logic, edges, with no ids and no
+visual fields) still exists as an export/import format: ``export_flow_yaml``
+derives it from the stored document via ``_split``, and ``import_flow_yaml``
+turns pasted-in YAML text back into a combined document via ``_merge``. Those
+two functions are what used to be the on-disk YAML/JSON pair, kept only as a
+serialization the API surfaces.
 
-The two are linked by node ``id``. ``load_flow`` merges them back into the
-single combined dict the rest of the codebase already expects (nodes with
-``data`` holding label/description, plus position/style), so downstream readers
-need no changes beyond calling this module.
-
-Legacy migration: the old single ``.agents_hub/flows.json`` array is split
-into per-flow file pairs on first access, then renamed to ``flows.json.bak``.
-
-All reads/writes funnel through here so the six historical readers of
-``flows.json`` stay consistent. A file lock guards concurrent writers.
+Legacy migration, once per database: an installation that still has the old
+per-flow ``<flow_id>.yaml`` + ``<flow_id>.json`` file pairs under
+``.agents_hub/flows/`` (or, older still, a single ``.agents_hub/flows.json``
+array) has every pair read with the same logic ``_read_pair`` always used,
+loaded into the store keyed by id, and the source renamed to ``.migrated``
+(the directory becomes ``flows.migrated``, the old file becomes
+``flows.json.migrated``). A store that already has rows never imports.
 """
 from __future__ import annotations
 
@@ -25,36 +32,30 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from common import db
+from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Legacy locations only: read during the one-time import, never written again.
 FLOWS_DIR = AGENTS_HUB_ROOT / "flows"
 LEGACY_FLOWS_FILE = AGENTS_HUB_ROOT / "flows.json"
+
+_FLOWS = DocStore("flows")
 
 
 class FlowParseError(ValueError):
     """A flow file is structurally readable but references something invalid —
     e.g. a node whose ``entity`` is not a registered flow entity."""
 
-try:
-    from filelock import FileLock
-
-    def _lock(path: Path):
-        return FileLock(str(path) + ".lock")
-except ImportError:  # pragma: no cover - filelock is optional
-    import contextlib
-
-    def _lock(path: Path):
-        return contextlib.nullcontext()
-
 
 # Flow-level keys that are NOT written to the YAML skeleton. ``id`` is the
-# filename; ``task_id`` is per-run state owned by the flow-run records
+# store key; ``task_id`` is per-run state owned by the flow-run records
 # (``flow.run_store``), not part of the flow's logic definition.
 _NON_YAML_FLOW_FIELDS = {"id", "task_id"}
 # Per-node logic fields carried in the YAML skeleton (besides ``type`` and the
 # entity reference, which get their own dedicated keys). ``id`` and ``nodeTask``
-# are dropped: ids live only in the visual JSON, nodeTask is obsolete.
+# are dropped: ids live only in the visual side, nodeTask is obsolete.
 _LOGIC_NODE_FIELDS = {
     "input", "inputs", "output", "outputs", "config",
     # Execution policy the engine reads per node (see flow.engine): how many
@@ -116,8 +117,10 @@ def _split(flow: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
 
     YAML is a pure logic skeleton: nodes are ``{type, entity, ...io}`` with no
     ids; edges are ``{from, to}`` referencing node keys; entry_point is a key.
-    JSON is the visual realization and the id ledger — it holds the concrete
-    node ids (keyed back to YAML by ``key``), positions, styles and edge ids.
+    The visual half is the id ledger — it holds the concrete node ids (keyed
+    back to YAML by ``key``), positions, styles and edge ids. Used by
+    ``export_flow_yaml`` (to derive the YAML half of a stored document) and by
+    the one-time legacy import (to read the old on-disk pairs).
     """
     src_nodes = flow.get("nodes", [])
     src_edges = flow.get("edges", [])
@@ -171,7 +174,7 @@ def _split(flow: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     logic["edges"] = logic_edges
     visual: Dict[str, Any] = {"id": flow.get("id")}
     # The currently attached task is run-scoped, not flow logic → it rides in the
-    # JSON ledger alongside the ids, never in the YAML skeleton.
+    # visual ledger alongside the ids, never in the YAML skeleton.
     if flow.get("task_id"):
         visual["task_id"] = flow["task_id"]
     visual["nodes"] = visual_nodes
@@ -180,7 +183,7 @@ def _split(flow: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
 
 
 def _gen_node_id(key: str) -> str:
-    """Deterministic node id for a key when the visual JSON has none (e.g. a
+    """Deterministic node id for a key when the visual ledger has none (e.g. a
     YAML authored by hand). Strips the ``#N`` disambiguator into a suffix."""
     base, _, n = key.partition("#")
     return base if not n else f"{base}-{n}"
@@ -198,8 +201,8 @@ def _is_legacy_logic(logic: Dict[str, Any]) -> bool:
 def _normalize_legacy_logic(logic: Dict[str, Any], visual: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Convert an old-format (id-bearing) logic+visual pair to the new shape.
 
-    Lets existing flow files load through the new merge path unchanged; the file
-    on disk is rewritten in skeleton form the next time it is saved.
+    Lets old-format YAML/JSON pairs load through the new merge path unchanged
+    during the one-time legacy import.
     """
     visual_by_id = {n.get("id"): n for n in (visual.get("nodes") or [])}
     combined_nodes: List[Dict[str, Any]] = []
@@ -228,16 +231,17 @@ def _normalize_legacy_logic(logic: Dict[str, Any], visual: Dict[str, Any]) -> tu
 def _merge(logic: Dict[str, Any], visual: Dict[str, Any]) -> Dict[str, Any]:
     """Recombine a logic+visual pair into the combined dict callers expect.
 
-    Reconstructs concrete node ids (from the JSON ledger, regenerated when
+    Reconstructs concrete node ids (from the visual ledger, regenerated when
     absent) and rebuilds edges' ``source``/``target`` and ``entry_point`` from
-    the YAML node keys, so the in-memory shape matches what the runtime expects.
+    the YAML node keys. Used by ``import_flow_yaml`` and by the one-time legacy
+    import of old on-disk pairs.
     """
     if _is_legacy_logic(logic):
         logic, visual = _normalize_legacy_logic(logic, visual)
     logic_nodes = logic.get("nodes", [])
     keys = _node_keys(_logic_to_nodelike(logic_nodes))
     visual_by_key = {n.get("key"): n for n in (visual.get("nodes") or [])}
-    # key → concrete id: prefer the JSON ledger, else regenerate deterministically.
+    # key → concrete id: prefer the visual ledger, else regenerate deterministically.
     key_to_id: Dict[str, str] = {}
     for k in keys:
         vn = visual_by_key.get(k, {})
@@ -253,7 +257,7 @@ def _merge(logic: Dict[str, Any], visual: Dict[str, Any]) -> Dict[str, Any]:
             merged[k] = v
     if visual.get("id"):
         merged.setdefault("id", visual["id"])
-    # Restore the attached task (run-scoped, stored in the JSON ledger).
+    # Restore the attached task (run-scoped, stored in the visual ledger).
     merged["task_id"] = visual.get("task_id")
 
     nodes: List[Dict[str, Any]] = []
@@ -284,7 +288,7 @@ def _merge(logic: Dict[str, Any], visual: Dict[str, Any]) -> Dict[str, Any]:
         nodes.append(node)
     merged["nodes"] = nodes
 
-    # Edges: rebuild source/target from keys; restore visual fields from JSON.
+    # Edges: rebuild source/target from keys; restore visual fields from the ledger.
     visual_edges_by_pair = {
         (e.get("from"), e.get("to")): e for e in (visual.get("edges") or [])
     }
@@ -313,9 +317,9 @@ def _logic_to_nodelike(logic_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]
 def _check_entities_exist(flow_id: str, merged: Dict[str, Any]) -> None:
     """Fail loudly when a node references an entity missing from the registry.
 
-    Every node in a YAML flow must name a registered flow entity (agent,
-    processor, condition, ...). A reference to an unknown entity — a typo, or an
-    agent that was since deleted/renamed — is a parse-time error, not a
+    Every node in a flow must name a registered flow entity (agent, processor,
+    condition, ...). A reference to an unknown entity — a typo, or an agent
+    that was since deleted/renamed — is a parse-time error, not a
     silently-skipped node. Raises :class:`FlowParseError` listing every offender.
     """
     from flow import dispatch as flow_dispatch
@@ -338,7 +342,7 @@ def _check_entities_exist(flow_id: str, merged: Dict[str, Any]) -> None:
         )
 
 
-# ── file paths ───────────────────────────────────────────────────────────────
+# ── legacy file paths (read-only: the one-time import only) ─────────────────
 
 def _yaml_path(flow_id: str) -> Path:
     return FLOWS_DIR / f"{flow_id}.yaml"
@@ -348,52 +352,10 @@ def _json_path(flow_id: str) -> Path:
     return FLOWS_DIR / f"{flow_id}.json"
 
 
-# ── migration ──────────────────────────────────────────────────────────────
-
-def _migrate_legacy_if_needed() -> None:
-    """Split the legacy flows.json array into per-flow pairs, once.
-
-    Runs when the legacy file exists and the per-flow folder has no YAML files
-    yet. The legacy file is renamed to flows.json.bak afterwards.
-    """
-    if not LEGACY_FLOWS_FILE.exists():
-        return
-    FLOWS_DIR.mkdir(parents=True, exist_ok=True)
-    if any(FLOWS_DIR.glob("*.yaml")):
-        return  # already migrated
-    try:
-        flows = json.loads(LEGACY_FLOWS_FILE.read_text(encoding="utf-8"))
-    except Exception as e:  # noqa: BLE001
-        print(f"[flow_store] could not read legacy flows.json: {e}")
-        return
-    if not isinstance(flows, list):
-        return
-    for flow in flows:
-        if isinstance(flow, dict) and flow.get("id"):
-            _write_pair(flow)
-    try:
-        LEGACY_FLOWS_FILE.rename(LEGACY_FLOWS_FILE.with_suffix(".json.bak"))
-    except OSError:
-        pass
-    print(f"[flow_store] migrated {len(flows)} flow(s) to per-flow YAML/JSON pairs")
-
-
-# ── low-level read/write ──────────────────────────────────────────────────────
-
-def _write_pair(flow: Dict[str, Any]) -> None:
-    flow_id = flow["id"]
-    FLOWS_DIR.mkdir(parents=True, exist_ok=True)
-    logic, visual = _split(flow)
-    with _lock(_yaml_path(flow_id)):
-        _yaml_path(flow_id).write_text(
-            yaml.safe_dump(logic, sort_keys=False, allow_unicode=True), encoding="utf-8"
-        )
-        _json_path(flow_id).write_text(
-            json.dumps(visual, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
-
 def _read_pair(flow_id: str) -> Optional[Dict[str, Any]]:
+    """Read one legacy ``<flow_id>.yaml`` + ``<flow_id>.json`` pair off disk and
+    merge it into a combined flow dict. Used only by the one-time legacy
+    import — the store holds the combined dict directly from then on."""
     yp, jp = _yaml_path(flow_id), _json_path(flow_id)
     if not yp.exists():
         return None
@@ -413,51 +375,101 @@ def _read_pair(flow_id: str) -> Optional[Dict[str, Any]]:
     return merged
 
 
+# ── legacy import (once per database) ────────────────────────────────────────
+
+_legacy_imported_for: Optional[str] = None
+
+
+def _ensure_legacy_imported() -> None:
+    """Import the old on-disk flows into the store, at most once per database
+    (like :meth:`common.docstore.DocStore._ensure_imported`, whose per-store
+    marker this mirrors: a fresh/rewritten database — a test swapping
+    databases, a process reopening one — makes the check run again)."""
+    global _legacy_imported_for
+    db.get_conn()
+    marker = f"{db._generation}:{db.dialect()}:{db.DB_FILE}:{db.database_url()}"
+    if _legacy_imported_for == marker:
+        return
+    _legacy_imported_for = marker
+    _import_legacy_flows()
+
+
+def _import_legacy_flows() -> None:
+    """Load every flow found on disk into the store and rename the source out
+    of the way. The per-flow YAML/JSON directory, when it has any pairs, is
+    authoritative (mirrors the old migration's own precedence); the older
+    single ``flows.json`` array is only used when there is no such directory."""
+    dir_pairs = sorted(FLOWS_DIR.glob("*.yaml")) if FLOWS_DIR.exists() else []
+    if dir_pairs:
+        docs: Dict[str, Any] = {}
+        for yp in dir_pairs:
+            flow_id = yp.stem
+            try:
+                merged = _read_pair(flow_id)
+            except FlowParseError as e:
+                print(f"[flow_store] legacy flow '{flow_id}' skipped: {e}")
+                continue
+            if merged:
+                docs[flow_id] = merged
+        _FLOWS.import_legacy(docs, source=FLOWS_DIR)
+        return
+    if LEGACY_FLOWS_FILE.exists():
+        try:
+            flows = json.loads(LEGACY_FLOWS_FILE.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            print(f"[flow_store] could not read legacy flows.json: {e}")
+            return
+        docs = {}
+        if isinstance(flows, list):
+            for flow in flows:
+                if isinstance(flow, dict) and flow.get("id"):
+                    docs[str(flow["id"])] = flow
+        _FLOWS.import_legacy(docs, source=LEGACY_FLOWS_FILE)
+
+
 # ── public API ───────────────────────────────────────────────────────────────
 
 def list_flows(limit: Optional[int] = None, offset: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Return flows as combined dicts (logic+visual merged), file-name order.
+    """Return every flow as a combined dict, ordered by id (deterministic,
+    matching the old file-name ordering when ids were also the filenames).
 
-    ``limit``/``offset`` page the file list *before* anything is read off disk:
-    each flow is a YAML+JSON pair, so a page of N flows costs N parses rather
-    than "parse the whole catalog, then slice". With neither given, every flow
-    is returned, exactly as before. See :func:`count_flows` for the matching
-    total that does not parse anything either.
+    ``limit``/``offset`` slice that ordered list; ``count_flows`` gives the
+    matching total. One broken flow (an unknown entity reference) does not
+    break the rest of the listing — it is skipped and logged; fetching it
+    directly through :func:`get_flow` still raises.
     """
-    _migrate_legacy_if_needed()
-    if not FLOWS_DIR.exists():
-        return []
-    paths = sorted(FLOWS_DIR.glob("*.yaml"))
+    _ensure_legacy_imported()
+    flows = sorted(_FLOWS.values(), key=lambda f: str((f or {}).get("id") or ""))
     if limit is not None or offset is not None:
         start = offset or 0
-        paths = paths[start: start + limit] if limit is not None else paths[start:]
+        flows = flows[start: start + limit] if limit is not None else flows[start:]
     out: List[Dict[str, Any]] = []
-    for yp in paths:
+    for flow in flows:
+        flow_id = flow.get("id", "")
         try:
-            flow = _read_pair(yp.stem)
+            _check_entities_exist(flow_id, flow)
         except FlowParseError as e:
-            # One broken flow must not break the whole listing; skip + log so the
-            # rest of the catalog still loads. Opening it directly still errors.
-            print(f"[flow_store] skip {yp.stem}: {e}")
+            print(f"[flow_store] skip {flow_id}: {e}")
             continue
-        if flow:
-            out.append(flow)
+        out.append(flow)
     return out
 
 
 def count_flows() -> int:
-    """Total number of flows on disk, for a caller paging with
-    :func:`list_flows` that needs ``total`` without parsing every file."""
-    _migrate_legacy_if_needed()
-    if not FLOWS_DIR.exists():
-        return 0
-    return sum(1 for _ in FLOWS_DIR.glob("*.yaml"))
+    """Total number of flows in the store, for a caller paging with
+    :func:`list_flows` that needs ``total`` without loading every document."""
+    _ensure_legacy_imported()
+    return _FLOWS.count()
 
 
 def get_flow(flow_id: str) -> Optional[Dict[str, Any]]:
     """Return a single combined flow dict, or None."""
-    _migrate_legacy_if_needed()
-    return _read_pair(flow_id)
+    _ensure_legacy_imported()
+    flow = _FLOWS.get(flow_id)
+    if flow is None:
+        return None
+    _check_entities_exist(flow_id, flow)  # raises FlowParseError on unknown entity
+    return flow
 
 
 def _notify_flows_changed(flow_id: str | None = None) -> None:
@@ -469,22 +481,18 @@ def _notify_flows_changed(flow_id: str | None = None) -> None:
 
 
 def save_flow(flow: Dict[str, Any]) -> None:
-    """Persist a combined flow dict as its YAML/JSON pair."""
+    """Persist a combined flow dict as the store's document for its id."""
     if not flow.get("id"):
         raise ValueError("flow must have an 'id'")
-    _migrate_legacy_if_needed()
-    _write_pair(flow)
+    _ensure_legacy_imported()
+    _FLOWS.put(flow["id"], flow)
     _notify_flows_changed(flow.get("id"))
 
 
 def delete_flow(flow_id: str) -> bool:
-    """Delete a flow's file pair. Returns True if anything was removed."""
-    _migrate_legacy_if_needed()
-    removed = False
-    for p in (_yaml_path(flow_id), _json_path(flow_id)):
-        if p.exists():
-            p.unlink()
-            removed = True
+    """Delete a flow from the store. Returns True if anything was removed."""
+    _ensure_legacy_imported()
+    removed = _FLOWS.delete(flow_id)
     if removed:
         _notify_flows_changed(flow_id)
     return removed
@@ -493,9 +501,9 @@ def delete_flow(flow_id: str) -> bool:
 def export_flow_yaml(flow_id: str) -> Optional[str]:
     """Return a flow's logic skeleton serialized as YAML text, or None if absent.
 
-    This is the same logic-only YAML written to ``<flow_id>.yaml`` (meta, state,
-    node logic, edges) — the portable definition of the flow, without the visual
-    layout. ``id``/``task_id`` are run/file-scoped and excluded by ``_split``.
+    This is the logic-only view of the stored document (meta, state, node
+    logic, edges) — the portable definition of the flow, without the visual
+    layout. ``id``/``task_id`` are run/store-scoped and excluded by ``_split``.
     """
     flow = get_flow(flow_id)
     if flow is None:

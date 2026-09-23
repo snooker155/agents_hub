@@ -5,14 +5,13 @@ the definition_hash recorded on a run by managers.runs.lifecycle.
 """
 from __future__ import annotations
 
-import json
 
 import pytest
 
 from agents import prompt_assembly
 from agents import versions as av
 from agents.capability_guard import CapabilityViolation
-from agents.registry import AgentSpec, _REGISTRY_CACHE, _config_path, add_agent, get_agent
+from agents.registry import AgentSpec, add_agent, get_agent, replace_all_raw
 from managers import run_manager as rm
 
 
@@ -32,13 +31,9 @@ def fresh_registry():
     real file under AGENTS_HUB_ROOT, which conftest already redirects to a
     throwaway directory; the DB itself is reset per test by conftest's
     fresh_db, so agent_versions rows never leak between tests)."""
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"agents": []}, ensure_ascii=False, indent=2), encoding="utf-8")
-    _REGISTRY_CACHE["mtime"] = None
+    replace_all_raw([])
     yield
-    path.write_text(json.dumps({"agents": []}, ensure_ascii=False, indent=2), encoding="utf-8")
-    _REGISTRY_CACHE["mtime"] = None
+    replace_all_raw([])
 
 
 def _spec(agent_id: str, *, tools=None, model=None, system=False,

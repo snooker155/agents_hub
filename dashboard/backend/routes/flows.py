@@ -34,7 +34,7 @@ router = APIRouter(prefix="/api/flows", tags=["flows"])
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-# Flows are persisted as per-flow YAML(logic)+JSON(visual) pairs via flow_store.
+# Flows are persisted in the database via flow_store (the `flows` document store).
 # These thin wrappers keep the existing list-oriented CRUD logic unchanged.
 
 def _load() -> List[Dict]:

@@ -1,8 +1,9 @@
 """
 Agent registry loader.
 
-Loads and validates available agents from the shared `.agents_hub/agents.json`
-module and exposes a small API:
+Loads and validates the agent registry (the ``agents`` document collection
+in the database, common/docstore.py; an existing ``.agents_hub/agents.json``
+is imported once and renamed ``.migrated``) and exposes a small API:
 - list_agents() -> list[AgentSpec]
 - get_agent(agent_id: str) -> AgentSpec | None
 
@@ -20,7 +21,10 @@ Validation rules:
 - Agent IDs must be unique
 - entrypoint must be in the form "module.sub:attr" (importable)
 
-The loader caches results and will auto-reload if the file mtime changes.
+The loader caches results and reloads when the store's signature changes.
+Inside a run container (``AGENTS_HUB_SNAPSHOT_DIR`` set, see
+common/snapshot.py) it reads the snapshot the launcher wrote and refuses
+writes.
 """
 from __future__ import annotations
 
@@ -30,8 +34,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import json
 import logging
-import os
-from filelock import FileLock
+from common import snapshot
+from common.docstore import DocStore
 from common.paths import AGENTS_FILE
 
 log = logging.getLogger(__name__)
@@ -352,25 +356,82 @@ _REGISTRY_CACHE: dict[str, Any] = {
 
 
 def _config_path() -> Path:
+    """The legacy registry file (``agents.json``). The registry itself lives in
+    the database now; the file is imported once on first use and renamed
+    ``.migrated``. Kept for callers that still name it."""
     return AGENTS_FILE
 
 
+# The registry: one document per agent, keyed by id, insertion order kept.
 # add_agent/remove_agent run from the dashboard process as well as agent
 # subprocesses (create_agent_tool / modify_agent_tool in
-# tools/langchain_tools.py), so the read-modify-write must be serialized
-# across processes, not just threads. Same lock-file-next-to-target
-# convention as common/user_context.py and workspace/storage.py.
-_REGISTRY_LOCK_PATH = str(AGENTS_FILE) + ".lock"
+# tools/langchain_tools.py); the store's transaction serializes them across
+# processes and hosts.
+_agents_store = DocStore("agents")
+_legacy_checked_for: Optional[int] = None
 
 
-def _write_registry(path: Path, data: Dict[str, Any]) -> None:
-    """Write agents.json via temp file + os.replace so a crash never leaves
-    a truncated or half-written file behind for readers to trip over."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+def _record_key(rec: Any) -> Optional[str]:
+    return str(rec["id"]) if isinstance(rec, dict) and rec.get("id") else None
+
+
+def _ensure_legacy_imported() -> None:
+    """Import ``agents.json`` (``{"agents": [...]}``) once, keyed by id."""
+    global _legacy_checked_for
+    from common import db
+    db.get_conn()
+    if _legacy_checked_for == db._generation:
+        return
+    _legacy_checked_for = db._generation
+    path = _config_path()
+    if not path.exists():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("agents.json is unreadable and was left in place: %s", exc)
+        return
+    items = raw.get("agents") if isinstance(raw, dict) else raw
+    docs: Dict[str, Any] = {}
+    for rec in (items or []):
+        key = _record_key(rec)
+        if key:
+            docs[key] = rec
+    _agents_store.import_legacy(docs, path)
+
+
+def load_all_raw() -> List[Dict[str, Any]]:
+    """Every agent record as stored (dicts, registry order). In a run
+    container this is the snapshot the launcher wrote (common/snapshot.py)."""
+    snap = snapshot.read_snapshot(snapshot.AGENTS_SNAPSHOT)
+    if snap is not None:
+        items = snap.get("agents") if isinstance(snap, dict) else snap
+        return [rec for rec in (items or []) if isinstance(rec, dict)]
+    _ensure_legacy_imported()
+    return [rec for rec in _agents_store.values() if isinstance(rec, dict)]
+
+
+def replace_all_raw(records: List[Dict[str, Any]]) -> None:
+    """Make the registry exactly ``records`` (dicts with an ``id``), in that
+    order. Bootstrap and tests use it; the API goes through add/remove."""
+    if snapshot.in_snapshot_mode():
+        snapshot.refuse_write("the agent registry")
+    _ensure_legacy_imported()
+    _agents_store.replace_all({str(r["id"]): r for r in records if isinstance(r, dict) and r.get("id")})
+    _REGISTRY_CACHE["mtime"] = None
+
+
+def export_snapshot() -> Dict[str, Any]:
+    """The registry as the snapshot file for a run container holds it: the
+    same ``{"agents": [...]}`` shape agents.json had."""
+    return {"agents": load_all_raw()}
+
+
+def _registry_signature() -> str:
+    if snapshot.in_snapshot_mode():
+        return "snapshot"
+    _ensure_legacy_imported()
+    return _agents_store.signature()
 
 
 def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
@@ -548,59 +609,33 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     )
 
 
-def _load_file_raw(path: Path) -> Dict[str, Any]:
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(
-            f"Agents config not found at {path}. Ensure 'agents.json' exists."
-        ) from e
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in agents config at {path}: {e}") from e
-
-
-def _load_agents_from_disk() -> List[AgentSpec]:
-    path = _config_path()
-    data = _load_file_raw(path)
-
-    if not isinstance(data, dict):
-        raise ValueError(f"Agents config root must be an object: {path}")
-
-    raw_agents = data.get("agents")
-    if not isinstance(raw_agents, list):
-        raise ValueError(f"Agents config must contain a list under 'agents': {path}")
-
+def _load_agents_from_store() -> List[AgentSpec]:
     specs: List[AgentSpec] = []
     seen: set[str] = set()
-    for idx, item in enumerate(raw_agents):
+    for idx, item in enumerate(load_all_raw()):
         if not isinstance(item, dict):
             raise ValueError(f"Agent entry at index {idx} must be an object, got {type(item).__name__}")
         spec = _validate_agent_dict(item)
         if spec.id in seen:
-            raise ValueError(f"Duplicate agent id '{spec.id}' in agents config")
+            raise ValueError(f"Duplicate agent id '{spec.id}' in the agent registry")
         seen.add(spec.id)
         specs.append(spec)
-
     return specs
 
 
 def _maybe_reload() -> List[AgentSpec]:
-    path = _config_path()
-    try:
-        mtime = path.stat().st_mtime
-    except FileNotFoundError:
-        # Trigger downstream error on actual load
-        mtime = None
-
-    cached_mtime = _REGISTRY_CACHE.get("mtime")
+    """The validated registry, rebuilt only when the store changed. The cache
+    key is the store's signature (row count and latest write); ``mtime`` is
+    the historical name of that slot and setting it to None still forces a
+    reload, which callers and tests rely on."""
+    key = _registry_signature()
+    cached_key = _REGISTRY_CACHE.get("mtime")
     agents = _REGISTRY_CACHE.get("agents")
-
-    if agents is not None and mtime == cached_mtime:
+    if agents is not None and key == cached_key:
         return agents  # type: ignore[return-value]
 
-    specs = _load_agents_from_disk()
-    _REGISTRY_CACHE["mtime"] = mtime
+    specs = _load_agents_from_store()
+    _REGISTRY_CACHE["mtime"] = key
     _REGISTRY_CACHE["agents"] = specs
     return specs
 
@@ -663,7 +698,7 @@ def add_agent(
     actor: Optional[str] = None,
     note: Optional[str] = None,
 ) -> None:
-    """Persist a new agent spec to agents.json.
+    """Persist a new agent spec to the registry.
 
     Save time is the capability guard's chokepoint: every write path (dashboard
     routes, ``create_agent_tool`` / ``modify_agent_tool``, bootstrap) lands here,
@@ -698,7 +733,7 @@ def add_agent(
         import dataclasses as _dc
         spec = _dc.replace(spec, user_modified=True)
 
-    # Snapshot whatever is currently on disk into version history before this
+    # Snapshot whatever is currently stored into version history before this
     # call replaces it, so history never has a gap. Only fires when the agent
     # already exists and its stored definition differs from the last snapshot
     # on file; best-effort, never blocks a legitimate write (see
@@ -710,28 +745,11 @@ def add_agent(
         except Exception:
             log.warning("could not snapshot version history for '%s'", spec.id, exc_info=True)
 
-    path = _config_path()
-    with FileLock(_REGISTRY_LOCK_PATH, timeout=10.0):
-        try:
-            data = _load_file_raw(path)
-        except FileNotFoundError:
-            data = {"agents": []}
-
-        if not isinstance(data, dict) or "agents" not in data:
-            data = {"agents": []}
-
-        # Check for duplicates (update if exists)
-        found = False
-        for i, a in enumerate(data["agents"]):
-            if a.get("id") == spec.id:
-                data["agents"][i] = spec.to_dict()
-                found = True
-                break
-
-        if not found:
-            data["agents"].append(spec.to_dict())
-
-        _write_registry(path, data)
+    if snapshot.in_snapshot_mode():
+        snapshot.refuse_write("the agent registry")
+    _ensure_legacy_imported()
+    with _agents_store.transaction():
+        _agents_store.put(spec.id, spec.to_dict())
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
@@ -739,24 +757,12 @@ def add_agent(
 
 
 def remove_agent(agent_id: str) -> bool:
-    """Remove an agent from agents.json by id. Returns True if found and removed."""
-    path = _config_path()
-    with FileLock(_REGISTRY_LOCK_PATH, timeout=10.0):
-        try:
-            data = _load_file_raw(path)
-        except FileNotFoundError:
-            return False
-
-        if not isinstance(data, dict) or "agents" not in data:
-            return False
-
-        original_len = len(data["agents"])
-        data["agents"] = [a for a in data["agents"] if a.get("id") != agent_id]
-
-        if len(data["agents"]) == original_len:
-            return False  # not found
-
-        _write_registry(path, data)
+    """Remove an agent from the registry by id. Returns True if found and removed."""
+    if snapshot.in_snapshot_mode():
+        snapshot.refuse_write("the agent registry")
+    _ensure_legacy_imported()
+    if not _agents_store.delete(str(agent_id)):
+        return False
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
@@ -766,8 +772,8 @@ def remove_agent(agent_id: str) -> bool:
 
 def _notify_agents_changed(agent_id: str | None = None) -> None:
     # Drop any cached build for the changed agent immediately. The build cache
-    # also fingerprints agents.json's mtime, so this is belt-and-braces against
-    # coarse filesystem timestamps — an edit takes effect on the very next run.
+    # also fingerprints the registry store's signature, so this is belt-and-
+    # braces — an edit takes effect on the very next run.
     try:
         from agents.agent_cache import invalidate
         invalidate(agent_id)
@@ -782,9 +788,9 @@ def _notify_agents_changed(agent_id: str | None = None) -> None:
 
 def set_default_chat_agent(agent_id: str) -> None:
     """Deprecated: default chat agent is stored per workspace metadata."""
-    raise ValueError("Default chat agent is stored in workspace metadata (workspaces.json), not agents.json")
+    raise ValueError("Default chat agent is stored in workspace metadata, not in the agent registry")
 
 
 def clear_default_chat_agent() -> None:
     """Deprecated: default chat agent is stored per workspace metadata."""
-    raise ValueError("Default chat agent is stored in workspace metadata (workspaces.json), not agents.json")
+    raise ValueError("Default chat agent is stored in workspace metadata, not in the agent registry")

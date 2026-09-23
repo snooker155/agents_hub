@@ -1308,16 +1308,12 @@ def test_the_view_chat_prompt_carries_the_live_view():
 
 def test_the_visualizer_ships_with_the_product():
     """A Studio pointed at an agent the install does not have is a dead page."""
-    import shutil
 
-    from agents.registry import _REGISTRY_CACHE, get_agent
-    from common.bootstrap import BOOTSTRAP_AGENTS_FILE
-    from common.paths import AGENTS_FILE
+    from agents.registry import get_agent
+    from common.bootstrap import seed_registry_from_bootstrap
     from routes.views import VIEW_AGENT_ID
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
-    _REGISTRY_CACHE["mtime"] = None
+    seed_registry_from_bootstrap()
 
     spec = get_agent(VIEW_AGENT_ID)
     assert spec is not None and spec.system is True

@@ -85,14 +85,9 @@ def clean_registry():
     file is a test-only situation; creating it here keeps the registry's own
     "config must exist" contract intact instead of loosening it for tests.
     """
-    from common.paths import AGENTS_FILE, ensure_agents_hub_root
-
-    ensure_agents_hub_root()
-    AGENTS_FILE.write_text(json.dumps({"agents": []}), encoding="utf-8")
-    registry._REGISTRY_CACHE["mtime"] = None
+    registry.replace_all_raw([])
     yield
-    AGENTS_FILE.write_text(json.dumps({"agents": []}), encoding="utf-8")
-    registry._REGISTRY_CACHE["mtime"] = None
+    registry.replace_all_raw([])
 
 
 @pytest.fixture

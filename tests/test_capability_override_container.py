@@ -36,24 +36,19 @@ empty ``agents.json`` for ``add_agent`` round-trips).
 """
 from __future__ import annotations
 
-import json
 
 import pytest
 
-from agents.registry import AgentSpec, _REGISTRY_CACHE, _config_path, add_agent, get_agent
+from agents.registry import AgentSpec, add_agent, get_agent, replace_all_raw
 
 
 @pytest.fixture(autouse=True)
 def fresh_registry():
     """Start each test from an empty, valid agents.json (as in
     tests/test_registry_locking.py) so add_agent round-trips for real."""
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"agents": []}, ensure_ascii=False, indent=2), encoding="utf-8")
-    _REGISTRY_CACHE["mtime"] = None
+    replace_all_raw([])
     yield
-    path.write_text(json.dumps({"agents": []}, ensure_ascii=False, indent=2), encoding="utf-8")
-    _REGISTRY_CACHE["mtime"] = None
+    replace_all_raw([])
 
 
 def _blocked_override_spec(agent_id: str) -> AgentSpec:

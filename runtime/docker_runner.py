@@ -45,7 +45,11 @@ def start_node_container(
     http_port: int = 8080,
     http_host_port: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Start a detached container for a persistent agent node."""
+    """Start a detached container for a persistent agent node.
+
+    The node reads the registries from a snapshot too (common/snapshot.py),
+    written under ``node-<id>``; a registry change reaches it on restart."""
+    from common import snapshot
     name = container_name_for_node(node_id)
     return start_container(
         container_name=name,
@@ -56,6 +60,7 @@ def start_node_container(
         http_expose=http_expose,
         http_port=http_port,
         http_host_port=http_host_port,
+        snapshot_dir=str(snapshot.write_snapshots(f"node-{node_id}")),
     )
 
 
@@ -70,10 +75,12 @@ def start_run_container(
 
     Unlike a node container (long-lived, keeps today's permissive mounts), a
     run container gets the hardened profile: resource limits, a read-only
-    root filesystem, a scrubbed environment, and agents.json /
-    custom_providers.json pinned read-only. See
-    managers.container_manager.build_run_command and docs/containers.md.
+    root filesystem, a scrubbed environment, and the registry snapshot
+    (agents, custom providers, model catalog: common/snapshot.py) mounted
+    read-only. See managers.container_manager.build_run_command and
+    docs/containers.md.
     """
+    from common import snapshot
     name = container_name_for_run(run_id)
     return start_container(
         container_name=name,
@@ -82,4 +89,5 @@ def start_run_container(
         workspace=cwd,
         env=env,
         hardened=True,
+        snapshot_dir=str(snapshot.write_snapshots(run_id)),
     )

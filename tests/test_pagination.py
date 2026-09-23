@@ -156,8 +156,8 @@ def test_flows_paging_slices_the_loaded_list_and_reports_the_total(flows_client)
     assert body["total"] == 5
     assert body["limit"] == 2
     assert body["offset"] == 2
-    # flow_store.list_flows() sorts by filename (== id here), so the page is
-    # deterministic without re-deriving the store's own ordering.
+    # flow_store.list_flows() sorts by id, so the page is deterministic
+    # without re-deriving the store's own ordering.
     assert [f["id"] for f in body["items"]] == sorted(ids)[2:4]
 
 

@@ -19,7 +19,7 @@ node is something an operator is actively watching:
 
 | | Node container | Run container |
 |---|---|---|
-| Mounts | state dir, tasks dir, workspace (all read-write) | same, plus `agents.json` and `custom_providers.json` re-mounted `:ro` on top of the state dir (and, with `AGENT_RUN_STATE_TRANSPORT=http`, the whole state dir `:ro` with `run_logs/` re-mounted `:rw`, see below) |
+| Mounts | state dir, tasks dir, workspace (all read-write) | same, plus the registry snapshot (`run_snapshots/<run_id>/`: `agents.json`, `custom_providers.json`, `models.json`) mounted `:ro` inside the state dir and named in `AGENTS_HUB_SNAPSHOT_DIR` (and, with `AGENT_RUN_STATE_TRANSPORT=http`, the whole state dir `:ro` with `run_logs/` re-mounted `:rw`, see below) |
 | Env | provider-key allowlist (`OPENAI_*`, `ANTHROPIC_*`, …) | full env minus a host-only denylist (`container_env`) — a run needs its session id, workspace name and relay token too |
 | Root filesystem | writable | `--read-only`, with `--tmpfs /tmp` for scratch space and `$HOME` |
 | Resources | none | `--memory` (`AGENT_DOCKER_MEMORY`, default `2g`), `--cpus` (`AGENT_DOCKER_CPUS`, default `2`), `--pids-limit 512` |
@@ -33,8 +33,20 @@ command line as a pure function (no daemon needed), which is what
 
 By default a run reaches the shared database (`agents_hub.db`, holding run
 records, tasks, sessions…) directly through `common/db.py`, the same as a
-local subprocess does: the state dir mount is read-write, and only
-`agents.json` / `custom_providers.json` are pinned `:ro` on top.
+local subprocess does: the state dir mount is read-write, and only the
+registry snapshot is pinned `:ro` on top.
+
+The agent registry, the custom provider list and the model catalog live in
+the database, and a container is not handed the database just to read
+them: before the container starts, the launcher writes the three as JSON
+into `<state>/run_snapshots/<run_id>/` (`common/snapshot.py`,
+`write_snapshots`), mounts that directory read-only and points
+`AGENTS_HUB_SNAPSHOT_DIR` at it. Inside the container every registry
+serves the snapshot and refuses writes, so a run reads a frozen copy of its
+own definition and cannot change what the capability guard will allow it.
+A node container gets the same under `run_snapshots/node-<id>/`; a registry
+edit reaches a running node on its next restart. Snapshots of finished runs
+are removed by the maintenance sweep.
 
 Setting `AGENT_RUN_STATE_TRANSPORT=http` (env var, or `run_state_transport` in
 Settings; default `db` on SQLite, `http` when `AGENTS_HUB_DATABASE_URL` names

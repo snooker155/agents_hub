@@ -99,7 +99,7 @@ agents_hub/
 │   │   ├── agent_creator/
 │   │   └── ...              # the full seed roster is bootstrap/agents.json
 │   ├── prompt_assembly.py   # Builds the runtime system prompt from the three markdown layers
-│   ├── registry.py          # AgentSpec loader (reads .agents_hub/agents.json)
+│   ├── registry.py          # AgentSpec loader (the `agents` document store)
 │   ├── agent_factory.py     # Constructs runnable agents and binds tools / memory
 │   ├── agent_launcher.py    # Starts a run (budget check, process launch, run record)
 │   ├── agent_response.py    # Structured response envelope (buttons, views, …)
@@ -172,7 +172,7 @@ agents_hub/
 │   ├── agents/              # Example prompts, not seeded — waterfall/, events/, story/, jobs/, misc/ (see examples/agents/README.md)
 │   ├── imported-agents/     # Worked HTTP-import examples (Aider, a LangGraph graph in Python and JS)
 │   └── 0N_*/                # Numbered runnable walkthroughs (task assistant, human-in-loop approval, Docker isolation, …)
-├── .agents_hub/             # Runtime state: agents_hub.db, agents.json, workspaces, memory, views
+├── .agents_hub/             # Runtime state: agents_hub.db, workspaces, logs, views
 ├── cli/
 │   ├── main.py              # Terminal entry point: every command, and its rendering
 │   └── backend.py           # The operations it calls — in-process, or over REST
@@ -240,10 +240,10 @@ agents_hub/
   Shared JSON envelope for all tool results: `json_ok({...})` on success, `json_err(message, code=...)` on failure. One module where twenty-six identical copies used to live.
 - `.agents_hub/agents_hub.db` (or Postgres, by `AGENTS_HUB_DATABASE_URL`)
   The database holding runs, tasks, sessions, nodes, views, the eval / loop / team / simulation records, and the document collections below.
-- `.agents_hub/agents.json`
-  Registry of `AgentSpec` records — model, provider, tools, memory, node settings.
-- `.agents_hub/models.json`
-  Model catalog: which models are enabled per provider, the default per provider, and per-model pricing.
+- `agents` document store
+  Registry of `AgentSpec` records — model, provider, tools, memory, node settings (`agents/registry.py`; a run container reads it from the snapshot in `.agents_hub/run_snapshots/`).
+- `models` document store
+  Model catalog: which models are enabled per provider, the default per provider, and per-model pricing (`providers/catalog.py`).
 - `documents` table (`common/docstore.py`)
   Project metadata, central per-workspace metadata (settings overrides, allowed agents/flows, env vars, model override, keyed by workspace name; the per-folder `.workspace.json` a fresh open still migrates in and removes), scheduled jobs, notifications, memory pools and the other former JSON stores, one named collection each.
 - `.agents_hub/workspaces/`
@@ -381,7 +381,7 @@ State is split between a database (SQLite by default, Postgres by `AGENTS_HUB_DA
 | Loops | `loops`, `loop_runs`, `loop_iterations` |
 | Teams | `teams`, `team_runs`, `team_messages` |
 | Integration | `inbound_deliveries` (notify's idempotency record for an inbound webhook) |
-| Documents | `documents` (`common/docstore.py`): the JSON collections that used to be one file each under a lock. One row per document, keyed by `(store, key)`, insertion order kept in `seq`. Stores: `plans`, `notifications`, `workspaces`, `projects`, `project_graphs`, `shared_memory`, `episodes:<pool>`, `graph_nodes:<pool>`, `graph_edges:<pool>`, `procedures`, `extractions:<pool>`, `entity_chats`, `connections`, `telegram`, `git_connectors`, `node_connections`, `web_log`, `user_context` |
+| Documents | `documents` (`common/docstore.py`): the JSON collections that used to be one file each under a lock. One row per document, keyed by `(store, key)`, insertion order kept in `seq`. Stores: `agents`, `custom_providers`, `models`, `flows`, `flow_entities`, `plans`, `notifications`, `workspaces`, `projects`, `project_graphs`, `shared_memory`, `episodes:<pool>`, `graph_nodes:<pool>`, `graph_edges:<pool>`, `procedures`, `extractions:<pool>`, `entity_chats`, `connections`, `telegram`, `git_connectors`, `blender_connector`, `node_connections`, `web_log`, `user_context` |
 
 The schema is a sequence of numbered migrations (`common/migrations/`, ledger table `schema_migrations`), written once in SQLite syntax and rewritten for Postgres by the runner. The first connection in any process applies the pending ones and runs the one-time import of the legacy JSON stores (`common/db_migrate.py` for the original tables, each `DocStore` for its own file), leaving the originals behind as `*.migrated` — so any entrypoint, backend or CLI, may touch the stores first. `ah db migrate --to <url|path>` copies a whole database between the two backends (`common/db_transfer.py`).
 
@@ -389,14 +389,12 @@ The schema is a sequence of numbered migrations (`common/migrations/`, ledger ta
 
 **Files** — under `.agents_hub/` unless noted:
 
-- `agents.json` — agent registry (AgentSpec records); mounted read-only into agent containers, which is why it is still a file
-- `models.json` — model catalog: enabled models, defaults, per-model pricing
-- `custom_providers.json` — custom model backends (mounted into agent containers like `agents.json`)
-- `flows/`, `flow_logs/` — flow definitions (YAML plus a JSON visual pair, edited in place and git-friendly) and per-run logs; flow run records live in the `flow_runs` table (an existing `flow_runs.json` is imported once and renamed `.migrated`)
+- `.agents_hub/run_snapshots/<run_id>/` — the registry snapshot a run or node container reads (`agents.json`, `custom_providers.json`, `models.json` exported from the database by `common/snapshot.py` before the container starts, mounted read-only); pruned once the run is over
+- `.agents_hub/flow_logs/` — per-run flow logs; flow definitions and flow run records are in the database (`flows` document store and the `flow_runs` table; an existing `flows/` directory or `flow_runs.json` is imported once and renamed `.migrated`)
 - `run_logs/`, `node_logs/`, `dockerfiles/` — generated artifacts
 - `workspaces/` — generated workspace folders (logs, plans, knowledge, project subfolders), and views under `<workspace>/.views/<view_id>/`; a workspace's settings live in the `workspaces` document store, not in its folder
 - `agents/definitions/<agent_id>/{instructions,capabilities,usage}.md` — layered agent prompts, in the repository rather than the state directory
-- `*.migrated` — the JSON files the database replaced (`workspaces.json`, `plans.json`, `shared_memory.json`, `episodes/`, `graphs/`, `procedures.json`, `connections.json`, `telegram.json`, ...), left behind by the one-time import and safe to delete
+- `*.migrated` — the JSON and YAML files the database replaced (`agents.json`, `models.json`, `custom_providers.json`, `workspaces.json`, `plans.json`, `shared_memory.json`, `episodes/`, `graphs/`, `procedures.json`, `connections.json`, `telegram.json`, `flows/`, ...), left behind by the one-time import and safe to delete
 
 ## Running more than one backend
 

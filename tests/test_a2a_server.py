@@ -155,14 +155,10 @@ def test_every_stream_frame_is_a_full_jsonrpc_response():
 def clean_registry():
     """An empty registry in the throwaway state root, as bootstrap would write."""
     from agents import registry
-    from common.paths import AGENTS_FILE, ensure_agents_hub_root
 
-    ensure_agents_hub_root()
-    AGENTS_FILE.write_text(json.dumps({"agents": []}), encoding="utf-8")
-    registry._REGISTRY_CACHE["mtime"] = None
+    registry.replace_all_raw([])
     yield
-    AGENTS_FILE.write_text(json.dumps({"agents": []}), encoding="utf-8")
-    registry._REGISTRY_CACHE["mtime"] = None
+    registry.replace_all_raw([])
 
 
 @pytest.fixture

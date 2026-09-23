@@ -1,9 +1,10 @@
 """
 Model pricing lookup shared by cost/usage aggregation and budget enforcement.
 
-Reads the curated catalog persisted at ``MODELS_FILE`` (``.agents_hub/models.json``)
-and exposes a flat ``(provider, model_id) -> (input, output, cached_input)`` map
-plus a per-run cost helper. Prices are USD per 1M tokens, matching the Models page.
+Reads the curated catalog persisted by ``providers.catalog`` (the database
+document that used to be ``.agents_hub/models.json``) and exposes a flat
+``(provider, model_id) -> (input, output, cached_input)`` map plus a per-run
+cost helper. Prices are USD per 1M tokens, matching the Models page.
 
 Cached input is its own price because it is its own line on the provider's bill.
 An agent loop re-sends the whole conversation on every step, so a 37-step run
@@ -19,10 +20,9 @@ backend. It only *reads* the catalog; curation/discovery stays in
 """
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, Tuple
 
-from common.paths import MODELS_FILE
+from providers.catalog import load_catalog_raw
 
 # (input, output, cached_input) USD per 1M tokens.
 PriceMap = Dict[Tuple[str, str], Tuple[float, float, float]]
@@ -48,9 +48,7 @@ def load_price_map() -> PriceMap:
     models as zero-cost). Never raises."""
     prices: PriceMap = {}
     try:
-        if not MODELS_FILE.exists():
-            return prices
-        data = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
+        data = load_catalog_raw()
     except Exception:
         return prices
     if not isinstance(data, dict):

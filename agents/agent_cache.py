@@ -82,7 +82,7 @@ def compute_fingerprint(
 ) -> str:
     """Hash the definition inputs that determine the built agent."""
     from common.docstore import DocStore
-    from common.paths import AGENTS_FILE, PROJECT_ROOT
+    from common.paths import PROJECT_ROOT
     from common.workspace_context import resolve_active_project
 
     defn = Path(definitions_dir) / agent_id
@@ -95,7 +95,7 @@ def compute_fingerprint(
     ]
     for fname in ("instructions.md", "capabilities.md", "usage.md"):
         parts.append(f"{fname}={_stat_sig(defn / fname)}")
-    parts.append("agents=" + _stat_sig(Path(AGENTS_FILE)))
+    parts.append("agents=" + DocStore("agents").signature())
     parts.append("ws=" + DocStore("workspaces").signature())
     parts.append("proc=" + DocStore("procedures").signature())
     parts.append("env=" + _stat_sig(Path(PROJECT_ROOT) / ".env"))

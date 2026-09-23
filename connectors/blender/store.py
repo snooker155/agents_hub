@@ -3,8 +3,11 @@ Blender connector configuration.
 
 Blender is an *external resource* in the same sense GitHub is: something the
 operator points the hub at, whose availability is a fact about the machine
-rather than about the code. State lives in ``.agents_hub/blender_connector.json``
-and nothing here is secret, so the whole config is readable from the API.
+rather than about the code. State is one document, held by
+:class:`common.docstore.DocStore` under the key ``"state"`` (store name
+``"blender_connector"``), shaped like the old
+``.agents_hub/blender_connector.json``, and nothing in it is secret, so the
+whole config is readable from the API.
 
 Two ways to reach an engine, in the order the operator is expected to try them:
 
@@ -20,26 +23,28 @@ Two ways to reach an engine, in the order the operator is expected to try them:
 """
 from __future__ import annotations
 
-import os
+import json
 import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from filelock import FileLock
-
-from common.paths import AGENTS_HUB_ROOT, ensure_agents_hub_root
-
-try:  # the same JSON helpers every connector uses
-    import json
-except ImportError:  # pragma: no cover
-    raise
+from common.docstore import DocStore
+from common.paths import AGENTS_HUB_ROOT
 
 MODES = ("local", "docker")
 
+#: Legacy JSON file this document was imported from.
 _FILE = AGENTS_HUB_ROOT / "blender_connector.json"
-_LOCK = AGENTS_HUB_ROOT / "blender_connector.json.lock"
+
+# One dict of settings, not a collection, so it is imported by hand below as a
+# single document under the "state" key (like
+# connectors/telegram/telegram_store.py), rather than through DocStore's own
+# per-key legacy import.
+_store = DocStore("blender_connector")
+
+_STATE_KEY = "state"
 
 #: Where a Blender install usually lands, per platform. Probed in order.
 _CANDIDATE_PATHS: List[str] = [
@@ -65,37 +70,46 @@ def _defaults() -> Dict[str, Any]:
     }
 
 
-def _load_unlocked() -> Dict[str, Any]:
-    out = _defaults()
+def _ensure_legacy_imported() -> None:
+    """Import ``blender_connector.json`` once, as the single "state" document.
+
+    A store that already has rows is left alone (:meth:`DocStore.import_legacy`
+    re-checks this itself, atomically); the cheap existence check here just
+    avoids reading and parsing the file on every call once it is gone.
+    """
     if not _FILE.exists():
-        return out
+        return
     try:
         text = _FILE.read_text(encoding="utf-8")
-        data = json.loads(text) if text.strip() else {}
+        data = json.loads(text) if text.strip() else None
     except Exception:
-        return out
+        return
+    if isinstance(data, dict):
+        _store.import_legacy({_STATE_KEY: data}, _FILE)
+
+
+def _coerce(data: Any) -> Dict[str, Any]:
+    out = _defaults()
     if isinstance(data, dict):
         out.update({k: v for k, v in data.items() if k in out})
     return out
 
 
 def load() -> Dict[str, Any]:
-    with FileLock(str(_LOCK), timeout=5.0):
-        return _load_unlocked()
+    _ensure_legacy_imported()
+    return _coerce(_store.get(_STATE_KEY))
 
 
 def save(patch: Dict[str, Any]) -> Dict[str, Any]:
     """Merge ``patch`` into the stored config and return the new state."""
     clean = _validate(patch)
-    with FileLock(str(_LOCK), timeout=5.0):
-        data = _load_unlocked()
+    _ensure_legacy_imported()
+    with _store.transaction():
+        data = _coerce(_store.get(_STATE_KEY))
         data.update(clean)
-        ensure_agents_hub_root()
-        tmp = _FILE.with_suffix(_FILE.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, _FILE)
-        _probe_cache.clear()
-        return data
+        _store.put(_STATE_KEY, data)
+    _probe_cache.clear()
+    return data
 
 
 def _validate(patch: Dict[str, Any]) -> Dict[str, Any]:

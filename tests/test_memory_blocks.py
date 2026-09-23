@@ -28,15 +28,10 @@ from memory.tool import create_memory_tools
 @pytest.fixture
 def seeded_registry():
     """A registry mirroring the shipped seed, in the suite's throwaway root."""
-    import shutil
 
-    from agents.registry import _REGISTRY_CACHE
-    from common.bootstrap import BOOTSTRAP_AGENTS_FILE
-    from common.paths import AGENTS_FILE
+    from common.bootstrap import seed_registry_from_bootstrap
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
-    _REGISTRY_CACHE["mtime"] = None
+    seed_registry_from_bootstrap()
     yield
 
 

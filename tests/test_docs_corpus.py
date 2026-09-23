@@ -165,15 +165,10 @@ def test_every_system_agent_can_reach_the_corpus():
 @pytest.fixture
 def live_registry():
     """A registry mirroring the shipped seed, in the suite's throwaway root."""
-    import shutil
 
-    from agents.registry import _REGISTRY_CACHE
-    from common.bootstrap import BOOTSTRAP_AGENTS_FILE
-    from common.paths import AGENTS_FILE
+    from common.bootstrap import seed_registry_from_bootstrap
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
-    _REGISTRY_CACHE["mtime"] = None
+    seed_registry_from_bootstrap()
     yield
 
 

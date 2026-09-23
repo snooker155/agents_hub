@@ -1,31 +1,27 @@
-"""Concurrency and durability tests for agents/registry.py's agents.json writes.
+"""Concurrency tests for agents/registry.py's writes.
 
 add_agent/remove_agent are called both from the dashboard process and from
 agent subprocesses (create_agent_tool / modify_agent_tool in
-tools/langchain_tools.py). Before the fix these did a plain read-modify-write
-with no lock, so two concurrent writers could clobber each other's changes.
+tools/langchain_tools.py). They used to be a plain read-modify-write of
+agents.json with no lock, so two concurrent writers could clobber each
+other's changes; the registry is a document collection now and every write
+is a database transaction.
 """
 from __future__ import annotations
 
-import json
 import threading
 
 import pytest
 
-from agents.registry import AgentSpec, _REGISTRY_CACHE, _config_path, add_agent
-from common.paths import AGENTS_FILE
+from agents.registry import AgentSpec, add_agent, load_all_raw, replace_all_raw
 
 
 @pytest.fixture(autouse=True)
 def fresh_registry():
-    """Start each test from an empty, valid agents.json."""
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"agents": []}, ensure_ascii=False, indent=2), encoding="utf-8")
-    _REGISTRY_CACHE["mtime"] = None
+    """Start each test from an empty registry."""
+    replace_all_raw([])
     yield
-    path.write_text(json.dumps({"agents": []}, ensure_ascii=False, indent=2), encoding="utf-8")
-    _REGISTRY_CACHE["mtime"] = None
+    replace_all_raw([])
 
 
 def _spec(agent_id: str) -> AgentSpec:
@@ -38,9 +34,8 @@ def _spec(agent_id: str) -> AgentSpec:
 
 
 def test_concurrent_add_agent_keeps_every_record():
-    """100 adds across two threads must all survive, and the file must stay
-    valid JSON throughout: proof the read-modify-write is now serialized."""
-    path = _config_path()
+    """100 adds across two threads must all survive: proof the
+    read-modify-write is serialized."""
 
     def worker(prefix: str) -> None:
         for i in range(50):
@@ -53,21 +48,12 @@ def test_concurrent_add_agent_keeps_every_record():
     t1.join()
     t2.join()
 
-    data = json.loads(path.read_text(encoding="utf-8"))
-    ids = {a["id"] for a in data["agents"]}
-    assert len(data["agents"]) == 100
+    records = load_all_raw()
+    ids = {a["id"] for a in records}
+    assert len(records) == 100
     assert len(ids) == 100
 
 
-def test_add_agent_write_leaves_no_temp_file_behind():
-    """The temp-and-rename write must not leave agents.json.tmp lying around,
-    even though it lives right next to the real file that AGENTS_FILE points at."""
-    path = _config_path()
+def test_add_agent_is_visible_to_a_fresh_read():
     add_agent(_spec("solo"), user_edit=False)
-
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    assert not tmp.exists()
-    # Sanity: the real file is still valid JSON with the new agent in it.
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert any(a["id"] == "solo" for a in data["agents"])
-    assert path == AGENTS_FILE
+    assert any(a["id"] == "solo" for a in load_all_raw())

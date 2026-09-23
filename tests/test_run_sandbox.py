@@ -137,8 +137,7 @@ def _run_cmd(**overrides):
         memory="1g",
         cpus="1",
         pids_limit=256,
-        agents_file="/host/.agents_hub/agents.json",
-        custom_providers_file="/host/.agents_hub/custom_providers.json",
+        snapshot_dir="/host/.agents_hub/run_snapshots/r1",
     )
     kwargs.update(overrides)
     return cm.build_run_command(**kwargs)
@@ -161,11 +160,16 @@ def test_run_command_never_mounts_the_docker_socket(no_host_translation):
     assert "/var/run/docker.sock" not in " ".join(argv)
 
 
-def test_run_command_pins_agents_json_read_only(no_host_translation):
+def test_run_command_mounts_the_registry_snapshot_read_only(no_host_translation):
+    """The registries live in the database; the run gets a frozen copy of
+    them (common/snapshot.py), mounted read-only and named in
+    AGENTS_HUB_SNAPSHOT_DIR, so it can read but never edit its own agent
+    definition or the provider credentials."""
     argv = _run_cmd()
     joined = " ".join(argv)
-    assert "/host/.agents_hub/agents.json:/app/.agents_hub/agents.json:ro" in joined
-    assert "/host/.agents_hub/custom_providers.json:/app/.agents_hub/custom_providers.json:ro" in joined
+    assert "/host/.agents_hub/run_snapshots/r1:/app/.agents_hub/run_snapshots/r1:ro" in joined
+    assert "-e AGENTS_HUB_SNAPSHOT_DIR=/app/.agents_hub/run_snapshots/r1" in joined
+    assert "agents.json" not in joined
 
 
 def test_run_command_scrubs_env_but_keeps_provider_keys(no_host_translation):
@@ -175,9 +179,10 @@ def test_run_command_scrubs_env_but_keeps_provider_keys(no_host_translation):
     assert "HOST_PROJECT_ROOT" not in joined
 
 
-def test_run_command_omits_ro_mounts_when_files_absent(no_host_translation):
-    argv = _run_cmd(agents_file=None, custom_providers_file=None)
-    assert "agents.json" not in " ".join(argv)
+def test_run_command_omits_the_snapshot_mount_when_none_was_written(no_host_translation):
+    argv = _run_cmd(snapshot_dir=None)
+    joined = " ".join(argv)
+    assert "run_snapshots" not in joined and "AGENTS_HUB_SNAPSHOT_DIR" not in joined
 
 
 def test_run_command_default_transport_mounts_state_dir_read_write(no_host_translation):
@@ -202,8 +207,8 @@ def test_run_command_http_transport_mounts_state_dir_read_only(no_host_translati
     assert "/host/.agents_hub:/app/.agents_hub:ro" in joined
     assert "/host/.agents_hub/run_logs:/app/.agents_hub/run_logs" in joined
     assert "/host/.agents_hub/run_logs:/app/.agents_hub/run_logs:ro" not in joined
-    # The read-only overlays for agents.json / custom_providers.json still apply.
-    assert "/host/.agents_hub/agents.json:/app/.agents_hub/agents.json:ro" in joined
+    # The read-only snapshot mount still applies.
+    assert "/host/.agents_hub/run_snapshots/r1:/app/.agents_hub/run_snapshots/r1:ro" in joined
     # The relay env var itself still reaches the container.
     assert "-e AGENT_RUN_STATE_TRANSPORT=http" in joined
 

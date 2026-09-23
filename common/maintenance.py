@@ -94,6 +94,19 @@ def prune_orphan_files() -> int:
                 except Exception:
                     pass
 
+    # Registry snapshots written for run containers (common/snapshot.py):
+    # gone once their run has finished. Node snapshots (node-<id>) stay while
+    # the node record exists.
+    try:
+        from common import snapshot
+        live = {row["run_id"] for row in conn.execute(
+            "SELECT run_id FROM runs WHERE status IN ('running', 'pending', 'stop', 'awaiting_approval')"
+        ).fetchall()}
+        live |= {f"node-{row['node_id']}" for row in conn.execute("SELECT node_id FROM nodes").fetchall()}
+        removed += snapshot.prune_snapshots(live)
+    except Exception:
+        pass
+
     # Legacy sidecar dir (renamed to .migrated post-migration, but a partially
     # upgraded environment may still have the live dir): drop stale entries.
     for sidecar_dir in (AGENTS_HUB_ROOT / "run_process", AGENTS_HUB_ROOT / "run_process.migrated"):

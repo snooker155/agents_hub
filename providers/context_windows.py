@@ -1,7 +1,8 @@
 """
 Model context-window resolution.
 
-The catalog (``models.json``) stores an optional ``context_window`` (max input
+The catalog (``providers.catalog``, database-backed, formerly ``models.json``)
+stores an optional ``context_window`` (max input
 tokens) per model. It is populated three ways, in order of trust:
 
 1. **User override** in the Models page catalog — always wins.
@@ -21,9 +22,7 @@ reads the catalog first and falls back to (3). Returns 0 when unknown.
 """
 from __future__ import annotations
 
-import json
-
-from common.paths import MODELS_FILE
+from providers.catalog import load_catalog_raw
 
 # Built-in fallback (max input tokens), matched by substring against the model
 # id, most-specific first — same convention as the pricing defaults. Indicative
@@ -90,12 +89,12 @@ def get_model_context_window(provider: str, model: str) -> int:
     """Context window (max input tokens) for a model, 0 when unknown.
 
     Catalog value (user-set or discovered) first, then the static fallback.
-    Safe to call from the agent runtime — reads models.json directly and never
-    raises.
+    Safe to call from the agent runtime — reads the catalog directly and
+    never raises.
     """
     try:
-        if MODELS_FILE.exists():
-            catalog = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
+        catalog = load_catalog_raw()
+        if isinstance(catalog, dict):
             entry = catalog.get(provider) or {}
             for m in entry.get("models", []):
                 if m.get("id") == model:

@@ -181,22 +181,6 @@ app = FastAPI(
 )
 
 
-# Helper to locate orchestrator settings (stored under .agents_hub)
-def get_orchestrator_settings_path() -> PathlibPath:
-    """Return the path to orchestrator settings JSON under .agents_hub.
-
-    Ensures the directory exists and initializes the file if missing.
-    """
-    from common.paths import AGENTS_HUB_ROOT
-    path = AGENTS_HUB_ROOT / "orchestrator_settings.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        try:
-            path.write_text("{\"enabled\": false}", encoding="utf-8")
-        except Exception:
-            pass
-    return path
-
 # ============================================================================
 # Identity: authentication and authorization
 # ============================================================================

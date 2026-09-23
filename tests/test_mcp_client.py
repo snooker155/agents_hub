@@ -8,7 +8,6 @@ backend's provider keys.
 """
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -368,13 +367,9 @@ def test_approval_none_is_the_default(workspace):
 @pytest.fixture
 def live_registry():
     """A registry mirroring the shipped seed, in the suite's throwaway root."""
-    from agents.registry import _REGISTRY_CACHE
-    from common.bootstrap import BOOTSTRAP_AGENTS_FILE
-    from common.paths import AGENTS_FILE
+    from common.bootstrap import seed_registry_from_bootstrap
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
-    _REGISTRY_CACHE["mtime"] = None
+    seed_registry_from_bootstrap()
     yield
 
 

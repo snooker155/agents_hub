@@ -78,6 +78,7 @@ from typing import Any, Dict, List, Optional
 
 from common.hostnet import to_host_gateway
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
+from common.snapshot import SNAPSHOT_DIR_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -451,8 +452,7 @@ def build_run_command(
     memory: Optional[str] = None,
     cpus: Optional[str] = None,
     pids_limit: Optional[int] = None,
-    agents_file: Optional[str] = None,
-    custom_providers_file: Optional[str] = None,
+    snapshot_dir: Optional[str] = None,
 ) -> List[str]:
     """Build the ``docker run`` argv for a sandboxed, one-shot run container.
 
@@ -468,10 +468,14 @@ def build_run_command(
       --read-only + --tmpfs /tmp — the image's own filesystem cannot be
         written to; only /tmp, the state dir and the workspace are writable.
       --memory / --cpus / --pids-limit — a single run cannot exhaust the host.
-      agents_file / custom_providers_file, when given, are re-mounted
-        read-only *inside* the state dir mount, so a run can still write its
-        own logs and run records there but cannot edit agent definitions or
-        provider credentials, unless AGENT_RUN_STATE_TRANSPORT is "http" in
+      snapshot_dir, when given, is the registry snapshot the launcher wrote
+        for this run (common/snapshot.py: agents.json, custom_providers.json,
+        models.json), re-mounted read-only *inside* the state dir mount and
+        named in AGENTS_HUB_SNAPSHOT_DIR, so the run reads its agent
+        definitions and provider credentials from a frozen copy and cannot
+        edit them, whatever the state dir mount allows. The state dir itself
+        mounts read-write, so a run can still write its own logs and run
+        records there, unless AGENT_RUN_STATE_TRANSPORT is "http" in
         `env`, in which case the state dir is read-only wholesale (the run
         reaches the database through the backend's /api/run-state routes
         instead of opening it directly, see common/state_transport.py) and
@@ -514,10 +518,10 @@ def build_run_command(
         run_logs_dir = str(Path(state_dir) / "run_logs")
         docker_cmd += ["-v", f"{_host_path(run_logs_dir)}:{CONTAINER_STATE_DIR}/run_logs"]
 
-    if agents_file:
-        docker_cmd += ["-v", f"{_host_path(agents_file)}:{CONTAINER_STATE_DIR}/agents.json:ro"]
-    if custom_providers_file:
-        docker_cmd += ["-v", f"{_host_path(custom_providers_file)}:{CONTAINER_STATE_DIR}/custom_providers.json:ro"]
+    snapshot_in_container: Optional[str] = None
+    if snapshot_dir:
+        snapshot_in_container = f"{CONTAINER_STATE_DIR}/run_snapshots/{Path(snapshot_dir).name}"
+        docker_cmd += ["-v", f"{_host_path(snapshot_dir)}:{snapshot_in_container}:ro"]
 
     docker_cmd += ["-w", "/app"]
 
@@ -528,6 +532,8 @@ def build_run_command(
     docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
 
     merged_env = container_env(dict(env or {}))
+    if snapshot_in_container:
+        merged_env[SNAPSHOT_DIR_ENV] = snapshot_in_container
     merged_env["AGENT_EXECUTION_MODE"] = "local"
     merged_env = _point_local_models_at_the_host(merged_env)
     for key, value in merged_env.items():
@@ -578,6 +584,7 @@ def start_container(
     memory: Optional[str] = None,
     cpus: Optional[str] = None,
     pids_limit: Optional[int] = None,
+    snapshot_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Start a detached container for an agent.
 
@@ -597,10 +604,12 @@ def start_container(
     keep the default, unchanged shape above) additionally applies: a scrubbed
     environment (container_env, not the provider-key allowlist), --memory /
     --cpus / --pids-limit, --cap-drop ALL, --security-opt no-new-privileges,
-    a --read-only root with --tmpfs /tmp, and agents.json/custom_providers.json
-    re-mounted read-only on top of the (still read-write) state directory. See
-    docs/containers.md for the full mount table and the remaining gap (the
-    shared SQLite database is still mounted read-write).
+    a --read-only root with --tmpfs /tmp, and the registry snapshot
+    (``snapshot_dir``, see common/snapshot.py) mounted read-only inside the
+    (still read-write) state directory. A node container gets the snapshot
+    too, through AGENTS_HUB_SNAPSHOT_DIR, since the registries live in the
+    database and a container has no database of its own. See
+    docs/containers.md for the full mount table.
 
     Returns: {success, container_id, container_name, image, error,
               http_url (if http_expose)}
@@ -626,12 +635,6 @@ def start_container(
     extra = extra_args or live_setting("AGENT_DOCKER_EXTRA_ARGS")
 
     if hardened:
-        # agents.json / custom_providers.json ride read-write inside the state
-        # dir mount above; only pin them back to read-only when they already
-        # exist — bind-mounting a path docker has to invent turns a file mount
-        # into an empty directory, which is a confusing way to fail.
-        agents_file = AGENTS_HUB_ROOT / "agents.json"
-        custom_providers_file = AGENTS_HUB_ROOT / "custom_providers.json"
         docker_cmd = build_run_command(
             container_name=container_name,
             agent_id=agent_id,
@@ -646,8 +649,7 @@ def start_container(
             memory=memory,
             cpus=cpus,
             pids_limit=pids_limit,
-            agents_file=str(agents_file) if agents_file.exists() else None,
-            custom_providers_file=str(custom_providers_file) if custom_providers_file.exists() else None,
+            snapshot_dir=snapshot_dir,
         )
     else:
         docker_cmd = [
@@ -682,6 +684,10 @@ def start_container(
         merged_env = dict(os.environ if env is None else env)
         merged_env["AGENT_EXECUTION_MODE"] = "local"
         merged_env = _point_local_models_at_the_host(merged_env)
+        if snapshot_dir:
+            # Inside the state dir mount already; only the pointer is needed.
+            merged_env[SNAPSHOT_DIR_ENV] = (
+                f"{CONTAINER_STATE_DIR}/run_snapshots/{Path(snapshot_dir).name}")
         docker_cmd.extend(_env_flags(merged_env))
 
         # Extra user-configured docker flags, same live resolution as the image

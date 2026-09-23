@@ -3,14 +3,13 @@ Regression-replay tests: replay_run rebuilds + re-invokes a recorded run,
 records a clearly-tagged replay run, and returns an original-vs-replay diff.
 The agent build and invocation are stubbed so no real LLM call happens.
 """
-import json
-
 import pytest
 
 from agents import agent_replay
 from agents.agent_invoke import AgentInvocation
 from managers import run_manager as rm
-from common import budget, pricing
+from common import budget
+from providers import catalog as model_catalog
 
 
 class _FakeAgent:
@@ -104,16 +103,14 @@ def test_replay_no_input_raises(monkeypatch):
 
 def test_replay_run_excluded_from_budget_spend(monkeypatch, tmp_path):
     # Price catalog so both runs would otherwise cost money.
-    models_file = tmp_path / "models.json"
-    models_file.write_text(json.dumps({
+    model_catalog.save_catalog_raw({
         "anthropic": {"default": "claude-sonnet-5", "models": [
             {"id": "claude-sonnet-5", "enabled": True, "input_price": 3.0, "output_price": 15.0},
         ]},
         "openai": {"default": "gpt-4o", "models": [
             {"id": "gpt-4o", "enabled": True, "input_price": 2.5, "output_price": 10.0},
         ]},
-    }), encoding="utf-8")
-    monkeypatch.setattr(pricing, "MODELS_FILE", models_file)
+    })
 
     _stub_agent(monkeypatch)
     _seed_original(ws="ws1")
