@@ -84,11 +84,14 @@ class _Heartbeat(threading.Thread):
         super().__init__(name=f"heartbeat-{run_id[:8]}", daemon=True)
         self.run_id = run_id
         self._state = state
-        self._stop = threading.Event()
+        # Not ``_stop``: threading.Thread has a private ``_stop()`` method of
+        # its own on Python 3.11 and 3.12, called from join(), and shadowing
+        # it with an Event breaks the join.
+        self._halt = threading.Event()
         self.beats = 0
 
     def run(self) -> None:
-        while not self._stop.wait(HEARTBEAT_SECONDS):
+        while not self._halt.wait(HEARTBEAT_SECONDS):
             try:
                 status = self._state.heartbeat(self.run_id)
             except Exception:
@@ -103,7 +106,7 @@ class _Heartbeat(threading.Thread):
                 return
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
 
 
 # -------------------- Run lifecycle --------------------
