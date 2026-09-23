@@ -749,18 +749,21 @@
       "id": "scaling",
       "title": "Running more than one backend",
       "surface": "Installation",
-      "summary": "docker compose --scale backend=N needs the cross-replica broker bridge (AGENTS_HUB_BROKER_URL) or SSE clients pinned to another replica stop seeing live updates; the default single replica needs none of this.",
+      "summary": "docker compose --scale backend=N needs the cross-replica broker bridge (AGENTS_HUB_BROKER_URL) or SSE clients pinned to another replica stop seeing live updates; AGENTS_HUB_DATABASE_URL puts the database in Postgres (ah db migrate moves an existing one); the default single replica on SQLite needs none of this.",
       "related": [
         "installation",
         "service-health",
         "sessions-and-runs",
         "notifications",
-        "scheduling"
+        "scheduling",
+        "cli",
+        "containers"
       ],
       "headings": [
         "Per replica vs. shared",
         "The broker bridge",
         "Running it",
+        "Postgres",
         "Limits",
         "Staying on one replica (the default)"
       ]

@@ -30,10 +30,12 @@ def save_team(team: Team) -> Team:
     config = {f: getattr(team, f) for f in _CONFIG_FIELDS}
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO teams
-               (team_id, name, description, workspace, mode, charter,
-                leader_agent_id, members, config, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "teams",
+                ("team_id", "name", "description", "workspace", "mode", "charter",
+                 "leader_agent_id", "members", "config", "created_at", "updated_at"),
+                ("team_id",),
+            ),
             (
                 team.team_id, team.name, team.description, team.workspace,
                 team.mode, team.charter, team.leader_agent_id,
@@ -105,11 +107,14 @@ def delete_team(team_id: str) -> bool:
 def save_run(run: TeamRun) -> TeamRun:
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO team_runs
-               (team_run_id, team_id, workspace, mode, status, goal, task_id,
-                session_id, conversation_id, rounds_done, total_cost, result,
-                stop_reason, error, started_at, finished_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "team_runs",
+                ("team_run_id", "team_id", "workspace", "mode", "status", "goal",
+                 "task_id", "session_id", "conversation_id", "rounds_done",
+                 "total_cost", "result", "stop_reason", "error", "started_at",
+                 "finished_at"),
+                ("team_run_id",),
+            ),
             (
                 run.team_run_id, run.team_id, run.workspace, run.mode, run.status,
                 run.goal, run.task_id, run.session_id, run.conversation_id,
@@ -222,14 +227,15 @@ def append_message(msg: TeamMessage) -> TeamMessage:
             """INSERT INTO team_messages
                (team_run_id, round, ts, sender, recipients, kind, content,
                 run_id, cost, tokens, error)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               RETURNING seq""",
             (
                 msg.team_run_id, msg.round, msg.ts or utc_iso(), msg.sender,
                 db.dumps(list(msg.recipients or [BROADCAST])), msg.kind,
                 msg.content, msg.run_id, msg.cost, msg.tokens, msg.error,
             ),
         )
-        msg.seq = int(cur.lastrowid or 0)
+        msg.seq = int(cur.fetchone()[0])
     return msg
 
 

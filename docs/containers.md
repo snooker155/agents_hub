@@ -31,13 +31,15 @@ command line as a pure function (no daemon needed), which is what
 
 ## HTTP-only state transport
 
-By default a run reaches the shared SQLite database (`agents_hub.db`, holding
-run records, tasks, sessions…) directly through `common/db.py`, the same as a
+By default a run reaches the shared database (`agents_hub.db`, holding run
+records, tasks, sessions…) directly through `common/db.py`, the same as a
 local subprocess does: the state dir mount is read-write, and only
 `agents.json` / `custom_providers.json` are pinned `:ro` on top.
 
 Setting `AGENT_RUN_STATE_TRANSPORT=http` (env var, or `run_state_transport` in
-Settings; default `db`) closes that: `build_run_command` mounts the whole
+Settings; default `db` on SQLite, `http` when `AGENTS_HUB_DATABASE_URL` names
+a Postgres database, so a container is never handed the database password
+just to update its own record; see docs/scaling.md) closes that: `build_run_command` mounts the whole
 state dir `:ro` instead, with `run_logs/` re-mounted read-write on top so the
 run can still write its own log file directly. Everything else the run's own
 entrypoint (`runtime/agent_run.py`) needs to write, opening and closing its

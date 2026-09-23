@@ -37,6 +37,11 @@ services:
       # AGENTS_HUB_BROKER_URL=redis://redis:6379/0 there and start the `redis`
       # service with `--profile scale` when running more than one backend.
       AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-}
+      # Database (see docs/scaling.md). Empty keeps SQLite on the bind mount
+      # below. Set AGENTS_HUB_DATABASE_URL in .env to the bundled server's URL
+      # (postgresql://agents_hub:agents_hub@postgres:5432/agents_hub) and start
+      # it with `--profile postgres`, or point it at a Postgres of your own.
+      AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -147,5 +152,32 @@ services:
     #   - redis_data:/data
     restart: unless-stopped
 
-# volumes:
+  # Postgres for AGENTS_HUB_DATABASE_URL (docs/scaling.md). Under the
+  # `postgres` profile so a plain `docker compose up` never starts it; the
+  # backend only uses it when the URL in .env says so:
+  #   AGENTS_HUB_DATABASE_URL=postgresql://agents_hub:agents_hub@postgres:5432/agents_hub
+  #   docker compose --profile postgres up --build
+  # Combine with `--profile scale` (Redis) to run several backend replicas.
+  # Data lives in the named volume; no port is published, only the compose
+  # network reaches it. Publish 5432 yourself if you want psql from the host.
+  postgres:
+    image: postgres:17-alpine
+    profiles:
+      - postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agents_hub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agents_hub}
+      POSTGRES_DB: ${POSTGRES_DB:-agents_hub}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agents_hub} -d ${POSTGRES_DB:-agents_hub}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+# Uncomment together with the redis volume above to persist Redis too.
 #   redis_data:

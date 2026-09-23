@@ -165,6 +165,11 @@ async def lifespan(app: FastAPI):
         _notify_outbound.shutdown()
     except Exception:
         pass
+    try:
+        from common import db as _db
+        _db.close_pool()
+    except Exception:
+        pass
 
 
 # Initialize FastAPI app

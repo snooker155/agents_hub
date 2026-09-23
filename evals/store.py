@@ -1,4 +1,4 @@
-"""Persistence for eval sets, runs and per-cell results (SQLite, see common/db.py)."""
+"""Persistence for eval sets, runs and per-cell results (see common/db.py)."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -16,10 +16,12 @@ def save_eval_set(evalset: EvalSet) -> EvalSet:
     evalset.updated_at = utc_iso()
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO eval_sets
-               (eval_set_id, name, description, workspace, agent_id,
-                cases, graders, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "eval_sets",
+                ("eval_set_id", "name", "description", "workspace", "agent_id",
+                 "cases", "graders", "created_at", "updated_at"),
+                ("eval_set_id",),
+            ),
             (
                 evalset.eval_set_id, evalset.name, evalset.description,
                 evalset.workspace, evalset.agent_id,
@@ -103,10 +105,12 @@ def remove_case(eval_set_id: str, case_id: str) -> Optional[EvalSet]:
 def save_eval_run(run: EvalRun) -> EvalRun:
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO eval_runs
-               (eval_run_id, eval_set_id, workspace, status, configs, summary,
-                total_cost, error, started_at, finished_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "eval_runs",
+                ("eval_run_id", "eval_set_id", "workspace", "status", "configs",
+                 "summary", "total_cost", "error", "started_at", "finished_at"),
+                ("eval_run_id",),
+            ),
             (
                 run.eval_run_id, run.eval_set_id, run.workspace, run.status,
                 db.dumps([c.to_dict() for c in run.configs]),
@@ -158,11 +162,14 @@ def list_eval_runs(eval_set_id: Optional[str] = None, limit: int = 50) -> List[E
 def save_result(result: EvalResult) -> EvalResult:
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO eval_results
-               (result_id, eval_run_id, case_id, config_label, run_id, ok, error,
-                output, scores, score, passed, duration_ms, inbound_tokens,
-                outbound_tokens, cost, attempt)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "eval_results",
+                ("result_id", "eval_run_id", "case_id", "config_label", "run_id",
+                 "ok", "error", "output", "scores", "score", "passed",
+                 "duration_ms", "inbound_tokens", "outbound_tokens", "cost",
+                 "attempt"),
+                ("result_id",),
+            ),
             (
                 result.result_id, result.eval_run_id, result.case_id,
                 result.config_label, result.run_id, int(result.ok), result.error,

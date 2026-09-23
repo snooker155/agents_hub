@@ -350,9 +350,11 @@ def login(username: str, password: str) -> Optional[Dict[str, Any]]:
     expires = now + timedelta(hours=hours)
     with db.transaction() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO auth_sessions "
-            "(token_hash, user_id, created_at, expires_at, last_seen_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            db.upsert_sql(
+                "auth_sessions",
+                ("token_hash", "user_id", "created_at", "expires_at", "last_seen_at"),
+                ("token_hash",),
+            ),
             (_token_hash(token), row["user_id"], _iso(now), _iso(expires), _iso(now)),
         )
     return {"token": token, "expires_at": _iso(expires),

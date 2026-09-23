@@ -1,0 +1,7 @@
+# The Postgres driver, used only when AGENTS_HUB_DATABASE_URL is a
+# postgresql:// URL (common/db.py, docs/scaling.md). Installed in the backend
+# image unconditionally (it is small and inert until the URL is set); on a
+# host install add it with `pip install -r requirements-postgres.txt` or
+# `pip install -e ".[postgres]"`.
+psycopg[binary]>=3.2,<4
+psycopg_pool>=3.2,<4

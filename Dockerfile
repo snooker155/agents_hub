@@ -33,9 +33,13 @@ RUN set -eux; \
 
 COPY dashboard/backend/requirements.txt /tmp/requirements-backend.txt
 COPY requirements-agents.txt /tmp/requirements-agents.txt
+# The Postgres driver rides along: a few megabytes, and inert until
+# AGENTS_HUB_DATABASE_URL names a postgresql:// database (docs/scaling.md).
+COPY requirements-postgres.txt /tmp/requirements-postgres.txt
 
 RUN pip install --no-cache-dir -r /tmp/requirements-backend.txt \
-    && pip install --no-cache-dir -r /tmp/requirements-agents.txt
+    && pip install --no-cache-dir -r /tmp/requirements-agents.txt \
+    && pip install --no-cache-dir -r /tmp/requirements-postgres.txt
 
 # ---------- RAG extras ----------
 # Embeddings and vector stores. Torch comes from the CPU-only index first so

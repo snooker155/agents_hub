@@ -1,5 +1,5 @@
 """
-One-time migration of the legacy JSON stores into SQLite.
+One-time migration of the legacy JSON stores into the database.
 
 Runs automatically from ``common.db`` when the database has no
 ``json_migrated`` marker. Imports, per store:
@@ -32,13 +32,13 @@ and reported — never treated as empty.
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from common.paths import AGENTS_HUB_ROOT
 from common import run_payloads as rp
+from common.db import upsert_sql
 
 # Run-record keys stored as dedicated columns; everything else goes to `extra`.
 RUN_COLUMNS = (
@@ -96,7 +96,7 @@ def _now_iso() -> str:
 
 # ── per-store importers (each runs inside the caller's transaction) ──────────
 
-def _import_runs(conn: sqlite3.Connection) -> int:
+def _import_runs(conn: Any) -> int:
     src = AGENTS_HUB_ROOT / "agent_runs.json"
     data = _read_json(src)
     if data is None or _is_corrupt(data) or not isinstance(data, list):
@@ -119,9 +119,9 @@ def _import_runs(conn: sqlite3.Connection) -> int:
                 "duration_ms": proc.get("duration_ms"),
             }
         conn.execute(
-            f"INSERT OR REPLACE INTO runs ({', '.join(RUN_COLUMNS)}, "
-            "prompt_tokens, completion_tokens, total_tokens, duration_ms, extra) "
-            f"VALUES ({', '.join('?' * len(RUN_COLUMNS))}, ?, ?, ?, ?, ?)",
+            upsert_sql("runs", RUN_COLUMNS + ("prompt_tokens", "completion_tokens",
+                                              "total_tokens", "duration_ms", "extra"),
+                       ("run_id",)),
             [row[k] for k in RUN_COLUMNS]
             + [tokens["prompt_tokens"], tokens["completion_tokens"],
                tokens["total_tokens"], tokens["duration_ms"], _dumps(extra)],
@@ -133,12 +133,12 @@ def _import_runs(conn: sqlite3.Connection) -> int:
     return n
 
 
-def _write_payload(conn: sqlite3.Connection, run_id: str, proc: Dict[str, Any]) -> None:
+def _write_payload(conn: Any, run_id: str, proc: Dict[str, Any]) -> None:
     c = rp.canonicalize(proc)
     conn.execute(
-        "INSERT OR REPLACE INTO run_payloads (run_id, input_context, response, "
-        "tool_calls, reasoning, llm_invocations, llm_raw_responses, artifacts, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        upsert_sql("run_payloads", ("run_id", "input_context", "response", "tool_calls",
+                                    "reasoning", "llm_invocations", "llm_raw_responses",
+                                    "artifacts", "updated_at"), ("run_id",)),
         (run_id, _dumps(c["input_context"]), _dumps(c["response"]),
          _dumps(c["tool_calls"]), _dumps(c["reasoning"]),
          _dumps(c["llm_invocations"]), _dumps(c["llm_raw_responses"]),
@@ -146,7 +146,7 @@ def _write_payload(conn: sqlite3.Connection, run_id: str, proc: Dict[str, Any]) 
     )
 
 
-def _import_run_payloads(conn: sqlite3.Connection) -> int:
+def _import_run_payloads(conn: Any) -> int:
     src_dir = AGENTS_HUB_ROOT / "run_process"
     if not src_dir.is_dir():
         return 0
@@ -172,7 +172,7 @@ def _import_run_payloads(conn: sqlite3.Connection) -> int:
     return n
 
 
-def _import_tasks(conn: sqlite3.Connection) -> int:
+def _import_tasks(conn: Any) -> int:
     src = AGENTS_HUB_ROOT / "tasks.json"
     data = _read_json(src)
     if data is None or _is_corrupt(data) or not isinstance(data, list):
@@ -182,8 +182,8 @@ def _import_tasks(conn: sqlite3.Connection) -> int:
         if not isinstance(doc, dict) or not doc.get("id"):
             continue
         conn.execute(
-            "INSERT OR REPLACE INTO tasks (id, key, parent_id, status, workspace, "
-            "project_id, created_at, updated_at, doc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            upsert_sql("tasks", ("id", "key", "parent_id", "status", "workspace",
+                                 "project_id", "created_at", "updated_at", "doc"), ("id",)),
             (str(doc.get("id")), doc.get("key"),
              str(doc["parent_id"]) if doc.get("parent_id") else None,
              str(doc.get("status") or ""), doc.get("workspace"),
@@ -195,7 +195,7 @@ def _import_tasks(conn: sqlite3.Connection) -> int:
     return n
 
 
-def _import_task_sidecars(conn: sqlite3.Connection) -> int:
+def _import_task_sidecars(conn: Any) -> int:
     n = 0
     act_dir = AGENTS_HUB_ROOT / "activity_logs"
     if act_dir.is_dir():
@@ -232,7 +232,7 @@ def _import_task_sidecars(conn: sqlite3.Connection) -> int:
     return n
 
 
-def _import_sessions(conn: sqlite3.Connection) -> int:
+def _import_sessions(conn: Any) -> int:
     data = _read_json(AGENTS_HUB_ROOT / "session_contexts.json")
     n = 0
     if isinstance(data, list):
@@ -240,8 +240,8 @@ def _import_sessions(conn: sqlite3.Connection) -> int:
             if not isinstance(ctx, dict) or not ctx.get("session_id"):
                 continue
             conn.execute(
-                "INSERT OR REPLACE INTO sessions (session_id, conversation_id, task_id, doc) "
-                "VALUES (?, ?, ?, ?)",
+                upsert_sql("sessions", ("session_id", "conversation_id", "task_id", "doc"),
+                           ("session_id",)),
                 (str(ctx["session_id"]), ctx.get("conversation_id"),
                  str(ctx["task_id"]) if ctx.get("task_id") else None, _dumps(ctx)))
             n += 1
@@ -258,7 +258,7 @@ def _import_sessions(conn: sqlite3.Connection) -> int:
     return n
 
 
-def _import_nodes(conn: sqlite3.Connection) -> int:
+def _import_nodes(conn: Any) -> int:
     data = _read_json(AGENTS_HUB_ROOT / "nodes.json")
     if not isinstance(data, list):
         return 0
@@ -266,13 +266,13 @@ def _import_nodes(conn: sqlite3.Connection) -> int:
     for node in data:
         if not isinstance(node, dict) or not node.get("node_id"):
             continue
-        conn.execute("INSERT OR REPLACE INTO nodes (node_id, doc) VALUES (?, ?)",
+        conn.execute(upsert_sql("nodes", ("node_id", "doc"), ("node_id",)),
                      (str(node["node_id"]), _dumps(node)))
         n += 1
     return n
 
 
-def _import_flow_runs(conn: sqlite3.Connection) -> int:
+def _import_flow_runs(conn: Any) -> int:
     src = AGENTS_HUB_ROOT / "flow_runs.json"
     data = _read_json(src)
     if data is None or _is_corrupt(data) or not isinstance(data, list):
@@ -282,8 +282,7 @@ def _import_flow_runs(conn: sqlite3.Connection) -> int:
         if not isinstance(rec, dict) or not rec.get("flow_run_id"):
             continue
         conn.execute(
-            f"INSERT OR REPLACE INTO flow_runs ({', '.join(FLOW_RUN_COLUMNS)}, doc) "
-            f"VALUES ({', '.join('?' * len(FLOW_RUN_COLUMNS))}, ?)",
+            upsert_sql("flow_runs", FLOW_RUN_COLUMNS + ("doc",), ("flow_run_id",)),
             [rec.get(k) for k in FLOW_RUN_COLUMNS] + [_dumps(rec)],
         )
         n += 1
@@ -292,7 +291,7 @@ def _import_flow_runs(conn: sqlite3.Connection) -> int:
 
 # ── entrypoint ───────────────────────────────────────────────────────────────
 
-def migrate_legacy_json(conn: sqlite3.Connection) -> Optional[Dict[str, int]]:
+def migrate_legacy_json(conn: Any) -> Optional[Dict[str, int]]:
     """Import all legacy JSON stores and set the ``json_migrated`` marker.
 
     Called by ``common.db._ensure_ready`` while it already holds the startup
@@ -319,8 +318,8 @@ def migrate_legacy_json(conn: sqlite3.Connection) -> Optional[Dict[str, int]]:
         "nodes": _import_nodes(conn),
     }
     conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('json_migrated', ?)",
-        (json.dumps({"at": _now_iso(), "counts": counts}),),
+        upsert_sql("meta", ("key", "value"), ("key",)),
+        ("json_migrated", json.dumps({"at": _now_iso(), "counts": counts})),
     )
     return counts
 
@@ -341,7 +340,7 @@ def rename_migrated_sources() -> None:
 
 
 
-def migrate_flow_runs(conn: sqlite3.Connection) -> Optional[int]:
+def migrate_flow_runs(conn: Any) -> Optional[int]:
     """Import ``flow_runs.json`` into the ``flow_runs`` table, once.
 
     Kept apart from :func:`migrate_legacy_json` and guarded by its own
@@ -361,8 +360,8 @@ def migrate_flow_runs(conn: sqlite3.Connection) -> Optional[int]:
         return None
     count = _import_flow_runs(conn)
     conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('flow_runs_migrated', ?)",
-        (json.dumps({"at": _now_iso(), "count": count}),),
+        upsert_sql("meta", ("key", "value"), ("key",)),
+        ("flow_runs_migrated", json.dumps({"at": _now_iso(), "count": count})),
     )
     return count
 

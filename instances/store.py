@@ -71,8 +71,7 @@ def _write(conn, merged: Dict[str, Any]) -> None:
     cols = {k: data.pop(k, None) for k in INSTANCE_COLUMNS}
     data.pop("is_live", None)
     conn.execute(
-        f"INSERT OR REPLACE INTO instances ({', '.join(INSTANCE_COLUMNS)}, extra) "
-        f"VALUES ({', '.join('?' * len(INSTANCE_COLUMNS))}, ?)",
+        db.upsert_sql("instances", INSTANCE_COLUMNS + ("extra",), ("instance_id",)),
         [cols[k] for k in INSTANCE_COLUMNS] + [db.dumps(data)],
     )
 
@@ -303,8 +302,8 @@ def enforce_retention(workspace: Optional[str], keep: int = RETENTION_KEEP) -> i
         rows = conn.execute(
             f"SELECT instance_id FROM instances{where} "
             "ORDER BY COALESCE(finished_at, last_activity_at, created_at) DESC "
-            "LIMIT -1 OFFSET ?",
-            list(params) + [int(keep)],
+            "LIMIT ? OFFSET ?",
+            list(params) + [db.NO_LIMIT(), int(keep)],
         ).fetchall()
         if not rows:
             return 0

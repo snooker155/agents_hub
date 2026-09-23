@@ -1,653 +1,441 @@
 """
-SQLite core for Agents Hub state.
+Database core for Agents Hub state: SQLite by default, Postgres by URL.
 
-One database file (``.agents_hub/agents_hub.db``) replaces the JSON stores that
-multiple processes mutate concurrently: agent runs, tasks, sessions and nodes.
-WAL journaling lets the backend, agent subprocesses and node workers read and
-write at the same time without the whole-file locking, lost-update races and
-corruption-wipe hazards of the JSON-file stores.
+One database holds the stores that several processes mutate concurrently:
+agent runs, tasks, sessions, nodes, flows, identity and the rest. With
+``AGENTS_HUB_DATABASE_URL`` empty (the default) that is the SQLite file
+``.agents_hub/agents_hub.db`` in WAL mode, which the backend, agent
+subprocesses and node workers on one host share safely. Set it to a
+``postgresql://`` URL and the same schema lives in Postgres, which is what
+lets backend replicas and workers run on different hosts.
 
-Usage::
+Usage is the same on both::
 
     from common.db import get_conn, transaction
 
     with transaction() as conn:            # atomic read-modify-write
-        row = conn.execute("SELECT ...").fetchone()
+        row = conn.execute("SELECT ... WHERE id = ?", (id,)).fetchone()
         conn.execute("UPDATE ...")
 
     conn = get_conn()                       # plain reads (autocommit)
     rows = conn.execute("SELECT ...").fetchall()
 
-Connections are per-thread (sqlite3 objects must not cross threads). The first
-connection in a process ensures the schema exists and runs the one-time legacy
-JSON migration (see :mod:`common.db_migrate`) under an exclusive transaction,
-so it is safe for any entrypoint — backend, ``runtime/agent_run.py``,
-``runtime/node_run.py``, the CLI — to touch the stores first.
+Callers write SQL with ``?`` placeholders and read rows by column name or
+index (``row["status"]``, ``row[0]``, ``dict(row)``, ``row.keys()``). The
+Postgres driver converts placeholders, escapes ``%``, turns Python bools into
+integers (Postgres will not put a boolean into an INTEGER column) and returns
+:class:`Row` objects that behave like ``sqlite3.Row``. Where the two SQL
+dialects differ the helpers at the bottom of this module produce the right
+text: :func:`upsert_sql`, :func:`json_text`, :func:`json_truthy`,
+:func:`group_concat`, :func:`sum_if`, :data:`NO_LIMIT`. Portable forms are
+used at call sites wherever one exists (``ON CONFLICT ... DO UPDATE``,
+``RETURNING``, ``CASE WHEN``), so the helpers are few.
 
-That startup sequence (post-hoc column ALTERs, schema creation, the
-``schema_version`` bump and the JSON imports) all run inside one
-``BEGIN IMMEDIATE`` transaction, so two processes racing to open the same
-fresh-or-stale database serialize instead of one seeing a column that isn't
-there yet while the other is mid-``ALTER TABLE``. There are two imports, each
-with its own marker: the original bulk one and ``flow_runs.json``, which moved
-into SQLite later and so cannot ride on a marker every database already has.
+Transactions: SQLite uses ``BEGIN IMMEDIATE``, one writer at a time across
+every process on the host. Postgres reproduces that discipline with a
+transaction-scoped advisory lock (``pg_advisory_xact_lock``) taken at
+``BEGIN``: a ``with transaction()`` block that reads then writes never loses
+an update to a concurrent block, exactly as under SQLite, without every
+read-modify-write in the codebase needing ``SELECT ... FOR UPDATE``. Reads
+outside a transaction are unaffected (MVCC). Hot paths that want row-level
+locking can take it explicitly later; the global lock is the safe default.
+
+Connections: SQLite keeps one connection per thread. Postgres keeps one
+connection *pool* per process (``psycopg_pool``; size ``AGENTS_HUB_DB_POOL_SIZE``,
+default 10) and a lightweight per-thread handle that borrows a pooled
+connection for the duration of a transaction, or for one statement when
+outside one. Both wait up to ten seconds on a lock or a full pool, matching
+the old FileLock timeout.
+
+The first connection in a process makes the schema current: numbered
+migrations from :mod:`common.migrations` and the one-time legacy JSON import
+(:mod:`common.db_migrate`) run under one transaction, so any entrypoint
+(backend, ``runtime/agent_run.py``, ``runtime/node_run.py``, the CLI) may
+touch the stores first, and two processes racing to open the same fresh or
+stale database serialize instead of both trying to ``ALTER`` a column in.
 """
 from __future__ import annotations
 
+import atexit
 import json
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any, Iterable, Iterator, List, Optional, Sequence
 
 from common.paths import AGENTS_HUB_ROOT, DB_FILE
 
+DATABASE_URL_ENV = "AGENTS_HUB_DATABASE_URL"
+POOL_SIZE_ENV = "AGENTS_HUB_DB_POOL_SIZE"
+
+# Wait up to 10s on a locked database / a full pool — the old FileLock timeout.
+_BUSY_TIMEOUT_MS = 10_000
+
+# The one advisory lock every Postgres write transaction takes (see module
+# docstring). Any constant works; this one spells "AHUB" in ASCII.
+_PG_WRITE_LOCK_KEY = 0x41485542
+
 _local = threading.local()
 # RLock (not Lock): the one-time schema/migration runs while the lock is held,
-# and although the migration importers use the passed connection directly, an
-# RLock keeps a same-thread re-entry from ever dead-locking.
+# and an RLock keeps a same-thread re-entry from ever dead-locking.
 _schema_lock = threading.RLock()
 _schema_ready = False
 
-# Wait up to 10s on a locked database — matches the old FileLock timeout.
-_BUSY_TIMEOUT_MS = 10_000
+# Resolved once per process on first use; None until then. Tests that switch
+# databases reset it through reset_connections().
+_dialect: Optional[str] = None
+_pool: Any = None
+_pool_lock = threading.Lock()
+# Counts completed startup sequences in this process. Changes whenever the
+# process (re)opens a database, which is what per-process caches keyed on
+# "which database am I looking at" compare against (common/docstore.py).
+_generation = 0
 
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT
-);
+# ── Configuration ────────────────────────────────────────────────────────────
 
--- One row per agent run, identical structure for every execution mode
--- (chat, local subprocess, node worker, docker container, flow node).
-CREATE TABLE IF NOT EXISTS runs (
-    run_id            TEXT PRIMARY KEY,
-    task_id           TEXT,
-    agent_id          TEXT,
-    session_id        TEXT,
-    session_type      TEXT,
-    channel           TEXT,
-    execution_mode    TEXT,
-    node_id           TEXT,
-    container_name    TEXT,
-    workspace         TEXT,
-    title             TEXT,
-    provider          TEXT,
-    model             TEXT,
-    status            TEXT,
-    message_origin    TEXT,
-    pid               INTEGER,
-    exit_code         INTEGER,
-    error             TEXT,
-    created_at        TEXT,
-    started_at        TEXT,
-    finished_at       TEXT,
-    log_file          TEXT,
-    input             TEXT,
-    output            TEXT,
-    instance_id       TEXT,
-    prompt_tokens     INTEGER,
-    cached_prompt_tokens INTEGER,
-    completion_tokens INTEGER,
-    total_tokens      INTEGER,
-    duration_ms       INTEGER,
-    extra             TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_runs_task    ON runs(task_id);
-CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
-CREATE INDEX IF NOT EXISTS idx_runs_status  ON runs(status);
-CREATE INDEX IF NOT EXISTS idx_runs_node    ON runs(node_id);
--- The Messages list is filtered by agent and always ordered newest-first; the
--- Instances views page a single instance's journal the same way.
-CREATE INDEX IF NOT EXISTS idx_runs_agent     ON runs(agent_id, started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_started   ON runs(started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace, started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_instance  ON runs(instance_id, started_at DESC);
-
--- Structured heavy payload of a run, one row per run. Each column is a JSON
--- document; the plain-text log stays a file linked from runs.log_file.
-CREATE TABLE IF NOT EXISTS run_payloads (
-    run_id            TEXT PRIMARY KEY,
-    input_context     TEXT,   -- {system_prompt, history[], user_message, ...}
-    response          TEXT,   -- {text, structured}
-    tool_calls        TEXT,   -- [{step, tool, input, output}, ...]
-    reasoning         TEXT,   -- chronological thinking/trace lines
-    llm_invocations   TEXT,   -- per-LLM-call structured records
-    llm_raw_responses TEXT,   -- raw LLMResult dumps
-    artifacts         TEXT,   -- file-change diffs recorded during the run
-    updated_at        TEXT
-);
-
--- One row per flow *execution* (not per agent run: the per-node agent runs live
--- in `runs` and carry this id as extra.flow_run_id). The same flow can run many
--- times in parallel, so running state and orchestrator pid belong here and not
--- on the flow definition.
---
--- `doc` holds the whole record as JSON and is the source of truth for reads;
--- the columns beside it are an indexed mirror of the fields queries filter on.
--- Callers store checkpoints and other keys of their own on a record, and those
--- survive in `doc` without a schema change.
-CREATE TABLE IF NOT EXISTS flow_runs (
-    flow_run_id TEXT PRIMARY KEY,
-    flow_id     TEXT,
-    task_id     TEXT,
-    session_id  TEXT,
-    workspace   TEXT,
-    status      TEXT,     -- pending | running | completed | failed | stopped
-    pid         INTEGER,  -- the orchestrator subprocess (runtime/flow_run.py)
-    started_at  TEXT,
-    finished_at TEXT,
-    exit_code   INTEGER,
-    error       TEXT,
-    doc         TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_flow_runs_flow   ON flow_runs(flow_id);
-CREATE INDEX IF NOT EXISTS idx_flow_runs_status ON flow_runs(status);
-
--- Registry version history: a snapshot of an agent's record and its three
--- markdown definition files, taken every time the stored definition is about
--- to change (see agents.versions.snapshot_if_changed). Lets the dashboard
--- list what changed over time, diff any two versions, and roll back.
-CREATE TABLE IF NOT EXISTS agent_versions (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id        TEXT,
-    version         INTEGER,
-    hash            TEXT,
-    created_at      TEXT,
-    actor           TEXT,
-    spec_json       TEXT,
-    definition_json TEXT,
-    note            TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id, version DESC);
-
-CREATE TABLE IF NOT EXISTS tasks (
-    id         TEXT PRIMARY KEY,
-    key        TEXT,
-    parent_id  TEXT,
-    status     TEXT,
-    workspace  TEXT,
-    project_id TEXT,
-    -- Who filed it, under AUTH_MODE=multi; 'local' in the single-operator
-    -- modes. `created_by` in the doc says what *kind* of actor did (a person,
-    -- the orchestrator, an external system); this says which user.
-    created_by_user TEXT,
-    created_at TEXT,
-    updated_at TEXT,
-    doc        TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-
-CREATE TABLE IF NOT EXISTS task_activity (
-    seq     INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT NOT NULL,
-    entry   TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_task_activity_task ON task_activity(task_id);
-
-CREATE TABLE IF NOT EXISTS task_results (
-    seq     INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT NOT NULL,
-    run_id  TEXT,
-    entry   TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_task_results_task ON task_results(task_id);
-
-CREATE TABLE IF NOT EXISTS routing_log (
-    seq   INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id      TEXT PRIMARY KEY,
-    conversation_id TEXT,
-    task_id         TEXT,
-    workspace       TEXT,
-    created_at      TEXT,
-    is_flow         INTEGER,
-    doc             TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_sessions_conv ON sessions(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sessions_ws ON sessions(workspace, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS continuations (
-    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    task_id    TEXT NOT NULL,
-    run_id     TEXT,
-    doc        TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_continuations_task ON continuations(task_id);
-
-CREATE TABLE IF NOT EXISTS nodes (
-    node_id TEXT PRIMARY KEY,
-    doc     TEXT NOT NULL
-);
-
--- Rich views (charts, graphs, 3D scenes, live HTML, ...) produced by agents.
--- The heavy spec + assets live in a file dir (views.store); this row is the
--- lightweight index used by the gallery/routes and by retention. ``state``
--- holds per-user control values / selection so reopening restores the view.
-CREATE TABLE IF NOT EXISTS views (
-    view_id    TEXT PRIMARY KEY,
-    workspace  TEXT,
-    run_id     TEXT,
-    task_id    TEXT,
-    kind       TEXT,
-    title      TEXT,
-    summary    TEXT,
-    state      TEXT,
-    size_bytes INTEGER,
-    created_at TEXT,
-    updated_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_views_workspace ON views(workspace);
-CREATE INDEX IF NOT EXISTS idx_views_run       ON views(run_id);
-
--- Ordered mutation log for a live view (Studio). The materialized spec is
--- fold(base, ops); this log gives step-by-step build streaming, undo/redo
--- (revert to a seq) and a "how it was built" history. ``seq`` is per-view
--- monotonic; ``op`` is one JSON op document {op,path,value,ts,source,run_id}.
-CREATE TABLE IF NOT EXISTS view_ops (
-    view_id TEXT NOT NULL,
-    seq     INTEGER NOT NULL,
-    ts      TEXT,
-    run_id  TEXT,
-    op      TEXT NOT NULL,
-    PRIMARY KEY (view_id, seq)
-);
-CREATE INDEX IF NOT EXISTS idx_view_ops_view ON view_ops(view_id);
-
--- ── Eval harness (evals/) ───────────────────────────────────────────────────
--- A named dataset plus the graders that score it. Cases and grader specs are
--- JSON documents rather than child tables: a set is always read and written
--- whole, and the shapes are grader-specific, so normalising them would buy
--- nothing but joins.
-CREATE TABLE IF NOT EXISTS eval_sets (
-    eval_set_id TEXT PRIMARY KEY,
-    name        TEXT,
-    description TEXT,
-    workspace   TEXT,
-    agent_id    TEXT,
-    cases       TEXT,       -- JSON [Case]
-    graders     TEXT,       -- JSON [GraderSpec]
-    created_at  TEXT,
-    updated_at  TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_eval_sets_workspace ON eval_sets(workspace);
-
--- One execution of a set across one or more configs (agent x model).
-CREATE TABLE IF NOT EXISTS eval_runs (
-    eval_run_id TEXT PRIMARY KEY,
-    eval_set_id TEXT,
-    workspace   TEXT,
-    status      TEXT,       -- running | completed | failed | stopped
-    configs     TEXT,       -- JSON [RunConfig]
-    summary     TEXT,       -- JSON {config_label: {...}}
-    total_cost  REAL,
-    error       TEXT,
-    started_at  TEXT,
-    finished_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_eval_runs_set ON eval_runs(eval_set_id);
-CREATE INDEX IF NOT EXISTS idx_eval_runs_workspace ON eval_runs(workspace);
-
--- One cell of the score matrix. ``run_id`` links to the real agent run so the
--- UI can drill from a score into the full recorded trace; ``output`` is kept
--- alongside ``scores`` because a grader is itself unreliable and the number
--- must never be the only thing on screen.
-CREATE TABLE IF NOT EXISTS eval_results (
-    result_id        TEXT PRIMARY KEY,
-    eval_run_id      TEXT NOT NULL,
-    case_id          TEXT,
-    config_label     TEXT,
-    run_id           TEXT,
-    ok               INTEGER,
-    error            TEXT,
-    output           TEXT,
-    scores           TEXT,   -- JSON {grader_kind: GradeResult}
-    score            REAL,
-    passed           INTEGER,
-    duration_ms      INTEGER,
-    inbound_tokens   INTEGER,
-    outbound_tokens  INTEGER,
-    cost             REAL,
-    attempt          INTEGER  -- 1-based repeat number within its (case, config)
-);
-CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(eval_run_id);
-
--- ── Agent Playground (playground/) ─────────────────────────────────────────
--- A reusable scenario: which environment, which role overlays, which limits.
-CREATE TABLE IF NOT EXISTS scenarios (
-    scenario_id  TEXT PRIMARY KEY,
-    name         TEXT,
-    description  TEXT,
-    workspace    TEXT,
-    environment  TEXT,
-    env_params   TEXT,      -- JSON, shape declared by the environment
-    roles        TEXT,      -- JSON [Role] — the per-sim overlay, never on AgentSpec
-    config       TEXT,      -- JSON run-level params (ticks, seed, ceilings)
-    created_at   TEXT,
-    updated_at   TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_scenarios_workspace ON scenarios(workspace);
-
--- A world somebody authored: rooms, props, fixtures, values and the rules
--- about who may do what to whom. One JSON document because it is edited as one
--- thing and read in full on every run, and because its shape is the author's,
--- not a schema's. Scenarios point at it by ``environment = 'custom:<world_id>'``.
-CREATE TABLE IF NOT EXISTS worlds (
-    world_id     TEXT PRIMARY KEY,
-    name         TEXT,
-    description  TEXT,
-    workspace    TEXT,
-    spec         TEXT,      -- JSON WorldSpec (see playground/worlds.py)
-    created_at   TEXT,
-    updated_at   TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_worlds_workspace ON worlds(workspace);
-
-CREATE TABLE IF NOT EXISTS sim_runs (
-    sim_run_id   TEXT PRIMARY KEY,
-    scenario_id  TEXT,
-    workspace    TEXT,
-    environment  TEXT,
-    status       TEXT,      -- running | stopping | completed | stopped | failed
-    activation   TEXT,      -- synchronous | triggered
-    stop_reason  TEXT,      -- stopped | max_ticks | idle | terminal | ...
-    ticks_done   INTEGER,
-    total_cost   REAL,
-    error        TEXT,
-    scores       TEXT,      -- JSON, scored objectives over final state
-    final_state  TEXT,      -- JSON
-    config       TEXT,      -- JSON, the scenario as it was at launch
-    -- JSON: the model's retelling of this run, kept because it costs a call
-    -- to make. The chronicle it was made from is recomputed from the ticks
-    -- and never stored — it is a pure function of them.
-    story        TEXT,
-    started_at   TEXT,
-    finished_at  TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_sim_runs_scenario ON sim_runs(scenario_id);
-CREATE INDEX IF NOT EXISTS idx_sim_runs_workspace ON sim_runs(workspace);
-
--- The tick log — the artifact of record. LLM calls do not reproduce even at
--- temperature 0, so the config cannot be what makes a run reviewable; this is.
--- One row per tick holds every observation, decision and resolution.
-CREATE TABLE IF NOT EXISTS sim_ticks (
-    sim_run_id  TEXT NOT NULL,
-    tick        INTEGER NOT NULL,
-    ts          TEXT,
-    decisions   TEXT,      -- JSON [AgentDecision]
-    resolutions TEXT,      -- JSON [ActionResult]
-    frame       TEXT,      -- JSON world snapshot
-    events      TEXT,      -- JSON [str]
-    idle        TEXT,      -- JSON [str] — who was not woken this tick
-    cost        REAL,
-    PRIMARY KEY (sim_run_id, tick)
-);
-CREATE INDEX IF NOT EXISTS idx_sim_ticks_run ON sim_ticks(sim_run_id);
-
--- ── Loops (loops/) ──────────────────────────────────────────────────────────
--- A loop is a flow plus an exit criterion: the flow is re-run from its entry
--- point until an *agent* judges the work good enough. The definition holds the
--- criterion in prose (the evaluator reads it) and the ceilings that make a
--- non-converging loop terminate anyway.
-CREATE TABLE IF NOT EXISTS loops (
-    loop_id        TEXT PRIMARY KEY,
-    name           TEXT,
-    description    TEXT,
-    workspace      TEXT,
-    flow_id        TEXT,
-    exit_criterion TEXT,      -- prose; handed to the evaluator verbatim
-    config         TEXT,      -- JSON run-level params (max_iterations, target_score, ...)
-    created_at     TEXT,
-    updated_at     TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_loops_workspace ON loops(workspace);
-
-CREATE TABLE IF NOT EXISTS loop_runs (
-    loop_run_id     TEXT PRIMARY KEY,
-    loop_id         TEXT,
-    workspace       TEXT,
-    status          TEXT,     -- running | stopping | completed | stopped | failed
-    goal            TEXT,
-    task_id         TEXT,
-    session_id      TEXT,
-    iterations_done INTEGER,
-    best_score      REAL,
-    final_score     REAL,
-    stop_reason     TEXT,     -- criterion_met | max_iterations | no_improvement | ...
-    result          TEXT,
-    error           TEXT,
-    total_cost      REAL,
-    started_at      TEXT,
-    finished_at     TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_loop_runs_loop      ON loop_runs(loop_id);
-CREATE INDEX IF NOT EXISTS idx_loop_runs_workspace ON loop_runs(workspace);
-
--- One row per iteration — the point of a loop is that you can watch the score
--- move, so every pass is kept whole (its own flow run, output, verdict and
--- feedback) instead of being overwritten by the next one.
-CREATE TABLE IF NOT EXISTS loop_iterations (
-    loop_run_id     TEXT NOT NULL,
-    iteration       INTEGER NOT NULL,
-    flow_run_id     TEXT,     -- the flow.run_store record for this pass
-    status          TEXT,     -- running | completed | failed | stopped
-    score           REAL,
-    verdict         TEXT,     -- continue | stop
-    reason          TEXT,
-    feedback        TEXT,     -- what the next iteration must fix
-    output          TEXT,
-    node_outputs    TEXT,     -- JSON {node_id: output}
-    state           TEXT,     -- JSON flow state snapshot at the end of the pass
-    evaluator_agent TEXT,
-    evaluator_raw   TEXT,     -- the raw judgement, kept because parsers lie
-    cost            REAL,
-    duration_ms     INTEGER,
-    started_at      TEXT,
-    finished_at     TEXT,
-    PRIMARY KEY (loop_run_id, iteration)
-);
-CREATE INDEX IF NOT EXISTS idx_loop_iterations_run ON loop_iterations(loop_run_id);
-
--- ── Teams (teams/) ──────────────────────────────────────────────────────────
--- A bounded set of agents that know each other. Each member carries a manifest
--- (what it will do for this team) and every member's prompt carries the team
--- charter plus the roster, so an agent addresses a teammate by name knowing
--- what that teammate is for.
-CREATE TABLE IF NOT EXISTS teams (
-    team_id         TEXT PRIMARY KEY,
-    name            TEXT,
-    description     TEXT,
-    workspace       TEXT,
-    mode            TEXT,     -- centralized (a leader assigns) | autonomous (handoff between peers) | parallel (all act each round)
-    charter         TEXT,     -- the shared system prompt every member receives
-    leader_agent_id TEXT,     -- centralized mode only
-    members         TEXT,     -- JSON [TeamMember] — roster + per-member manifest
-    config          TEXT,     -- JSON run-level params (rounds, ceilings, ...)
-    created_at      TEXT,
-    updated_at      TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_teams_workspace ON teams(workspace);
-
-CREATE TABLE IF NOT EXISTS team_runs (
-    team_run_id     TEXT PRIMARY KEY,
-    team_id         TEXT,
-    workspace       TEXT,
-    mode            TEXT,
-    status          TEXT,     -- running | stopping | completed | stopped | failed
-    goal            TEXT,
-    task_id         TEXT,
-    session_id      TEXT,
-    conversation_id TEXT,
-    rounds_done     INTEGER,
-    total_cost      REAL,
-    result          TEXT,
-    stop_reason     TEXT,
-    error           TEXT,
-    started_at      TEXT,
-    finished_at     TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_team_runs_team      ON team_runs(team_id);
-CREATE INDEX IF NOT EXISTS idx_team_runs_workspace ON team_runs(workspace);
-
--- The team's message bus and its artifact of record. Everything a member said,
--- who it was addressed to, and which run produced it.
-CREATE TABLE IF NOT EXISTS team_messages (
-    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
-    team_run_id TEXT NOT NULL,
-    round       INTEGER,
-    ts          TEXT,
-    sender      TEXT,
-    recipients  TEXT,      -- JSON [str]; ["*"] is a broadcast to the whole team
-    kind        TEXT,      -- system | goal | instruction | message | result | verdict | error
-    content     TEXT,
-    run_id      TEXT,
-    cost        REAL,
-    tokens      INTEGER,
-    error       TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_team_messages_run ON team_messages(team_run_id);
-
--- One row per *live agent instance* — a running copy of an agent, as opposed to
--- a run (which is one unit of work that copy performed). An instance owns its
--- session, keeps its context after finishing, and can be messaged again; its
--- runs are its journal, linked by runs.instance_id.
---
--- kind  : node | container | task | chat | flow_node | team_member
--- state : starting | active | standby | finished | stopped | failed
---         "standby" means the carrier process is alive but idle (a node in its
---         poll loop); "finished" means no process, context retained, revivable.
-CREATE TABLE IF NOT EXISTS instances (
-    instance_id      TEXT PRIMARY KEY,
-    agent_id         TEXT,
-    workspace        TEXT,
-    project_id       TEXT,
-    kind             TEXT,
-    state            TEXT,
-    label            TEXT,
-    session_id       TEXT,
-    node_id          TEXT,
-    container_name   TEXT,
-    pid              INTEGER,
-    current_run_id   TEXT,
-    task_id          TEXT,
-    provider         TEXT,
-    model            TEXT,
-    created_at       TEXT,
-    started_at       TEXT,
-    last_activity_at TEXT,
-    finished_at      TEXT,
-    archived_at      TEXT,
-    runs_count       INTEGER DEFAULT 0,
-    total_tokens     INTEGER DEFAULT 0,
-    total_duration_ms INTEGER DEFAULT 0,
-    last_activity    TEXT,   -- short human line: what it is doing right now
-    error            TEXT,
-    extra            TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_instances_ws_state ON instances(workspace, state);
-CREATE INDEX IF NOT EXISTS idx_instances_agent    ON instances(agent_id, state);
-CREATE INDEX IF NOT EXISTS idx_instances_node     ON instances(node_id);
-CREATE INDEX IF NOT EXISTS idx_instances_session  ON instances(session_id);
-CREATE INDEX IF NOT EXISTS idx_instances_activity ON instances(workspace, last_activity_at DESC);
-
--- Messages addressed to an instance. A live instance drains its own inbox from
--- its poll loop; a finished one is revived by the API, which delivers the
--- message through the chat pipeline with the instance's history rebuilt.
-CREATE TABLE IF NOT EXISTS instance_inbox (
-    msg_id       TEXT PRIMARY KEY,
-    instance_id  TEXT NOT NULL,
-    body         TEXT,
-    origin       TEXT,       -- web | telegram | agent | system
-    created_at   TEXT,
-    delivered_at TEXT,       -- NULL while pending
-    run_id       TEXT,       -- the run that consumed it
-    error        TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_inbox_pending ON instance_inbox(instance_id, delivered_at);
-
--- One row per conversation on the main Chat page. The transcript used to live
--- in the browser's localStorage, which made a chat a property of one browser
--- profile: invisible to every other device, wiped with the site data, and
--- silently trimmed once the quota was hit. A chat is a first-class record of
--- what the service was asked to do, so it is stored here beside the runs it
--- produced. ``doc`` holds the whole conversation (metadata + message bubbles)
--- the way the UI renders it; the columns are what the list query filters and
--- orders by, kept in sync with the doc on every write.
-CREATE TABLE IF NOT EXISTS chats (
-    chat_id       TEXT PRIMARY KEY,
-    title         TEXT,
-    workspace     TEXT,
-    project_id    TEXT,
-    agent_id      TEXT,
-    flow_id       TEXT,
-    team_id       TEXT,
-    target_mode   TEXT,
-    origin        TEXT,       -- NULL/web for the dashboard, "telegram" for a bound thread
-    owner         TEXT,       -- the user it belongs to; 'local' outside AUTH_MODE=multi
-    message_count INTEGER DEFAULT 0,
-    created_at    TEXT,
-    updated_at    TEXT,
-    doc           TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_chats_ws      ON chats(workspace, updated_at DESC);
-
--- Identity (AUTH_MODE=multi only; see common/identity.py and docs/identity.md).
--- These tables exist in every database and stay empty in the other two modes,
--- which is what keeps "switch the mode in .env and restart" a complete answer:
--- no migration step stands between single-operator and multi-user.
---
--- The password is never stored, only a PBKDF2-HMAC-SHA256 digest of it with a
--- per-user salt. The iteration count is a column, not a constant, so raising
--- the cost later re-hashes on next login instead of invalidating every
--- password at once.
-CREATE TABLE IF NOT EXISTS users (
-    user_id       TEXT PRIMARY KEY,
-    username      TEXT NOT NULL,
-    display_name  TEXT,
-    role          TEXT NOT NULL DEFAULT 'member',  -- admin | member
-    password_hash TEXT NOT NULL,
-    password_salt TEXT NOT NULL,
-    password_iterations INTEGER NOT NULL,
-    disabled      INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT,
-    updated_at    TEXT
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
-
--- One row per logged-in browser. The token itself is never stored: the row is
--- keyed by its SHA-256, so a stolen database hands over no usable session.
-CREATE TABLE IF NOT EXISTS auth_sessions (
-    token_hash   TEXT PRIMARY KEY,
-    user_id      TEXT NOT NULL,
-    created_at   TEXT,
-    expires_at   TEXT,
-    last_seen_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
-
--- Who may do what inside one workspace. Absence of a row means no access at
--- all (admins excepted), so this table is the whole membership answer.
-CREATE TABLE IF NOT EXISTS workspace_members (
-    workspace  TEXT NOT NULL,
-    user_id    TEXT NOT NULL,
-    role       TEXT NOT NULL DEFAULT 'viewer',  -- viewer | editor | owner
-    created_at TEXT,
-    PRIMARY KEY (workspace, user_id)
-);
-CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
-"""
+def database_url() -> str:
+    """The configured database URL: the environment first (an explicitly empty
+    value pins SQLite, which is how the test suite stays off a developer's
+    ``.env``), then ``Settings`` (``.env``)."""
+    if DATABASE_URL_ENV in os.environ:
+        return os.environ[DATABASE_URL_ENV].strip()
+    try:
+        from common.config import settings
+        return (getattr(settings, "database_url", "") or "").strip()
+    except Exception:
+        return ""
 
 
-def _connect() -> sqlite3.Connection:
+def dialect() -> str:
+    """``"sqlite"`` or ``"postgres"``, fixed for the life of the process on
+    first use."""
+    global _dialect
+    if _dialect is None:
+        url = database_url()
+        if url.startswith(("postgresql://", "postgres://")):
+            _dialect = "postgres"
+        elif url:
+            raise RuntimeError(
+                f"{DATABASE_URL_ENV} must be empty (SQLite) or a postgresql:// URL, got {url!r}")
+        else:
+            _dialect = "sqlite"
+    return _dialect
+
+
+def is_postgres() -> bool:
+    return dialect() == "postgres"
+
+
+def pool_size() -> int:
+    raw = os.environ.get(POOL_SIZE_ENV, "").strip()
+    if not raw:
+        try:
+            from common.config import settings
+            raw = str(getattr(settings, "db_pool_size", "") or "")
+        except Exception:
+            raw = ""
+    try:
+        return max(1, int(raw)) if raw else 10
+    except ValueError:
+        return 10
+
+
+# ── Rows ─────────────────────────────────────────────────────────────────────
+
+class RowKeyError(KeyError, IndexError):
+    """A column name the row does not have. Subclasses both, because
+    ``sqlite3.Row`` raises IndexError for that and callers may catch either."""
+
+
+class Row(tuple):
+    """A result row: a tuple that also answers to column names, like
+    ``sqlite3.Row``. ``dict(row)`` works (through ``keys()``), ``row[0]`` and
+    ``row["name"]`` both work, iteration yields the values."""
+
+    __slots__ = ()
+
+    _columns: tuple  # set per class, see make_row_class
+
+    def __getitem__(self, key):  # type: ignore[override]
+        if isinstance(key, str):
+            try:
+                return tuple.__getitem__(self, self._columns.index(key))
+            except ValueError:
+                raise RowKeyError(key) from None
+        return tuple.__getitem__(self, key)
+
+    def keys(self) -> List[str]:
+        return list(self._columns)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except (KeyError, IndexError):
+            return default
+
+
+_row_class_cache: dict = {}
+
+
+def make_row_class(columns: Sequence[str]) -> type:
+    """A Row subclass bound to one column list. Cached per column tuple so
+    the per-row cost is one tuple construction."""
+    key = tuple(columns)
+    cls = _row_class_cache.get(key)
+    if cls is None:
+        cls = type("Row", (Row,), {"__slots__": (), "_columns": key})
+        if len(_row_class_cache) > 4096:
+            _row_class_cache.clear()
+        _row_class_cache[key] = cls
+    return cls
+
+
+# ── Postgres: SQL adaptation ─────────────────────────────────────────────────
+
+_sql_cache: dict = {}
+
+
+def _adapt_sql_for_pg(sql: str, has_params: bool) -> str:
+    """``?`` → ``%s`` outside string literals; ``%`` → ``%%`` everywhere when
+    parameters are passed (psycopg scans the whole string, literals
+    included). Cached: the SQL text is nearly always a constant."""
+    key = (sql, has_params)
+    out = _sql_cache.get(key)
+    if out is not None:
+        return out
+    parts: List[str] = []
+    in_quote = False
+    for ch in sql:
+        if ch == "'":
+            in_quote = not in_quote
+            parts.append(ch)
+        elif ch == "?" and not in_quote:
+            parts.append("%s")
+        elif ch == "%" and has_params:
+            parts.append("%%")
+        else:
+            parts.append(ch)
+    out = "".join(parts)
+    if len(_sql_cache) > 8192:
+        _sql_cache.clear()
+    _sql_cache[key] = out
+    return out
+
+
+def _adapt_params_for_pg(params: Any) -> Any:
+    if params is None:
+        return None
+    if isinstance(params, dict):
+        return {k: (int(v) if isinstance(v, bool) else v) for k, v in params.items()}
+    return [int(v) if isinstance(v, bool) else v for v in params]
+
+
+class _Result:
+    """What ``execute`` returns on Postgres: rows fetched eagerly (the pooled
+    connection may be returned right after the statement), with the cursor
+    methods callers use."""
+
+    __slots__ = ("_rows", "_pos", "rowcount", "description", "lastrowid")
+
+    def __init__(self, cur: Any) -> None:
+        self.rowcount = cur.rowcount
+        self.lastrowid = None
+        self.description = cur.description
+        if cur.description:
+            row_cls = make_row_class([d.name for d in cur.description])
+            self._rows = [row_cls(r) for r in cur.fetchall()]
+        else:
+            self._rows = []
+        self._pos = 0
+
+    def fetchone(self) -> Optional[Row]:
+        if self._pos >= len(self._rows):
+            return None
+        row = self._rows[self._pos]
+        self._pos += 1
+        return row
+
+    def fetchmany(self, size: int = 1) -> List[Row]:
+        rows = self._rows[self._pos:self._pos + size]
+        self._pos += len(rows)
+        return rows
+
+    def fetchall(self) -> List[Row]:
+        rows = self._rows[self._pos:]
+        self._pos = len(self._rows)
+        return rows
+
+    def __iter__(self) -> Iterator[Row]:
+        while self._pos < len(self._rows):
+            yield self.fetchone()  # type: ignore[misc]
+
+    def close(self) -> None:
+        self._rows = []
+
+
+class PgConnection:
+    """The per-thread Postgres handle behind ``get_conn()``.
+
+    Outside a transaction every ``execute`` borrows a pooled connection for
+    that one statement (autocommit). ``begin()`` pins one until ``commit()``
+    or ``rollback()``, so a ``with transaction()`` block, and every
+    ``get_conn()`` call made from inside it on the same thread, sees its own
+    uncommitted writes, exactly like the per-thread SQLite connection."""
+
+    def __init__(self, pool: Any, raw: Any = None) -> None:
+        self._pool = pool
+        self._pinned: Any = None
+        # A dedicated psycopg connection instead of a pool (from_raw): used by
+        # the transfer tool, which talks to a database this process is not
+        # configured with.
+        self._raw = raw
+
+    @classmethod
+    def from_raw(cls, raw: Any) -> "PgConnection":
+        """Wrap one autocommit psycopg connection, no pool."""
+        return cls(None, raw)
+
+    # -- transactions --------------------------------------------------------
+    @property
+    def in_transaction(self) -> bool:
+        return self._pinned is not None
+
+    def _acquire(self) -> Any:
+        if self._raw is not None:
+            return self._raw
+        return self._pool.getconn(timeout=_BUSY_TIMEOUT_MS / 1000.0)
+
+    def _release(self, raw: Any) -> None:
+        if self._raw is None:
+            self._pool.putconn(raw)
+
+    def begin(self) -> None:
+        if self._pinned is not None:
+            raise RuntimeError("transaction already open on this thread")
+        raw = self._acquire()
+        try:
+            raw.execute("BEGIN")
+            raw.execute("SELECT pg_advisory_xact_lock(%s)", (_PG_WRITE_LOCK_KEY,))
+        except Exception:
+            try:
+                raw.execute("ROLLBACK")
+            except Exception:
+                pass
+            self._release(raw)
+            raise
+        self._pinned = raw
+
+    def _finish(self, verb: str) -> None:
+        raw, self._pinned = self._pinned, None
+        if raw is None:
+            return
+        try:
+            raw.execute(verb)
+        finally:
+            self._release(raw)
+
+    def commit(self) -> None:
+        self._finish("COMMIT")
+
+    def rollback(self) -> None:
+        self._finish("ROLLBACK")
+
+    # -- statements ----------------------------------------------------------
+    def execute(self, sql: str, params: Any = None) -> _Result:
+        verb = sql.strip().upper()
+        if verb in ("BEGIN", "BEGIN IMMEDIATE", "BEGIN EXCLUSIVE", "BEGIN DEFERRED"):
+            self.begin()
+            return _Result(_NoCursor)
+        if verb == "COMMIT":
+            self.commit()
+            return _Result(_NoCursor)
+        if verb == "ROLLBACK":
+            self.rollback()
+            return _Result(_NoCursor)
+        has_params = params is not None and (not hasattr(params, "__len__") or len(params) > 0)
+        text = _adapt_sql_for_pg(sql, has_params)
+        args = _adapt_params_for_pg(params) if has_params else None
+        if self._pinned is not None:
+            return _Result(self._pinned.execute(text, args))
+        if self._raw is not None:
+            return _Result(self._raw.execute(text, args))
+        with self._pool.connection(timeout=_BUSY_TIMEOUT_MS / 1000.0) as raw:
+            return _Result(raw.execute(text, args))
+
+    def executemany(self, sql: str, seq_of_params: Iterable[Any]) -> _Result:
+        text = _adapt_sql_for_pg(sql, True)
+        batches = [_adapt_params_for_pg(p) for p in seq_of_params]
+        if not batches:
+            return _Result(_NoCursor)
+
+        def run(raw: Any) -> _Result:
+            with raw.cursor() as cur:
+                cur.executemany(text, batches)
+                return _Result(cur)
+
+        if self._pinned is not None:
+            return run(self._pinned)
+        if self._raw is not None:
+            return run(self._raw)
+        with self._pool.connection(timeout=_BUSY_TIMEOUT_MS / 1000.0) as raw:
+            return run(raw)
+
+    def close(self) -> None:
+        if self._pinned is not None:
+            self.rollback()
+        if self._raw is not None:
+            try:
+                self._raw.close()
+            except Exception:
+                pass
+
+
+class _NoCursor:
+    """Stands in for a cursor when a statement produced none."""
+    rowcount = -1
+    description = None
+
+    @staticmethod
+    def fetchall() -> list:
+        return []
+
+
+def _get_pool() -> Any:
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is not None:
+            return _pool
+        try:
+            from psycopg_pool import ConnectionPool
+        except ImportError as exc:  # pragma: no cover - depends on the environment
+            raise RuntimeError(
+                f"{DATABASE_URL_ENV} is set but the Postgres driver is not installed: "
+                "pip install 'psycopg[binary]' psycopg_pool"
+            ) from exc
+        _pool = ConnectionPool(
+            database_url(),
+            min_size=1,
+            max_size=pool_size(),
+            open=True,
+            timeout=_BUSY_TIMEOUT_MS / 1000.0,
+            kwargs={
+                "autocommit": True,
+                # Applies to the advisory lock too: the Postgres counterpart of
+                # SQLite's busy_timeout.
+                "options": f"-c lock_timeout={_BUSY_TIMEOUT_MS}",
+            },
+        )
+        atexit.register(close_pool)
+    return _pool
+
+
+# ── Connections ──────────────────────────────────────────────────────────────
+
+def _connect_sqlite() -> sqlite3.Connection:
     AGENTS_HUB_ROOT.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_FILE), timeout=_BUSY_TIMEOUT_MS / 1000.0)
     conn.row_factory = sqlite3.Row
@@ -659,157 +447,67 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-# Bumped whenever _ADDED_COLUMNS (or any other startup migration folded into
-# _ensure_ready) grows a new entry. A fresh database is stamped with this value
-# immediately; an existing one is upgraded to it — see _ensure_ready. It names
-# the migrations below, not every schema change ever made (CREATE TABLE IF NOT
-# EXISTS / CREATE INDEX IF NOT EXISTS additions are self-idempotent and need no
-# version bump).
-#   2 — the `flow_runs` table, and the import of flow_runs.json into it.
-#   3 — the `agent_versions` table (registry definition history).
-#   4 — `tasks.created_by_user` and `chats.owner`, the owner fields identity
-#       (AUTH_MODE) writes. The users/auth_sessions/workspace_members tables
-#       beside them are plain CREATE TABLE IF NOT EXISTS and need no version.
-SCHEMA_VERSION = 4
-
-# Columns added to a table *after* it first shipped. ``_SCHEMA`` only ever runs
-# CREATE TABLE IF NOT EXISTS, so a new column in the CREATE body reaches fresh
-# databases only; existing ones need an explicit ALTER. Add an entry here in the
-# same commit that adds the column to _SCHEMA, and keep both in sync.
-_ADDED_COLUMNS: dict[str, dict[str, str]] = {
-    # The instance a run belongs to — a real column (not `extra`) because the
-    # instance journal is queried by it and needs the index.
-    # ``cached_prompt_tokens`` is the slice of prompt_tokens the provider served
-    # from its prompt cache. A column rather than an `extra` key because cost
-    # aggregation reads it for every run in the table.
-    "runs": {"instance_id": "TEXT", "cached_prompt_tokens": "INTEGER"},
-    # Session lookup keys lifted out of the JSON doc so the sessions list can be
-    # filtered, ordered and paged in SQL instead of in Python.
-    "sessions": {"workspace": "TEXT", "created_at": "TEXT", "is_flow": "INTEGER"},
-    # Triggered simulations: how agents were activated, why the run ended, and
-    # who stayed idle on a given tick.
-    # ``config`` is the launch-time snapshot of the scenario: a scenario is
-    # edited in place, so without it a finished run can only be read against
-    # settings it never ran with.
-    "sim_runs": {"activation": "TEXT", "stop_reason": "TEXT", "config": "TEXT",
-                 "story": "TEXT"},
-    "sim_ticks": {"idle": "TEXT"},
-    # Repeats/variance: which attempt (1-based) a result is, within its
-    # (case, config) pair. Pre-existing rows are all attempt 1.
-    "eval_results": {"attempt": "INTEGER"},
-    # Who created the record, under AUTH_MODE=multi. Columns rather than keys
-    # in `doc`, because the lists are filtered by them. Everything that existed
-    # before identity shipped was created by the single local operator, and the
-    # backfill below says exactly that instead of leaving a NULL that reads as
-    # "unknown".
-    "tasks": {"created_by_user": "TEXT"},
-    "chats": {"owner": "TEXT"},
-}
-
-# Statements that fill a freshly added column from data already in the row.
-# Run once, immediately after the ALTER that created the column, so existing
-# databases end up indistinguishable from a fresh one.
-_ADDED_COLUMN_BACKFILL: dict[str, list[str]] = {
-    "sessions": [
-        "UPDATE sessions SET workspace = json_extract(doc, '$.workspace') "
-        "WHERE workspace IS NULL",
-        "UPDATE sessions SET created_at = json_extract(doc, '$.created_at') "
-        "WHERE created_at IS NULL",
-        "UPDATE sessions SET is_flow = CASE WHEN json_extract(doc, '$.is_flow') "
-        "IN (1, 'true') THEN 1 ELSE 0 END WHERE is_flow IS NULL",
-    ],
-    "eval_results": [
-        "UPDATE eval_results SET attempt = 1 WHERE attempt IS NULL",
-    ],
-    "tasks": [
-        "UPDATE tasks SET created_by_user = 'local' WHERE created_by_user IS NULL",
-    ],
-    "chats": [
-        "UPDATE chats SET owner = 'local' WHERE owner IS NULL",
-    ],
-}
+def _connect() -> Any:
+    if dialect() == "postgres":
+        return PgConnection(_get_pool())
+    return _connect_sqlite()
 
 
-def _ensure_columns(conn: sqlite3.Connection) -> None:
-    """Add post-hoc columns to pre-existing tables (idempotent).
-
-    Runs *before* the rest of ``_SCHEMA`` so the indexes declared there can
-    reference the new columns. Tables that do not exist yet are skipped — a
-    fresh database gets them from the CREATE TABLE body instead. Called by
-    ``_ensure_ready`` inside its ``BEGIN IMMEDIATE`` transaction, so the
-    table_info check and the ALTER it guards are no longer a check-then-act
-    race between processes; the ``duplicate column`` catch below is
-    belt-and-braces only (e.g. a schema hand-edited outside this code path).
-    """
-    for table, columns in _ADDED_COLUMNS.items():
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone()
-        if not exists:
-            continue
-        present = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
-        added = False
-        for column, decl in columns.items():
-            if column in present:
-                continue
-            try:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
-            except sqlite3.OperationalError as exc:
-                if "duplicate column name" not in str(exc).lower():
-                    raise
-                continue  # already there — nothing to backfill for this column
-            added = True
-        if added:
-            for statement in _ADDED_COLUMN_BACKFILL.get(table, []):
-                conn.execute(statement)
+def _begin(conn: Any) -> None:
+    if isinstance(conn, PgConnection):
+        conn.begin()
+    else:
+        conn.execute("BEGIN IMMEDIATE")
 
 
-def _schema_statements() -> list[str]:
-    """Split ``_SCHEMA`` into individual statements, comments stripped.
-
-    ``conn.executescript()`` cannot be used from inside ``_ensure_ready``: the
-    sqlite3 module always issues an implicit COMMIT before running a script,
-    which would close the exclusive transaction that makes column ALTERs,
-    table creation, the version bump and the JSON migration land atomically.
-    Executing each statement individually keeps everything inside that one
-    transaction. ``_SCHEMA`` only ever uses ``--`` line comments (no block
-    comments, no string literal contains ``--``), so stripping from the first
-    ``--`` to end of line on every line before splitting on ``;`` is exact.
-    """
-    lines = []
-    for line in _SCHEMA.split("\n"):
-        idx = line.find("--")
-        if idx != -1:
-            line = line[:idx]
-        lines.append(line)
-    return [s.strip() for s in "\n".join(lines).split(";") if s.strip()]
+def _commit(conn: Any) -> None:
+    if isinstance(conn, PgConnection):
+        conn.commit()
+    else:
+        conn.execute("COMMIT")
 
 
-def _ensure_ready(conn: sqlite3.Connection) -> None:
-    """Create/upgrade the schema and run the one-time JSON migration, exactly
-    once per process.
+def _rollback(conn: Any) -> None:
+    if isinstance(conn, PgConnection):
+        conn.rollback()
+    else:
+        conn.execute("ROLLBACK")
 
-    Everything here runs inside a single ``BEGIN IMMEDIATE`` transaction:
-    the ``schema_version`` read, the post-hoc column ALTERs (only when the
-    stored version is behind), schema creation and the legacy-JSON import.
-    Two processes opening the same database at once now serialize on
-    SQLite's own write lock instead of both reading "column missing" from
-    ``PRAGMA table_info`` and both trying to ALTER it in — the defect this
-    replaces (see tests/test_db_schema.py).
-    """
-    global _schema_ready
+
+# ── Schema readiness ─────────────────────────────────────────────────────────
+
+def _latest_schema_version() -> int:
+    from common import migrations
+    return migrations.latest_version(dialect())
+
+
+# The highest migration this build knows. ``meta.schema_version`` is stamped
+# with it so an older build (which compares against its own constant) refuses
+# a database written by a newer one. Kept as a module attribute for callers
+# and tests; the value comes from the migrations directory.
+SCHEMA_VERSION = 5
+
+
+def _ensure_ready(conn: Any) -> None:
+    """Make the schema current and run the one-time JSON migration, exactly
+    once per process, all inside one write transaction (see module
+    docstring)."""
+    global _schema_ready, SCHEMA_VERSION, _generation
     if _schema_ready:
         return
     with _schema_lock:
         if _schema_ready:
             return
+        from common import migrations
+        from common import db_migrate
 
-        conn.execute("BEGIN IMMEDIATE")
+        SCHEMA_VERSION = migrations.latest_version(dialect())
+        _begin(conn)
         migrated: Optional[dict] = None
         flow_runs_migrated: Optional[int] = None
         try:
-            # Needed before the version read below; also in _SCHEMA (harmless
-            # to create twice, both are IF NOT EXISTS).
+            # Needed before the version read below; also in the baseline
+            # (harmless to create twice, both are IF NOT EXISTS).
             conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
 
             row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
@@ -820,66 +518,63 @@ def _ensure_ready(conn: sqlite3.Connection) -> None:
 
             if stored_version > SCHEMA_VERSION:
                 raise RuntimeError(
-                    f"This state directory's schema_version ({stored_version}) is "
-                    f"newer than what this build of Agents Hub understands "
-                    f"(SCHEMA_VERSION={SCHEMA_VERSION}). It was written by a newer "
-                    "version of the app — upgrade before opening it, or point "
-                    "AGENTS_HUB_ROOT at a different directory."
+                    f"This database's schema_version ({stored_version}) is newer than "
+                    f"what this build of Agents Hub understands (SCHEMA_VERSION="
+                    f"{SCHEMA_VERSION}). It was written by a newer version of the app: "
+                    "upgrade before opening it, or point AGENTS_HUB_ROOT / "
+                    f"{DATABASE_URL_ENV} at a different database."
                 )
 
-            if stored_version < SCHEMA_VERSION:
-                _ensure_columns(conn)
+            applied = migrations.apply_pending(conn, dialect())
 
-            for statement in _schema_statements():
-                conn.execute(statement)
-
-            if stored_version < SCHEMA_VERSION:
+            if stored_version != SCHEMA_VERSION:
                 conn.execute(
-                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
-                    (str(SCHEMA_VERSION),),
+                    upsert_sql("meta", ("key", "value"), ("key",)),
+                    ("schema_version", str(SCHEMA_VERSION)),
                 )
 
             # Legacy JSON migration — guarded by a meta marker so concurrent
-            # processes and restarts never import twice. Runs in this same
-            # transaction: either the schema/version bump and the import land
-            # together, or (on any error) neither does.
+            # processes and restarts never import twice. Same transaction:
+            # either the schema and the import land together, or neither does.
             row = conn.execute("SELECT value FROM meta WHERE key='json_migrated'").fetchone()
             if row is None:
-                from common import db_migrate
                 migrated = db_migrate.migrate_legacy_json(conn)
 
-            # flow_runs.json moved into SQLite after the first migration shipped,
-            # so it carries its own marker: a database that already set
-            # `json_migrated` still has to import it exactly once. Same
-            # transaction, same all-or-nothing guarantee.
+            # flow_runs.json moved into the database after the first migration
+            # shipped, so it carries its own marker.
             row = conn.execute("SELECT value FROM meta WHERE key='flow_runs_migrated'").fetchone()
             if row is None:
-                from common import db_migrate
                 flow_runs_migrated = db_migrate.migrate_flow_runs(conn)
         except Exception:
-            conn.execute("ROLLBACK")
+            _rollback(conn)
             raise
         else:
-            conn.execute("COMMIT")
+            _commit(conn)
+
+        if applied:
+            print(f"[db] applied schema migration(s) {applied} ({dialect()})")
 
         if migrated is not None:
-            from common import db_migrate
             db_migrate.rename_migrated_sources()
             if any(migrated.values()):
-                print(f"[db] migrated legacy JSON state into SQLite: {migrated}")
+                print(f"[db] migrated legacy JSON state into the database: {migrated}")
 
         if flow_runs_migrated is not None:
-            from common import db_migrate
             db_migrate.rename_flow_runs_source()
             if flow_runs_migrated:
-                print(f"[db] migrated {flow_runs_migrated} flow run(s) into SQLite")
+                print(f"[db] migrated {flow_runs_migrated} flow run(s) into the database")
 
         _schema_ready = True
+        _generation += 1
 
 
-def get_conn() -> sqlite3.Connection:
-    """Return this thread's connection, creating it (and the schema) if needed."""
-    conn: Optional[sqlite3.Connection] = getattr(_local, "conn", None)
+def get_conn() -> Any:
+    """Return this thread's connection, creating it (and the schema) if needed.
+
+    A ``sqlite3.Connection`` or a :class:`PgConnection`; both take
+    ``execute(sql, params)`` with ``?`` placeholders and return rows that
+    answer to column names."""
+    conn = getattr(_local, "conn", None)
     if conn is None:
         conn = _connect()
         _local.conn = conn
@@ -888,13 +583,13 @@ def get_conn() -> sqlite3.Connection:
 
 
 @contextmanager
-def transaction() -> Iterator[sqlite3.Connection]:
-    """Run a block inside a single write transaction (BEGIN IMMEDIATE).
+def transaction() -> Iterator[Any]:
+    """Run a block inside a single write transaction.
 
     Re-entrant within a thread: a nested ``with transaction()`` joins the
     outer transaction instead of starting a new one, so helper functions can
-    use it freely.
-    """
+    use it freely. SQLite: ``BEGIN IMMEDIATE``. Postgres: ``BEGIN`` plus the
+    process-wide advisory write lock (see module docstring)."""
     conn = get_conn()
     depth = getattr(_local, "tx_depth", 0)
     if depth > 0:
@@ -906,16 +601,140 @@ def transaction() -> Iterator[sqlite3.Connection]:
         return
 
     _local.tx_depth = 1
-    conn.execute("BEGIN IMMEDIATE")
+    _begin(conn)
     try:
         yield conn
-    except Exception:
-        conn.execute("ROLLBACK")
+    except BaseException:
+        _rollback(conn)
         raise
     else:
-        conn.execute("COMMIT")
+        _commit(conn)
     finally:
         _local.tx_depth = 0
+
+
+def reset_connections() -> None:
+    """Forget every per-thread connection, the resolved dialect and the pool,
+    so the next ``get_conn()`` starts over. For tests and for a process that
+    re-points ``DB_FILE`` / the URL; never needed in normal operation."""
+    global _local, _schema_ready, _dialect, _pool
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    pool, _pool = _pool, None
+    if pool is not None:
+        try:
+            pool.close()
+        except Exception:
+            pass
+    _local = threading.local()
+    _schema_ready = False
+    _dialect = None
+
+
+def close_pool() -> None:
+    """Close the Postgres pool at process shutdown (no-op on SQLite)."""
+    global _pool
+    pool, _pool = _pool, None
+    if pool is not None:
+        try:
+            pool.close()
+        except Exception:
+            pass
+
+
+def truncate_all_tables(conn: Optional[Any] = None) -> List[str]:
+    """Empty every table in the schema (the test suite's per-test reset on
+    Postgres, where a fresh file is not an option). Returns the table names.
+    Sequences restart, so autoincrement columns count from 1 again like in a
+    fresh database. Never called by the application."""
+    conn = conn or get_conn()
+    if dialect() == "postgres":
+        rows = conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+        ).fetchall()
+        names = [str(r[0]) for r in rows]
+        if names:
+            conn.execute("TRUNCATE " + ", ".join(names) + " RESTART IDENTITY")
+        return names
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    names = [str(r[0]) for r in rows]
+    for name in names:
+        conn.execute(f"DELETE FROM {name}")
+    return names
+
+
+# ── Dialect helpers ──────────────────────────────────────────────────────────
+# Each returns SQL text for the dialect in use. Use them only where the two
+# dialects genuinely differ; portable SQL needs no helper.
+
+def upsert_sql(table: str, columns: Sequence[str], key: Sequence[str]) -> str:
+    """``INSERT ... ON CONFLICT (key) DO UPDATE SET ...`` with ``?`` placeholders
+    in ``columns`` order, updating every non-key column. Valid on both
+    dialects (SQLite 3.24+), and the replacement for ``INSERT OR REPLACE``,
+    which Postgres lacks and which SQLite implements as delete-then-insert
+    (resetting columns not in the list; this form leaves them alone)."""
+    cols = list(columns)
+    keys = list(key)
+    updates = [c for c in cols if c not in keys]
+    sql = (f"INSERT INTO {table} ({', '.join(cols)}) "
+           f"VALUES ({', '.join('?' * len(cols))}) "
+           f"ON CONFLICT ({', '.join(keys)}) ")
+    if updates:
+        sql += "DO UPDATE SET " + ", ".join(f"{c} = excluded.{c}" for c in updates)
+    else:
+        sql += "DO NOTHING"
+    return sql
+
+
+def json_text(column: str, key: str) -> str:
+    """The value at top-level ``key`` of the JSON document in ``column``, as
+    text (a string value compares equal to a ``?`` string parameter on both
+    dialects; NULL when the key is absent)."""
+    if dialect() == "postgres":
+        return f"(({column})::jsonb ->> '{key}')"
+    return f"json_extract({column}, '$.{key}')"
+
+
+def json_truthy(column: str, key: str) -> str:
+    """A boolean SQL expression: the JSON value at ``key`` is ``true`` or
+    ``1`` (the two spellings a boolean flag has been stored with)."""
+    if dialect() == "postgres":
+        return f"(COALESCE(({column})::jsonb ->> '{key}', '') IN ('true', '1'))"
+    return f"(COALESCE(json_extract({column}, '$.{key}'), 0) IN (1, 'true'))"
+
+
+def group_concat(expr: str, separator: str = ",") -> str:
+    """Comma-joined aggregate: ``GROUP_CONCAT`` / ``string_agg``. ``expr`` may
+    start with ``DISTINCT``."""
+    if dialect() == "postgres":
+        return f"string_agg({expr}, '{separator}')"
+    if separator == ",":
+        return f"GROUP_CONCAT({expr})"
+    return f"GROUP_CONCAT({expr}, '{separator}')"
+
+
+def sum_if(condition: str) -> str:
+    """Count the rows where ``condition`` holds. Portable; SQLite lets
+    ``SUM(status = 'x')`` through, Postgres has no ``SUM(boolean)``."""
+    return f"SUM(CASE WHEN {condition} THEN 1 ELSE 0 END)"
+
+
+class _NoLimit:
+    """The parameter value for ``LIMIT ?`` meaning "no limit": ``-1`` on SQLite,
+    NULL on Postgres. Resolved at use so the dialect is read lazily."""
+
+    def __call__(self) -> Any:
+        return None if dialect() == "postgres" else -1
+
+
+NO_LIMIT = _NoLimit()
 
 
 # ── JSON column helpers ───────────────────────────────────────────────────────
@@ -929,6 +748,8 @@ def loads(text: Optional[str], default: Any = None) -> Any:
     """Decode a JSON TEXT column, returning ``default`` for NULL/invalid."""
     if not text:
         return default
+    if isinstance(text, (dict, list)):
+        return text
     try:
         return json.loads(text)
     except Exception:

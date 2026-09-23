@@ -33,11 +33,12 @@ JSON_PAYLOAD = (FIXTURES / "otlp_langgraph.json").read_bytes()
 
 
 @pytest.fixture(autouse=True)
-def isolated_connections(tmp_path, monkeypatch):
-    monkeypatch.setattr(connection_store, "CONNECTIONS_FILE", tmp_path / "connections.json")
-    monkeypatch.setattr(connection_store, "CONNECTIONS_LOCK", tmp_path / "connections.json.lock")
-    connection_store._cache = None
-    connection_store._cache_stamp = None
+def isolated_connections():
+    """No in-memory state carried between tests.
+
+    The connections themselves live in the database, and the autouse
+    ``fresh_db`` fixture already gives every test its own empty one.
+    """
     ingest_service.reset_for_tests()
     otel.reset_for_tests()
     yield

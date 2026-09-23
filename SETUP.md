@@ -348,15 +348,15 @@ After the first run, the repo root will contain a runtime directory:
 
 ```text
 .agents_hub/
+├── agents_hub.db               # SQLite: runs, tasks, sessions, memory, plans, workspace settings, ...
 ├── agents.json                 # AgentSpec registry
-├── projects.json
-├── tasks.json
-├── procedures.json             # procedural memory (skills) — single file, records carry agent_id + workspace
-├── shared_memory.json          # notes, structured slots, RAG file metadata
-├── episodes/<pool_id>.json     # episodic events
-├── graphs/<pool_id>.json       # knowledge graph nodes + edges
+├── models.json                 # model catalog
+├── flows/                      # flow definitions
+├── run_logs/, node_logs/       # generated logs
 └── workspaces/<ws>/            # per-workspace files
 ```
+
+Everything several processes write at once (runs, tasks, sessions, memory pools, episodes, the knowledge graph, procedures, scheduled jobs, workspace settings) is in the database. That is the SQLite file by default; set `AGENTS_HUB_DATABASE_URL` to a `postgresql://` URL to keep it in Postgres instead (see `docs/scaling.md`, and `ah db migrate` to move an existing one). Older JSON files the database replaced are left behind as `*.migrated` after the first start.
 
 You can delete `.agents_hub/` to fully reset state — it will be regenerated on the next backend start. Back it up if you want to preserve memory or task history.
 

@@ -36,9 +36,8 @@ def _write_ctx(conn, ctx: Dict[str, Any]) -> None:
     """Persist a context: the full document plus the columns the list queries
     filter and order by (kept in sync with the doc on every write)."""
     conn.execute(
-        "INSERT OR REPLACE INTO sessions "
-        "(session_id, conversation_id, task_id, workspace, created_at, is_flow, doc) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        db.upsert_sql("sessions", ("session_id", "conversation_id", "task_id", "workspace",
+                                   "created_at", "is_flow", "doc"), ("session_id",)),
         (str(ctx.get("session_id")), ctx.get("conversation_id"),
          str(ctx["task_id"]) if ctx.get("task_id") else None,
          ctx.get("workspace"), ctx.get("created_at"),
@@ -55,7 +54,8 @@ def _notify() -> None:
 
 
 def load_contexts(timeout: float = 10.0) -> List[Dict[str, Any]]:
-    rows = db.get_conn().execute("SELECT doc FROM sessions ORDER BY rowid").fetchall()
+    rows = db.get_conn().execute(
+        "SELECT doc FROM sessions ORDER BY COALESCE(created_at, ''), session_id").fetchall()
     return [c for c in (_row_to_ctx(r) for r in rows) if c is not None]
 
 
@@ -206,7 +206,8 @@ def get_or_create_task_session(
     }
     with db.transaction() as conn:
         if task_id is not None:
-            row = conn.execute("SELECT doc FROM sessions WHERE task_id = ? ORDER BY rowid LIMIT 1",
+            row = conn.execute("SELECT doc FROM sessions WHERE task_id = ? "
+                               "ORDER BY COALESCE(created_at, ''), session_id LIMIT 1",
                                (str(task_id),)).fetchone()
             existing = _row_to_ctx(row) if row is not None else None
             if existing and existing.get("session_id"):
@@ -242,7 +243,7 @@ def get_or_create_chat_session(
     with db.transaction() as conn:
         row = conn.execute(
             "SELECT doc FROM sessions WHERE conversation_id = ? OR session_id = ? "
-            "ORDER BY rowid LIMIT 1",
+            "ORDER BY COALESCE(created_at, ''), session_id LIMIT 1",
             (str(conversation_id), str(conversation_id))).fetchone()
         existing = _row_to_ctx(row) if row is not None else None
         if existing:

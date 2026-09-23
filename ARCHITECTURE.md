@@ -40,7 +40,7 @@ Under those runtime layers, the backend works with several domain modules:
 - `runtime/`
   Entrypoints a subprocess actually executes — `agent_run.py`, `node_run.py`, `flow_run.py`, plus the node HTTP server and the Docker runner.
 - `common/`
-  The SQLite core (`db.py`, `db_migrate.py`), the single `.env` parser with mtime caching (`dotenv.py`), configuration, paths, workspace and user context, the session broker, pricing, budgets, optional auth, and the sinks that route a run's side effects (stream, artifacts, views, graph).
+  The database core (`db.py`: SQLite by default, Postgres by `AGENTS_HUB_DATABASE_URL`; `common/migrations/`, `db_migrate.py`, `db_transfer.py`), the single `.env` parser with mtime caching (`dotenv.py`), configuration, paths, workspace and user context, the session broker, pricing, budgets, optional auth, and the sinks that route a run's side effects (stream, artifacts, views, graph).
 - `instances/`
   Live agent copies: the single registration point every execution channel calls, the instance store, the per-instance mailbox, and the server-side rebuild of a copy's conversation history.
 - `chat/`
@@ -116,7 +116,9 @@ agents_hub/
 ├── notify/                  # Outbound webhooks / Slack incoming-webhooks and alert rules
 ├── clients/                 # Tracer libraries an external graph imports to report into connections/
 ├── common/
-│   ├── db.py                # SQLite core (WAL) — runs, tasks, sessions, nodes, views, evals …
+│   ├── db.py                # database core (SQLite WAL, or Postgres) — runs, tasks, sessions, nodes, views, evals …
+│   ├── migrations/          # numbered schema migrations, one syntax for both backends
+│   ├── db_transfer.py       # ah db migrate: copy the whole database between backends
 │   ├── db_migrate.py        # One-time migration from the legacy JSON stores
 │   ├── config.py            # Environment-driven settings
 │   ├── paths.py             # Canonical paths under .agents_hub/
@@ -221,7 +223,7 @@ agents_hub/
 - `projects/proxy_service.py`
   Validated backend base URLs for proxied requests: rejects non-http(s) schemes and cloud metadata addresses, rewrites container hostnames to reach the Docker host.
 - `common/db.py`
-  The SQLite core. One WAL-journaled database file backs the stores that several processes mutate concurrently — runs, tasks, sessions, nodes, views, evals, loops, teams, simulations.
+  The database core. One WAL-journaled SQLite file (or, with `AGENTS_HUB_DATABASE_URL`, a Postgres database) backs the stores that several processes mutate concurrently — runs, tasks, sessions, nodes, views, evals, loops, teams, simulations.
 - `memory/injection.py`
   Injects shared / episodic / graph / RAG capability hints into the assembled system prompt at runtime.
 - `common/dotenv.py`
@@ -236,16 +238,14 @@ agents_hub/
   CRUD tool factory shared by six entity management modules (flow, loop, team, scenario, world, project). Wraps entity-specific handlers with try/except, `json_ok`/`json_err` envelopes, and the `@tool` decorator.
 - `tools/_json.py`
   Shared JSON envelope for all tool results: `json_ok({...})` on success, `json_err(message, code=...)` on failure. One module where twenty-six identical copies used to live.
-- `.agents_hub/agents_hub.db`
-  SQLite database holding runs, tasks, sessions, nodes, views, and the eval / loop / team / simulation records.
+- `.agents_hub/agents_hub.db` (or Postgres, by `AGENTS_HUB_DATABASE_URL`)
+  The database holding runs, tasks, sessions, nodes, views, the eval / loop / team / simulation records, and the document collections below.
 - `.agents_hub/agents.json`
   Registry of `AgentSpec` records — model, provider, tools, memory, node settings.
 - `.agents_hub/models.json`
   Model catalog: which models are enabled per provider, the default per provider, and per-model pricing.
-- `.agents_hub/projects.json`
-  JSON-backed project metadata store.
-- `.agents_hub/workspaces.json`
-  Central per-workspace metadata (settings overrides, allowed agents/flows, env vars, model override), keyed by workspace name, replacing the per-folder `.workspace.json` that a fresh open still migrates in and removes.
+- `documents` table (`common/docstore.py`)
+  Project metadata, central per-workspace metadata (settings overrides, allowed agents/flows, env vars, model override, keyed by workspace name; the per-folder `.workspace.json` a fresh open still migrates in and removes), scheduled jobs, notifications, memory pools and the other former JSON stores, one named collection each.
 - `.agents_hub/workspaces/`
   Generated workspace folders — logs, plans, knowledge and project subfolders, and views under `<workspace>/.views/`.
 
@@ -366,9 +366,9 @@ The contents of the pool are **not** dumped into the prompt — only names and s
 
 ## Storage Model
 
-State is split between a SQLite database and files on disk, along one line: anything several processes mutate concurrently lives in the database; anything a human edits, or that is naturally a file, stays a file.
+State is split between a database (SQLite by default, Postgres by `AGENTS_HUB_DATABASE_URL`) and files on disk, along one line: anything several processes mutate concurrently lives in the database; anything a human edits, or that is naturally a file, stays a file.
 
-**SQLite** — `.agents_hub/agents_hub.db`, WAL-journaled so the backend, agent subprocesses, and node workers can read and write at the same time. The JSON stores it replaced suffered whole-file locking, lost updates, and corruption-wipe hazards under exactly that concurrency. Tables:
+**The database** — `.agents_hub/agents_hub.db` (SQLite, WAL-journaled so the backend, agent subprocesses, and node workers can read and write at the same time) or a Postgres database holding the same tables (`common/db.py`, `common/migrations/`). The JSON stores it replaced suffered whole-file locking, lost updates, and corruption-wipe hazards under exactly that concurrency. Tables:
 
 | Group | Tables |
 | --- | --- |
@@ -381,31 +381,26 @@ State is split between a SQLite database and files on disk, along one line: anyt
 | Loops | `loops`, `loop_runs`, `loop_iterations` |
 | Teams | `teams`, `team_runs`, `team_messages` |
 | Integration | `inbound_deliveries` (notify's idempotency record for an inbound webhook) |
+| Documents | `documents` (`common/docstore.py`): the JSON collections that used to be one file each under a lock. One row per document, keyed by `(store, key)`, insertion order kept in `seq`. Stores: `plans`, `notifications`, `workspaces`, `projects`, `project_graphs`, `shared_memory`, `episodes:<pool>`, `graph_nodes:<pool>`, `graph_edges:<pool>`, `procedures`, `extractions:<pool>`, `entity_chats`, `connections`, `telegram`, `git_connectors`, `node_connections`, `web_log`, `user_context` |
 
-The first connection in any process ensures the schema and runs a one-time migration from the legacy JSON stores (`common/db_migrate.py`), leaving the originals behind as `*.migrated` — so any entrypoint, backend or CLI, may touch the stores first.
+The schema is a sequence of numbered migrations (`common/migrations/`, ledger table `schema_migrations`), written once in SQLite syntax and rewritten for Postgres by the runner. The first connection in any process applies the pending ones and runs the one-time import of the legacy JSON stores (`common/db_migrate.py` for the original tables, each `DocStore` for its own file), leaving the originals behind as `*.migrated` — so any entrypoint, backend or CLI, may touch the stores first. `ah db migrate --to <url|path>` copies a whole database between the two backends (`common/db_transfer.py`).
 
 `chats` is the newest of these and arrived the same way the others did. The Chat page kept its conversations in the browser's `localStorage`, which made the record the service exists to produce the one thing it did not store: bound to a single browser profile, erased with the site data, and trimmed oldest-first once the ~5 MB quota was reached. A conversation is now a row (`common/chat_store.py`, `/api/chats`), holding the transcript as the UI renders it, beside the `runs` its turns produced. The browser keeps only what is true of that browser — which panel is open, which view mode was last used — and a profile still holding the old key hands it over once, additively, on first load.
 
 **Files** — under `.agents_hub/` unless noted:
 
-- `agents.json` — agent registry (AgentSpec records)
+- `agents.json` — agent registry (AgentSpec records); mounted read-only into agent containers, which is why it is still a file
 - `models.json` — model catalog: enabled models, defaults, per-model pricing
-- `custom_providers.json`, `git_connectors.json`, `telegram.json` — connector and backend configuration
-- `connections.json` — connections registry (external agents reporting runs in over `/api/ingest`)
-- `workspaces.json`: central per-workspace metadata: settings overrides, allowed agents/flows, env vars, model override; tool policy (`require_tool_approval` toggle under settings, `hooks` at top level) for the approval gate and hook configuration; MCP servers and notification endpoints/rules are stored under each workspace's `settings`
-- `projects.json`, `project_graphs.json` — project metadata and graphs
-- `plans.json`, `notifications.json` — scheduled jobs and the notification inbox
-- `shared_memory.json` — shared memory pools (notes, structured slots, RAG file metadata)
-- `episodes/<pool_id>.json`, `graphs/<pool_id>.json`, `procedures.json` — episodic, graph, and procedural memory
-- `flows/`, `flow_logs/` — flow definitions and per-run logs; flow run records live in the `flow_runs` table of the SQLite database (an existing `flow_runs.json` is imported once and renamed `.migrated`)
+- `custom_providers.json` — custom model backends (mounted into agent containers like `agents.json`)
+- `flows/`, `flow_logs/` — flow definitions (YAML plus a JSON visual pair, edited in place and git-friendly) and per-run logs; flow run records live in the `flow_runs` table (an existing `flow_runs.json` is imported once and renamed `.migrated`)
 - `run_logs/`, `node_logs/`, `dockerfiles/` — generated artifacts
-- `web_requests.jsonl` — the web access log
-- `workspaces/` — generated workspace folders (logs, plans, knowledge, project subfolders), and views under `<workspace>/.views/<view_id>/`; a workspace's settings live in `workspaces.json` above, not in its folder
+- `workspaces/` — generated workspace folders (logs, plans, knowledge, project subfolders), and views under `<workspace>/.views/<view_id>/`; a workspace's settings live in the `workspaces` document store, not in its folder
 - `agents/definitions/<agent_id>/{instructions,capabilities,usage}.md` — layered agent prompts, in the repository rather than the state directory
+- `*.migrated` — the JSON files the database replaced (`workspaces.json`, `plans.json`, `shared_memory.json`, `episodes/`, `graphs/`, `procedures.json`, `connections.json`, `telegram.json`, ...), left behind by the one-time import and safe to delete
 
 ## Running more than one backend
 
-The default deployment is one backend replica; nothing below is needed for it. `docker-compose.yml` also supports `--scale backend=N` behind nginx, but two pieces of state stop that from being safe on their own: the session broker (`common/session_broker.py`) is an in-process SSE hub, so an event published on one replica never reaches a browser tab connected to another; and everything else (SQLite, the `.agents_hub/` state directory) is a bind mount shared by every replica on one host, which is fine as long as it stays one host. `common/broker_bridge.py` closes the first gap: set `AGENTS_HUB_BROKER_URL` to a Redis URL and every replica fans its local events out to every other replica, with an `origin` tag so a replica never re-delivers its own event to itself. It stays off (no import, no connection) when the setting is empty. Scheduled jobs (`plans/`) already use DB leases so several schedulers racing the same due job is safe regardless of the bridge. See [docs/scaling.md](./docs/scaling.md) for the full picture, the exact commands, and the boundary this does not cross (still one host, still SQLite, no Postgres).
+The default deployment is one backend replica; nothing below is needed for it. `docker-compose.yml` also supports `--scale backend=N` behind nginx, but two pieces of state stop that from being safe on their own: the session broker (`common/session_broker.py`) is an in-process SSE hub, so an event published on one replica never reaches a browser tab connected to another; and everything else (SQLite, the `.agents_hub/` state directory) is a bind mount shared by every replica on one host, which is fine as long as it stays one host. `common/broker_bridge.py` closes the first gap: set `AGENTS_HUB_BROKER_URL` to a Redis URL and every replica fans its local events out to every other replica, with an `origin` tag so a replica never re-delivers its own event to itself. It stays off (no import, no connection) when the setting is empty. Scheduled jobs (`plans/`) already use DB leases so several schedulers racing the same due job is safe regardless of the bridge. `AGENTS_HUB_DATABASE_URL` moves the database itself into Postgres (`common/db.py` has both backends behind one API; `ah db migrate` copies an existing SQLite state across), which leaves the files under `.agents_hub/` as the remaining one-host boundary. See [docs/scaling.md](./docs/scaling.md) for the full picture and the exact commands.
 
 ## API Surface
 
@@ -494,6 +489,6 @@ Wording lives in `dashboard/frontend/src/i18n/locales/<lang>/<namespace>.js` —
 
 ## Tech stack
 
-**Backend** — FastAPI, Uvicorn, Pydantic / pydantic-settings, SQLite (WAL) for concurrent state, LangChain ecosystem libraries, Chroma / Pinecone / Qdrant for RAG vector storage, Typer for the CLI, Docker for optional agent isolation.
+**Backend** — FastAPI, Uvicorn, Pydantic / pydantic-settings, SQLite (WAL) or Postgres (psycopg 3) for concurrent state, LangChain ecosystem libraries, Chroma / Pinecone / Qdrant for RAG vector storage, Typer for the CLI, Docker for optional agent isolation.
 
 **Frontend** — React 19, Vite, Tailwind CSS, React Router, Axios, React Flow (flow canvas), and the view renderers: Vega-Lite (charts), Cytoscape (graphs), three.js with React Three Fiber (3D scenes), Mermaid (diagrams), KaTeX (equations).

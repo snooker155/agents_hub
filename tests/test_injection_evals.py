@@ -22,12 +22,14 @@ from tools import web, web_log
 
 
 @pytest.fixture
-def log_file(tmp_path, monkeypatch):
-    """Redirect the web log (and its lock) at a per-test file."""
-    path = tmp_path / "web_requests.jsonl"
-    monkeypatch.setattr(web_log, "WEB_LOG_FILE", path)
-    monkeypatch.setattr(web_log, "_LOCK_FILE", str(path) + ".lock")
-    return path
+def log_file():
+    """No-op placeholder: kept as a fixture so test signatures needn't change.
+
+    The log used to live in a file this fixture redirected per test; it now
+    lives in the database, already isolated per test by the autouse
+    ``fresh_db`` fixture.
+    """
+    return None
 
 
 @pytest.fixture

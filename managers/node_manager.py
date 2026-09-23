@@ -6,7 +6,9 @@ Unlike task-based runs (run_manager), nodes persist until explicitly stopped.
 
 Node records live in the shared SQLite database (``nodes`` table, see
 ``common.db``); the legacy nodes.json is migrated in on first open.
-Connection history stays in per-node JSON files (append-only, single writer).
+Connection history lives in the ``node_connections`` DocStore (see
+``common.docstore``), one document per node id; legacy per-node
+``node_connections/<node_id>.json`` files are imported in the same way.
 
 Public API
 ----------
@@ -36,10 +38,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from filelock import FileLock
-
 from agents.registry import get_agent
 from common import db
+from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from common.session_broker import notify_change
 
@@ -48,8 +49,10 @@ AGENTS_HUB_ROOT.mkdir(parents=True, exist_ok=True)
 
 NODE_LOGS_DIR = AGENTS_HUB_ROOT / "node_logs"
 NODE_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+#: Legacy per-node connection-history files, imported by hand (see
+#: ``log_connection``/``get_connections`` below): one document per node id in
+#: the ``node_connections`` DocStore, not one file per node in this directory.
 NODE_CONNECTIONS_DIR = AGENTS_HUB_ROOT / "node_connections"
-NODE_CONNECTIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -77,7 +80,7 @@ def _append_node_log(node: Dict[str, Any], message: str) -> None:
 
 
 def _load_nodes(timeout: float = 10.0) -> List[Dict[str, Any]]:
-    rows = db.get_conn().execute("SELECT doc FROM nodes ORDER BY rowid").fetchall()
+    rows = db.get_conn().execute("SELECT doc FROM nodes ORDER BY node_id").fetchall()
     return [n for n in (db.loads(r["doc"]) for r in rows) if isinstance(n, dict)]
 
 
@@ -86,7 +89,7 @@ def _save_nodes(nodes: List[Dict[str, Any]], timeout: float = 10.0) -> None:
         conn.execute("DELETE FROM nodes")
         for n in nodes:
             if isinstance(n, dict) and n.get("node_id"):
-                conn.execute("INSERT OR REPLACE INTO nodes (node_id, doc) VALUES (?, ?)",
+                conn.execute(db.upsert_sql("nodes", ("node_id", "doc"), ("node_id",)),
                              (str(n["node_id"]), db.dumps(n)))
 
 
@@ -98,7 +101,7 @@ def _upsert_node(node: Dict[str, Any]) -> None:
         row = conn.execute("SELECT doc FROM nodes WHERE node_id = ?", (node_id,)).fetchone()
         existing = db.loads(row["doc"]) if row is not None else None
         merged = {**(existing or {}), **node}
-        conn.execute("INSERT OR REPLACE INTO nodes (node_id, doc) VALUES (?, ?)",
+        conn.execute(db.upsert_sql("nodes", ("node_id", "doc"), ("node_id",)),
                      (node_id, db.dumps(merged)))
 
 
@@ -571,40 +574,68 @@ def get_node_by_token(token: str) -> Optional[Dict[str, Any]]:
 
 
 # ── Connection logging ────────────────────────────────────────────────────────
+#
+# One document per node id, in the ``node_connections`` DocStore, holding the
+# node's connection history as a capped list. A read-modify-write (append, cap
+# at 500) happens inside ``store.transaction()``, atomic across every process
+# and host, in place of the per-node file lock this used to take.
+
+_node_connections = DocStore("node_connections")
+
 
 def _connections_file(node_id: str) -> Path:
     return NODE_CONNECTIONS_DIR / f"{node_id}.json"
 
 
-def _connections_lock(node_id: str) -> str:
-    return str(NODE_CONNECTIONS_DIR / f"{node_id}.json.lock")
+def _import_legacy_connections(node_id: str) -> None:
+    """Import one node's legacy ``node_connections/<node_id>.json`` once, as
+    that node's document. A store row already present means it was already
+    imported (or written since); the file is left alone either way.
+
+    Not :meth:`DocStore.import_legacy`: that method's "already has rows"
+    check is store-wide, which is right for a single-file store but wrong
+    here, where every node has its own document in the same ``node_connections``
+    store — another node's history must not block this one's import. So the
+    existence check (and the write it guards) is per node id instead, done by
+    hand under the store's own transaction for the same atomicity.
+    """
+    if _node_connections.exists(node_id):
+        return
+    cf = _connections_file(node_id)
+    if not cf.exists():
+        return
+    try:
+        records = json.loads(cf.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(records, list):
+        return
+    with _node_connections.transaction():
+        if not _node_connections.exists(node_id):
+            _node_connections.put(node_id, records)
+    try:
+        cf.rename(cf.with_name(cf.name + ".migrated"))
+    except Exception:
+        pass  # rows are in; the rename is hygiene only
 
 
 def log_connection(node_id: str, record: Dict[str, Any]) -> None:
     """Append a connection record to the node's connection history."""
-    cf = _connections_file(node_id)
-    lock_path = _connections_lock(node_id)
-    with FileLock(lock_path, timeout=10.0):
-        existing: List[Dict[str, Any]] = []
-        if cf.exists():
-            try:
-                existing = json.loads(cf.read_text(encoding="utf-8"))
-            except Exception:
-                existing = []
+    _import_legacy_connections(node_id)
+    with _node_connections.transaction():
+        existing = _node_connections.get(node_id)
+        existing = list(existing) if isinstance(existing, list) else []
         existing.append(record)
         # Keep last 500 connection records per node
         if len(existing) > 500:
             existing = existing[-500:]
-        cf.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        _node_connections.put(node_id, existing)
 
 
 def get_connections(node_id: str) -> List[Dict[str, Any]]:
     """Return connection history for a node, newest first."""
-    cf = _connections_file(node_id)
-    if not cf.exists():
+    _import_legacy_connections(node_id)
+    records = _node_connections.get(node_id)
+    if not isinstance(records, list):
         return []
-    try:
-        records = json.loads(cf.read_text(encoding="utf-8"))
-        return list(reversed(records))
-    except Exception:
-        return []
+    return list(reversed(records))

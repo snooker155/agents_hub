@@ -43,10 +43,12 @@ def save_scenario(scenario: Scenario) -> Scenario:
     config = {f: getattr(scenario, f) for f in _CONFIG_FIELDS}
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO scenarios
-               (scenario_id, name, description, workspace, environment,
-                env_params, roles, config, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "scenarios",
+                ("scenario_id", "name", "description", "workspace", "environment",
+                 "env_params", "roles", "config", "created_at", "updated_at"),
+                ("scenario_id",),
+            ),
             (
                 scenario.scenario_id, scenario.name, scenario.description,
                 scenario.workspace, scenario.environment,
@@ -128,9 +130,12 @@ def save_world(spec: WorldSpec) -> WorldSpec:
     spec.updated_at = utc_iso()
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO worlds
-               (world_id, name, description, workspace, spec, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "worlds",
+                ("world_id", "name", "description", "workspace", "spec",
+                 "created_at", "updated_at"),
+                ("world_id",),
+            ),
             (spec.world_id, spec.name, spec.description, spec.workspace,
              db.dumps(spec.to_dict()), spec.created_at, spec.updated_at),
         )
@@ -208,11 +213,13 @@ def delete_world(world_id: str) -> bool:
 def save_sim_run(run: SimRun) -> SimRun:
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO sim_runs
-               (sim_run_id, scenario_id, workspace, environment, status,
-                activation, stop_reason, ticks_done, total_cost, error,
-                scores, final_state, config, started_at, finished_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "sim_runs",
+                ("sim_run_id", "scenario_id", "workspace", "environment", "status",
+                 "activation", "stop_reason", "ticks_done", "total_cost", "error",
+                 "scores", "final_state", "config", "started_at", "finished_at"),
+                ("sim_run_id",),
+            ),
             (
                 run.sim_run_id, run.scenario_id, run.workspace, run.environment,
                 run.status, run.activation, run.stop_reason, run.ticks_done,
@@ -391,10 +398,12 @@ def stop_requested(sim_run_id: str) -> bool:
 def save_tick(record: TickRecord) -> TickRecord:
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO sim_ticks
-               (sim_run_id, tick, ts, decisions, resolutions, frame, events,
-                idle, cost)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "sim_ticks",
+                ("sim_run_id", "tick", "ts", "decisions", "resolutions", "frame",
+                 "events", "idle", "cost"),
+                ("sim_run_id", "tick"),
+            ),
             (
                 record.sim_run_id, record.tick, record.ts,
                 db.dumps([d.to_dict() for d in record.decisions]),

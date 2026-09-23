@@ -14,12 +14,15 @@ from workspace import storage
 
 @pytest.fixture
 def ws_root(tmp_path, monkeypatch):
-    """Point the workspaces root at a throwaway directory for one test."""
+    """Point the workspaces root at a throwaway directory for one test.
+
+    Workspace metadata itself lives in the per-test database (the autouse
+    ``fresh_db`` fixture in conftest.py already isolates it), so only the
+    filesystem root needs redirecting here.
+    """
     root = tmp_path / "state" / "workspaces"
     root.mkdir(parents=True)
     monkeypatch.setattr(storage, "WORKSPACES_ROOT", root)
-    monkeypatch.setattr(storage, "WORKSPACES_META_FILE", tmp_path / "workspaces.json")
-    monkeypatch.setattr(storage, "_WORKSPACES_META_LOCK", str(tmp_path / "workspaces.json.lock"))
     monkeypatch.setattr(storage, "ensure_workspaces_root", lambda: root)
     return root
 

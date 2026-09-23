@@ -214,7 +214,10 @@ def test_an_owner_manages_the_members_of_their_own_workspace(multi, client):
     assert added.status_code == 200
     names = {m["username"] for m in client.get("/api/workspaces/alpha/members",
                                                headers=owner).json()}
-    assert names == {"olivia", "bob"}
+    # root created alpha, so root is its owner too (claim_workspace); this
+    # used to pass without root only because an earlier test's workspaces.json
+    # leaked into this one and skipped the seeding.
+    assert names == {"root", "olivia", "bob"}
     assert client.delete(f"/api/workspaces/alpha/members/{bob_id}",
                          headers=owner).status_code == 200
 

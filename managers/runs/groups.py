@@ -293,8 +293,9 @@ def _team_children(team_run_id: str) -> List[str]:
     writes exactly one message carrying its run id."""
     from common import db
     rows = db.get_conn().execute(
-        "SELECT DISTINCT run_id FROM team_messages "
-        "WHERE team_run_id = ? AND run_id IS NOT NULL AND run_id != '' ORDER BY seq",
+        "SELECT run_id, MIN(seq) AS first_seq FROM team_messages "
+        "WHERE team_run_id = ? AND run_id IS NOT NULL AND run_id != '' "
+        "GROUP BY run_id ORDER BY first_seq",
         (str(team_run_id),)).fetchall()
     return [str(r["run_id"]) for r in rows]
 

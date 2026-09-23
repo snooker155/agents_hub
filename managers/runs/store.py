@@ -71,9 +71,9 @@ def _write_payload_row(conn, run_id: str, proc: Dict[str, Any]) -> None:
     """Canonicalize and store a heavy process payload for a run."""
     c = rp.canonicalize(proc)
     conn.execute(
-        "INSERT OR REPLACE INTO run_payloads (run_id, input_context, response, "
-        "tool_calls, reasoning, llm_invocations, llm_raw_responses, artifacts, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        db.upsert_sql("run_payloads", ("run_id", "input_context", "response", "tool_calls",
+                                       "reasoning", "llm_invocations", "llm_raw_responses",
+                                       "artifacts", "updated_at"), ("run_id",)),
         (str(run_id), db.dumps(c["input_context"]), db.dumps(c["response"]),
          db.dumps(c["tool_calls"]), db.dumps(c["reasoning"]),
          db.dumps(c["llm_invocations"]), db.dumps(c["llm_raw_responses"]),
@@ -87,10 +87,7 @@ def _write_record(conn, merged: Dict[str, Any], tokens: Dict[str, Any]) -> None:
     data.pop("process", None)
     cols = {k: data.pop(k, None) for k in RUN_COLUMNS}
     conn.execute(
-        f"INSERT OR REPLACE INTO runs ({', '.join(RUN_COLUMNS)}, "
-        "prompt_tokens, cached_prompt_tokens, completion_tokens, total_tokens, "
-        "duration_ms, extra) "
-        f"VALUES ({', '.join('?' * len(RUN_COLUMNS))}, ?, ?, ?, ?, ?, ?)",
+        db.upsert_sql("runs", RUN_COLUMNS + _TOKEN_COLUMNS + ("extra",), ("run_id",)),
         [cols[k] for k in RUN_COLUMNS]
         + [tokens.get(k) for k in _TOKEN_COLUMNS]
         + [db.dumps(data)],
@@ -258,7 +255,7 @@ def query_runs(
         # A node run records the flow execution it belongs to in `extra`, not in
         # a column: it is the only grouping key that is not shared by every run
         # channel, and the run group adapters are the only readers of it.
-        clauses.append("json_extract(extra, '$.flow_run_id') = ?")
+        clauses.append(f"{db.json_text('extra', 'flow_run_id')} = ?")
         params.append(str(flow_run_id))
     if from_date:
         clauses.append("COALESCE(started_at, created_at) >= ?")
@@ -274,7 +271,7 @@ def query_runs(
         # of the flow pseudo-agents — the same rule the UI applied in Python.
         ids = list(flow_agent_ids or ())
         placeholders = ", ".join("?" * len(ids)) if ids else "NULL"
-        expr = (f"(COALESCE(json_extract(extra, '$.is_flow'), 0) IN (1, 'true') "
+        expr = (f"({db.json_truthy('extra', 'is_flow')} "
                 f"OR agent_id IN ({placeholders}))")
         clauses.append(expr if is_flow else f"NOT {expr}")
         params.extend(ids)
@@ -371,13 +368,13 @@ def session_run_stats(session_ids: Optional[Sequence[str]] = None) -> Dict[str, 
         f"""
         SELECT session_id,
                COUNT(*)                                              AS total,
-               SUM(status = 'running')                               AS n_running,
-               SUM(status = 'completed')                              AS n_completed,
-               SUM(status IN ('failed', 'error'))                     AS n_failed,
-               SUM(status IN ('stop', 'stopped'))                     AS n_stopped,
-               SUM(status IN ('pending', 'awaiting_approval'))        AS n_pending,
+               {db.sum_if("status = 'running'")}                     AS n_running,
+               {db.sum_if("status = 'completed'")}                   AS n_completed,
+               {db.sum_if("status IN ('failed', 'error')")}          AS n_failed,
+               {db.sum_if("status IN ('stop', 'stopped')")}          AS n_stopped,
+               {db.sum_if("status IN ('pending', 'awaiting_approval')")} AS n_pending,
                MAX(finished_at)                                       AS finished_at,
-               GROUP_CONCAT(DISTINCT agent_id)                        AS agents,
+               {db.group_concat("DISTINCT agent_id")}                 AS agents,
                (SELECT r2.status FROM runs r2
                  WHERE r2.session_id = runs.session_id
                  ORDER BY COALESCE(r2.started_at, r2.created_at) DESC LIMIT 1) AS last_status
@@ -401,7 +398,8 @@ def session_run_stats(session_ids: Optional[Sequence[str]] = None) -> Dict[str, 
 
 def _load_runs(timeout: float = 10.0) -> List[Dict[str, Any]]:
     conn = db.get_conn()
-    rows = conn.execute("SELECT * FROM runs ORDER BY rowid").fetchall()
+    rows = conn.execute(
+        "SELECT * FROM runs ORDER BY COALESCE(created_at, started_at, ''), run_id").fetchall()
     return [_row_to_record(r) for r in rows]
 
 

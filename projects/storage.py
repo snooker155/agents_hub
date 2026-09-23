@@ -1,31 +1,26 @@
+"""Project records, as a document collection.
+
+A list of :class:`Project` models keyed by ``id``, kept in the ``documents``
+table through :class:`common.docstore.DocStore` (one row per project). An
+existing ``projects.json`` is imported once on first use and renamed
+``.migrated`` (see ``common/docstore.py``).
+"""
 from __future__ import annotations
 
-import json
-from datetime import datetime
-from enum import Enum
 from pathlib import Path
-from typing import Iterable, List, Optional
-from uuid import UUID
+from typing import Any, List, Optional
 
-from filelock import FileLock
 from pydantic import BaseModel
 
+from common.docstore import DocStore
+from common.paths import PROJECTS_FILE as DEFAULT_PROJECTS_FILE
 from .models import Project
-from common.paths import PROJECTS_FILE
 
 
 def _model_to_dict(obj: BaseModel) -> dict:
-    return obj.model_dump()
-
-
-def _json_default(o):
-    if isinstance(o, Enum):
-        return o.value
-    if isinstance(o, datetime):
-        return o.isoformat()
-    if isinstance(o, UUID):
-        return str(o)
-    raise TypeError(f"Object of type {type(o)!r} is not JSON serializable")
+    # JSON mode: enums as their values, datetimes as ISO strings, UUIDs as
+    # strings, exactly what the JSON file used to hold.
+    return obj.model_dump(mode="json")
 
 
 def _parse_project(data: dict) -> Project:
@@ -36,94 +31,66 @@ def _parse_project(data: dict) -> Project:
     return Project.model_validate(data)
 
 
+def _record_key(rec: Any) -> Optional[str]:
+    return str(rec["id"]) if isinstance(rec, dict) and rec.get("id") else None
+
+
 class ProjectStore:
-    """File-based store for Project objects with OS-level file locking."""
+    """A list of :class:`Project` models keyed by ``id`` over a :class:`DocStore`.
+
+    ``path`` names the legacy JSON file the collection is imported from on
+    first use (the constructor argument tests and callers already pass); the
+    data itself lives in the database.
+    """
 
     def __init__(self, path: Path | str | None = None):
-        if path is None:
-            path = PROJECTS_FILE
-        self.path = Path(path)
-        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self._atomic_write([])
+        self.path = Path(path) if path else Path(DEFAULT_PROJECTS_FILE)
+        self.docs = DocStore("projects", legacy_file=self.path, legacy_key=_record_key)
 
     def load(self, timeout: float = 10.0) -> List[Project]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            return self._load_unlocked()
+        items: List[Project] = []
+        for obj in self.docs.all().values():
+            parsed = self._parse_or_none(obj)
+            if parsed is not None:
+                items.append(parsed)
+        return items
 
     def list(self, timeout: float = 10.0) -> List[Project]:
         return self.load(timeout=timeout)
 
     def get(self, project_id: str, timeout: float = 10.0) -> Optional[Project]:
-        for p in self.load(timeout=timeout):
-            if p.id == project_id:
-                return p
-        return None
+        doc = self.docs.get(str(project_id))
+        return self._parse_or_none(doc) if doc is not None else None
 
     def add(self, project: Project, timeout: float = 10.0) -> Project:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            projects = self._load_unlocked()
-            projects.append(project)
-            self._atomic_write([_model_to_dict(p) for p in projects])
+        self.docs.put(str(project.id), _model_to_dict(project))
         return project
 
     def update(self, project_id: str, *, timeout: float = 10.0, **fields) -> Optional[Project]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            projects = self._load_unlocked()
-            updated: Optional[Project] = None
-            new_list: List[Project] = []
-            for p in projects:
-                if p.id == project_id:
-                    data = _model_to_dict(p)
-                    # Handle nested config updates
-                    for key, val in fields.items():
-                        if key in ("repo", "frontend", "backend") and isinstance(val, dict):
-                            existing = data.get(key, {})
-                            existing.update(val)
-                            data[key] = existing
-                        else:
-                            data[key] = val
-                    updated = _parse_project(data)
-                    updated.touch()
-                    new_list.append(updated)
-                else:
-                    new_list.append(p)
-            if updated is None:
+        pid = str(project_id)
+        with self.docs.transaction():
+            doc = self.docs.get(pid)
+            if not isinstance(doc, dict):
                 return None
-            self._atomic_write([_model_to_dict(p) for p in new_list])
+            data = dict(doc)
+            # Handle nested config updates
+            for key, val in fields.items():
+                if key in ("repo", "frontend", "backend") and isinstance(val, dict):
+                    existing = data.get(key, {})
+                    existing.update(val)
+                    data[key] = existing
+                else:
+                    data[key] = val
+            updated = _parse_project(data)
+            updated.touch()
+            self.docs.put(pid, _model_to_dict(updated))
             return updated
 
     def delete(self, project_id: str, timeout: float = 10.0) -> bool:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            projects = self._load_unlocked()
-            new_list = [p for p in projects if p.id != project_id]
-            if len(new_list) == len(projects):
-                return False
-            self._atomic_write([_model_to_dict(p) for p in new_list])
-            return True
+        return self.docs.delete(str(project_id))
 
-    def _load_unlocked(self) -> List[Project]:
+    def _parse_or_none(self, data: Any) -> Optional[Project]:
         try:
-            text = self.path.read_text(encoding="utf-8")
-            if not text.strip():
-                return []
-            data = json.loads(text)
-            if not isinstance(data, list):
-                return []
-        except (FileNotFoundError, Exception):
-            return []
-
-        items: List[Project] = []
-        for obj in data:
-            try:
-                items.append(_parse_project(obj))
-            except Exception:
-                continue
-        return items
-
-    def _atomic_write(self, payload: Iterable[dict]) -> None:
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        text = json.dumps(list(payload), ensure_ascii=False, indent=2, default=_json_default)
-        tmp_path.write_text(text + "\n", encoding="utf-8")
-        tmp_path.replace(self.path)
+            return _parse_project(dict(data))
+        except Exception:
+            return None

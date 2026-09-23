@@ -132,7 +132,7 @@ def list_chats(workspace: Optional[str] = None, limit: int = 200,
     total = conn.execute(f"SELECT COUNT(*) FROM chats {where}", params).fetchone()[0]
     rows = conn.execute(
         f"SELECT doc FROM chats {where} "
-        "ORDER BY COALESCE(updated_at, created_at) DESC, rowid DESC LIMIT ? OFFSET ?",
+        "ORDER BY COALESCE(updated_at, created_at) DESC, chat_id DESC LIMIT ? OFFSET ?",
         [*params, max(1, min(int(limit), 500)), max(0, int(offset))],
     ).fetchall()
     items = [_summary(c) for c in (_row_to_chat(r) for r in rows) if c is not None]
@@ -182,10 +182,12 @@ def save_chat(chat: Dict[str, Any]) -> Dict[str, Any]:
             "updated_at": _now(),
         })
         conn.execute(
-            "INSERT OR REPLACE INTO chats "
-            "(chat_id, title, workspace, project_id, agent_id, flow_id, team_id,"
-            " target_mode, origin, owner, message_count, created_at, updated_at, doc) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            db.upsert_sql(
+                "chats",
+                ("chat_id",) + _COLUMNS
+                + ("message_count", "created_at", "updated_at", "doc"),
+                ("chat_id",),
+            ),
             (chat_id, *[doc.get(c) for c in _COLUMNS], len(_messages(doc)),
              doc.get("created_at"), doc.get("updated_at"), db.dumps(doc)),
         )

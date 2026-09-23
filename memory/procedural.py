@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Iterable, List, Literal, Optional, Sequence
+from typing import Any, List, Literal, Optional, Sequence
 from uuid import UUID, uuid4
 
-from filelock import FileLock
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 
-from common.paths import AGENTS_HUB_ROOT, WORKSPACES_ROOT, ensure_agents_hub_root
+from common import db
+from common.docstore import DocStore
+from common.paths import PROCEDURES_FILE as _PROCEDURES_FILE
+from common.paths import WORKSPACES_ROOT, ensure_agents_hub_root
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -46,30 +47,28 @@ class Procedure(BaseModel):
 
 # ── Store ─────────────────────────────────────────────────────────────────────
 
-def _json_default(o: Any) -> Any:
-    if isinstance(o, Enum):
-        return o.value
-    if isinstance(o, datetime):
-        return o.isoformat()
-    if isinstance(o, UUID):
-        return str(o)
-    raise TypeError(f"Object of type {type(o)!r} is not JSON serializable")
+def _model_to_dict(procedure: Procedure) -> dict:
+    # JSON mode: enums as their values, datetimes as ISO strings, UUIDs as
+    # strings, exactly what the JSON files used to hold.
+    return procedure.model_dump(mode="json")
 
 
-# Canonical single-file location, parallel to tasks.json / projects.json.
-_PROCEDURES_FILE = AGENTS_HUB_ROOT / "procedures.json"
-_PROCEDURES_LOCK = AGENTS_HUB_ROOT / "procedures.json.lock"
+def _record_key(rec: Any) -> Optional[str]:
+    return str(rec.get("id")) if isinstance(rec, dict) and rec.get("id") else None
+
 
 _LEGACY_MIGRATED = False
 
 
 def _migrate_legacy_files() -> None:
-    """One-shot: merge any per-workspace procedures.json files into the new single file.
+    """One-shot: merge any per-workspace procedures.json files directly into
+    the single 'procedures' collection.
 
     Each old file lives at .agents_hub/workspaces/<ws>/procedures.json and is a
-    list of Procedure records. We append unique-by-id records to the new file,
-    then rename each legacy file to procedures.json.migrated.bak so a second
-    boot doesn't re-import them.
+    list of Procedure records. Records already present (by id, or already
+    imported from the legacy single-file procedures.json) are skipped; the
+    rest are put into the store, then each legacy file is renamed to
+    procedures.json.migrated.bak so a second boot doesn't re-import them.
     """
     global _LEGACY_MIGRATED
     if _LEGACY_MIGRATED:
@@ -79,24 +78,18 @@ def _migrate_legacy_files() -> None:
     if not WORKSPACES_ROOT.exists():
         return
 
-    ensure_agents_hub_root()
-
     legacy_files = list(WORKSPACES_ROOT.glob("*/procedures.json"))
     if not legacy_files:
         return
 
-    with FileLock(str(_PROCEDURES_LOCK), timeout=10.0):
-        existing: list[dict] = []
-        if _PROCEDURES_FILE.exists():
-            try:
-                text = _PROCEDURES_FILE.read_text(encoding="utf-8")
-                if text.strip():
-                    existing = json.loads(text) or []
-            except Exception:
-                existing = []
-        seen_ids = {str(r.get("id")) for r in existing if r.get("id")}
+    ensure_agents_hub_root()
 
-        merged_any = False
+    docs_store = DocStore("procedures", legacy_file=_PROCEDURES_FILE, legacy_key=_record_key)
+    with db.transaction():
+        # Reading .keys() imports the legacy single-file procedures.json first
+        # (if it still exists), so per-workspace records are only added when
+        # not already covered by that import.
+        existing_ids = set(docs_store.keys())
         for legacy in legacy_files:
             try:
                 text = legacy.read_text(encoding="utf-8")
@@ -112,133 +105,108 @@ def _migrate_legacy_files() -> None:
                 # Old records may not carry `workspace` — backfill from folder name.
                 rec.setdefault("workspace", workspace_name)
                 rid = str(rec.get("id") or "")
-                if rid and rid in seen_ids:
+                if rid and rid in existing_ids:
                     continue
-                if rid:
-                    seen_ids.add(rid)
-                existing.append(rec)
-                merged_any = True
+                store_key = rid or str(uuid4())
+                existing_ids.add(store_key)
+                docs_store.put(store_key, rec)
 
             try:
                 legacy.rename(legacy.with_suffix(legacy.suffix + ".migrated.bak"))
             except Exception:
                 pass
 
-        if merged_any or not _PROCEDURES_FILE.exists():
-            tmp = _PROCEDURES_FILE.with_suffix(_PROCEDURES_FILE.suffix + ".tmp")
-            tmp.write_text(
-                json.dumps(existing, ensure_ascii=False, indent=2, default=_json_default) + "\n",
-                encoding="utf-8",
-            )
-            tmp.replace(_PROCEDURES_FILE)
-
 
 class ProcedureStore:
-    """File-based store for Procedure objects.
+    """Store for Procedure objects.
 
-    All procedures live in a single file at .agents_hub/procedures.json. The
-    `workspace` argument is retained on the constructor so call sites stay
-    unchanged — internally it's used to filter records on read and to stamp
-    the `workspace` field on writes.
+    All procedures live in one collection ('procedures') in the ``documents``
+    table. The `workspace` argument is retained on the constructor so call
+    sites stay unchanged — it filters records on read and stamps the
+    `workspace` field on writes.
     """
 
     def __init__(self, workspace: str):
         self.workspace = workspace
         self.path = _PROCEDURES_FILE
-        self.lock_path = _PROCEDURES_LOCK
         ensure_agents_hub_root()
         _migrate_legacy_files()
-        if not self.path.exists():
-            self._atomic_write_all([])
+        self.docs = DocStore("procedures", legacy_file=self.path, legacy_key=_record_key)
 
-    # ── unfiltered I/O (operates on the whole file) ─────────────────────────
+    # ── unfiltered I/O (operates on the whole collection) ───────────────────
 
-    def _load_all_unlocked(self) -> List[Procedure]:
-        try:
-            text = self.path.read_text(encoding="utf-8")
-            if not text.strip():
-                return []
-            return [Procedure(**obj) for obj in json.loads(text)]
-        except Exception:
-            return []
-
-    def _atomic_write_all(self, payload: Iterable[dict]) -> None:
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        text = json.dumps(list(payload), ensure_ascii=False, indent=2, default=_json_default)
-        tmp_path.write_text(text + "\n", encoding="utf-8")
-        tmp_path.replace(self.path)
+    def _load_all(self) -> List[Procedure]:
+        out: List[Procedure] = []
+        for obj in self.docs.values():
+            try:
+                out.append(Procedure(**obj))
+            except Exception:
+                continue
+        return out
 
     # ── workspace-scoped API ────────────────────────────────────────────────
 
     def load(self, timeout: float = 10.0) -> List[Procedure]:
         """Return procedures belonging to this workspace."""
-        with FileLock(str(self.lock_path), timeout=timeout):
-            return [p for p in self._load_all_unlocked() if p.workspace == self.workspace]
+        return [p for p in self._load_all() if p.workspace == self.workspace]
 
     def save(self, procedures: Sequence[Procedure], timeout: float = 10.0) -> None:
         """Replace this workspace's procedures with the given list (other workspaces untouched)."""
-        with FileLock(str(self.lock_path), timeout=timeout):
-            others = [p for p in self._load_all_unlocked() if p.workspace != self.workspace]
-            # Make sure incoming records are stamped with the right workspace.
-            stamped = []
+        with self.docs.transaction():
+            others = {
+                k: v for k, v in self.docs.all().items()
+                if not (isinstance(v, dict) and v.get("workspace") == self.workspace)
+            }
+            stamped: dict = {}
             for p in procedures:
                 if p.workspace != self.workspace:
                     p = p.model_copy(update={"workspace": self.workspace})
-                stamped.append(p)
-            self._atomic_write_all([p.model_dump() for p in (others + stamped)])
+                stamped[str(p.id)] = _model_to_dict(p)
+            self.docs.replace_all({**others, **stamped})
 
     def get(self, procedure_id: UUID | str, timeout: float = 10.0) -> Optional[Procedure]:
-        pid = str(procedure_id)
-        for p in self.load(timeout=timeout):
-            if str(p.id) == pid:
-                return p
-        return None
+        doc = self.docs.get(str(procedure_id))
+        if doc is None:
+            return None
+        try:
+            p = Procedure(**doc)
+        except Exception:
+            return None
+        return p if p.workspace == self.workspace else None
 
     def add(self, procedure: Procedure, timeout: float = 10.0) -> Procedure:
         if procedure.workspace != self.workspace:
             procedure = procedure.model_copy(update={"workspace": self.workspace})
-        with FileLock(str(self.lock_path), timeout=timeout):
-            all_procs = self._load_all_unlocked()
-            all_procs.append(procedure)
-            self._atomic_write_all([p.model_dump() for p in all_procs])
+        self.docs.put(str(procedure.id), _model_to_dict(procedure))
         return procedure
 
     def update(self, procedure: Procedure, timeout: float = 10.0) -> bool:
         pid = str(procedure.id)
         if procedure.workspace != self.workspace:
             procedure = procedure.model_copy(update={"workspace": self.workspace})
-        with FileLock(str(self.lock_path), timeout=timeout):
-            all_procs = self._load_all_unlocked()
-            for i, p in enumerate(all_procs):
-                if str(p.id) == pid and p.workspace == self.workspace:
-                    all_procs[i] = procedure
-                    self._atomic_write_all([pp.model_dump() for pp in all_procs])
-                    return True
-        return False
+        with self.docs.transaction():
+            existing = self.docs.get(pid)
+            if not isinstance(existing, dict) or existing.get("workspace") != self.workspace:
+                return False
+            self.docs.put(pid, _model_to_dict(procedure))
+            return True
 
     def delete(self, procedure_id: UUID | str, timeout: float = 10.0) -> bool:
         pid = str(procedure_id)
-        with FileLock(str(self.lock_path), timeout=timeout):
-            all_procs = self._load_all_unlocked()
-            new_list = [
-                p for p in all_procs
-                if not (str(p.id) == pid and p.workspace == self.workspace)
-            ]
-            if len(new_list) == len(all_procs):
+        with self.docs.transaction():
+            existing = self.docs.get(pid)
+            if not isinstance(existing, dict) or existing.get("workspace") != self.workspace:
                 return False
-            self._atomic_write_all([p.model_dump() for p in new_list])
-            return True
+            return self.docs.delete(pid)
 
 
 def all_procedures() -> List[Procedure]:
-    """Every procedure in every workspace, newest file state.
+    """Every procedure in every workspace, newest store state.
 
     The per-workspace ``ProcedureStore`` deliberately filters on read; the
     global skills catalog is the one caller that needs the unfiltered view.
     """
-    store = ProcedureStore("default")
-    with FileLock(str(store.lock_path), timeout=10.0):
-        return store._load_all_unlocked()
+    return ProcedureStore("default")._load_all()
 
 
 def find_procedure(procedure_id: UUID | str) -> Optional[Procedure]:

@@ -14,59 +14,35 @@ import uuid
 import json
 import shutil
 
-from filelock import FileLock
-
+from common.docstore import DocStore
 from common.paths import (
     WORKSPACES_ROOT as DEFAULT_WORKSPACES_ROOT,
     WORKSPACES_META_FILE,
     ensure_workspaces_root,
-    ensure_agents_hub_root,
 )
 
 # Default workspaces root under the shared .agents_hub state directory
 WORKSPACES_ROOT = DEFAULT_WORKSPACES_ROOT
 
-# All workspace metadata lives in a single JSON file keyed by workspace name
-# (see WORKSPACES_META_FILE). A file lock guards the read-modify-write so the
-# dashboard, node workers and agent subprocesses can update it concurrently.
-_WORKSPACES_META_LOCK = str(WORKSPACES_META_FILE) + ".lock"
+# All workspace metadata lives in the "workspaces" document collection
+# (common/docstore.py), keyed by workspace name. WORKSPACES_META_FILE is kept
+# only as the legacy JSON file a fresh database imports once, on first use.
+_workspaces_store = DocStore("workspaces", legacy_file=WORKSPACES_META_FILE)
 _migration_done = False
-
-
-def _load_all_metadata() -> Dict[str, Dict[str, Any]]:
-    """Load the central name -> metadata map (empty dict when absent/corrupt)."""
-    if not WORKSPACES_META_FILE.exists():
-        return {}
-    try:
-        txt = WORKSPACES_META_FILE.read_text(encoding="utf-8")
-        data = json.loads(txt) if txt.strip() else {}
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _save_all_metadata(all_meta: Dict[str, Dict[str, Any]]) -> None:
-    """Atomically write the central metadata map."""
-    ensure_agents_hub_root()
-    tmp = WORKSPACES_META_FILE.with_suffix(WORKSPACES_META_FILE.suffix + ".tmp")
-    tmp.write_text(json.dumps(all_meta, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(WORKSPACES_META_FILE)
 
 
 def _migrate_legacy_metadata() -> None:
     """One-time merge of per-folder .workspace.json files into the central store.
 
     Runs at most once per process. For every workspace folder that still has a
-    legacy ``.workspace.json``, its contents are folded into the central map
+    legacy ``.workspace.json``, its contents are folded into the central store
     (only when the name is not already present, so the central copy wins) and the
     per-folder file is then removed. Cheap no-op once migration has happened.
     """
     global _migration_done
     if _migration_done:
         return
-    with FileLock(_WORKSPACES_META_LOCK):
-        all_meta = _load_all_metadata()
-        changed = False
+    with _workspaces_store.transaction():
         if WORKSPACES_ROOT.exists():
             for folder in WORKSPACES_ROOT.iterdir():
                 if not folder.is_dir():
@@ -75,21 +51,18 @@ def _migrate_legacy_metadata() -> None:
                 if not legacy.exists():
                     continue
                 name = folder.name
-                if name not in all_meta:
+                if not _workspaces_store.exists(name):
                     try:
                         raw = json.loads(legacy.read_text(encoding="utf-8"))
                     except Exception:
                         raw = None
                     if isinstance(raw, dict):
-                        all_meta[name] = _normalize_workspace_metadata(raw)
-                        changed = True
+                        _workspaces_store.put(name, _normalize_workspace_metadata(raw))
                 # The central store is now authoritative — drop the per-folder file.
                 try:
                     legacy.unlink()
                 except Exception:
                     pass
-        if changed:
-            _save_all_metadata(all_meta)
     _migration_done = True
 
 # Reserved system folder inside each workspace where planning-capable agents
@@ -135,7 +108,7 @@ def _default_chat_agent_id() -> str | None:
 
     Guarded by a registry lookup so a workspace never stores a dangling id: the
     Chat page treats an unknown default as "no default" anyway, but persisting
-    one would mislead anyone reading workspaces.json.
+    one would mislead anyone reading the stored workspace metadata.
     """
     try:
         from agents.registry import get_agent
@@ -213,13 +186,13 @@ def _seed_workspace_metadata(name: str, attached_path: Optional[str] = None) -> 
     from common.identity import claim_workspace, current_user_id
 
     _migrate_legacy_metadata()
-    if name in _load_all_metadata() and attached_path is None:
+    if _workspaces_store.exists(name) and attached_path is None:
         return
     seeded = False
-    with FileLock(_WORKSPACES_META_LOCK):
-        all_meta = _load_all_metadata()
-        if name not in all_meta:
-            all_meta[name] = {
+    with _workspaces_store.transaction():
+        meta = _workspaces_store.get(name)
+        if meta is None:
+            meta = {
                 "name": name,
                 "created_at": str(uuid.uuid4()),  # Placeholder for actual time if needed
                 # Who created it. ``local`` outside AUTH_MODE=multi, where there
@@ -233,12 +206,12 @@ def _seed_workspace_metadata(name: str, attached_path: Optional[str] = None) -> 
             }
             default_chat = _default_chat_agent_id()
             if default_chat:
-                all_meta[name]["default_chat_agent"] = default_chat
+                meta["default_chat_agent"] = default_chat
             seeded = True
         if attached_path is not None:
-            all_meta[name]["attached_path"] = attached_path
-        _save_all_metadata(all_meta)
-    # Outside the file lock: the membership row is a database write, and the
+            meta["attached_path"] = attached_path
+        _workspaces_store.put(name, meta)
+    # Outside the transaction: the membership row is a database write, and the
     # creator has to become an ``owner`` member or they could not reach the
     # workspace they just made. A no-op in every mode but multi.
     if seeded:
@@ -433,15 +406,13 @@ def get_workspace_default_model_config(meta: Dict[str, Any] | None) -> Dict[str,
 def get_workspace_metadata(name: str) -> Dict[str, Any]:
     """Get metadata for a workspace from the central store."""
     _migrate_legacy_metadata()
-    raw = _load_all_metadata().get(name)
+    raw = _workspaces_store.get(name)
     if not isinstance(raw, dict):
         return {}
     normalized = _normalize_workspace_metadata(raw)
     if normalized != raw:
-        with FileLock(_WORKSPACES_META_LOCK):
-            cur = _load_all_metadata()
-            cur[name] = normalized
-            _save_all_metadata(cur)
+        with _workspaces_store.transaction():
+            _workspaces_store.put(name, normalized)
     return normalized
 
 
@@ -455,15 +426,13 @@ def update_workspace_metadata(name: str, updates: Dict[str, Any]) -> Dict[str, A
     if not get_workspace_folder(name):
         raise FileNotFoundError(f"Workspace '{name}' does not exist")
     _migrate_legacy_metadata()
-    with FileLock(_WORKSPACES_META_LOCK):
-        all_meta = _load_all_metadata()
-        meta = all_meta.get(name)
+    with _workspaces_store.transaction():
+        meta = _workspaces_store.get(name)
         if not isinstance(meta, dict):
             meta = {}
         meta.update(updates)
         meta = _normalize_workspace_metadata(meta)
-        all_meta[name] = meta
-        _save_all_metadata(all_meta)
+        _workspaces_store.put(name, meta)
     return meta
 
 
@@ -517,11 +486,7 @@ def delete_workspace_folder(name: str) -> bool:
             shutil.rmtree(workspace_path)
     # Drop the central metadata entry regardless, so a recreated workspace of the
     # same name starts clean rather than inheriting stale settings.
-    with FileLock(_WORKSPACES_META_LOCK):
-        all_meta = _load_all_metadata()
-        if name in all_meta:
-            del all_meta[name]
-            _save_all_metadata(all_meta)
+    _workspaces_store.delete(name)
     return existed
 
 
@@ -539,7 +504,7 @@ def resolve_project_root(workspace_name: str, project_name: Optional[str] = None
     """Return the directory agents should operate in.
 
     Structure:
-      .agents_hub/workspaces/{workspace_name}/                  <- .logs/, .plans/, knowledge/ live here (metadata is in workspaces.json)
+      .agents_hub/workspaces/{workspace_name}/                  <- .logs/, .plans/, knowledge/ live here (metadata is in the "workspaces" store)
       .agents_hub/workspaces/{workspace_name}/{project_name}/   <- agents read/write here when project is set
 
     Creates the project subfolder if it does not exist.

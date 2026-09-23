@@ -40,6 +40,8 @@ ah task create "Build a REST API" --decompose
 ah task list --status todo
 ah workspace list
 ah node list
+ah db status                            # which database backend, schema version, row counts
+ah db migrate --to postgresql://...     # copy the database into Postgres (or back to a file)
 ah config
 ```
 

@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from enum import Enum
-from pathlib import Path
-from typing import Any, Iterable, List, Literal, Optional
+from typing import Any, List, Literal, Optional
 from uuid import UUID, uuid4
 
-from filelock import FileLock
 from pydantic import BaseModel, Field
 
-from common.paths import EPISODES_DIR, pool_episodes_file
+from common.docstore import DocStore
+from common.paths import pool_episodes_file
 
 
 EpisodeKind = Literal["interaction", "task", "decision", "error", "observation"]
@@ -51,46 +49,47 @@ class Episode(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-def _json_default(o: Any) -> Any:
-    if isinstance(o, Enum):
-        return o.value
-    if isinstance(o, datetime):
-        return o.isoformat()
-    if isinstance(o, UUID):
-        return str(o)
-    raise TypeError(f"Object of type {type(o)!r} is not JSON serializable")
+def _model_to_dict(episode: Episode) -> dict:
+    # JSON mode: UUIDs and datetimes as strings, exactly what the JSON files
+    # used to hold.
+    return episode.model_dump(mode="json")
+
+
+def _record_key(rec: Any) -> Optional[str]:
+    return str(rec.get("id")) if isinstance(rec, dict) and rec.get("id") else None
 
 
 class EpisodeStore:
-    """File-based store for Episode objects, scoped to one shared-memory pool."""
+    """Store for Episode objects, scoped to one shared-memory pool, kept in
+    the ``documents`` table (one row per episode, collection
+    ``episodes:<pool_id>``) through :class:`common.docstore.DocStore`."""
 
     def __init__(self, pool_id: str):
         self.pool_id = str(pool_id)
-        self.path: Path = pool_episodes_file(self.pool_id)
-        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        EPISODES_DIR.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self._atomic_write([])
+        # Legacy per-pool file, imported once on first use.
+        self.path = pool_episodes_file(self.pool_id)
+        self.docs = DocStore(f"episodes:{self.pool_id}", legacy_file=self.path,
+                              legacy_key=_record_key)
 
     def load(self, timeout: float = 10.0) -> List[Episode]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            return self._load_unlocked()
+        return self._build(self.docs.values())
 
-    def _load_unlocked(self) -> List[Episode]:
-        try:
-            text = self.path.read_text(encoding="utf-8")
-            if not text.strip():
-                return []
-            return [Episode(**obj) for obj in json.loads(text)]
-        except Exception:
-            return []
+    @staticmethod
+    def _build(raw) -> List[Episode]:
+        out: List[Episode] = []
+        for obj in raw:
+            try:
+                out.append(Episode(**obj))
+            except Exception:
+                continue
+        return out
 
     def add(self, episode: Episode, timeout: float = 10.0) -> Episode:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            episodes = self._load_unlocked()
+        with self.docs.transaction():
+            episodes = self.load()
             episodes.append(episode)
             episodes = _apply_retention(episodes)
-            self._atomic_write([e.model_dump() for e in episodes])
+            self.docs.replace_all({str(e.id): _model_to_dict(e) for e in episodes})
         return episode
 
     def query(
@@ -123,29 +122,22 @@ class EpisodeStore:
         return episodes[:limit]
 
     def delete(self, episode_id: UUID | str, timeout: float = 10.0) -> bool:
-        eid = str(episode_id)
-        with FileLock(str(self.lock_path), timeout=timeout):
-            episodes = self._load_unlocked()
-            new_list = [e for e in episodes if str(e.id) != eid]
-            if len(new_list) == len(episodes):
-                return False
-            self._atomic_write([e.model_dump() for e in new_list])
-            return True
+        return self.docs.delete(str(episode_id))
 
     def set_pinned(self, episode_id: UUID | str, pinned: bool = True, timeout: float = 10.0) -> bool:
         """Pin or unpin one episode. A pinned episode is never pruned."""
         eid = str(episode_id)
-        with FileLock(str(self.lock_path), timeout=timeout):
-            episodes = self._load_unlocked()
-            hit = False
-            for ep in episodes:
-                if str(ep.id) == eid:
-                    ep.pinned = bool(pinned)
-                    hit = True
-                    break
-            if hit:
-                self._atomic_write([e.model_dump() for e in episodes])
-            return hit
+        with self.docs.transaction():
+            doc = self.docs.get(eid)
+            if doc is None:
+                return False
+            try:
+                episode = Episode(**doc)
+            except Exception:
+                return False
+            episode.pinned = bool(pinned)
+            self.docs.put(eid, _model_to_dict(episode))
+            return True
 
     def stats(self, timeout: float = 10.0) -> dict:
         episodes = self.load(timeout=timeout)
@@ -169,12 +161,6 @@ class EpisodeStore:
             "pinned": pinned,
             "cap": MAX_EPISODES_PER_POOL,
         }
-
-    def _atomic_write(self, payload: Iterable[dict]) -> None:
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        text = json.dumps(list(payload), ensure_ascii=False, indent=2, default=_json_default)
-        tmp_path.write_text(text + "\n", encoding="utf-8")
-        tmp_path.replace(self.path)
 
 
 def _is_protected(episode: Episode) -> bool:

@@ -92,11 +92,25 @@ def _services(app_state: Any = None) -> Dict[str, Optional[bool]]:
     return services
 
 
+def _database_bytes() -> tuple[int, int]:
+    """(database size, WAL size). On Postgres the server reports the first and
+    there is no WAL file of ours to measure."""
+    if db.is_postgres():
+        try:
+            row = db.get_conn().execute(
+                "SELECT pg_database_size(current_database())").fetchone()
+            return int(row[0] or 0), 0
+        except Exception:
+            return 0, 0
+    return _file_size(DB_FILE), _file_size(Path(str(DB_FILE) + "-wal"))
+
+
 def _storage() -> Dict[str, int]:
     logs_dir = AGENTS_HUB_ROOT / "run_logs"
+    db_bytes, wal_bytes = _database_bytes()
     return {
-        "db_bytes": _file_size(DB_FILE),
-        "db_wal_bytes": _file_size(Path(str(DB_FILE) + "-wal")),
+        "db_bytes": db_bytes,
+        "db_wal_bytes": wal_bytes,
         "run_logs_bytes": _dir_size(logs_dir),
         "run_logs_files": sum(1 for _ in logs_dir.glob("*.log")) if logs_dir.is_dir() else 0,
         "agents_hub_bytes": _dir_size(AGENTS_HUB_ROOT),

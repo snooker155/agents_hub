@@ -46,6 +46,8 @@ packages = ["agents_hub"]
 backend = { file = ["dashboard/backend/requirements.txt"] }
 agents = { file = ["requirements-agents.txt"] }
 rag = { file = ["requirements-rag.txt"] }
+# Postgres driver, for AGENTS_HUB_DATABASE_URL=postgresql://... (docs/scaling.md).
+postgres = { file = ["requirements-postgres.txt"] }
 # The playground (simulation worlds/scenarios) needs nothing beyond backend/
 # agents already installs; this extra is a marker, not a dependency source —
 # PLAYGROUND_ENABLED is what actually makes the feature optional at runtime.

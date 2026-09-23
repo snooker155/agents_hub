@@ -211,38 +211,35 @@ def test_a_miss_says_what_the_pool_does_hold(tools):
     assert "persona" in out["available"]["blocks"]
 
 
-# ── the read cache ───────────────────────────────────────────────────────────
+# ── reads over the shared store ─────────────────────────────────────────────
+#
+# The store used to keep an mtime-keyed cache of the raw JSON file, so every
+# layer re-reading it in one request didn't re-read the file each time. Now
+# that MemoryStore is a DocStore over the `documents` table, every process
+# and every host already share one copy — there is nothing to cache and
+# nothing that can go stale, so these pin down that property instead.
 
-def test_an_unchanged_file_is_not_read_twice(pool, monkeypatch):
-    """Recall alone hits the store once per layer per pool; the injection pass
-    hits it again for every prompt built. Re-reading the file each time was the
-    cost the audit measured."""
+def test_clear_cache_is_a_harmless_no_op(pool):
+    """clear_cache stays around only so old call sites (tests, out-of-band
+    writers) keep working; it no longer does anything."""
     store = MemoryStore()
-    store.load()  # warm the cache
-
-    reads = []
-    original = MemoryStore._load_unlocked
-    monkeypatch.setattr(
-        MemoryStore, "_load_unlocked",
-        lambda self: (reads.append(str(self.path)), original(self))[1],
-    )
-
     assert store.load()
-    assert MemoryStore().load()   # a different instance, same file
+    clear_cache()
     assert store.get(pool.id) is not None
-    assert reads == []
+    assert MemoryStore().load()   # a different instance, same collection
 
 
-def test_a_write_from_elsewhere_invalidates_the_cache(pool):
-    """The dashboard and an agent subprocess both hold a store. A cache that
-    outlived the other one's write would serve a stale pool forever."""
+def test_a_write_from_elsewhere_is_visible_immediately(pool):
+    """The dashboard and an agent subprocess both hold a store. Both read the
+    same table, so the second instance's write is visible on the first
+    instance's very next read — no invalidation needed."""
     store = MemoryStore()
     store.load()
 
-    raw = json.loads(store.path.read_text(encoding="utf-8"))
-    entry = next(row for row in raw if row["id"] == str(pool.id))
-    entry["name"] = "renamed out of band"
-    store.path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    other = MemoryStore()
+    mem = other.get(pool.id)
+    mem.name = "renamed out of band"
+    other.save([mem])
 
     assert store.get(pool.id).name == "renamed out of band"
 

@@ -120,7 +120,10 @@ catalog and the run pipeline all work. If the run fails instead,
 Everything the service writes goes under `.agents_hub/` in the checkout:
 `agents_hub.db` (SQLite, WAL), `agents.json`, `models.json`, the workspace
 folders, memory pools, run logs and generated views. Deleting that folder resets
-the installation; it is also the folder to back up. Agent prompts are the
+the installation; it is also the folder to back up. With
+`AGENTS_HUB_DATABASE_URL` set the database lives in Postgres instead of the
+file (docs/scaling.md, `ah db migrate` to move an existing one); the rest of
+the folder stays where it is. Agent prompts are the
 exception: they live in `agents/definitions/<id>/` in the repository, because
 they are source rather than state.
 

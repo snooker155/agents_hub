@@ -23,9 +23,12 @@ injection gets flagged, and that is the right trade for a review surface.
 Nothing here blocks a call; enforcement lives in the SSRF guard, the domain
 policy and the capability model.
 
-Storage is a capped JSONL file at ``.agents_hub/web_requests.jsonl``: append
-per call, rewrite keeping the newest ``web_log_max_entries`` once the file
-outgrows its size cap.
+Storage is the ``web_log`` :class:`~common.docstore.DocStore`, one document
+per entry keyed by the entry's own ``id``: ``append`` puts the new document
+and trims the oldest keys past ``web_log_max_entries`` inside one
+``store.transaction()``, atomic across every process and host in place of the
+file lock this used to take. An existing ``web_requests.jsonl`` is imported
+once, line by line, and renamed ``.migrated``.
 """
 from __future__ import annotations
 
@@ -38,17 +41,12 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from filelock import FileLock
-
-from common.paths import WEB_LOG_FILE, ensure_agents_hub_root
+from common.docstore import DocStore
+from common.paths import WEB_LOG_FILE
 
 log = logging.getLogger(__name__)
 
-_LOCK_FILE = str(WEB_LOG_FILE) + ".lock"
-
-# Rewrite-trim trigger. Line count is what we cap on, but stat() is cheaper than
-# reading the file on every append, so size is the tripwire.
-_MAX_BYTES = 16 * 1024 * 1024
+_store = DocStore("web_log")
 
 SEVERITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
 
@@ -318,39 +316,23 @@ def _truncate_bodies(record: Dict[str, Any], body_chars: int) -> Dict[str, Any]:
     return out
 
 
-def append(record: Dict[str, Any]) -> None:
-    enabled, max_entries, body_chars = _config()
-    if not enabled:
-        return
-    ensure_agents_hub_root()
-    payload = json.dumps(_truncate_bodies(record, body_chars), ensure_ascii=False, default=str)
-    with FileLock(_LOCK_FILE, timeout=5.0):
-        with open(WEB_LOG_FILE, "a", encoding="utf-8") as fh:
-            fh.write(payload + "\n")
-        try:
-            if WEB_LOG_FILE.stat().st_size > _MAX_BYTES:
-                _trim_unlocked(max_entries)
-        except OSError:
-            pass
+def _ensure_legacy_imported() -> None:
+    """Import ``web_requests.jsonl`` once, one document per line, keyed by
+    each entry's own ``id``.
 
-
-def _trim_unlocked(max_entries: int) -> None:
-    lines = WEB_LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
-    keep = lines[-max_entries:]
-    tmp = WEB_LOG_FILE.with_suffix(WEB_LOG_FILE.suffix + ".tmp")
-    tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
-    tmp.replace(WEB_LOG_FILE)
-
-
-def _read_all() -> List[Dict[str, Any]]:
+    A store that already has rows is left alone (:meth:`DocStore.import_legacy`
+    re-checks this itself, atomically); the cheap existence check here just
+    avoids reading and parsing the file on every call once it is gone.
+    """
     if not WEB_LOG_FILE.exists():
-        return []
-    records: List[Dict[str, Any]] = []
+        return
+    if _store.count() > 0:
+        return
     try:
-        with FileLock(_LOCK_FILE, timeout=5.0):
-            text = WEB_LOG_FILE.read_text(encoding="utf-8", errors="replace")
+        text = WEB_LOG_FILE.read_text(encoding="utf-8", errors="replace")
     except Exception:
-        return []
+        return
+    docs: Dict[str, Any] = {}
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -359,9 +341,31 @@ def _read_all() -> List[Dict[str, Any]]:
             obj = json.loads(line)
         except Exception:
             continue
-        if isinstance(obj, dict):
-            records.append(obj)
-    return records
+        if isinstance(obj, dict) and obj.get("id"):
+            docs[str(obj["id"])] = obj
+    _store.import_legacy(docs, WEB_LOG_FILE)
+
+
+def append(record: Dict[str, Any]) -> None:
+    enabled, max_entries, body_chars = _config()
+    if not enabled:
+        return
+    _ensure_legacy_imported()
+    payload = _truncate_bodies(record, body_chars)
+    key = str(payload.get("id") or uuid4().hex)
+    payload.setdefault("id", key)
+    with _store.transaction():
+        _store.put(key, payload)
+        keys = _store.keys()
+        overflow = len(keys) - max_entries
+        if overflow > 0:
+            for old_key in keys[:overflow]:
+                _store.delete(old_key)
+
+
+def _read_all() -> List[Dict[str, Any]]:
+    _ensure_legacy_imported()
+    return list(_store.values())
 
 
 def _summarize(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -419,10 +423,8 @@ def query(
 
 
 def get(entry_id: str) -> Optional[Dict[str, Any]]:
-    for record in reversed(_read_all()):
-        if record.get("id") == entry_id:
-            return record
-    return None
+    _ensure_legacy_imported()
+    return _store.get(entry_id)
 
 
 def stats() -> Dict[str, Any]:
@@ -469,15 +471,12 @@ def stats() -> Dict[str, Any]:
 
 def clear() -> int:
     """Delete every entry. Returns how many were removed."""
-    count = len(_read_all())
+    _ensure_legacy_imported()
     try:
-        with FileLock(_LOCK_FILE, timeout=5.0):
-            if WEB_LOG_FILE.exists():
-                WEB_LOG_FILE.unlink()
+        return _store.clear()
     except Exception as e:
         log.warning("web_log clear failed: %s", e)
         return 0
-    return count
 
 
 __all__ = [

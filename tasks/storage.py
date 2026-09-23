@@ -84,12 +84,16 @@ def _creating_user_id() -> str:
     return current_user_id()
 
 
+# Creation order, on both backends (SQLite's rowid has no Postgres counterpart).
+_INSERTION_ORDER = "created_at, id"
+
+
 def _write_task_row(conn, task: Task) -> None:
     d = _model_to_dict(task)
     conn.execute(
-        "INSERT OR REPLACE INTO tasks (id, key, parent_id, status, workspace, "
-        "project_id, created_by_user, created_at, updated_at, doc) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        db.upsert_sql("tasks", ("id", "key", "parent_id", "status", "workspace",
+                                "project_id", "created_by_user", "created_at",
+                                "updated_at", "doc"), ("id",)),
         (str(task.id), task.key,
          str(task.parent_id) if task.parent_id else None,
          str(d.get("status") or ""), task.workspace,
@@ -144,7 +148,7 @@ class TaskStore:
     # ------------- internals -------------
     @staticmethod
     def _load_all(conn) -> List[Task]:
-        rows = conn.execute("SELECT doc FROM tasks ORDER BY rowid").fetchall()
+        rows = conn.execute(f"SELECT doc FROM tasks ORDER BY {_INSERTION_ORDER}").fetchall()
         out: List[Task] = []
         for r in rows:
             t = _doc_to_task(r["doc"])
@@ -167,16 +171,17 @@ class TaskStore:
              offset: Optional[int] = None) -> List[Task]:
         """Every task, or one page of them.
 
-        ``limit``/``offset`` push the page into the query itself (``LIMIT -1``
-        is SQLite for "no cap, but still skip ``offset`` rows") rather than
-        loading every row and slicing in Python — the point of a SQL-backed
-        store over the JSON ones, where slicing after load is the only option.
+        ``limit``/``offset`` push the page into the query itself
+        (``db.NO_LIMIT()`` is "no cap, but still skip ``offset`` rows") rather
+        than loading every row and slicing in Python — the point of a
+        SQL-backed store over the JSON ones, where slicing after load is the
+        only option.
         """
         if limit is None and offset is None:
             return self.load(timeout=timeout)
         rows = db.get_conn().execute(
-            "SELECT doc FROM tasks ORDER BY rowid LIMIT ? OFFSET ?",
-            (limit if limit is not None else -1, offset or 0),
+            f"SELECT doc FROM tasks ORDER BY {_INSERTION_ORDER} LIMIT ? OFFSET ?",
+            (limit if limit is not None else db.NO_LIMIT(), offset or 0),
         ).fetchall()
         out: List[Task] = []
         for r in rows:

@@ -158,16 +158,14 @@ def test_two_threads_checkpointing_different_fields_keep_both():
 
 # ── Migration ─────────────────────────────────────────────────────────────────
 
-def _reopen(monkeypatch, tmp_path, state_root):
+def _reopen(monkeypatch, tmp_path, state_root, reopen_db):
     """Point the database and the migration source at a fresh directory and
     force the next get_conn() to run the startup sequence again."""
     monkeypatch.setattr(db_migrate, "AGENTS_HUB_ROOT", state_root)
-    monkeypatch.setattr(db, "DB_FILE", tmp_path / "migrate.db")
-    db._local = threading.local()
-    db._schema_ready = False
+    reopen_db(tmp_path / "migrate.db")
 
 
-def test_an_existing_flow_runs_file_is_imported_and_renamed(monkeypatch, tmp_path):
+def test_an_existing_flow_runs_file_is_imported_and_renamed(monkeypatch, tmp_path, reopen_db):
     state_root = tmp_path / "state"
     state_root.mkdir()
     src = state_root / "flow_runs.json"
@@ -178,7 +176,7 @@ def test_an_existing_flow_runs_file_is_imported_and_renamed(monkeypatch, tmp_pat
         {"not_a_run": True},
     ]), encoding="utf-8")
 
-    _reopen(monkeypatch, tmp_path, state_root)
+    _reopen(monkeypatch, tmp_path, state_root, reopen_db)
     try:
         db.get_conn()
 
@@ -195,14 +193,14 @@ def test_an_existing_flow_runs_file_is_imported_and_renamed(monkeypatch, tmp_pat
         db._local = threading.local()
 
 
-def test_the_import_runs_once_even_after_the_records_are_edited(monkeypatch, tmp_path):
+def test_the_import_runs_once_even_after_the_records_are_edited(monkeypatch, tmp_path, reopen_db):
     state_root = tmp_path / "state"
     state_root.mkdir()
     (state_root / "flow_runs.json").write_text(
         json.dumps([{"flow_run_id": "old-1", "flow_id": "flow-a", "status": "running"}]),
         encoding="utf-8")
 
-    _reopen(monkeypatch, tmp_path, state_root)
+    _reopen(monkeypatch, tmp_path, state_root, reopen_db)
     try:
         db.get_conn()
         run_store.close_flow_run("old-1", status="completed")

@@ -3,15 +3,14 @@ from __future__ import annotations
 import json
 from collections import deque
 from datetime import datetime, timezone
-from enum import Enum
-from pathlib import Path
 from typing import Any, List, Literal, Optional, Tuple
 from uuid import UUID, uuid4
 
-from filelock import FileLock
 from pydantic import BaseModel, Field
 
-from common.paths import GRAPHS_DIR, pool_graph_file
+from common import db
+from common.docstore import DocStore
+from common.paths import pool_graph_file
 
 
 Direction = Literal["out", "in", "both"]
@@ -57,62 +56,105 @@ class Edge(BaseModel):
         object.__setattr__(self, "updated_at", datetime.now(timezone.utc))
 
 
-def _json_default(o: Any) -> Any:
-    if isinstance(o, Enum):
-        return o.value
-    if isinstance(o, datetime):
-        return o.isoformat()
-    if isinstance(o, UUID):
-        return str(o)
-    raise TypeError(f"Object of type {type(o)!r} is not JSON serializable")
+def _model_to_dict(obj: BaseModel) -> dict:
+    # JSON mode: UUIDs and datetimes as strings, exactly what the JSON files
+    # used to hold.
+    return obj.model_dump(mode="json")
+
+
+def _record_key(rec: Any) -> Optional[str]:
+    return str(rec.get("id")) if isinstance(rec, dict) and rec.get("id") else None
 
 
 class GraphStore:
-    """File-based store for a knowledge graph, scoped to one shared-memory pool.
+    """Store for a knowledge graph, scoped to one shared-memory pool.
 
-    Storage shape: {"nodes": [...], "edges": [...]}.
+    Kept in the ``documents`` table as two collections per pool —
+    ``graph_nodes:<pool_id>`` and ``graph_edges:<pool_id>`` — through
+    :class:`common.docstore.DocStore`. Every read-modify-write that used to
+    run under one ``FileLock`` now runs under one ``db.transaction()`` that
+    covers both collections, so a node write and the edge cascade it implies
+    (or vice versa) are atomic together.
+
     Node identity = (type, name) lowercased — `upsert_node` merges by that key.
     Edge identity = (source_id, target_id, relation) — `add_edge` merges by that key.
     """
 
     def __init__(self, pool_id: str):
         self.pool_id = str(pool_id)
-        self.path: Path = pool_graph_file(self.pool_id)
-        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
+        # Legacy combined file ({"nodes": [...], "edges": [...]}), imported
+        # once on first use by _ensure_legacy_import — its shape doesn't fit
+        # DocStore's own single-file import, so this module drives it.
+        self.path = pool_graph_file(self.pool_id)
+        self.nodes_docs = DocStore(f"graph_nodes:{self.pool_id}", legacy_key=_record_key)
+        self.edges_docs = DocStore(f"graph_edges:{self.pool_id}", legacy_key=_record_key)
+        self._legacy_checked = False
+
+    # ── Legacy import ────────────────────────────────────────────────────────
+
+    def _ensure_legacy_import(self) -> None:
+        if self._legacy_checked:
+            return
+        self._legacy_checked = True
         if not self.path.exists():
-            self._atomic_write({"nodes": [], "edges": []})
+            return
+        if self.nodes_docs.count() or self.edges_docs.count():
+            return
+        try:
+            text = self.path.read_text(encoding="utf-8")
+            data = json.loads(text) if text.strip() else {}
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        nodes = {
+            str(n["id"]): n for n in data.get("nodes", [])
+            if isinstance(n, dict) and n.get("id")
+        }
+        edges = {
+            str(e["id"]): e for e in data.get("edges", [])
+            if isinstance(e, dict) and e.get("id")
+        }
+        # Nodes first (no source: don't rename yet), then edges with the
+        # source path so the rename happens once both are in.
+        self.nodes_docs.import_legacy(nodes)
+        self.edges_docs.import_legacy(edges, source=self.path)
 
     # ── Load / save ───────────────────────────────────────────────────────────
 
     def load(self, timeout: float = 10.0) -> Tuple[List[Node], List[Edge]]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            return self._load_unlocked()
+        self._ensure_legacy_import()
+        return self._read()
 
-    def _load_unlocked(self) -> Tuple[List[Node], List[Edge]]:
-        try:
-            text = self.path.read_text(encoding="utf-8")
-            if not text.strip():
-                return [], []
-            data = json.loads(text)
-            nodes = [Node(**n) for n in data.get("nodes", [])]
-            edges = [Edge(**e) for e in data.get("edges", [])]
-            return nodes, edges
-        except Exception:
-            return [], []
+    def _read(self) -> Tuple[List[Node], List[Edge]]:
+        nodes = self._build_nodes(self.nodes_docs.values())
+        edges = self._build_edges(self.edges_docs.values())
+        return nodes, edges
 
-    def _atomic_write(self, payload: dict) -> None:
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        text = json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
-        tmp_path.write_text(text + "\n", encoding="utf-8")
-        tmp_path.replace(self.path)
+    @staticmethod
+    def _build_nodes(raw) -> List[Node]:
+        out: List[Node] = []
+        for obj in raw:
+            try:
+                out.append(Node(**obj))
+            except Exception:
+                continue
+        return out
 
-    def _save_unlocked(self, nodes: List[Node], edges: List[Edge]) -> None:
+    @staticmethod
+    def _build_edges(raw) -> List[Edge]:
+        out: List[Edge] = []
+        for obj in raw:
+            try:
+                out.append(Edge(**obj))
+            except Exception:
+                continue
+        return out
+
+    def _save(self, nodes: List[Node], edges: List[Edge]) -> None:
         nodes, edges = _apply_retention(nodes, edges)
-        self._atomic_write({
-            "nodes": [n.model_dump() for n in nodes],
-            "edges": [e.model_dump() for e in edges],
-        })
+        self.nodes_docs.replace_all({str(n.id): _model_to_dict(n) for n in nodes})
+        self.edges_docs.replace_all({str(e.id): _model_to_dict(e) for e in edges})
 
     # ── Read helpers ──────────────────────────────────────────────────────────
 
@@ -157,19 +199,20 @@ class GraphStore:
         """Create or merge a node by (type, name). Returns (node, mode) where
         mode is 'created' or 'merged'."""
         t, nm = _normalize(type), _normalize(name)
-        with FileLock(str(self.lock_path), timeout=timeout):
-            nodes, edges = self._load_unlocked()
+        with db.transaction():
+            self._ensure_legacy_import()
+            nodes, edges = self._read()
             for i, n in enumerate(nodes):
                 if _normalize(n.type) == t and _normalize(n.name) == nm:
                     if properties:
                         n.properties = {**n.properties, **properties}
                     n.touch()
                     nodes[i] = n
-                    self._save_unlocked(nodes, edges)
+                    self._save(nodes, edges)
                     return n, "merged"
             new_node = Node(type=t, name=nm, properties=properties or {})
             nodes.append(new_node)
-            self._save_unlocked(nodes, edges)
+            self._save(nodes, edges)
             return new_node, "created"
 
     def add_edge(
@@ -185,8 +228,9 @@ class GraphStore:
         Returns (edge, mode)."""
         rel = _normalize(relation)
         sid, tid = str(source_id), str(target_id)
-        with FileLock(str(self.lock_path), timeout=timeout):
-            nodes, edges = self._load_unlocked()
+        with db.transaction():
+            self._ensure_legacy_import()
+            nodes, edges = self._read()
             node_ids = {str(n.id) for n in nodes}
             if sid not in node_ids:
                 raise ValueError(f"source_id {sid} not found")
@@ -204,7 +248,7 @@ class GraphStore:
                         e.weight = weight
                     e.touch()
                     edges[i] = e
-                    self._save_unlocked(nodes, edges)
+                    self._save(nodes, edges)
                     return e, "merged"
             new_edge = Edge(
                 source_id=UUID(sid),
@@ -214,7 +258,7 @@ class GraphStore:
                 weight=weight,
             )
             edges.append(new_edge)
-            self._save_unlocked(nodes, edges)
+            self._save(nodes, edges)
             return new_edge, "created"
 
     def merge_nodes(self, keep_id: UUID | str, drop_id: UUID | str, timeout: float = 10.0) -> Optional[Node]:
@@ -228,8 +272,9 @@ class GraphStore:
         kid, did = str(keep_id), str(drop_id)
         if kid == did:
             return None
-        with FileLock(str(self.lock_path), timeout=timeout):
-            nodes, edges = self._load_unlocked()
+        with db.transaction():
+            self._ensure_legacy_import()
+            nodes, edges = self._read()
             by_id = {str(n.id): n for n in nodes}
             keep, drop = by_id.get(kid), by_id.get(did)
             if keep is None or drop is None:
@@ -254,14 +299,15 @@ class GraphStore:
                 new_edges.append(e)
 
             new_nodes = [n for n in nodes if str(n.id) != did]
-            self._save_unlocked(new_nodes, new_edges)
+            self._save(new_nodes, new_edges)
             return keep
 
     def delete_node(self, node_id: UUID | str, timeout: float = 10.0) -> bool:
         """Delete a node and any edges that touch it."""
         nid = str(node_id)
-        with FileLock(str(self.lock_path), timeout=timeout):
-            nodes, edges = self._load_unlocked()
+        with db.transaction():
+            self._ensure_legacy_import()
+            nodes, edges = self._read()
             new_nodes = [n for n in nodes if str(n.id) != nid]
             if len(new_nodes) == len(nodes):
                 return False
@@ -269,17 +315,18 @@ class GraphStore:
                 e for e in edges
                 if str(e.source_id) != nid and str(e.target_id) != nid
             ]
-            self._save_unlocked(new_nodes, new_edges)
+            self._save(new_nodes, new_edges)
             return True
 
     def delete_edge(self, edge_id: UUID | str, timeout: float = 10.0) -> bool:
         eid = str(edge_id)
-        with FileLock(str(self.lock_path), timeout=timeout):
-            nodes, edges = self._load_unlocked()
+        with db.transaction():
+            self._ensure_legacy_import()
+            nodes, edges = self._read()
             new_edges = [e for e in edges if str(e.id) != eid]
             if len(new_edges) == len(edges):
                 return False
-            self._save_unlocked(nodes, new_edges)
+            self._save(nodes, new_edges)
             return True
 
     # ── Traversal ─────────────────────────────────────────────────────────────

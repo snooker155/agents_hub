@@ -270,23 +270,10 @@ def set_inbound_secret(workspace: str, secret: Optional[str]) -> None:
 
 
 # ── Inbound idempotency ──────────────────────────────────────────────────────
-# A small table, added lazily so this feature needs no change to the shared
-# schema in common/db.py. Mirrors loops/store.py's `_ensure_progress_column`.
+# ``inbound_deliveries`` is part of the baseline schema
+# (common/migrations/baseline_schema.sql).
 
-_INBOUND_TABLE_READY: set = set()
 _REPLAY_WINDOW_SECONDS = 24 * 3600
-
-
-def _ensure_inbound_table() -> None:
-    key = str(getattr(db, "DB_FILE", ""))
-    if key in _INBOUND_TABLE_READY:
-        return
-    with db.transaction() as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS inbound_deliveries ("
-            "delivery_id TEXT PRIMARY KEY, seen_at TEXT NOT NULL)"
-        )
-    _INBOUND_TABLE_READY.add(key)
 
 
 def record_delivery(delivery_id: str) -> bool:
@@ -299,7 +286,6 @@ def record_delivery(delivery_id: str) -> bool:
     """
     if not delivery_id:
         return False
-    _ensure_inbound_table()
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(seconds=_REPLAY_WINDOW_SECONDS)).isoformat()
     with db.transaction() as conn:

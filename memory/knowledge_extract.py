@@ -30,9 +30,8 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional
 from uuid import uuid4
 
-from filelock import FileLock
-
-from common.paths import EXTRACTIONS_DIR, pool_extractions_file
+from common.docstore import DocStore
+from common.paths import pool_extractions_file
 from memory.graph_extract import _normalize_token, _resolve_workspace_model
 
 # Per-call caps — extraction should distill, not transcribe.
@@ -337,19 +336,24 @@ def _apply_drops(proposal: dict, drop: Iterable[str]) -> tuple[dict, list[str], 
 
 
 # ---------------------------------------------------------------------------
-# Pending-extraction store (per pool, file-based like EpisodeStore)
+# Pending-extraction store (per pool, one row per proposal in the documents
+# table, collection "extractions:<pool_id>")
 # ---------------------------------------------------------------------------
 
+def _record_key(rec: Any) -> Optional[str]:
+    return str(rec.get("id")) if isinstance(rec, dict) and rec.get("id") else None
+
+
 class PendingExtractionStore:
-    """File-based store for proposed-but-not-yet-saved extractions of one pool."""
+    """Store for proposed-but-not-yet-saved extractions of one pool, kept in
+    the ``documents`` table through :class:`common.docstore.DocStore`."""
 
     def __init__(self, pool_id: str):
         self.pool_id = str(pool_id)
+        # Legacy per-pool file, imported once on first use.
         self.path: Path = pool_extractions_file(self.pool_id)
-        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        EXTRACTIONS_DIR.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self._atomic_write([])
+        self.docs = DocStore(f"extractions:{self.pool_id}", legacy_file=self.path,
+                              legacy_key=_record_key)
 
     def add(self, proposal: dict, *, focus: Optional[str] = None, text_chars: int = 0, timeout: float = 10.0) -> dict:
         entry = {
@@ -362,50 +366,33 @@ class PendingExtractionStore:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "saved_at": None,
         }
-        with FileLock(str(self.lock_path), timeout=timeout):
-            entries = self._load_unlocked()
-            entries.append(entry)
-            if len(entries) > MAX_PENDING_PER_POOL:
-                entries = entries[-MAX_PENDING_PER_POOL:]
-            self._atomic_write(entries)
+        with self.docs.transaction():
+            self.docs.put(entry["id"], entry)
+            keys = self.docs.keys()
+            if len(keys) > MAX_PENDING_PER_POOL:
+                for old_key in keys[:-MAX_PENDING_PER_POOL]:
+                    self.docs.delete(old_key)
         return entry
 
     def get(self, extraction_id: str, timeout: float = 10.0) -> Optional[dict]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            for e in self._load_unlocked():
-                if e.get("id") == extraction_id:
-                    return e
-        return None
+        return self.docs.get(extraction_id)
 
     def list(self, *, status: Optional[str] = None, timeout: float = 10.0) -> List[dict]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            entries = self._load_unlocked()
+        entries = self.docs.values()
         if status:
             entries = [e for e in entries if e.get("status") == status]
         return entries
 
     def mark_saved(self, extraction_id: str, timeout: float = 10.0) -> bool:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            entries = self._load_unlocked()
-            for e in entries:
-                if e.get("id") == extraction_id:
-                    e["status"] = "saved"
-                    e["saved_at"] = datetime.now(timezone.utc).isoformat()
-                    self._atomic_write(entries)
-                    return True
-        return False
-
-    def _load_unlocked(self) -> List[dict]:
-        try:
-            text = self.path.read_text(encoding="utf-8")
-            return json.loads(text) if text.strip() else []
-        except Exception:
-            return []
-
-    def _atomic_write(self, entries: List[dict]) -> None:
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        tmp_path.replace(self.path)
+        with self.docs.transaction():
+            entry = self.docs.get(extraction_id)
+            if entry is None:
+                return False
+            entry = dict(entry)
+            entry["status"] = "saved"
+            entry["saved_at"] = datetime.now(timezone.utc).isoformat()
+            self.docs.put(extraction_id, entry)
+            return True
 
 
 # ---------------------------------------------------------------------------

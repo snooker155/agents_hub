@@ -61,6 +61,8 @@ workspace_app = typer.Typer(help="Workspace management commands.", no_args_is_he
 node_app = typer.Typer(help="Node management commands.", no_args_is_help=True)
 project_app = typer.Typer(help="Project management commands.", no_args_is_help=True)
 server_app = typer.Typer(help="Backend server commands.", no_args_is_help=True)
+db_app = typer.Typer(help="Database commands: which backend is in use, moving state between backends.",
+                     no_args_is_help=True)
 
 app.add_typer(agent_app, name="agent")
 app.add_typer(task_app, name="task")
@@ -68,6 +70,7 @@ app.add_typer(workspace_app, name="workspace")
 app.add_typer(project_app, name="project")
 app.add_typer(node_app, name="node")
 app.add_typer(server_app, name="server")
+app.add_typer(db_app, name="db")
 
 console = Console()
 
@@ -382,6 +385,68 @@ def server_start(
         cmd.append("--reload")
     console.print(f"[bold green]Starting server[/bold green] → http://{host}:{port}")
     subprocess.run(cmd, cwd=backend_dir)
+
+
+# ---------------------------------------------------------------------------
+# db commands
+# ---------------------------------------------------------------------------
+# Direct mode only: these open the database this process is configured with
+# (AGENTS_HUB_DATABASE_URL, or the SQLite file under AGENTS_HUB_ROOT), so a
+# CLI pointed at a remote backend over AGENTS_HUB_URL has nothing to open.
+
+
+def _require_direct_mode(what: str) -> None:
+    if os.environ.get("AGENTS_HUB_URL"):
+        console.print(f"[red]{what} works on the local database only[/red]: unset "
+                      "AGENTS_HUB_URL and run it where the state lives.")
+        raise typer.Exit(code=1)
+
+
+@db_app.command("status")
+def db_status():
+    """Which backend is in use, its schema version and row counts."""
+    _require_direct_mode("ah db status")
+    from common import db_transfer
+    info = db_transfer.status()
+    console.print(f"[bold]{info['dialect']}[/bold]  {info['location']}")
+    console.print(f"schema_version {info['schema_version']}, migrations {info['migrations']}")
+    table = Table(box=box.SIMPLE, show_header=True)
+    table.add_column("table")
+    table.add_column("rows", justify="right")
+    for name, n in sorted(info["counts"].items()):
+        table.add_row(name, str(n))
+    console.print(table)
+
+
+@db_app.command("migrate")
+def db_migrate(
+    to: str = typer.Option(..., "--to", help="Target: a postgresql:// URL, or a path to a SQLite file."),
+    force: bool = typer.Option(False, "--force", help="Empty the target's tables first."),
+    batch: int = typer.Option(500, help="Rows per INSERT batch."),
+):
+    """Copy the whole database into another backend, table by table, in one
+    transaction, and compare the counts. Works in both directions: SQLite to
+    Postgres and back. Files beside the database (run logs, workspaces, view
+    assets) are not moved. Then point AGENTS_HUB_DATABASE_URL at the target
+    and restart."""
+    _require_direct_mode("ah db migrate")
+    from common import db_transfer
+    console.print(f"copying into [bold]{db_transfer.describe(to)}[/bold]")
+    try:
+        report = db_transfer.transfer(to, force=force, batch=batch,
+                                      log=lambda line: console.print(f"  {line}"))
+    except Exception as exc:  # noqa: BLE001 - the CLI reports, it does not recover
+        console.print(f"[red]failed:[/red] {exc}")
+        raise typer.Exit(code=1)
+    total = sum(v["target"] for v in report["tables"].values())
+    console.print(f"[green]done[/green]: {total} row(s) in {len(report['tables'])} table(s) "
+                  f"now in {report['target']}")
+    if report["dialect"] == "postgres":
+        console.print("next: set AGENTS_HUB_DATABASE_URL to that URL in .env and restart every "
+                      "process that touches state (backend, workers, the CLI).")
+    else:
+        console.print("next: clear AGENTS_HUB_DATABASE_URL in .env (and, if the file is not "
+                      "the default one, point AGENTS_HUB_ROOT at its directory) and restart.")
 
 
 # ---------------------------------------------------------------------------

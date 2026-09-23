@@ -365,6 +365,20 @@ class Settings(BaseSettings):
     broker_url: str = Field(
         default="", validation_alias=AliasChoices("AGENTS_HUB_BROKER_URL", "broker_url"))
 
+    # ── Database (common/db.py) ───────────────────────────────────────────────
+    # Empty (default): SQLite at <AGENTS_HUB_ROOT>/agents_hub.db, one host. A
+    # postgresql:// URL puts the same schema in Postgres, which is what lets
+    # backend replicas and workers run on different hosts. Every process that
+    # touches state (backend, agent subprocesses, node workers, the CLI in
+    # direct mode) reads this, so set it in .env rather than per service.
+    database_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_DATABASE_URL", "database_url"))
+    # Postgres only: connections in this process's pool. The backend serves
+    # requests from a thread pool and needs ten or so; a run subprocess needs
+    # one or two, so runtime entrypoints may set it lower in their environment.
+    db_pool_size: int = Field(
+        default=10, validation_alias=AliasChoices("AGENTS_HUB_DB_POOL_SIZE", "db_pool_size"))
+
     model_config = SettingsConfigDict(
         case_sensitive=False,
         env_file=str(PROJECT_ROOT / ".env"),
@@ -474,13 +488,26 @@ def agent_execution_mode() -> str:
 
 def run_state_transport() -> str:
     """How a run's own entrypoint reaches its run/task records: "db" (direct
-    SQLite access, the default) or "http" (relayed through the backend's
-    /api/run-state routes). Resolved live, the same way as
-    ``agent_execution_mode``. Unrecognised reads as "db", the mode that needs
-    no backend reachable over HTTP.
+    database access) or "http" (relayed through the backend's /api/run-state
+    routes). Resolved live, the same way as ``agent_execution_mode``. Left
+    unset, it is "db" on SQLite and "http" on Postgres (docs/containers.md,
+    docs/scaling.md); an explicit value wins on either. Unrecognised reads as
+    the unset case.
     """
-    mode = live_setting("AGENT_RUN_STATE_TRANSPORT", settings.run_state_transport).lower()
-    return mode if mode in ("db", "http") else "db"
+    mode = live_setting("AGENT_RUN_STATE_TRANSPORT", "").lower()
+    if mode in ("db", "http"):
+        return mode
+    # Not set anywhere: under Postgres the relay is the default, so a run
+    # container is never handed the database URL and password just to write
+    # its own status; under SQLite direct access stays the default, as the
+    # state directory is mounted into the container anyway.
+    try:
+        from common import db
+        if db.is_postgres():
+            return "http"
+    except Exception:
+        pass
+    return settings.run_state_transport if settings.run_state_transport in ("db", "http") else "db"
 
 
 # Convenience accessors to align with previous orchestrator.config API

@@ -37,6 +37,7 @@ def test_fresh_database_is_stamped_with_the_current_schema_version():
     assert int(row["value"]) == db.SCHEMA_VERSION
 
 
+@pytest.mark.sqlite_only
 def test_a_newer_schema_version_refuses_to_open(tmp_path, monkeypatch):
     """A state directory written by a newer build must fail loudly, not
     silently corrupt itself against migrations it doesn't recognise."""
@@ -150,6 +151,7 @@ def _race_worker(root: str, q) -> None:
         q.put(("FAIL", f"{type(e).__name__}: {e}"))
 
 
+@pytest.mark.sqlite_only
 def test_four_processes_opening_a_stale_db_at_once_never_duplicate_a_column(tmp_path):
     """The regression test for audit defect 6.
 

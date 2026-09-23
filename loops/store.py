@@ -5,7 +5,6 @@ column rather than as columns, so tightening a ceiling never needs a migration.
 """
 from __future__ import annotations
 
-import sqlite3
 from typing import Any, Dict, List, Optional
 
 from common import db
@@ -23,34 +22,14 @@ _CONFIG_FIELDS = (
 # real work: several iterations, each a whole flow. Losing that to a process
 # ending is the most expensive kind of forgetting in the product, so after every
 # iteration the run's position — what it has done, what the reviewer said and
-# what it has spent — is written to the row. The column is added here rather
-# than in the shared schema so the change is additive and needs no migration:
-# an existing database gets it on first use, a fresh one on creation.
+# what it has spent — is written to the ``progress`` column of its row (part of
+# the baseline schema, common/migrations/baseline_schema.sql).
 
 _PROGRESS_COLUMN = "progress"
-_progress_column_ready: set = set()
-
-
-def _ensure_progress_column() -> None:
-    """Add ``loop_runs.progress`` once per database. Idempotent and cheap."""
-    key = str(getattr(db, "DB_FILE", ""))
-    if key in _progress_column_ready:
-        return
-    conn = db.get_conn()
-    present = {r["name"] for r in conn.execute("PRAGMA table_info(loop_runs)")}
-    if _PROGRESS_COLUMN not in present:
-        try:
-            with db.transaction() as tconn:
-                tconn.execute(f"ALTER TABLE loop_runs ADD COLUMN {_PROGRESS_COLUMN} TEXT")
-        except sqlite3.OperationalError as exc:
-            if "duplicate column name" not in str(exc).lower():
-                raise
-    _progress_column_ready.add(key)
 
 
 def save_position(loop_run_id: str, position: Dict[str, Any]) -> None:
     """Persist where a run has got to, so it can be resumed from here."""
-    _ensure_progress_column()
     with db.transaction() as conn:
         conn.execute(
             f"UPDATE loop_runs SET {_PROGRESS_COLUMN} = ? WHERE loop_run_id = ?",
@@ -60,7 +39,6 @@ def save_position(loop_run_id: str, position: Dict[str, Any]) -> None:
 
 def get_position(loop_run_id: str) -> Dict[str, Any]:
     """The stored resume position of a run, or ``{}`` when it has none."""
-    _ensure_progress_column()
     row = db.get_conn().execute(
         f"SELECT {_PROGRESS_COLUMN} FROM loop_runs WHERE loop_run_id = ?", (loop_run_id,)
     ).fetchone()
@@ -100,10 +78,9 @@ def save_loop(loop: Loop) -> Loop:
     config = {f: getattr(loop, f) for f in _CONFIG_FIELDS}
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO loops
-               (loop_id, name, description, workspace, flow_id, exit_criterion,
-                config, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql("loops", ("loop_id", "name", "description", "workspace",
+                                    "flow_id", "exit_criterion", "config",
+                                    "created_at", "updated_at"), ("loop_id",)),
             (
                 loop.loop_id, loop.name, loop.description, loop.workspace,
                 loop.flow_id, loop.exit_criterion, db.dumps(config),
@@ -170,17 +147,16 @@ def delete_loop(loop_id: str) -> bool:
 # ── Runs ─────────────────────────────────────────────────────────────────────
 
 def save_run(run: LoopRun) -> LoopRun:
-    # INSERT OR REPLACE rewrites the whole row, so the resume position is
-    # written with it; leaving it out of the column list would quietly blank a
-    # running loop's position the next time its record was saved.
-    _ensure_progress_column()
+    # The whole row is written, resume position included: leaving it out of
+    # the column list would quietly blank a running loop's position the next
+    # time its record was saved.
     with db.transaction() as conn:
         conn.execute(
-            f"""INSERT OR REPLACE INTO loop_runs
-               (loop_run_id, loop_id, workspace, status, goal, task_id, session_id,
-                iterations_done, best_score, final_score, stop_reason, result,
-                error, total_cost, started_at, finished_at, {_PROGRESS_COLUMN})
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql("loop_runs", (
+                "loop_run_id", "loop_id", "workspace", "status", "goal", "task_id",
+                "session_id", "iterations_done", "best_score", "final_score",
+                "stop_reason", "result", "error", "total_cost", "started_at",
+                "finished_at", _PROGRESS_COLUMN), ("loop_run_id",)),
             (
                 run.loop_run_id, run.loop_id, run.workspace, run.status, run.goal,
                 run.task_id, run.session_id, run.iterations_done, run.best_score,
@@ -305,11 +281,11 @@ def stop_requested(loop_run_id: str) -> bool:
 def save_iteration(it: Iteration) -> Iteration:
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO loop_iterations
-               (loop_run_id, iteration, flow_run_id, status, score, verdict,
-                reason, feedback, output, node_outputs, state, evaluator_agent,
-                evaluator_raw, cost, duration_ms, started_at, finished_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql("loop_iterations", (
+                "loop_run_id", "iteration", "flow_run_id", "status", "score", "verdict",
+                "reason", "feedback", "output", "node_outputs", "state", "evaluator_agent",
+                "evaluator_raw", "cost", "duration_ms", "started_at", "finished_at"),
+                ("loop_run_id", "iteration")),
             (
                 it.loop_run_id, it.iteration, it.flow_run_id, it.status, it.score,
                 it.verdict, it.reason, it.feedback, it.output,

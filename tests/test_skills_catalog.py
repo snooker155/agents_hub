@@ -32,7 +32,6 @@ def store_file(tmp_path, monkeypatch):
 
     path = tmp_path / "procedures.json"
     monkeypatch.setattr(procedural, "_PROCEDURES_FILE", path)
-    monkeypatch.setattr(procedural, "_PROCEDURES_LOCK", tmp_path / "procedures.json.lock")
     monkeypatch.setattr(procedural, "_LEGACY_MIGRATED", True)
     return path
 

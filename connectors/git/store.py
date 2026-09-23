@@ -1,7 +1,9 @@
 """
-Git connector configuration — file-backed token storage.
+Git connector configuration, in the database.
 
-State lives in `.agents_hub/git_connectors.json`:
+State is one document, held by :class:`common.docstore.DocStore` under the
+key ``"state"`` (store name ``"git_connectors"``), shaped like the old
+``.agents_hub/git_connectors.json``:
 
     {
         "github": {"token": "<secret, never returned to the UI>"},
@@ -11,24 +13,36 @@ State lives in `.agents_hub/git_connectors.json`:
 Tokens are write-only from the API perspective — callers see only
 `has_token: bool`. The GitLab base URL is configurable for self-hosted
 instances.
+
+Every setter below is a read-modify-write inside ``store.transaction()``,
+atomic across every process and host, in place of the file lock this used to
+take. An existing ``git_connectors.json`` is imported once on first use and
+renamed ``.migrated``.
 """
 from __future__ import annotations
 
 import json
-import os
+
 from typing import Any
 
-from filelock import FileLock
-
-from common.paths import AGENTS_HUB_ROOT, ensure_agents_hub_root
+from common.docstore import DocStore
+from common.paths import AGENTS_HUB_ROOT
 
 
 PROVIDERS = ("github", "gitlab")
 
 DEFAULT_GITLAB_BASE_URL = "https://gitlab.com"
 
+#: Legacy JSON file this collection was imported from.
 _GIT_FILE = AGENTS_HUB_ROOT / "git_connectors.json"
-_GIT_LOCK = AGENTS_HUB_ROOT / "git_connectors.json.lock"
+
+# No ``legacy_file=`` here: git_connectors.json is one dict of settings, not a
+# collection, so the store's own per-key import would split it into one
+# document per provider. It is imported by hand, below, as a single document
+# under the "state" key.
+_store = DocStore("git_connectors")
+
+_STATE_KEY = "state"
 
 
 def _default_state() -> dict[str, Any]:
@@ -38,14 +52,25 @@ def _default_state() -> dict[str, Any]:
     }
 
 
-def _load_unlocked() -> dict[str, Any]:
+def _ensure_legacy_imported() -> None:
+    """Import ``git_connectors.json`` once, as the single "state" document.
+
+    A store that already has rows is left alone (:meth:`DocStore.import_legacy`
+    re-checks this itself, atomically); the cheap existence check here just
+    avoids reading and parsing the file on every call once it is gone.
+    """
     if not _GIT_FILE.exists():
-        return _default_state()
+        return
     try:
-        txt = _GIT_FILE.read_text(encoding="utf-8")
-        data = json.loads(txt) if txt.strip() else {}
+        text = _GIT_FILE.read_text(encoding="utf-8")
+        data = json.loads(text) if text.strip() else None
     except Exception:
-        return _default_state()
+        return
+    if isinstance(data, dict):
+        _store.import_legacy({_STATE_KEY: data}, _GIT_FILE)
+
+
+def _coerce(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return _default_state()
     out = _default_state()
@@ -53,14 +78,6 @@ def _load_unlocked() -> dict[str, Any]:
         if isinstance(data.get(provider), dict):
             out[provider].update(data[provider])
     return out
-
-
-def _save_unlocked(data: dict[str, Any]) -> None:
-    ensure_agents_hub_root()
-    payload = json.dumps(data, ensure_ascii=False, indent=2)
-    tmp = _GIT_FILE.with_suffix(_GIT_FILE.suffix + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, _GIT_FILE)
 
 
 def _check_provider(provider: str) -> str:
@@ -71,8 +88,8 @@ def _check_provider(provider: str) -> str:
 
 def load() -> dict[str, Any]:
     """Return the full state dict (tokens included; internal use only)."""
-    with FileLock(str(_GIT_LOCK), timeout=5.0):
-        return _load_unlocked()
+    _ensure_legacy_imported()
+    return _coerce(_store.get(_STATE_KEY))
 
 
 def get_config(provider: str) -> dict[str, Any]:
@@ -97,19 +114,21 @@ def get_base_url(provider: str) -> str:
 def set_token(provider: str, token: str | None) -> None:
     """Set or clear (empty/None) the provider token."""
     _check_provider(provider)
-    with FileLock(str(_GIT_LOCK), timeout=5.0):
-        data = _load_unlocked()
+    _ensure_legacy_imported()
+    with _store.transaction():
+        data = _coerce(_store.get(_STATE_KEY))
         data[provider]["token"] = (token or "").strip()
-        _save_unlocked(data)
+        _store.put(_STATE_KEY, data)
 
 
 def set_base_url(provider: str, base_url: str | None) -> None:
     if provider != "gitlab":
         raise ValueError("base_url is only configurable for gitlab")
-    with FileLock(str(_GIT_LOCK), timeout=5.0):
-        data = _load_unlocked()
+    _ensure_legacy_imported()
+    with _store.transaction():
+        data = _coerce(_store.get(_STATE_KEY))
         data["gitlab"]["base_url"] = (base_url or DEFAULT_GITLAB_BASE_URL).strip().rstrip("/")
-        _save_unlocked(data)
+        _store.put(_STATE_KEY, data)
 
 
 def public_config() -> dict[str, Any]:

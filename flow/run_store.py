@@ -147,8 +147,7 @@ def _row_to_record(row) -> Dict[str, Any]:
 def _write(conn, rec: Dict[str, Any]) -> None:
     """Persist one whole record, refreshing the mirrored columns from it."""
     conn.execute(
-        f"INSERT OR REPLACE INTO flow_runs ({', '.join(FLOW_RUN_COLUMNS)}, doc) "
-        f"VALUES ({', '.join('?' * len(FLOW_RUN_COLUMNS))}, ?)",
+        db.upsert_sql("flow_runs", FLOW_RUN_COLUMNS + ("doc",), ("flow_run_id",)),
         [rec.get(k) for k in FLOW_RUN_COLUMNS] + [db.dumps(rec)],
     )
 
@@ -162,7 +161,9 @@ def load_flow_runs(timeout: float = 10.0) -> List[Dict[str, Any]]:
     does its own waiting (``PRAGMA busy_timeout``). The parameter stays because
     callers pass it positionally.
     """
-    rows = db.get_conn().execute("SELECT * FROM flow_runs ORDER BY rowid").fetchall()
+    rows = db.get_conn().execute(
+        "SELECT * FROM flow_runs ORDER BY COALESCE(started_at, ''), flow_run_id"
+    ).fetchall()
     return [_row_to_record(r) for r in rows]
 
 
@@ -237,7 +238,7 @@ def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
     """
     rows = db.get_conn().execute(
         "SELECT * FROM flow_runs WHERE flow_id = ? AND status IN ('running', 'pending') "
-        "ORDER BY rowid", (str(flow_id),)).fetchall()
+        "ORDER BY COALESCE(started_at, ''), flow_run_id", (str(flow_id),)).fetchall()
     active: List[Dict[str, Any]] = []
     reaped = False
     for r in (_row_to_record(row) for row in rows):

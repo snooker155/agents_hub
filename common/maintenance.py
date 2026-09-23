@@ -124,8 +124,8 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
             return {"skipped": 1}
         # Claim the slot immediately so a co-running scheduler in another process
         # sees "not due" and bows out.
-        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_maintenance', ?)",
-                     (_now().isoformat(),))
+        conn.execute(db.upsert_sql("meta", ("key", "value"), ("key",)),
+                     ("last_maintenance", _now().isoformat()))
 
     pruned_runs = prune_old_runs(settings.run_retention_days)
     pruned_files = prune_orphan_files()

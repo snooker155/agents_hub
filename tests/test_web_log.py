@@ -1,8 +1,9 @@
 """Web access log (tools/web_log.py): scanner heuristics, storage, and the
 instrumentation in tools/web.py.
 
-The network is never touched: HTTP is stubbed, and the log file is redirected
-per test so nothing accumulates across the suite.
+The network is never touched: HTTP is stubbed, and the log lives in the
+database, which the autouse ``fresh_db`` fixture gives every test its own
+empty copy of, so nothing accumulates across the suite.
 """
 import json
 
@@ -12,12 +13,13 @@ from tools import web, web_log
 
 
 @pytest.fixture
-def log_file(tmp_path, monkeypatch):
-    """Redirect the log (and its lock) at a per-test file."""
-    path = tmp_path / "web_requests.jsonl"
-    monkeypatch.setattr(web_log, "WEB_LOG_FILE", path)
-    monkeypatch.setattr(web_log, "_LOCK_FILE", str(path) + ".lock")
-    return path
+def log_file():
+    """No-op placeholder: kept as a fixture so test signatures needn't change.
+
+    The log used to live in a file this fixture redirected per test; it now
+    lives in the database, already isolated per test by ``fresh_db``.
+    """
+    return None
 
 
 # -- Scanner ------------------------------------------------------------------
@@ -139,7 +141,6 @@ def test_stored_bodies_are_capped(log_file, monkeypatch):
 def test_trimming_keeps_the_newest_entries(log_file, monkeypatch):
     from common.config import settings
     monkeypatch.setattr(settings, "web_log_max_entries", 5)
-    monkeypatch.setattr(web_log, "_MAX_BYTES", 1)   # trim on every append
     for i in range(12):
         _record(log_file, url=f"https://ok.test/{i}")
     urls = [row["url"] for row in web_log.query()["items"]]
@@ -147,10 +148,16 @@ def test_trimming_keeps_the_newest_entries(log_file, monkeypatch):
     assert urls[0] == "https://ok.test/11"
 
 
-def test_a_broken_line_does_not_break_the_reader(log_file):
-    _record(log_file)
-    with open(log_file, "a", encoding="utf-8") as fh:
-        fh.write("{not json\n")
+def test_a_legacy_line_that_does_not_parse_is_skipped_not_fatal(log_file, tmp_path, monkeypatch):
+    """A broken line in an old web_requests.jsonl must not break the import."""
+    legacy = tmp_path / "web_requests.jsonl"
+    legacy.write_text(
+        json.dumps({"id": "legacy-1", "kind": "fetch", "url": "https://ok.test/legacy"}) + "\n"
+        "{not json\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_log, "WEB_LOG_FILE", legacy)
+
     assert web_log.query()["total"] == 1
 
 

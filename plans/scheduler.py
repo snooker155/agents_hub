@@ -2,11 +2,14 @@
 Asyncio scheduler loop for plan jobs.
 
 Started once at FastAPI startup (same pattern as the Telegram poller). Each
-tick scans plans.json for due jobs and fires them in a worker thread so file
-locks and subprocess launches never block the event loop.
+tick claims due jobs from the plans store (plans/storage.py, in the database)
+and fires them in a worker thread so database waits and subprocess launches
+never block the event loop.
 
-Agent subprocesses that create jobs via tools write to the same plans.json,
-so their jobs are picked up on the next tick without any IPC.
+Agent subprocesses that create jobs via tools write to the same store, so
+their jobs are picked up on the next tick without any IPC; the claim is a
+database lease, so several backend replicas ticking at once never fire the
+same job twice.
 """
 from __future__ import annotations
 
