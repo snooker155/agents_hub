@@ -7,11 +7,11 @@ groups multiple messages into a process-level context.
 """
 import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from typing import Optional
 from pathlib import Path
 
-from common import live_runs
+from common import access, identity, live_runs
 from managers import run_manager
 from managers.run_manager import update_run as update_message_run
 from tasks import service as tasks_service
@@ -57,8 +57,15 @@ def _enrich_page(runs: list) -> list:
     return [_enrich_message(r, tasks_by_id) for r in runs]
 
 
+def _require_run_visible(request: Request, run: dict) -> None:
+    """403 unless the caller may see the workspace this run belongs to."""
+    principal = identity.request_principal(request)
+    access.require_visible(principal, run.get("workspace"))
+
+
 @router.get("")
 async def list_messages(
+    request: Request,
     workspace: Optional[str] = None,
     agent_id: Optional[str] = None,
     status: Optional[str] = None,
@@ -77,6 +84,12 @@ async def list_messages(
     Returns ``{items, total, limit, offset}``. Filtering used to happen in
     Python over every run ever recorded, which a workspace running a thousand
     agents in parallel turns into a full-table scan on every refresh.
+
+    A request naming no workspace is otherwise open to any signed-in account
+    (common/auth.py authorize()); the page is additionally narrowed here to
+    runs whose own workspace the caller can see, a no-op outside ``multi``
+    mode. Filtered after the SQL page is fetched, so ``total`` still counts
+    the unfiltered page — see common/access.py's filter_by_workspace.
     """
     page = run_manager.query_runs(
         workspace=workspace,
@@ -93,15 +106,18 @@ async def list_messages(
         limit=max(1, min(int(limit), 500)),
         offset=max(0, int(offset)),
     )
-    return {**page, "items": _enrich_page(page["items"])}
+    principal = identity.request_principal(request)
+    items = access.filter_by_workspace(principal, page["items"])
+    return {**page, "items": _enrich_page(items)}
 
 
 @router.get("/{run_id}")
-async def get_message(run_id: str):
+async def get_message(run_id: str, request: Request):
     """Get details for a single message (agent run)."""
     run = run_manager.get_run_by_id(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Message not found")
+    _require_run_visible(request, run)
 
     task_id = run.get("task_id")
     tasks_by_id = tasks_service.get_tasks([task_id]) if task_id else {}
@@ -112,11 +128,12 @@ async def get_message(run_id: str):
 
 
 @router.get("/{run_id}/logs")
-async def get_message_logs(run_id: str):
+async def get_message_logs(run_id: str, request: Request):
     """Return the log file content for a message."""
     run = run_manager.get_run_by_id(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Message not found")
+    _require_run_visible(request, run)
 
     log_file = run.get("log_file")
     if not log_file or not Path(log_file).exists():
@@ -130,7 +147,7 @@ async def get_message_logs(run_id: str):
 
 
 @router.get("/{run_id}/live")
-async def get_message_live(run_id: str):
+async def get_message_live(run_id: str, request: Request):
     """What this run has produced so far, for a run that is still going.
 
     A finished run answers from its record: the log, the payloads, the process
@@ -143,17 +160,21 @@ async def get_message_live(run_id: str):
     ``{"turn": null}`` when nothing live is known: the run is over, or it was
     never one of the kinds that report (see the module docstring there).
     """
+    run = run_manager.get_run_by_id(run_id)
+    if run is not None:
+        _require_run_visible(request, run)
     # Async on purpose: a run executing on another replica has its live tail
     # only in the Redis mirror (common/live_runs.py), which is read awaited.
     return {"turn": await live_runs.by_run_async(run_id)}
 
 
 @router.get("/{run_id}/insights")
-async def get_message_insights(run_id: str):
+async def get_message_insights(run_id: str, request: Request):
     """Return message insights: process graph, tools, thinking trace, token usage."""
     run = run_manager.get_run_by_id(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Message not found")
+    _require_run_visible(request, run)
 
     messages = []
     tools = []
@@ -377,12 +398,13 @@ async def get_message_insights(run_id: str):
 
 
 @router.post("/{run_id}/stop")
-async def stop_message(run_id: str):
+async def stop_message(run_id: str, request: Request):
     """Stop a running message (agent run)."""
     from datetime import datetime, timezone
     run = run_manager.get_run_by_id(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Message not found")
+    _require_run_visible(request, run)
 
     stopped = run_manager.stop_run_by_id(run_id)
     if stopped:
@@ -399,11 +421,12 @@ async def stop_message(run_id: str):
 
 
 @router.delete("/{run_id}")
-async def delete_message(run_id: str, delete_log: bool = True):
+async def delete_message(run_id: str, request: Request, delete_log: bool = True):
     """Delete a message record. Running messages must be stopped first."""
     run = run_manager.get_run_by_id(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Message not found")
+    _require_run_visible(request, run)
 
     if run.get("status") == "running":
         raise HTTPException(status_code=400, detail="Stop the running message before deleting it")

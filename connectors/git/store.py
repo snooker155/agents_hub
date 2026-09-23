@@ -22,6 +22,7 @@ renamed ``.migrated``.
 from __future__ import annotations
 
 import json
+import os
 
 from typing import Any
 
@@ -97,8 +98,42 @@ def get_config(provider: str) -> dict[str, Any]:
     return dict(load().get(_check_provider(provider)) or {})
 
 
+#: The environment variable a run's own token arrives in (common/secrets.py
+#: hands workspace secrets to a run under their names).
+TOKEN_ENV = {"github": "GITHUB_TOKEN", "gitlab": "GITLAB_TOKEN"}
+
+
+def _run_token(provider: str) -> str:
+    """The token the current run holds for itself, or "".
+
+    An agent with an agent-scoped ``GITHUB_TOKEN`` secret pushes and opens
+    pull requests as its own identity rather than as the connector's. Inside
+    the backend process (a chat turn) that token comes from the active secret
+    scope; inside a run subprocess, from the environment the launcher built.
+    The environment is only trusted in a run (``AGENT_WORKSPACE`` is set by
+    common/subprocess_env.py), so a ``GITHUB_TOKEN`` the operator happens to
+    export in the shell that starts the backend does not quietly replace the
+    token configured in Settings.
+    """
+    name = TOKEN_ENV.get(provider)
+    if not name:
+        return ""
+    try:
+        from common import secrets as _secrets
+        if _secrets.active_scope() is not None:
+            value = _secrets.get(name)
+            if value:
+                return value.strip()
+    except Exception:
+        pass
+    if os.environ.get("AGENT_WORKSPACE"):
+        return (os.environ.get(name) or "").strip()
+    return ""
+
+
 def get_token(provider: str) -> str:
-    return str(get_config(provider).get("token") or "").strip()
+    """The token to act with: the run's own, else the connector's."""
+    return _run_token(provider) or str(get_config(provider).get("token") or "").strip()
 
 
 def has_token(provider: str) -> bool:

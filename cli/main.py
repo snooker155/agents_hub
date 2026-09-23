@@ -22,7 +22,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from rich.console import Console
@@ -63,6 +63,11 @@ project_app = typer.Typer(help="Project management commands.", no_args_is_help=T
 server_app = typer.Typer(help="Backend server commands.", no_args_is_help=True)
 db_app = typer.Typer(help="Database commands: which backend is in use, moving state between backends.",
                      no_args_is_help=True)
+auth_app = typer.Typer(help="Who this CLI is acting as, and personal API keys.",
+                       no_args_is_help=True)
+auth_keys_app = typer.Typer(help="Personal API keys: list, create, revoke (docs/api-keys.md).",
+                            no_args_is_help=True)
+auth_app.add_typer(auth_keys_app, name="keys")
 
 app.add_typer(agent_app, name="agent")
 app.add_typer(task_app, name="task")
@@ -70,6 +75,7 @@ app.add_typer(workspace_app, name="workspace")
 app.add_typer(project_app, name="project")
 app.add_typer(node_app, name="node")
 app.add_typer(server_app, name="server")
+app.add_typer(auth_app, name="auth")
 app.add_typer(db_app, name="db")
 
 console = Console()
@@ -608,6 +614,109 @@ def db_verify_cmd(archive: str = typer.Argument(..., help="An archive written by
     else:
         console.print(f"[red]mismatch:[/red] {report['mismatches']}")
         raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# auth commands: whoami, personal API keys
+# ---------------------------------------------------------------------------
+# Over AGENTS_HUB_URL these speak to /api/auth/me and /api/auth/keys as
+# whoever AGENTS_HUB_API_KEY (or a session) authenticates — see
+# common.auth.auth_headers and docs/api-keys.md. In direct mode there is no
+# request and so no named user: DirectBackend answers as the local operator
+# for whoami, and keys need an explicit --user naming the account to act on,
+# an administrator operation against the local database.
+
+
+@auth_app.command("whoami")
+def auth_whoami():
+    """Who this CLI is acting as."""
+    info = call(hub().whoami)
+    lines = [f"[bold]id:[/bold] {info.get('id', '-')}"]
+    if info.get("username"):
+        lines.append(f"[bold]username:[/bold] {info['username']}")
+    if info.get("role"):
+        lines.append(f"[bold]role:[/bold] {info['role']}")
+    if info.get("via"):
+        lines.append(f"[bold]via:[/bold] {info['via']}")
+    if info.get("mode"):
+        lines.append(f"[bold]mode:[/bold] {info['mode']}")
+    console.print(Panel("\n".join(lines), title="whoami", border_style="cyan"))
+
+
+@auth_keys_app.command("list")
+def auth_keys_list(
+    user: Optional[str] = typer.Option(
+        None, "--user", help="Direct mode only: manage this account's keys, as an admin."),
+):
+    """List personal API keys."""
+    if hub().kind == "http" and user:
+        console.print("[yellow]--user is ignored over AGENTS_HUB_URL[/yellow]: "
+                      "a key acts as whoever AGENTS_HUB_API_KEY authenticates.")
+    keys = call(hub().list_api_keys, user)
+
+    table = Table(title="API keys", box=box.ROUNDED, show_lines=False)
+    table.add_column("ID", style="bold cyan", no_wrap=True)
+    table.add_column("Name")
+    table.add_column("Hint")
+    table.add_column("Workspaces")
+    table.add_column("Expires")
+    table.add_column("Last used")
+
+    for k in keys:
+        workspaces = k.get("workspaces")
+        table.add_row(
+            k.get("id", ""),
+            k.get("name", "") or "-",
+            f"…{k.get('hint', '')}",
+            ", ".join(workspaces) if workspaces else "full reach",
+            k.get("expires_at") or "never",
+            k.get("last_used_at") or "never",
+        )
+
+    console.print(table)
+    console.print(f"[dim]{len(keys)} key(s)[/dim]")
+
+
+@auth_keys_app.command("create")
+def auth_keys_create(
+    name: str = typer.Option("", "--name", help="A label for the key, e.g. 'laptop CLI'."),
+    workspace: List[str] = typer.Option(
+        [], "--workspace", "-w",
+        help="Repeatable; narrows the key to these workspaces. Omit for the owner's full reach."),
+    expires_days: Optional[int] = typer.Option(
+        None, "--expires-days", help="Days until expiry. Omit for a key that never expires."),
+    user: Optional[str] = typer.Option(
+        None, "--user", help="Direct mode only: cut a key for this account, as an admin."),
+):
+    """Cut a new personal API key. Shown once: store it now."""
+    if hub().kind == "http" and user:
+        console.print("[yellow]--user is ignored over AGENTS_HUB_URL[/yellow]: "
+                      "a key acts as whoever AGENTS_HUB_API_KEY authenticates.")
+    workspaces = list(workspace) or None
+    record = call(hub().create_api_key, user, name, workspaces, expires_days)
+
+    console.print(Panel(
+        f"[bold]{record['key']}[/bold]\n\n"
+        "Shown once. Store it now; it cannot be shown again.",
+        title="New API key", border_style="green",
+    ))
+    scope = ", ".join(record.get("workspaces") or []) or "full reach"
+    console.print(f"id {record.get('id')}, name {record.get('name') or '-'}, scope {scope}, "
+                  f"expires {record.get('expires_at') or 'never'}")
+
+
+@auth_keys_app.command("revoke")
+def auth_keys_revoke(
+    key_id: str = typer.Argument(..., help="The key's id, from `ah auth keys list`."),
+    user: Optional[str] = typer.Option(
+        None, "--user", help="Direct mode only: revoke this account's key, as an admin."),
+):
+    """Revoke a personal API key. Immediate: anything using it stops working at once."""
+    if hub().kind == "http" and user:
+        console.print("[yellow]--user is ignored over AGENTS_HUB_URL[/yellow]: "
+                      "a key acts as whoever AGENTS_HUB_API_KEY authenticates.")
+    call(hub().revoke_api_key, key_id, user)
+    console.print(f"[green]revoked[/green] {key_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -1672,6 +1781,128 @@ def config_show():
 
     console.print(table)
     console.print(f"\n[dim]Service: {hub().describe()}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Secrets (common/secrets.py; docs/secrets.md)
+# ---------------------------------------------------------------------------
+# Values go in and never come out: `list` shows names, scopes and hints, and
+# there is deliberately no `get`. Direct mode calls common.secrets in this
+# process; over HTTP the same commands use /api/workspaces/{name}/secrets.
+
+secrets_app = typer.Typer(help="Workspace secrets: encrypted values handed to agents by name.",
+                          no_args_is_help=True)
+app.add_typer(secrets_app, name="secrets")
+
+
+def _secrets_workspace(workspace: Optional[str]) -> str:
+    ws = _active_workspace(workspace)
+    if not ws:
+        console.print("[red]Error:[/red] no workspace selected; pass --workspace.")
+        raise typer.Exit(1)
+    return ws
+
+
+def _secrets_call(direct, method: str, path: str, *, params=None, json=None):
+    """One secrets operation on whichever backend serves this CLI."""
+    backend = hub()
+    if getattr(backend, "kind", "") == "http":
+        return call(backend._request, method, path, params=params, json=json)
+    from common import secrets as secret_store
+    try:
+        return direct(secret_store)
+    except secret_store.SecretsError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+def _secrets_audit(action: str, workspace: str, name: str, agent: Optional[str],
+                   user: Optional[str]) -> None:
+    """Direct mode writes the same audit row the route would, as the operator."""
+    from common import audit
+    from common.auth import LOCAL_PRINCIPAL
+    audit.record(action, principal=LOCAL_PRINCIPAL, object_type="secret", object_id=name,
+                 workspace=workspace,
+                 details={"name": name, "agent_id": agent or "", "user_id": user or ""})
+
+
+@secrets_app.command("keygen")
+def secrets_keygen():
+    """Print a fresh key for AGENTS_HUB_SECRET_KEY."""
+    from common.secrets import keygen
+    typer.echo(keygen())
+
+
+@secrets_app.command("list")
+def secrets_list(
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace name."),
+    json_out: bool = typer.Option(False, "--json", help="Print JSON."),
+):
+    """List the secrets of a workspace: names, scopes and hints, never values."""
+    ws = _secrets_workspace(workspace)
+    rows = _secrets_call(lambda s: s.list_secrets(ws), "GET", f"/api/workspaces/{ws}/secrets") or []
+    if json_out:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        console.print(f"[dim]No secrets in {ws}.[/dim]")
+        return
+    table = Table(box=box.SIMPLE, show_header=True, title=f"secrets in {ws}")
+    for col in ("name", "agent", "user", "hint", "updated"):
+        table.add_column(col)
+    for r in rows:
+        table.add_row(r["name"], r.get("agent_id") or "[dim]any[/dim]",
+                      r.get("user_id") or "[dim]any[/dim]", r.get("hint") or "",
+                      str(r.get("updated_at") or "")[:19])
+    console.print(table)
+
+
+@secrets_app.command("set")
+def secrets_set(
+    name: str = typer.Argument(..., help="Secret name, e.g. GITHUB_TOKEN."),
+    value: Optional[str] = typer.Option(
+        None, "--value", help="The value; '-' reads stdin. Prompted for, hidden, when omitted."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace name."),
+    agent: Optional[str] = typer.Option(None, "--agent", help="Only for this agent."),
+    user: Optional[str] = typer.Option(None, "--user", help="Only for runs this user launches."),
+):
+    """Store or replace a secret."""
+    ws = _secrets_workspace(workspace)
+    if value == "-":
+        value = sys.stdin.read().rstrip("\n")
+    elif value is None:
+        value = typer.prompt(f"Value for {name}", hide_input=True)
+
+    def direct(s):
+        row = s.set_secret(ws, name, value, agent_id=agent, user_id=user, created_by="local")
+        _secrets_audit("secret.set", ws, name, agent, user)
+        return row
+
+    _secrets_call(direct, "PUT", f"/api/workspaces/{ws}/secrets/{name}",
+                  json={"value": value, "agent_id": agent, "user_id": user})
+    console.print(f"[green]Set[/green] {name} in {ws}.")
+
+
+@secrets_app.command("delete")
+def secrets_delete(
+    name: str = typer.Argument(..., help="Secret name."),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace name."),
+    agent: Optional[str] = typer.Option(None, "--agent", help="The agent scope it was set with."),
+    user: Optional[str] = typer.Option(None, "--user", help="The user scope it was set with."),
+):
+    """Delete one secret at exactly the given scope."""
+    ws = _secrets_workspace(workspace)
+
+    def direct(s):
+        if not s.delete_secret(ws, name, agent_id=agent, user_id=user):
+            console.print(f"[red]Error:[/red] no secret {name} at that scope in {ws}.")
+            raise typer.Exit(1)
+        _secrets_audit("secret.delete", ws, name, agent, user)
+        return {"deleted": True}
+
+    params = {k: v for k, v in (("agent_id", agent), ("user_id", user)) if v}
+    _secrets_call(direct, "DELETE", f"/api/workspaces/{ws}/secrets/{name}", params=params or None)
+    console.print(f"[green]Deleted[/green] {name} from {ws}.")
 
 
 # ---------------------------------------------------------------------------

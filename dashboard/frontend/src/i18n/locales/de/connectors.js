@@ -19,6 +19,11 @@ export default {
     secret: 'Geheimnis',
     secretPlaceholder: 'Signiert jede Zustellung, optional',
     addEndpoint: 'Endpunkt hinzufügen',
+    events: 'Ereignisse',
+    eventLabels: {
+      notification: 'Benachrichtigungen',
+      audit: 'Audit-Protokoll',
+    },
     test: 'Testen',
     testSent: 'Testereignis gesendet.',
     confirmRemoveEndpoint: 'Diesen Endpunkt entfernen?',

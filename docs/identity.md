@@ -48,6 +48,13 @@ a role in each workspace they belong to: `owner`, `editor` or `viewer`. A
 session is opened by logging in and lives in the browser until it expires
 (`AUTH_SESSION_HOURS`, two weeks by default) or is ended.
 
+This is also the mode the corporate features build on: [single sign-on](sso.md)
+through an OpenID Connect provider, groups that grant roles automatically,
+[SCIM provisioning](scim.md), the [audit trail](audit.md), personal
+[API keys](api-keys.md), [secrets](secrets.md) handed to agents by allowlist,
+and record-level access. Each is described on its own page; the section
+[Corporate identity](#corporate-identity) below says how they fit together.
+
 ## First run in `multi` mode
 
 With no accounts, there is no administrator to create the first one, so
@@ -71,8 +78,9 @@ request is about.
 
 A safe method (`GET`, `HEAD`) needs any membership; `POST`, `PUT`, `PATCH` and
 `DELETE` need `editor` or better. Administrators bypass membership entirely.
-Requests that name no workspace at all are open to any signed-in account: the
-scope of this feature is the workspace, not the individual record.
+A request that names no workspace passes the guard for any signed-in account;
+what it then sees is filtered by membership, see
+[Record-level access](#record-level-access).
 
 The workspace a request is about is read from the path
 (`/api/workspaces/{name}/…`), the `workspace` query parameter, or the
@@ -83,6 +91,95 @@ for every call, and no route that matters names its workspace only there.
 Whoever creates a workspace becomes its `owner`. The `default` workspace is
 not special: it is read by its members and written by its editors, like any
 other, so give people membership of it if they should see it.
+
+## Corporate identity
+
+The department signs in with its own accounts, the administrator sees who
+did what, and an agent reaches external systems with credentials it was
+granted rather than the keys in `.env`. Everything below is off until it is
+configured, and all of it needs `multi` mode except the audit trail, which
+`token` mode records too.
+
+| Need | Where | Turned on by |
+|---|---|---|
+| sign in with Keycloak, Entra ID or Google Workspace | [sso](sso.md) | `AUTH_OIDC_ISSUER`, `AUTH_OIDC_CLIENT_ID`, `AUTH_OIDC_CLIENT_SECRET` |
+| groups from the provider become roles and memberships | Accounts page, group mappings | a mapping rule; the `groups` claim (`AUTH_OIDC_GROUPS_CLAIM`) |
+| the provider creates, renames and deactivates accounts | [scim](scim.md) | `AUTH_SCIM_TOKEN` |
+| who did what, exported or streamed to a SIEM | [audit](audit.md) | always outside `single`; `AUDIT_REQUESTS` |
+| a CLI, a CI job or another hub acts as one person | [api-keys](api-keys.md) | the Account page |
+| an agent gets only the secrets it is allowed | [secrets](secrets.md) | `AGENTS_HUB_SECRET_KEY` |
+
+**Where an account comes from.** An account has a `source`: `local` (created
+here, with a password), `oidc` (created by the first single sign-on of that
+person) or `scim` (provisioned by the identity provider). An account from a
+provider has no password until an administrator sets one and signs in only
+through the provider. A local account with the same email is linked to the
+external identity on its first single sign-on rather than duplicated
+(`AUTH_OIDC_LINK_BY_EMAIL`), and keeps its memberships.
+
+**Groups.** A group is an entity of its own, fed by the provider (the id
+token's groups claim, or SCIM) and readable on the Accounts page. A group
+grants nothing by itself; a *mapping* turns it into a global role or a role
+in one workspace, and the grants are recomputed on every login. Memberships
+an owner granted by hand are marked `manual` and never touched by that
+recomputation; the ones a group granted follow the group, so leaving the
+admins group at the provider takes admin away here at the next login.
+
+Single sign-on sends the session back in the URL fragment of `/login/oidc`,
+never in a query string, and records every sign-in, including refused ones,
+as `auth.login` in the audit trail. When the id token carries the groups
+claim, it replaces the person's provider groups on each sign-in; when the
+claim is absent, their groups are left as they were. A group created by hand
+keeps its members until the provider names a group of the same name, and
+from then on that group follows the provider. A membership granted by a
+mapping shows as "via group" on the workspace's member list, where its role
+cannot be changed; change the mapping instead.
+
+SCIM provisioning lets the provider drive `/scim/v2` directly: creating,
+renaming and deactivating accounts, and syncing group membership, the moment
+they change in its own directory. It has a bearer token of its own,
+`AUTH_SCIM_TOKEN`, checked independently of the operator token since the
+route sits outside `/api`.
+
+**Passwords as the emergency door.** `AUTH_LOCAL_PASSWORDS=false` closes
+password sign-in for everyone but administrators, so the provider being down
+never locks the installation. Failed sign-ins are throttled per account
+(`AUTH_LOGIN_MAX_ATTEMPTS` in `AUTH_LOGIN_WINDOW_MINUTES`, then 429) and, more
+loosely, per address.
+
+**Sessions.** Every session remembers how it was opened (password, single
+sign-on, bootstrap), from which address and browser, and can be revoked one
+by one or all at once on the Account page. A single sign-on session is
+shorter (`AUTH_OIDC_SESSION_HOURS`, eight hours) because the provider's own
+session renews it without asking. Disabling an account, by hand or through
+SCIM, drops its sessions and revokes its API keys at once.
+
+**The audit trail** is append-only: the middleware records every write
+request in `token` and `multi` mode, and the key points (a sign-in, a role
+or membership change, a run launch, a tool approval, a workspace policy, env
+or budget change) record themselves. An administrator reads every row;
+anyone else reads their own actions plus the rows of a workspace they own,
+exportable as CSV or JSONL and offered live to `audit`-subscribed webhooks.
+See [audit](audit.md).
+
+**Secrets.** A workspace can hold encrypted secrets, set under
+`AGENTS_HUB_SECRET_KEY` (or kept in HashiCorp Vault), and only its owner or
+an administrator may list, set or delete them. A secret can be scoped to one
+agent or one user, and a run receives only the names its agent declares,
+resolved for the user who launched it. That is how an agent gets its own
+GitHub identity, or acts on behalf of the user who started it. See
+[secrets](secrets.md).
+
+**A credential never acts wider than its owner.** Each signed-in person has
+an Account page (`/account`): every live session with a sign-out button and
+"sign out everywhere else", a password change that drops every session, and
+personal API keys, optionally scoped to a list of workspaces and an expiry.
+A key resolves to the same principal a login would, narrowed to the
+workspaces it was cut for; the guard refuses a workspace outside that scope
+before it looks at roles, for an administrator's key as much as anyone's. A
+key is what the CLI presents over `AGENTS_HUB_URL` (`AGENTS_HUB_API_KEY`), what
+an A2A client presents when the far side is another hub, and what a CI job
+presents instead of a browser session. See [api-keys](api-keys.md).
 
 ## What a record remembers
 
@@ -96,9 +193,20 @@ passed in by the caller:
   orchestrator, an external system);
 - a chat records `owner`.
 
-Outside `multi` mode all three are `local`. Nothing reads them for access
-control yet: they are there so that a `multi` deployment can answer "who did
-this", and so that record-level ownership has somewhere to start.
+Outside `multi` mode all three are `local`. In `multi` mode they are read:
+see [Record-level access](#record-level-access) below.
+
+## Record-level access
+
+A request that names no workspace used to be open to any signed-in account.
+It no longer returns the whole table: lists are filtered to the workspaces
+the caller is a member of, and a single record outside them answers 403.
+A member sees the tasks, runs, sessions and memory pools of their workspaces;
+a chat is visible to its owner and to administrators (and, when it was
+written by the system or before identity existed, to the members of its
+workspace). Administrators, the shared token and the service credential see
+everything; a scoped API key sees its scope and nothing beyond it. None of
+this applies outside `multi` mode.
 
 ## The service credential
 
@@ -180,6 +288,8 @@ along with a note on where it is set.
 
 ## Related
 
+- [sso](sso.md), [scim](scim.md), [audit](audit.md), [api-keys](api-keys.md),
+  [secrets](secrets.md): the corporate features that build on `multi` mode
 - [settings](settings.md): where `AUTH_MODE` and the API token live
 - [workspaces](workspaces.md): what membership is membership *of*
 - [installation](installation.md): Docker and exposing the port

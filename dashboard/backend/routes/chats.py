@@ -18,12 +18,32 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from common import chat_store, live_runs
+from common import access, chat_store, identity, live_runs
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
+
+
+def _chat_visible(principal, chat: Dict[str, Any]) -> bool:
+    """Whether this principal may see one stored chat.
+
+    Two rules stack: the chat's workspace must be visible to the caller (see
+    common/access.py), and — because a chat additionally carries a personal
+    ``owner`` (docs/identity.md, "What a record remembers") — the caller must
+    be that owner, an admin, or the chat must be one of the system's own
+    (``owner`` empty or ``local``, written before identity existed or by
+    something other than a signed-in person).
+    """
+    return (access.can_see_workspace(principal, chat.get("workspace"))
+            and access.owner_or_admin(principal, chat.get("owner")))
+
+
+def _require_chat_visible(request: Request, chat: Dict[str, Any]) -> None:
+    principal = identity.request_principal(request)
+    if not _chat_visible(principal, chat):
+        raise HTTPException(status_code=403, detail="Chat not visible to this account")
 
 
 class ChatIn(BaseModel):
@@ -56,6 +76,7 @@ class ImportIn(BaseModel):
 
 @router.get("")
 async def list_chats(
+    request: Request,
     workspace: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
@@ -65,12 +86,26 @@ async def list_chats(
     The sidebar draws a title and a time per row; shipping every transcript to
     draw it would reproduce the problem this store exists to solve, one page
     load at a time. The transcript arrives when a chat is opened.
+
+    A request naming no workspace used to come back with every chat in the
+    database, on the theory that a request that names no workspace is open to
+    any signed-in account (common/auth.py). That theory is about the
+    workspace as ``authorize`` sees it, not about the individual chat, so the
+    page is additionally narrowed here to what the caller can see: their own
+    chats, and the system's, in workspaces they belong to. A no-op outside
+    ``multi`` mode. Filtering happens after the page is fetched, so ``total``
+    still counts the unfiltered set — a caller who is member of every
+    workspace involved sees no discrepancy, and one who is not sees a page
+    that may read as short of its stated total.
     """
-    return chat_store.list_chats(workspace=workspace, limit=limit, offset=offset)
+    page = chat_store.list_chats(workspace=workspace, limit=limit, offset=offset)
+    principal = identity.request_principal(request)
+    items = [c for c in page["items"] if _chat_visible(principal, c)]
+    return {**page, "items": items}
 
 
 @router.get("/{chat_id}/live")
-async def get_live_turn(chat_id: str):
+async def get_live_turn(chat_id: str, request: Request):
     """The turn this conversation is in the middle of, if there is one.
 
     A browser that opens a chat while it is being answered has missed the tokens
@@ -81,20 +116,24 @@ async def get_live_turn(chat_id: str):
     ``{"turn": null}`` for a conversation that is idle, which is the common case
     and not an error.
     """
+    chat = chat_store.get_chat(chat_id)
+    if chat is not None:
+        _require_chat_visible(request, chat)
     return {"turn": live_runs.by_conversation(chat_id)}
 
 
 @router.get("/{chat_id}")
-async def get_chat(chat_id: str):
+async def get_chat(chat_id: str, request: Request):
     """One conversation with its full transcript."""
     chat = chat_store.get_chat(chat_id)
     if chat is None:
         raise HTTPException(status_code=404, detail="Chat not found")
+    _require_chat_visible(request, chat)
     return chat
 
 
 @router.put("/{chat_id}")
-async def save_chat(chat_id: str, payload: ChatIn,
+async def save_chat(request: Request, chat_id: str, payload: ChatIn,
                     x_client_id: Optional[str] = Header(default=None)):
     """Create or replace one conversation.
 
@@ -106,6 +145,11 @@ async def save_chat(chat_id: str, payload: ChatIn,
     """
     if payload.id != chat_id:
         raise HTTPException(status_code=400, detail="Chat id mismatch")
+    # Replacing a conversation is gated like reading it: somebody who cannot
+    # see another person's chat cannot overwrite it by knowing its id either.
+    existing = chat_store.get_chat(chat_id)
+    if existing is not None:
+        _require_chat_visible(request, existing)
     stored = chat_store.save_chat(payload.model_dump())
     await _announce_save(chat_id, x_client_id)
     return stored
@@ -127,8 +171,12 @@ async def _announce_save(chat_id: str, origin_client: Optional[str]) -> None:
 
 
 @router.delete("/{chat_id}")
-async def delete_chat(chat_id: str):
+async def delete_chat(chat_id: str, request: Request):
     """Drop one conversation. Its runs stay in the ledger."""
+    chat = chat_store.get_chat(chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    _require_chat_visible(request, chat)
     if not chat_store.delete_chat(chat_id):
         raise HTTPException(status_code=404, detail="Chat not found")
     return {"deleted": True}

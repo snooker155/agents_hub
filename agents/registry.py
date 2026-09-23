@@ -175,6 +175,11 @@ class AgentSpec:
     # ``approval_exempt`` removes ones it may, and the exemption wins.
     approval_tools: List[str] = field(default_factory=list)
     approval_exempt: List[str] = field(default_factory=list)
+    # Workspace secrets (common/secrets.py) this agent may receive, by name.
+    # Empty by default, and empty means none: a run is handed only the names
+    # listed here, as environment variables. A non-empty list counts as
+    # reading private data for the capability guard (tools/capabilities.py).
+    secrets: List[str] = field(default_factory=list)
     # External-agent descriptor — empty for built-in agents. When ``type`` is
     # "remote" this holds everything needed to reach the agent over HTTP
     # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
@@ -315,6 +320,8 @@ class AgentSpec:
             d["approval_tools"] = list(self.approval_tools)
         if self.approval_exempt:
             d["approval_exempt"] = list(self.approval_exempt)
+        if self.secrets:
+            d["secrets"] = list(self.secrets)
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
@@ -556,6 +563,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
 
     approval_tools = _id_list(ad.get("approval_tools"))
     approval_exempt = _id_list(ad.get("approval_exempt"))
+    secrets = _id_list(ad.get("secrets"))
 
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
@@ -605,6 +613,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         delegates=delegates,
         approval_tools=approval_tools,
         approval_exempt=approval_exempt,
+        secrets=secrets,
         remote=remote,
     )
 
@@ -714,10 +723,15 @@ def add_agent(
     from agents.capability_guard import enforce_agent_tools
 
     _prev = get_agent(spec.id)
+    from tools.capabilities import secret_grant_ids
+
+    # Declared secrets ride along as pseudo tool ids (``secrets:<NAME>``) that
+    # grant reads_private, so holding a token closes the trifecta like any
+    # private-data tool would.
     enforce_agent_tools(
         spec.id,
-        list(spec.tools or []),
-        previous_tools=list(_prev.tools or []) if _prev else None,
+        list(spec.tools or []) + secret_grant_ids(spec.secrets),
+        previous_tools=(list(_prev.tools or []) + secret_grant_ids(_prev.secrets)) if _prev else None,
         override=bool(spec.capability_override),
         # The spec being saved, not the (possibly stale-or-absent) registry
         # record: a brand-new agent, or one whose delegates list is being

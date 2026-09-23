@@ -100,6 +100,25 @@ def start_flow_run(
         title=task.title, log_file=str(log_file), status="pending",
     )
 
+    # Audit trail (common/audit.py). No HTTP request is in flight here (a flow
+    # may be re-queued by a worker or fired by a schedule), so the actor comes
+    # from the current-user contextvar, "local" when nobody is signed in.
+    try:
+        from common import audit
+        from common.auth import LOCAL_OPERATOR_ID
+        from common.identity import current_user_id
+        _actor_id = current_user_id()
+        audit.record(
+            "flow.launch",
+            actor={"actor_id": _actor_id,
+                   "actor_kind": "local" if _actor_id == LOCAL_OPERATOR_ID else "user",
+                   "actor_name": None},
+            workspace=ws_name, object_type="run", object_id=run_id,
+            details={"flow_id": flow_id, "task_id": str(task_id)},
+        )
+    except Exception:
+        pass
+
     args = [
         sys.executable,
         str(PROJECT_ROOT / "runtime" / "flow_run.py"),
@@ -137,7 +156,11 @@ QUEUE_KIND = "flow"
 def _dispatch(spec: Dict[str, Any]) -> None:
     """Spawn here, or hand the spec to a worker, by this process's role."""
     from common.config import hub_role
+    from common.identity import current_user_id
 
+    # Who asked for this run, so the process that spawns it (maybe a worker
+    # with no request in flight) can resolve user-scoped secrets.
+    spec.setdefault("launched_by", current_user_id())
     if hub_role() == "api":
         from common import run_queue
         run_queue.enqueue(spec["run_id"], QUEUE_KIND, spec, workspace=spec.get("workspace"),
@@ -155,7 +178,8 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     flow_run_id = str(spec["run_id"])
     flow_id = str(spec.get("flow_id") or "")
     env = _build_env(str(spec.get("workspace") or ""), str(spec.get("session_id") or ""),
-                     str(spec["log_file"]))
+                     str(spec["log_file"]), flow_id=flow_id,
+                     user_id=str(spec.get("launched_by") or "") or None)
     pid = _spawn_flow_process(list(spec["args"]), spec["log_file"], env, flow_id,
                               header=str(spec.get("header") or "Flow run started"),
                               mode=str(spec.get("mode") or "w"))
@@ -414,11 +438,12 @@ def trigger_flow(
     }
 
 
-def _build_env(ws_name: str, session_id: str, log_file: str) -> Dict[str, str]:
+def _build_env(ws_name: str, session_id: str, log_file: str, *,
+               flow_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, str]:
     # base env + run metadata. No flow-wide model override: each node resolves its
     # own model via create_agent's cascade (agent definition → workspace override →
     # workspace settings → global), matching the single-agent path (agent_run.py).
     from common.subprocess_env import base_subprocess_env, add_run_env
-    env = base_subprocess_env(ws_name)
+    env = base_subprocess_env(ws_name, flow_id=flow_id, user_id=user_id)
     add_run_env(env, session_id=session_id, log_file=log_file)
     return env

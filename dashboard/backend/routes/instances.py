@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from common import access, identity
 from instances import delivery, inbox, store
 from instances import history as instance_history
 from instances import registry as instance_registry
@@ -58,6 +59,7 @@ def _get_or_404(instance_id: str) -> dict:
 
 @router.get("")
 async def list_instances(
+    request: Request,
     workspace: Optional[str] = None,
     agent_id: Optional[str] = None,
     kind: Optional[str] = None,
@@ -69,7 +71,20 @@ async def list_instances(
     limit: int = 100,
     offset: int = 0,
 ):
-    """A page of instances plus the per-state counts for the header strip."""
+    """A page of instances plus the per-state counts for the header strip.
+
+    A request naming no workspace is otherwise open to any signed-in account
+    (common/auth.py authorize()); the page is additionally narrowed here to
+    instances whose own workspace the caller can see, a no-op outside
+    ``multi`` mode. Filtered after the SQL page is fetched, so ``total`` still
+    counts the unfiltered page (common/access.py). The header counts are not
+    narrowed the same way: ``counts_by_state`` aggregates in SQL and does not
+    take a set of workspaces, so under ``multi`` mode without a single
+    ``workspace`` given they may count instances outside what the items list
+    shows. Left as-is: recomputing the tally in Python for every restricted
+    caller would be the full-table scan this route exists to avoid, and the
+    header strip is not itself the leak (no record is returned, only a count).
+    """
     page = store.list_instances(
         limit=max(1, min(int(limit), 500)),
         offset=max(0, int(offset)),
@@ -82,11 +97,13 @@ async def list_instances(
         q=q,
         include_archived=include_archived,
     )
-    task_ids = {str(i.get("task_id")) for i in page["items"] if i.get("task_id")}
+    principal = identity.request_principal(request)
+    items = access.filter_by_workspace(principal, page["items"])
+    task_ids = {str(i.get("task_id")) for i in items if i.get("task_id")}
     tasks_by_id = tasks_service.get_tasks(task_ids) if task_ids else {}
     return {
         **page,
-        "items": [_enrich(i, tasks_by_id) for i in page["items"]],
+        "items": [_enrich(i, tasks_by_id) for i in items],
         "counts": store.counts_by_state(workspace=workspace, agent_id=agent_id),
     }
 

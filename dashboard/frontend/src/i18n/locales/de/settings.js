@@ -262,6 +262,8 @@ export default {
     ok: 'Das Backend hat es akzeptiert.',
     unauthorized: 'Das Backend antwortete mit 401: nicht autorisiert.',
     testFailed: 'Das Backend war nicht erreichbar.',
+    personalKeysTitle: 'Persönliche API-Schlüssel',
+    personalKeysHint: 'Im Mehrbenutzerbetrieb wird statt eines Browser-Tokens eine angemeldete Sitzung ausgestellt. Ein persönlicher Schlüssel (Seite „Konto“) funktioniert hier ebenfalls: einen ahk_-Schlüssel oben einfügen, und dieser Browser authentifiziert sich als dessen Besitzer, genau wie mit einem gemeinsamen Token.',
     serverTitle: 'Serverseite',
     serverHintBefore: 'Serverseitig wird ein Token nur geprüft, wenn',
     serverHintAfter: 'in der',

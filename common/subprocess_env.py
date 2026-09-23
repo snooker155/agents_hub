@@ -17,13 +17,26 @@ import os
 from typing import Dict, Optional
 
 
-def base_subprocess_env(workspace_name: str) -> Dict[str, str]:
+def base_subprocess_env(
+    workspace_name: str,
+    *,
+    agent_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    flow_id: Optional[str] = None,
+) -> Dict[str, str]:
     """Base environment every agent-running subprocess needs.
 
     A copy of the current environment plus the workspace name and the OpenAI key
     when configured. State lives in the shared SQLite database, which the
     subprocess opens for itself via ``common.paths``, so no store path is
     injected. Callers layer their own run metadata on top.
+
+    With ``agent_id`` (or ``flow_id``), the workspace secrets that agent
+    declares in ``AgentSpec.secrets`` are merged in, resolved for ``user_id``
+    (the user who launched the run) by ``common.secrets``: only the declared
+    names, most specific scope first, nothing at all on any error. A docker
+    run inherits the same dict through ``container_env``. Called with the
+    workspace alone, the result is exactly what it always was.
     """
     from common.config import settings
     env = os.environ.copy()
@@ -47,6 +60,15 @@ def base_subprocess_env(workspace_name: str) -> Dict[str, str]:
     from common.identity import SERVICE_TOKEN_ENV, current_mode, service_token
     if current_mode() == "multi" and not settings.api_token:
         env[SERVICE_TOKEN_ENV] = service_token()
+    # Last, so a declared secret wins over the same name inherited from the
+    # host environment: an agent-scoped GITHUB_TOKEN is the whole point of
+    # giving an agent its own identity.
+    if agent_id or flow_id:
+        from common import secrets as _secrets
+        if agent_id:
+            env.update(_secrets.env_for_run(workspace_name, agent_id, user_id))
+        else:
+            env.update(_secrets.env_for_flow(workspace_name, flow_id, user_id))
     return env
 
 

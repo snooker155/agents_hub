@@ -227,6 +227,27 @@ def prepare_run(
             pass
     execution_mode = _ws_agent_mode or agent_execution_mode()
 
+    # Audit trail (common/audit.py): who launched this run. No HTTP request is
+    # in flight here (a launch may be re-queued by a worker), so the actor
+    # comes from the current-user contextvar rather than a principal, "local"
+    # when nobody is signed in (single/token mode, or the system itself).
+    try:
+        from common import audit
+        from common.auth import LOCAL_OPERATOR_ID
+        from common.identity import current_user_id
+        _actor_id = current_user_id()
+        audit.record(
+            "run.launch",
+            actor={"actor_id": _actor_id,
+                   "actor_kind": "local" if _actor_id == LOCAL_OPERATOR_ID else "user",
+                   "actor_name": None},
+            workspace=ws_name, object_type="run", object_id=run_id,
+            details={"agent_id": agent_id, "task_id": str(task_id),
+                     "execution_mode": execution_mode},
+        )
+    except Exception:
+        pass
+
     return {
         "kind": QUEUE_KIND,
         "run_id": run_id,
@@ -235,6 +256,9 @@ def prepare_run(
         "session_id": session_id,
         "instance_id": instance_id,
         "workspace": ws_name,
+        # Who asked for this run, so the process that spawns it (maybe a
+        # worker with no request in flight) can resolve user-scoped secrets.
+        "launched_by": _current_user_id(),
         "ws_path": str(ws_path),
         "log_file": str(log_file),
         "cli_args": cli_args,
@@ -275,7 +299,8 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     from instances import registry as instance_registry
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    env = _build_env(ws_name, session_id, str(log_file), instance_id)
+    env = _build_env(ws_name, session_id, str(log_file), instance_id,
+                     agent_id=agent_id, user_id=str(spec.get("launched_by") or "") or None)
 
     if execution_mode == "docker":
         _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id)
@@ -413,8 +438,14 @@ def _start_run_in_docker(
         pass
 
 
+def _current_user_id() -> str:
+    from common.identity import current_user_id
+    return current_user_id()
+
+
 def _build_env(ws_name: str, session_id: str, log_file: str,
-               instance_id: Optional[str] = None) -> Dict[str, str]:
+               instance_id: Optional[str] = None, *, agent_id: Optional[str] = None,
+               user_id: Optional[str] = None) -> Dict[str, str]:
     # base env + run metadata only. No model override is injected: agent_run.py
     # resolves the model via create_agent's cascade (agent definition → workspace
     # override → workspace settings → global), so a single run honours the agent's
@@ -422,7 +453,7 @@ def _build_env(ws_name: str, session_id: str, log_file: str,
     # one model — that's the deliberate difference between the two launchers.
     from common.subprocess_env import base_subprocess_env, add_run_env
     from instances.registry import ENV_INSTANCE_ID
-    env = base_subprocess_env(ws_name)
+    env = base_subprocess_env(ws_name, agent_id=agent_id, user_id=user_id)
     add_run_env(env, session_id=session_id, log_file=log_file)
     if instance_id:
         env[ENV_INSTANCE_ID] = str(instance_id)

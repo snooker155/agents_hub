@@ -27,8 +27,21 @@ per [workspace](workspaces.md):
 `kind` is `webhook` or `slack`. A webhook's `secret` is optional but signs
 every delivery; a Slack endpoint has none, since Slack's own incoming-webhook
 URL is the secret. `events` is a list of event names the endpoint subscribes
-to; today the only event this hub raises is `notification`, so every endpoint
-subscribes to it unless it is turned off with `enabled: false`.
+to; an endpoint created before this list existed, or created with
+`events: ["notification"]` explicitly, only ever sees `notification`.
+
+Two events exist:
+
+- **`notification`**: everything the inbox raises, a fired [alert
+  rule](#alert-rules) or an explicit `create_notification` call.
+- **`audit`**: every row of the [audit trail](audit.md), append-only, one
+  event per recorded action. A row with no workspace of its own (a login, an
+  account change: identity is not workspace-scoped) is offered to the
+  `default` workspace's endpoints, which is where an installation's global
+  integrations live. This is how a SIEM collects the trail without polling
+  `GET /api/audit` itself.
+
+The Connectors page offers both as a checkbox pair when adding an endpoint.
 
 A notification's channels decide which side channels fire: `create_notification`
 (the same call the inbox uses) accepts `channels` including `"telegram"`,
@@ -38,7 +51,8 @@ passes through.
 
 ### The event shape
 
-Every delivery, webhook or Slack, carries the same event:
+Every delivery, webhook or Slack, carries the same envelope, `type` naming
+which of the two events it is:
 
 ```json
 {
@@ -51,6 +65,26 @@ Every delivery, webhook or Slack, carries the same event:
     "body": "The run failed.",
     "severity": "error",
     "source": {"rule_id": "...", "rule_kind": "run_failed"}
+  }
+}
+```
+
+An `audit` delivery carries the same envelope with `type: "audit"`, `id` set
+to `"audit-<row id>"`, and `data` set to the row exactly as
+[`GET /api/audit`](audit.md) returns it:
+
+```json
+{
+  "id": "audit-482",
+  "type": "audit",
+  "workspace": "acme",
+  "created_at": "2026-09-22T10:00:00+00:00",
+  "data": {
+    "id": 482, "at": "2026-09-22T10:00:00+00:00",
+    "actor_id": "u1", "actor_kind": "user", "actor_name": "alice",
+    "action": "workspace.policy", "object_type": "workspace", "object_id": "acme",
+    "workspace": "acme", "ip": "10.0.0.4", "method": null, "path": null,
+    "result": "ok", "details": {"keys": ["require_tool_approval"]}
   }
 }
 ```
@@ -199,4 +233,4 @@ action). The response is the created task, in the same shape
   once its window has passed; idempotency here is about a retry or a flaky
   network landing twice, not a permanent id registry.
 
-Related: [connectors](connectors.md), [scheduling](scheduling.md), [costs](costs.md), [tasks](tasks.md), [nodes](nodes.md), [flows](flows.md).
+Related: [connectors](connectors.md), [scheduling](scheduling.md), [costs](costs.md), [tasks](tasks.md), [nodes](nodes.md), [flows](flows.md), [audit](audit.md).

@@ -19,21 +19,31 @@ import { useWorkspace } from '../workspace';
 
 const RULE_KINDS = ['run_failed', 'spend_daily_over', 'spend_run_over'];
 const CHANNELS = ['dashboard', 'telegram', 'slack', 'webhook'];
+// What an endpoint can subscribe to: the notifications the inbox already
+// raises (create_notification, alert rules), and the audit trail
+// (common/audit.py, docs/audit.md), for a SIEM that wants every recorded
+// action of this workspace without polling GET /api/audit itself.
+const EVENT_KINDS = ['notification', 'audit'];
 
 function EndpointForm({ workspace, onCreated }) {
   const { t } = useI18n();
   const [kind, setKind] = useState('webhook');
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
+  const [events, setEvents] = useState(['notification']);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const toggleEvent = (name) => {
+    setEvents((cur) => (cur.includes(name) ? cur.filter((x) => x !== name) : [...cur, name]));
+  };
 
   const handleAdd = async () => {
     if (!url.trim()) return;
     setSaving(true);
     setError('');
     try {
-      const payload = { kind, url: url.trim(), events: ['notification'], enabled: true };
+      const payload = { kind, url: url.trim(), events: events.length ? events : ['notification'], enabled: true };
       if (kind === 'webhook' && secret.trim()) payload.secret = secret.trim();
       const { data } = await createNotifyEndpoint(payload, workspace);
       onCreated(data.endpoint);
@@ -78,6 +88,17 @@ function EndpointForm({ workspace, onCreated }) {
           />
         </div>
       )}
+      <div>
+        <label className="text-xs font-medium text-gray-500 mb-1 block">{t('connectors.webhooks.events')}</label>
+        <div className="flex items-center gap-2 h-[38px]">
+          {EVENT_KINDS.map((name) => (
+            <label key={name} className="flex items-center gap-1 text-xs text-gray-600">
+              <input type="checkbox" checked={events.includes(name)} onChange={() => toggleEvent(name)} />
+              {t(`connectors.webhooks.eventLabels.${name}`)}
+            </label>
+          ))}
+        </div>
+      </div>
       <button
         type="button"
         onClick={handleAdd}
@@ -155,6 +176,7 @@ function EndpointsSection({ workspace }) {
                 <th className="py-2 pr-3">{t('connectors.webhooks.kind')}</th>
                 <th className="py-2 pr-3">{t('connectors.webhooks.url')}</th>
                 <th className="py-2 pr-3">{t('connectors.webhooks.secret')}</th>
+                <th className="py-2 pr-3">{t('connectors.webhooks.events')}</th>
                 <th className="py-2"></th>
               </tr>
             </thead>
@@ -168,6 +190,10 @@ function EndpointsSection({ workspace }) {
                   </td>
                   <td className="py-2 pr-3 font-mono text-xs text-gray-700 max-w-xs truncate">{ep.url}</td>
                   <td className="py-2 pr-3 font-mono text-xs text-gray-400">{ep.secret || '—'}</td>
+                  <td className="py-2 pr-3 text-xs text-gray-500">
+                    {(ep.events && ep.events.length ? ep.events : ['notification'])
+                      .map((name) => t(`connectors.webhooks.eventLabels.${name}`)).join(', ')}
+                  </td>
                   <td className="py-2 text-right whitespace-nowrap">
                     <button
                       type="button"

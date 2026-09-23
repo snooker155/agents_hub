@@ -7,6 +7,7 @@ import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, Shoppin
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
 import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
+import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -1086,6 +1087,7 @@ const WorkspaceDetails = () => {
           and nothing for a viewer who is neither an owner of it nor an admin.
           See components/workspace/WorkspaceMembers.jsx. */}
       {activeTab === 'agents' && <WorkspaceMembers workspace={name} />}
+      {activeTab === 'agents' && <WorkspaceSecrets workspace={name} agents={ws?.metadata?.allowed_agents || []} />}
 
       {activeTab === 'instructions' && (
         <div className="bg-white p-6 shadow-md rounded-lg">

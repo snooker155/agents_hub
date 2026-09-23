@@ -19,6 +19,32 @@ Both are the same operations behind one interface, so a command behaves
 identically either way. Each invocation is a fresh process, so expect about a
 second and a half of import and bootstrap before anything happens.
 
+## Authenticating over `AGENTS_HUB_URL`
+
+Direct mode needs no credential: it is the service. Over REST, whatever
+`common.auth.auth_headers()` finds in the environment goes on every request,
+tried in this order: `AGENTS_HUB_API_TOKEN` (`token` mode's shared secret),
+`AGENTS_HUB_SERVICE_TOKEN` (minted for a hub's own subprocesses, not meant to
+be set by hand), `AGENTS_HUB_API_KEY` — a personal key
+([api-keys](api-keys.md)), cut with `ah auth keys create` or from the Account
+page, and the ordinary way to authenticate a CLI against a `multi`-mode hub
+running somewhere else:
+
+```bash
+export AGENTS_HUB_URL=https://hub.example.com
+export AGENTS_HUB_API_KEY=ahk_...
+ah auth whoami            # who this key acts as
+ah task list
+```
+
+`ah auth whoami` answers from `GET /api/auth/me` over HTTP, or names the local
+operator in direct mode — there is no session or key to ask about, direct mode
+*is* the account. `ah auth keys list|create|revoke` manage personal keys the
+same way: over `AGENTS_HUB_URL` they act on the caller the presented
+credential names; in direct mode there is no such caller, so they need an
+explicit `--user <name>`, which is an administrator operation against the
+local database rather than someone managing their own key.
+
 A write from the CLI reaches an open dashboard the way a write from an agent
 subprocess does: the change goes to the shared database and a `<resource>.changed`
 event is relayed, so open tabs refetch instead of showing stale rows.
@@ -43,6 +69,10 @@ ah node list
 ah db status                            # which database backend, schema version, row counts
 ah db migrate --to postgresql://...     # copy the database into Postgres (or back to a file)
 ah worker                               # claim launches from the run queue and spawn them here (see workers.md)
+ah auth whoami                          # who this CLI is acting as (see api-keys.md)
+ah auth keys create --name laptop --expires-days 90
+ah auth keys list
+ah auth keys revoke <id>
 ah config
 ```
 

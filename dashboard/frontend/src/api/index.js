@@ -177,6 +177,9 @@ export const setWorkspaceSecret = (name, secret, data) =>
   api.put(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, data);
 export const deleteWorkspaceSecret = (name, secret, params) =>
   api.delete(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, { params });
+// An agent's allowlist: the secret names a run of it may receive.
+export const getAgentSecrets = (id) => api.get(`/agents/${id}/secrets`);
+export const updateAgentSecrets = (id, secrets) => api.put(`/agents/${id}/secrets`, { secrets });
 export const setWorkspaceMember = (name, data) => api.put(`/workspaces/${name}/members`, data);
 export const removeWorkspaceMember = (name, userId) =>
   api.delete(`/workspaces/${name}/members/${userId}`);

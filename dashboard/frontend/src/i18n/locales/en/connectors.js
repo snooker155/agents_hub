@@ -19,6 +19,11 @@ export default {
     secret: 'Secret',
     secretPlaceholder: 'Used to sign each delivery, optional',
     addEndpoint: 'Add endpoint',
+    events: 'Events',
+    eventLabels: {
+      notification: 'Notifications',
+      audit: 'Audit trail',
+    },
     test: 'Test',
     testSent: 'Test event sent.',
     confirmRemoveEndpoint: 'Remove this endpoint?',

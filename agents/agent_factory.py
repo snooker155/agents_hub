@@ -880,9 +880,13 @@ class AgentFactory:
         # reasoning tools), so the resolved set is re-checked before the agent
         # is handed a runtime. See agents/capability_guard.py.
         from agents.capability_guard import enforce_built_tools
+        from tools.capabilities import secret_grant_ids
         enforce_built_tools(
             agent_id,
-            [getattr(t, "name", getattr(t, "__name__", "")) for t in tools],
+            [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
+            # A declared secret is a grant of private data, checked with the
+            # tools it would be handed to (docs/secrets.md).
+            + secret_grant_ids(getattr(_spec, "secrets", None) or [] if _spec else []),
             override=bool(_spec.capability_override) if _spec else False,
             delegates=list(_spec.delegates or []) if _spec else [],
         )

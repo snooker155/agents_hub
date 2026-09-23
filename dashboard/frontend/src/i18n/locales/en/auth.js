@@ -61,4 +61,33 @@ export default {
     updateFailed: 'Could not change the role.',
     removeFailed: 'Could not remove the member.',
   },
+  // Single sign-on (docs/sso.md) and where an account came from.
+  sso: {
+    signInWith: 'Sign in with {{provider}}',
+    or: 'or with a password',
+    passwordsOff: 'Password sign-in is reserved for administrators.',
+    completing: 'Finishing sign-in…',
+    backToLogin: 'Back to sign-in',
+    failedTitle: 'Single sign-on did not work',
+    errors: {
+      bad_state: 'The sign-in took too long or was started in another browser. Please try again.',
+      provider_error: 'The identity provider refused the sign-in.',
+      provider_unreachable: 'The identity provider could not be reached.',
+      exchange_failed: 'The identity provider did not confirm the sign-in.',
+      verification_failed: 'The identity provider\'s answer could not be verified.',
+      disabled: 'This account is disabled. Ask an administrator.',
+      account_failed: 'No account could be created for this identity.',
+      unknown: 'Single sign-on failed. Please try again.',
+    },
+    source: {
+      local: 'local',
+      oidc: 'SSO',
+      scim: 'SCIM',
+    },
+    sourceLabel: 'Source',
+    email: 'Email',
+    noPassword: 'no password',
+    viaGroup: 'via group',
+    viaGroupHint: 'Granted by a group mapping. The role follows the group; change the mapping on the Accounts page.',
+  },
 };

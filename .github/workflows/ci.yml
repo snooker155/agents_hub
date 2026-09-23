@@ -144,6 +144,54 @@ jobs:
           grep -E "^\s*runs\s+1\s*$" /tmp/status.txt
           test -f "${{ runner.temp }}/agents_hub_backup_dst/run_logs/agent_run_backup-smoke.log"
 
+  # docs/sso.md: single sign-on end to end against a real Keycloak, with the
+  # realm in deploy/keycloak/realm-export.json (alice in hub-admins and devs,
+  # bob in devs). A service container cannot be given `start-dev`, so the
+  # container is started by hand.
+  oidc-keycloak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Keycloak
+        run: |
+          docker run -d --name keycloak -p 8080:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            -v "$GITHUB_WORKSPACE/deploy/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro" \
+            quay.io/keycloak/keycloak:26.0 start-dev --import-realm
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r dashboard/backend/requirements.txt
+          pip install -r requirements-agents.txt
+          pip install requests httpx
+
+      - name: Wait for Keycloak
+        run: |
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:8080/realms/agents-hub/.well-known/openid-configuration >/dev/null; then
+              echo "Keycloak is ready"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs keycloak | tail -50
+          exit 1
+
+      - name: Sign in as alice and bob
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_oidc
+        run: python scripts/ci/oidc_keycloak_check.py
+
+      - name: Keycloak logs on failure
+        if: failure()
+        run: docker logs keycloak | tail -100
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

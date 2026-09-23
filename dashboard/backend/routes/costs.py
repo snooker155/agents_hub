@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from managers import run_manager
@@ -23,6 +23,7 @@ from tasks import service as tasks_service
 from common.pricing import (EVALUATION_CHANNELS, load_price_map, run_cached_tokens,
                             run_cost_usd, run_tokens)
 from common import budget as budget_mod
+from common import audit, identity
 from common.workspace_context import normalize_workspace_name
 
 router = APIRouter(prefix="/api/costs", tags=["costs"])
@@ -155,11 +156,14 @@ async def get_budget(workspace: Optional[str] = None):
 
 
 @router.post("/budget")
-async def set_budget(settings: BudgetSettings, workspace: Optional[str] = None):
+async def set_budget(request: Request, settings: BudgetSettings, workspace: Optional[str] = None):
     """Persist a workspace's budget caps and return the fresh status."""
     ws = normalize_workspace_name(workspace) or "default"
     try:
         budget_mod.set_budget(ws, settings.model_dump())
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Workspace '{ws}' does not exist")
+    audit.record("workspace.budget", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=ws, workspace=ws,
+                 ip=identity.client_ip(request), details=settings.model_dump())
     return budget_mod.budget_status(ws)

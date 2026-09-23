@@ -5,7 +5,7 @@ import {
   RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
-import { TOKEN, useAuth } from '../components/auth';
+import { MULTI, TOKEN, useAuth } from '../components/auth';
 import {
   getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides,
   getWorkspacePolicy, updateWorkspacePolicy,
@@ -452,6 +452,17 @@ function ApiAccessTab() {
             : <span className="flex items-center gap-1 text-xs text-red-700"><AlertCircle className="w-3 h-3" /> {result.status === 401 ? t('settings.apiAccess.unauthorized') : t('settings.apiAccess.testFailed')}</span>
           )}
         </div>
+      </SectionCard>
+      )}
+      {/* multi mode issues a session instead of a browser token, so there is
+          nothing to paste here for that case — except a personal API key
+          (common/api_keys.py, docs/api-keys.md), which this same field
+          happens to double as: getAuthToken() falls back to it whenever
+          there is no session, so an `ahk_...` key pasted in as the "browser
+          token" authenticates every request exactly the way a session would. */}
+      {mode === MULTI && (
+      <SectionCard title={t('settings.apiAccess.personalKeysTitle')}>
+        <p className="text-sm text-gray-600">{t('settings.apiAccess.personalKeysHint')}</p>
       </SectionCard>
       )}
       <SectionCard title={t('settings.apiAccess.serverTitle')}>

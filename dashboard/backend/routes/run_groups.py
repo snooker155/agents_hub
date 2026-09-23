@@ -19,8 +19,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from common import access, identity
 from managers.runs import groups as run_groups
 
 router = APIRouter(prefix="/api/runs/groups", tags=["run-groups"])
@@ -28,16 +29,27 @@ router = APIRouter(prefix="/api/runs/groups", tags=["run-groups"])
 
 @router.get("")
 async def list_run_groups(
+    request: Request,
     kind: Optional[str] = None,
     workspace: Optional[str] = None,
     limit: int = 50,
 ):
     """List run groups, newest first. Without ``kind`` all four are returned,
-    each capped at ``limit`` so one busy kind cannot crowd out the others."""
+    each capped at ``limit`` so one busy kind cannot crowd out the others.
+
+    A request naming no workspace is otherwise open to any signed-in account
+    (common/auth.py authorize()); the list is additionally narrowed here to
+    groups whose own workspace the caller can see, a no-op outside ``multi``
+    mode. See common/access.py.
+    """
     try:
         found = run_groups.list_groups(kind=kind, workspace=workspace, limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    principal = identity.request_principal(request)
+    visible = access.visible_workspaces(principal)
+    if visible is not None:
+        found = [g for g in found if access.can_see_workspace(principal, g.workspace)]
     return {"groups": [g.to_dict() for g in found], "kinds": list(run_groups.KINDS)}
 
 

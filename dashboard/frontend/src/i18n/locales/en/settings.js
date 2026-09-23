@@ -262,6 +262,8 @@ export default {
     ok: 'The backend accepted it.',
     unauthorized: 'The backend returned 401: not authorized.',
     testFailed: 'Could not reach the backend.',
+    personalKeysTitle: 'Personal API keys',
+    personalKeysHint: 'Multiple users mode issues a signed-in session instead of a browser token. A personal key (Account page) works here too: paste an ahk_ key above and this browser authenticates as its owner, the same as it would with a shared token.',
     serverTitle: 'Server side',
     serverHintBefore: 'On the server side, a token is checked only when',
     serverHintAfter: 'is set in the',

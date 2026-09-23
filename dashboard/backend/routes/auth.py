@@ -203,6 +203,7 @@ async def me(request: Request):
     payload = identity.principal_dict(principal)
     if identity.current_mode() == MULTI and principal.kind == "user":
         payload["workspaces"] = identity.workspaces_for_user(principal.id)
+        payload["workspace_roles"] = identity.workspace_roles_for_user(principal.id)
         user = identity.get_user(principal.id) or {}
         payload["display_name"] = user.get("display_name") or principal.username
         payload["email"] = user.get("email") or ""

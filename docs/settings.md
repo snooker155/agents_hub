@@ -30,7 +30,13 @@ operator and no login at all), `token` (one shared secret gates every request),
 or `multi` (named accounts with passwords, roles and per-workspace
 membership). The API access tab shows which one is in force. [identity](identity.md)
 explains all three, how to pick one, and the first-run bootstrap under `multi`.
-The rest of this section is the `token` mode.
+Under `multi` the corporate features have settings of their own, all in `.env`
+and all read at startup: `AUTH_OIDC_*` for [single sign-on](sso.md),
+`AUTH_SCIM_TOKEN` for [provisioning](scim.md), `AUDIT_REQUESTS` and
+`AUDIT_RETENTION_DAYS` for the [audit trail](audit.md), `AUTH_LOCAL_PASSWORDS`
+and the `AUTH_LOGIN_*` throttle for password sign-in, `AGENTS_HUB_SECRET_KEY`
+for [secrets](secrets.md). Each is listed in `.env.example` with a one-line
+note. The rest of this section is the `token` mode.
 
 The service's own API can be closed to callers that do not present a token.
 This is off by default, unlike a provider key: nothing here checks it until the

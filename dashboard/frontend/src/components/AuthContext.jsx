@@ -1,8 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   authBootstrap, authLogin, authLogout, getAuthMode, getMe, setSessionToken, getSessionToken,
+  oidcStartUrl,
 } from '../api';
 import { AuthContext, DEFAULT_AUTH, MULTI, SINGLE } from './auth';
+import {
+  RENEW_CHECK_MS, oidcRenewalDue, readSessionMeta, writeSessionMeta,
+} from './sessionMeta';
 
 /**
  * Asks the backend what identity posture it is in, once, at app start.
@@ -64,6 +68,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (username, password) => {
     const { data } = await authLogin({ username, password });
     setSessionToken(data.token);
+    writeSessionMeta({ kind: data.kind || 'password', expires_at: data.expires_at || '' });
     setState((prev) => ({ ...prev, user: data.user, bootstrapRequired: false }));
     return data.user;
   }, []);
@@ -85,6 +90,7 @@ export function AuthProvider({ children }) {
       // the server already forgot it, or cannot be reached to be told.
     }
     setSessionToken('');
+    writeSessionMeta(null);
     setState((prev) => ({ ...prev, user: null }));
   }, []);
 
@@ -96,6 +102,26 @@ export function AuthProvider({ children }) {
     setState((prev) => ({ ...prev, user, bootstrapRequired: false }));
     return user;
   }, [loadUser]);
+
+  // Silent renewal of a single sign-on session: a little before it ends, send
+  // the browser through the provider again. The provider's own session makes
+  // that a pair of redirects with no form, and the callback page brings the
+  // browser back to where it was. Checked once when a user is known and then
+  // every few minutes; password sessions are long and never renewed here.
+  const oidcOn = Boolean(state.oidc);
+  const signedIn = Boolean(state.user);
+  useEffect(() => {
+    if (state.mode !== MULTI || !oidcOn || !signedIn) return undefined;
+    const check = () => {
+      if (!oidcRenewalDue(readSessionMeta())) return;
+      const { pathname, search } = window.location;
+      if (pathname.startsWith('/login')) return;
+      window.location.assign(oidcStartUrl(`${pathname}${search || ''}`));
+    };
+    check();
+    const timer = window.setInterval(check, RENEW_CHECK_MS);
+    return () => window.clearInterval(timer);
+  }, [state.mode, oidcOn, signedIn]);
 
   const value = useMemo(() => ({
     ...DEFAULT_AUTH, ...state, login, bootstrap, logout, adoptSession,

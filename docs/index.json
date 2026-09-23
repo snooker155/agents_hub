@@ -904,6 +904,124 @@
         "Losing the host",
         "How often"
       ]
+    },
+    {
+      "id": "scim",
+      "title": "SCIM provisioning",
+      "summary": "The channel an identity provider drives itself: /scim/v2 implements SCIM 2.0 Users and Groups (filtering, paging, PATCH) so Entra ID, Okta or Keycloak can create, rename and deactivate accounts here directly, gated by AUTH_SCIM_TOKEN.",
+      "surface": "Accounts",
+      "related": [
+        "identity",
+        "sso",
+        "audit"
+      ],
+      "headings": [
+        "Turning it on",
+        "Pointing a provider at it",
+        "What maps to what",
+        "Deactivation is immediate",
+        "Groups become hub groups, and mappings give them meaning",
+        "Filtering, paging, PATCH",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "sso",
+      "title": "Single sign-on",
+      "summary": "Sign in with Keycloak, Microsoft Entra ID, Google Workspace or any OpenID Connect provider (Authorization Code with PKCE). Groups from the id token become global roles and workspace memberships through mapping rules on the Accounts page.",
+      "surface": "Accounts",
+      "related": [
+        "identity",
+        "scim",
+        "audit",
+        "settings",
+        "installation"
+      ],
+      "headings": [
+        "How it works",
+        "Configuration",
+        "Keycloak",
+        "Microsoft Entra ID",
+        "Google Workspace",
+        "Groups and mappings",
+        "Passwords and the emergency door",
+        "Sessions",
+        "Linking accounts by email",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "secrets",
+      "title": "Secrets",
+      "summary": "Encrypted per-workspace values, optionally scoped to one agent or one user, handed to a run as environment variables only under the names its agent declares.",
+      "surface": "Workspace, Agents tab, Secrets card",
+      "related": [
+        "identity",
+        "tools-and-capabilities",
+        "workspaces",
+        "settings",
+        "containers",
+        "cli"
+      ],
+      "headings": [
+        "Why this exists",
+        "The key",
+        "Scopes and precedence",
+        "The agent's allowlist",
+        "How a run receives them",
+        "Managing them",
+        "Vault",
+        "Agent identity in external systems",
+        "Gotchas",
+        "Related"
+      ]
+    },
+    {
+      "id": "audit",
+      "title": "Audit trail",
+      "summary": "Who did what, when, to which object: the append-only trail (token and multi mode) written by the write-request middleware and by key points across the hub (login, run launch, tool approval, workspace policy, env and budget), readable by an administrator in full or by anyone else for their own actions and the workspaces they own, exportable as CSV or JSONL, and offered to audit-subscribed webhooks.",
+      "surface": "Audit",
+      "related": [
+        "identity",
+        "notifications",
+        "workspaces",
+        "settings",
+        "sso",
+        "scim",
+        "api-keys",
+        "secrets"
+      ],
+      "headings": [
+        "What is recorded",
+        "Who can read what",
+        "Retention",
+        "Export",
+        "The audit webhook event",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "api-keys",
+      "title": "Personal API keys",
+      "summary": "A key one person cuts for themselves under AUTH_MODE=multi: acts as its owner, never wider, optionally scoped to workspaces and an expiry. Used by the CLI over AGENTS_HUB_URL, an A2A client talking to another hub, and CI. Managed on the Account page.",
+      "surface": "Account",
+      "related": [
+        "identity",
+        "cli",
+        "a2a",
+        "audit",
+        "settings"
+      ],
+      "headings": [
+        "What a key is",
+        "Scope and expiry",
+        "Where it is used",
+        "How it differs from AGENTS_HUB_API_TOKEN",
+        "The Account page",
+        "Revocation",
+        "The login throttle",
+        "Gotchas"
+      ]
     }
   ]
 }

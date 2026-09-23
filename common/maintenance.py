@@ -181,6 +181,15 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
         summary.update(run_view_maintenance())
     except Exception:
         log.exception("view maintenance failed")
+    # The audit trail (common/audit.py): rows past AUDIT_RETENTION_DAYS. Isolated
+    # like the passes above, and a no-op (0 rows, 0 disables it) outside
+    # single-mode where the trail is off, so this stays safe to call always.
+    try:
+        from common import audit
+        summary["pruned_audit_rows"] = audit.prune()
+    except Exception:
+        log.exception("audit prune failed")
+        summary["pruned_audit_rows"] = 0
     if pruned_runs or pruned_files or summary.get("pruned_view_dirs") \
             or summary.get("pruned_connection_runs"):
         log.info("maintenance: pruned %d run(s), %d connection run(s), %d orphan file(s), "

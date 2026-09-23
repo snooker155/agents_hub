@@ -12,6 +12,7 @@ import shutil
 from tasks import service as tasks_service
 from common.bootstrap import ensure_initial_state
 from common.session_broker import notify_change
+from common import audit, identity
 from workspace import (
     create_workspace_folder,
     attach_workspace_folder,
@@ -544,7 +545,7 @@ async def get_workspace_settings_overrides(name: str):
 
 
 @router.put("/{name}/settings-overrides")
-async def update_workspace_settings_overrides(name: str, payload: dict):
+async def update_workspace_settings_overrides(request: Request, name: str, payload: dict):
     """Replace workspace-scoped settings."""
     _ensure_writable_workspace(name)
     overrides = payload.get("overrides", {})
@@ -553,6 +554,9 @@ async def update_workspace_settings_overrides(name: str, payload: dict):
     # Strip empty-string values (treat as cleared)
     cleaned = {k: v for k, v in overrides.items() if v is not None and str(v).strip() != ""}
     update_workspace_metadata(name, {"settings": cleaned})
+    audit.record("workspace.settings", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request), details={"keys": sorted(cleaned)})
     # The log level is the one override this process acts on itself, so re-read
     # it now instead of making the user restart the backend. Resolving through
     # the active workspace means editing some *other* workspace is a no-op here.
@@ -647,7 +651,7 @@ async def get_workspace_policy(name: str):
 
 
 @router.put("/{name}/policy")
-async def update_workspace_policy(name: str, payload: dict):
+async def update_workspace_policy(request: Request, name: str, payload: dict):
     """Replace the workspace's tool policy.
 
     ``require_tool_approval`` is written into the same ``settings`` block the
@@ -667,6 +671,9 @@ async def update_workspace_policy(name: str, payload: dict):
         updates["hooks"] = _validate_hooks(payload.get("hooks"))
     if updates:
         update_workspace_metadata(name, updates)
+        audit.record("workspace.policy", principal=identity.request_principal(request),
+                     object_type="workspace", object_id=name, workspace=name,
+                     ip=identity.client_ip(request), details={"keys": sorted(updates)})
     return _policy_payload(name)
 
 
@@ -678,13 +685,17 @@ async def get_workspace_env(name: str):
 
 
 @router.put("/{name}/env")
-async def update_workspace_env(name: str, payload: dict):
+async def update_workspace_env(request: Request, name: str, payload: dict):
     """Replace workspace-scoped environment variables."""
     _ensure_writable_workspace(name)
     env_vars = payload.get("env_vars", {})
     if not isinstance(env_vars, dict):
         raise HTTPException(status_code=400, detail="env_vars must be a key-value object")
     update_workspace_metadata(name, {"env_vars": env_vars})
+    # Names only, never values: an env block is exactly where a secret lives.
+    audit.record("workspace.env", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request), details={"keys": sorted(env_vars)})
     return {"env_vars": env_vars}
 
 

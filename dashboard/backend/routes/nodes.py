@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agents import registry
+from common import access, identity
 from managers import node_manager
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
@@ -55,11 +56,19 @@ def _enrich(node: dict) -> dict:
 
 
 @router.get("")
-async def list_nodes(workspace: Optional[str] = None):
-    """List all nodes sorted newest-first, optionally filtered by workspace."""
+async def list_nodes(request: Request, workspace: Optional[str] = None):
+    """List all nodes sorted newest-first, optionally filtered by workspace.
+
+    A request naming no workspace is otherwise open to any signed-in account
+    (common/auth.py authorize()); the list is additionally narrowed here to
+    nodes whose own workspace the caller can see, a no-op outside ``multi``
+    mode. See common/access.py.
+    """
     nodes = node_manager.list_nodes()
     if workspace:
         nodes = [n for n in nodes if n.get("workspace") == workspace]
+    principal = identity.request_principal(request)
+    nodes = access.filter_by_workspace(principal, nodes)
     enriched = [_enrich(n) for n in nodes]
     enriched.sort(key=lambda n: n.get("started_at") or "", reverse=True)
     return enriched

@@ -73,6 +73,7 @@ def _spec_parts(spec: Any) -> Dict[str, Any]:
         "capability_override": bool(spec.capability_override),
         "approval_tools": sorted(spec.approval_tools or []),
         "approval_exempt": sorted(spec.approval_exempt or []),
+        "secrets": sorted(getattr(spec, "secrets", None) or []),
         "delegates": sorted(spec.delegates or []),
         "skills_enabled": bool(spec.skills_enabled),
         "episodic_write_enabled": spec.episodic_write_enabled,

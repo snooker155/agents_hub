@@ -1,7 +1,7 @@
 """
 Task-related API routes.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Union
@@ -26,6 +26,7 @@ from tasks.serialize import task_to_dict
 from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate, TaskAnswer, TaskListItem, TaskDetail, TaskPage
 from common.session_service import add_event_to_session
 from common.paths import PROJECTS_FILE
+from common import access, audit, identity
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -47,9 +48,26 @@ def _resolve_task_ref(ref: str) -> UUID:
 
 
 
+def _visible_tasks(request: Request, tasks: List) -> List:
+    """Narrow a task list to the workspaces the caller can see.
+
+    A request naming no workspace is otherwise open to any signed-in account
+    (common/auth.py authorize()); this additionally filters to what the
+    caller is a member of, a no-op outside ``multi`` mode. ``created_by_user``
+    is informational only (docs/identity.md) and is never gated on here — the
+    workspace is the unit of visibility, the same as everywhere else in
+    common/access.py.
+    """
+    principal = identity.request_principal(request)
+    visible = access.visible_workspaces(principal)
+    if visible is None:
+        return tasks
+    return [t for t in tasks if access.can_see_workspace(principal, t.workspace)]
+
+
 @router.get("", response_model=Union[List[TaskListItem], TaskPage])
-async def list_tasks(workspace: Optional[str] = None, limit: Optional[int] = None,
-                     offset: Optional[int] = None):
+async def list_tasks(request: Request, workspace: Optional[str] = None,
+                     limit: Optional[int] = None, offset: Optional[int] = None):
     """The task list. With no ``limit``/``offset`` this is the full list, exactly
     as before; with either, it is one page: ``{items, total, limit, offset}``."""
     if limit is None and offset is None:
@@ -58,9 +76,14 @@ async def list_tasks(workspace: Optional[str] = None, limit: Optional[int] = Non
             tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
         else:
             tasks = all_tasks
+        tasks = _visible_tasks(request, tasks)
         return [task_to_dict(t) for t in tasks]
 
     page, total = tasks_service.list_tasks_page(workspace=workspace, limit=limit, offset=offset)
+    # Paged in SQL, so filtering after the fact can only shrink the page, not
+    # ``total`` — a caller who is not a member of every workspace in view may
+    # see fewer items than ``total`` claims. See common/access.py.
+    page = _visible_tasks(request, page)
     return {"items": [task_to_dict(t) for t in page], "total": total,
             "limit": limit, "offset": offset}
 
@@ -149,10 +172,11 @@ async def create_task(task: TaskCreate):
 
 
 @router.get("/{task_id}", response_model=TaskDetail)
-async def get_task(task_id: UUID):
+async def get_task(task_id: UUID, request: Request):
     t = tasks_service.get_task(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
+    access.require_visible(identity.request_principal(request), t.workspace)
 
     # Also fetch subtasks
     all_tasks = tasks_service.list_tasks()
@@ -691,7 +715,7 @@ class TaskApproval(BaseModel):
 
 
 @router.post("/{task_id}/approve")
-async def approve_task_call(task_id: UUID, payload: TaskApproval):
+async def approve_task_call(request: Request, task_id: UUID, payload: TaskApproval):
     """Approve or deny the tool call a task is parked on, and resume it.
 
     Mirrors ``/answer``: the agent that stopped is re-run with a resume
@@ -748,6 +772,15 @@ async def approve_task_call(task_id: UUID, payload: TaskApproval):
             tasks_service.approve_tool_call(task_id, tool, fingerprint, note=note)
         tasks_service.assign_agent(task_id, agent_id, params, run_id=run_id)
         tasks_service.update_task(task_id, status=TaskStatus.in_progress, pending_approval=None)
+        # Audit trail (common/audit.py): the operator's decision on the call,
+        # by fingerprint when it was approved (that is what the gate spends),
+        # by tool name alone when it was refused (there is nothing to spend).
+        audit.record(
+            "tool.approve" if payload.approved else "tool.reject",
+            principal=identity.request_principal(request), object_type="task",
+            object_id=str(task_id), ip=identity.client_ip(request),
+            details={"tool": tool, "fingerprint": fingerprint, "note": note},
+        )
         # The task resumes under a fresh run; re-point any run-bound session
         # continuation at it so it still fires when the resumed run finishes.
         try:

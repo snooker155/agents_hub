@@ -19,6 +19,11 @@ export default {
     secret: 'Секрет',
     secretPlaceholder: 'Используется для подписи каждой доставки, необязательно',
     addEndpoint: 'Добавить точку доставки',
+    events: 'События',
+    eventLabels: {
+      notification: 'Уведомления',
+      audit: 'Журнал аудита',
+    },
     test: 'Тест',
     testSent: 'Тестовое событие отправлено.',
     confirmRemoveEndpoint: 'Удалить эту точку доставки?',

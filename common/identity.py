@@ -791,6 +791,15 @@ def workspaces_for_user(user_id: str) -> List[str]:
     return [r["workspace"] for r in rows]
 
 
+def workspace_roles_for_user(user_id: str) -> Dict[str, Dict[str, str]]:
+    """``{workspace: {"role", "source"}}`` for one user, for the Account page."""
+    rows = db.get_conn().execute(
+        "SELECT workspace, role, source FROM workspace_members WHERE user_id = ? "
+        "ORDER BY workspace", (str(user_id),)).fetchall()
+    return {r["workspace"]: {"role": r["role"], "source": r["source"] or "manual"}
+            for r in rows}
+
+
 def claim_workspace(workspace: str, user_id: Optional[str] = None) -> None:
     """Make the creator of a workspace its owner.
 
@@ -940,13 +949,16 @@ def authorize_request(request) -> tuple[bool, Optional[Principal]]:
     principal = current_principal(request)
     workspace = None
     role = None
-    if mode == MULTI and principal is not None and not principal.is_admin:
+    if mode == MULTI and principal is not None:
+        # The workspace is resolved for everyone: a scoped API key is checked
+        # against it before roles matter, an administrator's included. Only
+        # the membership lookup is skipped for admins, who bypass it anyway.
         workspace = workspace_from_request(
             path=path,
             query_workspace=request.query_params.get("workspace"),
             header_workspace=request.headers.get("x-workspace"),
         )
-        if workspace:
+        if workspace and not principal.is_admin:
             role = membership_role(workspace, principal.id)
     allowed = authorize(mode, principal=principal, method=method, path=path,
                         workspace=workspace, membership_role=role)
@@ -980,8 +992,16 @@ def require_role(principal: Optional[Principal], *, admin: bool = False,
 
 
 def request_principal(request) -> Optional[Principal]:
-    """The principal the middleware put on the request, for a route to read."""
-    principal = getattr(request.state, "principal", None)
+    """The principal the middleware put on the request, for a route to read.
+
+    A route called without a request at all (the CLI's direct backend calls
+    route functions in-process) is the operator acting on their own state,
+    so it gets the local principal in every mode.
+    """
+    if request is None:
+        return LOCAL_PRINCIPAL
+    state = getattr(request, "state", None)
+    principal = getattr(state, "principal", None) if state is not None else None
     if principal is None and current_mode() == SINGLE:
         return LOCAL_PRINCIPAL
     return principal
@@ -1023,5 +1043,6 @@ __all__ = [
     "revoke_other_sessions", "revoke_session",
     "service_token", "session_for_token", "set_current_user", "set_member", "set_password",
     "update_user", "upsert_external_user", "user_count", "user_for_session",
-    "verify_password", "workspaces_for_user", "required_workspace_role",
+    "verify_password", "workspace_roles_for_user", "workspaces_for_user",
+    "required_workspace_role",
 ]

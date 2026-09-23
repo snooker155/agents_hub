@@ -121,8 +121,19 @@ export default function WorkspaceMembers({ workspace }) {
                 {member.role === 'admin' && (
                   <ShieldCheck className="inline w-3.5 h-3.5 ml-1.5 text-indigo-500" />
                 )}
+                {member.source === 'group' && (
+                  <span title={t('auth.sso.viaGroupHint')}
+                    className="ml-2 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                    {t('auth.sso.viaGroup')}
+                  </span>
+                )}
               </span>
+              {/* A role granted by a group mapping follows the group, so it is
+                  changed through the mapping, not overridden member by member. */}
               <select value={member.workspace_role} className={selectCls}
+                disabled={member.source === 'group'}
+                title={member.source === 'group' ? t('auth.sso.viaGroupHint') : undefined}
+                aria-label={t('auth.fields.role')}
                 onChange={(e) => changeRole(member, e.target.value)}>
                 <option value="viewer">{t('auth.workspaceRoles.viewer')}</option>
                 <option value="editor">{t('auth.workspaceRoles.editor')}</option>

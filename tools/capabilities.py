@@ -509,6 +509,38 @@ DELEGATING_TOOLS: FrozenSet[str] = frozenset({
 # additional reach for this graph to add on top of that.
 
 
+# ── Declared secrets ─────────────────────────────────────────────────────────
+#
+# An agent that declares workspace secrets (``AgentSpec.secrets``, see
+# common/secrets.py) receives them as environment variables, which is reading
+# private data whatever its tools are. Rather than a second input to every
+# check, a declared secret travels as a pseudo tool id ``secrets:<NAME>``
+# that grants reads_private, so it shows up in ``capability_sources`` and in a
+# Violation under exactly that label.
+
+SECRET_GRANT_PREFIX = "secrets:"
+
+
+def secret_grant_ids(names: Optional[Iterable[str]]) -> List[str]:
+    """The pseudo tool ids for an agent's declared secrets."""
+    out: List[str] = []
+    for name in names or []:
+        label = f"{SECRET_GRANT_PREFIX}{str(name).strip()}"
+        if str(name).strip() and label not in out:
+            out.append(label)
+    return out
+
+
+def _secrets_of(agent_id: str) -> List[str]:
+    """A registered agent's declared secrets as pseudo tool ids. Never raises."""
+    try:
+        from agents.registry import get_agent  # lazy: avoid an import cycle
+        spec = get_agent(agent_id)
+    except Exception:
+        return []
+    return secret_grant_ids(getattr(spec, "secrets", None)) if spec is not None else []
+
+
 def _delegates_of(agent_id: str) -> Optional[List[str]]:
     """Delegation allowlist of a registered agent, or ``None`` for "no restriction".
 
@@ -603,7 +635,10 @@ def _walk_delegation_graph(
                 if target_id in visited:
                     continue
                 visited.add(target_id)
+                # A delegate's declared secrets are part of what it can read,
+                # so they are reached through delegation like its tools are.
                 target_tools = list(resolve_agent_tools(target_id) or [])
+                target_tools += [s for s in _secrets_of(target_id) if s not in target_tools]
                 hop = f"via {delegating_tool} -> {target_id}"
                 path = f"{prefix} -> {hop}" if prefix else hop
                 for cap in capabilities_of(target_tools):
@@ -831,6 +866,8 @@ def grants_of(tool_id: str) -> FrozenSet[str]:
         return ALIAS_GRANTS[tool_id]
     if tool_id in REVIEWED_NO_GRANT:
         return frozenset()
+    if tool_id.startswith(SECRET_GRANT_PREFIX):
+        return frozenset({READS_PRIVATE})
     # An MCP tool is classified by its server's configuration rather than by a
     # table in this file — see ``mcp_grants``. Checked before the unknown-tool
     # warning below, which would otherwise fire for every external tool.
@@ -949,4 +986,5 @@ __all__ = [
     "check_combination", "explain",
     "effective_capabilities", "effective_capability_sources",
     "check_effective_combination",
+    "SECRET_GRANT_PREFIX", "secret_grant_ids",
 ]

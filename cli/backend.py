@@ -267,6 +267,62 @@ class DirectBackend:
         dump = getattr(result, "model_dump", None)
         return dump(mode="json") if dump else dict(result)
 
+    # ---- auth: whoami and personal API keys ----
+    # Direct mode has no request and no session: it *is* the local operator
+    # (common.auth.LOCAL_OPERATOR_ID), whatever AUTH_MODE the configured
+    # database happens to be running under. Personal keys act as a named
+    # user, so they need one: either AGENTS_HUB_URL (a real request, a real
+    # principal, see HttpBackend below) or an explicit --user, which is an
+    # administrator operation run straight against the local database.
+
+    NO_USER_MESSAGE = (
+        "Personal keys act as a named user. Direct mode has none: it is the "
+        "local operator, the same in every AUTH_MODE. Either set AGENTS_HUB_URL "
+        "(and AGENTS_HUB_API_KEY or a session) to manage your own keys over "
+        "REST, or pass --user <username> to manage that account's keys "
+        "directly against the local database, as an administrator would."
+    )
+
+    def whoami(self) -> dict:
+        from common.auth import LOCAL_OPERATOR_ID, ROLE_ADMIN
+        from common import identity
+        return {"id": LOCAL_OPERATOR_ID, "username": LOCAL_OPERATOR_ID,
+                "role": ROLE_ADMIN, "kind": "local", "via": "local",
+                "mode": identity.current_mode()}
+
+    def _resolve_user(self, username: Optional[str]) -> str:
+        if not username:
+            raise BackendError(self.NO_USER_MESSAGE)
+        from common import identity
+        user = identity.get_user_by_username(username)
+        if user is None:
+            raise BackendError(f"no such user: {username}")
+        return user["id"]
+
+    def list_api_keys(self, username: Optional[str] = None) -> List[dict]:
+        from common import api_keys
+        return api_keys.list_keys(self._resolve_user(username))
+
+    def create_api_key(self, username: Optional[str] = None, name: str = "",
+                       workspaces: Optional[List[str]] = None,
+                       expires_in_days: Optional[int] = None) -> dict:
+        from common import api_keys
+        user_id = self._resolve_user(username)
+        try:
+            key, record = api_keys.create_key(
+                user_id, name=name, workspaces=workspaces,
+                expires_in_days=expires_in_days)
+        except ValueError as e:
+            raise BackendError(str(e))
+        return {**record, "key": key}
+
+    def revoke_api_key(self, key_id: str, username: Optional[str] = None) -> dict:
+        from common import api_keys
+        user_id = self._resolve_user(username)
+        if not api_keys.revoke_key(key_id, user_id=user_id):
+            raise BackendError(f"no such key for {username}: {key_id}")
+        return {"revoked": True}
+
 
 def _notify_workspaces() -> None:
     """Tell a running dashboard its workspace list changed."""
@@ -434,6 +490,27 @@ class HttpBackend:
 
     def get_settings(self):
         return self._request("GET", "/api/settings")
+
+    # ---- auth: whoami and personal API keys ----
+    # A request over REST carries whatever common.auth.auth_headers() finds
+    # in the environment (AGENTS_HUB_API_KEY first among the personal-key
+    # credentials); the key acts as its owner, so ``username`` here names
+    # nobody but the caller and is accepted only for symmetry with
+    # DirectBackend's signature — see cli/main.py, which warns when it is set.
+
+    def whoami(self):
+        return self._request("GET", "/api/auth/me")
+
+    def list_api_keys(self, username=None):
+        return self._request("GET", "/api/auth/keys")
+
+    def create_api_key(self, username=None, name="", workspaces=None, expires_in_days=None):
+        body = {"name": name, "workspaces": workspaces, "expires_in_days": expires_in_days}
+        return self._request("POST", "/api/auth/keys", json=body)
+
+    def revoke_api_key(self, key_id, username=None):
+        self._request("DELETE", f"/api/auth/keys/{key_id}")
+        return {"revoked": True}
 
 
 # ---------------------------------------------------------------------------

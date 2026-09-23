@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import json
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -18,12 +18,26 @@ from models import (
     MemoryStructuredSlotUpsert,
 )
 from rag import get_rag_status, ingest_file, delete_file_vectors, delete_pool_vectors
+from common import access, identity
 from common.paths import workspace_knowledge_dir
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 
 router = APIRouter(prefix="/api/shared-memory", tags=["memory"])
+
+
+def _require_pool_visible(request: Request, mem: SharedMemory) -> None:
+    """403 unless the caller can see the workspace this pool is bound to.
+
+    A pool's ``workspace`` is a single optional field (memory/models.py), so
+    "any of its workspaces" collapses to that one value here; a pool bound to
+    none (``None``) is visible to anyone signed in, the same reading
+    common/access.py gives a workspace-less record generally.
+    """
+    principal = identity.request_principal(request)
+    if not access.can_see_workspace(principal, mem.workspace):
+        raise HTTPException(status_code=403, detail="Memory pool not visible to this account")
 
 
 def _persist_mem(store: MemoryStore, mem: SharedMemory) -> SharedMemory:
@@ -62,11 +76,13 @@ def _unlink_graph_mirror(memory_id: UUID, node_type: str, name: str) -> None:
 # ---------------------------------------------------------------------------
 
 @router.get("")
-async def list_shared_memory(workspace: Optional[str] = None):
+async def list_shared_memory(request: Request, workspace: Optional[str] = None):
     store = MemoryStore()
     memories = store.load()
     if workspace:
         memories = [m for m in memories if (m.workspace or "") == workspace]
+    principal = identity.request_principal(request)
+    memories = [m for m in memories if access.can_see_workspace(principal, m.workspace)]
     return [_mem_dump(m) for m in memories]
 
 
@@ -255,19 +271,23 @@ router.include_router(build_entity_chat_router(EntityChatRoute(
 # and a catch-all declared first would read it as a memory id (the same reason
 # ``/rag-config`` sits above them).
 @router.get("/{memory_id}")
-async def get_shared_memory(memory_id: UUID):
+async def get_shared_memory(memory_id: UUID, request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory not found")
+    _require_pool_visible(request, mem)
     return _mem_dump(mem)
 
 
 @router.delete("/{memory_id}")
-async def delete_shared_memory(memory_id: UUID):
+async def delete_shared_memory(memory_id: UUID, request: Request):
     store = MemoryStore()
-    if not store.delete(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory not found")
+    _require_pool_visible(request, mem)
+    store.delete(memory_id)
 
     # Clean up the per-pool episodes file so deleted pools don't leave orphaned data.
     try:
@@ -308,11 +328,12 @@ async def delete_shared_memory(memory_id: UUID):
 # ---------------------------------------------------------------------------
 
 @router.post("/{memory_id}/notes")
-async def add_note(memory_id: UUID, data: MemoryNoteAdd):
+async def add_note(memory_id: UUID, data: MemoryNoteAdd, request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     if data.title.startswith("journal:"):
         raise HTTPException(status_code=403, detail="Journal entries are read-only and cannot be created manually")
     from uuid import uuid4
@@ -327,11 +348,12 @@ async def add_note(memory_id: UUID, data: MemoryNoteAdd):
 
 
 @router.put("/{memory_id}/notes/{note_id}")
-async def update_note(memory_id: UUID, note_id: str, data: MemoryNoteUpdate):
+async def update_note(memory_id: UUID, note_id: str, data: MemoryNoteUpdate, request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     for note in mem.notes:
         if note.get("id") == note_id:
             if note.get("title", "").startswith("journal:"):
@@ -345,11 +367,12 @@ async def update_note(memory_id: UUID, note_id: str, data: MemoryNoteUpdate):
 
 
 @router.delete("/{memory_id}/notes/{note_id}")
-async def delete_note(memory_id: UUID, note_id: str):
+async def delete_note(memory_id: UUID, note_id: str, request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     note = next((n for n in mem.notes if n.get("id") == note_id), None)
     if note and note.get("title", "").startswith("journal:"):
         raise HTTPException(status_code=403, detail="Journal entries are read-only")
@@ -374,21 +397,23 @@ class MemoryBlockUpsert(BaseModel):
 
 
 @router.get("/{memory_id}/blocks")
-async def list_memory_blocks(memory_id: UUID):
+async def list_memory_blocks(memory_id: UUID, request: Request):
     """The pool's blocks, exactly as they are rendered into a system prompt."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     return {"blocks": [b.model_dump() for b in mem.blocks]}
 
 
 @router.put("/{memory_id}/blocks/{name}")
-async def upsert_memory_block(memory_id: UUID, name: str, data: MemoryBlockUpsert):
+async def upsert_memory_block(memory_id: UUID, name: str, data: MemoryBlockUpsert, request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
 
     block = mem.get_block(name)
     if block is not None and block.read_only and data.read_only is not False:
@@ -417,11 +442,12 @@ async def upsert_memory_block(memory_id: UUID, name: str, data: MemoryBlockUpser
 
 
 @router.delete("/{memory_id}/blocks/{name}")
-async def delete_memory_block(memory_id: UUID, name: str):
+async def delete_memory_block(memory_id: UUID, name: str, request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     block = mem.get_block(name)
     if block is None:
         raise HTTPException(status_code=404, detail=f"Block '{name}' not found")
@@ -436,30 +462,34 @@ async def delete_memory_block(memory_id: UUID, name: str):
 # ---------------------------------------------------------------------------
 
 @router.get("/{memory_id}/structured")
-async def list_structured_slots(memory_id: UUID):
+async def list_structured_slots(memory_id: UUID, request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     return {"slots": list(mem.structured_data.keys())}
 
 
 @router.put("/{memory_id}/structured/{slot}")
-async def upsert_structured_slot(memory_id: UUID, slot: str, data: MemoryStructuredSlotUpsert):
+async def upsert_structured_slot(memory_id: UUID, slot: str, data: MemoryStructuredSlotUpsert,
+                                 request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     mem.structured_data[slot] = data.data
     return _mem_dump(_persist_mem(store, mem))
 
 
 @router.delete("/{memory_id}/structured/{slot}")
-async def delete_structured_slot(memory_id: UUID, slot: str):
+async def delete_structured_slot(memory_id: UUID, slot: str, request: Request):
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     if slot not in mem.structured_data:
         raise HTTPException(status_code=404, detail=f"Slot '{slot}' not found")
     del mem.structured_data[slot]
@@ -477,12 +507,13 @@ def _rag_file_entry(mem: SharedMemory, filename: str) -> Optional[dict]:
 
 
 @router.get("/{memory_id}/files")
-async def list_rag_files(memory_id: UUID, workspace: str):
+async def list_rag_files(memory_id: UUID, workspace: str, request: Request):
     """List all files in workspace knowledge dir, annotated with this pool's index status."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
 
     kdir = workspace_knowledge_dir(workspace)
     disk_files = sorted(
@@ -507,6 +538,7 @@ async def list_rag_files(memory_id: UUID, workspace: str):
 @router.post("/{memory_id}/files/upload")
 async def upload_knowledge_file(
     memory_id: UUID,
+    request: Request,
     workspace: str = Form(...),
     file: UploadFile = File(...),
 ):
@@ -515,6 +547,7 @@ async def upload_knowledge_file(
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
 
     kdir = workspace_knowledge_dir(workspace)
     dest = kdir / file.filename
@@ -525,12 +558,13 @@ async def upload_knowledge_file(
 
 
 @router.post("/{memory_id}/files/{filename}/index")
-async def index_knowledge_file(memory_id: UUID, filename: str, workspace: str):
+async def index_knowledge_file(memory_id: UUID, filename: str, workspace: str, request: Request):
     """Chunk and embed a workspace knowledge file into this pool's vector store."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
 
     kdir = workspace_knowledge_dir(workspace)
     path = kdir / filename
@@ -558,12 +592,13 @@ async def index_knowledge_file(memory_id: UUID, filename: str, workspace: str):
 
 
 @router.delete("/{memory_id}/files/{filename}/index")
-async def deindex_knowledge_file(memory_id: UUID, filename: str):
+async def deindex_knowledge_file(memory_id: UUID, filename: str, request: Request):
     """Remove a file's index entry from this pool (does not delete the file from disk)."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
 
     mem.rag_files = [f for f in mem.rag_files if f.get("filename") != filename]
     _persist_mem(store, mem)
@@ -575,12 +610,13 @@ async def deindex_knowledge_file(memory_id: UUID, filename: str):
 
 
 @router.delete("/{memory_id}/files/{filename}")
-async def delete_knowledge_file(memory_id: UUID, filename: str, workspace: str):
+async def delete_knowledge_file(memory_id: UUID, filename: str, workspace: str, request: Request):
     """Delete a file from disk and remove it from this pool's index."""
     store = MemoryStore()
     mem = store.get(memory_id)
     if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
 
     kdir = workspace_knowledge_dir(workspace)
     path = kdir / filename
@@ -601,6 +637,7 @@ async def delete_knowledge_file(memory_id: UUID, filename: str, workspace: str):
 @router.get("/{memory_id}/episodes")
 async def list_episodes(
     memory_id: UUID,
+    request: Request,
     kind: Optional[str] = None,
     outcome: Optional[str] = None,
     query: Optional[str] = None,
@@ -608,8 +645,10 @@ async def list_episodes(
 ):
     """List recent episodes for a memory pool, optionally filtered."""
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
 
     from memory.episodic import EpisodeStore
     eps = EpisodeStore(str(memory_id)).query(
@@ -625,19 +664,23 @@ async def list_episodes(
 
 
 @router.get("/{memory_id}/episodes/stats")
-async def episodes_stats(memory_id: UUID):
+async def episodes_stats(memory_id: UUID, request: Request):
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.episodic import EpisodeStore
     return EpisodeStore(str(memory_id)).stats()
 
 
 @router.delete("/{memory_id}/episodes/{episode_id}")
-async def delete_episode(memory_id: UUID, episode_id: UUID):
+async def delete_episode(memory_id: UUID, episode_id: UUID, request: Request):
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.episodic import EpisodeStore
     if not EpisodeStore(str(memory_id)).delete(episode_id):
         raise HTTPException(status_code=404, detail="Episode not found")
@@ -649,11 +692,13 @@ async def delete_episode(memory_id: UUID, episode_id: UUID):
 # ---------------------------------------------------------------------------
 
 @router.get("/{memory_id}/graph")
-async def get_graph(memory_id: UUID):
+async def get_graph(memory_id: UUID, request: Request):
     """Return the full graph for visualization (nodes + edges)."""
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.graph import GraphStore
     nodes, edges = GraphStore(str(memory_id)).load()
     return {
@@ -663,30 +708,34 @@ async def get_graph(memory_id: UUID):
 
 
 @router.get("/{memory_id}/graph/stats")
-async def graph_stats(memory_id: UUID):
+async def graph_stats(memory_id: UUID, request: Request):
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.graph import GraphStore
     return GraphStore(str(memory_id)).stats()
 
 
 @router.post("/{memory_id}/graph/prune")
-async def prune_graph_mirrors(memory_id: UUID, dry_run: bool = False):
+async def prune_graph_mirrors(memory_id: UUID, request: Request, dry_run: bool = False):
     """Remove `slot`/`note` mirror nodes whose backing slot/note no longer exists.
 
     Reconciles the graph after slot/note deletes. Typed entity nodes are never
     touched. Pass `?dry_run=true` to preview what would be removed.
     """
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.maintenance import prune_orphan_mirrors
     return prune_orphan_mirrors(str(memory_id), dry_run=dry_run)
 
 
 @router.post("/{memory_id}/graph/link")
-async def graph_link(memory_id: UUID, payload: dict):
+async def graph_link(memory_id: UUID, payload: dict, request: Request):
     """Create or merge an edge between two entities.
 
     Body: {"source": {"type", "name", "properties"?},
@@ -694,8 +743,10 @@ async def graph_link(memory_id: UUID, payload: dict):
            "relation": str, "edge_properties"?: {}, "weight"?: float}
     """
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.graph import GraphStore
     src = payload.get("source") or {}
     tgt = payload.get("target") or {}
@@ -720,7 +771,7 @@ async def graph_link(memory_id: UUID, payload: dict):
 
 
 @router.post("/{memory_id}/graph/merge-slots")
-async def graph_merge_slots(memory_id: UUID):
+async def graph_merge_slots(memory_id: UUID, request: Request):
     """Merge generic `slot`-typed mirror nodes into same-name typed entity nodes.
 
     Cleans up the duplication produced when a slot mirror and an extraction
@@ -728,14 +779,16 @@ async def graph_merge_slots(memory_id: UUID):
     Edges are re-pointed and properties combined.
     """
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.graph import merge_slot_duplicates
     return merge_slot_duplicates(str(memory_id))
 
 
 @router.post("/{memory_id}/graph/merge-nodes")
-async def graph_merge_nodes(memory_id: UUID, payload: dict):
+async def graph_merge_nodes(memory_id: UUID, payload: dict, request: Request):
     """Merge one node into another (for semantic duplicates the automatic
     slot-merge can't match by name, e.g. 'team_member_bob' vs 'bob').
 
@@ -744,8 +797,10 @@ async def graph_merge_nodes(memory_id: UUID, payload: dict):
     dropped node removed.
     """
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     keep_id, drop_id = payload.get("keep_id"), payload.get("drop_id")
     if not keep_id or not drop_id:
         raise HTTPException(status_code=400, detail="keep_id and drop_id are required")
@@ -759,10 +814,12 @@ async def graph_merge_nodes(memory_id: UUID, payload: dict):
 
 
 @router.delete("/{memory_id}/graph/nodes/{node_id}")
-async def delete_graph_node(memory_id: UUID, node_id: UUID):
+async def delete_graph_node(memory_id: UUID, node_id: UUID, request: Request):
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.graph import GraphStore
     if not GraphStore(str(memory_id)).delete_node(node_id):
         raise HTTPException(status_code=404, detail="Node not found")
@@ -770,10 +827,12 @@ async def delete_graph_node(memory_id: UUID, node_id: UUID):
 
 
 @router.delete("/{memory_id}/graph/edges/{edge_id}")
-async def delete_graph_edge(memory_id: UUID, edge_id: UUID):
+async def delete_graph_edge(memory_id: UUID, edge_id: UUID, request: Request):
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     from memory.graph import GraphStore
     if not GraphStore(str(memory_id)).delete_edge(edge_id):
         raise HTTPException(status_code=404, detail="Edge not found")
@@ -781,14 +840,16 @@ async def delete_graph_edge(memory_id: UUID, edge_id: UUID):
 
 
 @router.post("/{memory_id}/graph/extract")
-async def graph_extract(memory_id: UUID, payload: dict):
+async def graph_extract(memory_id: UUID, payload: dict, request: Request):
     """Run LLM-based extraction over a chunk of text and persist the triples.
 
     Body: {"text": str}. Synchronous; returns counts.
     """
     store = MemoryStore()
-    if not store.get(memory_id):
+    mem = store.get(memory_id)
+    if not mem:
         raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
     text = (payload or {}).get("text") or ""
     if not isinstance(text, str) or not text.strip():
         raise HTTPException(status_code=400, detail="text is required")
