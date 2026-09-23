@@ -54,7 +54,7 @@ def reset_emitter(token) -> None:
     """Restore the previous emitter using a token from :func:`set_emitter`."""
     try:
         _stream_emitter.reset(token)
-    except Exception:
+    except (ValueError, RuntimeError):
         pass
 
 
@@ -91,11 +91,11 @@ def reset_scope(tokens: ScopeTokens) -> None:
     dtok, rtok, _ = tokens
     try:
         _delegation_depth.reset(dtok)
-    except Exception:
+    except (ValueError, RuntimeError):
         pass
     try:
         _delegation_run_id.reset(rtok)
-    except Exception:
+    except (ValueError, RuntimeError):
         pass
 
 

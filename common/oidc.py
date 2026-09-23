@@ -38,12 +38,15 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
+
+log = logging.getLogger(__name__)
 
 #: Name of the round-trip cookie, scoped to the two OIDC routes.
 STATE_COOKIE = "ah_oidc"
@@ -135,7 +138,7 @@ def _http_post_form(url: str, data: Dict[str, str],
         # The provider explains a refused exchange in the body; keep it.
         try:
             return json.loads(exc.read().decode("utf-8"))
-        except Exception:
+        except ValueError:
             return {"error": f"http_{exc.code}"}
 
 
@@ -248,13 +251,13 @@ def read_state(value: Optional[str]) -> Dict[str, Any]:
     expected = hmac.new(_signing_key(), body.encode("ascii"), hashlib.sha256).digest()
     try:
         presented = _unb64(mac)
-    except Exception:
+    except ValueError:
         raise OidcError("bad_state", "malformed state cookie")
     if not hmac.compare_digest(expected, presented):
         raise OidcError("bad_state", "state cookie signature mismatch")
     try:
         payload = json.loads(_unb64(body).decode("utf-8"))
-    except Exception:
+    except ValueError:
         raise OidcError("bad_state", "malformed state cookie")
     if float(payload.get("exp", 0)) < time.time():
         raise OidcError("bad_state", "the sign-in took too long")
@@ -316,7 +319,8 @@ def exchange_code(request, code: str, verifier: str) -> Dict[str, Any]:
                 pair.encode("utf-8")).decode("ascii")
     try:
         tokens = _http_post_form(doc["token_endpoint"], data, headers)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the provider's HTTP/network failure modes vary; converted to OidcError below
+        log.debug("token endpoint exchange failed", exc_info=True)
         raise OidcError("exchange_failed", f"token endpoint unreachable: {exc}")
     if not isinstance(tokens, dict) or tokens.get("error") or not tokens.get("id_token"):
         detail = (tokens or {}).get("error_description") or (tokens or {}).get("error")

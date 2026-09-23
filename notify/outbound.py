@@ -84,14 +84,14 @@ def _worker_loop() -> None:
             # Nothing woke us: look for rows whose retry time has come.
             try:
                 drain()
-            except Exception:
+            except Exception:  # noqa: BLE001 - background loop, must keep running
                 log.debug("notify.outbound: periodic drain failed", exc_info=True)
             continue
         try:
             if item is _SHUTDOWN:
                 return
             drain()
-        except Exception:
+        except Exception:  # noqa: BLE001 - background loop, must keep running
             log.debug("notify.outbound: drain failed", exc_info=True)
         finally:
             _queue.task_done()
@@ -101,7 +101,7 @@ def dispatch(endpoint: Dict[str, Any], event: Dict[str, Any]) -> None:
     """Record one delivery and return immediately; the drainer does the work."""
     try:
         enqueue(endpoint, event)
-    except Exception:
+    except Exception:  # noqa: BLE001 - falls back to direct delivery, must not break the caller
         # No database (a bare test harness, a CLI without state): fall back to
         # delivering from the thread directly, best-effort, as before.
         log.debug("notify.outbound: outbox write failed, delivering directly", exc_info=True)
@@ -129,7 +129,7 @@ def shutdown(timeout: float = 2.0) -> None:
     try:
         _queue.put(_SHUTDOWN)
         _queue.join()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises (see docstring)
         log.debug("notify.outbound: shutdown drain failed", exc_info=True)
 
 
@@ -244,7 +244,7 @@ def deliver(endpoint: Dict[str, Any], event: Dict[str, Any]) -> bool:
         if kind == "slack":
             return _deliver_slack(endpoint, event)
         return False
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises (see docstring)
         log.debug("notify.outbound: delivery failed for endpoint %s", endpoint.get("id"), exc_info=True)
         return False
 

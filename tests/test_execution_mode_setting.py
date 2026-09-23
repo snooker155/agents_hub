@@ -100,6 +100,13 @@ def launched(monkeypatch):
         node_manager.subprocess, "Popen",
         lambda *a, **k: calls["subprocess"].append(a) or _FakeProc(),
     )
+    # get_node()/_sync_status() probes a docker-mode node with container_running(),
+    # which shells out to `docker ps`. `subprocess.Popen` above is the same global
+    # module object container_manager's `subprocess.run` uses internally, and the
+    # bare `_FakeProc` fake is not a context manager, so without this the probe
+    # would hit a real (or broken-fake) subprocess call the fixture never intended
+    # to exercise. Pretend nothing is running, the same as a docker-less test host.
+    monkeypatch.setattr(cm, "container_running", lambda name: False)
     return calls
 
 

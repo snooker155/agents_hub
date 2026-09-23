@@ -35,12 +35,15 @@ store's own module through :meth:`import_legacy`.
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from common import db
+
+log = logging.getLogger(__name__)
 
 TABLE = "documents"
 
@@ -211,8 +214,8 @@ class DocStore:
         try:
             text = self.legacy_file.read_text(encoding="utf-8")
             data = json.loads(text) if text.strip() else None
-        except Exception as exc:
-            print(f"[docstore] {self.legacy_file.name}: unreadable, left in place ({exc})")
+        except (OSError, ValueError) as exc:
+            log.warning("docstore: %s unreadable, left in place (%s)", self.legacy_file.name, exc)
             return
         docs = self._legacy_docs(data)
         self.import_legacy(docs, self.legacy_file)
@@ -227,7 +230,8 @@ class DocStore:
                 if self.legacy_key is not None:
                     try:
                         key = self.legacy_key(rec)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - a caller-supplied key function must not break the import
+                        log.debug("docstore: legacy_key failed for a record", exc_info=True)
                         key = None
                 if key is None:
                     key = f"{i}"
@@ -244,8 +248,8 @@ class DocStore:
                                (self.name,)).fetchone()
             if int(row[0] or 0):
                 if source is not None and source.exists():
-                    print(f"[docstore] {source.name}: store '{self.name}' already has rows, "
-                          "file left in place")
+                    log.info("docstore: %s: store '%s' already has rows, file left in place",
+                             source.name, self.name)
                 return 0
             for key, doc in docs.items():
                 self._put(conn, str(key), doc)
@@ -253,9 +257,9 @@ class DocStore:
             try:
                 if source.exists():
                     source.rename(source.with_name(source.name + ".migrated"))
-            except Exception:
+            except OSError:
                 pass  # rows are in; the rename is hygiene only
             if docs:
-                print(f"[docstore] imported {len(docs)} record(s) from {source.name} "
-                      f"into '{self.name}'")
+                log.info("docstore: imported %d record(s) from %s into '%s'",
+                          len(docs), source.name, self.name)
         return len(docs)

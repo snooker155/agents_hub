@@ -10,6 +10,7 @@ Organized by domains:
 - workspaces: Workspace management
 """
 import argparse
+import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path as PathlibPath
@@ -68,6 +69,8 @@ from routes import deployment as deployment_router
 # having pinned an old value.
 from common.config import settings  # noqa: F401  (kept: imported by name elsewhere)
 
+log = logging.getLogger("dashboard.backend.main")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -90,13 +93,13 @@ async def lifespan(app: FastAPI):
     # moves the threshold they log at. The level is read for the workspace the
     # UI has selected, which is where the Settings page writes it.
     from common.logging_config import configure_logging_for_active_workspace
-    print(f"✓ Log level: {configure_logging_for_active_workspace()}")
+    log.info(f"✓ Log level: {configure_logging_for_active_workspace()}")
 
     # The orchestrator node is started on demand by the user, not at startup.
 
     from common.config import hub_role
-    print(f"✓ Role: {hub_role()}"
-          + ("  (launches go to the run queue for workers)" if hub_role() == "api" else ""))
+    log.info(f"✓ Role: {hub_role()}"
+             + ("  (launches go to the run queue for workers)" if hub_role() == "api" else ""))
 
     # The Telegram poller runs on exactly one replica: the supervisor holds
     # the ``telegram`` lease and starts the poller when it gets it, stops it
@@ -106,9 +109,9 @@ async def lifespan(app: FastAPI):
         from common.singletons import supervisor as _supervisor, telegram_service
         _supervisor.add(telegram_service())
         await _supervisor.start()
-        print("✓ Singleton supervisor started (telegram, online_evals)")
+        log.info("✓ Singleton supervisor started (telegram, online_evals)")
     except Exception as e:
-        print(f"⚠ Could not start the singleton supervisor: {e}")
+        log.warning(f"⚠ Could not start the singleton supervisor: {e}")
 
     # This replica's row on the deployment map (common/members.py): registered
     # now, refreshed from a daemon thread with what the process is carrying.
@@ -131,9 +134,9 @@ async def lifespan(app: FastAPI):
             "http": True, "execution_modes": ["local", "docker"],
         }, load_fn=_load)
         app.state.member_beat.start()
-        print("✓ Registered on the deployment map")
+        log.info("✓ Registered on the deployment map")
     except Exception as e:
-        print(f"⚠ Could not register this replica: {e}")
+        log.warning(f"⚠ Could not register this replica: {e}")
 
     # Outbound webhook deliveries left in the outbox by an earlier process go
     # out as soon as this replica holds the ``outbox`` lease.
@@ -141,24 +144,24 @@ async def lifespan(app: FastAPI):
         from notify import outbound as _notify_outbound
         _notify_outbound.start()
     except Exception as e:
-        print(f"⚠ Could not start the outbox drainer: {e}")
+        log.warning(f"⚠ Could not start the outbox drainer: {e}")
 
     # Start the plan scheduler (fires due scheduled jobs / notifications).
     try:
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.start()
-        print("✓ Plan scheduler started")
+        log.info("✓ Plan scheduler started")
     except Exception as e:
-        print(f"⚠ Could not start plan scheduler: {e}")
+        log.warning(f"⚠ Could not start plan scheduler: {e}")
 
     # Start the periodic external-state publisher (containers, node heartbeats,
     # log tails) — pushes snapshots over the single SSE stream so the UI never polls.
     try:
         from common.live_state import run_external_publisher
         app.state.external_publisher = asyncio.create_task(run_external_publisher())
-        print("✓ External-state publisher started")
+        log.info("✓ External-state publisher started")
     except Exception as e:
-        print(f"⚠ Could not start external-state publisher: {e}")
+        log.warning(f"⚠ Could not start external-state publisher: {e}")
 
     # Start the cross-replica broker bridge (common/broker_bridge.py). A no-op
     # when AGENTS_HUB_BROKER_URL is unset, which is the default and what a
@@ -167,16 +170,16 @@ async def lifespan(app: FastAPI):
         from common.broker_bridge import start_bridge
         await start_bridge()
     except Exception as e:
-        print(f"⚠ Could not start broker bridge: {e}")
+        log.warning(f"⚠ Could not start broker bridge: {e}")
 
     # Start the run watchdog (fails runs stuck in 'pending' and runs whose
     # process died, so tasks never freeze waiting on a run that cannot finish).
     try:
         from managers.run_watchdog import watchdog as _run_watchdog
         await _run_watchdog.start()
-        print("✓ Run watchdog started")
+        log.info("✓ Run watchdog started")
     except Exception as e:
-        print(f"⚠ Could not start run watchdog: {e}")
+        log.warning(f"⚠ Could not start run watchdog: {e}")
 
     yield
 

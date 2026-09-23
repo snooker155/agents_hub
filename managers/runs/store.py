@@ -14,6 +14,7 @@ which re-exports everything here.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -25,6 +26,8 @@ from common.session_broker import notify_change
 
 from .notifications import (_notify_task_run_finished, _publish_run_delta,
                             _sync_instance)
+
+log = logging.getLogger(__name__)
 
 AGENTS_HUB_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -442,9 +445,8 @@ def _export_run_finished(old: Dict[str, Any], new: Dict[str, Any]) -> None:
     try:
         from common.otel_export import export_run_finished
         export_run_finished(old, new)
-    except Exception:
-        # Export must never break run recording.
-        pass
+    except Exception:  # noqa: BLE001 - export must never break run recording
+        log.debug("_export_run_finished failed for run %s", new.get("run_id"), exc_info=True)
 
 
 def _update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -541,7 +543,7 @@ def get_run_process(run_id: str) -> Dict[str, Any]:
         try:
             legacy = json.loads(p.read_text(encoding="utf-8")) or {}
             return rp.with_legacy_aliases(rp.canonicalize(legacy))
-        except Exception:
+        except (OSError, ValueError):
             return {}
     # Imported here, not at module import time: the lifecycle module sits on
     # top of this one, so a top-level import would close the cycle.
@@ -561,8 +563,8 @@ def delete_run_process(run_id: str) -> None:
         p = RUN_PROCESS_DIR / f"{run_id}.json"
         if p.exists():
             p.unlink()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort delete (see docstring)
+        log.debug("delete_run_process failed for %s", run_id, exc_info=True)
 
 
 def seed_run_input_context(run_id: str, system_prompt: str, user_message: str) -> None:
@@ -584,8 +586,8 @@ def seed_run_input_context(run_id: str, system_prompt: str, user_message: str) -
                 },
             },
         })
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort (see docstring): a failed seed must never break the run
+        log.debug("seed_run_input_context failed for %s", run_id, exc_info=True)
 
 
 def compact_runs() -> int:

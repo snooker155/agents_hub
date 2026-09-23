@@ -104,7 +104,7 @@ def _age_seconds(iso_ts: str) -> Optional[float]:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - ts).total_seconds()
-    except Exception:
+    except ValueError:
         return None
 
 
@@ -114,7 +114,8 @@ def _task_owns_run(task_id: str, run_id: str) -> bool:
         from uuid import UUID
         task = _ts.get_task(UUID(task_id))
         return bool(task) and str(getattr(task, "assigned_agent_run_id", "") or "") == run_id
-    except Exception:
+    except Exception:  # noqa: BLE001 - a lookup failure means "not confirmed owned", the safer default
+        log.debug("_task_owns_run failed for task %s", task_id, exc_info=True)
         return False
 
 
@@ -169,7 +170,8 @@ def _try_resume_from_checkpoint(rec: Dict[str, Any]) -> bool:
     try:
         from agents.checkpoint import load_checkpoint
         checkpoint = load_checkpoint(run_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort (see docstring): a load failure just means no auto-resume
+        log.debug("load_checkpoint failed for run %s", run_id, exc_info=True)
         return False
     if not checkpoint or not checkpoint.get("steps"):
         return False
@@ -344,7 +346,8 @@ def _check_queued_run(rec: Dict[str, Any]) -> int:
     run_id = str(rec.get("run_id") or "")
     try:
         row = run_queue.get(run_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - falls back to leaving the run alone this pass
+        log.debug("run_queue.get failed for %s", run_id, exc_info=True)
         return 0
     if row is None:
         _fail_run(rec, "Run was queued for a worker but its queue entry is gone.")
@@ -377,7 +380,7 @@ def _sweep_containers() -> None:
     try:
         from managers.container_manager import refresh_registered_containers
         refresh_registered_containers()
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort sweep, must not break the rest of the watchdog tick
         log.debug("container registry sweep failed", exc_info=True)
 
 
@@ -404,7 +407,7 @@ def _sweep_flow_runs() -> int:
     """Resume flow runs whose process died with a checkpoint; fail the rest."""
     try:
         from flow import run_store
-    except Exception:
+    except ImportError:
         return 0
 
     handled = 0
@@ -460,7 +463,7 @@ def _sweep_loop_runs() -> int:
     """
     try:
         from loops import store as loop_store
-    except Exception:
+    except ImportError:
         return 0
 
     handled = 0
@@ -520,7 +523,7 @@ def _sweep_instances() -> int:
     try:
         from instances import registry as instance_registry
         from instances import store as instance_store
-    except Exception:
+    except ImportError:
         return 0
     try:
         fixed = instance_registry.reconcile()
@@ -564,8 +567,8 @@ class RunWatchdog:
             try:
                 from common import leases
                 await asyncio.to_thread(leases.release, LEASE_ROLE)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - shutdown must not raise, the lease simply lapses on its own TTL
+                log.debug("lease release failed during watchdog stop", exc_info=True)
 
     def holds_lease(self) -> bool:
         return self._leader

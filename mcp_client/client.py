@@ -90,8 +90,8 @@ def _run_async(factory, *, timeout: float):
         finally:
             try:
                 loop.run_until_complete(loop.shutdown_asyncgens())
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort cleanup, the loop is being discarded anyway
+                log.debug("shutdown_asyncgens failed", exc_info=True)
             asyncio.set_event_loop(None)
             loop.close()
 
@@ -338,7 +338,7 @@ def tools_for(workspace: Optional[str], server_id: str) -> List[Any]:
 
     try:
         tools = load_server_tools(record)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - a server that will not connect must not break the build (see docstring)
         log.warning("mcp: server %r in workspace %r did not connect: %s",
                     server_id, workspace, exc)
         store.record_status(workspace, server_id, error=str(exc) or exc.__class__.__name__)

@@ -15,6 +15,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from common.logging_config import marker_logger
 from common.paths import AGENTS_HUB_ROOT
 from common.state_transport import get_state_transport
 from managers.run_manager import _utc_now_iso
@@ -22,6 +23,13 @@ from agents.agent_lifecycle import run_agent_lifecycle
 from agents.callbacks import SessionPublishCallback as _SessionPublishCallback
 from common.utils import Tee as _Tee  # Tee re-exported for back-compat (was defined here)
 from tasks.context import build_task_instruction
+
+# The marker lines below (``[heartbeat]``, ``[resume]``, ``Running agent with
+# instruction:``, ``Agent output:``, ...) are what agents.agent_launcher pipes
+# into the run's log file and what dashboard/backend/routes/sessions.py and
+# several tests grep back out of it, so they go through a logger configured to
+# emit the message only, on stdout, at INFO regardless of ORCH_LOG_LEVEL.
+log = marker_logger(__name__)
 
 
 def _setup_cli_log(run_id: str, workspace: str) -> str:
@@ -98,7 +106,7 @@ class _Heartbeat(threading.Thread):
                 continue
             self.beats += 1
             if status == "stop":
-                print(f"[heartbeat] stop requested for run {self.run_id}; terminating", flush=True)
+                log.info(f"[heartbeat] stop requested for run {self.run_id}; terminating")
                 try:
                     os.kill(os.getpid(), signal.SIGTERM)
                 except Exception:
@@ -262,7 +270,7 @@ def main():
     # (mirrors the get_agent guard in runtime/agent_launcher.start_run).
     from agents.registry import get_agent
     if not get_agent(agent_id):
-        print(f"Unknown agent_id: {agent_id}", file=sys.stderr)
+        log.error(f"Unknown agent_id: {agent_id}")
         sys.exit(1)
 
     # When invoked via CLI without a --run-id, generate one so the run is
@@ -309,13 +317,13 @@ def main():
             _prior_steps = _ckpt.resume_steps(_cp)
             if not instruction:
                 instruction = str(_cp.get("instruction") or "")
-            print(f"[resume] continuing run {run_id} from step {_cp.get('step')} "
-                  f"({len(_prior_steps)} tool call(s) replayed)")
+            log.info(f"[resume] continuing run {run_id} from step {_cp.get('step')} "
+                     f"({len(_prior_steps)} tool call(s) replayed)")
             instruction = _ckpt.resume_instruction(_cp)
         else:
-            print(f"[resume] no checkpoint for run {args.resume_checkpoint}; starting over")
+            log.info(f"[resume] no checkpoint for run {args.resume_checkpoint}; starting over")
 
-    print(f"Running agent with instruction: {instruction}")
+    log.info(f"Running agent with instruction: {instruction}")
 
     # Model config (provider/model/keys/temperature/...) is resolved entirely by
     # create_agent via its cascade (agent definition → workspace override →
@@ -342,7 +350,7 @@ def main():
     ))
 
     def _after_build(agent) -> None:
-        print(
+        log.info(
             f"[agent_init] agent={agent_id}"
             f" provider={agent.provider or 'unknown'}"
             f" model={agent.model or 'unknown'}"
@@ -368,7 +376,7 @@ def main():
     def _emit_summary_and_finalize(result, invocation) -> None:
         callback = invocation.stats
         duration_ms = invocation.duration_ms
-        print(
+        log.info(
             f"[message_summary] "
             f"inbound_tokens={callback.prompt_tokens} "
             f"outbound_tokens={callback.completion_tokens} "
@@ -397,7 +405,7 @@ def main():
 
     def _on_build_error(error_msg: str):
         # create_agent failed before any run — finalize the record and bail.
-        print(f"Unhandled error in run_agent: {error_msg}", file=sys.stderr)
+        log.error(f"Unhandled error in run_agent: {error_msg}")
         if run_id:
             class _FailedResult:
                 ok = False
@@ -408,13 +416,13 @@ def main():
 
     def _on_success(result, invocation):
         _emit_summary_and_finalize(result, invocation)
-        print("Agent output:")
-        print(result.agent_output)
+        log.info("Agent output:")
+        log.info(result.agent_output)
         sys.exit(0)
 
     def _on_failure(error_msg, invocation):
         _emit_summary_and_finalize(invocation.result, invocation)
-        print(f"Agent failed: {error_msg}")
+        log.info(f"Agent failed: {error_msg}")
         sys.exit(1)
 
     resume = None

@@ -68,6 +68,7 @@ re-fetching everything.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import threading
 import time
@@ -75,6 +76,8 @@ import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Callable, Deque, Dict, List, Optional, Set, Tuple
+
+log = logging.getLogger(__name__)
 
 #: Default per-client queue depth; override with AGENTS_HUB_SSE_QUEUE_MAX.
 DEFAULT_SSE_QUEUE_MAX = 1000
@@ -232,10 +235,11 @@ class SessionBroker:
         if event_id is None and not skip_sinks and self._id_provider is not None:
             try:
                 event_id = await self._id_provider(channel, tagged)
-            except Exception:
+            except Exception:  # noqa: BLE001 - the id provider's failure must never break delivery
                 # The id provider's own failure (Redis briefly down, a
                 # timeout) must never break delivery to this replica's own
                 # clients — it just falls back to this client's own counter.
+                log.debug("id provider failed for channel %s", channel, exc_info=True)
                 event_id = None
         for state in list(self._queues.get(channel, [])):
             self._deliver(state, tagged, event_id=event_id)
@@ -555,8 +559,8 @@ def _relay_notify(resource: str, meta: dict, *, delta: bool = False,
                 headers=auth_headers(),
                 timeout=1.0,
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort same-machine relay, must not break the caller
+            log.debug("relay notify failed for %s", resource, exc_info=True)
 
     with _relay_lock:
         existing = _relay_timers.get(key)

@@ -75,12 +75,12 @@ class SingletonSupervisor:
             try:
                 if svc.is_running():
                     await svc.stop()
-            except Exception:
+            except Exception:  # noqa: BLE001 - shutdown must not break, other services still need to stop
                 log.debug("stopping %s failed", svc.role, exc_info=True)
             try:
                 await asyncio.to_thread(leases.release, svc.role)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - shutdown must not break, other services still need to stop
+                log.debug("releasing lease %s failed", svc.role, exc_info=True)
 
     async def tick(self) -> None:
         """One pass over every service: hold what is wanted, drop what is not."""
@@ -90,7 +90,8 @@ class SingletonSupervisor:
         for svc in self.services:
             try:
                 wanted = bool(svc.wanted())
-            except Exception:
+            except Exception:  # noqa: BLE001 - a caller-supplied check must not break the supervisor tick
+                log.debug("wanted() check failed for %s", svc.role, exc_info=True)
                 wanted = False
             running = bool(svc.is_running())
             if not wanted:

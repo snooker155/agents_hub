@@ -81,7 +81,7 @@ def app_version() -> str:
                 ["git", "rev-parse", "--short", "HEAD"], cwd=str(PROJECT_ROOT),
                 capture_output=True, text=True, timeout=5)
             version = out.stdout.strip() if out.returncode == 0 else ""
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             version = ""
     _version_cache = version or "unknown"
     return _version_cache
@@ -142,7 +142,7 @@ def mark_stopped(member_id: Optional[str] = None) -> None:
         with db.transaction() as conn:
             conn.execute("UPDATE members SET stopped_at = ? WHERE member_id = ?",
                          (_now().isoformat(), member_id))
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort at shutdown, must not raise
         log.debug("could not mark member %s stopped", member_id, exc_info=True)
 
 
@@ -220,7 +220,7 @@ def attach_log_file(member_id: Optional[str] = None) -> Optional[Path]:
         _log_state["handler"] = handler
         _log_state["mirrored_size"] = 0
         return path
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises (see docstring)
         log.debug("could not attach the member log file", exc_info=True)
         return None
 
@@ -231,8 +231,8 @@ def detach_log_file() -> None:
         try:
             logging.getLogger().removeHandler(handler)
             handler.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort at shutdown, must not raise
+            log.debug("could not detach the member log file", exc_info=True)
     _log_state.pop("path", None)
 
 
@@ -253,7 +253,8 @@ def mirror_log(*, force: bool = False) -> bool:
         if ok:
             _log_state["mirrored_size"] = size
         return ok
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort mirror, must not block the beat loop
+        log.debug("log mirror failed", exc_info=True)
         return False
 
 
@@ -269,13 +270,15 @@ def read_log(member_id: str, tail: int = 500) -> Optional[str]:
     if path.exists():
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except OSError:
             text = None
     if text is None:
         try:
             from common import blobs
             text = blobs.read_text(blobs.rel(path))
-        except Exception:
+        except ValueError:
+            # blobs.rel() rejects a path outside AGENTS_HUB_ROOT; blobs.read_text
+            # itself never raises (common/blobs.py's own contract).
             text = None
     if text is None:
         return None
@@ -310,7 +313,8 @@ class MemberBeat(threading.Thread):
             return {}
         try:
             return dict(self.load_fn() or {})
-        except Exception:
+        except Exception:  # noqa: BLE001 - a caller-supplied callback must not break the beat loop
+            log.debug("load_fn failed", exc_info=True)
             return {}
 
     def start(self) -> None:  # type: ignore[override]
@@ -318,7 +322,7 @@ class MemberBeat(threading.Thread):
         try:
             register(self.role, capabilities=self.capabilities, load=self._load())
             self.registered = True
-        except Exception:
+        except Exception:  # noqa: BLE001 - startup must not raise, the next beat retries
             log.warning("member registration failed; will retry on the next beat", exc_info=True)
         super().start()
 
@@ -328,7 +332,7 @@ class MemberBeat(threading.Thread):
                 if not beat(self._load()):
                     register(self.role, capabilities=self.capabilities, load=self._load())
                 self.beats += 1
-            except Exception:
+            except Exception:  # noqa: BLE001 - background loop, must keep running until stop()
                 log.debug("member beat failed", exc_info=True)
             # The log mirror rides on the beat: once a minute is plenty.
             if self.beats % max(1, int(60 / max(self.interval, 1))) == 0:

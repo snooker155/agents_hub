@@ -28,6 +28,7 @@ get_connections(node_id)               -> List[dict]
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import secrets
@@ -44,6 +45,8 @@ from common import db
 from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from common.session_broker import notify_change
+
+log = logging.getLogger(__name__)
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 AGENTS_HUB_ROOT.mkdir(parents=True, exist_ok=True)
@@ -69,15 +72,15 @@ def _log_now() -> str:
 def _append_node_log(node: Dict[str, Any], message: str) -> None:
     log_file = node.get("log_file")
     if not log_file:
-        print(f"Warning: no log file for node {node.get('node_id')}, skipping log append")
+        log.warning("no log file for node %s, skipping log append", node.get("node_id"))
         return
     try:
         p = Path(log_file)
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as fh:
             fh.write(f"[{_log_now()}] {message}\n")
-    except Exception:
-        pass
+    except OSError:
+        log.debug("node log append failed for %s", node.get("node_id"), exc_info=True)
 
 
 def _load_nodes(timeout: float = 10.0) -> List[Dict[str, Any]]:
@@ -142,8 +145,8 @@ def _sync_node_instance(node: Dict[str, Any], next_status: str) -> None:
         else:
             instance_registry.ensure_instance(
                 str(node.get("agent_id") or ""), instance_id=iid, state=state)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort registry sync, must not break the node status update
+        log.debug("instance registry sync failed for node %s", node.get("node_id"), exc_info=True)
 
 
 def update_node(node_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -185,7 +188,7 @@ def _pid_exists(pid: int) -> bool:
         os.kill(pid, 0)
     except OSError:
         return False
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unexpected error is treated as "still alive", the safer false-negative
         return True
     return True
 
@@ -216,7 +219,8 @@ def _fail_in_progress_sessions(node_id: str, reason: str = "Running node was sto
     try:
         from . import run_manager
         return run_manager.fail_in_progress_runs_for_node(node_id, reason)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort cleanup, must not break the node status sync
+        log.debug("fail_in_progress_runs_for_node failed for %s", node_id, exc_info=True)
         return 0
 
 
@@ -244,7 +248,8 @@ def get_running_sessions_for_node(node_id: str) -> List[Dict[str, Any]]:
     try:
         from . import run_manager
         runs = run_manager.get_in_progress_runs_for_node(node_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - falls back to no in-progress sessions rather than breaking the caller
+        log.debug("get_in_progress_runs_for_node failed for %s", node_id, exc_info=True)
         runs = []
     runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return runs
@@ -271,7 +276,8 @@ def start_node(
         try:
             from workspace import create_workspace_folder
             abs_workspace = str(create_workspace_folder(workspace))
-        except Exception:
+        except Exception:  # noqa: BLE001 - falls back to the node running without a resolved workspace path
+            log.debug("create_workspace_folder failed for %s", workspace, exc_info=True)
             abs_workspace = None
 
     # Node type drives the process mode; caller override takes precedence over spec
@@ -310,8 +316,8 @@ def start_node(
         try:
             from workspace import get_workspace_metadata
             _ws_agent_mode = (get_workspace_metadata(workspace).get("settings") or {}).get("agent_mode") or None
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - an unreadable workspace override falls back to the process-wide default
+            log.debug("workspace agent_mode lookup failed for %s", workspace, exc_info=True)
     execution_mode = _ws_agent_mode or agent_execution_mode()
     container_name: Optional[str] = None
     pid: Optional[int] = None
@@ -394,8 +400,8 @@ def start_node(
             label=label or agent_id,
             state="starting",
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort registry sync, must not break starting the node
+        log.debug("instance registry sync failed for node %s", node_id, exc_info=True)
     pid_info = str(pid) if pid is not None else container_name or "—"
     _append_node_log(
         node_rec,
@@ -447,7 +453,7 @@ def stop_node(node_id: str) -> bool:
         try:
             os.kill(pid, signal.SIGTERM)
             sent = True
-        except Exception:
+        except OSError:
             try:
                 import ctypes
                 PROCESS_TERMINATE = 0x0001
@@ -456,17 +462,17 @@ def stop_node(node_id: str) -> bool:
                     ctypes.windll.kernel32.TerminateProcess(handle, 1)
                     ctypes.windll.kernel32.CloseHandle(handle)
                     sent = True
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - last-resort kill; the caller reports "failed to send stop signal" either way
+                log.debug("ctypes TerminateProcess fallback failed for pid %s", pid, exc_info=True)
     else:
         try:
             os.killpg(pid, signal.SIGTERM)
             sent = True
-        except Exception:
+        except OSError:
             try:
                 os.kill(pid, signal.SIGTERM)
                 sent = True
-            except Exception:
+            except OSError:
                 pass
 
     if sent:
@@ -523,7 +529,7 @@ def delete_node(node_id: str) -> bool:
         if log_file:
             try:
                 Path(log_file).unlink(missing_ok=True)
-            except Exception:
+            except OSError:
                 pass
         return True
     return False
@@ -610,7 +616,7 @@ def _import_legacy_connections(node_id: str) -> None:
         return
     try:
         records = json.loads(cf.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return
     if not isinstance(records, list):
         return
@@ -619,7 +625,7 @@ def _import_legacy_connections(node_id: str) -> None:
             _node_connections.put(node_id, records)
     try:
         cf.rename(cf.with_name(cf.name + ".migrated"))
-    except Exception:
+    except OSError:
         pass  # rows are in; the rename is hygiene only
 
 

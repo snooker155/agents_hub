@@ -29,6 +29,7 @@ usual direction swapped.
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +37,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from common import db
 from common import migrations
+
+log = logging.getLogger(__name__)
 
 # Rows per INSERT batch. The whole copy is one transaction on the target
 # anyway; this only bounds memory per statement.
@@ -247,13 +250,13 @@ def transfer(target: str, *, source: Optional[str] = None, force: bool = False,
     finally:
         try:
             tconn.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort close, connection is being discarded anyway
+            log.debug("target connection close failed", exc_info=True)
         if not own_source:
             try:
                 src_conn.close()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort close, connection is being discarded anyway
+                log.debug("source connection close failed", exc_info=True)
 
     return {"target": describe(target), "dialect": tgt_dialect,
             "applied": applied, "tables": report}
@@ -267,7 +270,8 @@ def status() -> Dict[str, Any]:
     for table in _table_names(conn, d):
         try:
             counts[table] = _count(conn, table)
-        except Exception:
+        except Exception:  # noqa: BLE001 - one table's count failing must not break the whole status report
+            log.debug("row count failed for table %s", table, exc_info=True)
             counts[table] = -1
     row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
     return {

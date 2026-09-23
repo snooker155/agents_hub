@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Iterable, List, Optional, TypeVar
 
 from workspace import get_workspace_metadata
+
+log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -52,7 +55,7 @@ def workspace_name_from_path(value: Optional[str]) -> Optional[str]:
             rel = p.resolve().relative_to(Path(WORKSPACES_ROOT).resolve())
             if rel.parts:
                 return rel.parts[0]
-        except Exception:
+        except ValueError:
             pass
     return p.name
 
@@ -72,8 +75,8 @@ def resolve_active_workspace(preferred: Optional[str] = None) -> Optional[str]:
         stored = get_active_workspace()
         if stored:
             return normalize_workspace_name(stored)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the UI-stored fallback must not break workspace resolution
+        log.debug("could not read the UI-stored active workspace", exc_info=True)
     return None
 
 

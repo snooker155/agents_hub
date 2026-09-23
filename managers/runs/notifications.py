@@ -14,10 +14,13 @@ the package's import order, so the store can depend on it without a cycle.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from common import db
 from common.session_broker import notify_change, notify_delta
+
+log = logging.getLogger(__name__)
 
 
 # -------------------- Instance bookkeeping --------------------
@@ -64,9 +67,8 @@ def _sync_instance(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> None:
             ireg.mark_failed(instance_id, str(new.get("error") or "run failed"))
         else:
             ireg.mark_finished(instance_id, "run finished")
-    except Exception:
-        # Instance bookkeeping must never break run recording.
-        pass
+    except Exception:  # noqa: BLE001 - instance bookkeeping must never break run recording
+        log.debug("instance sync failed for %s", instance_id, exc_info=True)
 
 
 _NOTIFY_TERMINAL_STATUSES = {"completed", "failed"}
@@ -124,9 +126,8 @@ def _notify_task_run_finished(old: Dict[str, Any], new: Dict[str, Any]) -> None:
             source={"task_id": str(task_id), "run_id": str(new.get("run_id") or "")},
             workspace=getattr(task, "workspace", None),
         )
-    except Exception:
-        # Notification delivery must never break run bookkeeping.
-        pass
+    except Exception:  # noqa: BLE001 - notification delivery must never break run bookkeeping
+        log.debug("_notify_task_run_finished failed for task %s", new.get("task_id"), exc_info=True)
 
 
 def _task_already_announced(task_id: str, run_id: str) -> bool:
@@ -146,8 +147,8 @@ def _task_already_announced(task_id: str, run_id: str) -> bool:
             (str(task_id), str(run_id), _ROUTING_AGENT_ID),
         ).fetchone()
         return row is not None
-    except Exception:
-        # Can't tell — stay quiet rather than risk another duplicate.
+    except Exception:  # noqa: BLE001 - can't tell, stay quiet rather than risk another duplicate
+        log.debug("_task_already_announced failed for task %s", task_id, exc_info=True)
         return True
 
 
@@ -185,9 +186,8 @@ def _notify_task_run_started(record: Dict[str, Any]) -> None:
             source={"task_id": str(task_id), "run_id": str(record.get("run_id") or "")},
             workspace=getattr(task, "workspace", None),
         )
-    except Exception:
-        # Notification delivery must never break run bookkeeping.
-        pass
+    except Exception:  # noqa: BLE001 - notification delivery must never break run bookkeeping
+        log.debug("_notify_task_run_started failed for task %s", record.get("task_id"), exc_info=True)
 
 
 # Fields a list row needs to repaint itself. A run update publishes these as a

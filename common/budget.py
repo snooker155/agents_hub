@@ -18,10 +18,13 @@ catalog pricing (``common.pricing``); it is the same number the Costs page shows
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from common.pricing import EVALUATION_CHANNELS
+
+log = logging.getLogger(__name__)
 
 VALID_PERIODS = ("total", "daily", "monthly")
 
@@ -86,7 +89,8 @@ def get_budget(workspace: str) -> Dict[str, Any]:
 
         meta = get_workspace_metadata(workspace) or {}
         return normalize_budget(meta.get("budget"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - fails open to the disabled default (see docstring)
+        log.debug("get_budget failed for %s", workspace, exc_info=True)
         return dict(_DEFAULT_BUDGET)
 
 
@@ -125,7 +129,8 @@ def workspace_period_spend(workspace: str, period: str) -> float:
                     continue
             total += run_cost_usd(r, prices)
         return round(total, 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - fails open to 0.0 (see docstring)
+        log.debug("workspace_period_spend failed for %s", workspace, exc_info=True)
         return 0.0
 
 
@@ -160,7 +165,8 @@ def check_budget(workspace: Optional[str]) -> None:
         if not hard:
             return
         spend = workspace_period_spend(workspace, cfg["period"])
-    except Exception:
+    except Exception:  # noqa: BLE001 - fails open (see docstring): only a confident over-cap reading blocks the run
+        log.debug("check_budget failed for %s", workspace, exc_info=True)
         return
     if spend >= hard:
         raise BudgetExceededError(workspace, spend, hard, cfg["period"])

@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -65,6 +66,8 @@ from contextlib import contextmanager
 from typing import Any, Iterable, Iterator, List, Optional, Sequence
 
 from common.paths import AGENTS_HUB_ROOT, DB_FILE
+
+log = logging.getLogger(__name__)
 
 DATABASE_URL_ENV = "AGENTS_HUB_DATABASE_URL"
 POOL_SIZE_ENV = "AGENTS_HUB_DB_POOL_SIZE"
@@ -104,7 +107,7 @@ def database_url() -> str:
     try:
         from common.config import settings
         return (getattr(settings, "database_url", "") or "").strip()
-    except Exception:
+    except ImportError:
         return ""
 
 
@@ -134,7 +137,7 @@ def pool_size() -> int:
         try:
             from common.config import settings
             raw = str(getattr(settings, "db_pool_size", "") or "")
-        except Exception:
+        except ImportError:
             raw = ""
     try:
         return max(1, int(raw)) if raw else 10
@@ -321,8 +324,8 @@ class PgConnection:
         except Exception:
             try:
                 raw.execute("ROLLBACK")
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort rollback on an already-failed BEGIN, original error is re-raised below
+                log.debug("rollback after failed BEGIN also failed", exc_info=True)
             self._release(raw)
             raise
         self._pinned = raw
@@ -388,8 +391,8 @@ class PgConnection:
         if self._raw is not None:
             try:
                 self._raw.close()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort close, connection is being discarded anyway
+                log.debug("connection close failed", exc_info=True)
 
 
 class _NoCursor:
@@ -552,17 +555,17 @@ def _ensure_ready(conn: Any) -> None:
             _commit(conn)
 
         if applied:
-            print(f"[db] applied schema migration(s) {applied} ({dialect()})")
+            log.info("applied schema migration(s) %s (%s)", applied, dialect())
 
         if migrated is not None:
             db_migrate.rename_migrated_sources()
             if any(migrated.values()):
-                print(f"[db] migrated legacy JSON state into the database: {migrated}")
+                log.info("migrated legacy JSON state into the database: %s", migrated)
 
         if flow_runs_migrated is not None:
             db_migrate.rename_flow_runs_source()
             if flow_runs_migrated:
-                print(f"[db] migrated {flow_runs_migrated} flow run(s) into the database")
+                log.info("migrated %s flow run(s) into the database", flow_runs_migrated)
 
         _schema_ready = True
         _generation += 1
@@ -622,14 +625,14 @@ def reset_connections() -> None:
     if conn is not None:
         try:
             conn.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort close, connection is being discarded anyway
+            log.debug("connection close failed during reset", exc_info=True)
     pool, _pool = _pool, None
     if pool is not None:
         try:
             pool.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort close, pool is being discarded anyway
+            log.debug("pool close failed during reset", exc_info=True)
     _local = threading.local()
     _schema_ready = False
     _dialect = None
@@ -642,8 +645,8 @@ def close_pool() -> None:
     if pool is not None:
         try:
             pool.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort close at shutdown, must not block exit
+            log.debug("pool close failed at shutdown", exc_info=True)
 
 
 def truncate_all_tables(conn: Optional[Any] = None) -> List[str]:
@@ -752,5 +755,5 @@ def loads(text: Optional[str], default: Any = None) -> Any:
         return text
     try:
         return json.loads(text)
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return default

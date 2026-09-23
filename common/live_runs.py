@@ -52,9 +52,12 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional, Set
+
+log = logging.getLogger(__name__)
 
 #: Streamed answer text kept per run. A live tail, not the archive — the run log
 #: holds the whole thing.
@@ -339,7 +342,8 @@ def _mirror_write(turn: Optional[Dict[str, Any]], *, force: bool = False) -> Non
     try:
         from common.broker_bridge import get_redis
         redis_conn = get_redis()
-    except Exception:
+    except Exception:  # noqa: BLE001 - mirroring is best-effort, must not break the write path
+        log.debug("mirror: could not get a redis connection", exc_info=True)
         return
     if redis_conn is None:
         return
@@ -357,8 +361,8 @@ def _mirror_write(turn: Optional[Dict[str, Any]], *, force: bool = False) -> Non
     async def _write() -> None:
         try:
             await redis_conn.set(key, payload, ex=ttl)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - mirroring is best-effort, must not break the write path
+            log.debug("mirror write failed for %s", key, exc_info=True)
 
     _schedule(_write())
 
@@ -391,13 +395,15 @@ async def by_run_async(run_id: str) -> Optional[Dict[str, Any]]:
     try:
         from common.broker_bridge import get_redis
         redis_conn = get_redis()
-    except Exception:
+    except Exception:  # noqa: BLE001 - cross-replica fallback is best-effort, must not break the read path
+        log.debug("by_run_async: could not get a redis connection", exc_info=True)
         return None
     if redis_conn is None:
         return None
     try:
         raw = await redis_conn.get(_mirror_key(str(run_id)))
-    except Exception:
+    except Exception:  # noqa: BLE001 - cross-replica fallback is best-effort, must not break the read path
+        log.debug("mirror read failed for %s", run_id, exc_info=True)
         return None
     if not raw:
         return None

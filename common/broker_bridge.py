@@ -244,7 +244,7 @@ class BrokerBridge:
         try:
             self._redis = redis_module.from_url(self.url)
             await self._redis.ping()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the caller must keep running either way (see docstring)
             log.error(
                 "AGENTS_HUB_BROKER_URL=%s is set but the initial Redis connection failed (%s); "
                 "running with the cross-replica broker bridge OFF.", self.url, e,
@@ -268,14 +268,14 @@ class BrokerBridge:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown must not raise (see docstring)
+                log.debug("broker_bridge: subscribe task raised on cancel", exc_info=True)
             self._task = None
         if self._redis is not None:
             try:
                 await self._redis.aclose()
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - shutdown must not raise (see docstring)
+                log.debug("broker_bridge: redis close failed", exc_info=True)
             self._redis = None
 
     # ── outbound: local publish -> Redis, id comes back before delivery ────
@@ -302,7 +302,7 @@ class BrokerBridge:
                 self._redis.xadd(STREAM_KEY, fields, maxlen=_stream_maxlen(), approximate=True),
                 timeout=_PUBLISH_TIMEOUT,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - a Redis hiccup must never delay or drop a local event (see docstring)
             log.debug("broker_bridge: outbound publish failed", exc_info=True)
             return None
         return _to_str(entry_id)
@@ -336,7 +336,7 @@ class BrokerBridge:
                         await self._handle_inbound(entry_id, fields)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001 - background loop, must keep retrying with backoff
                 if self._stopping:
                     return
                 log.warning(
@@ -347,8 +347,8 @@ class BrokerBridge:
                 # The old connection may be wedged; a fresh one is cheap.
                 try:
                     self._redis = self._redis_module.from_url(self.url)
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - reconnect attempt, next loop iteration retries anyway
+                    log.debug("broker_bridge: reconnect attempt failed", exc_info=True)
 
     async def _handle_inbound(self, entry_id: Any, fields: dict) -> None:
         try:
@@ -400,7 +400,7 @@ class BrokerBridge:
         wanted = set(channels)
         try:
             head = await self._redis.xrange(STREAM_KEY, min="-", max="+", count=1)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a Redis hiccup must fall back to a full refetch, not raise
             log.debug("broker_bridge: replay could not read the stream head", exc_info=True)
             return None
         if not head:
@@ -410,7 +410,7 @@ class BrokerBridge:
             return None
         try:
             entries = await self._redis.xrange(STREAM_KEY, min=f"({since_id}", max="+", count=limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a Redis hiccup must fall back to a full refetch, not raise
             log.debug("broker_bridge: replay could not read entries", exc_info=True)
             return None
         replayed: List[dict] = []

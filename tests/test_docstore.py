@@ -100,13 +100,14 @@ def test_a_legacy_dict_file_is_keyed_by_its_own_keys(tmp_path):
     assert (tmp_path / "map.json.migrated").exists()
 
 
-def test_an_unreadable_legacy_file_is_left_in_place(tmp_path, capsys):
+def test_an_unreadable_legacy_file_is_left_in_place(tmp_path, caplog):
     path = tmp_path / "broken.json"
     path.write_text("{not json", encoding="utf-8")
-    s = DocStore("t_legacy_broken", legacy_file=path)
-    assert s.count() == 0
+    with caplog.at_level("WARNING", logger="common.docstore"):
+        s = DocStore("t_legacy_broken", legacy_file=path)
+        assert s.count() == 0
     assert path.exists()
-    assert "unreadable" in capsys.readouterr().out
+    assert "unreadable" in caplog.text
 
 
 def test_import_legacy_by_hand_loads_an_empty_store_only(tmp_path):

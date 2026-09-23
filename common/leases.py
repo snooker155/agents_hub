@@ -186,7 +186,7 @@ def hold(role: str, ttl_seconds: float = DEFAULT_TTL_SECONDS) -> bool:
     the health page (``service_leases`` shows an expired holder)."""
     try:
         return acquire(role, owner_id(), ttl_seconds)
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, module contract: a hiccup means "not held this tick"
         log.warning("could not acquire or renew lease %s", role, exc_info=True)
         return False
 

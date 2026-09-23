@@ -70,7 +70,7 @@ def _read_json(path: Path) -> Optional[Any]:
         if not text.strip():
             return []
         return json.loads(text)
-    except Exception:
+    except (OSError, ValueError):
         return ("ERROR",)
 
 
@@ -86,7 +86,7 @@ def _rename_migrated(path: Path) -> None:
     try:
         if path.exists():
             path.rename(path.with_name(path.name + ".migrated"))
-    except Exception:
+    except OSError:
         pass  # marker already prevents re-import; the rename is hygiene only
 
 

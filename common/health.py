@@ -14,11 +14,14 @@ that errors out tells an operator less than one that says which part is down.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from common import db
 from common.paths import AGENTS_HUB_ROOT, DB_FILE
+
+log = logging.getLogger(__name__)
 
 # Core stores whose row counts say how much state has accumulated.
 _COUNTED_TABLES = (
@@ -34,15 +37,16 @@ def _dir_size(path: Path) -> int:
             if f.is_file():
                 try:
                     total += f.stat().st_size
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - a health probe must never raise
+                    log.debug("stat failed for %s", f, exc_info=True)
     return total
 
 
 def _file_size(path: Path) -> int:
     try:
         return path.stat().st_size if path.exists() else 0
-    except Exception:
+    except Exception:  # noqa: BLE001 - a health probe must never raise
+        log.debug("stat failed for %s", path, exc_info=True)
         return 0
 
 
@@ -53,13 +57,15 @@ def _database() -> tuple[Dict[str, Any], bool]:
         for table in _COUNTED_TABLES:
             try:
                 counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            except Exception:
+            except Exception:  # noqa: BLE001 - a health probe must never raise
+                log.debug("row count failed for table %s", table, exc_info=True)
                 counts[table] = None
         running_runs = conn.execute(
             "SELECT COUNT(*) FROM runs WHERE status IN ('running','stop')"
         ).fetchone()[0]
         return {"reachable": True, "counts": counts, "running_runs": running_runs}, True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("database probe failed", exc_info=True)
         return {"reachable": False, "error": str(e)}, False
 
 
@@ -73,22 +79,26 @@ def _services(app_state: Any = None) -> Dict[str, Optional[bool]]:
     try:
         from plans.scheduler import scheduler
         services["plan_scheduler"] = scheduler.is_running()
-    except Exception:
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("plan_scheduler liveness check failed", exc_info=True)
         services["plan_scheduler"] = None
     try:
         from managers.run_watchdog import watchdog
         services["run_watchdog"] = watchdog.is_running()
-    except Exception:
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("run_watchdog liveness check failed", exc_info=True)
         services["run_watchdog"] = None
     try:
         from connectors.telegram.telegram_runner import service as tg
         services["telegram_poller"] = tg.is_running()
-    except Exception:
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("telegram_poller liveness check failed", exc_info=True)
         services["telegram_poller"] = None
     try:
         from common.singletons import supervisor
         services["singleton_supervisor"] = supervisor.is_running()
-    except Exception:
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("singleton_supervisor liveness check failed", exc_info=True)
         services["singleton_supervisor"] = None
     # The external-state publisher is an asyncio task on the app, so it is only
     # observable when a running app hands us its state.
@@ -105,7 +115,8 @@ def _database_bytes() -> tuple[int, int]:
             row = db.get_conn().execute(
                 "SELECT pg_database_size(current_database())").fetchone()
             return int(row[0] or 0), 0
-        except Exception:
+        except Exception:  # noqa: BLE001 - a health probe must never raise
+            log.debug("pg_database_size query failed", exc_info=True)
             return 0, 0
     return _file_size(DB_FILE), _file_size(Path(str(DB_FILE) + "-wal"))
 
@@ -142,7 +153,8 @@ def _auth_mode() -> str:
     try:
         from common.identity import current_mode
         return current_mode()
-    except Exception:
+    except Exception:  # noqa: BLE001 - a health probe must never raise
+        log.debug("auth mode lookup failed", exc_info=True)
         return "unknown"
 
 
@@ -167,7 +179,8 @@ def _blender() -> Dict[str, Any]:
             "max_daemons": int(cfg.get("max_daemons") or 0),
             "reason": state.get("reason", ""),
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("blender probe failed", exc_info=True)
         return {"available": None, "error": str(e)}
 
 
@@ -176,7 +189,8 @@ def _agent_cache() -> Dict[str, Any]:
         from common.config import settings
         from agents.agent_cache import cache_stats
         return {"enabled": bool(settings.agent_cache_enabled), **cache_stats()}
-    except Exception:
+    except Exception:  # noqa: BLE001 - a health probe must never raise
+        log.debug("agent cache stats failed", exc_info=True)
         return {"enabled": None}
 
 
@@ -191,17 +205,20 @@ def _cluster() -> Dict[str, Any]:
         out["role"] = hub_role()
         out["instance"] = leases.owner_id()
         out["leases"] = leases.all_leases()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("leases probe failed", exc_info=True)
         out["leases_error"] = str(e)
     try:
         from common import run_queue
         out["queue"] = run_queue.stats()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("queue probe failed", exc_info=True)
         out["queue_error"] = str(e)
     try:
         from notify import outbound
         out["outbox"] = outbound.stats()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("outbox probe failed", exc_info=True)
         out["outbox_error"] = str(e)
     return out
 

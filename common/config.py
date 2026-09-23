@@ -693,7 +693,7 @@ def run_state_transport() -> str:
         from common import db
         if db.is_postgres():
             return "http"
-    except Exception:
+    except (ImportError, RuntimeError):
         pass
     return settings.run_state_transport if settings.run_state_transport in ("db", "http") else "db"
 

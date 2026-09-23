@@ -24,8 +24,11 @@ reaches here) or are out of scope.
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, Optional
+
+log = logging.getLogger(__name__)
 
 
 class StateTransport:
@@ -55,8 +58,8 @@ class StateTransport:
                     },
                 },
             })
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort, a failed seed must never break the run
+            log.debug("seed_run_input_context failed for %s", run_id, exc_info=True)
 
     def close_run_from_result(self, run_id: str, result: Any, **extra: Any) -> None:
         raise NotImplementedError
@@ -130,7 +133,8 @@ class DirectStateTransport(StateTransport):
         from managers.runs.store import touch_heartbeat
         try:
             return touch_heartbeat(run_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort (see docstring): None when the call did not go through
+            log.debug("heartbeat failed for %s", run_id, exc_info=True)
             return None
 
     def save_checkpoint(self, run_id: str, checkpoint: Dict[str, Any]) -> None:
@@ -181,10 +185,11 @@ class HttpStateTransport(StateTransport):
             )
             try:
                 data = resp.json()
-            except Exception:
+            except ValueError:
                 return None
             return data if isinstance(data, dict) else None
-        except Exception:
+        except Exception:  # noqa: BLE001 - every call here is best-effort (see class docstring)
+            log.debug("state transport call failed: %s %s", method, path, exc_info=True)
             return None
 
     def open_run(self, run_id: str, agent_id: str, **kwargs: Any) -> None:
@@ -204,7 +209,8 @@ class HttpStateTransport(StateTransport):
         if resp_obj is not None:
             try:
                 response_payload = resp_obj.to_payload() if hasattr(resp_obj, "to_payload") else None
-            except Exception:
+            except Exception:  # noqa: BLE001 - best-effort derivation, a bad payload must not break closing the run
+                log.debug("response payload derivation failed for %s", run_id, exc_info=True)
                 response_payload = None
         error = getattr(result, "error", None)
         body = {

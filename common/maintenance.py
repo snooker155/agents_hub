@@ -42,7 +42,7 @@ def _due(marker: str | None) -> bool:
         if last.tzinfo is None:
             last = last.replace(tzinfo=timezone.utc)
         return (_now() - last) >= timedelta(hours=_MAINTENANCE_INTERVAL_HOURS)
-    except Exception:
+    except ValueError:
         return True
 
 
@@ -72,8 +72,8 @@ def prune_old_runs(retention_days: int) -> int:
                     # either.
                     from common import blobs
                     blobs.delete(blobs.rel(lf))
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - best-effort mirror cleanup, must not block pruning
+                    log.debug("blob cleanup failed for %s", lf, exc_info=True)
             removed += 1
     return removed
 
@@ -94,13 +94,13 @@ def prune_orphan_files() -> int:
                 try:
                     f.unlink()
                     removed += 1
-                except Exception:
-                    pass
+                except OSError:
+                    log.debug("orphan log delete failed for %s", f, exc_info=True)
                 try:
                     from common import blobs
                     blobs.delete(blobs.rel(f))
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - best-effort mirror cleanup, must not block pruning
+                    log.debug("blob cleanup failed for %s", f, exc_info=True)
 
     # Registry snapshots written for run containers (common/snapshot.py):
     # gone once their run has finished. Node snapshots (node-<id>) stay while
@@ -112,8 +112,8 @@ def prune_orphan_files() -> int:
         ).fetchall()}
         live |= {f"node-{row['node_id']}" for row in conn.execute("SELECT node_id FROM nodes").fetchall()}
         removed += snapshot.prune_snapshots(live)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - isolated cleanup pass, must not block orphan file pruning
+        log.debug("snapshot pruning failed", exc_info=True)
 
     # Legacy sidecar dir (renamed to .migrated post-migration, but a partially
     # upgraded environment may still have the live dir): drop stale entries.
@@ -124,8 +124,8 @@ def prune_orphan_files() -> int:
                     try:
                         f.unlink()
                         removed += 1
-                    except Exception:
-                        pass
+                    except OSError:
+                        log.debug("stale sidecar delete failed for %s", f, exc_info=True)
     return removed
 
 
@@ -156,6 +156,7 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
         from common import members
         summary["pruned_members"] = members.prune()
     except Exception:
+        log.exception("member pruning failed")
         summary["pruned_members"] = 0
     # Connections are capped by run *count*, not by age: a graph reporting a few
     # hundred runs an hour outgrows a day-based limit long before the limit

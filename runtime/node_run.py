@@ -28,6 +28,15 @@ from common.paths import PROJECT_ROOT, PROJECTS_FILE
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from common.logging_config import marker_logger
+
+# This node's own timestamped lines (``[2024-...] Orchestrator node ... ready``,
+# ``[container] ...``, etc.) are what a Docker node's ``--write-stdout-to-log``
+# mirrors into the node's log file, so they go through a logger configured to
+# emit the message only (the ``[timestamp]`` prefix below is added by ``log()``
+# itself), on stdout, at INFO regardless of ORCH_LOG_LEVEL.
+_marker_log = marker_logger(__name__)
+
 
 # ── Live streaming ───────────────────────────────────────────────────────────
 
@@ -63,7 +72,7 @@ _log_fh = None  # set in main() for Docker nodes to mirror stdout into the share
 
 def log(msg: str) -> None:
     line = f"[{_now()}] {msg}"
-    print(line, flush=True)
+    _marker_log.info(line)
     if _log_fh is not None:
         try:
             _log_fh.write(line + "\n")

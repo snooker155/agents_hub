@@ -88,3 +88,94 @@ def test_configure_logging_moves_the_root_level(monkeypatch):
     monkeypatch.setenv("ORCH_LOG_LEVEL", "ERROR")
     assert logging_config.configure_logging() == "ERROR"
     assert logging.getLogger().level == logging.ERROR
+
+
+# ── marker_logger ────────────────────────────────────────────────────────────
+#
+# runtime/agent_run.py, runtime/flow_run.py, runtime/node_run.py and
+# runtime/http_server.py print their marker lines (``[flow_start]``,
+# ``[heartbeat]``, ``Agent output:``, ...) through this logger instead of a
+# bare print(). agents/agent_launcher.py pipes a run's stdout straight into
+# the run's log file and dashboard/backend/routes/sessions.py greps that file
+# for these exact strings, so what matters here is that the logger writes only
+# the message (no timestamp/level prefix), lands on stdout, always fires at
+# INFO regardless of the configured ORCH_LOG_LEVEL, and never double-prints.
+
+@pytest.fixture
+def _clean_marker_logger():
+    """A logger name this test owns exclusively, removed again afterwards so
+    a re-run of this test (or another test using the same name) does not trip
+    marker_logger's "already has a handler" guard against a stale one."""
+    name = "test.marker_logger.fixture"
+    yield name
+    logging.getLogger(name).handlers.clear()
+
+
+def test_marker_logger_writes_the_message_only_to_stdout(_clean_marker_logger, capsys):
+    log = logging_config.marker_logger(_clean_marker_logger)
+    log.info("[flow_start] flow_id=f1 nodes=1 edges=0")
+
+    out = capsys.readouterr().out
+    assert out == "[flow_start] flow_id=f1 nodes=1 edges=0\n"
+
+
+def test_marker_logger_ignores_the_configured_level(monkeypatch, _clean_marker_logger, capsys):
+    """A print() never respected ORCH_LOG_LEVEL; the logger that replaces it
+    must not start either, even when the root logger is configured well above
+    INFO (e.g. ORCH_LOG_LEVEL=ERROR)."""
+    monkeypatch.setenv("ORCH_LOG_LEVEL", "ERROR")
+    logging_config.configure_logging()
+
+    log = logging_config.marker_logger(_clean_marker_logger)
+    log.info("Running agent with instruction: do the thing")
+
+    assert "Running agent with instruction: do the thing" in capsys.readouterr().out
+
+
+def test_marker_logger_does_not_propagate_to_root(_clean_marker_logger, capsys, caplog):
+    """propagate=False: a handler configure_logging installs on the root
+    logger (stderr, timestamp + level prefix) must never see — and reprint —
+    a marker line the logger already put on stdout."""
+    log = logging_config.marker_logger(_clean_marker_logger)
+    with caplog.at_level(logging.INFO):
+        log.info("[flow_done] flow_id=f1 nodes_completed=1 nodes_failed=0")
+
+    assert not caplog.records
+    assert capsys.readouterr().out.count("[flow_done]") == 1
+
+
+def test_marker_logger_is_idempotent_no_duplicate_handlers(_clean_marker_logger, capsys):
+    """Every runtime entrypoint calls marker_logger(__name__) once at import
+    time, but a module can be imported more than once in a test process (or a
+    subprocess entrypoint's main() re-entered); either must not attach a
+    second handler and print every line twice."""
+    logging_config.marker_logger(_clean_marker_logger)
+    log = logging_config.marker_logger(_clean_marker_logger)
+    log.info("Agent output:")
+
+    assert capsys.readouterr().out == "Agent output:\n"
+
+
+def test_marker_logger_follows_sys_stdout_reassignment(_clean_marker_logger, tmp_path):
+    """A tee installed after the logger is built (runtime/agent_run.py's
+    _setup_cli_log / _setup_docker_log_tee reassign sys.stdout once the run's
+    log file is known) must still receive marker lines the same way a bare
+    print() — which resolves sys.stdout at call time, not import time — always
+    did."""
+    import sys as _sys
+
+    log = logging_config.marker_logger(_clean_marker_logger)
+
+    log_path = tmp_path / "tee.log"
+    lf = log_path.open("w", encoding="utf-8")
+    orig_stdout = _sys.stdout
+    try:
+        _sys.stdout = lf
+        log.info("[agent_init] agent=test_agent provider=prov model=mdl workspace=ws1")
+        lf.flush()
+    finally:
+        _sys.stdout = orig_stdout
+        lf.close()
+
+    content = log_path.read_text(encoding="utf-8")
+    assert content == "[agent_init] agent=test_agent provider=prov model=mdl workspace=ws1\n"

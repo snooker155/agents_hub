@@ -117,7 +117,7 @@ def _evaluate_online_eval(workspace: str, rule: Dict[str, Any], run: Dict[str, A
         from evals.online import maybe_enqueue
 
         maybe_enqueue(workspace, rule, run)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, one rule failing must not stop the others
         log.debug("notify.rules: could not queue an online eval", exc_info=True)
 
 
@@ -146,5 +146,5 @@ def evaluate_run_finished(run: Dict[str, Any]) -> None:
                 _evaluate_spend_daily_over(workspace, rule, now)
             elif kind == "online_eval":
                 _evaluate_online_eval(workspace, rule, run)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort (see docstring): must never break run bookkeeping
         log.debug("notify.rules: evaluation failed", exc_info=True)

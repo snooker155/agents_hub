@@ -45,10 +45,18 @@ if _REPO_ROOT not in sys.path:
 # First-party imports. Kept at module top (after the sys.path shim above) rather
 # than inside main(): this module already pulls the heavy agents.* / langchain
 # graph transitively, so deferring these saves no startup cost.
+from common.logging_config import marker_logger
 from managers.run_manager import finalize_flow_task
 from tasks.context import persist_task_result, build_task_instruction
 from flow.launcher import INTERRUPT_AGENT_ID, _set_flow_running
 from flow import run_store
+
+# The marker lines below (``[flow_start]``, ``[flow_done]``, ``[flow_resume]``,
+# ``[flow_interrupt]``, ...) are what agents.agent_launcher pipes into the run's
+# log file and what dashboard/backend/routes/sessions.py and several tests grep
+# back out of it, so they go through a logger configured to emit the message
+# only, on stdout, at INFO regardless of ORCH_LOG_LEVEL.
+log = marker_logger(__name__)
 
 # The DAG walk lives in flow.engine; the task-surface driver (node execution,
 # run records, flow-log writes, stop check) lives in flow.task_driver. run.py is
@@ -104,7 +112,7 @@ def _park_on_interrupt(
         # reaped as a crash the moment this process exits.
         close_run(node_run_id, status="awaiting_input", exit_code=0, output=question)
     except Exception as e:  # noqa: BLE001
-        print(f"[flow_interrupt] could not record the interrupt run: {e}")
+        log.info(f"[flow_interrupt] could not record the interrupt run: {e}")
 
     # The checkpoint is what the answer resumes from; the interrupt rides with
     # it so the resume knows which key the answer belongs under.
@@ -121,7 +129,7 @@ def _park_on_interrupt(
             agent_id=INTERRUPT_AGENT_ID,
         )
     except Exception as e:  # noqa: BLE001
-        print(f"[flow_interrupt] could not park the task: {e}")
+        log.info(f"[flow_interrupt] could not park the task: {e}")
 
     log_flow(flow_id, run_id, {
         "timestamp": _utc_now_iso(),
@@ -133,7 +141,7 @@ def _park_on_interrupt(
         "choices": list(interrupt.get("choices") or []),
     })
     _set_flow_running(flow_id, False)
-    print(f"[flow_interrupt] flow_run={run_id} node={node_id} parked awaiting input")
+    log.info(f"[flow_interrupt] flow_run={run_id} node={node_id} parked awaiting input")
 
 
 # ── Preflight ───────────────────────────────────────────────────────────────
@@ -150,7 +158,7 @@ def _fail_preflight(flow_id: str, run_id: str, task_id: str, stage: str, detail:
         "content": msg,
         "status": "failed",
     })
-    print(f"[flow_error] {msg}", file=sys.stderr)
+    log.error(f"[flow_error] {msg}")
     sys.exit(1)
 
 
@@ -187,7 +195,7 @@ def main() -> None:
         run_store.close_flow_run(run_id, status="failed", exit_code=1, error=msg)
         _set_flow_running(flow_id, False)
         finalize_flow_task(task_id, "failed", 1, error=msg)
-        print(f"[flow_error] {msg}", file=sys.stderr)
+        log.error(f"[flow_error] {msg}")
         sys.exit(1)
 
     # A flow is not an agent run, so it has no run record of its own — the per-node
@@ -208,14 +216,14 @@ def main() -> None:
 
     try:
         validate_flow(flow)
-        print(f"[preflight] validation OK ({len(nodes)} nodes, {len(edges)} edges)")
+        log.info(f"[preflight] validation OK ({len(nodes)} nodes, {len(edges)} edges)")
     except FlowValidationError as e:
         _fail_preflight(flow_id, run_id, task_id, "validation", "; ".join(e.errors))
 
     try:
         node_entities = resolve_entities(nodes)
         _cats = sorted({s.category for s in node_entities.values()})
-        print(f"[preflight] resolved {len(node_entities)} entities from registry (categories: {_cats})")
+        log.info(f"[preflight] resolved {len(node_entities)} entities from registry (categories: {_cats})")
     except FlowValidationError as e:
         _fail_preflight(flow_id, run_id, task_id, "entity resolution", "; ".join(e.errors))
 
@@ -240,8 +248,8 @@ def main() -> None:
     session_id = args.session_id
     _port = int(os.environ.get("DASHBOARD_PORT", "8000"))
 
-    print(f"[flow_start] flow_id={flow_id} nodes={len(nodes)} edges={len(edges)}")
-    print(f"Running flow with context: {shared_context}")
+    log.info(f"[flow_start] flow_id={flow_id} nodes={len(nodes)} edges={len(edges)}")
+    log.info(f"Running flow with context: {shared_context}")
 
     # The engine owns the DAG walk; the task driver supplies the subprocess sinks
     # (node execution, run records, flow-log writes, stop check). See flow.task_driver.
@@ -260,14 +268,14 @@ def main() -> None:
         resume_cp = _rec.get("checkpoint") or None
         if resume_cp:
             _done = len(resume_cp.get("done") or [])
-            print(f"[flow_resume] resuming {args.resume_from} from checkpoint ({_done} node(s) already done)")
+            log.info(f"[flow_resume] resuming {args.resume_from} from checkpoint ({_done} node(s) already done)")
             log_flow(flow_id, run_id, {
                 "timestamp": _utc_now_iso(), "type": "flow_resume",
                 "content": f"Resuming from checkpoint ({_done} node(s) already done)",
                 "status": "running",
             })
         else:
-            print(f"[flow_resume] {args.resume_from} has no checkpoint — running from the start")
+            log.info(f"[flow_resume] {args.resume_from} has no checkpoint — running from the start")
 
     # Seed state (scheduled/webhook triggers): a JSON object merged into the
     # flow's initial state so external callers can parameterize a run.
@@ -279,9 +287,9 @@ def main() -> None:
             if isinstance(parsed, dict):
                 seed_state = parsed
             else:
-                print(f"[flow_seed] ignoring non-object seed: {type(parsed).__name__}")
+                log.info(f"[flow_seed] ignoring non-object seed: {type(parsed).__name__}")
         except Exception as e:
-            print(f"[flow_seed] failed to parse --seed JSON: {e}")
+            log.info(f"[flow_seed] failed to parse --seed JSON: {e}")
 
     async def _drive() -> dict:
         final: dict = {}
@@ -295,7 +303,7 @@ def main() -> None:
     # A user stop between nodes halts the engine with stopped=True; the stop
     # endpoint already logged flow_stopped + killed the pid, so just exit.
     if final.get("stopped"):
-        print(f"[flow_stopped] flow_run={run_id} — stop requested, halting")
+        log.info(f"[flow_stopped] flow_run={run_id} — stop requested, halting")
         sys.exit(1)
 
     # A human_interrupt node parked the run: the task waits for an answer and
@@ -334,8 +342,8 @@ def main() -> None:
     run_store.close_flow_run(args.run_id, status=fr_status, exit_code=fr_exit)
     _set_flow_running(args.flow_id, False)
     finalize_flow_task(args.task_id, "completed" if not any_node_failed else "failed", fr_exit)
-    print(f"[flow_done] flow_id={args.flow_id} nodes_completed={len(node_outputs)}"
-          f" nodes_failed={sum(1 for n in nodes if n.get('id') not in node_outputs and _resolve_agent_id(n))}")
+    log.info(f"[flow_done] flow_id={args.flow_id} nodes_completed={len(node_outputs)}"
+             f" nodes_failed={sum(1 for n in nodes if n.get('id') not in node_outputs and _resolve_agent_id(n))}")
 
 
 if __name__ == "__main__":

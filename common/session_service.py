@@ -16,11 +16,14 @@ pending_continuations.json files are migrated in on first open.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from common import db
+
+log = logging.getLogger(__name__)
 
 
 def _utc_now_iso() -> str:
@@ -49,8 +52,8 @@ def _notify() -> None:
     try:
         from common.session_broker import notify_change
         notify_change("sessions")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort UI notification, must not break the write
+        log.debug("session change notify failed", exc_info=True)
 
 
 def load_contexts(timeout: float = 10.0) -> List[Dict[str, Any]]:

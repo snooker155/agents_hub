@@ -23,6 +23,14 @@ from typing import Callable, Optional
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 
+from common.logging_config import marker_logger
+
+# This service's own timestamped lines (``[timestamp] ...``) go through a
+# logger configured to emit the message only (the ``[timestamp]`` prefix below
+# is added by ``_make_logger``'s ``_log`` itself), on stdout, at INFO
+# regardless of ORCH_LOG_LEVEL — mirrors runtime/node_run.py's ``log()``.
+_marker_log = marker_logger(__name__)
+
 
 # ── Request models (module-level so FastAPI/Pydantic v2 resolves them as body) ─
 
@@ -92,7 +100,7 @@ def _make_logger(log_file: Optional[str]) -> Callable[[str], None]:
     def _log(msg: str) -> None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         line = f"[{ts}] {msg}"
-        print(line, flush=True)
+        _marker_log.info(line)
         if _fh is not None:
             try:
                 _fh.write(line + "\n")

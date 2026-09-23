@@ -21,7 +21,8 @@ one field. Existing files are imported on first open, see
 A record is a plain dict and the table keeps it whole in ``doc``: callers store
 keys of their own on a run (a checkpoint, say) and read them back unchanged.
 The columns beside ``doc`` are an indexed mirror of the fields queries filter
-on, and every write here refreshes them together with the document.
+on, and every write here refreshes them together with the document. That
+handling is shared with loop and team runs: see ``common.entity_runs``.
 """
 from __future__ import annotations
 
@@ -31,8 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common import db
 from common.db_migrate import FLOW_RUN_COLUMNS
+from common.entity_runs import EntityRunStore
 from common.paths import AGENTS_HUB_ROOT
 
 FLOW_LOGS_DIR = AGENTS_HUB_ROOT / "flow_logs"
@@ -163,22 +164,21 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
     return events
 
 
-def _row_to_record(row) -> Dict[str, Any]:
-    """Rebuild a flow-run record from its row. ``doc`` is the whole record, so
-    the mirrored columns are only a fallback for a row written by something
-    other than this module."""
-    rec = db.loads(row["doc"], None)
-    if isinstance(rec, dict):
-        return rec
-    return {k: row[k] for k in FLOW_RUN_COLUMNS}
+# -------------------- Run records --------------------
+# The record handling (merge, whole-record document, mirrored columns, the
+# ``flow_runs.changed`` notice) is the shared implementation in
+# common/entity_runs.py; this module only says what a flow run looks like.
 
-
-def _write(conn, rec: Dict[str, Any]) -> None:
-    """Persist one whole record, refreshing the mirrored columns from it."""
-    conn.execute(
-        db.upsert_sql("flow_runs", FLOW_RUN_COLUMNS + ("doc",), ("flow_run_id",)),
-        [rec.get(k) for k in FLOW_RUN_COLUMNS] + [db.dumps(rec)],
-    )
+_RUNS: EntityRunStore[Dict[str, Any]] = EntityRunStore(
+    table="flow_runs",
+    key="flow_run_id",
+    columns=FLOW_RUN_COLUMNS,
+    doc_column="doc",
+    resource="flow_runs",
+    parent_key="flow_id",
+    order_by="COALESCE(started_at, ''), flow_run_id",
+    live_statuses=("running", "pending"),
+)
 
 
 # -------------------- Public API --------------------
@@ -190,36 +190,20 @@ def load_flow_runs(timeout: float = 10.0) -> List[Dict[str, Any]]:
     does its own waiting (``PRAGMA busy_timeout``). The parameter stays because
     callers pass it positionally.
     """
-    rows = db.get_conn().execute(
-        "SELECT * FROM flow_runs ORDER BY COALESCE(started_at, ''), flow_run_id"
-    ).fetchall()
-    return [_row_to_record(r) for r in rows]
+    return _RUNS.list()
 
 
 def _notify_flow_runs(flow_id: Optional[str] = None) -> None:
-    try:
-        from common.session_broker import notify_change
-        notify_change("flow_runs", flow_id=flow_id)
-    except Exception:
-        pass
+    _RUNS.notify(flow_id=flow_id)
 
 
 def upsert_flow_run(rec: Dict[str, Any]) -> None:
     """Insert or update a flow-run record by ``flow_run_id``.
 
     An existing record is merged into, not replaced, so a field this caller did
-    not mention survives — the same semantics the JSON store had.
+    not mention survives. The same semantics the JSON store had.
     """
-    flow_run_id = str(rec.get("flow_run_id") or "")
-    if not flow_run_id:
-        return
-    with db.transaction() as conn:
-        row = conn.execute("SELECT * FROM flow_runs WHERE flow_run_id = ?",
-                           (flow_run_id,)).fetchone()
-        existing = _row_to_record(row) if row is not None else None
-        merged = {**existing, **rec} if existing else dict(rec)
-        _write(conn, merged)
-    _notify_flow_runs(merged.get("flow_id"))
+    _RUNS.upsert(rec)
 
 
 def update_flow_run(flow_run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -228,27 +212,12 @@ def update_flow_run(flow_run_id: str, updates: Dict[str, Any]) -> Optional[Dict[
     The merge happens inside one transaction, so two processes checkpointing
     different keys on the same run cannot drop each other's write.
     """
-    with db.transaction() as conn:
-        row = conn.execute("SELECT * FROM flow_runs WHERE flow_run_id = ?",
-                           (str(flow_run_id),)).fetchone()
-        if row is None:
-            return None
-        newr = {**_row_to_record(row), **updates}
-        newr["flow_run_id"] = str(flow_run_id)
-        _write(conn, newr)
-    try:
-        from common.session_broker import notify_change
-        notify_change("flow_runs", flow_run_id=flow_run_id, flow_id=newr.get("flow_id"))
-    except Exception:
-        pass
-    return newr
+    return _RUNS.update(flow_run_id, updates)
 
 
 def get_flow_run(flow_run_id: str) -> Optional[Dict[str, Any]]:
     """Return a flow-run record by id, or None."""
-    row = db.get_conn().execute("SELECT * FROM flow_runs WHERE flow_run_id = ?",
-                                (str(flow_run_id),)).fetchone()
-    return _row_to_record(row) if row is not None else None
+    return _RUNS.get(flow_run_id)
 
 
 def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
@@ -265,12 +234,9 @@ def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
     started node lit indefinitely. The reconcile emits a flow_stopped log event so
     that node clears too. Pending runs have no pid yet, so they are never reaped.
     """
-    rows = db.get_conn().execute(
-        "SELECT * FROM flow_runs WHERE flow_id = ? AND status IN ('running', 'pending') "
-        "ORDER BY COALESCE(started_at, ''), flow_run_id", (str(flow_id),)).fetchall()
     active: List[Dict[str, Any]] = []
     reaped = False
-    for r in (_row_to_record(row) for row in rows):
+    for r in _RUNS.active({"flow_id": str(flow_id)}):
         # Only reap once a pid has been recorded (status == running); a pending run
         # hasn't been handed a pid yet and is legitimately not-yet-started.
         pid = r.get("pid")

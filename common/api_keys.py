@@ -22,11 +22,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from common import db
+
+log = logging.getLogger(__name__)
 
 #: Every key starts with this, so one is recognisable in a log or a config
 #: file, and so that :func:`resolve` can skip the lookup for anything else.
@@ -179,8 +182,8 @@ def resolve(presented: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
             with db.transaction() as conn:
                 conn.execute("UPDATE api_keys SET last_used_at = ? WHERE key_id = ?",
                              (now.isoformat(), row["key_id"]))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a last_used touch must not break key resolution
+            log.debug("last_used_at update failed for key %s", row["key_id"], exc_info=True)
     return user, _row_to_key(row)
 
 

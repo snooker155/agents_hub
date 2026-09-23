@@ -176,7 +176,7 @@ def _resolve_label(kind_spec: KindSpec, record: Dict[str, Any]) -> Optional[str]
         return record.get("id")
     try:
         return resolver(record.get("id") or "", record.get("meta") or {})
-    except Exception:
+    except Exception:  # noqa: BLE001 - one kind's label resolver must not break the whole link list
         log.debug("entity label lookup failed for %r", record, exc_info=True)
         return None
 
@@ -205,7 +205,7 @@ def entity_payloads(records) -> List[Dict[str, Any]]:
             continue
         try:
             path = kind_spec["path"](entity_id, meta)
-        except Exception:
+        except Exception:  # noqa: BLE001 - one record's path builder must not break the whole link list
             log.debug("entity path build failed for %r", record, exc_info=True)
             continue
         if not path:

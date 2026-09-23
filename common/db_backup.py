@@ -84,14 +84,14 @@ def _app_version() -> str:
             return version("agents-hub")
         except PackageNotFoundError:
             pass
-    except Exception:
+    except ImportError:
         pass
     try:
         text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
         if m:
             return m.group(1)
-    except Exception:
+    except OSError:
         pass
     return "unknown"
 

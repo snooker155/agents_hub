@@ -57,7 +57,7 @@ def run_cmd(cmd: List[str], cwd: str | None=None, timeout: int=30) -> Tuple[int,
         r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
         out = (r.stdout or "") + ("\n"+r.stderr if r.stderr else "")
         return r.returncode, out.strip()
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         return 1, f"[exec error] {e}"
 
 def append_log_md(section: str, text: str, md_path=None):
@@ -83,7 +83,7 @@ def is_text_path(path: pathlib.Path) -> bool:
         chunk = path.read_bytes()[:4096]
         chunk.decode("utf-8")
         return True
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return False
 
 def list_files(base: pathlib.Path, includes: list[str] | None, excludes: list[str] | None) -> list[pathlib.Path]:
@@ -131,7 +131,7 @@ def build_repo_snapshot_per_root(
                 continue
             try:
                 txt = f.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
+            except OSError:
                 continue
 
             rel = str(f.relative_to(base)).replace("\\","/")

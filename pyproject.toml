@@ -63,7 +63,7 @@ target-version = "py310"
 exclude = ["node_modules", "chroma_db", "site", "dashboard/frontend", "__pycache__"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "F", "BLE001", "S110"]
 ignore = [
     # E402 (module-import-not-at-top): a large share of the hits are entrypoints
     # and scripts that deliberately manipulate sys.path before importing local
@@ -75,3 +75,39 @@ ignore = [
     # ignore for now; revisit as a separate rename pass.
     "E741",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# BLE001 (blind except Exception) and S110 (try/except/pass with no logging):
+# common/, managers/, notify/, a2a/, mcp_client/ and workspace/ are clean of
+# both and enforce them as errors. Every other top-level package still has
+# unreviewed blind excepts, so both rules stay ignored there until someone
+# does the same narrowing pass for that package; remove a line here once its
+# package is clean, and the rules start applying to it too.
+"agents/**" = ["BLE001", "S110"]
+"chat/**" = ["BLE001", "S110"]
+"cli/**" = ["BLE001", "S110"]
+"clients/**" = ["BLE001", "S110"]
+"connections/**" = ["BLE001", "S110"]
+"connectors/**" = ["BLE001", "S110"]
+"dashboard/**" = ["BLE001", "S110"]
+"deploy/**" = ["BLE001", "S110"]
+"evals/**" = ["BLE001", "S110"]
+"examples/**" = ["BLE001", "S110"]
+"flow/**" = ["BLE001", "S110"]
+"instances/**" = ["BLE001", "S110"]
+"loops/**" = ["BLE001", "S110"]
+"memory/**" = ["BLE001", "S110"]
+"plans/**" = ["BLE001", "S110"]
+"playground/**" = ["BLE001", "S110"]
+"projects/**" = ["BLE001", "S110"]
+"providers/**" = ["BLE001", "S110"]
+"reasoning/**" = ["BLE001", "S110"]
+"runtime/**" = ["BLE001", "S110"]
+"tasks/**" = ["BLE001", "S110"]
+"teams/**" = ["BLE001", "S110"]
+"tools/**" = ["BLE001", "S110"]
+"views/**" = ["BLE001", "S110"]
+# Tests exercise failure paths deliberately (forcing an exception to confirm
+# a caller handles it), so a blind except or a swallowed one there is not the
+# same code smell it is in application code. Both rules stay ignored here.
+"tests/**" = ["BLE001", "S110"]

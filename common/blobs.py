@@ -120,14 +120,16 @@ class LocalBlobStore(BlobStore):
         p = AGENTS_HUB_ROOT / rel_path
         try:
             return p.read_text(encoding="utf-8")
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort read, module contract: never raise
+            log.debug("local read_text failed for %s", rel_path, exc_info=True)
             return default
 
     def read_bytes(self, rel_path: str) -> Optional[bytes]:
         p = AGENTS_HUB_ROOT / rel_path
         try:
             return p.read_bytes()
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort read, module contract: never raise
+            log.debug("local read_bytes failed for %s", rel_path, exc_info=True)
             return None
 
     def exists(self, rel_path: str) -> bool:
@@ -136,8 +138,8 @@ class LocalBlobStore(BlobStore):
     def delete(self, rel_path: str) -> None:
         try:
             (AGENTS_HUB_ROOT / rel_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort cleanup, module contract: never raise
+            log.debug("local delete failed for %s", rel_path, exc_info=True)
 
     def list(self, prefix: str) -> List[str]:
         base = AGENTS_HUB_ROOT / prefix
@@ -206,7 +208,7 @@ class S3BlobStore(BlobStore):
         try:
             self._get_client().upload_file(str(local), self._bucket, self._key(rel_path))
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort mirror, module contract: never raise
             log.debug("blob mirror failed for %s", rel_path, exc_info=True)
             return False
 
@@ -218,7 +220,7 @@ class S3BlobStore(BlobStore):
             local.parent.mkdir(parents=True, exist_ok=True)
             self._get_client().download_file(self._bucket, self._key(rel_path), str(local))
             return local if local.is_file() else None
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort fetch, module contract: never raise
             log.debug("blob ensure_local failed for %s", rel_path, exc_info=True)
             return None
 
@@ -228,7 +230,8 @@ class S3BlobStore(BlobStore):
             return default
         try:
             return p.read_text(encoding="utf-8")
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort read, module contract: never raise
+            log.debug("s3 read_text failed for %s", rel_path, exc_info=True)
             return default
 
     def read_bytes(self, rel_path: str) -> Optional[bytes]:
@@ -237,7 +240,8 @@ class S3BlobStore(BlobStore):
             return None
         try:
             return p.read_bytes()
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort read, module contract: never raise
+            log.debug("s3 read_bytes failed for %s", rel_path, exc_info=True)
             return None
 
     def exists(self, rel_path: str) -> bool:
@@ -246,24 +250,25 @@ class S3BlobStore(BlobStore):
         try:
             self._get_client().head_object(Bucket=self._bucket, Key=self._key(rel_path))
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort check, module contract: never raise
+            log.debug("blob head_object failed for %s", rel_path, exc_info=True)
             return False
 
     def delete(self, rel_path: str) -> None:
         try:
             (AGENTS_HUB_ROOT / rel_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort cleanup, module contract: never raise
+            log.debug("local delete failed for %s", rel_path, exc_info=True)
         try:
             self._get_client().delete_object(Bucket=self._bucket, Key=self._key(rel_path))
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort cleanup, module contract: never raise
             log.debug("blob delete failed for %s", rel_path, exc_info=True)
 
     def list(self, prefix: str) -> List[str]:
         out: List[str] = []
         try:
             client = self._get_client()
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort listing, module contract: never raise
             log.debug("blob list: no client for prefix %s", prefix, exc_info=True)
             return out
         key_prefix = self._key(prefix)
@@ -274,7 +279,7 @@ class S3BlobStore(BlobStore):
                 kwargs["ContinuationToken"] = token
             try:
                 resp = client.list_objects_v2(**kwargs)
-            except Exception:
+            except Exception:  # noqa: BLE001 - best-effort listing, module contract: never raise
                 log.debug("blob list failed for prefix %s", prefix, exc_info=True)
                 break
             for item in resp.get("Contents") or []:
@@ -303,7 +308,7 @@ def _build_store() -> BlobStore:
     endpoint = live_setting(BLOB_ENDPOINT_ENV, settings.blob_endpoint) or None
     try:
         return S3BlobStore(url, endpoint=endpoint)
-    except Exception:
+    except ValueError:
         log.warning("invalid %s %r; falling back to local storage", BLOB_URL_ENV, url, exc_info=True)
         return LocalBlobStore()
 
@@ -334,7 +339,8 @@ def configured() -> bool:
     """True when a remote store is set (``AGENTS_HUB_BLOB_URL`` is non-empty)."""
     try:
         return store().configured()
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, module contract: never raise
+        log.debug("configured() failed", exc_info=True)
         return False
 
 
@@ -346,7 +352,7 @@ def mirror(rel_path: str) -> bool:
     """
     try:
         return store().mirror(rel_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, module contract: never raise
         log.debug("mirror failed for %s", rel_path, exc_info=True)
         return False
 
@@ -356,7 +362,7 @@ def ensure_local(rel_path: str) -> Optional[Path]:
     if it is not already there. None if it exists nowhere."""
     try:
         return store().ensure_local(rel_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, module contract: never raise
         log.debug("ensure_local failed for %s", rel_path, exc_info=True)
         return None
 
@@ -364,7 +370,7 @@ def ensure_local(rel_path: str) -> Optional[Path]:
 def read_text(rel_path: str, default: Optional[str] = None) -> Optional[str]:
     try:
         return store().read_text(rel_path, default)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, module contract: never raise
         log.debug("read_text failed for %s", rel_path, exc_info=True)
         return default
 
@@ -372,7 +378,7 @@ def read_text(rel_path: str, default: Optional[str] = None) -> Optional[str]:
 def read_bytes(rel_path: str) -> Optional[bytes]:
     try:
         return store().read_bytes(rel_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, module contract: never raise
         log.debug("read_bytes failed for %s", rel_path, exc_info=True)
         return None
 
@@ -380,21 +386,22 @@ def read_bytes(rel_path: str) -> Optional[bytes]:
 def exists(rel_path: str) -> bool:
     try:
         return store().exists(rel_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, module contract: never raise
+        log.debug("exists() failed for %s", rel_path, exc_info=True)
         return False
 
 
 def delete(rel_path: str) -> None:
     try:
         store().delete(rel_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, module contract: never raise
         log.debug("delete failed for %s", rel_path, exc_info=True)
 
 
 def list(prefix: str) -> List[str]:  # noqa: A001 - the natural name for this API
     try:
         return store().list(prefix)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, module contract: never raise
         log.debug("list failed for prefix %s", prefix, exc_info=True)
         return []
 

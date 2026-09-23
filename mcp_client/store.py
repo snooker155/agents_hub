@@ -200,7 +200,7 @@ def _settings(workspace: Optional[str]) -> Dict[str, Any]:
     try:
         from workspace import get_workspace_metadata
         meta = get_workspace_metadata(workspace) or {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises (see list_servers docstring below)
         log.debug("mcp: cannot read metadata for workspace %r", workspace, exc_info=True)
         return {}
     settings = meta.get("settings")
@@ -323,7 +323,7 @@ def record_status(
                 records[index] = _normalize({**current, **changes})
                 _save(workspace, records)
                 return
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort by design (see docstring)
         log.debug("mcp: could not record status for %r", server_id, exc_info=True)
 
 

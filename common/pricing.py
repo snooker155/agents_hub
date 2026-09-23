@@ -20,9 +20,12 @@ backend. It only *reads* the catalog; curation/discovery stays in
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Tuple
 
 from providers.catalog import load_catalog_raw
+
+log = logging.getLogger(__name__)
 
 # (input, output, cached_input) USD per 1M tokens.
 PriceMap = Dict[Tuple[str, str], Tuple[float, float, float]]
@@ -49,7 +52,8 @@ def load_price_map() -> PriceMap:
     prices: PriceMap = {}
     try:
         data = load_catalog_raw()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises (see docstring): a missing/corrupt catalog is an empty map
+        log.debug("could not load the price catalog", exc_info=True)
         return prices
     if not isinstance(data, dict):
         return prices

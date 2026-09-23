@@ -58,7 +58,7 @@ def configured() -> bool:
     try:
         from common.config import settings
         return bool((settings.otel_export_url or "").strip())
-    except Exception:
+    except ImportError:
         return False
 
 
@@ -69,7 +69,7 @@ def _headers() -> Dict[str, str]:
     try:
         from common.config import settings
         raw = (getattr(settings, "otel_export_headers", "") or "").strip()
-    except Exception:
+    except ImportError:
         raw = ""
     for pair in raw.split(","):
         pair = pair.strip()
@@ -98,7 +98,7 @@ def _worker_loop() -> None:
         payload = _queue.get()
         try:
             _post(payload)
-        except Exception:
+        except Exception:  # noqa: BLE001 - background loop, must keep running (see module docstring)
             log.debug("otel_export: delivery failed", exc_info=True)
         finally:
             _queue.task_done()
@@ -108,7 +108,7 @@ def _post(payload: Dict[str, Any]) -> None:
     try:
         from common.config import settings
         url = (settings.otel_export_url or "").strip()
-    except Exception:
+    except ImportError:
         url = ""
     if not url:
         return
@@ -166,7 +166,7 @@ def _run_cost(run: Dict[str, Any]) -> Optional[float]:
     try:
         from common.pricing import load_price_map, run_cost_usd
         return round(run_cost_usd(run, load_price_map()), 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a cost estimate must not block the span
         return None
 
 
@@ -242,13 +242,13 @@ def dispatch(run: Dict[str, Any]) -> None:
     worker thread does the HTTP call on its own time."""
     try:
         payload = build_span(run)
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, never blocks (see docstring)
         log.debug("otel_export: could not build span", exc_info=True)
         return
     _ensure_worker()
     try:
         _queue.put_nowait(payload)
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, never blocks (see docstring)
         log.debug("otel_export: could not queue span", exc_info=True)
 
 
@@ -270,8 +270,7 @@ def export_run_finished(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> N
         if old_status in TERMINAL_STATUSES:
             return  # already exported on an earlier transition
         dispatch(new)
-    except Exception:
-        # Export must never break run recording.
+    except Exception:  # noqa: BLE001 - export must never break run recording
         log.debug("otel_export: export hook failed", exc_info=True)
 
 

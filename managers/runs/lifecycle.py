@@ -43,7 +43,7 @@ def _definition_hash_for(agent_id: Optional[str]) -> Optional[str]:
     try:
         from agents.versions import definition_fingerprint
         return definition_fingerprint(agent_id)["hash"]
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort (see docstring): logged, never raised
         log.warning("could not compute definition_hash for agent '%s'", agent_id, exc_info=True)
         return None
 
@@ -116,8 +116,8 @@ def preopen_run(
         try:
             from common.session_service import add_run_to_session as _link
             _link(session_id, run_id)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort session link, must not break the placeholder run
+            log.debug("add_run_to_session failed for %s/%s", session_id, run_id, exc_info=True)
     return run_id
 
 
@@ -175,8 +175,8 @@ def open_run(
         try:
             from common.session_service import add_run_to_session as _link
             _link(session_id, run_id)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort session link, must not break opening the run
+            log.debug("add_run_to_session failed for %s/%s", session_id, run_id, exc_info=True)
     _notify_task_run_started(record)
     return run_id
 
@@ -194,7 +194,7 @@ def _route_experiment(run_id: str, agent_id: Optional[str], record: Dict[str, An
         from evals.experiments import route_run
         route_run(run_id, agent_id, task_id=record.get("task_id"),
                   session_type=record.get("session_type"), channel=record.get("channel"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort (see docstring): a failure leaves the run on the live definition
         log.debug("experiment routing failed for run %s", run_id, exc_info=True)
 
 
@@ -245,7 +245,8 @@ def close_run_from_result(
         if resp_obj is not None:
             try:
                 structured = resp_obj.to_payload() if hasattr(resp_obj, "to_payload") else None
-            except Exception:
+            except Exception:  # noqa: BLE001 - best-effort derivation, a bad payload must not break closing the run
+                log.debug("response payload derivation failed for run %s", run_id, exc_info=True)
                 structured = None
         proc = {**proc, "response_text": output if ok else "", "response_obj": structured}
         extra["process"] = proc
@@ -283,7 +284,7 @@ def _pid_exists(pid: int) -> bool:
         os.kill(pid, 0)
     except OSError:
         return False
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unexpected error is treated as "still alive", the safer false-negative
         return True
     else:
         return True
@@ -347,8 +348,8 @@ def fail_in_progress_runs_for_node(node_id: str, reason: str) -> int:
                     task = tasks_service.get_task(tid)
                     if task and getattr(task, "status", None) == "in_progress":
                         tasks_service.block_task(tid, reason=reason)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort task block, one run's failure must not stop the sweep
+                log.debug("block_task failed for run %s", run_id, exc_info=True)
 
     return failed_count
 
@@ -401,8 +402,8 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
             from uuid import UUID
             tasks_service.clear_agent(UUID(task_id))
             tasks_service.stop_task(UUID(task_id))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort (see docstring), must not break stopping the run
+            log.debug("stop_task failed for task %s", task_id, exc_info=True)
         # Stopping the run stops the task: cancel its pending continuations too,
         # or a follow-up orchestrator would either fire on the stopped task or
         # (if bound to this run) sit in the queue forever.
@@ -418,8 +419,8 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
                     f"Run stopped — cancelled {dropped} pending continuation(s)",
                     run_id=run_id,
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort (see docstring), must not break stopping the run
+            log.debug("drop_continuations_for_task failed for task %s", task_id, exc_info=True)
 
     # A run executing *inside this process* — a team turn, a playground
     # decision — carries the server's own pid, because that is whose thread it
@@ -466,8 +467,8 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
                 try:
                     with open(log_file_path, "a", encoding="utf-8") as _lf:
                         _lf.write(f"\n[stopped] Run stopped by user at {_utc_now_iso()}\nStatus  : stopped\n")
-                except Exception:
-                    pass
+                except OSError:
+                    log.debug("could not append the stop marker to %s", log_file_path, exc_info=True)
             _mark_task_stopped()
             return True
         # In-process chat run: mark stop so the streaming handler can finalize.
@@ -503,7 +504,7 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
         try:
             os.kill(pid, signal.SIGTERM)
             sent = True
-        except Exception:
+        except OSError:
             try:
                 import ctypes  # type: ignore
                 PROCESS_TERMINATE = 0x0001
@@ -512,17 +513,18 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
                     ctypes.windll.kernel32.TerminateProcess(handle, 1)
                     ctypes.windll.kernel32.CloseHandle(handle)
                     sent = True
-            except Exception:
+            except Exception:  # noqa: BLE001 - last-resort kill; the caller falls back to "process already gone" either way
+                log.debug("ctypes TerminateProcess fallback failed for pid %s", pid, exc_info=True)
                 sent = False
     else:
         try:
             os.killpg(pid, signal.SIGTERM)
             sent = True
-        except Exception:
+        except OSError:
             try:
                 os.kill(pid, signal.SIGTERM)
                 sent = True
-            except Exception:
+            except OSError:
                 sent = False
 
     if sent:
@@ -574,8 +576,8 @@ def get_status(task_id: str, run_id: Optional[str] = None) -> Optional[Dict[str,
                         try:
                             with open(log_file_path, "a", encoding="utf-8") as _lf:
                                 _lf.write(f"\n[stopped] Run stopped by user at {_utc_now_iso()}\nStatus  : stopped\n")
-                        except Exception:
-                            pass
+                        except OSError:
+                            log.debug("could not append the stop marker to %s", log_file_path, exc_info=True)
                 rec = _update_run(rec["run_id"], {
                     "status": "stopped" if was_stopped else "failed",
                     "finished_at": _utc_now_iso(),

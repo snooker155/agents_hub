@@ -228,6 +228,39 @@ def test_session_publisher_with_session_id_returns_one_callback():
     assert isinstance(cbs[0], SessionPublishCallback)
 
 
+def test_log_reaches_stdout_through_the_marker_logger(capsys):
+    """log() builds its own "[timestamp] msg" line and used to print() it
+    directly; it now goes through common.logging_config.marker_logger, whose
+    job is to reach stdout with the message unchanged (no logging-added prefix
+    of its own) regardless of ORCH_LOG_LEVEL — this is what a Docker node's
+    --write-stdout-to-log mirrors into the node's log file."""
+    import re
+
+    import runtime.node_run as nr
+
+    nr.log("orchestrator node ready")
+
+    out = capsys.readouterr().out
+    assert re.fullmatch(r"\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\] orchestrator node ready\n", out)
+
+
+# ── runtime/http_server.py ───────────────────────────────────────────────────
+
+def test_make_logger_reaches_stdout_through_the_marker_logger(capsys):
+    """_make_logger()'s returned _log(), like node_run.log(), builds its own
+    "[timestamp] msg" line and used to print() it directly; it now goes
+    through common.logging_config.marker_logger the same way."""
+    import re
+
+    import runtime.http_server as hs
+
+    _log = hs._make_logger(None)
+    _log("agent HTTP service ready")
+
+    out = capsys.readouterr().out
+    assert re.fullmatch(r"\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\] agent HTTP service ready\n", out)
+
+
 # ── runtime/agent_run.py ─────────────────────────────────────────────────────
 
 def test_agent_run_main_success(monkeypatch, tmp_path):

@@ -2,12 +2,17 @@
 
 Mirrors :mod:`playground.store`: run-level knobs ride in a ``config`` JSON
 column rather than as columns, so tightening a ceiling never needs a migration.
+
+Loop *runs* are kept by the implementation flow and team runs share
+(:mod:`common.entity_runs`); this module says what a loop run looks like and
+keeps the definitions and the iteration log itself.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 from common import db
+from common.entity_runs import EntityRunStore
 from loops.models import Iteration, Loop, LoopRun, utc_iso
 
 _CONFIG_FIELDS = (
@@ -27,24 +32,66 @@ _CONFIG_FIELDS = (
 
 _PROGRESS_COLUMN = "progress"
 
+_RUN_COLUMNS = (
+    "loop_run_id", "loop_id", "workspace", "status", "goal", "task_id",
+    "session_id", "iterations_done", "best_score", "final_score",
+    "stop_reason", "result", "error", "total_cost", "started_at", "finished_at",
+)
+
+
+def _to_run(rec: Dict[str, Any]) -> LoopRun:
+    # The resume position is one JSON column, and the watchdog's attempt
+    # counter lives inside it rather than as a column of its own: both are
+    # written together, by the same writer, on the same schedule.
+    position = rec.get("position") or {}
+    return LoopRun(
+        position=position,
+        resume_attempts=int(position.get("resume_attempts") or 0),
+        loop_run_id=rec["loop_run_id"],
+        loop_id=rec["loop_id"] or "",
+        workspace=rec["workspace"],
+        status=rec["status"] or "running",
+        goal=rec["goal"] or "",
+        task_id=rec["task_id"],
+        session_id=rec["session_id"],
+        iterations_done=int(rec["iterations_done"] or 0),
+        best_score=rec["best_score"],
+        final_score=rec["final_score"],
+        stop_reason=rec["stop_reason"] or "",
+        result=rec["result"] or "",
+        error=rec["error"],
+        total_cost=float(rec["total_cost"] or 0.0),
+        started_at=rec["started_at"] or "",
+        finished_at=rec["finished_at"],
+    )
+
+
+#: Loop-run records over the shared implementation (common/entity_runs.py):
+#: plain columns, plus the ``progress`` JSON column exposed as ``position``.
+_RUNS: EntityRunStore[LoopRun] = EntityRunStore(
+    table="loop_runs",
+    key="loop_run_id",
+    columns=_RUN_COLUMNS,
+    doc_column=_PROGRESS_COLUMN,
+    doc_field="position",
+    convert=_to_run,
+    resource="loop_runs",
+    parent_key="loop_id",
+    order_by="started_at DESC",
+    live_statuses=("running", "stopping"),
+    stopping_status="stopping",
+)
+
 
 def save_position(loop_run_id: str, position: Dict[str, Any]) -> None:
     """Persist where a run has got to, so it can be resumed from here."""
-    with db.transaction() as conn:
-        conn.execute(
-            f"UPDATE loop_runs SET {_PROGRESS_COLUMN} = ? WHERE loop_run_id = ?",
-            (db.dumps(position or {}), loop_run_id),
-        )
+    _RUNS.update(loop_run_id, {"position": position or {}}, notify=False)
 
 
 def get_position(loop_run_id: str) -> Dict[str, Any]:
     """The stored resume position of a run, or ``{}`` when it has none."""
-    row = db.get_conn().execute(
-        f"SELECT {_PROGRESS_COLUMN} FROM loop_runs WHERE loop_run_id = ?", (loop_run_id,)
-    ).fetchone()
-    if not row:
-        return {}
-    return db.loads(row[_PROGRESS_COLUMN], {}) or {}
+    rec = _RUNS.read(loop_run_id)
+    return (rec or {}).get("position") or {}
 
 
 def touch_heartbeat(loop_run_id: str) -> None:
@@ -53,12 +100,13 @@ def touch_heartbeat(loop_run_id: str) -> None:
     Called as each flow node of an iteration finishes: an iteration is a whole
     flow and can legitimately take many minutes, so the watchdog must be able to
     tell "still working" from "the process is gone" more often than once per
-    iteration. Best-effort — a missed heartbeat is not worth failing a run over.
+    iteration. Best-effort: a missed heartbeat is not worth failing a run over.
     """
     try:
-        position = get_position(loop_run_id)
-        position["heartbeat_at"] = utc_iso()
-        save_position(loop_run_id, position)
+        with db.transaction():
+            position = get_position(loop_run_id)
+            position["heartbeat_at"] = utc_iso()
+            save_position(loop_run_id, position)
     except Exception:
         pass
 
@@ -147,25 +195,13 @@ def delete_loop(loop_id: str) -> bool:
 # ── Runs ─────────────────────────────────────────────────────────────────────
 
 def save_run(run: LoopRun) -> LoopRun:
-    # The whole row is written, resume position included: leaving it out of
-    # the column list would quietly blank a running loop's position the next
-    # time its record was saved.
-    with db.transaction() as conn:
-        conn.execute(
-            db.upsert_sql("loop_runs", (
-                "loop_run_id", "loop_id", "workspace", "status", "goal", "task_id",
-                "session_id", "iterations_done", "best_score", "final_score",
-                "stop_reason", "result", "error", "total_cost", "started_at",
-                "finished_at", _PROGRESS_COLUMN), ("loop_run_id",)),
-            (
-                run.loop_run_id, run.loop_id, run.workspace, run.status, run.goal,
-                run.task_id, run.session_id, run.iterations_done, run.best_score,
-                run.final_score, run.stop_reason, run.result, run.error,
-                run.total_cost, run.started_at, run.finished_at,
-                db.dumps(run.position or {}),
-            ),
-        )
-    _notify("loop_runs", loop_run_id=run.loop_run_id, loop_id=run.loop_id)
+    # The whole row is written, resume position included: leaving it out
+    # would quietly blank a running loop's position the next time its record
+    # was saved. ``resume_attempts`` is not a column; it lives in the position.
+    rec = run.to_dict()
+    rec.pop("resume_attempts", None)
+    rec["position"] = run.position or {}
+    _RUNS.upsert(rec, merge=False)
     return run
 
 
@@ -188,92 +224,29 @@ def update_progress(loop_run_id: str, **fields: Any) -> None:
     resume point (see :func:`save_position`).
     """
     position = fields.pop("position", None)
-    if position is not None:
-        save_position(loop_run_id, position)
     updates = {k: v for k, v in fields.items() if k in _PROGRESS_FIELDS}
-    if not updates:
-        if position is not None:
-            _notify("loop_runs", loop_run_id=loop_run_id)
-        return
-    assignments = ", ".join(f"{k} = ?" for k in updates)
-    with db.transaction() as conn:
-        conn.execute(
-            f"UPDATE loop_runs SET {assignments} WHERE loop_run_id = ?",
-            (*updates.values(), loop_run_id),
-        )
-    _notify("loop_runs", loop_run_id=loop_run_id)
-
-
-def _row_to_run(row) -> LoopRun:
-    # The resume position is one JSON column, and the watchdog's attempt
-    # counter lives inside it rather than as a column of its own: both are
-    # written together, by the same writer, on the same schedule.
-    keys = row.keys()
-    position = (db.loads(row[_PROGRESS_COLUMN], {}) or {}
-                if _PROGRESS_COLUMN in keys else {})
-    return LoopRun(
-        position=position,
-        resume_attempts=int(position.get("resume_attempts") or 0),
-        loop_run_id=row["loop_run_id"],
-        loop_id=row["loop_id"] or "",
-        workspace=row["workspace"],
-        status=row["status"] or "running",
-        goal=row["goal"] or "",
-        task_id=row["task_id"],
-        session_id=row["session_id"],
-        iterations_done=int(row["iterations_done"] or 0),
-        best_score=row["best_score"],
-        final_score=row["final_score"],
-        stop_reason=row["stop_reason"] or "",
-        result=row["result"] or "",
-        error=row["error"],
-        total_cost=float(row["total_cost"] or 0.0),
-        started_at=row["started_at"] or "",
-        finished_at=row["finished_at"],
-    )
+    if position is not None:
+        updates["position"] = position
+    if updates:
+        _RUNS.update(loop_run_id, updates)
 
 
 def get_run(loop_run_id: str) -> Optional[LoopRun]:
-    row = db.get_conn().execute(
-        "SELECT * FROM loop_runs WHERE loop_run_id = ?", (loop_run_id,)
-    ).fetchone()
-    return _row_to_run(row) if row else None
+    return _RUNS.get(loop_run_id)
 
 
 def list_runs(loop_id: Optional[str] = None, limit: int = 50) -> List[LoopRun]:
-    conn = db.get_conn()
-    if loop_id:
-        rows = conn.execute(
-            "SELECT * FROM loop_runs WHERE loop_id = ? ORDER BY started_at DESC LIMIT ?",
-            (loop_id, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM loop_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    return [_row_to_run(r) for r in rows]
+    return _RUNS.list({"loop_id": loop_id} if loop_id else None, limit=limit)
 
 
 def request_stop(loop_run_id: str) -> bool:
     """Ask a running loop to stop. The runner checks between nodes and between
     iterations, so the flow is never left half-applied."""
-    with db.transaction() as conn:
-        cur = conn.execute(
-            "UPDATE loop_runs SET status = 'stopping' "
-            "WHERE loop_run_id = ? AND status = 'running'",
-            (loop_run_id,),
-        )
-        stopped = cur.rowcount > 0
-    if stopped:
-        _notify("loop_runs", loop_run_id=loop_run_id)
-    return stopped
+    return _RUNS.request_stop(loop_run_id)
 
 
 def stop_requested(loop_run_id: str) -> bool:
-    row = db.get_conn().execute(
-        "SELECT status FROM loop_runs WHERE loop_run_id = ?", (loop_run_id,)
-    ).fetchone()
-    return bool(row and row["status"] in ("stopping", "stopped"))
+    return _RUNS.stop_requested(loop_run_id)
 
 
 # ── Iterations ───────────────────────────────────────────────────────────────

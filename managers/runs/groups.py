@@ -27,8 +27,11 @@ their own and its cost is the sum of theirs.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 KINDS = ("flow", "loop", "team", "container")
 
@@ -134,7 +137,8 @@ def runs_cost(run_ids: List[str]) -> float:
         prices = load_price_map()
         records = get_runs_by_ids(ids)
         return round(sum(_record_cost(rec, prices) for rec in records.values()), 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort (see docstring): a cost readout must never fail the caller
+        log.debug("runs_cost failed for %d run(s)", len(ids), exc_info=True)
         return 0.0
 
 
@@ -161,7 +165,8 @@ def turn_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
                                          "outbound_tokens": outbound}}},
             load_price_map(),
         ), 6)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort, a cost readout must never fail the caller
+        log.debug("turn_cost failed for %s/%s", provider, model, exc_info=True)
         return 0.0
 
 
@@ -239,14 +244,14 @@ def _flow_stop(flow_run_id: str) -> bool:
         try:
             os.kill(int(pid), signal.SIGTERM)
             stopped = True
-        except Exception:
-            pass
+        except OSError:
+            log.debug("could not signal flow orchestrator pid %s", pid, exc_info=True)
     for run_id in _flow_children(str(flow_run_id)):
         try:
             if stop_run_by_id(run_id):
                 stopped = True
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - one child's stop failing must not stop the rest
+            log.debug("stop_run_by_id failed for %s", run_id, exc_info=True)
     # The record is closed either way: an orchestrator that already died still
     # leaves a run marked running, and that is exactly what a stop must clear.
     return True if not stopped else stopped
@@ -385,7 +390,8 @@ def _container_group(parent_id: str) -> Optional[RunGroup]:
     from tasks import service as ts
     try:
         task = ts.get_task(UUID(str(parent_id)))
-    except Exception:
+    except Exception:  # noqa: BLE001 - a bad id or an unreadable task store means "no such group"
+        log.debug("_container_group lookup failed for %s", parent_id, exc_info=True)
         return None
     if task is None:
         return None
@@ -427,7 +433,8 @@ def _container_stop(parent_id: str) -> bool:
     from tasks import service as ts
     try:
         result = ts.pause_container(UUID(str(parent_id)))
-    except Exception:
+    except Exception:  # noqa: BLE001 - a bad id or an unreadable task store means "not stopped"
+        log.debug("_container_stop failed for %s", parent_id, exc_info=True)
         return False
     return bool(result.get("paused_subtasks") is not None)
 
@@ -486,8 +493,8 @@ def list_groups(kind: Optional[str] = None, workspace: Optional[str] = None,
     for k in kinds:
         try:
             out.extend(_LIST[k](workspace, int(limit)))
-        except Exception:
-            # One unavailable store must not blank the whole list.
+        except Exception:  # noqa: BLE001 - one unavailable store must not blank the whole list
+            log.debug("list_groups: %s store failed", k, exc_info=True)
             continue
     out.sort(key=lambda g: g.started_at or "", reverse=True)
     return out

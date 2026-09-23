@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
 from common.session_broker import broker
+
+log = logging.getLogger(__name__)
 
 INTERVAL = 3.0  # seconds between snapshot passes
 
@@ -53,7 +56,7 @@ def _node_log(node_id: str) -> Optional[str]:
         return "(no logs yet)"
     try:
         return Path(log_file).read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except OSError:
         return None
 
 
@@ -61,7 +64,8 @@ def _member_log(member_id: str) -> Optional[str]:
     from common import members
     try:
         return members.read_log(member_id, tail=400)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a log tail for one open panel must not break the publisher
+        log.debug("member log read failed for %s", member_id, exc_info=True)
         return None
 
 
@@ -69,7 +73,8 @@ def _container_log(name: str) -> Optional[str]:
     from managers import container_manager
     try:
         return container_manager.get_logs(name, tail=200)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a log tail for one open panel must not break the publisher
+        log.debug("container log read failed for %s", name, exc_info=True)
         return None
 
 
@@ -85,8 +90,8 @@ async def _publish_snapshots() -> None:
         try:
             data = await _run_blocking(node_manager.list_nodes)
             await _publish_if_changed("nodes", {"type": "snapshot", "data": data})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - background loop, next tick retries
+            log.debug("nodes snapshot failed", exc_info=True)
     else:
         _forget("nodes")
 
@@ -96,8 +101,8 @@ async def _publish_snapshots() -> None:
         try:
             data = await _run_blocking(container_manager.list_containers)
             await _publish_if_changed("containers", {"type": "snapshot", "data": data})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - background loop, next tick retries
+            log.debug("containers snapshot failed", exc_info=True)
     else:
         _forget("containers")
 
@@ -133,7 +138,7 @@ def _bridged() -> bool:
     try:
         from common.config import settings
         return bool((settings.broker_url or "").strip())
-    except Exception:
+    except ImportError:
         return False
 
 
@@ -154,6 +159,6 @@ async def run_external_publisher() -> None:
                 await _publish_snapshots()
         except asyncio.CancelledError:
             raise
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - background loop, must keep running until cancelled
+            log.debug("external publisher tick failed", exc_info=True)
         await asyncio.sleep(INTERVAL)

@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
+import logging
 import re
 import uuid
 import json
@@ -20,6 +21,8 @@ from common.paths import (
     WORKSPACES_META_FILE,
     ensure_workspaces_root,
 )
+
+log = logging.getLogger(__name__)
 
 # Default workspaces root under the shared .agents_hub state directory
 WORKSPACES_ROOT = DEFAULT_WORKSPACES_ROOT
@@ -54,15 +57,15 @@ def _migrate_legacy_metadata() -> None:
                 if not _workspaces_store.exists(name):
                     try:
                         raw = json.loads(legacy.read_text(encoding="utf-8"))
-                    except Exception:
+                    except (OSError, ValueError):
                         raw = None
                     if isinstance(raw, dict):
                         _workspaces_store.put(name, _normalize_workspace_metadata(raw))
                 # The central store is now authoritative — drop the per-folder file.
                 try:
                     legacy.unlink()
-                except Exception:
-                    pass
+                except OSError:
+                    log.debug("could not remove legacy metadata file %s", legacy, exc_info=True)
     _migration_done = True
 
 # Reserved system folder inside each workspace where planning-capable agents
@@ -98,7 +101,8 @@ def system_agent_ids() -> tuple[str, ...]:
     try:
         from agents.registry import system_agent_ids as _registry_ids
         ids = tuple(_registry_ids())
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable registry falls back to SYSTEM_AGENT_IDS (see module comment)
+        log.debug("system_agent_ids registry lookup failed", exc_info=True)
         ids = ()
     return ids or SYSTEM_AGENT_IDS
 
@@ -113,7 +117,8 @@ def _default_chat_agent_id() -> str | None:
     try:
         from agents.registry import get_agent
         return DEFAULT_CHAT_AGENT_ID if get_agent(DEFAULT_CHAT_AGENT_ID) else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable registry means "no default" (see docstring)
+        log.debug("default chat agent lookup failed", exc_info=True)
         return None
 
 
@@ -217,10 +222,8 @@ def _seed_workspace_metadata(name: str, attached_path: Optional[str] = None) -> 
     if seeded:
         try:
             claim_workspace(name)
-        except Exception:
-            # A workspace that exists but has no membership row is recoverable
-            # (an admin can add one); a create that fails because of it is not.
-            pass
+        except Exception:  # noqa: BLE001 - recoverable (see comment): a create must not fail because of it
+            log.debug("claim_workspace failed for %s", name, exc_info=True)
 
 
 def attach_workspace_folder(target: Path | str, name: Optional[str] = None) -> Path:
@@ -537,8 +540,8 @@ def resolve_task_project_name(task: Any, params: Optional[Dict[str, Any]] = None
             proj = ProjectStore(path=PROJECTS_FILE).get(str(project_id))
             if proj:
                 return project_folder_name(proj.name)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - an unreadable project store means "no project"
+            log.debug("project lookup failed for %s", project_id, exc_info=True)
     return None
 
 
@@ -582,7 +585,7 @@ def as_param_dict(params: Any) -> Dict[str, Any]:
         return {}
     try:
         return dict(params) if hasattr(params, "__iter__") else vars(params)
-    except Exception:
+    except TypeError:
         return {}
 
 
@@ -798,7 +801,7 @@ def get_plan(workspace_name: str, plan_id: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         return _parse_plan_md(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return None
 
 
@@ -809,7 +812,7 @@ def list_plans(workspace_name: str) -> List[Dict[str, Any]]:
     for p in plans_dir.glob("*.md"):
         try:
             records.append(_parse_plan_md(p.read_text(encoding="utf-8")))
-        except Exception:
+        except (OSError, ValueError):
             continue
     records.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
     return records

@@ -44,7 +44,7 @@ def _ensure_legacy_imported() -> None:
     try:
         text = _CTX_FILE.read_text(encoding="utf-8")
         data = json.loads(text) if text.strip() else {}
-    except Exception:
+    except (OSError, ValueError):
         return
     if isinstance(data, dict):
         _store.import_legacy({_STATE_KEY: data}, _CTX_FILE)

@@ -60,9 +60,7 @@ def read_snapshot(name: str) -> Optional[Any]:
     try:
         text = path.read_text(encoding="utf-8")
         return json.loads(text) if text.strip() else {}
-    except FileNotFoundError:
-        return {}
-    except Exception:
+    except (OSError, ValueError):
         return {}
 
 

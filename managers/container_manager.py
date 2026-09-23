@@ -342,7 +342,7 @@ def build_base_image(no_cache: bool = False) -> Dict[str, Any]:
             "error": None if success else log.splitlines()[-1] if log else "build failed",
             "built_at": _utc_now_iso() if success else None,
         }
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return {"success": False, "image": None, "log": "", "error": str(exc), "built_at": None}
 
 
@@ -382,7 +382,7 @@ def build_image(
             "error": None if success else log.splitlines()[-1] if log else "build failed",
             "built_at": _utc_now_iso() if success else None,
         }
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return {
             "success": False, "image": None,
             "dockerfile": str(dockerfile_path),
@@ -411,8 +411,8 @@ def list_images() -> List[Dict[str, Any]]:
                 "size": raw.get("Size", ""),
                 "created": raw.get("CreatedAt", ""),
             })
-        except Exception:
-            pass
+        except ValueError:
+            logger.debug("skipping malformed docker images line: %r", line)
     return images
 
 
@@ -565,7 +565,7 @@ def container_running(container_name: str) -> bool:
             "--filter", "status=running",
         ], timeout=10)
         return bool((result.stdout or "").strip())
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -721,7 +721,7 @@ def start_container(
             "image": image,
             "error": (result.stderr or result.stdout or "docker run failed").strip(),
         }
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return {
             "success": False,
             "container_id": None,
@@ -759,7 +759,7 @@ def stop_container(container_name: str, timeout: int = 15) -> bool:
     try:
         result = _run(["docker", "stop", "--time", str(timeout), container_name], timeout=timeout + 10)
         return result.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -772,7 +772,7 @@ def restart_container(container_name: str, timeout: int = 15) -> bool:
     try:
         result = _run(["docker", "restart", "--time", str(timeout), container_name], timeout=timeout + 30)
         return result.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -781,7 +781,7 @@ def remove_container(container_name: str) -> bool:
     try:
         result = _run(["docker", "rm", "-f", container_name], timeout=15)
         return result.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -790,7 +790,7 @@ def get_logs(container_name: str, tail: int = 200) -> str:
     try:
         result = _run(["docker", "logs", "--tail", str(tail), container_name], timeout=15)
         return (result.stdout or "") + (result.stderr or "")
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return f"[error fetching logs: {exc}]"
 
 
@@ -856,8 +856,8 @@ def _list_local_containers() -> List[Dict[str, Any]]:
                 "created": raw.get("CreatedAt", ""),
                 "agent_id": labels.get("agents-hub.agent-id", ""),
             })
-        except Exception:
-            pass
+        except ValueError:
+            logger.debug("skipping malformed docker ps line: %r", line)
     return containers
 
 
@@ -886,8 +886,8 @@ def register_container(name: str, *, kind: str, agent_id: str = "",
                               ("name",)),
                 (name, socket.gethostname(), kind, agent_id or "", run_id, node_id, image or "",
                  status, now, now, db.dumps(extra or {})))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - never raises (see docstring)
+        logger.debug("register_container failed for %s", name, exc_info=True)
 
 
 def update_container_status(name: str, status: str) -> None:
@@ -896,8 +896,8 @@ def update_container_status(name: str, status: str) -> None:
         with db.transaction() as conn:
             conn.execute("UPDATE containers SET status = ?, updated_at = ? WHERE name = ?",
                          (status, _utc_now_iso(), name))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort cross-host bookkeeping, must not break the caller
+        logger.debug("update_container_status failed for %s", name, exc_info=True)
 
 
 def forget_container(name: str) -> None:
@@ -905,8 +905,8 @@ def forget_container(name: str) -> None:
     try:
         with db.transaction() as conn:
             conn.execute("DELETE FROM containers WHERE name = ?", (name,))
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort cross-host bookkeeping, must not break the caller
+        logger.debug("forget_container failed for %s", name, exc_info=True)
 
 
 def registered_containers() -> List[Dict[str, Any]]:
@@ -915,7 +915,8 @@ def registered_containers() -> List[Dict[str, Any]]:
     try:
         rows = db.get_conn().execute(
             "SELECT * FROM containers ORDER BY started_at DESC LIMIT 500").fetchall()
-    except Exception:
+    except Exception:  # noqa: BLE001 - falls back to no registered containers rather than breaking the caller
+        logger.debug("registered_containers query failed", exc_info=True)
         return []
     out = []
     for row in rows:
@@ -935,7 +936,8 @@ def refresh_registered_containers() -> int:
         return 0
     try:
         local = {c["name"]: c for c in _list_local_containers()}
-    except Exception:
+    except Exception:  # noqa: BLE001 - a daemon that cannot be reached means nothing to reconcile this pass
+        logger.debug("_list_local_containers failed during reconcile", exc_info=True)
         return 0
     changed = 0
     for rec in mine:

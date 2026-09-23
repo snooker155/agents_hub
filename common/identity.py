@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 from contextvars import ContextVar
@@ -72,6 +73,8 @@ from common.auth import (
     required_workspace_role,
     workspace_from_request,
 )
+
+log = logging.getLogger(__name__)
 
 #: Cost of one password hash. Raise it, never lower it: an existing user's
 #: stored iteration count is what verifies them, so old rows keep working and
@@ -664,8 +667,8 @@ def session_for_token(token: str) -> Optional[Tuple[Dict[str, Any], Dict[str, An
             with db.transaction() as conn:
                 conn.execute("UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?",
                              (_iso(now), _token_hash(token)))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - a last_seen touch must not break session validation
+            log.debug("last_seen_at update failed", exc_info=True)
     session = {"session_id": row["session_id"], "kind": row["session_kind"] or SESSION_PASSWORD,
                "expires_at": row["expires_at"]}
     return _row_to_user(row), session

@@ -13,6 +13,7 @@ neither of them calls back into it.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 from uuid import uuid4
 
@@ -20,6 +21,8 @@ from common import db
 
 from .lifecycle import get_run_by_id, run_log_path
 from .store import _upsert_run, _utc_now_iso
+
+log = logging.getLogger(__name__)
 
 
 def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str | None = None) -> None:
@@ -48,7 +51,8 @@ def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str 
                 try:
                     from workspace import get_workspace_metadata
                     followup_mode = get_workspace_metadata(ws_name).get("orchestrator", {}).get("followup_mode", "single")
-                except Exception:
+                except Exception:  # noqa: BLE001 - an unreadable workspace falls back to the single-followup default
+                    log.debug("followup_mode lookup failed for %s", ws_name, exc_info=True)
                     followup_mode = "single"
                 if followup_mode == "continuous":
                     _ts.update_task(tid, status=_ts.TaskStatus.in_progress)
@@ -61,8 +65,8 @@ def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str 
             _ts.clear_agent(tid)
             try:
                 _ts.append_task_activity_log(tid, "run_failed", f"Flow failed: {reason}")
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - an activity-log write is best-effort, must not break finalization
+                log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
 
         # Trigger any session continuations waiting for this task
         try:
@@ -70,12 +74,12 @@ def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str 
             for cont in pop_continuations_for_task(str(task_id)):
                 try:
                     _trigger_session_continuation(cont, status)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception:  # noqa: BLE001 - one continuation failing must not stop the rest
+                    log.debug("session continuation trigger failed for %r", cont, exc_info=True)
+        except Exception:  # noqa: BLE001 - best-effort (see docstring): a continuation problem must not block finalize
+            log.debug("pop_continuations_for_task failed for task %s", task_id, exc_info=True)
     except Exception:
-        pass
+        log.exception("finalize_flow_task failed for task %s", task_id)
 
 
 def park_task_awaiting_input(run_id: str, question: Dict[str, Any], agent_id: str = "") -> None:
@@ -116,8 +120,8 @@ def park_task_awaiting_input(run_id: str, question: Dict[str, Any], agent_id: st
         _ts.update_task(tid, status=_ts.TaskStatus.awaiting_input, pending_question=pending)
         try:
             _ts.append_task_activity_log(tid, "awaiting_input", f"Agent asked: {q_text}", run_id=run_id, agent_id=pending["agent_id"])
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort (see docstring), an activity-log write must not break the pause
+            log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
 
         # Surface the question to the user (inbox + dashboard bell).
         try:
@@ -131,10 +135,10 @@ def park_task_awaiting_input(run_id: str, question: Dict[str, Any], agent_id: st
                 workspace=str(getattr(current_task, "workspace", "") or "") or None,
                 channels=["dashboard"],
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort (see docstring), a notification must not break the pause
+            log.debug("create_notification failed for %s", tid, exc_info=True)
     except Exception:
-        pass
+        log.exception("park_task_awaiting_input failed for run %s", run_id)
 
 
 # How many fix->review cycles a task may go through before the pipeline stops
@@ -197,8 +201,8 @@ def _auto_start_review(tid, task) -> bool:
                     workspace=ws_name,
                     channels=["dashboard"],
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - best-effort notification, must not break blocking the task
+                log.debug("create_notification failed for %s", tid, exc_info=True)
             return False
 
         from agents import agent_launcher
@@ -213,7 +217,8 @@ def _auto_start_review(tid, task) -> bool:
             agent_id="code_reviewer",
         )
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - falls back to a normal block on any failure to auto-start review
+        log.warning("auto-start of code review failed for task %s", tid, exc_info=True)
         return False
 
 
@@ -249,7 +254,8 @@ def _maybe_retry_failed_run(tid, run: Dict[str, Any], reason: str) -> bool:
         try:
             from workspace import get_workspace_metadata
             max_retries = int(get_workspace_metadata(ws_name).get("orchestrator", {}).get("max_retries", 0) or 0)
-        except Exception:
+        except Exception:  # noqa: BLE001 - an unreadable workspace falls back to retries disabled
+            log.debug("max_retries lookup failed for %s", ws_name, exc_info=True)
             max_retries = 0
         if max_retries <= 0:
             return False
@@ -279,7 +285,8 @@ def _maybe_retry_failed_run(tid, run: Dict[str, Any], reason: str) -> bool:
             agent_id=agent_id,
         )
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - falls back to a normal block on any failure to dispatch a retry
+        log.warning("retry dispatch failed for task %s", tid, exc_info=True)
         return False
 
 
@@ -317,8 +324,8 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                         error=str((run or {}).get("error") or "") or None,
                         workspace=str((run or {}).get("workspace") or "") or None,
                     )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort memory episode (see comment), must not break finalization
+            log.debug("silent_task_episode failed for run %s", run_id, exc_info=True)
 
         if status == "completed":
             # Only advance to 'resolved' if the agent didn't already set a
@@ -339,7 +346,8 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                     try:
                         from workspace import get_workspace_metadata
                         followup_mode = get_workspace_metadata(ws_name).get("orchestrator", {}).get("followup_mode", "single")
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - an unreadable workspace falls back to the single-followup default
+                        log.debug("followup_mode lookup failed for %s", ws_name, exc_info=True)
                         followup_mode = "single"
                     if followup_mode == "continuous":
                         # Keep in_progress so the UI shows work is ongoing, but clear
@@ -398,7 +406,8 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                 try:
                     from workspace import get_workspace_metadata
                     followup_mode = get_workspace_metadata(ws_name).get("orchestrator", {}).get("followup_mode", "single")
-                except Exception:
+                except Exception:  # noqa: BLE001 - an unreadable workspace falls back to the single-followup default
+                    log.debug("followup_mode lookup failed for %s", ws_name, exc_info=True)
                     followup_mode = "single"
                 if (
                     followup_mode == "continuous"
@@ -445,8 +454,8 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                     agent_id=agent_id_str,
                     exit_code=exit_code,
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - an activity-log write is best-effort, must not break finalization
+                log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
 
         # Trigger session continuations bound to this run (run-bound entries
         # ignore other runs on the task, e.g. the orchestrator's own run).
@@ -456,12 +465,12 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
             for cont in continuations:
                 try:
                     _trigger_session_continuation(cont, status)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception:  # noqa: BLE001 - one continuation failing must not stop the rest
+                    log.debug("session continuation trigger failed for %r", cont, exc_info=True)
+        except Exception:  # noqa: BLE001 - best-effort, a continuation problem must not block finalize
+            log.debug("pop_continuations_for_task failed for run %s", run_id, exc_info=True)
     except Exception:
-        pass
+        log.exception("finalize_task_from_run failed for run %s", run_id)
 
 
 def _trigger_session_continuation(cont: dict, finished_status: str) -> None:
@@ -519,8 +528,8 @@ def _trigger_session_continuation(cont: dict, finished_status: str) -> None:
         _current = _ts.get_task(_UUID(task_id))
         if _current and _current.status not in _verdict_statuses:
             _ts.update_task(_UUID(task_id), status=_ts.TaskStatus.in_progress)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort UI status; the run itself is already registered above
+        log.debug("continuation agent assignment failed for task %s", task_id, exc_info=True)
 
     env["AGENT_LOG_FILE"] = str(log_file)  # reuse the unified run_logs/ file
     env["AGENT_RUN_CHANNEL"] = "continuation"

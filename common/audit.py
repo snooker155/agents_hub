@@ -122,7 +122,7 @@ def record(action: str, *, principal: Any = None, actor: Optional[Dict[str, Any]
             if not row_id and db.is_postgres():
                 row = conn.execute("SELECT MAX(id) FROM audit_log").fetchone()
                 row_id = row[0] if row else None
-    except Exception:
+    except Exception:  # noqa: BLE001 - an audit write must not break the action it is recording
         log.warning("audit: could not record %s", action, exc_info=True)
         return None
     entry = {
@@ -153,7 +153,7 @@ def _fan_out(entry: Dict[str, Any]) -> None:
         }
         for endpoint in endpoints:
             notify_outbound.dispatch(endpoint, event)
-    except Exception:
+    except Exception:  # noqa: BLE001 - webhook fan-out is best-effort, must not break the audit write
         log.debug("audit: webhook fan-out failed", exc_info=True)
 
 

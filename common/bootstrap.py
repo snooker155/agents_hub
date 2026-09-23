@@ -21,6 +21,7 @@ deliberate exception (the last bullet):
 """
 from __future__ import annotations
 
+import logging
 import shutil
 
 from common.paths import (
@@ -31,6 +32,8 @@ from common.paths import (
     ensure_workspaces_root,
 )
 
+
+log = logging.getLogger(__name__)
 
 BOOTSTRAP_ROOT = PROJECT_ROOT / "bootstrap"
 BOOTSTRAP_AGENTS_FILE = BOOTSTRAP_ROOT / "agents.json"
@@ -51,7 +54,7 @@ def _seed_agents_file() -> bool:
     try:
         import json
         raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return False
     records = [a for a in (raw.get("agents") or []) if isinstance(a, dict) and a.get("id")]
     if not records:
@@ -101,7 +104,7 @@ def _ensure_system_agents() -> list[str]:
         import json
         from agents.registry import get_agent, add_agent, _validate_agent_dict
         raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return []
 
     added: list[str] = []
@@ -114,8 +117,8 @@ def _ensure_system_agents() -> list[str]:
         try:
             add_agent(_validate_agent_dict(ad), user_edit=False)
             added.append(aid)
-        except Exception:
-            continue
+        except Exception:  # noqa: BLE001 - one bad seed record must not stop the rest from being added
+            log.debug("could not add system agent %r from the seed", aid, exc_info=True)
     return added
 
 
@@ -133,10 +136,11 @@ def ensure_system_agent(agent_id: str) -> bool:
         from agents.registry import get_agent
         if get_agent(agent_id) is not None:
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable registry must report "unavailable", not 500
         # An unreadable registry is a broken install, not a crash
         # for the caller: a surface that needs this agent should report it as
         # unavailable rather than 500 on the lookup itself.
+        log.debug("registry lookup failed for %s", agent_id, exc_info=True)
         return False
     if not BOOTSTRAP_AGENTS_FILE.is_file():
         return False
@@ -150,7 +154,8 @@ def ensure_system_agent(agent_id: str) -> bool:
             return False
         add_agent(_validate_agent_dict(spec), user_edit=False)
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - on-demand seed must report "unavailable", not 500
+        log.debug("could not seed system agent %s on demand", agent_id, exc_info=True)
         return False
 
 
@@ -192,16 +197,15 @@ def _sync_system_agents() -> list[str]:
     Returns the ids that changed.
     """
     import json
-    import logging
     from agents.registry import load_all_raw, replace_all_raw
 
-    log = logging.getLogger(__name__)
     if not BOOTSTRAP_AGENTS_FILE.is_file():
         return []
     try:
         seed_raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
         live_raw = {"agents": load_all_raw()}
-    except Exception:
+    except Exception:  # noqa: BLE001 - startup must not raise; the seed's field sync just skips this run
+        log.debug("system agent sync: could not read the seed or the registry", exc_info=True)
         return []
     if not live_raw["agents"]:
         return []
@@ -217,7 +221,7 @@ def _sync_system_agents() -> list[str]:
 
     try:
         from tools.capabilities import check_combination
-    except Exception:
+    except ImportError:
         check_combination = None  # type: ignore[assignment]
 
     changed: list[str] = []
@@ -332,7 +336,7 @@ def _sync_system_agents() -> list[str]:
                 "before updating %d agent(s) from the seed.", backup, len(changed),
             )
         except Exception:
-            pass
+            log.exception("system agent sync: could not write the pre-sync backup to %s", backup)
 
     replace_all_raw(live_raw["agents"])
     return changed
@@ -353,14 +357,13 @@ def _grandfather_capability_violations() -> list[str]:
     violates, is left alone. New violations still hard-block — the override is
     only granted to combinations that were already on disk.
     """
-    import logging
     from agents.registry import load_all_raw, replace_all_raw
 
-    log = logging.getLogger(__name__)
     try:
         from tools.capabilities import check_combination
         raw = {"agents": load_all_raw()}
-    except Exception:
+    except Exception:  # noqa: BLE001 - startup must not raise; grandfathering just skips this run
+        log.debug("capability grandfathering: could not read the registry", exc_info=True)
         return []
 
     stamped: list[str] = []

@@ -1,9 +1,15 @@
-"""Persistence for teams, team runs and the message bus."""
+"""Persistence for teams, team runs and the message bus.
+
+Team *runs* are kept by the implementation flow and loop runs share
+(:mod:`common.entity_runs`); this module says what a team run looks like and
+keeps the team definitions and the message bus itself.
+"""
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from common import db
+from common.entity_runs import EntityRunStore
 from teams.models import BROADCAST, Team, TeamMessage, TeamRun, utc_iso
 
 # Run-level knobs share one JSON column, so tightening a ceiling never needs a
@@ -104,29 +110,55 @@ def delete_team(team_id: str) -> bool:
 
 # ── Runs ─────────────────────────────────────────────────────────────────────
 
+_RUN_COLUMNS = (
+    "team_run_id", "team_id", "workspace", "mode", "status", "goal",
+    "task_id", "session_id", "conversation_id", "rounds_done",
+    "total_cost", "result", "stop_reason", "error", "started_at",
+    "finished_at",
+)
+
+
+def _to_run(rec: Dict[str, Any]) -> TeamRun:
+    return TeamRun(
+        team_run_id=rec["team_run_id"],
+        team_id=rec["team_id"] or "",
+        workspace=rec["workspace"],
+        mode=rec["mode"] or "centralized",
+        status=rec["status"] or "running",
+        goal=rec["goal"] or "",
+        task_id=rec["task_id"],
+        session_id=rec["session_id"],
+        conversation_id=rec["conversation_id"],
+        rounds_done=int(rec["rounds_done"] or 0),
+        total_cost=float(rec["total_cost"] or 0.0),
+        result=rec["result"] or "",
+        stop_reason=rec["stop_reason"] or "",
+        error=rec["error"],
+        started_at=rec["started_at"] or "",
+        finished_at=rec["finished_at"],
+    )
+
+
+#: Team-run records over the shared implementation (common/entity_runs.py).
+_RUNS: EntityRunStore[TeamRun] = EntityRunStore(
+    table="team_runs",
+    key="team_run_id",
+    columns=_RUN_COLUMNS,
+    convert=_to_run,
+    resource="team_runs",
+    parent_key="team_id",
+    order_by="started_at DESC",
+    live_statuses=("running", "stopping"),
+    stopping_status="stopping",
+)
+
+
 def save_run(run: TeamRun) -> TeamRun:
-    with db.transaction() as conn:
-        conn.execute(
-            db.upsert_sql(
-                "team_runs",
-                ("team_run_id", "team_id", "workspace", "mode", "status", "goal",
-                 "task_id", "session_id", "conversation_id", "rounds_done",
-                 "total_cost", "result", "stop_reason", "error", "started_at",
-                 "finished_at"),
-                ("team_run_id",),
-            ),
-            (
-                run.team_run_id, run.team_id, run.workspace, run.mode, run.status,
-                run.goal, run.task_id, run.session_id, run.conversation_id,
-                run.rounds_done, run.total_cost, run.result, run.stop_reason,
-                run.error, run.started_at, run.finished_at,
-            ),
-        )
-    _notify("team_runs", team_run_id=run.team_run_id, team_id=run.team_id)
+    _RUNS.upsert(run.to_dict(), merge=False)
     return run
 
 
-#: Columns :func:`update_progress` may touch — ``status`` is deliberately absent
+#: Columns :func:`update_progress` may touch. ``status`` is deliberately absent
 #: so a stop request that landed mid-round is not overwritten by progress.
 _PROGRESS_FIELDS = frozenset({"rounds_done", "total_cost", "result", "error"})
 
@@ -139,83 +171,30 @@ def update_progress(team_run_id: str, **fields: Any) -> None:
     keep talking after the user pressed stop.
     """
     updates = {k: v for k, v in fields.items() if k in _PROGRESS_FIELDS}
-    if not updates:
-        return
-    assignments = ", ".join(f"{k} = ?" for k in updates)
-    with db.transaction() as conn:
-        conn.execute(
-            f"UPDATE team_runs SET {assignments} WHERE team_run_id = ?",
-            (*updates.values(), team_run_id),
-        )
-    _notify("team_runs", team_run_id=team_run_id)
-
-
-def _row_to_run(row) -> TeamRun:
-    return TeamRun(
-        team_run_id=row["team_run_id"],
-        team_id=row["team_id"] or "",
-        workspace=row["workspace"],
-        mode=row["mode"] or "centralized",
-        status=row["status"] or "running",
-        goal=row["goal"] or "",
-        task_id=row["task_id"],
-        session_id=row["session_id"],
-        conversation_id=row["conversation_id"],
-        rounds_done=int(row["rounds_done"] or 0),
-        total_cost=float(row["total_cost"] or 0.0),
-        result=row["result"] or "",
-        stop_reason=row["stop_reason"] or "",
-        error=row["error"],
-        started_at=row["started_at"] or "",
-        finished_at=row["finished_at"],
-    )
+    if updates:
+        _RUNS.update(team_run_id, updates)
 
 
 def get_run(team_run_id: str) -> Optional[TeamRun]:
-    row = db.get_conn().execute(
-        "SELECT * FROM team_runs WHERE team_run_id = ?", (team_run_id,)
-    ).fetchone()
-    return _row_to_run(row) if row else None
+    return _RUNS.get(team_run_id)
 
 
 def list_runs(team_id: Optional[str] = None, limit: int = 50) -> List[TeamRun]:
-    conn = db.get_conn()
-    if team_id:
-        rows = conn.execute(
-            "SELECT * FROM team_runs WHERE team_id = ? ORDER BY started_at DESC LIMIT ?",
-            (team_id, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM team_runs ORDER BY started_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    return [_row_to_run(r) for r in rows]
+    return _RUNS.list({"team_id": team_id} if team_id else None, limit=limit)
 
 
 def request_stop(team_run_id: str) -> bool:
     """Record that a running team was asked to stop.
 
-    The durable half of a stop — what a reloaded page, another process, or a
+    The durable half of a stop: what a reloaded page, another process, or a
     restarted server reads. The half that actually interrupts the turns in
     flight is :mod:`teams.control`; :func:`teams.runner.stop_run` does both.
     """
-    with db.transaction() as conn:
-        cur = conn.execute(
-            "UPDATE team_runs SET status = 'stopping' "
-            "WHERE team_run_id = ? AND status = 'running'",
-            (team_run_id,),
-        )
-        stopped = cur.rowcount > 0
-    if stopped:
-        _notify("team_runs", team_run_id=team_run_id)
-    return stopped
+    return _RUNS.request_stop(team_run_id)
 
 
 def stop_requested(team_run_id: str) -> bool:
-    row = db.get_conn().execute(
-        "SELECT status FROM team_runs WHERE team_run_id = ?", (team_run_id,)
-    ).fetchone()
-    return bool(row and row["status"] in ("stopping", "stopped"))
+    return _RUNS.stop_requested(team_run_id)
 
 
 # ── Messages ─────────────────────────────────────────────────────────────────

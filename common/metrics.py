@@ -20,9 +20,12 @@ thing that was supposed to tell them what is wrong.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Tuple
 
 from common import db
+
+log = logging.getLogger(__name__)
 
 # (labels, value) pairs for one metric name.
 _Sample = Tuple[Dict[str, Any], Any]
@@ -57,7 +60,8 @@ def _database_ok() -> bool:
     try:
         db.get_conn().execute("SELECT 1").fetchone()
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("database collector failed", exc_info=True)
         return False
 
 
@@ -66,7 +70,8 @@ def _runs_by_status() -> Dict[str, int]:
         rows = db.get_conn().execute(
             "SELECT status, COUNT(*) AS n FROM runs GROUP BY status").fetchall()
         return {str(r["status"] or "unknown"): int(r["n"] or 0) for r in rows}
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("runs_by_status collector failed", exc_info=True)
         return {}
 
 
@@ -79,7 +84,8 @@ def _tokens_by_workspace() -> Dict[str, int]:
             "SELECT COALESCE(NULLIF(workspace, ''), 'default') AS ws, "
             "SUM(COALESCE(total_tokens, 0)) AS n FROM runs GROUP BY ws").fetchall()
         return {str(r["ws"]): int(r["n"] or 0) for r in rows}
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("tokens_by_workspace collector failed", exc_info=True)
         return {}
 
 
@@ -99,7 +105,8 @@ def _cost_by_workspace() -> Tuple[Dict[str, float], bool]:
     try:
         from common.pricing import load_price_map
         prices = load_price_map()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("price catalog load failed", exc_info=True)
         return {}, False
     try:
         rows = db.get_conn().execute(
@@ -109,7 +116,8 @@ def _cost_by_workspace() -> Tuple[Dict[str, float], bool]:
             "SUM(COALESCE(cached_prompt_tokens, 0)) AS cached, "
             "SUM(COALESCE(completion_tokens, 0)) AS outbound "
             "FROM runs GROUP BY ws, provider, model").fetchall()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("cost_by_workspace collector failed", exc_info=True)
         return {}, False
 
     costs: Dict[str, float] = {}
@@ -151,7 +159,8 @@ def render() -> str:
     try:
         from common import run_queue
         qstats = run_queue.stats()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("run_queue collector failed", exc_info=True)
         qstats = {}
     _emit(lines, "agents_hub_run_queue",
           "Launch-queue rows by status (common/run_queue.py); empty everywhere "
@@ -165,7 +174,8 @@ def render() -> str:
     try:
         from notify import outbound
         obstats = outbound.stats()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("outbox collector failed", exc_info=True)
         obstats = {"pending": 0, "dead": 0}
     _emit(lines, "agents_hub_outbox",
           "Outbox rows waiting to be delivered, and rows given up on after "
@@ -176,7 +186,8 @@ def render() -> str:
     try:
         from common import leases
         lease_rows = leases.all_leases()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("leases collector failed", exc_info=True)
         lease_rows = []
     age_samples = [({"role": r["role"]}, r["age_seconds"]) for r in lease_rows
                    if r.get("age_seconds") is not None]
@@ -208,12 +219,14 @@ def render() -> str:
     try:
         from common.config import hub_role
         role = hub_role()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("hub_role collector failed", exc_info=True)
         role = "unknown"
     try:
         from common.leases import owner_id
         instance = owner_id()
-    except Exception:
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("owner_id collector failed", exc_info=True)
         instance = "unknown"
     _emit(lines, "agents_hub_info",
           "Constant 1, labeled with this process's role and instance id.",

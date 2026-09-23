@@ -115,7 +115,7 @@ def _fernet_key_from(configured: str) -> bytes:
         try:
             if len(base64.urlsafe_b64decode(raw.encode("ascii"))) == 32:
                 return raw.encode("ascii")
-        except Exception:
+        except ValueError:
             pass
     derived = hashlib.pbkdf2_hmac("sha256", raw.encode("utf-8"), _PASSPHRASE_SALT,
                                   _PASSPHRASE_ITERATIONS, dklen=32)
@@ -386,7 +386,7 @@ class VaultBackend(SecretBackend):
                 return None
             value = ((response.json() or {}).get("data") or {}).get("data", {}).get("value")
             return None if value is None else str(value)
-        except Exception as exc:
+        except (requests.RequestException, ValueError) as exc:
             log.warning("secrets: vault read of %s failed: %s", row["name"], type(exc).__name__)
             return None
 
@@ -400,7 +400,7 @@ class VaultBackend(SecretBackend):
                 self._endpoint("metadata", self.path(row["workspace"], row["name"],
                                                      row["agent_id"], row["user_id"])),
                 headers=self._headers(), timeout=self.TIMEOUT)
-        except Exception as exc:
+        except requests.RequestException as exc:
             log.warning("secrets: vault delete of %s failed: %s", row["name"], type(exc).__name__)
 
 
@@ -463,7 +463,7 @@ def _with_github_app(out: Dict[str, str], allowed: Iterable[str], workspace: str
         return out
     try:
         from connectors.git import github_app
-    except Exception:
+    except ImportError:
         return out
     token = github_app.token_for_run(workspace, agent_id, user_id)
     if token:
@@ -486,7 +486,7 @@ def env_for_run(workspace: str, agent_id: Optional[str],
             return {}
         return _with_github_app(resolve_for_run(workspace, agent_id, user_id, allowed),
                                 allowed, workspace, agent_id, user_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - never raises (see docstring): a secrets problem must not crash a launch
         log.warning("secrets: nothing handed to %s in %s: %s", agent_id, workspace,
                     type(exc).__name__)
         return {}
@@ -518,7 +518,7 @@ def env_for_flow(workspace: str, flow_id: Optional[str],
         # no single agent's github_identity can speak for all of them.
         return _with_github_app(resolve_for_run(workspace, "", user_id, names),
                                 names, workspace, None, user_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - never raises (see docstring): a secrets problem must not crash a launch
         log.warning("secrets: nothing handed to flow %s in %s: %s", flow_id, workspace,
                     type(exc).__name__)
         return {}
@@ -564,7 +564,7 @@ def get(name: str) -> Optional[str]:
             return None
         return _with_github_app(resolve_for_run(workspace, agent_id, user_id, [name]),
                                 [name], workspace, agent_id, user_id).get(name)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - an in-process secret read must not crash the caller
         log.warning("secrets: could not read %s: %s", name, type(exc).__name__)
         return None
 

@@ -30,6 +30,11 @@ jobs:
           pip install -r requirements-cli.txt
           pip install pytest ruff
 
+      - name: Blind excepts (report only)
+        # --isolated so the per-file-ignores in pyproject.toml do not hide the
+        # packages that are not clean yet: this step counts what remains.
+        run: ruff check --isolated --select BLE001,S110 --exit-zero --statistics --exclude node_modules,chroma_db,site,dashboard/frontend,__pycache__ .
+
       - name: Lint (ruff)
         run: ruff check .
 

@@ -16,7 +16,10 @@ module generalises the earlier view-only sink: a view is just one entity kind.
 from __future__ import annotations
 
 import contextvars
+import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+log = logging.getLogger(__name__)
 
 # Actions, weakest first. A run that reads a task and then updates it should
 # report "updated": a mutation always outranks a plain read, whichever came
@@ -119,7 +122,7 @@ def reset_sink(token) -> None:
     """Restore the previous sink using a token from :func:`set_sink`."""
     try:
         _entity_sink.reset(token)
-    except Exception:
+    except (ValueError, RuntimeError):
         pass
 
 
@@ -133,8 +136,8 @@ def record_entity(kind: str, entity_id: str, action: str = "updated", label: str
         return
     try:
         sink.record(kind, entity_id, action, label, **meta)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - never raises (see docstring), reporting must not break a tool call
+        log.debug("entity_sink: record failed for %s/%s", kind, entity_id, exc_info=True)
 
 
 __all__ = ["EntitySink", "set_sink", "reset_sink", "record_entity"]

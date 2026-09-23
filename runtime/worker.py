@@ -44,7 +44,17 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from common.logging_config import marker_logger
+
 log = logging.getLogger("runtime.worker")
+
+# ``ah worker --once`` is a diagnostic invocation: its one line of output is
+# meant to be read (or scripted against) from stdout the way a command's
+# result normally is, same as it was as a bare print() — everything else this
+# module logs goes through ``log`` above and, via configure_logging's default
+# root handler, to stderr. tests/test_worker_integration.py asserts on this
+# text in a real subprocess's captured stdout.
+_diag_log = marker_logger("runtime.worker.diagnostic")
 
 TICK_SECONDS = float(os.environ.get("AGENTS_HUB_WORKER_TICK_SECONDS", "2"))
 LEASE_SECONDS = float(os.environ.get("AGENTS_HUB_WORKER_LEASE_SECONDS", "60"))
@@ -247,7 +257,7 @@ def main(argv: Optional[List[str]] = None, *, run: Callable[[Worker], None] = No
     worker = Worker(concurrency=args.concurrency, modes=modes)
     if args.once:
         n = worker.tick()
-        print(f"worker tick: launched {n}, tracking {len(worker.tracked)}")
+        _diag_log.info(f"worker tick: launched {n}, tracking {len(worker.tracked)}")
         return 0
     (run or Worker.run_forever)(worker)
     return 0
