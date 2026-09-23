@@ -24,12 +24,18 @@ it costs anything to run.
 
 `run_flow_tool` starts it, and refuses until you have approved: a flow is as
 many model calls as it has agent nodes. It returns a run id immediately and
-streams per-node progress; it does not block the conversation.
+streams per-node progress; it does not block the conversation. In the default
+(all-in-one) role the flow starts at once in-process; in the `api` role the
+launch is queued and a worker spawns it on its own host.
 
 Nodes that do not depend on each other run at the same time. A node starts as
 soon as every node feeding it has finished, up to `max_parallel` (4 unless the
 flow says otherwise), so two branches of a fan-out are two branches in fact and
 not only on the canvas.
+
+Retry and review now apply to flow results: the workspace's orchestrator
+retries a failed flow run up to `orchestrator.max_retries` times, and review
+starts on every resolve when the code_reviewer agent is available.
 
 ## What a run costs before it runs
 

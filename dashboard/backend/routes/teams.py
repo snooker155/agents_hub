@@ -5,22 +5,25 @@ Teams API — a bounded roster of agents that know each other.
 ``GET|PUT|DELETE /api/teams/{team_id}``
 ``GET  /api/teams/manifest/{agent_id}``       a suggested manifest for a roster line
 ``POST /api/teams/{team_id}/estimate``        upper-bound call count for a full run
-``POST /api/teams/{team_id}/run``             start a team run (background thread)
+``POST /api/teams/{team_id}/run``             launch a team run as its own process
 ``GET  /api/teams/runs``                      recent runs
 ``GET  /api/teams/runs/{run_id}``             one run + its board
 ``GET  /api/teams/runs/{run_id}/messages``    the board (``?since=`` seq to poll)
 ``POST /api/teams/runs/{run_id}/stop``        stop a running team now
+``POST /api/teams/runs/{run_id}/resume``      relaunch a stopped/failed run from its checkpoint
 ``GET|POST|DELETE /api/teams/{team_id}/chat`` the team's own build chat
 ``POST /api/teams/{team_id}/chat/stop``      stop the in-flight build turn
 
-A team run is M members x R rounds of agent calls, so it starts on a background
-thread and the UI follows the ``team:<team_run_id>`` channel or polls the board.
-Both read the same rows — watching live and reading it back look the same.
+A team run is M members x R rounds of agent calls, so ``/run`` returns as soon
+as the record exists (teams.launcher.start_team_run) and the run itself
+executes in its own process — spawned right here, or via a worker in the
+``api`` role (docs/workers.md) — never on this request's thread. The UI
+follows the ``team:<team_run_id>`` channel or polls the board; both read the
+same rows, so watching live and reading it back look the same.
 """
 from __future__ import annotations
 
 import json
-import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -29,7 +32,7 @@ from pydantic import BaseModel
 from teams import store
 from teams.models import MAX_MEMBERS, MODES, Team
 from teams.prompts import suggest_manifest, team_system_prompt
-from teams.runner import estimate_cost, run_team, stop_run
+from teams.runner import estimate_cost, stop_run
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
@@ -176,12 +179,19 @@ async def list_runs(team_id: Optional[str] = None, limit: int = 50):
 
 @router.get("/runs/{team_run_id}")
 async def get_run(team_run_id: str):
+    from common import entity_runs
+
     run = store.get_run(team_run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Team run not found")
     team = store.get_team(run.team_id)
     return {
         **run.to_dict(),
+        # Whether a resume has something to pick back up from — the frontend's
+        # Resume button. Not on ``TeamRun.to_dict()`` itself: the checkpoint is
+        # its own column (common/entity_runs.py) and can be large, so it is
+        # never carried on every run record, only asked for here.
+        "has_checkpoint": bool(entity_runs.load_checkpoint(team_run_id)),
         "team": _enrich(team) if team else None,
         "messages": [m.to_dict() for m in store.list_messages(team_run_id)],
     }
@@ -217,6 +227,23 @@ async def stop_team_run(team_run_id: str):
     if not stop_run(team_run_id):
         raise HTTPException(status_code=400, detail="Run is not running")
     return {"ok": True}
+
+
+@router.post("/runs/{team_run_id}/resume")
+async def resume_team_run(team_run_id: str):
+    """Relaunch a stopped or failed run from its checkpoint, under the same id.
+
+    A fresh subprocess (or, in the ``api`` role, a worker's) picks the round
+    loop back up where the last attempt left off — 400 when there is nothing
+    to resume (the run is still live, finished cleanly, or never checkpointed).
+    """
+    from teams.launcher import TeamResumeError, resume_team_run as _resume
+
+    try:
+        run = _resume(team_run_id)
+    except TeamResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return run.to_dict()
 
 
 @router.get("/{team_id}")
@@ -272,12 +299,16 @@ async def estimate(team_id: str):
 
 @router.post("/{team_id}/run")
 async def start_run(team_id: str, data: RunIn):
-    """Start a team run on a background thread and return its record.
+    """Launch a team run as its own process and return its record.
 
-    The client needs a run id to follow, and only ``run_team`` mints one, so we
-    wait for the row rather than duplicating the id logic. The run continues
-    regardless of when this returns.
+    The database half (teams.launcher.start_team_run) runs synchronously —
+    the record, the task claim, the log path — so this always has something
+    to return; the round loop itself executes in a subprocess this call spawns
+    (or, in the ``api`` role, once a worker claims it off the queue), never on
+    this request's own thread.
     """
+    from teams.launcher import start_team_run
+
     team = store.get_team(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
@@ -290,34 +321,14 @@ async def start_run(team_id: str, data: RunIn):
             detail="a team run needs a goal — give it the request to work on",
         )
 
-    ready = threading.Event()
-    failure: Dict[str, Any] = {}
-
-    def _worker():
-        try:
-            run_team(
-                team_id, goal, workspace=data.workspace or team.workspace,
-                task_id=data.task_id, conversation_id=data.conversation_id,
-                on_message=lambda _m: ready.set(),
-            )
-        except Exception as e:  # noqa: BLE001
-            failure["error"] = f"{type(e).__name__}: {e}"
-        finally:
-            ready.set()
-
-    threading.Thread(target=_worker, name=f"team-{team_id}", daemon=True).start()
-
-    for _ in range(60):
-        runs = store.list_runs(team_id, limit=1)
-        if runs:
-            return runs[0].to_dict()
-        if failure:
-            raise HTTPException(status_code=400, detail=failure["error"])
-        ready.wait(timeout=0.05)
-
-    if failure:
-        raise HTTPException(status_code=400, detail=failure["error"])
-    return {"team_id": team_id, "status": "starting"}
+    try:
+        run = start_team_run(
+            team_id, goal, workspace=data.workspace or team.workspace,
+            task_id=data.task_id, conversation_id=data.conversation_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return run.to_dict()
 
 
 # ── The build chat ───────────────────────────────────────────────────────────

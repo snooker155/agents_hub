@@ -38,15 +38,43 @@ retention limit, and delivers messages that were written to a copy while it was
 busy (``instances.delivery.drain_idle``) — none of which has anywhere else to
 happen once the copy stopped running.
 
-Flow and loop runs are swept too, and for them death is not the end: both write
-a checkpoint as they go, so a run whose process is gone is **resumed** from it
-rather than failed. Only a run with no checkpoint, or one that has already been
-resumed :data:`MAX_AUTO_RESUMES` times, is closed as failed — a run that cannot
-get past its next node must not be restarted forever. Liveness for a flow run
-is its ``heartbeat_at``, refreshed every node and at least every 15 seconds
-while an agent node runs, because a pid says only that *a* process exists: the
-pid of a crashed-and-reused number is alive, and a hung orchestrator's pid is
-alive too, while a heartbeat that stopped moving is the run itself going quiet.
+Flow, loop, team and scenario runs are swept together, in one pass over
+:mod:`common.entity_runs` (:func:`_sweep_entity_runs`), because since stage 0 of
+the September 2026 plan they are one table with one status vocabulary
+(``common/run_status.py``): every kind is a process with a lease, a heartbeat
+and a checkpoint, whatever store its own adapter (flow.run_store, loops.store,
+teams.store, playground.store) wraps it in. For every one of them death is not
+the end: each writes a checkpoint as it goes, so a run whose process is gone is
+**resumed** from it rather than failed, through the kind's own resumer
+(flow.launcher.resume_flow_run, loops.runner.resume_loop_run on a thread, since
+a loop lives in the backend process and resuming it must not block the sweep,
+teams.launcher.resume_team_run, playground.launcher.resume_scenario_run). Only
+a run with no checkpoint (for a loop, one with no ``iterations_done`` yet), or
+one that has already been resumed :data:`MAX_AUTO_RESUMES` times, is closed as
+failed: a run that cannot get past its next step must not be restarted
+forever. Liveness is the run's ``heartbeat_at`` at a per-kind stale threshold
+(``FLOW_``/``LOOP_``/``TEAM_``/``SCENARIO_HEARTBEAT_STALE_SECONDS``), refreshed
+every node/round/tick and at least every 15 seconds while an agent step runs,
+because a pid says only that *a* process exists: the pid of a crashed-and-reused
+number is alive, and a hung orchestrator's pid is alive too, while a heartbeat
+that stopped moving is the run itself going quiet. A record with no heartbeat at
+all (older than heartbeats, or a process that died before its first beat) falls
+back to :func:`runtime.entity_launch.child_alive`, which is ``None`` (leave it
+alone) for a run this host did not start.
+
+A pending entity run follows the same two rules an agent run's ``queued`` status
+does: a queue row (``common/run_queue.py``) that failed or vanished means no
+worker will ever start it, so it fails now; one that never touched the queue at
+all (the default role launches synchronously, so this is the rare true orphan)
+gets :data:`PENDING_TIMEOUT_SECONDS` before the same fate. A run parked
+``awaiting_input`` is untouched either way: ``entity_runs.list_runs(active=True)``
+never returns it (see ``run_status.PARKED_STATUSES``), because it is not a run
+that died, it is one waiting on a person.
+
+:func:`_sweep_flow_runs` and :func:`_sweep_loop_runs` still exist, as thin
+one-kind wrappers over :func:`_sweep_entity_runs`, because the tests that
+exercise flow and loop resume (``tests/test_flow_resume.py``,
+``tests/test_loop_resume.py``) call them by name.
 
 Agent runs carry the same sign of life since stage 2 of the scaling plan:
 ``runtime/agent_run.py`` refreshes ``runs.heartbeat_at`` every few seconds
@@ -70,7 +98,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 log = logging.getLogger("managers.run_watchdog")
 
@@ -88,6 +116,12 @@ FLOW_HEARTBEAT_STALE_SECONDS = float(os.environ.get("FLOW_HEARTBEAT_STALE_SECOND
 # A loop beats once per flow node of the iteration it is running; the threshold
 # is wider because a single node of a single iteration can legitimately be slow.
 LOOP_HEARTBEAT_STALE_SECONDS = float(os.environ.get("LOOP_HEARTBEAT_STALE_SECONDS", "900"))
+# A team beats every RUN_HEARTBEAT_SECONDS like an agent run (teams/runner.py
+# turns are agent runs of their own); a plain default, generous enough that a
+# slow member turn does not read as a dead run.
+TEAM_HEARTBEAT_STALE_SECONDS = float(os.environ.get("TEAM_HEARTBEAT_STALE_SECONDS", "180"))
+# A scenario beats once per tick, the same shape as a team's rounds.
+SCENARIO_HEARTBEAT_STALE_SECONDS = float(os.environ.get("SCENARIO_HEARTBEAT_STALE_SECONDS", "180"))
 # How many times the watchdog may resume the same run by itself.
 MAX_AUTO_RESUMES = int(os.environ.get("RUN_MAX_AUTO_RESUMES", "2"))
 # An agent run beats every RUN_HEARTBEAT_SECONDS (runtime/agent_run.py); a run
@@ -332,8 +366,7 @@ def sweep_once() -> int:
 
     closed += _sweep_queue()
     _sweep_containers()
-    closed += _sweep_flow_runs()
-    closed += _sweep_loop_runs()
+    closed += _sweep_entity_runs()
     closed += _sweep_instances()
     return closed
 
@@ -403,114 +436,243 @@ def _flow_run_is_dead(rec: Dict[str, Any]) -> bool:
     return pid > 0 and not rm._pid_exists(pid)
 
 
-def _sweep_flow_runs() -> int:
-    """Resume flow runs whose process died with a checkpoint; fail the rest."""
+# ── The one sweep over every entity kind ────────────────────────────────────
+# flow, loop, team and scenario runs all live in common/entity_runs.py now,
+# one status vocabulary (common/run_status.py) and one shape of liveness: a
+# heartbeat, a checkpoint, a resume_attempts counter. This section replaced
+# the old per-kind _sweep_flow_runs/_sweep_loop_runs bodies (kept below as
+# one-kind wrappers) with a single pass, generalised the same way sweep_once
+# already generalises pending/running agent runs.
+
+#: Per-kind stale threshold, checked against ``heartbeat_at``. Falls back to
+#: :data:`RUN_HEARTBEAT_STALE_SECONDS` for a kind not listed (there is none
+#: today; this is only ever missing on a programming error).
+_STALE_SECONDS: Dict[str, float] = {
+    "flow": FLOW_HEARTBEAT_STALE_SECONDS,
+    "loop": LOOP_HEARTBEAT_STALE_SECONDS,
+    "team": TEAM_HEARTBEAT_STALE_SECONDS,
+    "scenario": SCENARIO_HEARTBEAT_STALE_SECONDS,
+}
+
+
+def _resume_flow_run(rec: Dict[str, Any]) -> None:
+    from flow.launcher import resume_flow_run
+    resume_flow_run(str(rec["run_id"]), auto=True)
+
+
+def _resume_loop_run(rec: Dict[str, Any]) -> None:
+    # A loop lives in the backend process (loops/runner.py), so resuming it is
+    # a synchronous run_loop() call under the hood, exactly as slow as the
+    # loop itself. Firing it on a daemon thread is what keeps one stuck loop
+    # from stalling the rest of a sweep tick, the same as before this module
+    # had one sweep for every kind.
+    import threading
+    run_id = str(rec["run_id"])
+    from loops.runner import resume_loop_run
+    threading.Thread(
+        target=resume_loop_run, args=(run_id,), kwargs={"auto": True},
+        daemon=True, name=f"loop-resume-{run_id}",
+    ).start()
+
+
+def _resume_team_run(rec: Dict[str, Any]) -> None:
+    from teams.launcher import resume_team_run
+    resume_team_run(str(rec["run_id"]), auto=True)
+
+
+def _resume_scenario_run(rec: Dict[str, Any]) -> None:
+    from playground.launcher import resume_scenario_run
+    resume_scenario_run(str(rec["run_id"]), auto=True)
+
+
+#: Per kind: how to relaunch a dead run from its checkpoint. Every resumer
+#: takes the entity_runs record and is responsible for its own bookkeeping
+#: (resume_attempts, the checkpoint, the process); the sweep only decides
+#: *whether* to call it.
+_RESUMERS: Dict[str, Callable[[Dict[str, Any]], None]] = {
+    "flow": _resume_flow_run,
+    "loop": _resume_loop_run,
+    "team": _resume_team_run,
+    "scenario": _resume_scenario_run,
+}
+
+
+def _entity_run_is_dead(rec: Dict[str, Any]) -> Optional[bool]:
+    """True when a running/stopping entity run's process is gone, False when
+    it is alive, None when this process cannot tell.
+
+    Generalises :func:`_flow_run_is_dead` over every kind: the heartbeat
+    decides when there is one, at the kind's own stale threshold
+    (:data:`_STALE_SECONDS`). A record with no heartbeat at all falls back to
+    :func:`runtime.entity_launch.child_alive`, which already knows how to
+    read a pid or a container name, and already returns None for a run this
+    host did not start, so a replica never guesses about another host's
+    process the way an old pid-only record still gets a guess in
+    :func:`_flow_run_is_dead`.
+    """
+    threshold = _STALE_SECONDS.get(str(rec.get("kind") or ""), RUN_HEARTBEAT_STALE_SECONDS)
+    heartbeat = str(rec.get("heartbeat_at") or "")
+    if heartbeat:
+        age = _age_seconds(heartbeat)
+        return None if age is None else age > threshold
+    from runtime.entity_launch import child_alive
+    alive = child_alive(rec)
+    return None if alive is None else not alive
+
+
+def _entity_checkpoint_resumable(rec: Dict[str, Any]) -> bool:
+    """Whether this run's checkpoint is enough to resume from.
+
+    Any non-empty checkpoint qualifies, except a loop's: its checkpoint *is*
+    its position (loops/store.py), and a position written before the first
+    iteration finished has nothing in it a resume could pick up from. The
+    same guard ``loops.runner.resume_loop_run`` applies itself, checked here
+    first so the sweep does not even try.
+    """
+    checkpoint = rec.get("checkpoint") or {}
+    if not checkpoint:
+        return False
+    if str(rec.get("kind") or "") == "loop":
+        return bool(checkpoint.get("iterations_done"))
+    return True
+
+
+def _fail_entity_run(rec: Dict[str, Any], error: str) -> None:
+    """Close a dead entity run as failed and finalize its task, generically
+    for every kind. Flow keeps its own close (it mirrors the log file and
+    clears the flow's coarse running marker); every other kind goes through
+    the shared :func:`common.entity_runs.close`."""
+    from common import entity_runs
+
+    kind = str(rec.get("kind") or "")
+    run_id = str(rec.get("run_id") or "")
     try:
-        from flow import run_store
-    except ImportError:
+        if kind == "flow":
+            from flow import run_store as _flow_run_store
+            from flow.launcher import _set_flow_running
+            _flow_run_store.close_flow_run(run_id, status="failed", exit_code=1, error=error)
+            _set_flow_running(str(rec.get("flow_id") or rec.get("entity_id") or ""), False)
+        else:
+            entity_runs.close(run_id, status="failed", exit_code=1, error=error,
+                              stop_reason="error")
+    except Exception:
+        log.exception("watchdog could not close %s run %s", kind, run_id[:8])
+        return
+
+    task_id = str(rec.get("task_id") or "")
+    if task_id:
+        try:
+            from managers.run_manager import finalize_flow_task
+            finalize_flow_task(task_id, "failed", 1, error=error)
+        except Exception:
+            log.exception("watchdog could not finalize task %s for run %s", task_id[:8], run_id[:8])
+    log.warning("watchdog failed %s run %s: %s", kind, run_id[:8], error)
+
+
+def _resume_or_fail_entity_run(rec: Dict[str, Any]) -> int:
+    """A dead run: resume it from its checkpoint when the budget allows,
+    otherwise fail it. Returns 1 either way (the caller counts runs handled,
+    not outcomes)."""
+    kind = str(rec.get("kind") or "")
+    run_id = str(rec.get("run_id") or "")
+    status = str(rec.get("status") or "")
+    attempts = int(rec.get("resume_attempts") or 0)
+    checkpoint_ok = _entity_checkpoint_resumable(rec)
+
+    # A run already asked to stop is not resumed even if it still has budget
+    # left: honouring the stop is the point, and the transition table agrees
+    # (stopping -> running is not a legal move, common/run_status.py). Only
+    # a run still trying to make forward progress gets another attempt.
+    if status == "running" and checkpoint_ok and attempts < MAX_AUTO_RESUMES:
+        resumer = _RESUMERS.get(kind)
+        if resumer is not None:
+            try:
+                resumer(rec)
+                log.warning(
+                    "watchdog resumed %s run %s from its checkpoint (attempt %d)",
+                    kind, run_id[:8], attempts + 1,
+                )
+                return 1
+            except Exception:
+                log.exception("watchdog could not resume %s run %s", kind, run_id[:8])
+
+    error = (
+        "Run process stopped without finalizing"
+        + (f" and could not be resumed after {attempts} attempt(s)."
+           if checkpoint_ok else " and had no checkpoint to resume from.")
+    )
+    _fail_entity_run(rec, error)
+    return 1
+
+
+def _check_pending_entity_run(rec: Dict[str, Any]) -> int:
+    """A pending entity run waiting for a worker. Mirrors :func:`_check_queued_run`
+    for agent runs: a queue row that failed or disappeared means no worker will
+    ever start it, so the run fails now. A run that never touched the queue at
+    all (the default role launches synchronously, so this is the rare true
+    orphan, not the common case) gets :data:`PENDING_TIMEOUT_SECONDS` before the
+    same fate."""
+    from common import run_queue
+
+    run_id = str(rec.get("run_id") or "")
+    try:
+        row = run_queue.get(run_id)
+    except Exception:  # noqa: BLE001 - falls back to leaving the run alone this pass
+        log.debug("run_queue.get failed for %s", run_id, exc_info=True)
         return 0
+    if row is not None:
+        if row.get("status") == run_queue.STATUS_FAILED:
+            _fail_entity_run(rec, "No worker could start this run: "
+                             + str(row.get("last_error") or "launch failed"))
+            return 1
+        return 0
+    age = _age_seconds(str(rec.get("created_at") or ""))
+    if age is not None and age > PENDING_TIMEOUT_SECONDS:
+        _fail_entity_run(rec, (
+            f"Run was pending but never started within "
+            f"{int(PENDING_TIMEOUT_SECONDS // 60)} minutes."
+        ))
+        return 1
+    return 0
+
+
+def _sweep_entity_runs(kinds: Optional[Iterable[str]] = None) -> int:
+    """One sweep over flow, loop, team and scenario runs (``kinds=None``), or
+    just one kind's slice of it: :func:`_sweep_flow_runs` and
+    :func:`_sweep_loop_runs` are exactly that, kept for the tests that already
+    call them by name.
+
+    Every run in an active status (pending, running, stopping:
+    ``common.run_status.ACTIVE_STATUSES``) is read once; a parked
+    ``awaiting_input`` run is never in that set, so it is never visited here.
+    """
+    from common import entity_runs
 
     handled = 0
-    for rec in run_store.load_flow_runs():
-        if str(rec.get("status") or "") != "running":
+    for rec in entity_runs.list_runs(kinds=list(kinds) if kinds is not None else None,
+                                     active=True):
+        status = str(rec.get("status") or "")
+        if status == "pending":
+            handled += _check_pending_entity_run(rec)
             continue
-        if not _flow_run_is_dead(rec):
+        if status not in ("running", "stopping"):
             continue
-
-        flow_run_id = str(rec.get("flow_run_id") or "")
-        attempts = int(rec.get("resume_attempts") or 0)
-        checkpoint = rec.get("checkpoint") or {}
-        if checkpoint and attempts < MAX_AUTO_RESUMES:
-            try:
-                from flow.launcher import resume_flow_run
-                resume_flow_run(flow_run_id, auto=True)
-                log.warning(
-                    "watchdog resumed flow run %s from its checkpoint (attempt %d)",
-                    flow_run_id[:8], attempts + 1,
-                )
-                handled += 1
-                continue
-            except Exception:
-                log.exception("watchdog could not resume flow run %s", flow_run_id[:8])
-
-        error = (
-            "Flow run process stopped without finalizing"
-            + (f" and could not be resumed after {attempts} attempt(s)."
-               if checkpoint else " and had no checkpoint to resume from.")
-        )
-        try:
-            run_store.close_flow_run(flow_run_id, status="failed", exit_code=1, error=error)
-            from flow.launcher import _set_flow_running
-            _set_flow_running(str(rec.get("flow_id") or ""), False)
-            task_id = str(rec.get("task_id") or "")
-            if task_id:
-                from managers.run_manager import finalize_flow_task
-                finalize_flow_task(task_id, "failed", 1, error=error)
-            log.warning("watchdog failed flow run %s: %s", flow_run_id[:8], error)
-            handled += 1
-        except Exception:
-            log.exception("watchdog could not close flow run %s", flow_run_id[:8])
+        if not _entity_run_is_dead(rec):
+            continue
+        handled += _resume_or_fail_entity_run(rec)
     return handled
+
+
+def _sweep_flow_runs() -> int:
+    """Flow's slice of :func:`_sweep_entity_runs`. Kept as a thin wrapper so
+    tests/test_flow_resume.py keeps asserting against a flow-only sweep."""
+    return _sweep_entity_runs(kinds=("flow",))
 
 
 def _sweep_loop_runs() -> int:
-    """Resume loop runs whose backend process died mid-iteration.
-
-    A loop lives in the backend process, so a restart ends every loop that was
-    running. Each completed iteration is a whole flow's worth of work, which is
-    exactly why the run carries a position: the resume picks up at the iteration
-    after the last one that finished, instead of paying for all of them again.
-    """
-    try:
-        from loops import store as loop_store
-    except ImportError:
-        return 0
-
-    handled = 0
-    for run in loop_store.list_runs(limit=200):
-        if run.status != "running":
-            continue
-        position = dict(run.position or {})
-        heartbeat = str(position.get("heartbeat_at") or "")
-        age = _age_seconds(heartbeat) if heartbeat else None
-        if age is None or age <= LOOP_HEARTBEAT_STALE_SECONDS:
-            continue
-
-        attempts = int(position.get("resume_attempts") or 0)
-        if position.get("iterations_done") and attempts < MAX_AUTO_RESUMES:
-            try:
-                import threading
-                from loops.runner import resume_loop_run
-                threading.Thread(
-                    target=resume_loop_run, args=(run.loop_run_id,),
-                    kwargs={"auto": True}, daemon=True,
-                    name=f"loop-resume-{run.loop_run_id}",
-                ).start()
-                log.warning(
-                    "watchdog resumed loop run %s from iteration %s (attempt %d)",
-                    run.loop_run_id[:8], position.get("iterations_done"), attempts + 1,
-                )
-                handled += 1
-                continue
-            except Exception:
-                log.exception("watchdog could not resume loop run %s", run.loop_run_id[:8])
-
-        run.status = "failed"
-        run.stop_reason = "error"
-        run.error = (
-            "The loop stopped without finishing (the backend process ended) and "
-            + ("could not be resumed." if position.get("iterations_done")
-               else "had no position to resume from.")
-        )
-        from loops.models import utc_iso
-        run.finished_at = utc_iso()
-        try:
-            loop_store.save_run(run)
-            log.warning("watchdog failed loop run %s", run.loop_run_id[:8])
-            handled += 1
-        except Exception:
-            log.exception("watchdog could not close loop run %s", run.loop_run_id[:8])
-    return handled
+    """Loop's slice of :func:`_sweep_entity_runs`. Kept as a thin wrapper so
+    tests/test_loop_resume.py keeps asserting against a loop-only sweep."""
+    return _sweep_entity_runs(kinds=("loop",))
 
 
 def _sweep_instances() -> int:

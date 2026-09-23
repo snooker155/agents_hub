@@ -195,12 +195,16 @@ def test_a_stopped_run_is_resumable_and_continues_from_its_position(
     # Simulate a user stop applied after two iterations completed: same shape
     # of row a real stop leaves (see loops.store.request_stop / run_loop's
     # LoopStopped("stopped", ...) handling), built directly here since
-    # stub_flow's fake flow does not itself expose should_stop.
+    # stub_flow's fake flow does not itself expose should_stop. Written with
+    # SQL because the store refuses completed -> stopped, a move no real
+    # writer makes (common/run_status.py).
+    import common.db as db
+    with db.transaction() as conn:
+        conn.execute("UPDATE entity_runs SET status = 'stopped', stop_reason = 'stopped' "
+                     "WHERE run_id = ?", (run.loop_run_id,))
     stopped = store.get_run(run.loop_run_id)
-    stopped.status = "stopped"
-    stopped.stop_reason = "stopped"
-    stopped.position = {**stopped.position, "iterations_done": 2}
-    store.save_run(stopped)
+    assert stopped.status == "stopped"
+    store.save_position(run.loop_run_id, {**stopped.position, "iterations_done": 2})
 
     resumed = resume_loop_run(run.loop_run_id)
     assert resumed.status == "completed"

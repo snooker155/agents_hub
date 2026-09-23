@@ -18,8 +18,27 @@ Every tick, every role acts. That is the cost model: a scenario run is roles
 times ticks of model calls, which is why `run_scenario_tool` refuses until you
 have approved and shows the estimate first.
 
+`POST /api/playground/scenarios/{id}/run` returns at once with a `pending`
+record; the ticks run in their own process, polling and stamping a heartbeat
+every 15 seconds. After every tick a checkpoint is written with the tick number,
+a snapshot of the environment, history, carry-forward state, streaks, and spend.
+
+Environment snapshots are a generic default (pickled snapshot of the environment
+state), or custom per environment class; the checkpoint is JSON. Decisions have
+deterministic run ids (uuid5 of scenario run id, tick and agent) and carry
+`parent_run_id`.
+
+`POST /api/playground/runs/{id}/resume` relaunches a `stopped` or `failed` run
+from its checkpoint (400 when nothing to resume). Ticks already recorded in
+`sim_ticks` are never re-run.
+
+Triggers (`POST /runs/{id}/trigger`) are now durable: kept on the run record
+and drained at the top of every tick, polled every few seconds while the world
+is idle, so they reach a run in any process.
+
 Runs stream as they go, and produce a replayable record: what each role did on
-each tick, and why.
+each tick, and why. Resume button on the scenario page shows host, heartbeat age
+and resume attempts.
 
 ## Designing one
 

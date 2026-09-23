@@ -2,8 +2,10 @@
 
 One function that reports whether the moving parts are alive: database
 reachability and the row counts of the core stores, the liveness of every
-background service, on-disk state sizes, provider readiness, and the agent
-build cache.
+background service, on-disk state sizes, provider readiness, the agent
+build cache, and a summary of every flow/loop/team/scenario run by kind
+(common/entity_runs.py); the individual active runs are the deployment
+map's job (dashboard/backend/routes/deployment.py), this is just the count.
 
 It lives here rather than in the route so both callers can use it: the
 ``GET /api/health`` endpoint and the Service Agent's ``service_health`` tool.
@@ -184,6 +186,24 @@ def _blender() -> Dict[str, Any]:
         return {"available": None, "error": str(e)}
 
 
+def _entity_runs() -> Dict[str, Any]:
+    """Counts of every flow, loop, team and scenario run, by kind and by kind
+    in an active status: the one table every kind's run lives in now
+    (common/entity_runs.py). A summary only: the individual active runs (with
+    their host and heartbeat age) are the deployment map's job
+    (dashboard/backend/routes/deployment.py), not this snapshot's."""
+    try:
+        from common import entity_runs
+        from common.run_status import ACTIVE_STATUSES
+        return {
+            "total_by_kind": entity_runs.counts_by_kind(),
+            "active_by_kind": entity_runs.counts_by_kind(statuses=ACTIVE_STATUSES),
+        }
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("entity run counts failed", exc_info=True)
+        return {"total_by_kind": {}, "active_by_kind": {}, "error": str(e)}
+
+
 def _agent_cache() -> Dict[str, Any]:
     try:
         from common.config import settings
@@ -240,4 +260,5 @@ def snapshot(app_state: Any = None) -> Dict[str, Any]:
         "blender": _blender(),
         "agent_cache": _agent_cache(),
         "cluster": _cluster(),
+        "entity_runs": _entity_runs(),
     }

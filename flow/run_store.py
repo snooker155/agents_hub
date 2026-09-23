@@ -10,19 +10,19 @@ running state and orchestrator pid cannot live on the flow definition.
 Records are keyed by ``flow_run_id`` (the id flow/launcher generates and passes
 to runtime/flow_run.py as --run-id; the per-node agent runs carry it as flow_run_id).
 
-Storage is the ``flow_runs`` table (see ``common.db``), which replaced a
-``flow_runs.json`` file guarded by a FileLock. A flow run is written from at
-least three processes at once — the launcher, the orchestrator subprocess and
-the backend's stop route — and the whole-file rewrite meant every one of those
-writers serialized on the lock and rewrote every other flow's records to change
-one field. Existing files are imported on first open, see
+Storage is the ``entity_runs`` table shared with loop, team and scenario runs
+(``common.entity_runs``, kind ``flow``), which replaced first a
+``flow_runs.json`` file guarded by a FileLock and then a ``flow_runs`` table
+of its own. A flow run is written from at least three processes at once — the
+launcher, the orchestrator subprocess and the backend's stop route — and every
+write is one merge inside a transaction, so none of them drops another's
+field. Existing files are imported on first open, see
 ``common.db_migrate.migrate_flow_runs``.
 
 A record is a plain dict and the table keeps it whole in ``doc``: callers store
-keys of their own on a run (a checkpoint, say) and read them back unchanged.
-The columns beside ``doc`` are an indexed mirror of the fields queries filter
-on, and every write here refreshes them together with the document. That
-handling is shared with loop and team runs: see ``common.entity_runs``.
+keys of their own on a run (a resume token, say) and read them back unchanged.
+The common columns beside ``doc`` are an indexed mirror of the fields queries
+filter on; the checkpoint has a column of its own.
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common.db_migrate import FLOW_RUN_COLUMNS
 from common.entity_runs import EntityRunStore
+from common.run_status import RunStatus
 from common.paths import AGENTS_HUB_ROOT
 
 FLOW_LOGS_DIR = AGENTS_HUB_ROOT / "flow_logs"
@@ -169,16 +169,15 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
 # ``flow_runs.changed`` notice) is the shared implementation in
 # common/entity_runs.py; this module only says what a flow run looks like.
 
-_RUNS: EntityRunStore[Dict[str, Any]] = EntityRunStore(
-    table="flow_runs",
-    key="flow_run_id",
-    columns=FLOW_RUN_COLUMNS,
-    doc_column="doc",
-    resource="flow_runs",
-    parent_key="flow_id",
-    order_by="COALESCE(started_at, ''), flow_run_id",
-    live_statuses=("running", "pending"),
+#: Flow-run records, kind ``flow`` of the shared table. Oldest first, a run
+#: that has not started yet counting as oldest.
+RUNS: EntityRunStore[Dict[str, Any]] = EntityRunStore(
+    "flow",
+    order_by="COALESCE(started_at, ''), run_id",
+    live_statuses=(RunStatus.running.value, RunStatus.pending.value,
+                   RunStatus.stopping.value),
 )
+_RUNS = RUNS
 
 
 # -------------------- Public API --------------------

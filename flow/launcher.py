@@ -13,18 +13,15 @@ Like a task run (agents/agent_launcher.py), a flow launch is a database half
 and a process half. ``start_flow_run`` and ``resume_flow_run`` do the first
 and, in the default role, the second right away; in the ``api`` role they put
 a launch spec on the queue (``common/run_queue.py``) and a worker calls
-:func:`launch_prepared` with it. See docs/workers.md.
+:func:`launch_prepared` with it. The process half is the envelope every
+entity kind shares (runtime/entity_launch.py). See docs/workers.md.
 """
 from __future__ import annotations
 
-import os
-import socket
-import subprocess
-import sys
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
-from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
+from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT  # noqa: F401 - PROJECT_ROOT re-exported
 from managers.run_manager import _utc_now_iso
 
 #: The agent id a ``human_interrupt`` node parks its task under. A flow node is
@@ -119,9 +116,7 @@ def start_flow_run(
     except Exception:
         pass
 
-    args = [
-        sys.executable,
-        str(PROJECT_ROOT / "runtime" / "flow_run.py"),
+    cli_args = [
         "--flow-id", flow_id,
         "--workspace", str(ws_path),
         "--task-id", str(task_id),
@@ -131,20 +126,21 @@ def start_flow_run(
 
     desc = params.get("description") or ""
     if desc:
-        args += ["--desc", desc]
+        cli_args += ["--desc", desc]
 
     # Optional structured seed state (scheduled/webhook triggers), passed as JSON
     # and merged into the flow's initial state by runtime/flow_run.py.
     seed = params.get("seed")
     if isinstance(seed, dict) and seed:
         import json as _json
-        args += ["--seed", _json.dumps(seed)]
+        cli_args += ["--seed", _json.dumps(seed)]
 
     _dispatch({
-        "kind": QUEUE_KIND, "run_id": run_id, "flow_id": flow_id, "task_id": str(task_id),
-        "session_id": session_id, "workspace": ws_name, "args": args,
+        "kind": QUEUE_KIND, "run_id": run_id, "entity_id": flow_id, "flow_id": flow_id,
+        "entrypoint": "flow_run", "cli_args": cli_args, "task_id": str(task_id),
+        "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
         "log_file": str(log_file), "header": "Flow run started", "mode": "w",
-        "resume": False,
+        "execution_mode": "local", "resume": False,
     })
     return run_id, session_id
 
@@ -154,40 +150,23 @@ QUEUE_KIND = "flow"
 
 
 def _dispatch(spec: Dict[str, Any]) -> None:
-    """Spawn here, or hand the spec to a worker, by this process's role."""
-    from common.config import hub_role
-    from common.identity import current_user_id
-
-    # Who asked for this run, so the process that spawns it (maybe a worker
-    # with no request in flight) can resolve user-scoped secrets.
-    spec.setdefault("launched_by", current_user_id())
-    if hub_role() == "api":
-        from common import run_queue
-        run_queue.enqueue(spec["run_id"], QUEUE_KIND, spec, workspace=spec.get("workspace"),
-                          execution_mode="local")
-        return
-    launch_prepared(spec)
+    """Spawn here, or hand the spec to a worker, by this process's role
+    (runtime/entity_launch.py)."""
+    from runtime.entity_launch import dispatch
+    dispatch(spec, launch_prepared)
 
 
 def launch_prepared(spec: Dict[str, Any]) -> None:
     """The process half of a flow launch: spawn ``runtime/flow_run.py`` on
     this host from a spec :func:`start_flow_run` or :func:`resume_flow_run`
-    prepared, and record the pid, the host and the flow's running marker."""
-    from flow import run_store
+    prepared (the shared envelope records the pid and the host), then flip
+    the flow's coarse running marker and, on a resume, put the task back to
+    work."""
+    from runtime.entity_launch import launch_prepared as _launch
 
-    flow_run_id = str(spec["run_id"])
-    flow_id = str(spec.get("flow_id") or "")
-    env = _build_env(str(spec.get("workspace") or ""), str(spec.get("session_id") or ""),
-                     str(spec["log_file"]), flow_id=flow_id,
-                     user_id=str(spec.get("launched_by") or "") or None)
-    pid = _spawn_flow_process(list(spec["args"]), spec["log_file"], env, flow_id,
-                              header=str(spec.get("header") or "Flow run started"),
-                              mode=str(spec.get("mode") or "w"))
-
-    # Record the orchestrator pid on the flow-run record so a stop request can
-    # terminate this specific instance, and flip the flow's coarse running marker.
-    run_store.mark_running(flow_run_id, pid)
-    run_store.update_flow_run(flow_run_id, {"host": socket.gethostname()})
+    flow_id = str(spec.get("flow_id") or spec.get("entity_id") or "")
+    spec.setdefault("execution_mode", "local")
+    _launch(spec)
     _set_flow_running(flow_id, True)
     if spec.get("resume"):
         try:
@@ -198,40 +177,6 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
                 _ts.update_task(UUID(task_id), status=_ts.TaskStatus.in_progress, pending_question=None)
         except Exception:
             pass
-
-
-def _spawn_flow_process(args, log_file, env, flow_id: str, *, header: str, mode: str = "w") -> int:
-    """Start runtime/flow_run.py detached and return its pid.
-
-    Shared by the first launch and by :func:`resume_flow_run`, which appends to
-    the same log file so one flow run reads as one story even when it took two
-    processes to finish it.
-    """
-    with open(log_file, mode, encoding="utf-8") as lf:
-        lf.write(
-            f"--- {header} at {_utc_now_iso()} ---\n"
-            f"Flow ID : {flow_id}\n"
-            f"Command : {args}\n\n"
-        )
-        lf.flush()
-
-        creationflags = 0
-        start_new_session = False
-        if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        else:
-            start_new_session = True
-
-        proc = subprocess.Popen(
-            args,
-            start_new_session=start_new_session,
-            creationflags=creationflags,
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            stdout=lf,
-            stderr=subprocess.STDOUT,
-        )
-    return proc.pid
 
 
 class FlowResumeError(Exception):
@@ -317,9 +262,7 @@ def resume_flow_run(
         "error": None,
     })
 
-    args = [
-        sys.executable,
-        str(PROJECT_ROOT / "runtime" / "flow_run.py"),
+    cli_args = [
         "--flow-id", flow_id,
         "--workspace", str(ws_path),
         "--task-id", task_id,
@@ -328,10 +271,11 @@ def resume_flow_run(
         "--resume-from", flow_run_id,
     ]
     _dispatch({
-        "kind": QUEUE_KIND, "run_id": flow_run_id, "flow_id": flow_id, "task_id": task_id,
-        "session_id": session_id, "workspace": ws_name, "args": args,
+        "kind": QUEUE_KIND, "run_id": flow_run_id, "entity_id": flow_id, "flow_id": flow_id,
+        "entrypoint": "flow_run", "cli_args": cli_args, "task_id": task_id,
+        "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
         "log_file": str(log_file), "header": "Flow run resumed", "mode": "a",
-        "resume": True,
+        "execution_mode": "local", "resume": True,
     })
     rec = run_store.get_flow_run(flow_run_id) or {}
     return {
@@ -440,6 +384,8 @@ def trigger_flow(
 
 def _build_env(ws_name: str, session_id: str, log_file: str, *,
                flow_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, str]:
+    # Kept for callers outside this module; the launch itself builds its
+    # environment in runtime/entity_launch.py.
     # base env + run metadata. No flow-wide model override: each node resolves its
     # own model via create_agent's cascade (agent definition → workspace override →
     # workspace settings → global), matching the single-agent path (agent_run.py).

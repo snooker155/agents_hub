@@ -62,44 +62,66 @@ DRAIN_SECONDS = float(os.environ.get("AGENTS_HUB_WORKER_DRAIN_SECONDS", "300"))
 
 
 def _launch(spec: Dict[str, Any]) -> None:
-    """Dispatch one claimed launch to the launcher of its kind."""
+    """Dispatch one claimed launch to the launcher of its kind.
+
+    ``task`` keeps its own launcher (agents/agent_launcher.py; a task run
+    predates the shared envelope and still owns the ``runs`` table). Every
+    other kind, flow, team, scenario, shares one envelope
+    (runtime/entity_launch.py): ``launcher_for(kind)`` returns that kind's
+    ``launch_prepared``, so a fifth kind only needs an entry in
+    ``runtime.entity_launch.LAUNCHERS``, not a new branch here.
+    """
     kind = str(spec.get("kind") or "task")
     if kind == "task":
         from agents.agent_launcher import launch_prepared
         launch_prepared(spec)
-    elif kind == "flow":
-        from flow.launcher import launch_prepared as launch_flow
-        launch_flow(spec)
-    else:
-        raise ValueError(f"unknown launch kind {kind!r}")
+        return
+    from runtime.entity_launch import launcher_for
+    launcher_for(kind)(spec)
 
 
 def _child_alive(spec: Dict[str, Any]) -> Optional[bool]:
     """Whether the process spawned for a launch still runs on this host.
-    None when the record does not say (the launch failed before a pid)."""
+    None when the record does not say (the launch failed before a pid, or the
+    run belongs to another host).
+
+    ``task`` reads its own record (``runs``, managers/run_manager.py); its
+    own status vocabulary (``running``/``stop``/``pending``/``queued``)
+    predates ``common/run_status.py`` and is left as it is here. Every other
+    kind reads ``entity_runs`` and hands the record to
+    ``runtime.entity_launch.child_alive``, which already knows how to read a
+    pid or a container name for any of them.
+    """
     kind = str(spec.get("kind") or "task")
     run_id = str(spec["run_id"])
-    try:
-        if kind == "flow":
-            from flow import run_store
-            rec = run_store.get_flow_run(run_id) or {}
-        else:
+    if kind == "task":
+        try:
             from managers.run_manager import get_run_by_id
             rec = get_run_by_id(run_id) or {}
+        except Exception:
+            return None
+        status = str(rec.get("status") or "")
+        if status not in ("running", "stop", "pending", "queued"):
+            return False
+        container = rec.get("container_name")
+        if container:
+            from managers.container_manager import container_running
+            return container_running(str(container))
+        pid = int(rec.get("pid") or 0)
+        if pid <= 0:
+            return None
+        from managers.runs.lifecycle import _pid_exists
+        return _pid_exists(pid)
+
+    try:
+        from common import entity_runs
+        rec = entity_runs.get(run_id)
     except Exception:
         return None
-    status = str(rec.get("status") or "")
-    if status not in ("running", "stop", "pending", "queued"):
-        return False
-    container = rec.get("container_name")
-    if container:
-        from managers.container_manager import container_running
-        return container_running(str(container))
-    pid = int(rec.get("pid") or 0)
-    if pid <= 0:
+    if rec is None:
         return None
-    from managers.runs.lifecycle import _pid_exists
-    return _pid_exists(pid)
+    from runtime.entity_launch import child_alive
+    return child_alive(rec)
 
 
 class Worker:

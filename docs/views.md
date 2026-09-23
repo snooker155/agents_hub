@@ -3,10 +3,18 @@
 A view is something an agent built to be looked at: a chart, a graph, a table, a
 3D scene, a simulation, a slide deck or a document.
 
+A view is owned by a run of any kind: an agent run, or a flow, loop, team or
+scenario run. The owner is `{kind: "run"|"flow"|"loop"|"team"|"scenario", id: "..."}`.
+A view created inside a flow node, a team turn or a scenario decision is owned
+by the containing entity run. A process launched for an entity run knows its
+owner from its environment.
+
 ## Getting one
 
 Ask for it. An agent with `create_view` builds the view instead of describing it
 in prose, and the view appears as its own object you can open, share and edit.
+`GET /api/views` accepts `owner_kind` and `owner_id`; responses carry `owner` and
+`owner_entity_id`. The Views list shows an owner chip linking to the run's page.
 
 ## Studio
 

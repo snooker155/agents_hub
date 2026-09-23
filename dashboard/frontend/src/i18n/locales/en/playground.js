@@ -40,6 +40,8 @@ export default {
   descriptionHint: 'Shown in the scenario list and above the chronicle of every run. The characters never read it — what they are told about the world is the world’s own description.',
   environment: 'Environment',
   estimate: 'Estimate',
+  resume: 'Resume',
+  resumeFailed: 'Could not resume the run.',
   stop: 'Stop',
   live: 'live',
   follow: 'Follow',

@@ -12,12 +12,13 @@ call this, so an assignment means the same thing whichever one made it.
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
 from tasks import service as tasks_service
 from tasks.context import augment_params_with_block_reason
-from tasks.models import TaskStatus, CreatedBy
+from tasks.models import Executor, TaskStatus, CreatedBy
 from agents import registry
 from agents import agent_launcher
 from managers import run_manager
@@ -162,3 +163,169 @@ def assign_agent_to_task(
         "run_id": run_id,
         "pending_approval": False,
     }
+
+
+def assign_executor_to_task(
+    task_id: UUID,
+    executor: Executor | Dict[str, Any] | str,
+    params: Optional[Dict[str, Any]] = None,
+    *,
+    task_to_dict,
+) -> Dict[str, Any]:
+    """Assign an executor — an agent, a flow, a team or a loop — to a task and start it.
+
+    Dispatches on ``executor.kind``: an agent goes through
+    :func:`assign_agent_to_task` unchanged (allowed_agents, the decomposer
+    rule, the orchestrator-on-a-container special case, node vs subprocess
+    mode); a flow, a team or a loop is launched through its own launcher
+    (``flow.launcher.start_flow_run`` / ``teams.launcher.start_team_run`` /
+    ``loops.runner.run_loop``) and the resulting run is recorded on the task
+    through :func:`tasks.service.assign_executor`.
+
+    The workspace's ``allowed_agents`` restriction applies only to the agent
+    branch — a flow is scoped by its own ``allowed_flows`` (enforced by
+    ``flow.launcher.trigger_flow``, a different entry point; a task-attached
+    flow run has always launched unrestricted, matching ``start_flow_run``),
+    and a team or a loop has no equivalent workspace allowlist today.
+
+    Raises ``AssignError`` (status 400) for a malformed ``executor`` (missing
+    ``id``, or a ``kind`` that is not one of the four) rather than letting
+    pydantic's ``ValidationError`` escape — the route's only other catch-all
+    is a 500, and a bad request body is not a server error.
+    """
+    if isinstance(executor, str):
+        executor = Executor(kind="agent", id=executor)
+    elif not isinstance(executor, Executor):
+        try:
+            executor = Executor.model_validate(executor)
+        except Exception as e:  # noqa: BLE001 - a malformed request body is a 400, not a 500
+            raise AssignError(f"Invalid executor: {e}", status=400)
+
+    if executor.kind == "agent":
+        return assign_agent_to_task(task_id, executor.id, params, task_to_dict=task_to_dict)
+    if executor.kind == "flow":
+        return _assign_flow_to_task(task_id, executor.id, params, task_to_dict=task_to_dict)
+    if executor.kind == "team":
+        return _assign_team_to_task(task_id, executor.id, params, task_to_dict=task_to_dict)
+    if executor.kind == "loop":
+        return _assign_loop_to_task(task_id, executor.id, params, task_to_dict=task_to_dict)
+    raise AssignError(f"Unknown executor kind: {executor.kind}", status=400)  # pragma: no cover - Executor.kind is a Literal
+
+
+def _assign_common_checks(task_id: UUID):
+    """The refusals every non-agent executor shares with the agent path: the
+    task must exist and must not be stopped (re-assigning is how a blocked
+    task gets picked up again, same as an agent)."""
+    t = tasks_service.get_task(task_id)
+    if not t:
+        raise AssignError("Task not found", status=404)
+    if t.status == TaskStatus.stopped:
+        raise AssignError("Task is stopped and cannot be assigned")
+    return t
+
+
+def _assign_flow_to_task(
+    task_id: UUID, flow_id: str, params: Optional[Dict[str, Any]], *, task_to_dict,
+) -> Dict[str, Any]:
+    """Start a flow on a task and record it as the task's executor.
+
+    ``flow.launcher.start_flow_run`` does its own flow/task validation (a
+    missing flow or task raises ``ValueError``) and launches the flow
+    subprocess, which drives the task's status itself from there on
+    (``runtime/flow_run.py``); this only launches it and records the
+    assignment, then moves the task off ``todo`` the same way assigning an
+    agent does.
+    """
+    _assign_common_checks(task_id)
+
+    from flow import launcher as flow_launcher
+    try:
+        run_id, _session_id = flow_launcher.start_flow_run(str(task_id), flow_id, params or {})
+    except ValueError as e:
+        raise AssignError(str(e), status=404)
+
+    tasks_service.assign_executor(task_id, Executor(kind="flow", id=flow_id), params, run_id=run_id)
+    tasks_service.update_task(task_id, status=TaskStatus.in_progress)
+    updated = tasks_service.get_task(task_id)
+    return {"task": task_to_dict(updated), "run_id": run_id, "pending_approval": False}
+
+
+def _assign_team_to_task(
+    task_id: UUID, team_id: str, params: Optional[Dict[str, Any]], *, task_to_dict,
+) -> Dict[str, Any]:
+    """Start a team run on a task.
+
+    ``teams.launcher.start_team_run`` claims the task itself (the same
+    ``assign_executor`` call ``teams.runner._claim_task`` makes today) — the
+    user picked this team and pressed run, so there is nobody left to approve
+    it, same as a team started from the Teams page. This does not assign the
+    task a second time; it only confirms the claim landed as kind "team" (a
+    launcher still writing the older agent-shaped assignment would otherwise
+    leave the task's executor recorded as an agent named after the team) and
+    fixes it up if not.
+    """
+    t = _assign_common_checks(task_id)
+
+    goal = str((params or {}).get("goal") or t.description or t.title or "")
+    from teams import launcher as team_launcher
+    try:
+        run = team_launcher.start_team_run(
+            team_id, goal, workspace=t.workspace, task_id=str(task_id),
+        )
+    except ValueError as e:
+        raise AssignError(str(e), status=404)
+
+    run_id = getattr(run, "team_run_id", None)
+    if run_id is None and isinstance(run, dict):
+        run_id = run.get("team_run_id")
+
+    updated = tasks_service.get_task(task_id)
+    if updated is None or updated.executor is None or updated.executor.kind != "team":
+        tasks_service.assign_executor(task_id, Executor(kind="team", id=team_id), params, run_id=run_id)
+        updated = tasks_service.get_task(task_id)
+    return {"task": task_to_dict(updated), "run_id": run_id, "pending_approval": False}
+
+
+def _assign_loop_to_task(
+    task_id: UUID, loop_id: str, params: Optional[Dict[str, Any]], *, task_to_dict,
+) -> Dict[str, Any]:
+    """Start a loop run on a task.
+
+    ``loops.runner.run_loop`` is synchronous (an iterative flow, minutes
+    long), so it runs on a daemon thread, mirroring
+    ``dashboard/backend/routes/loops.py``'s own run route: wait briefly for
+    the run row to appear, then read its id back with
+    ``loops.store.list_runs(loop_id, limit=1)``. ``run_loop`` claims the task
+    itself early on (``loops.runner._prepare_context``, kind "agent", no run
+    id yet) before the run row exists; the wait here is what makes this
+    call's own ``assign_executor`` (kind "loop", with the run id) land last
+    and win, the same fix-up ``_assign_team_to_task`` does for a team.
+    """
+    t = _assign_common_checks(task_id)
+
+    goal = str((params or {}).get("goal") or t.description or t.title or "")
+    import threading
+    from loops.runner import run_loop as _run_loop
+
+    def _worker():
+        try:
+            _run_loop(loop_id, goal=goal, workspace=t.workspace, task_id=str(task_id))
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, name=f"loop-assign-{loop_id}", daemon=True).start()
+
+    from loops import store as loop_store
+    run_id = None
+    for _ in range(60):
+        runs = loop_store.list_runs(loop_id, limit=1)
+        if runs and str(getattr(runs[0], "task_id", "")) == str(task_id):
+            run_id = getattr(runs[0], "loop_run_id", None)
+            break
+        time.sleep(0.05)
+
+    loop_params = {"loop_id": loop_id, "workspace": t.workspace, **(params or {})}
+    tasks_service.assign_executor(task_id, Executor(kind="loop", id=loop_id), loop_params, run_id=run_id)
+    tasks_service.update_task(task_id, status=TaskStatus.in_progress)
+    updated = tasks_service.get_task(task_id)
+    return {"task": task_to_dict(updated), "run_id": run_id, "pending_approval": False}

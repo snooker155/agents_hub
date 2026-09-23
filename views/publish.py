@@ -42,6 +42,7 @@ def publish_structured_response(
 
     if isinstance(response_obj, ViewResponse):
         from views.models import ViewValidationError
+        from views.owner import current_owner
         from views.store import create_view, view_ref
         try:
             env = create_view(
@@ -49,6 +50,7 @@ def publish_structured_response(
                 workspace=workspace,
                 run_id=run_id,
                 task_id=task_id,
+                owner=current_owner(leaf_run_id=run_id),
             )
         except ViewValidationError as exc:
             log.warning("inline view rejected (%s); degrading to plain text", exc)

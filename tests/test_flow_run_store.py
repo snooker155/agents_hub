@@ -99,9 +99,10 @@ def test_the_indexed_columns_mirror_the_document():
     run_store.open_flow_run("fr-5", "flow-a", workspace="ws")
     run_store.update_flow_run("fr-5", {"status": "running", "checkpoint": {"n": 1}})
     row = db.get_conn().execute(
-        "SELECT flow_id, status, workspace FROM flow_runs WHERE flow_run_id = 'fr-5'"
+        "SELECT entity_id, status, workspace, kind FROM entity_runs WHERE run_id = 'fr-5'"
     ).fetchone()
-    assert (row["flow_id"], row["status"], row["workspace"]) == ("flow-a", "running", "ws")
+    assert (row["entity_id"], row["status"], row["workspace"], row["kind"]) == (
+        "flow-a", "running", "ws", "flow")
 
 
 # ── Active runs ───────────────────────────────────────────────────────────────

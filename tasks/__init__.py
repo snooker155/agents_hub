@@ -4,6 +4,7 @@ from .models import (
     CreatedBy,
     AgentState,
     Actor,
+    Executor,
     TaskPriority,
     IllegalTransition,
     TRANSITIONS,
@@ -12,5 +13,5 @@ from .storage import TaskStore
 
 __all__ = [
     "Task", "TaskStatus", "CreatedBy", "AgentState", "TaskStore",
-    "Actor", "TaskPriority", "IllegalTransition", "TRANSITIONS",
+    "Actor", "Executor", "TaskPriority", "IllegalTransition", "TRANSITIONS",
 ]

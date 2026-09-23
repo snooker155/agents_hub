@@ -9,6 +9,8 @@ same thing:
 
 - **database** — reachable, row counts per store, and how many runs are in a
   running state
+- **entity_runs** — counts by kind (flow, loop, team, scenario) and active runs
+  by kind
 - **services** — plan scheduler, run watchdog, Telegram poller, external-state
   publisher
 - **storage** — database size, WAL size, run-log size and file count, total

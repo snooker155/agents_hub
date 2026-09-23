@@ -8,6 +8,7 @@ export default {
     loop: 'Loop',
     team: 'Team',
     container: 'Container',
+    scenario: 'Scenario',
   },
   columns: {
     kind: 'Kind',
@@ -33,6 +34,7 @@ export default {
     loop: 'Open loops',
     team: 'Open team',
     container: 'Open task',
+    scenario: 'Open scenario',
   },
   childRuns: 'Runs in this group',
   noChildRuns: 'No agent runs recorded for this group yet.',

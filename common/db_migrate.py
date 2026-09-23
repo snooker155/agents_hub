@@ -46,15 +46,15 @@ RUN_COLUMNS = (
     "execution_mode", "node_id", "container_name", "workspace", "title",
     "provider", "model", "status", "message_origin", "pid", "exit_code",
     "error", "created_at", "started_at", "finished_at", "log_file",
-    "input", "output", "instance_id", "heartbeat_at",
+    "input", "output", "instance_id", "heartbeat_at", "parent_run_id",
 )
 
 TASK_COLUMNS = ("id", "key", "parent_id", "status", "workspace", "project_id",
                 "created_at", "updated_at")
 
-# Flow-run keys mirrored into dedicated columns. The whole record is also kept
-# verbatim in ``doc``, so a key not listed here (a checkpoint, say) is preserved
-# rather than dropped.
+# The keys a legacy ``flow_runs.json`` record carried as its own fields; the
+# whole record is kept verbatim in the shared table's ``doc`` (common/entity_runs.py),
+# so a key not listed here (a checkpoint, say) is preserved rather than dropped.
 FLOW_RUN_COLUMNS = ("flow_run_id", "flow_id", "task_id", "session_id", "workspace",
                     "status", "pid", "started_at", "finished_at", "exit_code", "error")
 
@@ -273,6 +273,10 @@ def _import_nodes(conn: Any) -> int:
 
 
 def _import_flow_runs(conn: Any) -> int:
+    """Import ``flow_runs.json`` into ``entity_runs`` (kind ``flow``), the
+    table every kind of run shares since migration 0013."""
+    from common import entity_runs
+
     src = AGENTS_HUB_ROOT / "flow_runs.json"
     data = _read_json(src)
     if data is None or _is_corrupt(data) or not isinstance(data, list):
@@ -281,10 +285,9 @@ def _import_flow_runs(conn: Any) -> int:
     for rec in data:
         if not isinstance(rec, dict) or not rec.get("flow_run_id"):
             continue
-        conn.execute(
-            upsert_sql("flow_runs", FLOW_RUN_COLUMNS + ("doc",), ("flow_run_id",)),
-            [rec.get(k) for k in FLOW_RUN_COLUMNS] + [_dumps(rec)],
-        )
+        record = entity_runs._normalise(rec, "flow")
+        record.setdefault("created_at", record.get("started_at"))
+        entity_runs._write(conn, record)
         n += 1
     return n
 

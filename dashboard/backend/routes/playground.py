@@ -11,23 +11,25 @@ Agent Playground API — scenarios, simulation runs, the tick log.
 ``GET|POST /api/playground/scenarios``         list / create scenarios
 ``GET|PUT|DELETE /api/playground/scenarios/{id}``
 ``POST /api/playground/scenarios/{id}/estimate``   projected spend
-``POST /api/playground/scenarios/{id}/run``        start a simulation (background)
+``POST /api/playground/scenarios/{id}/run``        start a simulation, as its own process
 ``GET  /api/playground/runs``                  run history (all scenarios, or one)
 ``GET  /api/playground/runs/{id}``             one run + its scores
 ``GET  /api/playground/runs/{id}/ticks``       the tick log (``?since=`` to poll)
 ``POST /api/playground/runs/{id}/stop``        stop a running sim now
+``POST /api/playground/runs/{id}/resume``      relaunch a stopped or failed run from its checkpoint
 ``POST /api/playground/runs/{id}/trigger``     poke one agent from outside
 
 A simulation is N agents x T ticks of LLM calls — minutes, not seconds — so a
-run starts on a background thread and the UI follows the ``sim:<id>`` stream
-(or polls ``/ticks?since=``). The tick log is the artifact of record, so
-watching live and reviewing afterwards read the same rows.
+run is its own process (``playground.launcher``, ``runtime/scenario_run.py``,
+the same shared launch envelope a flow or a team run gets), launched here and
+followed on the UI's side through the ``sim:<id>`` stream (or a poll of
+``/ticks?since=``). The tick log is the artifact of record, so watching live
+and reviewing afterwards read the same rows.
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException
@@ -50,8 +52,10 @@ if playground_enabled():
     from playground.environments import list_environments
     from playground.models import ACTIVATIONS, Role, Scenario, utc_iso
     from playground.worlds import WorldSpec, new_world_id, validate_world, warnings_for
-    from playground.runner import (
-        estimate_cost, run_simulation, stop_simulation, trigger_agent,
+    from playground.runner import estimate_cost
+    from playground.launcher import (
+        ScenarioResumeError, resume_scenario_run, start_scenario_run,
+        stop_scenario_run, trigger_scenario_run,
     )
 
 
@@ -793,11 +797,14 @@ async def estimate_scenario(scenario_id: str):
 
 @router.post("/scenarios/{scenario_id}/run")
 async def start_run(scenario_id: str, workspace: Optional[str] = None):
-    """Start a simulation on a background thread and return its id immediately.
+    """Start a simulation as its own process and return its run record.
 
-    A sim is minutes of LLM calls; holding the request open for it would tie up
-    a worker and give the UI nothing to show in the meantime. The caller follows
-    ``sim:<id>`` on the stream, or polls the tick log.
+    A sim is minutes of LLM calls; holding the request open for them would tie
+    up a worker and give the UI nothing to show in the meantime. This returns
+    as soon as the run record is written and its process is launched (or
+    queued, in the ``api`` role — see ``runtime/entity_launch.py``), which is
+    normally milliseconds. The caller follows ``sim:<id>`` on the stream, or
+    polls the tick log.
     """
     scenario = store.get_scenario(scenario_id)
     if not scenario:
@@ -805,39 +812,13 @@ async def start_run(scenario_id: str, workspace: Optional[str] = None):
     if not scenario.roles:
         raise HTTPException(status_code=400, detail="Scenario has no roles")
 
-    # The client needs a run id to poll, and only run_simulation mints one, so
-    # the run reports itself the moment its row is written — well before the
-    # first model call answers. Taking "the newest run of this scenario"
-    # instead would hand back the *previous* run whenever this one has not been
-    # written yet, and the page would sit on a finished run watching nothing.
-    ready = threading.Event()
-    started: Dict[str, Any] = {}
-    failure: Dict[str, Any] = {}
-
-    def _worker():
-        def _on_start(run) -> None:
-            started["run"] = run.to_dict()
-            ready.set()
-
-        try:
-            run_simulation(scenario_id, workspace=workspace or scenario.workspace,
-                           on_start=_on_start)
-        except Exception as e:  # noqa: BLE001
-            failure["error"] = f"{type(e).__name__}: {e}"
-        finally:
-            ready.set()
-
-    threading.Thread(target=_worker, name=f"sim-{scenario_id}", daemon=True).start()
-
-    # Everything before the row is written is setup — building the world,
-    # validating the roster — so this normally returns in milliseconds. The
-    # simulation itself keeps running regardless of when we return.
-    await asyncio.to_thread(ready.wait, 10.0)
-    if started:
-        return started["run"]
-    if failure:
-        raise HTTPException(status_code=400, detail=failure["error"])
-    return {"scenario_id": scenario_id, "status": "starting"}
+    try:
+        run = await asyncio.to_thread(
+            start_scenario_run, scenario_id, workspace=workspace or scenario.workspace,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return run.to_dict()
 
 
 @router.get("/runs")
@@ -968,9 +949,23 @@ async def stop_run(sim_run_id: str):
     the end of the tick they were already in. The world is left as of the last
     tick that completed, which is the last consistent state there is.
     """
-    if not stop_simulation(sim_run_id):
+    if not stop_scenario_run(sim_run_id):
         raise HTTPException(status_code=400, detail="Run is not running")
     return {"ok": True}
+
+
+@router.post("/runs/{sim_run_id}/resume")
+async def resume_run(sim_run_id: str):
+    """Relaunch a stopped or failed run from its checkpoint, under the same id.
+
+    Refused (400) for a run that has already completed or has no checkpoint to
+    resume from — see ``playground.launcher.resume_scenario_run``.
+    """
+    try:
+        run = await asyncio.to_thread(resume_scenario_run, sim_run_id)
+    except ScenarioResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return run.to_dict()
 
 
 class TriggerIn(BaseModel):
@@ -992,8 +987,8 @@ async def trigger_run(sim_run_id: str, data: TriggerIn):
         raise HTTPException(status_code=400, detail="agent is required")
     if not data.text.strip():
         raise HTTPException(status_code=400, detail="text is required")
-    if not trigger_agent(sim_run_id, data.agent.strip(), data.text,
-                         data.sender or "(external)"):
+    if not trigger_scenario_run(sim_run_id, data.agent.strip(), data.text,
+                                data.sender or "(external)"):
         raise HTTPException(
             status_code=400,
             detail="Run is not accepting triggers (finished, or running in another process)",

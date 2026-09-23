@@ -327,6 +327,7 @@ def run_orchestrator_loop(node_id: str, workspace: str | None, agent_id: str = "
                     tasks_service.update_task(
                         task.id,
                         status=TaskStatus.in_progress,
+                        executor={"kind": "agent", "id": "orchestrator"},
                         assigned_agent_type="orchestrator",
                         assigned_agent_run_id=run_id,
                     )

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  getSimRun, getSimRuns, getSimTicks, startSimulation, stopSimulation, triggerSimAgent,
+  getSimRun, getSimRuns, getSimTicks, resumeSimulation, startSimulation, stopSimulation,
+  triggerSimAgent,
 } from '../../api';
 import { useChannel, useLiveRefetch, useStream } from '../../components/stream';
 import { isLiveStatus } from './status';
@@ -293,10 +294,33 @@ export function useScenarioRun({
     }
   }, [run?.sim_run_id, setMessage, t]);
 
+  /** Relaunch a stopped or failed run from its checkpoint, under the same id
+      (POST /runs/{id}/resume, playground.launcher.resume_scenario_run). */
+  const handleResume = useCallback(async (simRunId) => {
+    const targetId = simRunId || run?.sim_run_id;
+    if (!targetId) return;
+    setMessage('');
+    try {
+      const { data } = await resumeSimulation(targetId);
+      setTicks([]);
+      setInFlight([]);
+      setActivity([]);
+      setRun(data);
+      setFollowing(true);
+      shownRunRef.current = data.sim_run_id;
+      navigate(`/playground/${scenarioId}?run=${data.sim_run_id}`, { replace: true });
+      refreshRuns();
+    } catch (e) {
+      setMessage(e.response?.data?.detail
+        || t('playground.resumeFailed', { defaultValue: 'Could not resume the run.' }));
+    }
+  }, [run?.sim_run_id, scenarioId, navigate, setMessage, refreshRuns, t]);
+
   return {
     run, ticks, cursor, setCursor, following, setFollowing,
     inFlight, activity, waitingForTrigger, starting, refreshing,
     openRun, refreshRuns, handleStart, handleStop, handleRefresh, handleTrigger,
+    handleResume,
   };
 }
 

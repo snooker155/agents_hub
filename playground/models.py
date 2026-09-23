@@ -344,12 +344,17 @@ class SimRun:
     sim_run_id: str = field(default_factory=lambda: new_id("sim"))
     scenario_id: str = ""
     workspace: Optional[str] = None
-    # A run is born "starting": the row is written before the first model call,
-    # and the first tick — which is as slow as the slowest agent in it — is what
-    # promotes it to "running".
-    status: str = "starting"       # starting | running | stopping | completed | stopped | failed
+    # A run is born "pending" (the shared spelling of "no process yet",
+    # common/run_status.py): the row is written before the first model call,
+    # and the first tick — which is as slow as the slowest agent in it — is
+    # what promotes it to "running".
+    status: str = "pending"        # pending | running | stopping | completed | stopped | failed
     environment: str = ""
     activation: str = SYNCHRONOUS
+    # The task this run works on and the run it executes inside, if any.
+    task_id: Optional[str] = None
+    session_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
     # Why the run ended: stopped | max_ticks | idle | terminal | wall_clock |
     # cost_ceiling | budget | error. The status alone cannot tell "the world
     # went quiet" from "the tick cap was reached".
@@ -368,6 +373,14 @@ class SimRun:
     # scenario.
     config: Dict[str, Any] = field(default_factory=dict)
     final_state: Dict[str, Any] = field(default_factory=dict)
+    # Where and whether it runs: written by the launcher and the runner's
+    # heartbeat, read by the watchdog (common/entity_runs.py).
+    pid: Optional[int] = None
+    host: Optional[str] = None
+    heartbeat_at: Optional[str] = None
+    resume_attempts: int = 0
+    log_file: Optional[str] = None
+    created_at: str = field(default_factory=utc_iso)
     started_at: str = field(default_factory=utc_iso)
     finished_at: Optional[str] = None
 
@@ -376,10 +389,15 @@ class SimRun:
             "sim_run_id": self.sim_run_id, "scenario_id": self.scenario_id,
             "workspace": self.workspace, "status": self.status,
             "environment": self.environment, "activation": self.activation,
+            "task_id": self.task_id, "session_id": self.session_id,
+            "parent_run_id": self.parent_run_id,
             "stop_reason": self.stop_reason, "ticks_done": self.ticks_done,
             "total_cost": self.total_cost, "error": self.error,
             "scores": dict(self.scores), "final_state": dict(self.final_state),
             "config": dict(self.config),
+            "pid": self.pid, "host": self.host, "heartbeat_at": self.heartbeat_at,
+            "resume_attempts": self.resume_attempts, "log_file": self.log_file,
+            "created_at": self.created_at,
             "started_at": self.started_at, "finished_at": self.finished_at,
         }
 

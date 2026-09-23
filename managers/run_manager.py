@@ -130,6 +130,7 @@ from .runs.task_finalize import (  # noqa: F401
     delete_assigned_run,
     delete_awaiting_approval_run,
     finalize_flow_task,
+    finalize_task,
     finalize_task_from_run,
     park_task_awaiting_input,
 )

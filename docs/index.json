@@ -320,6 +320,7 @@
         "The exit criterion",
         "The bounds that stop it",
         "Running",
+        "Checkpoint and resume",
         "Gotchas"
       ]
     },
@@ -548,10 +549,12 @@
       ],
       "headings": [
         "Run",
+        "Entity runs",
         "Session",
+        "Run group",
         "Reading a failure",
         "Stale runs",
-        "Gotchas"
+        "Live updates"
       ]
     },
     {

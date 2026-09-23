@@ -528,7 +528,7 @@ def test_a_run_can_be_stopped_before_it_has_ticked():
     that is the minute the user is sitting there watching nothing happen."""
     from playground.models import SimRun
     run = store.save_sim_run(SimRun(scenario_id="x"))
-    assert run.status == "starting"
+    assert run.status == "pending"
     assert store.request_stop(run.sim_run_id)
     assert store.stop_requested(run.sim_run_id)
 
@@ -629,7 +629,7 @@ def test_a_full_simulation_records_a_tick_per_round(scripted_llm):
 
 def test_a_run_is_starting_until_its_first_tick(scripted_llm):
     """The row is written before a single model has been called, and until the
-    first tick lands the only honest status is "starting" — which is what the
+    first tick lands the only honest status is "pending" — which is what the
     page shows instead of an empty transcript under a finished-looking run."""
     from playground.runner import run_simulation
     s = make_scenario(max_ticks=1)
@@ -641,7 +641,7 @@ def test_a_run_is_starting_until_its_first_tick(scripted_llm):
         on_tick=lambda r: seen.__setitem__(
             "at_tick", store.get_sim_run(r.sim_run_id).status),
     )
-    assert seen["at_start"] == "starting"
+    assert seen["at_start"] == "pending"
     assert seen["at_tick"] == "running"
     assert run.status == "completed"
 
@@ -1822,18 +1822,21 @@ def client():
     return TestClient(app)
 
 
-def _await_finish(sim_run_id, timeout=15.0):
-    """Block until the background run is off the database."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        run = store.get_sim_run(sim_run_id)
-        if run and run.status in ("completed", "stopped", "failed"):
-            return run
-        time.sleep(0.05)
-    raise AssertionError("the simulation never finished")
+@pytest.fixture
+def fake_launch(monkeypatch):
+    """A scenario run is now its own process (playground.launcher,
+    runtime/scenario_run.py); a route test must not actually spawn one. This
+    replaces the process half with a capture of the spec it would have been
+    handed, the way ``playground.launcher.launch_prepared`` is documented to
+    be swapped out in tests."""
+    import playground.launcher as launcher
+    captured = []
+    monkeypatch.setattr(launcher, "launch_prepared", captured.append)
+    return captured
 
 
-def test_starting_a_run_answers_with_that_run_not_the_previous_one(client, scripted_llm):
+def test_starting_a_run_answers_with_that_run_not_the_previous_one(client, scripted_llm,
+                                                                    fake_launch):
     """The reply is the run that was just launched, in the only state it can be
     in yet. Answering with "the newest run of this scenario" would hand back
     yesterday's finished run whenever this one's row is a millisecond late, and
@@ -1846,8 +1849,14 @@ def test_starting_a_run_answers_with_that_run_not_the_previous_one(client, scrip
     assert r.status_code == 200
     body = r.json()
     assert body["sim_run_id"] != previous.sim_run_id
-    assert body["status"] == "starting"
-    _await_finish(body["sim_run_id"])
+    assert body["status"] == "pending"
+    # The launch envelope actually ran end to end (record written, spec
+    # built and dispatched) — only the real subprocess spawn was faked out.
+    assert store.get_sim_run(body["sim_run_id"]) is not None
+    assert len(fake_launch) == 1
+    assert fake_launch[0]["kind"] == "scenario"
+    assert fake_launch[0]["run_id"] == body["sim_run_id"]
+    assert fake_launch[0]["entrypoint"] == "scenario_run"
 
 
 def test_a_scenario_with_no_roles_is_refused_by_the_route(client):
@@ -1855,6 +1864,29 @@ def test_a_scenario_with_no_roles_is_refused_by_the_route(client):
     r = client.post(f"/api/playground/scenarios/{s.scenario_id}/run")
     assert r.status_code == 400
     assert client.post("/api/playground/scenarios/nope/run").status_code == 404
+
+
+def test_resume_route_relaunches_a_stopped_run_and_refuses_a_completed_one(client, fake_launch):
+    from common import entity_runs
+    from playground.models import SimRun
+
+    s = make_scenario(max_ticks=5)
+    stopped = store.save_sim_run(SimRun(scenario_id=s.scenario_id, status="stopped"))
+    entity_runs.save_checkpoint(stopped.sim_run_id, {"tick": 2, "env": {}})
+
+    r = client.post(f"/api/playground/runs/{stopped.sim_run_id}/resume")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sim_run_id"] == stopped.sim_run_id
+    assert body["status"] == "running"
+    assert len(fake_launch) == 1
+    assert fake_launch[0]["cli_args"][-1] == "--resume"
+
+    completed = store.save_sim_run(SimRun(scenario_id=s.scenario_id, status="completed"))
+    r2 = client.post(f"/api/playground/runs/{completed.sim_run_id}/resume")
+    assert r2.status_code == 400
+
+    assert client.post("/api/playground/runs/nope/resume").status_code == 400
 
 
 def test_saving_a_scenario_without_a_narrative_does_not_erase_one(client):

@@ -24,6 +24,18 @@ a flow, a loop and a team are priced by the same rule.
 Children are run ids, except for a loop, whose children are flow run ids — a
 loop's work happens inside the flow it re-runs, so its children are groups of
 their own and its cost is the sum of theirs.
+
+A fifth kind, ``scenario`` (a playground run), joined the other three that live
+in ``entity_runs`` once it moved there too (common/entity_runs.py). Its children
+are found the same way a flow's and a team's now are: ``entity_runs.leaf_children``
+first (runs that name this one as their ``parent_run_id``), the kind's own older
+query as a fallback for a run written before that column existed.
+
+:func:`stop_tree` is the recursive version of a stop: the group itself, then
+every entity run nested under it by ``parent_run_id`` (a team a flow node ran,
+say), then every leaf agent run any of them owns directly. :func:`stop_group`
+calls it, so a plain stop already reaches the whole tree; ``stop_tree`` is the
+name to reach for when a caller wants to know how much of the tree there was.
 """
 from __future__ import annotations
 
@@ -33,7 +45,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
-KINDS = ("flow", "loop", "team", "container")
+KINDS = ("flow", "loop", "team", "container", "scenario")
 
 # Statuses that mean "still going" across all four stores. Each store spells
 # its own set slightly differently (a flow run is pending before it is running,
@@ -173,8 +185,17 @@ def turn_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
 # ── Flow runs ────────────────────────────────────────────────────────────────
 
 def _flow_children(flow_run_id: str) -> List[str]:
-    """Run ids of the per-node agent runs of one flow execution. They carry the
-    flow_run_id in their record, written by flow/task_driver.py at open_run."""
+    """Run ids of the per-node agent runs of one flow execution.
+
+    ``entity_runs.leaf_children`` (a node run's own ``parent_run_id``) first;
+    a node run opened before that column existed still only carries
+    ``flow_run_id`` in its record (flow/task_driver.py at open_run), so that
+    older query is the fallback.
+    """
+    from common import entity_runs
+    children = entity_runs.leaf_children(str(flow_run_id))
+    if children:
+        return children
     from .store import query_runs
     page = query_runs(flow_run_id=str(flow_run_id), limit=10_000, ascending=True)
     return [str(r.get("run_id")) for r in page["items"] if r.get("run_id")]
@@ -313,9 +334,18 @@ def _loop_stop(loop_run_id: str) -> bool:
 # ── Team runs ────────────────────────────────────────────────────────────────
 
 def _team_children(team_run_id: str) -> List[str]:
-    """Run ids of the member turns. A member run records its team_id but not
-    which *execution* it belonged to; the message bus does, and every turn
-    writes exactly one message carrying its run id."""
+    """Run ids of the member turns.
+
+    ``entity_runs.leaf_children`` first. The older fallback: a member run
+    written before ``parent_run_id`` existed records its team_id but not which
+    *execution* it belonged to, so for those the message bus is what ties a
+    turn to one team run: every turn writes exactly one message carrying its
+    run id.
+    """
+    from common import entity_runs
+    children = entity_runs.leaf_children(str(team_run_id))
+    if children:
+        return children
     from common import db
     rows = db.get_conn().execute(
         "SELECT run_id, MIN(seq) AS first_seq FROM team_messages "
@@ -439,6 +469,78 @@ def _container_stop(parent_id: str) -> bool:
     return bool(result.get("paused_subtasks") is not None)
 
 
+# ── Scenario runs ────────────────────────────────────────────────────────────
+# A scenario run (the playground) is kind "scenario" of the shared entity_runs
+# table, like flow, loop and team. Unlike them it has no adapter module of its
+# own predating that table, so there is no "old shape" to preserve here beyond
+# the child lookup, which, like a flow's and a team's, still has to fall back
+# for a run written before parent_run_id existed.
+
+def _scenario_children(sim_run_id: str) -> List[str]:
+    """Run ids of the per-turn agent decisions of one scenario execution.
+
+    ``entity_runs.leaf_children`` first. The fallback for an older run: each
+    decision run records ``sim_run_id`` in its ``extra`` (playground/runner.py
+    ``_open_decision_run``), the same way a flow node records ``flow_run_id``
+    (see ``_flow_children``), so the same kind of query reaches it.
+    """
+    from common import entity_runs
+    children = entity_runs.leaf_children(str(sim_run_id))
+    if children:
+        return children
+    from common import db
+    rows = db.get_conn().execute(
+        f"SELECT run_id FROM runs WHERE {db.json_text('extra', 'sim_run_id')} = ? "
+        "ORDER BY COALESCE(started_at, created_at, ''), run_id",
+        (str(sim_run_id),)).fetchall()
+    return [str(r["run_id"]) for r in rows]
+
+
+def _scenario_group_from_record(rec: Dict[str, Any]) -> RunGroup:
+    from playground import store as playground_store
+
+    sim_run_id = str(rec.get("sim_run_id") or rec.get("run_id"))
+    scenario_id = rec.get("scenario_id") or rec.get("entity_id")
+    children = _scenario_children(sim_run_id)
+    title = None
+    if scenario_id:
+        try:
+            scenario = playground_store.get_scenario(str(scenario_id))
+            title = scenario.name if scenario else None
+        except Exception:  # noqa: BLE001 - a scenario lookup failing must not blank the group
+            log.debug("scenario lookup failed for %s", scenario_id, exc_info=True)
+    return RunGroup(
+        kind="scenario",
+        id=sim_run_id,
+        status=str(rec.get("status") or ""),
+        started_at=rec.get("started_at") or rec.get("created_at"),
+        finished_at=rec.get("finished_at"),
+        total_cost=_runs_cost(children),
+        error=rec.get("error"),
+        children=children,
+        workspace=rec.get("workspace"),
+        title=title,
+        parent_id=str(scenario_id) if scenario_id else None,
+    )
+
+
+def _scenario_group(sim_run_id: str) -> Optional[RunGroup]:
+    from playground import store as playground_store
+    run = playground_store.get_sim_run(str(sim_run_id))
+    return _scenario_group_from_record(run.to_dict()) if run else None
+
+
+def _scenario_list(workspace: Optional[str], limit: int) -> List[RunGroup]:
+    from playground import store as playground_store
+    runs = playground_store.list_sim_runs(limit=limit, workspace=workspace)
+    return [_scenario_group_from_record(r.to_dict()) for r in runs]
+
+
+def _scenario_stop(sim_run_id: str) -> bool:
+    from playground import store as playground_store
+    return bool(playground_store.request_stop(str(sim_run_id)))
+
+
 def _iso(value) -> Optional[str]:
     """Datetimes come out of the task store as objects and out of every other
     store as ISO strings; the API shape is the string."""
@@ -454,6 +556,7 @@ _GET: Dict[str, Callable[[str], Optional[RunGroup]]] = {
     "loop": _loop_group,
     "team": _team_group,
     "container": _container_group,
+    "scenario": _scenario_group,
 }
 
 _LIST: Dict[str, Callable[[Optional[str], int], List[RunGroup]]] = {
@@ -461,6 +564,7 @@ _LIST: Dict[str, Callable[[Optional[str], int], List[RunGroup]]] = {
     "loop": _loop_list,
     "team": _team_list,
     "container": _container_list,
+    "scenario": _scenario_list,
 }
 
 _STOP: Dict[str, Callable[[str], bool]] = {
@@ -468,6 +572,7 @@ _STOP: Dict[str, Callable[[str], bool]] = {
     "loop": _loop_stop,
     "team": _team_stop,
     "container": _container_stop,
+    "scenario": _scenario_stop,
 }
 
 
@@ -483,7 +588,7 @@ def get_group(kind: str, group_id: str) -> Optional[RunGroup]:
 
 def list_groups(kind: Optional[str] = None, workspace: Optional[str] = None,
                 limit: int = 50) -> List[RunGroup]:
-    """Run groups, newest first. ``kind=None`` covers all four kinds, each
+    """Run groups, newest first. ``kind=None`` covers every kind, each
     limited to ``limit`` records so one busy kind cannot crowd out the rest."""
     kinds = [str(kind)] if kind else list(KINDS)
     for k in kinds:
@@ -500,12 +605,68 @@ def list_groups(kind: Optional[str] = None, workspace: Optional[str] = None,
     return out
 
 
-def stop_group(kind: str, group_id: str) -> bool:
-    """Stop a run group through its own store's stop path."""
+def _stop_via_adapter(kind: str, group_id: str) -> bool:
+    """Stop one group through its own store's stop path, with no recursion
+    into anything nested under it. The building block :func:`stop_tree` composes
+    over; kept apart so ``stop_tree`` can call a group's own stop without
+    calling back into itself through :func:`stop_group`."""
     adapter = _STOP.get(str(kind))
     if adapter is None:
         raise ValueError(f"Unknown run group kind: {kind!r} (expected one of {', '.join(KINDS)})")
     return bool(adapter(str(group_id)))
+
+
+def stop_tree(kind: str, run_id: str) -> Dict[str, int]:
+    """Stop a run group and everything nested under it, recursively.
+
+    Three layers, all keyed off :mod:`common.entity_runs`'s ``parent_run_id``:
+    the group itself (through its own store's stop path), every entity run
+    that names this one as its parent (a team a flow node ran, a loop's flow
+    iteration, ...), walked the same way so a grandchild is reached too,
+    and every leaf agent run any of those own directly
+    (``entity_runs.leaf_children``, stopped through
+    ``managers.runs.lifecycle.stop_run_by_id``). A container has no entry in
+    ``entity_runs`` (its "runs" are the task tree), so for it this is just the
+    group's own stop; its own adapter (``_container_stop``) already recurses
+    over its subtasks.
+
+    Returns how many of each layer were actually stopped (not merely visited),
+    so a caller can tell a real stop from "there was nothing left to stop"
+    without re-deriving the tree itself.
+    """
+    from common import entity_runs
+    from .lifecycle import stop_run_by_id
+
+    counts = {"groups": 0, "entity_runs": 0, "leaf_runs": 0}
+
+    def _walk(k: str, rid: str) -> None:
+        if _stop_via_adapter(k, rid):
+            counts["groups"] += 1
+        for leaf_id in entity_runs.leaf_children(str(rid)):
+            try:
+                if stop_run_by_id(leaf_id):
+                    counts["leaf_runs"] += 1
+            except Exception:  # noqa: BLE001 - one leaf run's stop failing must not stop the rest
+                log.debug("stop_run_by_id failed for %s", leaf_id, exc_info=True)
+        for child in entity_runs.children(str(rid)):
+            child_kind = str(child.get("kind") or "")
+            child_id = str(child.get("run_id") or "")
+            if not child_kind or not child_id:
+                continue
+            counts["entity_runs"] += 1
+            _walk(child_kind, child_id)
+
+    _walk(str(kind), str(run_id))
+    return counts
+
+
+def stop_group(kind: str, group_id: str) -> bool:
+    """Stop a run group through its own store's stop path, and recursively
+    stop everything nested under it (:func:`stop_tree`). True when the group
+    itself was signalled or marked; False when it was already finished. A
+    nested run that had something to stop does not change that, the same way
+    it never did before ``stop_tree`` existed."""
+    return bool(stop_tree(kind, group_id).get("groups"))
 
 
 def group_cost(kind: str, group_id: str) -> float:
@@ -516,5 +677,5 @@ def group_cost(kind: str, group_id: str) -> float:
 
 
 __all__ = ["RunGroup", "KINDS", "ACTIVE_STATUSES",
-           "get_group", "list_groups", "stop_group", "group_cost",
+           "get_group", "list_groups", "stop_group", "stop_tree", "group_cost",
            "runs_cost", "turn_cost"]

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Images, RefreshCw, Trash2, Box, Search, Boxes } from 'lucide-react';
 import { listViews, deleteView } from '../api';
 import { useWorkspace } from '../components/workspace';
@@ -13,6 +13,25 @@ import { useToast, errorDetail } from '../components/toast';
 
 // Kinds that open in the Studio (built via the op protocol / live runtimes).
 const STUDIO_KINDS = new Set(['graph', 'scene3d', 'simulation', 'math', 'process', 'chart', 'table', 'html', 'diagram', 'latex', 'slides', 'document']);
+
+// Where each owner kind's own page lives (App.jsx routes), mirroring
+// ViewDetail.jsx's OWNER_ROUTE. `row.owner_entity_id` is the flow/team/
+// scenario id the list route resolves alongside owner_kind/owner_id
+// (dashboard/backend/routes/views.py), since none of those pages address a
+// specific run by its run id, only by the entity's own id.
+const OWNER_ROUTE = {
+  run: (row) => `/messages/${row.owner_id}`,
+  team: (row) => (row.owner_entity_id ? `/teams/${row.owner_entity_id}` : null),
+  flow: (row) => (row.owner_entity_id ? `/flows/${row.owner_entity_id}` : null),
+  scenario: (row) => (row.owner_entity_id ? `/playground/${row.owner_entity_id}?run=${row.owner_id}` : null),
+  loop: () => '/loops',
+};
+
+function ownerChip(row) {
+  if (!row.owner_kind || !row.owner_id) return null;
+  const short = row.owner_id.length > 12 ? `${row.owner_id.slice(0, 10)}…` : row.owner_id;
+  return { to: OWNER_ROUTE[row.owner_kind]?.(row) || null, label: `${row.owner_kind} · ${short}` };
+}
 
 export default function Views() {
   const { t } = useI18n();
@@ -96,27 +115,42 @@ export default function Views() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
-        {filtered.map((row) => (
-          <ViewCard
-            key={row.view_id}
-            compact
-            viewRef={{ view_id: row.view_id, view_kind: row.kind, title: row.title, summary: row.summary }}
-            actions={(
-              <>
-                {STUDIO_KINDS.has(row.kind) && (
-                  <button onClick={() => navigate(`/studio/${row.view_id}`)} title={t('views.openInStudio')}
-                    className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-600">
-                    <Boxes className="w-4 h-4" />
-                  </button>
+        {filtered.map((row) => {
+          const owner = ownerChip(row);
+          return (
+            <div key={row.view_id}>
+              <ViewCard
+                compact
+                viewRef={{ view_id: row.view_id, view_kind: row.kind, title: row.title, summary: row.summary }}
+                actions={(
+                  <>
+                    {STUDIO_KINDS.has(row.kind) && (
+                      <button onClick={() => navigate(`/studio/${row.view_id}`)} title={t('views.openInStudio')}
+                        className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-600">
+                        <Boxes className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button onClick={() => onDelete(row.view_id)} title={t('views.deleteView')}
+                      className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-red-600">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </>
                 )}
-                <button onClick={() => onDelete(row.view_id)} title={t('views.deleteView')}
-                  className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-red-600">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </>
-            )}
-          />
-        ))}
+              />
+              {owner && (
+                <div className="mt-1 px-1">
+                  {owner.to ? (
+                    <Link to={owner.to} className="text-[11px] text-gray-400 hover:text-indigo-600 hover:underline">
+                      {owner.label}
+                    </Link>
+                  ) : (
+                    <span className="text-[11px] text-gray-400">{owner.label}</span>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </PageContainer>
   );

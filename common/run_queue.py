@@ -14,6 +14,13 @@ Rows carry a JSON ``payload`` that is everything the launcher needs to spawn
 the process, and nothing secret: the worker builds the child's environment
 itself from its own configuration, the same way the backend did.
 
+Four kinds of launch pass through here: ``task`` (an agent run,
+agents/agent_launcher.py), and ``flow``, ``team``, ``scenario``, the entity
+kinds that share one launch envelope (runtime/entity_launch.py) and one run
+table (common/entity_runs.py). ``kind`` on a row is only ever these four; the
+worker (runtime/worker.py) dispatches a claimed row to the launcher its kind
+names and nothing here needs to change for a fifth kind to join them.
+
 Claiming is one read-modify-write under ``db.transaction()``, so two workers
 never take the same row: on SQLite the transaction is exclusive, on Postgres
 it holds the advisory lock every writer takes. A leased row whose lease ran

@@ -329,8 +329,9 @@ def test_start_flow_run_records_flow_launch(monkeypatch):
 
     monkeypatch.setattr(flow_store, "get_flow",
                         lambda flow_id: {"id": flow_id, "nodes": [], "edges": []})
-    # Never actually spawn runtime/flow_run.py.
-    monkeypatch.setattr(flow_launcher, "_spawn_flow_process", lambda *a, **k: 4242)
+    # Never actually spawn runtime/flow_run.py (the shared envelope does the
+    # spawning, runtime/entity_launch.py).
+    monkeypatch.setattr("runtime.entity_launch.spawn_local", lambda *a, **k: 4242)
 
     t = ts.create_task("audited flow launch")
     run_id, _session_id = flow_launcher.start_flow_run(str(t.id), "flow-1", None)

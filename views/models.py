@@ -14,7 +14,7 @@ same way; unknown kinds fail validation with a message that lists the known set.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel, ValidationError, model_validator
 
@@ -232,6 +232,26 @@ COMPLEXITY_TIERS = ("inline", "expanded", "fullscreen")
 
 # ── envelope ─────────────────────────────────────────────────────────────────
 
+class ViewOwner(BaseModel):
+    """Who produced this view: the run whose output it is.
+
+    ``kind="run"`` names a row in the ``runs`` table (an agent run: a chat
+    turn, a flow node, a team member's turn, a scenario decision); the other
+    kinds name a row in ``entity_runs`` (common/entity_runs.py), the flow,
+    loop, team or scenario run itself, which is what a person actually opens
+    to see the work the view came out of. See ``views/owner.py`` for how the
+    owner of a freshly created view is resolved.
+    """
+    kind: Literal["run", "flow", "loop", "team", "scenario"]
+    id: str
+
+    @model_validator(mode="after")
+    def _id_non_empty(self):
+        if not self.id.strip():
+            raise ValueError("owner.id must not be empty")
+        return self
+
+
 class ViewFallback(BaseModel):
     """What a non-visual surface (Telegram/email/CLI) shows for this view."""
     text: str = ""
@@ -240,12 +260,23 @@ class ViewFallback(BaseModel):
 
 class ViewEnvelope(BaseModel):
     """The one contract every view travels in. ``view_id`` is assigned by the
-    store on creation; ``spec`` is kind-specific and validated separately."""
+    store on creation; ``spec`` is kind-specific and validated separately.
+
+    ``owner`` and ``run_id`` are kept in sync rather than one deriving from the
+    other on read: giving either alone fills in the other (a ``run``-kind owner
+    from ``run_id`` for old callers; ``run_id`` from an owner whose kind is
+    ``run`` so a view opened by run id still resolves). An owner of any other
+    kind (``flow``/``loop``/``team``/``scenario``) leaves ``run_id`` at
+    whatever the caller passed, usually ``None``, since the view belongs to
+    the entity run, not to an agent run.
+    """
     view_id: str = ""
     kind: str
     title: str = ""
     summary: str = ""
     spec: Dict[str, Any] = {}
+    run_id: Optional[str] = None
+    owner: Optional[ViewOwner] = None
     # data separated from presentation: {"inline": ...} | {"file": "data.json"}
     # | {"url": "/api/..."}. None means the spec is self-contained.
     data: Optional[Dict[str, Any]] = None
@@ -267,6 +298,15 @@ class ViewEnvelope(BaseModel):
     fidelity: str = ""
     complexity: str = "inline"
     fallback: ViewFallback = ViewFallback()
+
+    @model_validator(mode="after")
+    def _sync_owner_and_run_id(self):
+        if self.owner is not None:
+            if self.owner.kind == "run":
+                self.run_id = self.owner.id
+        elif self.run_id:
+            self.owner = ViewOwner(kind="run", id=self.run_id)
+        return self
 
     def summary_row(self) -> Dict[str, Any]:
         """The lightweight projection stored in the DB index / list views."""
@@ -348,6 +388,7 @@ def _short_errors(exc: ValidationError, limit: int = 4) -> str:
 
 __all__ = [
     "ViewEnvelope",
+    "ViewOwner",
     "ViewFallback",
     "KIND_REGISTRY",
     "SUPPORTED_KINDS",

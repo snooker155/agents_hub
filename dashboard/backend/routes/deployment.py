@@ -12,6 +12,13 @@ replica executing them), nodes and containers. ``/api/health`` stays the
 A member's own log is served here too, from its host's file or the
 object-store mirror, and tailed live over the stream on
 ``logs:member:<member id>`` (common/live_state.py) like a node's.
+
+``entity_runs`` in the map is the one flow/loop/team/scenario query
+(``common.entity_runs.list_runs(active=True)``), kind-agnostic: counts by kind
+and status, plus every active run's kind, host, heartbeat age and resume
+attempts. ``flow_runs`` and ``loops`` are kept alongside it, sliced from the
+same query rather than a second one each, so the page that already reads them
+keeps working unchanged.
 """
 from __future__ import annotations
 
@@ -65,46 +72,75 @@ def _active_runs() -> List[Dict[str, Any]]:
     return out
 
 
-def _active_flow_runs() -> List[Dict[str, Any]]:
+def _active_entity_runs() -> List[Dict[str, Any]]:
+    """Every flow, loop, team and scenario run still going, kind-agnostic
+    (common/entity_runs.py): the one query ``_active_flow_runs`` and
+    ``_active_loops`` below both slice, and what the map's new ``entity_runs``
+    section shows whole. Each row keeps its raw ``checkpoint`` (a loop's own
+    position lives there) so those two slices do not need a second query;
+    ``_entity_runs_section`` strips it back out before the map ships it."""
     try:
-        from flow import run_store
-        rows = run_store.load_flow_runs()
+        from common import entity_runs
+        recs = entity_runs.list_runs(active=True)
     except Exception:
         return []
     out = []
-    for rec in rows:
-        if str(rec.get("status") or "") not in ("running", "pending"):
+    for rec in recs:
+        out.append({
+            "run_id": rec.get("run_id"), "kind": rec.get("kind"),
+            "entity_id": rec.get("entity_id"), "task_id": rec.get("task_id"),
+            "workspace": rec.get("workspace"), "status": rec.get("status"),
+            "host": rec.get("host") or "", "pid": rec.get("pid"),
+            "container_name": rec.get("container_name"),
+            "started_at": rec.get("started_at"),
+            "heartbeat_at": rec.get("heartbeat_at"),
+            "heartbeat_age_seconds": _age(rec.get("heartbeat_at")),
+            "resume_attempts": rec.get("resume_attempts"),
+            "checkpoint": rec.get("checkpoint"),
+        })
+    return out
+
+
+def _entity_runs_section(entity_active: List[Dict[str, Any]]) -> Dict[str, Any]:
+    try:
+        from common import entity_runs
+        counts = entity_runs.counts_by_kind()
+    except Exception:
+        counts = {}
+    active = [{k: v for k, v in rec.items() if k != "checkpoint"} for rec in entity_active]
+    return {"counts_by_kind": counts, "active": active}
+
+
+def _active_flow_runs(entity_active: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out = []
+    for rec in entity_active:
+        if rec.get("kind") != "flow" or rec.get("status") not in ("running", "pending"):
             continue
         out.append({
-            "flow_run_id": rec.get("flow_run_id"), "flow_id": rec.get("flow_id"),
+            "flow_run_id": rec.get("run_id"), "flow_id": rec.get("entity_id"),
             "task_id": rec.get("task_id"), "workspace": rec.get("workspace"),
             "status": rec.get("status"), "host": rec.get("host") or "",
             "pid": rec.get("pid"), "started_at": rec.get("started_at"),
             "heartbeat_at": rec.get("heartbeat_at"),
-            "heartbeat_age_seconds": _age(rec.get("heartbeat_at")),
+            "heartbeat_age_seconds": rec.get("heartbeat_age_seconds"),
             "resume_attempts": rec.get("resume_attempts"),
         })
     return out
 
 
-def _active_loops() -> List[Dict[str, Any]]:
-    try:
-        from loops import store as loop_store
-        runs = loop_store.list_runs(limit=200)
-    except Exception:
-        return []
+def _active_loops(entity_active: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out = []
-    for run in runs:
-        if run.status != "running":
+    for rec in entity_active:
+        if rec.get("kind") != "loop" or rec.get("status") != "running":
             continue
-        position = dict(run.position or {})
+        position = dict(rec.get("checkpoint") or {})
         out.append({
-            "loop_run_id": run.loop_run_id, "loop_id": run.loop_id,
-            "workspace": getattr(run, "workspace", None), "status": run.status,
-            "owner": position.get("owner") or "", "host": position.get("host") or "",
+            "loop_run_id": rec.get("run_id"), "loop_id": rec.get("entity_id"),
+            "workspace": rec.get("workspace"), "status": rec.get("status"),
+            "owner": position.get("owner") or "", "host": rec.get("host") or "",
             "iterations_done": position.get("iterations_done"),
-            "heartbeat_at": position.get("heartbeat_at"),
-            "heartbeat_age_seconds": _age(position.get("heartbeat_at")),
+            "heartbeat_at": rec.get("heartbeat_at"),
+            "heartbeat_age_seconds": rec.get("heartbeat_age_seconds"),
         })
     return out
 
@@ -162,8 +198,10 @@ def build_map() -> Dict[str, Any]:
         m["leases"] = sorted(by_owner.get(str(m.get("member_id")), []))
 
     runs = _active_runs()
-    flows = _active_flow_runs()
-    loops = _active_loops()
+    entity_active = _active_entity_runs()
+    flows = _active_flow_runs(entity_active)
+    loops = _active_loops(entity_active)
+    entity_section = _entity_runs_section(entity_active)
     nodes = _nodes()
     containers = _containers()
 
@@ -199,6 +237,7 @@ def build_map() -> Dict[str, Any]:
         "runs": runs,
         "flow_runs": flows,
         "loops": loops,
+        "entity_runs": entity_section,
         "nodes": nodes,
         "containers": containers,
         "hosts": [{

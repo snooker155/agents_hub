@@ -31,13 +31,14 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import time
 from concurrent.futures import (
     FIRST_COMPLETED, Future, ThreadPoolExecutor, wait as futures_wait,
 )
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from teams import control, store
 from teams.models import (
@@ -72,6 +73,9 @@ class Turn:
     tokens: int = 0
     error: str = ""
     stopped: bool = False
+    #: Read back off the board by _resume_turn rather than produced by a call
+    #: just now — _post_turns must never post this turn's message again.
+    already_posted: bool = False
 
 
 def _publish(team_run_id: str, event: Dict[str, Any]) -> None:
@@ -98,6 +102,7 @@ def _run_member(
     prompt: str, workspace: Optional[str], task_id: Optional[str],
     session_id: Optional[str], team_run_id: str, is_leader: bool = False,
     provider: Optional[str] = None, model: Optional[str] = None,
+    run_id: Optional[str] = None, in_process: bool = True,
 ) -> Turn:
     """Build the agent with its team seat and run one turn. Never raises: a
     member that fails posts an error to the board and the team continues, the
@@ -136,7 +141,7 @@ def _run_member(
         turn.error = f"{type(e).__name__}: {e}"
         return turn
 
-    run_id = str(uuid4())
+    run_id = run_id or str(uuid4())
     log_path = run_log_path(run_id)
     try:
         # One instance per seat of this team run: the seat is the live copy,
@@ -166,10 +171,19 @@ def _run_member(
             log_file=str(log_path), workspace=workspace,
             title=f"{team.name}: {speaker}",
             team_id=team.team_id, team_member=speaker, link_to_session=True,
-            # The turn runs on a thread of the server process, so the pid on
-            # this record is the server's; the flag keeps a stop from the runs
-            # UI from signalling it (run_manager._stop_run_record).
-            in_process=True,
+            parent_run_id=team_run_id,
+            # A member turn shares whatever process is running it: this API
+            # server's own pid when run_team minted its own record (chat, a
+            # tool call, the old Teams-page thread), or a dedicated team
+            # subprocess's pid when teams.launcher / runtime.team_run started
+            # it (run_team's ``run=`` path). in_process=True is what keeps
+            # managers.runs.lifecycle._stop_run_record from signalling a pid
+            # the API shares with everything else it is doing; a subprocess's
+            # pid belongs to this run alone, so a stop from the Messages page
+            # may terminate it directly there, which ends the run exactly the
+            # way the process dying any other way would (the watchdog reads
+            # the stalled heartbeat).
+            in_process=in_process,
             provider=agent.provider or "", model=agent.model or "",
             input=prompt, instance_id=instance_id,
         )
@@ -220,9 +234,60 @@ def _run_member(
     return turn
 
 
+def _turn_run_id(team_run_id: str, round_no: int, speaker: str) -> str:
+    """A member turn's leaf run id, deterministic in the team run, the round
+    and the speaker.
+
+    A run started as a subprocess can die mid-round; a resume replays that
+    round from the board it already has (see ``_already_spoken`` /
+    ``_resume_turn`` below), and a member already skipped there never reaches
+    this id at all. It is deterministic anyway, rather than a fresh
+    ``uuid4()`` per attempt, because "the same call" should mean the same id
+    whichever attempt makes it — the alternative is a random id that happens
+    to only ever be used once, which is not a guarantee, just a coincidence.
+    """
+    return str(uuid5(NAMESPACE_URL, f"team:{team_run_id}:{round_no}:{speaker}"))
+
+
+def _already_spoken(board: "_Board", round_no: int) -> set:
+    """Members who already have their own reply on the board for this round —
+    not the leader's instructions *about* them, which carry the same sender
+    name but are not a member's own turn."""
+    return {m.sender for m in board.messages
+            if m.round == round_no and m.kind in ("message", "verdict", "error")}
+
+
+def _resume_turn(board: "_Board", round_no: int, speaker: str) -> Optional["Turn"]:
+    """A member's turn as it already happened this round, read back off the
+    board rather than paid for twice.
+
+    Only reachable right after a resume: a checkpoint is written once a round
+    *finishes* (see run_team), so the round a resume replays can still hold
+    some of its members' messages from before the process died — the crash
+    landed between two turns, after the board write but before the round was
+    done. Best-effort: the board keeps a message's posted content (with
+    ``TEAM_DONE`` already stripped) and its cost, not the original completion,
+    so a member found this way always reads as "still going" even when it had
+    signalled done. That costs at most one extra round — never a wrong result
+    — which is the price of not re-billing a call a crash already paid for.
+    """
+    for msg in board.messages:
+        if msg.round != round_no or msg.sender != speaker:
+            continue
+        if msg.kind == "error":
+            return Turn(speaker=speaker, run_id=msg.run_id, cost=msg.cost,
+                       tokens=msg.tokens, error=msg.error or "not replayed on resume",
+                       already_posted=True)
+        if msg.kind in ("message", "verdict"):
+            return Turn(speaker=speaker, text=msg.content, run_id=msg.run_id,
+                       cost=msg.cost, tokens=msg.tokens, already_posted=True)
+    return None
+
+
 def _run_turns(
     jobs: List[Tuple[TeamMember, str]], *, team: Team, team_run_id: str,
     workspace: Optional[str], task_id: Optional[str], session_id: Optional[str],
+    round_no: int, board: "_Board", member_in_process: bool = True,
 ) -> List[Turn]:
     """Run one round's member turns, bounded by ``max_concurrent``.
 
@@ -240,9 +305,23 @@ def _run_turns(
     for. On a stop the pool is abandoned rather than joined — waiting for the
     calls we just cancelled is exactly the delay the user pressed the button to
     avoid.
+
+    A member already on the board for this round (see ``_already_spoken``) is
+    read back rather than run again — the round a resume starts on can be one
+    that was already partway done when the process died.
     """
     if not jobs or control.is_stopped(team_run_id):
         return []
+    already = _already_spoken(board, round_no)
+    reused = [t for t in (_resume_turn(board, round_no, member.display_name())
+                          for member, _ in jobs if member.display_name() in already)
+              if t is not None]
+    jobs = [(member, prompt) for member, prompt in jobs
+            if member.display_name() not in already]
+    if not jobs:
+        reused.sort(key=lambda t: t.speaker)
+        return reused
+
     workers = max(1, min(int(team.max_concurrent or 1), len(jobs)))
     pool = ThreadPoolExecutor(max_workers=workers)
     futures: Dict[Future, TeamMember] = {
@@ -252,11 +331,13 @@ def _run_turns(
             task_id=task_id, session_id=session_id, team_run_id=team_run_id,
             provider=member.provider or team.default_provider,
             model=member.model or team.default_model,
+            run_id=_turn_run_id(team_run_id, round_no, member.display_name()),
+            in_process=member_in_process,
         ): member
         for member, prompt in jobs
     }
 
-    turns: List[Turn] = []
+    turns: List[Turn] = list(reused)
     pending = set(futures)
     per_turn = max(1.0, float(team.turn_timeout or 300.0))
 
@@ -334,24 +415,13 @@ class _Board:
         return board_block(self.messages, viewer, see_all=see_all)
 
 
-def run_team(
-    team_id: str,
-    goal: str,
-    *,
-    workspace: Optional[str] = None,
-    task_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-    conversation_id: Optional[str] = None,
-    on_message: Optional[Callable[[TeamMessage], None]] = None,
-) -> TeamRun:
-    """Run a team against one goal until it finishes or hits a ceiling.
-
-    Synchronous and long-running, so callers start it on a background thread and
-    follow the ``team:<team_run_id>`` channel (or poll the message log).
+def _validate_for_run(team: Team) -> None:
+    """Every way of starting a team run needs the same guarantees: a roster
+    under the member cap, teammates addressable by distinct names, and (for a
+    centralized team) somebody to lead. Shared by run_team's own
+    mint-a-record path and teams.launcher.start_team_run, so a launch fails
+    the same way whichever door it came through.
     """
-    team = store.get_team(team_id)
-    if not team:
-        raise ValueError(f"Team not found: {team_id}")
     if not team.members:
         raise ValueError("Team has no members — a team needs a roster")
     if len(team.members) > MAX_MEMBERS:
@@ -362,52 +432,140 @@ def run_team(
     if team.mode == "centralized" and not team.leader_agent_id:
         raise ValueError("A centralized team needs a leader agent")
 
-    goal = (goal or "").strip() or (team.description or "").strip()
 
-    # The run id is minted before anything else because the task, the run record
-    # and the stop event all key off it: a team that claims a task has to be
-    # able to say which run holds it.
-    run = TeamRun(team_id=team_id, mode=team.mode, goal=goal,
-                  conversation_id=conversation_id)
-    control.register(run.team_run_id)
+def run_team(
+    team_id: str,
+    goal: str,
+    *,
+    workspace: Optional[str] = None,
+    task_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    on_message: Optional[Callable[[TeamMessage], None]] = None,
+    run: Optional[TeamRun] = None,
+    checkpoint: Optional[Dict[str, Any]] = None,
+) -> TeamRun:
+    """Run a team against one goal until it finishes or hits a ceiling.
 
-    ws_name, ws_path, task_id, session_id = _prepare_context(
-        team, workspace, task_id, session_id, conversation_id, goal,
-    )
-    run.workspace, run.task_id, run.session_id = ws_name, task_id, session_id
+    Two ways in, both ending up in the same round loop below:
 
-    # Publish the workspace on the context var the agent tools read, rather than
-    # a process-wide env var that would race with concurrent requests. Member
-    # turns run on a thread pool, which does not inherit context — so each turn
-    # sets it again for itself (see _run_member).
-    from common.workspace_context import _workspace_ctx
-    _workspace_ctx.set(ws_name)
+    * most callers (chat, the tools, a direct call) give only ``team_id`` and
+      a goal. A record is minted here, marked ``running`` under *this
+      thread's own pid* and given its own heartbeat, so a run started this
+      way is exactly as visible to the watchdog and to a stop from another
+      host as one that was launched as a subprocess — it only differs in
+      whose process happens to be carrying it.
+    * ``teams.launcher.start_team_run`` / ``resume_team_run`` and
+      ``runtime/team_run.py`` give the pre-created ``run`` instead: the
+      record, its task claim and (once the process starts) its
+      ``mark_running`` already happened — the launcher's database half, then
+      the shared envelope (runtime/entity_launch.py) — before this call.
+      ``checkpoint`` is what a resume picks the round loop back up from.
 
-    store.save_run(run)
-    _claim_task(team, run)
+    Synchronous and long-running either way: a caller that wants this off its
+    own thread starts it on one (or lets the launcher spawn the subprocess)
+    and follows the ``team:<team_run_id>`` channel or the board.
+    """
+    from common import entity_runs
+    from runtime.entity_heartbeat import EntityHeartbeat
+
+    # True only for the mint-your-own path: this thread's pid is the run's
+    # process. Every member turn's leaf run record is tagged the same way
+    # (see _run_member's in_process comment) — a run this API process carries
+    # must never be signalled by a stop from the Messages page, but a run a
+    # disposable team subprocess carries can be, because that pid is not
+    # shared with anything else.
+    member_in_process = run is None
+    own_heartbeat: Optional[EntityHeartbeat] = None
+
+    if run is None:
+        team = store.get_team(team_id)
+        if not team:
+            raise ValueError(f"Team not found: {team_id}")
+        _validate_for_run(team)
+
+        goal = (goal or "").strip() or (team.description or "").strip()
+
+        # The run id is minted before anything else because the task, the run
+        # record and the stop event all key off it: a team that claims a task
+        # has to be able to say which run holds it.
+        run = TeamRun(team_id=team_id, mode=team.mode, goal=goal,
+                      conversation_id=conversation_id)
+        control.register(run.team_run_id)
+
+        ws_name, ws_path, task_id, session_id = _prepare_context(
+            team, workspace, task_id, session_id, conversation_id, goal,
+        )
+        run.workspace, run.task_id, run.session_id = ws_name, task_id, session_id
+
+        # Publish the workspace on the context var the agent tools read, rather
+        # than a process-wide env var that would race with concurrent requests.
+        # Member turns run on a thread pool, which does not inherit context —
+        # so each turn sets it again for itself (see _run_member).
+        from common.workspace_context import _workspace_ctx
+        _workspace_ctx.set(ws_name)
+
+        store.save_run(run)
+        _claim_task(team, run)
+        # No launcher stands between this call and the record, so this is
+        # where the run becomes "running": under this thread's own pid, with
+        # its own heartbeat thread, exactly what mark_running + EntityHeartbeat
+        # give a launched subprocess (runtime/team_run.py).
+        entity_runs.mark_running(run.team_run_id, pid=os.getpid(),
+                                 host=socket.gethostname(), execution_mode="local")
+        run.status = "running"
+        own_heartbeat = EntityHeartbeat(
+            run.team_run_id, on_stop=lambda: control.request_stop(run.team_run_id))
+        own_heartbeat.start()
+    else:
+        team = store.get_team(run.team_id)
+        if not team:
+            raise ValueError(f"Team not found: {run.team_id}")
+        _validate_for_run(team)
+        team_id = run.team_id
+        goal = (run.goal or goal or "").strip() or (team.description or "").strip()
+        run.goal = goal
+        control.register(run.team_run_id)
+        ws_name, ws_path = _resolve_run_workspace(run)
+        task_id, session_id = run.task_id, run.session_id
+
+        from common.workspace_context import _workspace_ctx
+        _workspace_ctx.set(ws_name)
+
     _publish(run.team_run_id, {"type": "team_start", **run.to_dict(),
                                "team": team.to_dict()})
 
     board = _Board(run, on_message)
-    board.post(sender="(request)", content=goal, round_no=0, kind="goal")
+    state: Dict[str, Any] = {}
+    spend = 0.0
+    final_answer = ""
+    resume_round = 0
+    if checkpoint:
+        # The board is already durable (every post went through store.
+        # append_message as it happened), so a resume rebuilds it by reading
+        # the messages back rather than replaying anything.
+        resume_round = int(checkpoint.get("round") or 0)
+        state = dict(checkpoint.get("state") or {})
+        spend = float(checkpoint.get("spend") or 0.0)
+        final_answer = str(checkpoint.get("final_answer") or "")
+        board.messages.extend(store.list_messages(run.team_run_id))
+    else:
+        board.post(sender="(request)", content=goal, round_no=0, kind="goal")
 
     max_rounds = max(1, min(int(team.max_rounds or 1), MAX_ROUNDS_CAP))
     wall_cap = min(float(team.max_wall_seconds or MAX_WALL_SECONDS_CAP), MAX_WALL_SECONDS_CAP)
     started = time.monotonic()
-    spend = 0.0
-    final_answer = ""
     driver = _driver_for(team)
-    state: Dict[str, Any] = {}
 
     try:
-        for round_no in range(1, max_rounds + 1):
+        for round_no in range(resume_round + 1, max_rounds + 1):
             _check_between_rounds(run.team_run_id, started, wall_cap, spend, team, ws_name)
             _publish(run.team_run_id, {"type": "round_start", "round": round_no})
 
             round_cost, finished, answer = driver(
                 team=team, run=run, board=board, goal=goal, round_no=round_no,
                 workspace=ws_path, task_id=task_id, session_id=session_id,
-                state=state,
+                state=state, member_in_process=member_in_process,
             )
             spend = round(spend + round_cost, 6)
             run.rounds_done = round_no
@@ -416,6 +574,15 @@ def run_team(
                 run.team_run_id, rounds_done=run.rounds_done,
                 total_cost=run.total_cost,
             )
+            # Written once the round has fully finished — see _run_turns and
+            # _resume_turn for what a round that died before reaching here
+            # means for the resume that follows it.
+            entity_runs.save_checkpoint(run.team_run_id, {
+                "round": round_no, "state": state, "spend": spend,
+                "final_answer": final_answer,
+                "board_seq": board.messages[-1].seq if board.messages else 0,
+                "updated_at": utc_iso(),
+            })
 
             # A stop that landed mid-round already cut the turns short; ending
             # here keeps a half-finished round from being read as a result.
@@ -443,7 +610,7 @@ def run_team(
     if team.synthesize and run.status != "stopped" and not final_answer:
         final_answer, synth_cost = _synthesize(
             team=team, run=run, board=board, goal=goal, workspace=ws_path,
-            task_id=task_id, session_id=session_id,
+            task_id=task_id, session_id=session_id, member_in_process=member_in_process,
         )
         spend = round(spend + synth_cost, 6)
         # Only a synthesised answer is posted: a lead that finished the run wrote
@@ -460,6 +627,8 @@ def run_team(
     store.save_run(run)
     _finalize_task(run)
     control.release(run.team_run_id)
+    if own_heartbeat is not None:
+        own_heartbeat.stop()
     _publish(run.team_run_id, {"type": "team_done", **run.to_dict()})
     return run
 
@@ -479,6 +648,7 @@ def _driver_for(team: Team) -> Callable[..., Tuple[float, bool, str]]:
 def _run_centralized(
     *, team: Team, run: TeamRun, board: _Board, goal: str, round_no: int,
     workspace: str, task_id: str, session_id: str, state: Dict[str, Any],
+    member_in_process: bool = True,
 ) -> Tuple[float, bool, str]:
     """One round with a coordinator: the lead assigns, the assigned members act."""
     leader_name = team.leader_display_name()
@@ -491,6 +661,7 @@ def _run_centralized(
         workspace=workspace, task_id=task_id, session_id=session_id,
         team_run_id=run.team_run_id, is_leader=True,
         provider=team.default_provider, model=team.default_model,
+        in_process=member_in_process,
     )
     cost = lead_turn.cost
     if lead_turn.stopped:
@@ -531,7 +702,8 @@ def _run_centralized(
 
     turns = _run_turns(
         jobs, team=team, team_run_id=run.team_run_id, workspace=workspace,
-        task_id=task_id, session_id=session_id,
+        task_id=task_id, session_id=session_id, round_no=round_no, board=board,
+        member_in_process=member_in_process,
     )
     cost += _post_turns(team, board, turns, round_no)[0]
     return cost, False, ""
@@ -540,6 +712,7 @@ def _run_centralized(
 def _run_handoff(
     *, team: Team, run: TeamRun, board: _Board, goal: str, round_no: int,
     workspace: str, task_id: str, session_id: str, state: Dict[str, Any],
+    member_in_process: bool = True,
 ) -> Tuple[float, bool, str]:
     """One round without a coordinator, driven by requests between members.
 
@@ -582,7 +755,8 @@ def _run_handoff(
 
     turns = _run_turns(
         jobs, team=team, team_run_id=run.team_run_id, workspace=workspace,
-        task_id=task_id, session_id=session_id,
+        task_id=task_id, session_id=session_id, round_no=round_no, board=board,
+        member_in_process=member_in_process,
     )
     cost, handoffs = _post_turns(team, board, turns, round_no, handoff=True)
     state["queue"] = handoffs
@@ -594,6 +768,7 @@ def _run_handoff(
 def _run_parallel(
     *, team: Team, run: TeamRun, board: _Board, goal: str, round_no: int,
     workspace: str, task_id: str, session_id: str, state: Dict[str, Any],
+    member_in_process: bool = True,
 ) -> Tuple[float, bool, str]:
     """One round in which every member acts against the board.
 
@@ -610,7 +785,8 @@ def _run_parallel(
     ]
     turns = _run_turns(
         jobs, team=team, team_run_id=run.team_run_id, workspace=workspace,
-        task_id=task_id, session_id=session_id,
+        task_id=task_id, session_id=session_id, round_no=round_no, board=board,
+        member_in_process=member_in_process,
     )
     cost, _ = _post_turns(team, board, turns, round_no)
 
@@ -640,6 +816,22 @@ def _post_turns(
     handoffs: Dict[str, List[str]] = {}
     for turn in turns:
         cost += turn.cost
+        if turn.already_posted:
+            # Already on the board from before a resume (see _resume_turn) —
+            # never reposted, but a handoff round still needs to know who it
+            # asked for what, or a resumed round could wrongly conclude
+            # nothing was handed on and end early.
+            if handoff and turn.text:
+                _, recipients, _ = parse_member_reply(
+                    turn.text, team, allow_direct=team.allow_direct_messages or handoff,
+                )
+                for name in recipients:
+                    if name == BROADCAST or name == turn.speaker:
+                        continue
+                    handoffs.setdefault(name, []).append(
+                        handoff_instruction(turn.speaker, turn.text)
+                    )
+            continue
         if turn.stopped and not turn.text:
             continue  # the user stopped this turn; it is not a failure to report
         if turn.error and not turn.text:
@@ -675,7 +867,7 @@ def _post_turns(
 
 def _synthesize(
     *, team: Team, run: TeamRun, board: _Board, goal: str, workspace: str,
-    task_id: str, session_id: str,
+    task_id: str, session_id: str, member_in_process: bool = True,
 ) -> Tuple[str, float]:
     """Closing pass: one member writes the team's answer from the board."""
     speaker_id = team.leader_agent_id or (team.members[0].agent_id if team.members else None)
@@ -690,6 +882,7 @@ def _synthesize(
         team_run_id=run.team_run_id, is_leader=bool(team.leader_agent_id),
         provider=(member.provider if member else None) or team.default_provider,
         model=(member.model if member else None) or team.default_model,
+        in_process=member_in_process,
     )
     return turn.text, turn.cost
 
@@ -792,6 +985,28 @@ def _prepare_context(
     return ws_name, str(ws_path), task_id, session_id
 
 
+def _resolve_run_workspace(run: TeamRun) -> Tuple[str, str]:
+    """The workspace name and the directory a run's turns operate in,
+    recomputed rather than stored: only :func:`_prepare_context` resolves the
+    project subfolder, once, when a run is first created, and a ``TeamRun``
+    keeps just the workspace *name*. A subprocess that loads a pre-created
+    record (runtime/team_run.py) or a resume
+    (teams.launcher.resume_team_run) needs the same path back, so this finds
+    exactly what ``_prepare_context`` would have found for the same task.
+    """
+    from tasks import service as _ts
+    from workspace import as_param_dict, create_workspace_folder, resolve_task_workspace
+
+    ws_name = run.workspace
+    if run.task_id:
+        task = _ts.get_task(run.task_id)
+        if task is not None:
+            _, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": ws_name}))
+            return ws_name or "", str(ws_path)
+    folder = create_workspace_folder(ws_name) if ws_name else create_workspace_folder()
+    return folder.name, str(folder)
+
+
 def _claim_task(team: Team, run: TeamRun) -> None:
     """Hand the task to the team, the way assigning an agent hands it to an agent.
 
@@ -820,10 +1035,10 @@ def _claim_task(team: Team, run: TeamRun) -> None:
     except Exception:
         pass
     try:
-        _ts.assign_agent(
-            run.task_id, assignee,
+        _ts.assign_executor(
+            run.task_id, {"kind": "team", "id": team.team_id},
             {"team_id": team.team_id, "mode": team.mode, "workspace": run.workspace,
-             "team_run_id": run.team_run_id},
+             "team_run_id": run.team_run_id, "goal": run.goal},
             run_id=run.team_run_id,
         )
         _ts.update_task(run.task_id, status=TaskStatus.in_progress)
@@ -874,20 +1089,15 @@ def _finalize_task(run: TeamRun) -> None:
 def stop_run(team_run_id: str) -> bool:
     """Stop a team run now.
 
-    Both halves matter: the durable status (so a page that reloads, or another
-    process, sees it) and the in-memory event (so the turns in flight stop
-    calling the model instead of finishing the round the user cancelled).
+    Delegates to :func:`teams.launcher.stop_team_run`, which marks the
+    durable status (so a page that reloads, or another process, sees it) and
+    sets the in-memory event (so the turns in flight stop calling the model
+    instead of finishing the round the user cancelled). Kept here, under its
+    original name, because the tools (tools/entity_runs.py) and the chat
+    pipeline already call ``teams.runner.stop_run``.
     """
-    run = store.get_run(team_run_id)
-    if run is None:
-        return False
-    if run.status not in ("running", "stopping"):
-        return False
-    store.request_stop(team_run_id)
-    control.request_stop(team_run_id)
-    _publish(team_run_id, {"type": "stopping", "team_run_id": team_run_id,
-                           "status": "stopping"})
-    return True
+    from teams.launcher import stop_team_run
+    return stop_team_run(team_run_id)
 
 
 def estimate_cost(team: Team) -> Dict[str, Any]:

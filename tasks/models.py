@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional, List, Dict, FrozenSet  # noqa: F401 — List/Dict/Any used by SharedMemory
+from typing import Any, Literal, Optional, List, Dict, FrozenSet  # noqa: F401 — List/Dict/Any used by SharedMemory
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field, field_validator
 
@@ -284,6 +284,25 @@ class AgentState(str, Enum):
     completed = "completed"
     failed = "failed"
 
+
+class Executor(BaseModel):
+    """What is doing the work on a task: an agent, a flow, a team or a loop.
+
+    Before this (September 2026 stage-0 "unified run envelope"), a task could
+    only be handed to an agent (``assigned_agent_type``). A flow, a team or a
+    loop that claimed a task did so by writing its own name into that same
+    string field, which read fine in the UI but meant "the assigned agent"
+    was sometimes not an agent at all. ``Executor`` names the kind
+    explicitly, and is what ``tasks.assign.assign_executor_to_task`` dispatches
+    on: ``kind`` picks the launcher (an agent run, ``flow.launcher``,
+    ``teams.launcher`` or ``loops.runner``), ``id`` is that kind's own id (an
+    agent id, a flow id, a team id or a loop id).
+    """
+
+    kind: Literal["agent", "flow", "team", "loop"]
+    id: str
+
+
 class Task(BaseModel):
     id: UUID = Field(default_factory=uuid4, description="Unique task identifier")
     # Short human-readable key like "DEMO-12" (Jira-style: project prefix + number).
@@ -380,9 +399,28 @@ class Task(BaseModel):
         default=None, description="Source issue metadata when imported from a git provider"
     )
 
+    # What is executing this task: an agent, a flow, a team or a loop. The
+    # source of truth for assignment; ``assigned_agent_type`` below is kept in
+    # sync with it by the store (tasks.storage._sync_executor) purely for the
+    # readers written before this field existed — see that function's
+    # docstring for exactly how the two are kept in agreement.
+    executor: Optional[Executor] = Field(
+        default=None, description="What is executing this task: an agent, a flow, a team or a loop"
+    )
+
     # Agent assignment and execution control
+    #
+    # Kept as a *stored* (not computed) field, deliberately: readers across the
+    # codebase (task_finalize's retry path, the node worker's poller, the
+    # langchain tools, the chat reference renderer, the frontend...) read this
+    # directly with plain attribute/dict access, and a computed property would
+    # need every one of those call sites touched to keep working the moment
+    # ``executor`` became the source of truth. Instead the store recomputes it
+    # from ``executor`` on every write (and backfills ``executor`` from it on
+    # read, for a task written before this field existed), so the two can never
+    # drift apart: the agent id for kind "agent", ``"{kind}:{id}"`` otherwise.
     assigned_agent_type: Optional[str] = Field(
-        default=None, description="Type/name of the agent assigned to this task"
+        default=None, description="Type/name of the agent assigned to this task (kept in sync with executor)"
     )
     assigned_agent_params: Optional[dict[str, Any]] = Field(
         default=None, description="Arbitrary parameters for the assigned agent"
@@ -419,7 +457,41 @@ class Task(BaseModel):
 
     @property
     def agent_state(self) -> AgentState:
-        """Backward-compatible runtime state derived from assignment/run, not persisted."""
+        """Backward-compatible runtime state derived from assignment/run, not persisted.
+
+        An agent executor reads its run from the leaf ``runs`` table (via
+        ``run_manager``), exactly as before. Any other kind — a flow, a team or
+        a loop — has its run recorded in ``entity_runs`` instead (see
+        common.entity_runs), so it is read from there and its shared
+        ``RunStatus`` vocabulary (common.run_status) is mapped onto this same
+        enum, so the UI's assignment badge means the same thing whichever kind
+        of executor produced it. ``awaiting_input`` (a flow parked on a
+        human_interrupt node) reads as ``running``: it is neither finished nor
+        idle, and this enum has no state of its own for "parked on a person"
+        the way the task's own ``status`` does.
+        """
+        kind = self.executor.kind if self.executor else "agent"
+        if kind != "agent":
+            if not self.assigned_agent_run_id:
+                return AgentState.assigned if self.executor else AgentState.none
+            try:
+                from common.entity_runs import get as _get_entity_run
+                rec = _get_entity_run(str(self.assigned_agent_run_id))
+                if rec:
+                    st = str(rec.get("status") or "")
+                    if st == "pending":
+                        return AgentState.pending
+                    if st in ("running", "stopping", "awaiting_input"):
+                        return AgentState.running
+                    if st == "completed":
+                        return AgentState.completed
+                    if st == "stopped":
+                        return AgentState.stopped
+                    if st == "failed":
+                        return AgentState.failed
+            except Exception:
+                pass
+            return AgentState.none
         if self.assigned_agent_type and not self.assigned_agent_run_id:
             return AgentState.pending_approval
         if self.assigned_agent_run_id:

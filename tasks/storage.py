@@ -18,6 +18,41 @@ from pydantic_core import to_jsonable_python as _pydantic_encoder
 def _model_to_dict(obj: BaseModel) -> dict:
     return obj.model_dump()
 
+def _sync_executor(data: dict) -> None:
+    """Keep ``executor`` and ``assigned_agent_type`` in agreement, on every read.
+
+    ``executor`` (tasks.models.Executor) is the source of truth going forward;
+    ``assigned_agent_type`` is kept as a plain string alongside it purely so
+    every reader written before this field existed keeps working unmodified.
+    Two directions, checked in this order:
+
+    - ``executor`` present (a dict with both ``kind`` and ``id``):
+      ``assigned_agent_type`` is *recomputed* from it — the agent id for kind
+      "agent", ``"{kind}:{id}"`` otherwise — so a write that only touched
+      ``executor`` (``tasks.service.assign_executor``) is reflected in the
+      compatibility field too, and a stale ``assigned_agent_type`` from before
+      the write can never linger.
+    - ``executor`` absent but ``assigned_agent_type`` set: this is either a
+      task written by the previous build (only ``assigned_agent_type`` ever
+      existed), or the atomic "claim" marker ``tasks.service`` writes on a
+      subtask before the full assignment (``TaskStore.claim`` with
+      ``assigned_agent_type="orchestrator"``) — either way, an agent executor
+      is synthesized from it.
+
+    Otherwise both stay unset. Mutates ``data`` in place; called from
+    ``_parse_task``, so every read and every read-modify-write covers it.
+    """
+    executor = data.get("executor")
+    if isinstance(executor, dict) and executor.get("kind") and executor.get("id"):
+        kind = str(executor["kind"])
+        eid = str(executor["id"])
+        data["assigned_agent_type"] = eid if kind == "agent" else f"{kind}:{eid}"
+    elif data.get("assigned_agent_type"):
+        data["executor"] = {"kind": "agent", "id": str(data["assigned_agent_type"])}
+    else:
+        data.setdefault("executor", None)
+
+
 def _parse_task(data: dict) -> Task:
     # Remove legacy persisted field; agent_state is now derived at runtime
     data.pop("agent_state", None)
@@ -29,6 +64,7 @@ def _parse_task(data: dict) -> Task:
     data.setdefault("assigned_agent_type", None)
     data.setdefault("assigned_agent_params", None)
     data.setdefault("assigned_agent_run_id", None)
+    _sync_executor(data)
     # Backward compatibility: migrate legacy 'project_folder' to 'workspace'
     if "workspace" not in data and "project_folder" in data:
         data["workspace"] = data.get("project_folder")
@@ -303,11 +339,14 @@ class TaskStore:
     def claim(self, task_id: UUID | str, *, waiting_statuses: Sequence[str], **fields) -> Optional[Task]:
         """Atomically apply ``fields`` only if the task is still unclaimed.
 
-        A task is claimable when it has no ``assigned_agent_type`` and its status
-        is one of ``waiting_statuses``. The check and the write happen in one
+        A task is claimable when it has no ``executor`` and its status is one
+        of ``waiting_statuses``. The check and the write happen in one
         transaction, so when several processes race to dispatch the same runnable
         subtask exactly one wins (the others get ``None``). This is what makes
-        parallel subtask dispatch safe against double-dispatch.
+        parallel subtask dispatch safe against double-dispatch. ``assigned_agent_type``
+        is also checked, raw, alongside ``executor``: a doc from before ``executor``
+        existed carries only that field, and this guard runs on the raw stored
+        JSON, before ``_sync_executor`` would backfill one from the other.
         """
         tid_str = str(task_id)
         with db.transaction() as conn:
@@ -318,7 +357,7 @@ class TaskStore:
                 data = json.loads(row["doc"])
             except Exception:
                 return None
-            if data.get("assigned_agent_type"):
+            if data.get("executor") or data.get("assigned_agent_type"):
                 return None
             if str(data.get("status") or "") not in set(waiting_statuses):
                 return None

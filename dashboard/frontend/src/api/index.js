@@ -1086,6 +1086,7 @@ export const getSimRun = (runId) => api.get(`/playground/runs/${runId}`);
 export const getSimTicks = (runId, since = -1) =>
   api.get(`/playground/runs/${runId}/ticks`, { params: { since } });
 export const stopSimulation = (runId) => api.post(`/playground/runs/${runId}/stop`);
+export const resumeSimulation = (runId) => api.post(`/playground/runs/${runId}/resume`);
 // Poke one agent in a running simulation from outside the world. In triggered
 // mode this is what wakes them; in synchronous mode it is a message like any
 // other, delivered on the next tick.
@@ -1147,6 +1148,7 @@ export const getTeamRun = (runId) => api.get(`/teams/runs/${runId}`);
 export const getTeamMessages = (runId, since = 0) =>
   api.get(`/teams/runs/${runId}/messages`, { params: { since } });
 export const stopTeamRun = (runId) => api.post(`/teams/runs/${runId}/stop`);
+export const resumeTeamRun = (runId) => api.post(`/teams/runs/${runId}/resume`);
 
 // The GitHub App (routes/github_app.py, docs/github-app.md): installations and
 // their workspace binding for the Git connector page, and a person's own

@@ -30,16 +30,22 @@ The run goes to the background and returns its id; iterations appear on the page
 as they complete. `get_loop_run_tool` reports progress, `stop_loop_run_tool`
 ends it.
 
-## If it is interrupted
+## Checkpoint and resume
 
-A loop runs inside the backend, so a restart ends it mid-run. After every
-iteration the run records its position: how many passes it has done, the last
-output, the reviewer's last verdict, the best score, the patience counter and
-what it has spent. `POST /api/loops/runs/{id}/resume` starts at the pass after
-the last one that finished, with the feedback that pass was going to get. The
-watchdog resumes a run whose heartbeat has gone quiet by itself, twice at most.
-Iterations already done keep their rows and their scores: a resume continues the
-trajectory rather than starting a new one.
+A loop runs on a thread of the backend that started it and launches one flow process per iteration; it stamps its heartbeat as each flow node finishes.
+After every iteration the run records its position (a checkpoint) with how many
+passes are done, the last output, the reviewer's last verdict, the best score,
+the patience counter and spend.
+
+`POST /api/loops/runs/{id}/resume` relaunches a `stopped` or `failed` run from
+its checkpoint (400 when there is nothing to resume). The watchdog resumes a run
+whose heartbeat has gone quiet by itself, up to 2 times. Iterations already done
+keep their rows and their scores: a resume continues the trajectory rather than
+starting a new one.
+
+A loop run claims its task as executor kind `loop`. Retry and review now apply:
+the workspace's orchestrator retries a failed loop up to `orchestrator.max_retries`
+times, and review starts on every resolve when the code_reviewer agent is available.
 
 ## Gotchas
 

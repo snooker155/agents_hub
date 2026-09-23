@@ -3,9 +3,9 @@
 Mirrors :mod:`playground.store`: run-level knobs ride in a ``config`` JSON
 column rather than as columns, so tightening a ceiling never needs a migration.
 
-Loop *runs* are kept by the implementation flow and team runs share
-(:mod:`common.entity_runs`); this module says what a loop run looks like and
-keeps the definitions and the iteration log itself.
+Loop *runs* live in the ``entity_runs`` table every kind of run shares
+(:mod:`common.entity_runs`, kind ``loop``); this module says what a loop run
+looks like and keeps the definitions and the iteration log itself.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from common import db
 from common.entity_runs import EntityRunStore
+from common.run_status import RunStatus
 from loops.models import Iteration, Loop, LoopRun, utc_iso
 
 _CONFIG_FIELDS = (
@@ -27,75 +28,96 @@ _CONFIG_FIELDS = (
 # real work: several iterations, each a whole flow. Losing that to a process
 # ending is the most expensive kind of forgetting in the product, so after every
 # iteration the run's position — what it has done, what the reviewer said and
-# what it has spent — is written to the ``progress`` column of its row (part of
-# the baseline schema, common/migrations/baseline_schema.sql).
+# what it has spent — is written as the run's ``checkpoint`` (the column every
+# kind of run keeps its resume point in, common/entity_runs.py). It is exposed
+# on the record as ``position``, the name this package always used.
 
-_PROGRESS_COLUMN = "progress"
 
-_RUN_COLUMNS = (
-    "loop_run_id", "loop_id", "workspace", "status", "goal", "task_id",
-    "session_id", "iterations_done", "best_score", "final_score",
-    "stop_reason", "result", "error", "total_cost", "started_at", "finished_at",
-)
+def _position_of(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """The run's resume position, with the heartbeat the shared table keeps
+    as a column laid in: the position always said when the loop last showed
+    a sign of life, and its readers still ask it."""
+    position = dict(rec.get("checkpoint") or rec.get("position") or {})
+    if rec.get("heartbeat_at"):
+        position["heartbeat_at"] = rec["heartbeat_at"]
+    if rec.get("resume_attempts") is not None:
+        position["resume_attempts"] = int(rec.get("resume_attempts") or 0)
+    return position
 
 
 def _to_run(rec: Dict[str, Any]) -> LoopRun:
-    # The resume position is one JSON column, and the watchdog's attempt
-    # counter lives inside it rather than as a column of its own: both are
-    # written together, by the same writer, on the same schedule.
-    position = rec.get("position") or {}
+    position = _position_of(rec)
+    # The watchdog's attempt counter is a column of the shared table; a
+    # position written before the move still carries it too.
+    attempts = rec.get("resume_attempts")
+    if attempts is None:
+        attempts = position.get("resume_attempts") or 0
     return LoopRun(
         position=position,
-        resume_attempts=int(position.get("resume_attempts") or 0),
+        resume_attempts=int(attempts or 0),
         loop_run_id=rec["loop_run_id"],
-        loop_id=rec["loop_id"] or "",
-        workspace=rec["workspace"],
-        status=rec["status"] or "running",
-        goal=rec["goal"] or "",
-        task_id=rec["task_id"],
-        session_id=rec["session_id"],
-        iterations_done=int(rec["iterations_done"] or 0),
-        best_score=rec["best_score"],
-        final_score=rec["final_score"],
-        stop_reason=rec["stop_reason"] or "",
-        result=rec["result"] or "",
-        error=rec["error"],
-        total_cost=float(rec["total_cost"] or 0.0),
-        started_at=rec["started_at"] or "",
-        finished_at=rec["finished_at"],
+        loop_id=rec.get("loop_id") or "",
+        workspace=rec.get("workspace"),
+        status=rec.get("status") or RunStatus.pending.value,
+        goal=rec.get("goal") or "",
+        task_id=rec.get("task_id"),
+        session_id=rec.get("session_id"),
+        parent_run_id=rec.get("parent_run_id"),
+        iterations_done=int(rec.get("iterations_done") or 0),
+        best_score=rec.get("best_score"),
+        final_score=rec.get("final_score"),
+        stop_reason=rec.get("stop_reason") or "",
+        result=rec.get("result") or "",
+        error=rec.get("error"),
+        total_cost=float(rec.get("total_cost") or 0.0),
+        heartbeat_at=rec.get("heartbeat_at") or position.get("heartbeat_at"),
+        host=rec.get("host") or position.get("host"),
+        created_at=rec.get("created_at") or rec.get("started_at") or "",
+        started_at=rec.get("started_at") or "",
+        finished_at=rec.get("finished_at"),
     )
 
 
-#: Loop-run records over the shared implementation (common/entity_runs.py):
-#: plain columns, plus the ``progress`` JSON column exposed as ``position``.
-_RUNS: EntityRunStore[LoopRun] = EntityRunStore(
-    table="loop_runs",
-    key="loop_run_id",
-    columns=_RUN_COLUMNS,
-    doc_column=_PROGRESS_COLUMN,
-    doc_field="position",
+#: Loop-run records: kind ``loop`` of the shared table (common/entity_runs.py).
+RUNS: EntityRunStore[LoopRun] = EntityRunStore(
+    "loop",
     convert=_to_run,
-    resource="loop_runs",
-    parent_key="loop_id",
-    order_by="started_at DESC",
-    live_statuses=("running", "stopping"),
-    stopping_status="stopping",
+    order_by="COALESCE(started_at, created_at, '') DESC, run_id",
+    live_statuses=(RunStatus.pending.value, RunStatus.running.value,
+                   RunStatus.stopping.value),
 )
+_RUNS = RUNS
 
 
 def save_position(loop_run_id: str, position: Dict[str, Any]) -> None:
-    """Persist where a run has got to, so it can be resumed from here."""
-    _RUNS.update(loop_run_id, {"position": position or {}}, notify=False)
+    """Persist where a run has got to, so it can be resumed from here. The
+    position is the run's checkpoint; its heartbeat and attempt counter are
+    mirrored into the columns the watchdog reads for every kind."""
+    from common import entity_runs
+    position = dict(position or {})
+    entity_runs.save_checkpoint(loop_run_id, position, heartbeat=False)
+    mirrored: Dict[str, Any] = {}
+    if position.get("heartbeat_at"):
+        mirrored["heartbeat_at"] = position["heartbeat_at"]
+    if position.get("resume_attempts") is not None:
+        mirrored["resume_attempts"] = int(position.get("resume_attempts") or 0)
+    if position.get("host"):
+        mirrored["host"] = position["host"]
+    if mirrored:
+        _RUNS.update(loop_run_id, mirrored, notify=False)
 
 
 def get_position(loop_run_id: str) -> Dict[str, Any]:
     """The stored resume position of a run, or ``{}`` when it has none."""
     rec = _RUNS.read(loop_run_id)
-    return (rec or {}).get("position") or {}
+    if rec is None:
+        return {}
+    position = _position_of(rec)
+    return position if (rec.get("checkpoint") or position.get("heartbeat_at")) else {}
 
 
 def touch_heartbeat(loop_run_id: str) -> None:
-    """Refresh the position's ``heartbeat_at``, without touching the rest.
+    """Refresh the run's heartbeat, without touching the rest.
 
     Called as each flow node of an iteration finishes: an iteration is a whole
     flow and can legitimately take many minutes, so the watchdog must be able to
@@ -103,10 +125,8 @@ def touch_heartbeat(loop_run_id: str) -> None:
     iteration. Best-effort: a missed heartbeat is not worth failing a run over.
     """
     try:
-        with db.transaction():
-            position = get_position(loop_run_id)
-            position["heartbeat_at"] = utc_iso()
-            save_position(loop_run_id, position)
+        from common import entity_runs
+        entity_runs.touch_heartbeat(loop_run_id)
     except Exception:
         pass
 
@@ -178,13 +198,15 @@ def delete_loop(loop_id: str) -> bool:
     """Delete a loop and every run/iteration it produced."""
     with db.transaction() as conn:
         run_ids = [
-            r["loop_run_id"] for r in conn.execute(
-                "SELECT loop_run_id FROM loop_runs WHERE loop_id = ?", (loop_id,)
+            r["run_id"] for r in conn.execute(
+                "SELECT run_id FROM entity_runs WHERE kind = 'loop' AND entity_id = ?",
+                (loop_id,)
             ).fetchall()
         ]
         for rid in run_ids:
             conn.execute("DELETE FROM loop_iterations WHERE loop_run_id = ?", (rid,))
-        conn.execute("DELETE FROM loop_runs WHERE loop_id = ?", (loop_id,))
+        conn.execute("DELETE FROM entity_runs WHERE kind = 'loop' AND entity_id = ?",
+                     (loop_id,))
         cur = conn.execute("DELETE FROM loops WHERE loop_id = ?", (loop_id,))
         removed = cur.rowcount > 0
     if removed:
@@ -195,13 +217,14 @@ def delete_loop(loop_id: str) -> bool:
 # ── Runs ─────────────────────────────────────────────────────────────────────
 
 def save_run(run: LoopRun) -> LoopRun:
-    # The whole row is written, resume position included: leaving it out
+    # The whole record is written, resume position included: leaving it out
     # would quietly blank a running loop's position the next time its record
-    # was saved. ``resume_attempts`` is not a column; it lives in the position.
+    # was saved. The position is the run's checkpoint column; the document
+    # does not carry a copy.
     rec = run.to_dict()
-    rec.pop("resume_attempts", None)
-    rec["position"] = run.position or {}
-    _RUNS.upsert(rec, merge=False)
+    rec.pop("position", None)
+    rec["checkpoint"] = run.position or {}
+    _RUNS.upsert(rec, merge=True)
     return run
 
 
@@ -226,7 +249,11 @@ def update_progress(loop_run_id: str, **fields: Any) -> None:
     position = fields.pop("position", None)
     updates = {k: v for k, v in fields.items() if k in _PROGRESS_FIELDS}
     if position is not None:
-        updates["position"] = position
+        updates["checkpoint"] = dict(position)
+        if position.get("heartbeat_at"):
+            updates["heartbeat_at"] = position["heartbeat_at"]
+        if position.get("host"):
+            updates["host"] = position["host"]
     if updates:
         _RUNS.update(loop_run_id, updates)
 
@@ -314,7 +341,7 @@ def get_iteration(loop_run_id: str, iteration: int) -> Optional[Dict[str, Any]]:
 __all__ = [
     "save_loop", "get_loop", "list_loops", "delete_loop",
     "save_run", "get_run", "list_runs", "update_progress",
-    "save_position", "get_position", "touch_heartbeat",
+    "save_position", "get_position", "touch_heartbeat", "RUNS",
     "request_stop", "stop_requested",
     "save_iteration", "list_iterations", "get_iteration",
 ]

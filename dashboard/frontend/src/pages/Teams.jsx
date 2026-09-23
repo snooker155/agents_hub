@@ -31,7 +31,10 @@ const emptyTeam = (workspace) => ({
 
 function TeamCard({ team, lastRun, onDelete }) {
   const { t } = useI18n();
-  const live = isLive(lastRun?.status);
+  // A run is now born "pending" — queued for a process, not yet spawned —
+  // and is as much "in progress" as "running" is; isLive predates that
+  // status (see the same widening in TeamDetails.jsx).
+  const live = isLive(lastRun?.status) || lastRun?.status === 'pending';
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow flex flex-col">
       <Link to={`/teams/${team.team_id}`} className="p-4 flex-1 min-w-0">

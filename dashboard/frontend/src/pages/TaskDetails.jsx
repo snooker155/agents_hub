@@ -7,7 +7,7 @@ import {
   Play, Pause, Square, Split, Trash2, Folder, FolderOpen, Plus, Check, X,
   User, UserPlus, Flag, GitBranch, Layers, ExternalLink, Loader,
   ChevronDown, ChevronRight, ThumbsUp, ThumbsDown, History, FileText, Eye, Code2, HelpCircle,
-  CheckSquare, ShieldQuestion, Calendar,
+  CheckSquare, ShieldQuestion, Calendar, Workflow, Users, RotateCw,
 } from 'lucide-react';
 import DateInput from '../components/DateInput';
 import {
@@ -15,6 +15,7 @@ import {
   runDecomposer, getTaskExecutionLog, deleteTask, updateTask, createTask, getProjects,
   getTaskActivityLog, getTaskResult, getSettings, getTaskFileContent, getTaskFileRawUrl,
   answerTask, approveTaskCall, pauseTaskContainer, resumeTaskContainer, getMessageInsights,
+  listFlows, getTeams, getLoops,
 } from '../api';
 import api from '../api';
 import MarkdownRenderer from '../components/MarkdownRenderer';
@@ -25,6 +26,18 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import InlineEdit from '../components/InlineEdit';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
+
+// ─── Executor display (agent / flow / team / loop) ──────────────────────────
+// task.executor (tasks.models.Executor) is the source of truth for what is
+// running a task; a task from before that field existed falls back to the
+// compatibility assigned_agent_type string, read as a plain agent.
+const EXECUTOR_KIND_ICON = { agent: User, flow: Workflow, team: Users, loop: RotateCw };
+function executorLabel(task) {
+  const ex = task?.executor;
+  const kind = ex?.kind || 'agent';
+  const id = ex?.id || task?.assigned_agent_type || '';
+  return { kind, id, Icon: EXECUTOR_KIND_ICON[kind] || User };
+}
 // ─── File tree helpers (shared shape with WorkspaceDetails) ─────────────────────
 const buildFileTree = (paths) => {
   const root = { type: 'dir', children: {} };
@@ -463,8 +476,8 @@ function SubtaskRow({ st, onDelete, onStatusChange, onAssign, deleting }) {
         )}
         {st.assigned_agent_type && (
           <span className="inline-flex items-center gap-1 text-xs text-gray-400 mt-0.5">
-            <User className="w-3 h-3" />
-            {st.assigned_agent_type}
+            {(() => { const { Icon } = executorLabel(st); return <Icon className="w-3 h-3" />; })()}
+            {executorLabel(st).id}
             {st.agent_state && st.agent_state !== 'none' && (
               <span className={`ml-1 px-1 py-0.5 rounded text-xs ${
                 st.agent_state === 'running' ? 'bg-blue-100 text-blue-700' :
@@ -592,6 +605,18 @@ const TaskDetails = () => {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null); // null = parent task, subtask obj otherwise
   const [selectedAgent, setSelectedAgent] = useState('');
+  // Besides an agent, a task may be assigned a flow, a team or a loop
+  // (tasks.models.Executor). 'agent' keeps the original single-list picker;
+  // the other three each pick from their own catalog, fetched lazily when
+  // the modal opens.
+  const [executorKind, setExecutorKind] = useState('agent');
+  const [flows, setFlows] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [loops, setLoops] = useState([]);
+  const [selectedFlow, setSelectedFlow] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState('');
+  const [selectedLoop, setSelectedLoop] = useState('');
+  const [catalogsLoaded, setCatalogsLoaded] = useState(false);
 
 
   const [deletingTask, setDeletingTask] = useState(false);
@@ -895,14 +920,21 @@ const TaskDetails = () => {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleAssignAgent = async () => {
-    if (!selectedAgent) return;
+    const selection = { agent: selectedAgent, flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind];
+    if (!selection) return;
     try {
       const targetId = assignTarget ? assignTarget.id : id;
-      const resp = await assignAgent(targetId, { agent_id: selectedAgent });
+      const body = executorKind === 'agent'
+        ? { agent_id: selectedAgent }
+        : { executor: { kind: executorKind, id: selection } };
+      const resp = await assignAgent(targetId, body);
       setActiveRunId(resp.data.run_id);
       setShowAssignModal(false);
       setAssignTarget(null);
       setSelectedAgent('');
+      setSelectedFlow('');
+      setSelectedTeam('');
+      setSelectedLoop('');
       fetchData();
     } catch (err) {
       alert(`${t('taskDetails.errors.assignAgent')}: ` + (err.response?.data?.detail || err.message));
@@ -912,7 +944,24 @@ const TaskDetails = () => {
   const openAssign = (subtask = null) => {
     setAssignTarget(subtask);
     setSelectedAgent('');
+    setSelectedFlow('');
+    setSelectedTeam('');
+    setSelectedLoop('');
+    setExecutorKind('agent');
     setShowAssignModal(true);
+    if (!catalogsLoaded) {
+      const ws = task?.workspace || undefined;
+      Promise.all([
+        listFlows(ws).catch(() => ({ data: [] })),
+        getTeams(ws).catch(() => ({ data: { teams: [] } })),
+        getLoops(ws).catch(() => ({ data: { loops: [] } })),
+      ]).then(([flowsResp, teamsResp, loopsResp]) => {
+        setFlows(flowsResp.data || []);
+        setTeams(teamsResp.data?.teams || []);
+        setLoops(loopsResp.data?.loops || []);
+        setCatalogsLoaded(true);
+      });
+    }
   };
 
   const handleStopAgent = async () => {
@@ -1136,7 +1185,8 @@ const TaskDetails = () => {
                 {parentTask.priority && <PriorityBadge priority={parentTask.priority} />}
                 {parentTask.assigned_agent_type && (
                   <span className="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
-                    <User className="w-3 h-3" />{parentTask.assigned_agent_type}
+                    {(() => { const { Icon } = executorLabel(parentTask); return <Icon className="w-3 h-3" />; })()}
+                    {executorLabel(parentTask).id}
                   </span>
                 )}
               </div>
@@ -1169,7 +1219,12 @@ const TaskDetails = () => {
           <span className="text-xs text-gray-400">{t('taskDetails.createdAt')}: {new Date(task.created_at).toLocaleString()}</span>
           {task.assigned_agent_type && (
             <span className="flex items-center gap-1 text-xs text-gray-500">
-              <User className="w-3.5 h-3.5" /> {task.assigned_agent_type}
+              {(() => { const { Icon } = executorLabel(task); return <Icon className="w-3.5 h-3.5" />; })()} {executorLabel(task).id}
+              {executorLabel(task).kind !== 'agent' && (
+                <span className="px-1 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-600 border border-indigo-100">
+                  {executorLabel(task).kind}
+                </span>
+              )}
               <span className={`ml-1 px-1.5 py-0.5 rounded text-xs font-medium ${
                 task.agent_state === 'running' ? 'bg-blue-100 text-blue-700' :
                 task.agent_state === 'completed' ? 'bg-green-100 text-green-700' :
@@ -1611,48 +1666,113 @@ const TaskDetails = () => {
               </button>
             </div>
 
-            <div className="mb-2 flex items-center gap-3 text-xs text-gray-400">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> {t('taskDetails.nodeRunning')}</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300 inline-block" /> {t('taskDetails.noNode')}</span>
-              {taskAssignmentMode === 'nodes_only' && (
-                <span className="ml-auto text-amber-600 font-medium">{t('taskDetails.nodesOnlyModeAgentsWithout')}</span>
-              )}
+            {/* Executor kind: agent / flow / team / loop */}
+            <div className="flex items-center bg-gray-100 rounded-lg p-1 mb-3">
+              {[
+                { kind: 'agent', Icon: User, label: t('taskDetails.assignAgent') },
+                { kind: 'flow', Icon: Workflow, label: t('taskBoard.flow') },
+                { kind: 'team', Icon: Users, label: 'Team' },
+                { kind: 'loop', Icon: RotateCw, label: 'Loop' },
+              ].map(({ kind, Icon, label }) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => setExecutorKind(kind)}
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    executorKind === kind ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />{label}
+                </button>
+              ))}
             </div>
 
-            <div className="mb-5 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
-              {agents.length === 0 && (
-                <p className="text-sm text-gray-400 italic py-2">{t('taskDetails.noAgentsAvailableForThis')}</p>
-              )}
-              {agents.map(a => {
-                const hasNode = a.has_running_node;
-                const disabled = taskAssignmentMode === 'nodes_only' && !hasNode;
-                const selected = selectedAgent === a.id;
-                return (
-                  <button
-                    key={a.id}
-                    onClick={() => !disabled && setSelectedAgent(a.id)}
-                    disabled={disabled}
-                    title={disabled ? t('taskDetails.noRunningNodeHint') : undefined}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
-                      disabled
-                        ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed'
-                        : selected
-                          ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400'
-                          : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'
-                    }`}
-                  >
-                    <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-0.5 ${hasNode ? 'bg-green-500' : 'bg-gray-300'}`} />
-                    <span className="flex-1 min-w-0">
-                      <span className={`block text-sm font-medium ${selected ? 'text-indigo-700' : 'text-gray-800'}`}>
-                        {a.name}
+            {executorKind === 'agent' && (
+              <div className="mb-2 flex items-center gap-3 text-xs text-gray-400">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> {t('taskDetails.nodeRunning')}</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300 inline-block" /> {t('taskDetails.noNode')}</span>
+                {taskAssignmentMode === 'nodes_only' && (
+                  <span className="ml-auto text-amber-600 font-medium">{t('taskDetails.nodesOnlyModeAgentsWithout')}</span>
+                )}
+              </div>
+            )}
+
+            {executorKind === 'agent' && (
+              <div className="mb-5 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
+                {agents.length === 0 && (
+                  <p className="text-sm text-gray-400 italic py-2">{t('taskDetails.noAgentsAvailableForThis')}</p>
+                )}
+                {agents.map(a => {
+                  const hasNode = a.has_running_node;
+                  const disabled = taskAssignmentMode === 'nodes_only' && !hasNode;
+                  const selected = selectedAgent === a.id;
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => !disabled && setSelectedAgent(a.id)}
+                      disabled={disabled}
+                      title={disabled ? t('taskDetails.noRunningNodeHint') : undefined}
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                        disabled
+                          ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed'
+                          : selected
+                            ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400'
+                            : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'
+                      }`}
+                    >
+                      <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-0.5 ${hasNode ? 'bg-green-500' : 'bg-gray-300'}`} />
+                      <span className="flex-1 min-w-0">
+                        <span className={`block text-sm font-medium ${selected ? 'text-indigo-700' : 'text-gray-800'}`}>
+                          {a.name}
+                        </span>
+                        <span className="block text-xs text-gray-400 truncate">{a.id}{!hasNode && ` · ${t('taskDetails.noRunningNode')}`}</span>
                       </span>
-                      <span className="block text-xs text-gray-400 truncate">{a.id}{!hasNode && ` · ${t('taskDetails.noRunningNode')}`}</span>
-                    </span>
-                    {selected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
-                  </button>
-                );
-              })}
-            </div>
+                      {selected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {executorKind !== 'agent' && (() => {
+              const catalog = { flow: flows, team: teams, loop: loops }[executorKind];
+              const idKey = { flow: 'id', team: 'team_id', loop: 'loop_id' }[executorKind];
+              const nameKey = 'name';
+              const selected = { flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind];
+              const setSelected = { flow: setSelectedFlow, team: setSelectedTeam, loop: setSelectedLoop }[executorKind];
+              return (
+                <div className="mb-5 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
+                  {catalog.length === 0 && (
+                    <p className="text-sm text-gray-400 italic py-2">
+                      {catalogsLoaded ? t('taskDetails.noAgentsAvailableForThis') : '…'}
+                    </p>
+                  )}
+                  {catalog.map(item => {
+                    const itemId = item[idKey];
+                    const isSelected = selected === itemId;
+                    return (
+                      <button
+                        key={itemId}
+                        onClick={() => setSelected(itemId)}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                          isSelected
+                            ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400'
+                            : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'
+                        }`}
+                      >
+                        <span className="flex-1 min-w-0">
+                          <span className={`block text-sm font-medium ${isSelected ? 'text-indigo-700' : 'text-gray-800'}`}>
+                            {item[nameKey] || itemId}
+                          </span>
+                          <span className="block text-xs text-gray-400 truncate">{itemId}</span>
+                        </span>
+                        {isSelected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             <div className="flex justify-end gap-3">
               <button
@@ -1661,7 +1781,7 @@ const TaskDetails = () => {
               >{t('taskDetails.cancel')}</button>
               <button
                 onClick={handleAssignAgent}
-                disabled={!selectedAgent}
+                disabled={!{ agent: selectedAgent, flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind]}
                 className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >{t('taskDetails.startExecution')}</button>
             </div>

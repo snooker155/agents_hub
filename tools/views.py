@@ -21,10 +21,11 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, model_validator
 from langchain_core.tools import tool
 
-from common.agent_context import current_task_id, current_view_id
+from common.agent_context import current_session_id, current_task_id, current_view_id
 from common.entity_sink import record_entity
 from common.workspace_context import workspace_name_from_path
 from views.models import ViewValidationError, SUPPORTED_KINDS
+from views.owner import current_owner
 from views.ops import OpError, get_at
 from views.store import (
     create_view as _store_create_view,
@@ -162,6 +163,7 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
                 complexity=complexity,
                 asset_sources=asset_sources or None,
                 task_id=current_task_id.get(),
+                owner=current_owner(leaf_run_id=current_session_id.get()),
             )
         except ViewValidationError as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)

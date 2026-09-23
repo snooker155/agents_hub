@@ -114,22 +114,38 @@ small set of moves marked **bold** below. Anything else raises
 | done | in_progress | system, user |
 | done | reviewing | system |
 
-Most rows read "system, user" because reassigning an agent
-(`POST /api/tasks/{id}/assign`, or the terminal client) is allowed from almost
-any status — including a blocked, resolved, reviewed or even a done task — and
-lands it on `ready`, `in_progress`, or `reviewing`. The "user" column mirrors
-what the dashboard's Kanban board already enforces: dragging a card only ever
-targets `todo`, `ready`, `in_progress`, `blocked`, `stopped`, `done`,
-`reviewed` or `resolved` — the "waiting" and "reviewing" columns are not drop
-targets, because those statuses are entered and left by the system, not by a
-person picking a status. The bold rows are the only moves an **agent**
-may make through its own tools: picking up ready work (`todo` → `ready`),
+Most rows read "system, user" because reassigning an executor (`POST /api/tasks/{id}/assign`,
+or the terminal client) is allowed from almost any status — including a blocked,
+resolved, reviewed or even a done task — and lands it on `ready`, `in_progress`,
+or `reviewing`. The assignment is one of four executor kinds:
+
+- **agent** — an agent id
+- **flow** — a flow id
+- **team** — a team id
+- **loop** — a loop id
+
+A person assigns a flow, team or loop directly; the orchestrator assigns only
+agents. The task page offers a picker for any kind. `POST /api/tasks/{id}/assign`
+accepts `{"executor": {"kind": "agent"|"flow"|"team"|"loop", "id": "..."}, "params": {...}}`
+as well as `{"agent_id": "..."}` for compatibility.
+
+The "user" column mirrors what the dashboard's Kanban board already enforces:
+dragging a card only ever targets `todo`, `ready`, `in_progress`, `blocked`,
+`stopped`, `done`, `reviewed` or `resolved` — the "waiting" and "reviewing"
+columns are not drop targets, because those statuses are entered and left by the
+system, not by a person picking a status. The bold rows are the only moves an
+**agent** may make through its own tools: picking up ready work (`todo` → `ready`),
 starting on work it was given (`todo`/`ready` → `in_progress`), finishing
 (`in_progress` → `resolved`), blocking itself with a reason (`in_progress` →
 `blocked`), and unblocking itself (`blocked` → `in_progress`). An agent's
 `update_task` call can never set `done`, `reviewed`, `reviewing`, an
 `awaiting_*` status, `stopped`, or `pending` — those are reserved for the
 system and the person watching the task.
+
+Retry and review now apply to every executor kind: automatic retry and the
+review cycle apply to flow, team and loop results the same way they apply to
+agent results. For non-agent executors, the review starts on every resolve when
+the code_reviewer agent is available.
 
 Source of truth: `tasks.models.TRANSITIONS`, `USER_TARGETS`,
 `AGENT_TRANSITIONS`, and `tasks.service.update_task`'s `actor` parameter.

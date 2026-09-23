@@ -8,6 +8,7 @@ export default {
     loop: 'Цикл',
     team: 'Команда',
     container: 'Контейнер',
+    scenario: 'Сценарий',
   },
   columns: {
     kind: 'Тип',
@@ -33,6 +34,7 @@ export default {
     loop: 'Открыть циклы',
     team: 'Открыть команду',
     container: 'Открыть задачу',
+    scenario: 'Открыть сценарий',
   },
   childRuns: 'Запуски в этой группе',
   noChildRuns: 'Для этой группы пока не записано ни одного запуска агента.',

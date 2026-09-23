@@ -652,7 +652,7 @@ def _delete_scenario(scenario_id: str) -> str:
         return _json_err("Scenario not found", code="not_found",
                          extra={"scenario_id": scenario_id})
     live = [r for r in store.list_sim_runs(scenario_id, limit=5)
-            if r.status in ("starting", "running", "stopping")]
+            if r.status in ("pending", "running", "stopping")]
     if live:
         return _json_err(
             f"Scenario '{scenario_id}' has a live simulation; stop it before deleting.",

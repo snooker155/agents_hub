@@ -1,8 +1,8 @@
 """Persistence for teams, team runs and the message bus.
 
-Team *runs* are kept by the implementation flow and loop runs share
-(:mod:`common.entity_runs`); this module says what a team run looks like and
-keeps the team definitions and the message bus itself.
+Team *runs* live in the ``entity_runs`` table every kind of run shares
+(:mod:`common.entity_runs`, kind ``team``); this module says what a team run
+looks like and keeps the team definitions and the message bus itself.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from common import db
 from common.entity_runs import EntityRunStore
+from common.run_status import RunStatus
 from teams.models import BROADCAST, Team, TeamMessage, TeamRun, utc_iso
 
 # Run-level knobs share one JSON column, so tightening a ceiling never needs a
@@ -94,13 +95,15 @@ def delete_team(team_id: str) -> bool:
     """Delete a team and every run/message it produced."""
     with db.transaction() as conn:
         run_ids = [
-            r["team_run_id"] for r in conn.execute(
-                "SELECT team_run_id FROM team_runs WHERE team_id = ?", (team_id,)
+            r["run_id"] for r in conn.execute(
+                "SELECT run_id FROM entity_runs WHERE kind = 'team' AND entity_id = ?",
+                (team_id,)
             ).fetchall()
         ]
         for rid in run_ids:
             conn.execute("DELETE FROM team_messages WHERE team_run_id = ?", (rid,))
-        conn.execute("DELETE FROM team_runs WHERE team_id = ?", (team_id,))
+        conn.execute("DELETE FROM entity_runs WHERE kind = 'team' AND entity_id = ?",
+                     (team_id,))
         cur = conn.execute("DELETE FROM teams WHERE team_id = ?", (team_id,))
         removed = cur.rowcount > 0
     if removed:
@@ -110,51 +113,63 @@ def delete_team(team_id: str) -> bool:
 
 # ── Runs ─────────────────────────────────────────────────────────────────────
 
-_RUN_COLUMNS = (
-    "team_run_id", "team_id", "workspace", "mode", "status", "goal",
-    "task_id", "session_id", "conversation_id", "rounds_done",
-    "total_cost", "result", "stop_reason", "error", "started_at",
-    "finished_at",
-)
-
-
 def _to_run(rec: Dict[str, Any]) -> TeamRun:
     return TeamRun(
         team_run_id=rec["team_run_id"],
-        team_id=rec["team_id"] or "",
-        workspace=rec["workspace"],
-        mode=rec["mode"] or "centralized",
-        status=rec["status"] or "running",
-        goal=rec["goal"] or "",
-        task_id=rec["task_id"],
-        session_id=rec["session_id"],
-        conversation_id=rec["conversation_id"],
-        rounds_done=int(rec["rounds_done"] or 0),
-        total_cost=float(rec["total_cost"] or 0.0),
-        result=rec["result"] or "",
-        stop_reason=rec["stop_reason"] or "",
-        error=rec["error"],
-        started_at=rec["started_at"] or "",
-        finished_at=rec["finished_at"],
+        team_id=rec.get("team_id") or "",
+        workspace=rec.get("workspace"),
+        mode=rec.get("mode") or "centralized",
+        status=rec.get("status") or RunStatus.pending.value,
+        goal=rec.get("goal") or "",
+        task_id=rec.get("task_id"),
+        session_id=rec.get("session_id"),
+        conversation_id=rec.get("conversation_id"),
+        parent_run_id=rec.get("parent_run_id"),
+        rounds_done=int(rec.get("rounds_done") or 0),
+        total_cost=float(rec.get("total_cost") or 0.0),
+        result=rec.get("result") or "",
+        stop_reason=rec.get("stop_reason") or "",
+        error=rec.get("error"),
+        pid=rec.get("pid"),
+        host=rec.get("host"),
+        heartbeat_at=rec.get("heartbeat_at"),
+        resume_attempts=int(rec.get("resume_attempts") or 0),
+        log_file=rec.get("log_file"),
+        created_at=rec.get("created_at") or rec.get("started_at") or "",
+        started_at=rec.get("started_at") or "",
+        finished_at=rec.get("finished_at"),
     )
 
 
-#: Team-run records over the shared implementation (common/entity_runs.py).
-_RUNS: EntityRunStore[TeamRun] = EntityRunStore(
-    table="team_runs",
-    key="team_run_id",
-    columns=_RUN_COLUMNS,
+#: Team-run records: kind ``team`` of the shared table (common/entity_runs.py).
+RUNS: EntityRunStore[TeamRun] = EntityRunStore(
+    "team",
     convert=_to_run,
-    resource="team_runs",
-    parent_key="team_id",
-    order_by="started_at DESC",
-    live_statuses=("running", "stopping"),
-    stopping_status="stopping",
+    order_by="COALESCE(started_at, created_at, '') DESC, run_id",
+    live_statuses=(RunStatus.pending.value, RunStatus.running.value,
+                   RunStatus.stopping.value),
 )
+_RUNS = RUNS
+
+
+#: Fields the launcher (runtime/entity_launch.py) and the watchdog own. A
+#: freshly built ``TeamRun`` carries None for all of them until something
+#: sets it, and a plain dict merge would happily write that None over a real
+#: value already stored — so a save from the runner leaves a field out of the
+#: write entirely when its own copy does not know it, rather than merging in
+#: None and blanking it.
+_PROCESS_FIELDS = ("pid", "host", "heartbeat_at")
 
 
 def save_run(run: TeamRun) -> TeamRun:
-    _RUNS.upsert(run.to_dict(), merge=False)
+    """Write the run whole. ``resume_attempts``, ``pid``, ``host`` and the
+    heartbeat are the launcher's and the watchdog's to write, so a save from
+    the runner does not blank them: the stored values are merged in."""
+    payload = run.to_dict()
+    for field in _PROCESS_FIELDS:
+        if payload.get(field) is None:
+            payload.pop(field, None)
+    _RUNS.upsert(payload, merge=True)
     return run
 
 
@@ -195,6 +210,13 @@ def request_stop(team_run_id: str) -> bool:
 
 def stop_requested(team_run_id: str) -> bool:
     return _RUNS.stop_requested(team_run_id)
+
+
+def touch_heartbeat(team_run_id: str) -> Optional[str]:
+    """Stamp the run's heartbeat and return its current status (the runner's
+    process reads ``stopping`` back this way)."""
+    from common import entity_runs
+    return entity_runs.touch_heartbeat(team_run_id)
 
 
 # ── Messages ─────────────────────────────────────────────────────────────────
@@ -248,6 +270,6 @@ def list_messages(team_run_id: str, since: int = 0) -> List[TeamMessage]:
 __all__ = [
     "save_team", "get_team", "list_teams", "delete_team",
     "save_run", "get_run", "list_runs", "update_progress",
-    "request_stop", "stop_requested",
+    "request_stop", "stop_requested", "touch_heartbeat", "RUNS",
     "append_message", "list_messages",
 ]

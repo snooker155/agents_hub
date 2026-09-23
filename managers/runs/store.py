@@ -163,7 +163,7 @@ _RUN_LIST_COLUMNS = (
     "execution_mode", "node_id", "container_name", "workspace", "title",
     "provider", "model", "status", "message_origin", "pid", "exit_code",
     "error", "created_at", "started_at", "finished_at", "log_file",
-    "input", "output", "instance_id", "heartbeat_at",
+    "input", "output", "instance_id", "heartbeat_at", "parent_run_id",
     "prompt_tokens", "cached_prompt_tokens", "completion_tokens", "total_tokens",
     "duration_ms", "extra",
 )

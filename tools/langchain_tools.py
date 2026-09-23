@@ -986,6 +986,7 @@ def stop_agent_tool(task_id: str) -> str:
                 svc_update_task(
                     task.id,
                     status=TaskStatus.stopped,
+                    executor=None,
                     assigned_agent_type=None,
                     assigned_agent_params=None,
                     assigned_agent_run_id=None,

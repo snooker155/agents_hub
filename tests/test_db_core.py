@@ -174,7 +174,10 @@ def test_a_pre_ledger_sqlite_database_is_upgraded_in_place(reopen_db, tmp_path):
     assert (s["workspace"], s["created_at"], s["is_flow"]) == ("w", "2026-01-01", 1)
     t = conn.execute("SELECT created_by_user FROM tasks WHERE id='t1'").fetchone()
     assert t["created_by_user"] == "local"
-    assert "progress" in migrations.table_columns(conn, "sqlite", "loop_runs")
+    # The four per-kind run tables of the pre-ledger era were folded into
+    # entity_runs by migration 0013, so an upgraded database has the one table.
+    assert "checkpoint" in migrations.table_columns(conn, "sqlite", "entity_runs")
+    assert not migrations.table_exists(conn, "sqlite", "loop_runs")
     assert int(conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]) \
         == db.SCHEMA_VERSION
     assert migrations.applied_versions(conn, "sqlite") == [

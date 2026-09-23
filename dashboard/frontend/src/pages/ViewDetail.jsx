@@ -57,6 +57,34 @@ function dataSource(view) {
   return null;
 }
 
+// Where each owner kind's own page lives (App.jsx routes). "run" is an agent
+// run (a row in `runs`, MessageDetails' route); the rest are entity runs
+// (common/entity_runs.py), whose own page takes the entity's id, not the
+// run's, so it needs `owner.entity_id` (dashboard/backend/routes/views.py
+// resolves it). Only the scenario page can be pointed at one run in
+// particular (its `?run=` param); the others just open the entity's page.
+const OWNER_ROUTE = {
+  run: (o) => `/messages/${o.id}`,
+  team: (o) => (o.entity_id ? `/teams/${o.entity_id}` : null),
+  flow: (o) => (o.entity_id ? `/flows/${o.entity_id}` : null),
+  scenario: (o) => (o.entity_id ? `/playground/${o.entity_id}?run=${o.id}` : null),
+  loop: () => '/loops',
+};
+
+// A view's owner as the backend returns it, falling back to the older
+// `run_id`-only shape for a view fetched before this field existed.
+function resolveOwner(view) {
+  if (view?.owner?.kind && view?.owner?.id) return view.owner;
+  if (view?.run_id) return { kind: 'run', id: view.run_id };
+  return null;
+}
+
+function ownerLink(view) {
+  const owner = resolveOwner(view);
+  if (!owner) return null;
+  return { to: OWNER_ROUTE[owner.kind]?.(owner) || null, label: `${owner.kind} · ${owner.id}` };
+}
+
 export default function ViewDetail() {
   const { t } = useI18n();
   const { viewId } = useParams();
@@ -229,8 +257,17 @@ export default function ViewDetail() {
               <Row label={t('viewDetail.data')}>{dataSource(view)}</Row>
               <Row label={t('viewDetail.fidelity')}>{view.fidelity}</Row>
               <Row label={t('viewDetail.complexity')}>{view.complexity}</Row>
-              <Row label={t('viewDetail.run')}>
-                {view.run_id ? <Link className="text-indigo-600 hover:underline" to={`/messages/${view.run_id}`}>{view.run_id}</Link> : null}
+              {/* Not run through t(): like view.kind above, an owner kind
+                  (run/flow/loop/team/scenario) is an internal vocabulary
+                  word, not UI prose to translate. */}
+              <Row label="Owner">
+                {(() => {
+                  const owner = ownerLink(view);
+                  if (!owner) return null;
+                  return owner.to
+                    ? <Link className="text-indigo-600 hover:underline" to={owner.to}>{owner.label}</Link>
+                    : <span>{owner.label}</span>;
+                })()}
               </Row>
               <Row label={t('viewDetail.task')}>
                 {view.task_id ? <Link className="text-indigo-600 hover:underline" to={`/tasks/${view.task_id}`}>{view.task_id}</Link> : null}

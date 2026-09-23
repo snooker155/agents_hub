@@ -12,6 +12,15 @@ Views created without a workspace land in the global ``VIEWS_ROOT``. The
 carries per-user ``state`` (control values / selection) so reopening restores
 the view. The heavy spec stays in ``view.json``; run records reference a view
 only by a lightweight ``view_ref`` (see :func:`view_ref`).
+
+Every view is owned by the run that made it (``owner_kind``/``owner_id``,
+migration 0013): ``run`` for an agent run (a row in ``runs``), or one of
+``flow``/``loop``/``team``/``scenario`` for the entity run itself (a row in
+``entity_runs``, common/entity_runs.py). See :mod:`views.models` for the
+``ViewOwner`` shape and :mod:`views.owner` for how a fresh view's owner is
+resolved. ``run_id`` on the index row is kept as the pre-owner shorthand: set
+only when the owner is a ``run``, so ``list_views(run_id=...)`` keeps working
+unchanged for that (still the common) case.
 """
 from __future__ import annotations
 
@@ -24,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 from common import blobs, db
 from common.paths import workspace_views_dir
-from views.models import ViewEnvelope, normalize_envelope, base_spec_for
+from views.models import ViewEnvelope, ViewOwner, normalize_envelope, base_spec_for
 from views import ops as vops
 
 
@@ -94,6 +103,7 @@ def create_view(
     fallback: Optional[Dict[str, Any]] = None,
     run_id: Optional[str] = None,
     task_id: Optional[str] = None,
+    owner: Optional[Any] = None,
     asset_sources: Optional[Dict[str, str]] = None,
     validate: bool = True,
 ) -> ViewEnvelope:
@@ -104,7 +114,17 @@ def create_view(
     copied into the view dir and its name recorded in ``assets``. ``validate``
     is False for live Studio views whose spec starts empty (built by ops).
     Raises :class:`views.models.ViewValidationError` on an invalid kind/spec.
+
+    ``owner`` is a :class:`~views.models.ViewOwner`, a ``{"kind": ..., "id":
+    ...}`` dict, or None. When both ``owner`` and ``run_id`` are given they
+    must agree (a ``run``-kind owner derives ``run_id``, so passing a
+    different one is a caller bug, not silently resolved here). A caller
+    that only has a leaf run id and doesn't know whose view this really is
+    should call :func:`views.owner.current_owner` first: this function does
+    not do that resolution itself, so a direct call with neither ``owner``
+    nor ``run_id`` stores an ownerless view.
     """
+    owner_dict = owner.model_dump() if isinstance(owner, ViewOwner) else owner
     env = normalize_envelope({
         "kind": kind,
         "title": title or "",
@@ -116,6 +136,8 @@ def create_view(
         "actions": list(actions or []),
         "complexity": complexity or "inline",
         "fallback": fallback or {},
+        "run_id": run_id,
+        "owner": owner_dict,
     }, validate_spec_body=validate)
     env.view_id = _new_view_id()
 
@@ -140,14 +162,22 @@ def create_view(
         json.dumps(env.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+    # The run_id column is the "run"-owner shorthand, not a second place to
+    # record an entity owner's leaf: it is set only when the owner itself is
+    # kind "run" (env.run_id may otherwise still carry a leaf run id passed
+    # alongside a non-run owner, kept on the envelope for round-trip but not
+    # promoted to the index row's run_id).
+    owner_run_id = env.owner.id if (env.owner and env.owner.kind == "run") else None
     now = utc_iso()
     with db.transaction() as conn:
         conn.execute(
             """INSERT INTO views (view_id, workspace, run_id, task_id, kind, title,
-                                  summary, state, size_bytes, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (env.view_id, workspace or None, run_id, task_id, env.kind, env.title,
-             env.summary, None, _dir_size(view_dir), now, now),
+                                  summary, state, size_bytes, created_at, updated_at,
+                                  owner_kind, owner_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (env.view_id, workspace or None, owner_run_id, task_id, env.kind, env.title,
+             env.summary, None, _dir_size(view_dir), now, now,
+             env.owner.kind if env.owner else None, env.owner.id if env.owner else None),
         )
     _mirror_view_dir(view_dir)
     return env
@@ -208,6 +238,12 @@ def get_view(view_id: str) -> Optional[Dict[str, Any]]:
     env["workspace"] = row.get("workspace")
     env["run_id"] = row.get("run_id")
     env["task_id"] = row.get("task_id")
+    # The index row is the source of truth for who owns a view (like run_id
+    # above): it is what filters and links read, and it survives a view.json
+    # written before this field existed. No owner_id on the row means no
+    # owner rather than falling back to whatever an old view.json might hold.
+    owner_kind, owner_id = row.get("owner_kind"), row.get("owner_id")
+    env["owner"] = {"kind": owner_kind, "id": owner_id} if owner_kind and owner_id else None
     env["size_bytes"] = row.get("size_bytes")
     env["created_at"] = row.get("created_at")
     env["updated_at"] = row.get("updated_at")
@@ -218,9 +254,17 @@ def list_views(
     workspace: Optional[str] = None,
     *,
     run_id: Optional[str] = None,
+    owner_kind: Optional[str] = None,
+    owner_id: Optional[str] = None,
     limit: int = 200,
 ) -> List[Dict[str, Any]]:
-    """List view index rows (newest first), optionally filtered."""
+    """List view index rows (newest first), optionally filtered.
+
+    ``run_id`` is kept as the pre-owner shorthand every existing caller uses:
+    it is an alias for "owned by that agent run" (``owner_kind='run'``), not a
+    separate column read. Pass ``owner_kind``/``owner_id`` directly for a view
+    owned by a flow/loop/team/scenario run.
+    """
     conn = db.get_conn()
     clauses: List[str] = []
     params: List[Any] = []
@@ -228,17 +272,32 @@ def list_views(
         clauses.append("workspace = ?")
         params.append(workspace)
     if run_id is not None:
-        clauses.append("run_id = ?")
-        params.append(run_id)
+        clauses.append("owner_kind = ? AND owner_id = ?")
+        params.extend(["run", run_id])
+    if owner_kind is not None:
+        clauses.append("owner_kind = ?")
+        params.append(owner_kind)
+    if owner_id is not None:
+        clauses.append("owner_id = ?")
+        params.append(owner_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(int(limit))
     rows = conn.execute(
         f"""SELECT view_id, workspace, run_id, task_id, kind, title, summary,
-                   size_bytes, created_at, updated_at
+                   size_bytes, created_at, updated_at, owner_kind, owner_id
             FROM views{where} ORDER BY created_at DESC LIMIT ?""",
         params,
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def views_owned_by(kind: str, id: str, *, limit: int = 200) -> List[Dict[str, Any]]:  # noqa: A002 - matches the model field name
+    """Index rows for every view produced by one run, across all workspaces.
+
+    What a run's detail page reads to show "views it made": ``kind``/``id``
+    are a :class:`~views.models.ViewOwner` pair (e.g. ``("team", team_run_id)``).
+    """
+    return list_views(owner_kind=kind, owner_id=id, limit=limit)
 
 
 def set_view_state(view_id: str, state: Dict[str, Any]) -> bool:
@@ -456,6 +515,7 @@ def create_live_view(
     summary: str = "",
     run_id: Optional[str] = None,
     task_id: Optional[str] = None,
+    owner: Optional[Any] = None,
 ) -> ViewEnvelope:
     """Create an empty live view of ``kind``, seeded with its base spec, ready to
     be built up by ops in the Studio. Spec validation is deferred (the spec is
@@ -467,6 +527,7 @@ def create_live_view(
         complexity="fullscreen",
         run_id=run_id,
         task_id=task_id,
+        owner=owner,
         validate=False,
     )
 
@@ -738,6 +799,7 @@ __all__ = [
     "create_live_view",
     "get_view",
     "list_views",
+    "views_owned_by",
     "set_view_state",
     "delete_view",
     "view_asset_path",

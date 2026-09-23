@@ -25,13 +25,31 @@ from .store import _upsert_run, _utc_now_iso
 log = logging.getLogger(__name__)
 
 
-def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str | None = None) -> None:
-    """Update a task's status after its flow run finishes.
+def finalize_task(
+    task_id: str, status: str, exit_code: int, *,
+    error: str | None = None, run_id: str | None = None, executor=None,
+) -> None:
+    """Move a task along after one of its runs finishes, whatever kind produced it.
 
-    A flow is not an agent run — it has no meta run record — so this resolves
-    the task directly by id and applies the same terminal-status rules a
-    resolving agent would (advance to resolved / continuous-followup on success,
-    block on failure), then fires any pending session continuations.
+    The task state machine, generic over every executor kind (tasks.models.
+    Executor): on success, resolve — or, in continuous-followup mode, keep it
+    in_progress for the orchestrator's next pass — and clear the assignment;
+    then, once resolved, try to start the review cycle (_auto_start_review).
+    On failure, try the retry policy first (_maybe_retry_failed_run); only
+    once that declines does the task actually block. Finally, any session
+    continuations waiting on this task are fired.
+
+    ``run_id``/``executor`` are for a caller that has them (an agent run
+    does — see finalize_task_from_run, which builds one from the run record);
+    a flow/loop/team caller (finalize_flow_task) has neither and passes
+    ``executor=None``, so retry falls back to reading the task's own
+    ``executor`` field — the only place that information lives once a flow,
+    team or loop run has no per-run "agent id" to carry it.
+
+    This is the generic half of the pipeline. finalize_task_from_run layers
+    agent-specific status handling on top of it (the orchestrator's own tool
+    calls, the code_reviewer's verdict) rather than calling this directly,
+    since those cases are not "resolve or block" at all.
     """
     try:
         from tasks import service as _ts
@@ -59,19 +77,35 @@ def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str 
                 else:
                     _ts.update_task(tid, status=_ts.TaskStatus.resolved)
                 _ts.clear_agent(tid)
+                resolved_task = _ts.get_task(tid)
+                if resolved_task and resolved_task.status == _ts.TaskStatus.resolved:
+                    _auto_start_review(tid, resolved_task)
         else:
-            reason = (error or "").strip() or f"flow exited with code {exit_code}"
+            reason = (error or "").strip() or f"run exited with code {exit_code}"
+            retry_executor = executor
+            if retry_executor is None:
+                task_for_retry = _ts.get_task(tid)
+                retry_executor = task_for_retry.executor if task_for_retry else None
+            if _maybe_retry_failed_run(tid, retry_executor, status, reason):
+                return
             _ts.block_task(tid, reason=reason)
             _ts.clear_agent(tid)
             try:
-                _ts.append_task_activity_log(tid, "run_failed", f"Flow failed: {reason}")
+                _ts.append_task_activity_log(tid, "run_failed", f"Run failed: {reason}", run_id=run_id or "")
             except Exception:  # noqa: BLE001 - an activity-log write is best-effort, must not break finalization
                 log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
 
-        # Trigger any session continuations waiting for this task
+        # Trigger any session continuations waiting for this task. An agent
+        # caller passes run_id so only continuations bound to that specific run
+        # fire; a flow/loop/team caller has no per-run concept here and fires
+        # every continuation waiting on the task, as it always has.
         try:
             from common.session_service import pop_continuations_for_task
-            for cont in pop_continuations_for_task(str(task_id)):
+            continuations = (
+                pop_continuations_for_task(str(task_id), run_id=run_id) if run_id
+                else pop_continuations_for_task(str(task_id))
+            )
+            for cont in continuations:
                 try:
                     _trigger_session_continuation(cont, status)
                 except Exception:  # noqa: BLE001 - one continuation failing must not stop the rest
@@ -79,7 +113,19 @@ def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str 
         except Exception:  # noqa: BLE001 - best-effort (see docstring): a continuation problem must not block finalize
             log.debug("pop_continuations_for_task failed for task %s", task_id, exc_info=True)
     except Exception:
-        log.exception("finalize_flow_task failed for task %s", task_id)
+        log.exception("finalize_task failed for task %s", task_id)
+
+
+def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str | None = None) -> None:
+    """Update a task's status after its flow, loop or team run finishes.
+
+    A thin wrapper around :func:`finalize_task`: none of those three kinds
+    has a meta run record in the leaf ``runs`` table the way an agent run
+    does, so this resolves the task directly by id and leaves retry (through
+    the task's own ``executor``) and the review cycle to the generic state
+    machine — both apply here now, the same as for an agent run.
+    """
+    finalize_task(task_id, status, exit_code, error=error)
 
 
 def park_task_awaiting_input(run_id: str, question: Dict[str, Any], agent_id: str = "") -> None:
@@ -222,28 +268,47 @@ def _auto_start_review(tid, task) -> bool:
         return False
 
 
-def _maybe_retry_failed_run(tid, run: Dict[str, Any], reason: str) -> bool:
-    """Re-dispatch a failed worker run instead of blocking, when the workspace's
-    orchestrator ``max_retries`` still allows it.
+def _maybe_retry_failed_run(tid, executor, run_status: str, reason: str) -> bool:
+    """Re-dispatch a failed run through its own executor instead of blocking,
+    when the workspace's orchestrator ``max_retries`` still allows it.
 
-    Opt-in (default ``max_retries=0`` disables it) and deliberately conservative:
-    only worker-agent runs are retried (never orchestrator/reviewer control runs
-    or a run the user stopped), the failure reason is appended to the retry
-    instruction, and the per-task ``retry_count`` is capped hard so a persistently
-    failing task blocks after N attempts rather than looping forever. Returns True
-    when a retry was dispatched (caller then skips blocking the task).
+    Generalized over every executor kind a task can have (tasks.models.
+    Executor): ``executor`` says what produced the failing run — for an
+    ordinary agent run, finalize_task_from_run builds it from the run
+    record's own ``agent_id`` (not the task's stored ``executor``, which the
+    tests in tests/test_retry.py deliberately never set — a run can be
+    finalized on its own agent id even if the task's assignment bookkeeping
+    was never written); for a flow, a team or a loop, finalize_task passes
+    the task's current ``executor``, since those have no per-run "agent id"
+    field to read it from instead.
+
+    An agent executor is relaunched exactly as before — directly through
+    ``agents.agent_launcher.start_run`` and ``tasks.service.assign_agent``,
+    not ``tasks.assign.assign_agent_to_task`` — because that entry point
+    re-validates the agent against the registry and the workspace's
+    ``allowed_agents``, which is right for a fresh manual assignment but not
+    for retrying a run that was already valid once. A flow, a team or a loop
+    goes through ``tasks.assign.assign_executor_to_task``, which is what
+    starts each of those in the first place.
+
+    Opt-in (default ``max_retries=0`` disables it) and deliberately
+    conservative: the orchestrator and code_reviewer control agents are never
+    retried, nor is a run the user stopped; the failure reason is fed
+    forward, and the per-task ``retry_count`` is capped hard so a
+    persistently failing task blocks after N attempts rather than looping
+    forever. Returns True when a retry was dispatched (caller then skips
+    blocking the task).
     """
     try:
         from tasks import service as _ts
 
         # Never retry a run the user stopped.
-        run_status = str((run or {}).get("status") or "").lower()
-        err_text = str((run or {}).get("error") or "").lower()
-        if run_status == "stopped" or "stopped by user" in err_text:
+        if run_status == "stopped" or "stopped by user" in (reason or "").lower():
             return False
 
-        agent_id = str((run or {}).get("agent_id") or "")
-        if not agent_id or agent_id in ("orchestrator", "code_reviewer"):
+        if executor is None or not getattr(executor, "id", None):
+            return False
+        if executor.kind == "agent" and executor.id in ("orchestrator", "code_reviewer"):
             return False
 
         task = _ts.get_task(tid)
@@ -265,24 +330,36 @@ def _maybe_retry_failed_run(tid, run: Dict[str, Any], reason: str) -> bool:
             return False
 
         # Feed the failure forward so the retry can react to what went wrong.
+        # description is what an agent (and a flow, via its params.description)
+        # reads; goal is what a team/loop reads — set whichever applies.
         params = dict(getattr(task, "assigned_agent_params", None) or {})
-        prev_desc = str(params.get("description") or getattr(task, "description", "") or "").strip()
-        params["description"] = (
-            f"{prev_desc}\n\n[Retry {attempts + 1}/{max_retries}] The previous attempt failed: {reason}"
+        prev_text = str(params.get("description") or params.get("goal")
+                        or getattr(task, "description", "") or "").strip()
+        note = (
+            f"{prev_text}\n\n[Retry {attempts + 1}/{max_retries}] The previous attempt failed: {reason}"
         ).strip()
+        params["description"] = note
+        if executor.kind in ("team", "loop"):
+            params["goal"] = note
 
         # Dispatch first — if launching raises (e.g. a budget cap), we fall through
         # to blocking without having mutated the task's retry bookkeeping.
-        from agents import agent_launcher
-        new_run_id, _sess = agent_launcher.start_run(str(tid), agent_id, params)
-        _ts.assign_agent(tid, agent_id, params, run_id=new_run_id)
-        _ts.update_task(tid, status=_ts.TaskStatus.in_progress, retry_count=attempts + 1)
+        if executor.kind == "agent":
+            from agents import agent_launcher
+            new_run_id, _sess = agent_launcher.start_run(str(tid), executor.id, params)
+            _ts.assign_agent(tid, executor.id, params, run_id=new_run_id)
+            _ts.update_task(tid, status=_ts.TaskStatus.in_progress, retry_count=attempts + 1)
+        else:
+            from tasks.assign import assign_executor_to_task
+            from tasks.serialize import task_to_dict
+            assign_executor_to_task(tid, executor, params, task_to_dict=task_to_dict)
+            _ts.update_task(tid, retry_count=attempts + 1)
+
         _ts.append_task_activity_log(
             tid,
             "run_retry",
             f"Retry {attempts + 1}/{max_retries} after failure: {reason}",
-            run_id=new_run_id,
-            agent_id=agent_id,
+            agent_id=(executor.id if executor.kind == "agent" else f"{executor.kind}:{executor.id}"),
         )
         return True
     except Exception:  # noqa: BLE001 - falls back to a normal block on any failure to dispatch a retry
@@ -439,7 +516,13 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
             # Retry policy: re-dispatch instead of blocking when the workspace
             # allows it and this task hasn't exhausted its retries. A dispatched
             # retry leaves the task in_progress, so skip blocking + continuations.
-            if _maybe_retry_failed_run(tid, run or {}, reason):
+            # The executor comes from this specific run's own agent id (not the
+            # task's stored executor — see _maybe_retry_failed_run's docstring).
+            from tasks.models import Executor as _Executor
+            _run_agent_id = str((run or {}).get("agent_id") or "")
+            _retry_executor = _Executor(kind="agent", id=_run_agent_id) if _run_agent_id else None
+            _run_status = str((run or {}).get("status") or "").lower()
+            if _maybe_retry_failed_run(tid, _retry_executor, _run_status, reason):
                 return
             _ts.block_task(tid, reason=reason)
             _ts.clear_agent(tid)

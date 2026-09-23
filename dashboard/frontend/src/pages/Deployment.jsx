@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, Box, Loader, RefreshCw, Repeat, ScrollText, Server, Trash2, Waypoints, X,
+  AlertTriangle, Box, Layers, Loader, RefreshCw, Repeat, ScrollText, Server, Trash2, Waypoints, X,
 } from 'lucide-react';
 import { forgetMember, getDeployment, getMemberLogs } from '../api';
 import { useChannel } from '../components/stream';
@@ -16,6 +16,12 @@ import { useI18n } from '../i18n';
  * (backend replicas and workers, each with its heartbeat, load and the
  * singleton roles it holds), the launch queue, and the runs, flow runs, loops,
  * nodes and containers grouped by host.
+ *
+ * ``entity_runs`` is every flow, loop, team and scenario run, kind-agnostic
+ * (common/entity_runs.py): counts by kind, then each active one with its kind,
+ * host, heartbeat age and resume attempts. ``flow_runs`` and ``loops`` are the
+ * same query's flow and loop slices, kept so this page's older cards need no
+ * change.
  */
 
 function agoLabel(t, seconds) {
@@ -302,6 +308,35 @@ export default function Deployment() {
               ]}
             />
           </Card>
+
+          {map?.entity_runs && (
+            <Card
+              icon={Layers}
+              title={t('deployment.entityRuns', { defaultValue: 'Flow / loop / team / scenario runs' })}
+              hint={t('deployment.entityRunsHint', {
+                defaultValue: 'Every kind that shares the common/entity_runs.py table, in one place.',
+              })}
+            >
+              <div className="flex flex-wrap gap-4 text-sm mb-3">
+                {Object.entries(map.entity_runs.counts_by_kind || {}).map(([kind, n]) => (
+                  <span key={kind}><span className="text-gray-500 capitalize">{kind}:</span> <b>{n}</b></span>
+                ))}
+              </div>
+              <Table
+                empty={t('deployment.noEntityRuns', { defaultValue: 'No active flow, loop, team or scenario runs.' })}
+                rows={(map.entity_runs.active || []).map((r) => ({ ...r, key: r.run_id }))}
+                columns={[
+                  { key: 'run_id', label: 'run', render: (r) => <span className="font-mono text-xs">{String(r.run_id).slice(0, 8)}</span> },
+                  { key: 'kind', label: t('deployment.queueKind') },
+                  { key: 'workspace', label: t('deployment.workspace') },
+                  { key: 'status', label: t('deployment.status') },
+                  { key: 'host', label: t('deployment.host'), render: (r) => <span className="font-mono text-xs">{r.host || t('deployment.unknownHost')}</span> },
+                  { key: 'heartbeat', label: t('deployment.heartbeat'), render: (r) => agoLabel(t, r.heartbeat_age_seconds) },
+                  { key: 'resume_attempts', label: t('deployment.resumeAttempts', { defaultValue: 'resumes' }), render: (r) => r.resume_attempts || 0 },
+                ]}
+              />
+            </Card>
+          )}
 
           {(map?.loops || []).length > 0 && (
             <Card icon={Repeat} title={t('deployment.activeLoops')}>

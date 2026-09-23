@@ -286,17 +286,30 @@ class TeamRun:
     team_id: str = ""
     workspace: Optional[str] = None
     mode: str = "centralized"
-    status: str = "running"      # running | stopping | completed | stopped | failed
+    # The shared vocabulary of common/run_status.py: pending | running |
+    # stopping | completed | stopped | failed. A run is born ``pending`` and
+    # is ``running`` once a process (or the in-process runner) has it.
+    status: str = "pending"
     goal: str = ""
     task_id: Optional[str] = None
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
+    # The run this one executes inside (a flow node that is a team), if any.
+    parent_run_id: Optional[str] = None
     rounds_done: int = 0
     total_cost: float = 0.0
     result: str = ""
     stop_reason: str = ""
     error: Optional[str] = None
-    started_at: str = field(default_factory=utc_iso)
+    # Where and whether it runs: written by the launcher and the runner's
+    # heartbeat, read by the watchdog (common/entity_runs.py).
+    pid: Optional[int] = None
+    host: Optional[str] = None
+    heartbeat_at: Optional[str] = None
+    resume_attempts: int = 0
+    log_file: Optional[str] = None
+    created_at: str = field(default_factory=utc_iso)
+    started_at: str = ""
     finished_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -305,10 +318,13 @@ class TeamRun:
             "workspace": self.workspace, "mode": self.mode, "status": self.status,
             "goal": self.goal, "task_id": self.task_id,
             "session_id": self.session_id, "conversation_id": self.conversation_id,
+            "parent_run_id": self.parent_run_id,
             "rounds_done": self.rounds_done, "total_cost": self.total_cost,
             "result": self.result, "stop_reason": self.stop_reason,
-            "error": self.error, "started_at": self.started_at,
-            "finished_at": self.finished_at,
+            "error": self.error, "pid": self.pid, "host": self.host,
+            "heartbeat_at": self.heartbeat_at, "resume_attempts": self.resume_attempts,
+            "log_file": self.log_file, "created_at": self.created_at,
+            "started_at": self.started_at, "finished_at": self.finished_at,
         }
 
 

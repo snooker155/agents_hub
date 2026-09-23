@@ -21,7 +21,7 @@ from tasks import Actor, AgentState, CreatedBy, TaskStatus
 from workspace import create_workspace_folder, resolve_project_root, project_folder_name, resolve_task_project_name
 from workspace import get_workspace_metadata
 from agents.agent_factory import create_agent
-from tasks.assign import assign_agent_to_task, AssignError
+from tasks.assign import assign_agent_to_task, assign_executor_to_task, AssignError
 from tasks.serialize import task_to_dict
 from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate, TaskAnswer, TaskListItem, TaskDetail, TaskPage
 from common.session_service import add_event_to_session
@@ -440,13 +440,27 @@ async def get_task_file_raw(task_id: UUID, path: str):
 
 @router.post("/{task_id}/assign")
 async def assign_agent(task_id: UUID, assign: AgentAssign):
-    """Assign an agent to a task and start it.
+    """Assign an executor to a task and start it.
 
-    The policy and the launch live in :func:`tasks.assign.assign_agent_to_task`,
-    so the terminal client assigns on exactly the same terms; this maps its
-    refusals onto HTTP.
+    The policy and the launch live in :func:`tasks.assign.assign_executor_to_task`
+    (an agent's own path, :func:`tasks.assign.assign_agent_to_task`, is
+    unchanged), so the terminal client assigns on exactly the same terms;
+    this maps its refusals onto HTTP. The body may name an executor
+    explicitly (``{"executor": {"kind": ..., "id": ...}, "params": {...}}``,
+    any of the four kinds) or, for backward compatibility, just an
+    ``agent_id`` as before — the two original callers of this route (the
+    dashboard, the terminal client) still send exactly that.
     """
     try:
+        if assign.executor is not None:
+            return assign_executor_to_task(
+                task_id,
+                assign.executor.model_dump(),
+                assign.params,
+                task_to_dict=task_to_dict,
+            )
+        if not assign.agent_id:
+            raise HTTPException(status_code=400, detail="agent_id or executor is required")
         return assign_agent_to_task(
             task_id,
             assign.agent_id,
@@ -455,6 +469,8 @@ async def assign_agent(task_id: UUID, assign: AgentAssign):
         )
     except AssignError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

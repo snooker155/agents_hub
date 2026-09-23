@@ -304,5 +304,52 @@ class Environment(ABC):
         """Full state, for the final record. Defaults to the public frame."""
         return self.frame()
 
+    # ── Checkpointing ────────────────────────────────────────────────────────
+    #
+    # A scenario run now checkpoints after every tick (playground/runner.py), so
+    # a process that dies mid-simulation can resume without redoing ticks that
+    # already happened. Resuming means putting the world back exactly as it
+    # stood, and every environment's own fields differ — a market's order book,
+    # a social world's rooms and secrets, a custom world's whole ``WorldSpec``.
+    # Asking each environment author to hand-declare a resumable subset would be
+    # one more thing to keep in sync with every field they add, and a mistake
+    # there fails silently (a resumed run that quietly forgot who owed whom).
+    #
+    # So the default pickles the instance's own ``__dict__`` whole. Nothing a
+    # shipped or custom environment holds needs special handling: a
+    # ``random.Random`` (the market's rng), a ``set`` (the social world's
+    # ``visited`` rooms), a dataclass (``CustomEnvironment.spec``) all round-trip
+    # through pickle unchanged, which is not true of a JSON-safe copy — that
+    # would have to reconstruct the rng's internal state and turn every set back
+    # from a list. The pickle is base64-encoded so it sits as one JSON string
+    # inside the run's checkpoint (``common.db.dumps`` on the whole checkpoint
+    # dict), rather than needing a binary column of its own.
+    #
+    # A subclass overrides both methods only when its state holds something
+    # pickle cannot carry at all (an open file, a thread, a live callback) —
+    # nothing any shipped or custom environment does today.
+
+    def snapshot(self) -> Dict[str, Any]:
+        """A JSON-safe capture of this environment's full state."""
+        import base64
+        import pickle
+
+        blob = pickle.dumps(self.__dict__, protocol=pickle.HIGHEST_PROTOCOL)
+        return {"pickled": base64.b64encode(blob).decode("ascii")}
+
+    def restore(self, data: Dict[str, Any]) -> None:
+        """Put back a snapshot :meth:`snapshot` produced, replacing this
+        instance's current state. A snapshot with nothing in it is a no-op
+        rather than an error, so restoring from an empty or pre-checkpoint
+        record leaves a freshly constructed environment exactly as it was."""
+        import base64
+        import pickle
+
+        encoded = (data or {}).get("pickled")
+        if not encoded:
+            return
+        state = pickle.loads(base64.b64decode(encoded))
+        self.__dict__.update(state)
+
 
 __all__ = ["Environment", "speech_event"]

@@ -174,10 +174,26 @@ class AgentModelUpdate(BaseModel):
     clear_api_key: bool = False           # explicitly remove api_key override
 
 
+class ExecutorSpec(BaseModel):
+    """What to assign a task to: an agent, a flow, a team or a loop.
+
+    Mirrors tasks.models.Executor as a plain request body shape (``kind`` is
+    left a plain str here rather than the Literal that module uses, so an
+    unrecognised kind reaches tasks.assign.assign_executor_to_task's own
+    validation as a 400 rather than FastAPI's generic 422).
+    """
+    kind: str
+    id: str
+
+
 class AgentAssign(BaseModel):
-    agent_id: str
+    # agent_id is the original, still-default shape: assign this agent.
+    # executor is the newer, kind-agnostic shape (agent/flow/team/loop); when
+    # given, it takes precedence and agent_id/require_approval are ignored.
+    agent_id: Optional[str] = None
     params: Optional[Dict[str, Any]] = None
     require_approval: bool = False
+    executor: Optional[ExecutorSpec] = None
 
 
 class TaskAnswer(BaseModel):
@@ -476,6 +492,7 @@ class TaskListItem(BaseModel):
     due_at: Optional[datetime] = None
     blocked_reason: Optional[str] = None
     should_decompose: bool = False
+    executor: Optional[Dict[str, Any]] = None
     assigned_agent_type: Optional[str] = None
     assigned_agent_params: Optional[Dict[str, Any]] = None
     assigned_agent_run_id: Optional[str] = None

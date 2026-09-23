@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Gamepad2, Play, Square, Trash2, Loader, X,
+  Gamepad2, Play, RotateCcw, Square, Trash2, Loader, X,
   AlertTriangle, DollarSign, RefreshCw, History,
 } from 'lucide-react';
 import { getSimEnvironments, getAgents, getModelsCatalog } from '../api';
@@ -126,7 +126,7 @@ export default function PlaygroundScenario() {
   const {
     run, ticks, cursor, setCursor, following, setFollowing, inFlight, activity,
     waitingForTrigger, starting, refreshing, openRun,
-    handleStart, handleStop, handleRefresh, handleTrigger,
+    handleStart, handleStop, handleRefresh, handleTrigger, handleResume,
   } = useScenarioRun({
     scenarioId, runParam, navigate, scenario, selectedWorkspace,
     runs, setRuns, setMode, setMessage, setEventsSeen, t,
@@ -283,6 +283,21 @@ export default function PlaygroundScenario() {
               >
                 {starting ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1" />}
                 {t('playground.run')}
+              </button>
+            )}
+            {/* A stopped or failed run may still have a checkpoint to pick up
+                from — resume_scenario_run (POST /runs/{id}/resume) is the one
+                way back into "running" for a finished run. A run with no
+                checkpoint refuses with a clear message rather than the button
+                being hidden for it, since the page has no cheap way to know
+                which without asking. */}
+            {!live && run && (run.status === 'stopped' || run.status === 'failed') && (
+              <button
+                onClick={() => handleResume()}
+                className="inline-flex items-center px-3 py-2 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700"
+              >
+                <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                {t('playground.resume', { defaultValue: 'Resume' })}
               </button>
             )}
             <button

@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 from tasks.models import (
     Actor,
     CreatedBy,
+    Executor,
     IllegalTransition,  # noqa: F401 — re-exported for callers that catch it from here
     Task,
     TaskStatus,
@@ -195,6 +196,13 @@ def update_task(
     """
     fields.pop("id", None)
 
+    # A caller that clears the compatibility field directly (there are a
+    # handful outside this module, e.g. a run-deletion route) without knowing
+    # about ``executor`` would otherwise leave it stale. Clearing one clears
+    # both unless the caller explicitly says what ``executor`` should become.
+    if "assigned_agent_type" in fields and fields["assigned_agent_type"] is None and "executor" not in fields:
+        fields["executor"] = None
+
     if "depends" in fields:
         dep_ids = [d if isinstance(d, UUID) else UUID(str(d)) for d in (fields["depends"] or [])]
         if task_id in dep_ids:
@@ -230,7 +238,8 @@ def update_task(
 
             # Clear agent assignment when resetting to todo (preserve routing history for reviewed/done)
             if new_status in _CLEAR_AGENT_STATUSES:
-                for key in ("assigned_agent_type", "assigned_agent_params", "assigned_agent_run_id", "pre_assignment_status"):
+                for key in ("executor", "assigned_agent_type", "assigned_agent_params",
+                            "assigned_agent_run_id", "pre_assignment_status"):
                     if key not in fields:
                         fields[key] = None
             # Only clear session on full todo reset (keep session history for reviewed/done)
@@ -1276,24 +1285,40 @@ def delete_task_result_file(task_id: UUID) -> None:
     _delete_task_result(_tasks_path(), str(task_id))
 
 
-# -------------------- Agent management --------------------
+# -------------------- Executor management --------------------
+#
+# assign_executor is the one write behind every assignment, whatever kind of
+# executor a task gets: an agent, a flow, a team or a loop. assign_agent is
+# kept as a thin kind="agent" wrapper over it — a dozen call sites across the
+# codebase (the orchestrator's own tools, the retry/review cycle, the
+# approval routes, teams/loops claiming a task, flow.launcher.trigger_flow...)
+# call it directly with exactly this signature, and none of them need to
+# change for a task to gain the other three kinds.
 
-def assign_agent(
+def assign_executor(
     task_id: UUID,
-    agent_type: str,
+    executor: Executor | Dict[str, Any],
     params: Optional[Dict[str, Any]] = None,
     *,
     store: TaskStore = default_store,
     run_id: Optional[str] = None,
 ) -> Optional[Task]:
-    """Assign an agent to the task.
+    """Hand the task to an executor: an agent, a flow, a team or a loop.
 
-    - agent_type: string identifier of the agent
-    - params: arbitrary dict with agent configuration
-    - run_id: optional external run identifier
+    - executor: an Executor, or an equivalent {"kind": ..., "id": ...} dict
+    - params: arbitrary config for whatever runs it (an agent's launch params,
+      a flow/team/loop's own params)
+    - run_id: the run this assignment now points at (that kind's own run id —
+      an agent run, a flow run, a team run or a loop run)
+
+    Writes ``executor``; the store keeps ``assigned_agent_type`` in agreement
+    with it on the next read (tasks.storage._sync_executor) so every caller
+    written for the old, agent-only shape of a task keeps working.
     """
+    if not isinstance(executor, Executor):
+        executor = Executor.model_validate(executor)
     fields: Dict[str, Any] = {
-        "assigned_agent_type": agent_type,
+        "executor": executor.model_dump(),
         "assigned_agent_params": params if params is not None else None,
         "assigned_agent_run_id": run_id,
     }
@@ -1307,19 +1332,42 @@ def assign_agent(
     return updated
 
 
+def assign_agent(
+    task_id: UUID,
+    agent_type: str,
+    params: Optional[Dict[str, Any]] = None,
+    *,
+    store: TaskStore = default_store,
+    run_id: Optional[str] = None,
+) -> Optional[Task]:
+    """Assign an agent to the task (a thin kind="agent" wrapper over assign_executor).
+
+    - agent_type: string identifier of the agent
+    - params: arbitrary dict with agent configuration
+    - run_id: optional external run identifier
+    """
+    return assign_executor(task_id, Executor(kind="agent", id=agent_type), params,
+                            store=store, run_id=run_id)
+
+
 def clear_agent(
     task_id: UUID,
     *,
     store: TaskStore = default_store,
 ) -> Optional[Task]:
-    """Clear agent assignment."""
+    """Clear the task's executor assignment, of any kind."""
     fields: Dict[str, Any] = {
+        "executor": None,
         "assigned_agent_type": None,
         "assigned_agent_params": None,
         "assigned_agent_run_id": None,
         "pre_assignment_status": None,
     }
     return store.update(task_id, **fields)
+
+
+# Same function, named for a caller that is not thinking in agent terms.
+clear_executor = clear_agent
 
 
 __all__ = [
@@ -1350,8 +1398,10 @@ __all__ = [
     "resume_container",
     "PAUSE_MARKER",
     "create_sequence",
+    "assign_executor",
     "assign_agent",
     "clear_agent",
+    "clear_executor",
     "get_task_activity_log",
     "append_task_activity_log",
     "delete_task_activity_log",

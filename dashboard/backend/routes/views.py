@@ -1,8 +1,9 @@
 """
 Views API — serve rendered views, their assets, and per-user view state.
 
-- ``GET  /api/views``                list index rows (filter by workspace/run_id)
-- ``GET  /api/views/{view_id}``      full envelope + saved state
+- ``GET  /api/views``                list index rows (filter by workspace, run_id,
+                                     or owner_kind/owner_id)
+- ``GET  /api/views/{view_id}``      full envelope + saved state + owner
 - ``PATCH /api/views/{view_id}/state`` persist control values / selection
 - ``DELETE /api/views/{view_id}``    remove a view
 - ``GET  /api/views/{view_id}/assets/{path}``  serve a contained view asset
@@ -60,6 +61,27 @@ _ASSET_CSP = (
 )
 
 
+def _owner_entity_id(owner_kind: Optional[str], owner_id: Optional[str]) -> Optional[str]:
+    """The flow/team/scenario id an entity-kind owner's run belongs to.
+
+    A view's owner is recorded as a *run* (``owner_id`` is a row in
+    ``entity_runs``), but a frontend link wants the entity itself, e.g.
+    /teams/``teamId``, not a team run id no route addresses. ``None`` for a
+    ``run`` owner (nothing to resolve: the run id is already what
+    /messages/{runId} wants) or when the owning run can't be found (e.g.
+    since deleted).
+    """
+    if not owner_kind or not owner_id or owner_kind == "run":
+        return None
+    try:
+        from common import entity_runs
+        rec = entity_runs.get(owner_id)
+    except Exception:
+        return None
+    entity_id = (rec or {}).get("entity_id")
+    return str(entity_id) if entity_id else None
+
+
 def _asset_csp(view_id: str, request: Request) -> str:
     """The CSP for this view's assets; connect-src stays 'none' unless the view
     serves a backend, in which case only its scoped proxy path is allowed."""
@@ -100,9 +122,20 @@ class SnapshotRequest(BaseModel):
 
 @router.get("")
 async def get_views(workspace: Optional[str] = None, run_id: Optional[str] = None,
+                    owner_kind: Optional[str] = None, owner_id: Optional[str] = None,
                     limit: int = 200):
-    """List view index rows, newest first, optionally filtered."""
-    return {"views": list_views(workspace=workspace, run_id=run_id, limit=limit)}
+    """List view index rows, newest first, optionally filtered.
+
+    ``run_id`` stays the shorthand for "owned by that agent run" (an alias for
+    ``owner_kind=run&owner_id=<run_id>``, see views.store.list_views);
+    ``owner_kind``/``owner_id`` filter directly, e.g. every view a team run
+    produced.
+    """
+    rows = list_views(workspace=workspace, run_id=run_id,
+                      owner_kind=owner_kind, owner_id=owner_id, limit=limit)
+    for row in rows:
+        row["owner_entity_id"] = _owner_entity_id(row.get("owner_kind"), row.get("owner_id"))
+    return {"views": rows}
 
 
 @router.post("/studio")
@@ -122,6 +155,11 @@ async def get_one_view(view_id: str):
     view = get_view(view_id)
     if view is None:
         raise HTTPException(status_code=404, detail="View not found")
+    owner = view.get("owner")
+    if owner:
+        entity_id = _owner_entity_id(owner.get("kind"), owner.get("id"))
+        if entity_id:
+            view = {**view, "owner": {**owner, "entity_id": entity_id}}
     return view
 
 

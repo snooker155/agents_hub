@@ -54,12 +54,13 @@ import json
 import logging
 import os
 import re
+import socket
 import threading
 import time
+import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait as futures_wait
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from uuid import uuid4
 
 from playground import control, store
 from playground.environments import create_environment
@@ -674,6 +675,19 @@ def _enable_stream_usage(llm: Any) -> None:
 
 # ── Decisions as runs of record ──────────────────────────────────────────────
 
+def decision_run_id(sim_run_id: str, tick: int, agent: str) -> str:
+    """The run id one agent's turn at one tick always gets.
+
+    Deterministic (``uuid5`` over the sim, the tick and the agent's own
+    in-world name) rather than random, so a tick that is ever attempted twice
+    — the narrow crash window between :func:`playground.store.save_tick` and
+    its checkpoint, see ``run_simulation`` — opens the *same* run record
+    instead of leaving an orphaned one behind from the attempt that did not
+    finish. ``open_run`` upserts by id, so reopening it is exactly resuming it.
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"scenario:{sim_run_id}:{tick}:{agent}"))
+
+
 def _open_decision_run(*, role: Role, scenario: Scenario, sim_run_id: str,
                        tick: int, workspace: Optional[str], provider: str,
                        model: str, prompt: str) -> str:
@@ -689,7 +703,7 @@ def _open_decision_run(*, role: Role, scenario: Scenario, sim_run_id: str,
         from managers.run_manager import open_run, run_log_path
     except Exception:
         return ""
-    run_id = str(uuid4())
+    run_id = decision_run_id(sim_run_id, tick, role.display_name())
     try:
         instance_id = None
         try:
@@ -718,9 +732,18 @@ def _open_decision_run(*, role: Role, scenario: Scenario, sim_run_id: str,
             sim_role=role.display_name(), tick=tick,
             provider=provider or "", model=model or "", input=prompt,
             instance_id=instance_id, link_to_session=False,
-            # This turn runs on a thread of the server process, so its pid is
-            # the server's. Without this flag a stop from the Messages page
-            # would signal that pid — see run_manager._stop_run_record.
+            # A decision always runs on a thread of *whichever* process is
+            # executing this simulation, so its pid is that process's own —
+            # the API server for the old thread-based path (tools, tests), or
+            # the scenario's own subprocess (runtime/scenario_run.py) for a
+            # launched run. Either way, signalling that pid to stop one turn
+            # would take the whole process down with it, so this flag keeps
+            # managers.runs.lifecycle._stop_run_record from doing that: it
+            # marks the run record stopped and lets ``SimStopCallback`` (which
+            # reads ``playground.control``, not this run's own pid) abort the
+            # model call at its next callback instead. A scenario-wide stop is
+            # a different, durable path — entity_runs status plus
+            # ``control.request_stop`` — and does not go through here at all.
             in_process=True,
         )
         with open(log_path, "w", encoding="utf-8") as f:
@@ -807,13 +830,13 @@ def _progress_reporter(sim_run_id: str, tick: int, agent: str):
 
 
 def _promote_to_running(run: SimRun) -> None:
-    """Turn a starting run into a running one — what its first sign of life
+    """Turn a pending run into a running one — what its first sign of life
     means, whether that is a tick or a world that went straight to waiting.
 
-    The row is only promoted while it still says ``starting``, so a stop that
+    The row is only promoted while it still says ``pending``, so a stop that
     landed during the first tick survives the tick that finished after it.
     """
-    if run.status != "starting":
+    if run.status != "pending":
         return
     run.status = "running"
     if store.mark_running(run.sim_run_id):
@@ -829,7 +852,7 @@ def stop_simulation(sim_run_id: str) -> bool:
     calling the model instead of finishing the tick the user cancelled).
     """
     run = store.get_sim_run(sim_run_id)
-    if run is None or run.status not in ("starting", "running", "stopping"):
+    if run is None or run.status not in ("pending", "running", "stopping"):
         return False
     store.request_stop(sim_run_id)
     control.request_stop(sim_run_id)
@@ -845,11 +868,68 @@ def trigger_agent(sim_run_id: str, agent: str, text: str,
     Delivered through the environment's own inbox on the next tick, so an
     injected message is indistinguishable from one an agent sent: it lands in
     the recipient's observation, and in triggered mode it wakes them.
+
+    Pushed two ways. ``store.push_trigger`` is durable and reaches a run
+    executing in *any* process — a launched scenario runs in its own
+    subprocess (runtime/scenario_run.py) — and is what the return value
+    reports. ``control.push_trigger`` additionally wakes an idle loop sitting
+    in *this* process without waiting for its next poll of the durable queue
+    (see ``_wait_out_idle``); it is a no-op, harmlessly, when the run is not
+    registered here.
     """
     run = store.get_sim_run(sim_run_id)
-    if run is None or run.status not in ("starting", "running", "stopping"):
+    if run is None or run.status not in ("pending", "running", "stopping"):
         return False
-    return control.push_trigger(sim_run_id, agent, text, sender)
+    delivered = store.push_trigger(sim_run_id, agent, text, sender)
+    control.push_trigger(sim_run_id, agent, text, sender)
+    return delivered
+
+
+def validate_scenario_for_run(scenario: Scenario) -> None:
+    """Every check a scenario must pass before a run exists for it.
+
+    Shared by ``playground.launcher.start_scenario_run``, which checks before
+    it ever writes a run record, and this module's own head below — the tools'
+    direct call (``tools/entity_runs.py``, not this run's launcher) and the
+    test suite still go straight through ``run_simulation`` with no launcher
+    in front of it. Both fail the same way for the same scenario.
+    """
+    if not scenario.roles:
+        raise ValueError("Scenario has no roles — a society needs participants")
+    if len(scenario.roles) > MAX_AGENTS:
+        raise ValueError(f"Scenario has {len(scenario.roles)} roles; the cap is {MAX_AGENTS}")
+    names = [r.display_name() for r in scenario.roles]
+    if len(set(names)) != len(names):
+        raise ValueError("Two roles share a display name — names address agents in-world")
+    if create_environment(scenario.environment, scenario.env_params, seed=scenario.seed) is None:
+        raise ValueError(f"Unknown environment: {scenario.environment}")
+
+
+_DECISION_FIELDS = {f.name for f in dataclass_fields(AgentDecision)}
+_RESULT_FIELDS = {f.name for f in dataclass_fields(ActionResult)}
+
+
+def _tick_record_from_row(row: Dict[str, Any]) -> TickRecord:
+    """Rebuild a :class:`TickRecord` from ``store.get_tick``'s stored shape.
+
+    Used only when a resumed run finds a tick it already wrote to
+    ``sim_ticks`` (see ``run_simulation``): the stored outcome is replayed
+    into history and ``carry`` without asking the model again for a turn that
+    already happened.
+    """
+    return TickRecord(
+        sim_run_id=str(row.get("sim_run_id") or ""),
+        tick=int(row.get("tick") or 0),
+        decisions=[AgentDecision(**{k: v for k, v in d.items() if k in _DECISION_FIELDS})
+                   for d in (row.get("decisions") or []) if isinstance(d, dict)],
+        resolutions=[ActionResult(**{k: v for k, v in r.items() if k in _RESULT_FIELDS})
+                     for r in (row.get("resolutions") or []) if isinstance(r, dict)],
+        frame=dict(row.get("frame") or {}),
+        events=list(row.get("events") or []),
+        idle=list(row.get("idle") or []),
+        cost=float(row.get("cost") or 0.0),
+        ts=str(row.get("ts") or utc_iso()),
+    )
 
 
 def run_simulation(
@@ -858,23 +938,42 @@ def run_simulation(
     workspace: Optional[str] = None,
     on_start: Optional[Callable[[SimRun], None]] = None,
     on_tick: Optional[Callable[[TickRecord], None]] = None,
+    run: Optional[SimRun] = None,
+    checkpoint: Optional[dict] = None,
 ) -> SimRun:
-    """Run a scenario to completion (or to whichever limit it hits first)."""
-    scenario = store.get_scenario(scenario_id)
+    """Run a scenario to completion (or to whichever limit it hits first).
+
+    Two callers, two shapes of the same loop:
+
+    * **No ``run``** — the path every tool and most of the test suite still
+      uses: a fresh run is minted and started here, on whatever thread called
+      this function. Nothing upstream recorded a process for it, so this path
+      also stamps one itself (pid, host) and beats its own heartbeat for as
+      long as the loop runs — otherwise the watchdog (which now judges every
+      kind of run by its heartbeat, not by guessing) would eventually reap a
+      sim that is still very much going.
+    * **``run`` given** — the launched path (``playground.launcher``,
+      ``runtime/scenario_run.py``): the run record, its process and its own
+      heartbeat thread already exist before this function is ever called.
+      ``checkpoint`` (when given) is what a resume restores from. The
+      scenario itself is read from ``run.config`` — the copy frozen when the
+      run was launched — rather than the live scenario, so editing the
+      scenario while this run is going does not change what it is running.
+    """
+    own_process = run is None
+    if run is not None:
+        scenario = Scenario.from_dict(run.config) if run.config else store.get_scenario(scenario_id)
+    else:
+        scenario = store.get_scenario(scenario_id)
     if not scenario:
         raise ValueError(f"Scenario not found: {scenario_id}")
-    if not scenario.roles:
-        raise ValueError("Scenario has no roles — a society needs participants")
-    if len(scenario.roles) > MAX_AGENTS:
-        raise ValueError(f"Scenario has {len(scenario.roles)} roles; the cap is {MAX_AGENTS}")
+    validate_scenario_for_run(scenario)
 
     env = create_environment(scenario.environment, scenario.env_params, seed=scenario.seed)
     if env is None:
         raise ValueError(f"Unknown environment: {scenario.environment}")
 
     names = [r.display_name() for r in scenario.roles]
-    if len(set(names)) != len(names):
-        raise ValueError("Two roles share a display name — names address agents in-world")
     # Names *and* the roles they were cast in: an authored world places
     # characters by role and decides by role what each may do, and the role
     # string is a scenario's, not the environment's.
@@ -882,18 +981,36 @@ def run_simulation(
         {"name": r.display_name(), "role": r.role, "agent_id": r.agent_id}
         for r in scenario.roles
     ])
+    if checkpoint and checkpoint.get("env"):
+        env.restore(checkpoint["env"])
 
     ws = workspace or scenario.workspace
-    run = SimRun(
-        scenario_id=scenario_id, workspace=ws, environment=scenario.environment,
-        activation=scenario.activation,
-        # Freeze the scenario here: everything past this line reads from the
-        # live row, which the user is free to edit while the sim runs and after
-        # it finishes.
-        config=scenario.to_dict(),
-    )
+    if run is None:
+        run = SimRun(
+            scenario_id=scenario_id, workspace=ws, environment=scenario.environment,
+            activation=scenario.activation,
+            # Freeze the scenario here: everything past this line reads from
+            # the live row, which the user is free to edit while the sim runs
+            # and after it finishes.
+            config=scenario.to_dict(),
+        )
+
+    heartbeat = None
+    if own_process:
+        run.pid = os.getpid()
+        run.host = socket.gethostname()
+        from runtime.entity_heartbeat import EntityHeartbeat
+        heartbeat = EntityHeartbeat(
+            run.sim_run_id, on_stop=lambda: control.request_stop(run.sim_run_id),
+        )
+
     control.register(run.sim_run_id)
     store.save_sim_run(run)
+    if heartbeat is not None:
+        # Registered before the beat starts: its ``on_stop`` reads
+        # ``playground.control``, which only knows about this run from the
+        # ``register`` call just above.
+        heartbeat.start()
     _publish(run.sim_run_id, {"type": "sim_start", **run.to_dict(),
                               "scenario": scenario.to_dict()})
     # The row exists, so the caller can be handed the run before a single model
@@ -908,16 +1025,27 @@ def run_simulation(
     max_ticks = max(1, min(int(scenario.max_ticks), MAX_TICKS))
     wall_cap = optional_seconds(scenario.max_wall_seconds)
     started = time.monotonic()
-    spend = 0.0
+    # A resume picks every one of these up from the checkpoint instead of
+    # starting cold; an empty (or absent) checkpoint leaves them exactly as a
+    # fresh run always had them.
+    cp = checkpoint or {}
+    spend = float(cp.get("spend") or 0.0)
     # Per-agent rolling summary of its own past actions — the memory_horizon
     # knob. Without it, tick 200's prompt carries 199 ticks of transcript.
-    history: Dict[str, List[str]] = {n: [] for n in names}
-    tick = 0
+    history: Dict[str, List[str]] = {n: list(v) for n, v in (cp.get("history") or {}).items()}
+    for n in names:
+        history.setdefault(n, [])
+    # The last tick this run completed — 0 for a fresh run. The loop below
+    # always works on ``tick + 1``, so a resume's first tick is exactly the
+    # one after the checkpoint's.
+    tick = int(cp.get("tick") or 0)
     # Triggered mode only: who the last tick left mid-action, and what each
     # agent has been repeating, so a character that is out of ideas stops
     # being handed turns. Both are rebuilt every tick from the record.
-    carry: Dict[str, List[str]] = {}
-    streaks: Dict[str, List[Any]] = {}
+    carry: Dict[str, List[str]] = dict(cp.get("carry") or {})
+    streaks: Dict[str, List[Any]] = {k: list(v) for k, v in (cp.get("streaks") or {}).items()}
+
+    from common import entity_runs
 
     try:
         while tick < max_ticks:
@@ -944,13 +1072,38 @@ def run_simulation(
                 continue
 
             tick += 1
-            record = _run_tick(env, scenario, run.sim_run_id, tick, history, ws, plan)
+            # A resume can land on a tick this run already wrote to
+            # ``sim_ticks`` before it died — the narrow window between
+            # ``store.save_tick`` and the checkpoint write a few lines below,
+            # which are two separate writes. Redoing it would call the model
+            # again for a turn that is already the artifact of record;
+            # replaying its stored outcome into history and carry costs
+            # nothing and repeats nothing.
+            stored = store.get_tick(run.sim_run_id, tick)
+            if stored is not None:
+                record = _tick_record_from_row(stored)
+                for d in record.decisions:
+                    if not d.error:
+                        history.setdefault(d.agent, []).extend(_heard_lines(tick, d.observation))
+                for res in record.resolutions:
+                    history.setdefault(res.agent, []).append(_said_line(tick, res))
+            else:
+                record = _run_tick(env, scenario, run.sim_run_id, tick, history, ws, plan)
+                store.save_tick(record)
             carry = _continuations(env, scenario, record, streaks)
             spend += record.cost
             run.ticks_done = tick
             run.total_cost = round(spend, 6)
-            store.save_tick(record)
             _promote_to_running(run)
+            # What a resume starts from. Written after every tick — the same
+            # iteration that just wrote (or found) the tick itself — so the
+            # two stay in lockstep except across the narrow crash window the
+            # comment above already accounts for.
+            entity_runs.save_checkpoint(run.sim_run_id, {
+                "tick": tick, "env": env.snapshot(), "history": history,
+                "carry": carry, "streaks": streaks, "spend": spend,
+                "updated_at": utc_iso(),
+            })
             # The run's own counters ride with the tick: the page's meter reads
             # them, and without them it is stale until the next poll — which,
             # on a world that ticks faster than the poll, is never.
@@ -990,6 +1143,9 @@ def run_simulation(
         run.status = "failed"
         run.stop_reason = "error"
         run.error = f"{type(e).__name__}: {e}"
+    finally:
+        if heartbeat is not None:
+            heartbeat.stop()
 
     run.scores = env.score()
     run.final_state = env.state()
@@ -1036,8 +1192,15 @@ def _deliver_external(env: Environment, sim_run_id: str, names: List[str]) -> No
     They go in through ``queue_message`` rather than a side channel: the point
     of an external trigger is that the agent cannot tell it apart from a
     colleague's message, and the environment already knows how to deliver one.
+
+    Drained from both queues, every tick: ``control``'s in-memory one (a poke
+    that arrived while this process itself was running the sim) and
+    ``store``'s durable one (a poke that arrived through the database — the
+    only door open to a scenario running in another process). A run started
+    before either queue existed for it reads back an empty list from each, so
+    this is always safe to call.
     """
-    for item in control.drain_triggers(sim_run_id):
+    for item in control.drain_triggers(sim_run_id) + store.drain_triggers(sim_run_id):
         agent = str(item.get("agent") or "")
         text = str(item.get("text") or "")
         if agent not in names:
@@ -1182,6 +1345,15 @@ def _continue_reason(res: ActionResult) -> str:
             "— you still have the turn, so try another way")
 
 
+#: How often an idle wait polls the durable trigger queue. Coarser than
+#: ``_WAIT_SLICE``: the in-memory queue wakes this loop the instant something
+#: local arrives (``control.wait_for_trigger``'s event), so this poll only
+#: exists to catch a trigger pushed from *another* process, and a grace period
+#: can run to minutes — checking the database twice a second for that whole
+#: stretch would be a needless hammer on it.
+_DURABLE_POLL_SECONDS = 3.0
+
+
 def _wait_out_idle(env: Environment, sim_run_id: str, scenario: Scenario,
                    names: List[str], started: float,
                    wall_cap: Optional[float]) -> bool:
@@ -1196,6 +1368,7 @@ def _wait_out_idle(env: Environment, sim_run_id: str, scenario: Scenario,
         return False
     _publish(sim_run_id, {"type": "idle", "waiting_seconds": grace})
     deadline = time.monotonic() + grace
+    last_poll = 0.0
     while time.monotonic() < deadline:
         if control.is_stopped(sim_run_id) or store.stop_requested(sim_run_id):
             raise SimStopped("stopped", "stopped by request")
@@ -1204,6 +1377,14 @@ def _wait_out_idle(env: Environment, sim_run_id: str, scenario: Scenario,
         control.wait_for_trigger(sim_run_id, min(_WAIT_SLICE, deadline - time.monotonic()))
         if control.pending_trigger_count(sim_run_id):
             return True
+        now = time.monotonic()
+        if now - last_poll >= _DURABLE_POLL_SECONDS:
+            last_poll = now
+            # A durable trigger pushed from another process never sets the
+            # in-memory arrival event above, so this is the only way this loop
+            # ever learns about one.
+            if store.has_pending_triggers(sim_run_id):
+                return True
     return False
 
 
@@ -1527,6 +1708,7 @@ def estimate_cost(scenario: Scenario, avg_inbound: int = 1200,
 __all__ = [
     "run_simulation", "stop_simulation", "trigger_agent", "estimate_cost",
     "decide", "resolve_model", "parse_decision", "build_system_prompt",
-    "build_tick_prompt", "SimStopped", "Beat",
+    "build_tick_prompt", "validate_scenario_for_run", "decision_run_id",
+    "SimStopped", "Beat",
     "MAX_TICKS", "MAX_AGENTS",
 ]

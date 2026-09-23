@@ -319,7 +319,7 @@ def _scene(tk: Dict[str, Any], p: Dict[str, str], known: set) -> List[str]:
 
 def _finale(run: Dict[str, Any], p: Dict[str, str]) -> List[str]:
     out = [f"## {p['finale']}", ""]
-    if run.get("status") in ("starting", "running", "stopping"):
+    if run.get("status") in ("pending", "starting", "running", "stopping"):
         out += [p["still_running"], ""]
     done = int(run.get("ticks_done") or 0)
     out.append(p["ended_after"].format(

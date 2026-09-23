@@ -126,9 +126,10 @@ deployment` in a terminal) is that page:
   (scheduler, watchdog, outbox, telegram, publisher).
 - **Queue and outbox.** How many launches wait, which worker holds each,
   and how many webhook deliveries are pending.
-- **Entities by host.** Active agent runs with the age of their heartbeat
-  and their checkpoint step, flow runs, loops with the replica executing
-  them, nodes and containers, each with the host it lives on.
+- **Entity runs by host.** Active agent runs with the age of their heartbeat
+  and their checkpoint step; entity runs (flows, loops, teams, scenarios) with
+  kind, host, heartbeat age and resume attempts. Nodes and containers are
+  listed separately, each with the host it lives on.
 - **Logs.** Each member writes its own log to `service_logs/<member>.log`
   under the state root (rotating, 5 MB by 3), mirrored to the object store
   when one is configured, and served as `GET

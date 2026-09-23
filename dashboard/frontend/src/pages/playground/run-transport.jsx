@@ -1,6 +1,19 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, History, Radio, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, History, Radio, Server, X } from 'lucide-react';
 import { statusLabel, useI18n } from '../../i18n';
+
+/** "12s"/"3m"/"1h" since an ISO timestamp — the heartbeat age, read at a
+    glance rather than as an exact duration. */
+function ageLabel(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h`;
+}
 
 const STATUS_STYLES = {
   starting: 'bg-blue-100 text-blue-700',
@@ -70,6 +83,19 @@ export function RunTransport({
           <span className="text-xs font-semibold text-gray-700">
             ${(run.total_cost || 0).toFixed(4)}
           </span>
+          {/* Where this run's process lives and how recently it beat — the
+              same two facts every other kind of run now shows, since a
+              scenario is a process with a heartbeat just like they are. */}
+          {(run.host || run.heartbeat_at || run.resume_attempts > 0) && (
+            <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+              <Server className="w-3 h-3" />
+              {[
+                run.host,
+                ageLabel(run.heartbeat_at) && `beat ${ageLabel(run.heartbeat_at)} ago`,
+                run.resume_attempts > 0 && `resumed x${run.resume_attempts}`,
+              ].filter(Boolean).join(', ')}
+            </span>
+          )}
           {run.error && <span className="text-xs text-amber-700">{run.error}</span>}
 
           {/* The right-hand group is one block pinned to the edge, not

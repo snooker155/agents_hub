@@ -20,6 +20,7 @@ import { useI18n, statusLabel } from '../i18n';
 // The card shows its scenario's last run, because a scenario has no status of
 // its own — "is this one running right now" is a fact about that run.
 const RUN_STATUS_STYLES = {
+  pending: 'bg-blue-100 text-blue-700',
   starting: 'bg-blue-100 text-blue-700',
   running: 'bg-blue-100 text-blue-700',
   stopping: 'bg-amber-100 text-amber-700',

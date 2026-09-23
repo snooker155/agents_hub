@@ -315,6 +315,18 @@ def run_loop(
             task_id=task_id, session_id=session_id,
         )
     store.save_run(run)
+    if task_id:
+        # Point the task at this run: the executor was recorded by
+        # _prepare_context before the run id existed.
+        try:
+            from tasks import service as _ts
+            _ts.assign_executor(
+                task_id, {"kind": "loop", "id": loop_id},
+                {"loop_id": loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
+                run_id=run.loop_run_id,
+            )
+        except Exception:
+            pass
     if resume_run:
         # Distinct from a plain resume (e.g. the watchdog picking a crashed run
         # back up): a person's explicit stop is what "resumed from a stop"
@@ -614,12 +626,13 @@ def _prepare_context(
         _ts.update_task(task_id, session_id=session_id)
     except Exception:
         pass
-    # Record the loop as the task's assignee, the same way a flow run does, so a
-    # task attached to a loop shows what is working on it instead of appearing
-    # unassigned for the whole run.
+    # Record the loop as the task's executor (kind loop), the same way a flow
+    # run does, so a task attached to a loop shows what is working on it
+    # instead of appearing unassigned for the whole run. The run id is added
+    # by run_loop once the run record exists.
     try:
-        _ts.assign_agent(
-            task.id, f"Loop: {loop.name or loop.loop_id}",
+        _ts.assign_executor(
+            task.id, {"kind": "loop", "id": loop.loop_id},
             {"loop_id": loop.loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
         )
     except Exception:

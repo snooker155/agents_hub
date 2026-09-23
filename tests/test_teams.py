@@ -299,6 +299,43 @@ def test_the_goal_is_the_first_thing_on_the_board(stub_members):
     assert first.kind == "goal" and first.content == "ship the page"
 
 
+def test_a_run_that_mints_its_own_record_marks_itself_running_with_a_heartbeat(stub_members):
+    """run_team's in-process door (chat, a tool call, a direct call) has no
+    launcher to call entity_runs.mark_running for it — see teams.runner.
+    run_team's ``run is None`` branch, which does that itself."""
+    import os
+    import socket
+
+    team = store.save_team(_team(mode="parallel", max_rounds=1, synthesize=False))
+    stub_members({"*": ["ok"]})
+    run = run_team(team.team_id, "ship the page")
+
+    stored = store.get_run(run.team_run_id)
+    assert stored.pid == os.getpid()
+    assert stored.host == socket.gethostname()
+    assert stored.heartbeat_at
+
+
+def test_a_finished_run_leaves_a_checkpoint_of_its_last_round(stub_members):
+    from common import entity_runs
+
+    team = store.save_team(_team(mode="centralized", leader_agent_id="orch",
+                                 leader_name="Lead", max_rounds=5, synthesize=False))
+    stub_members({
+        "Lead": [
+            '{"assignments": [{"agent": "Sam", "instruction": "build the header"}]}',
+            '{"assignments": [], "done": true, "final": "the page is up"}',
+        ],
+        "Sam": ["header pushed"],
+        "Rae": ["looks fine"],
+    })
+
+    run = run_team(team.team_id, "ship the page")
+    checkpoint = entity_runs.load_checkpoint(run.team_run_id)
+    assert checkpoint["round"] == run.rounds_done == 2
+    assert checkpoint["updated_at"]
+
+
 def test_a_team_with_two_members_of_the_same_name_is_refused():
     team = store.save_team(_team(members=[
         TeamMember(agent_id="a", name="Sam"), TeamMember(agent_id="b", name="Sam"),
@@ -370,6 +407,14 @@ def test_a_member_keeps_its_own_prompt_and_gains_the_team_block(monkeypatch):
     record = get_run_by_id(turn.run_id)
     assert record["status"] == "completed" and record["agent_id"] == "swe"
     assert record["output"] == "header pushed"
+    # A recursive stop and the run groups page find member turns this way
+    # (common/entity_runs.py: children / leaf_children).
+    assert record["parent_run_id"] == "trun_test"
+    # This call gave no run_id / in_process of its own, so the defaults hold:
+    # a random id (never asked to reuse one) and the in-process assumption
+    # (managers.runs.lifecycle._stop_run_record must never SIGTERM a pid this
+    # test's own process shares with everything else it does).
+    assert record["in_process"] is True
 
 
 def test_a_member_whose_agent_cannot_be_built_reports_it_instead_of_raising(monkeypatch):
@@ -572,7 +617,10 @@ def test_a_team_run_claims_its_task_and_starts_it_without_an_approval_step():
 
     updated = task_service.get_task(task.id)
     assert updated.status == TaskStatus.in_progress
-    assert updated.assigned_agent_type == f"Team: {team.name}"
+    # The task's executor is the team itself (tasks.models.Executor); the
+    # compatibility string readers of the old shape see is derived from it.
+    assert updated.executor.kind == "team" and updated.executor.id == team.team_id
+    assert updated.assigned_agent_type == f"team:{team.team_id}"
     assert updated.assigned_agent_run_id == run.team_run_id
     assert updated.agent_state != AgentState.pending_approval
 

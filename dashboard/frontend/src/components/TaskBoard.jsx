@@ -5,7 +5,8 @@ import { useLiveRefetch } from './stream';
 import {
   Plus, CheckCircle, Clock, AlertCircle, StopCircle, Loader,
   ExternalLink, Trash2, List, Columns, UserPlus, ChevronRight,
-  GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle, ShieldQuestion
+  GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle, ShieldQuestion,
+  Users, RotateCw
 } from 'lucide-react';
 import { getTasks, deleteTask, getAgents, assignAgent, approveAssignment, rejectAssignment, updateTask, listFlows, runFlow, getProjects } from '../api';
 import CreateTaskModal from './CreateTaskModal';
@@ -26,6 +27,23 @@ const STATUS_CONFIG = {
   reviewed:    { bg: 'bg-teal-100',   text: 'text-teal-700',   icon: CheckCircle,  },
   done:        { bg: 'bg-green-100',  text: 'text-green-700',  icon: CheckCircle,  },
 };
+
+// ─── Executor display (agent / flow / team / loop) ──────────────────────────
+// task.executor is the source of truth (see tasks.models.Executor); a task
+// from before that field existed falls back to the flow_id heuristic this
+// used to rely on exclusively, so an older-shaped task still reads correctly.
+const EXECUTOR_ICON = { agent: User, flow: Workflow, team: Users, loop: RotateCw };
+const EXECUTOR_BADGE = {
+  flow: { label: 'flow', cls: 'bg-purple-50 text-purple-600 border-purple-100' },
+  team: { label: 'team', cls: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
+  loop: { label: 'loop', cls: 'bg-teal-50 text-teal-600 border-teal-100' },
+};
+
+function executorLabel(task) {
+  const kind = task.executor?.kind || (task.assigned_agent_params?.flow_id ? 'flow' : 'agent');
+  const id = task.executor?.id || task.assigned_agent_type || '';
+  return { kind, id, Icon: EXECUTOR_ICON[kind] || User, badge: EXECUTOR_BADGE[kind] };
+}
 
 // ─── Kanban columns: each column maps to one or more backend statuses ────────
 const KANBAN_COLUMNS = [
@@ -258,17 +276,15 @@ function KanbanCard({ task, allTasks, onDelete, onAssign, onApprove, onReject, d
         )}
       </div>
 
-      {/* Agent / Flow info */}
+      {/* Executor info: agent / flow / team / loop */}
       {task.assigned_agent_type && (
         <div className="flex items-center gap-1 text-xs text-gray-500 mb-1">
-          {task.assigned_agent_params?.flow_id ? (
-            <Workflow className="w-3 h-3 text-purple-500" />
-          ) : (
-            <User className="w-3 h-3" />
-          )}
-          <span className="truncate">{task.assigned_agent_type}</span>
-          {task.assigned_agent_params?.flow_id && (
-            <span className="px-1 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-600 border border-purple-100">{t('taskBoard.flow')}</span>
+          {(() => { const { Icon } = executorLabel(task); return <Icon className="w-3 h-3 text-purple-500" />; })()}
+          <span className="truncate">{executorLabel(task).id}</span>
+          {executorLabel(task).badge && (
+            <span className={`px-1 py-0.5 rounded text-[10px] font-medium border ${executorLabel(task).badge.cls}`}>
+              {executorLabel(task).badge.label}
+            </span>
           )}
           {task.agent_state && task.agent_state !== 'none' && (
             <span className={`ml-auto px-1.5 py-0.5 rounded text-xs font-medium ${
@@ -813,12 +829,13 @@ export default function TaskBoard({
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-600">
                       {task.assigned_agent_type ? (
                         <span className="flex items-center gap-1">
-                          {task.assigned_agent_params?.flow_id ? (
-                            <Workflow className="w-3 h-3 text-purple-500" />
-                          ) : (
-                            <User className="w-3 h-3" />
+                          {(() => { const { Icon } = executorLabel(task); return <Icon className="w-3 h-3 text-purple-500" />; })()}
+                          {executorLabel(task).id}
+                          {executorLabel(task).badge && (
+                            <span className={`px-1 py-0.5 rounded text-[10px] font-medium border ${executorLabel(task).badge.cls}`}>
+                              {executorLabel(task).badge.label}
+                            </span>
                           )}
-                          {task.assigned_agent_type}
                         </span>
                       ) : '—'}
                     </td>

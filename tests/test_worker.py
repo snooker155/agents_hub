@@ -6,12 +6,28 @@ between backend, queue and worker rather than what a child does.
 """
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 
-from common import run_queue
+from common import entity_runs, run_queue
 from managers import run_manager as rm
 from runtime import worker as worker_mod
 from tasks import service as ts
+
+
+def _stub_module(monkeypatch, name: str, **attrs):
+    """Register a fake module under ``name`` for the duration of one test, the
+    way teams.launcher and playground.launcher are stubbed here: both are
+    being written alongside this change (runtime/entity_launch.py), so the
+    worker's dispatch to them is tested against a stand-in rather than the
+    real module."""
+    mod = types.ModuleType(name)
+    for key, value in attrs.items():
+        setattr(mod, key, value)
+    monkeypatch.setitem(sys.modules, name, mod)
+    return mod
 
 
 @pytest.fixture(autouse=True)
@@ -200,12 +216,15 @@ def test_flow_launch_goes_through_the_queue_in_the_api_role(monkeypatch):
 
     monkeypatch.setenv("AGENTS_HUB_ROLE", "api")
     spawned = []
-    monkeypatch.setattr(flow_launcher, "_spawn_flow_process", lambda *a, **k: spawned.append(a) or 1)
-    flow_launcher._dispatch({"kind": "flow", "run_id": "f1", "flow_id": "fl", "task_id": "",
-                             "session_id": "s", "workspace": "default", "args": ["x"],
+    monkeypatch.setattr("runtime.entity_launch.spawn_local",
+                        lambda *a, **k: spawned.append(a) or 1)
+    flow_launcher._dispatch({"kind": "flow", "run_id": "f1", "entity_id": "fl", "flow_id": "fl",
+                             "entrypoint": "flow_run", "cli_args": ["x"], "task_id": "",
+                             "session_id": "s", "workspace": "default",
                              "log_file": "/tmp/x.log", "header": "h", "mode": "w"})
     assert not spawned
     assert run_queue.get("f1")["kind"] == "flow"
+    assert run_queue.get("f1")["payload"]["entrypoint"] == "flow_run"
 
 
 def test_main_once_runs_a_single_tick(monkeypatch, capsys):
@@ -213,3 +232,68 @@ def test_main_once_runs_a_single_tick(monkeypatch, capsys):
     monkeypatch.setattr("common.bootstrap.ensure_initial_state", lambda: {})
     assert worker_mod.main(["--once", "--modes", "local"]) == 0
     assert "worker tick" in capsys.readouterr().out
+
+
+# ── every entity kind through the shared launch envelope ────────────────────
+# team and scenario share runtime/entity_launch.py with flow; teams.launcher
+# and playground.launcher are stubbed rather than real, since both are being
+# written alongside this change.
+
+def test_launch_dispatches_team_and_scenario_specs_to_their_own_launcher(monkeypatch):
+    calls = []
+    _stub_module(monkeypatch, "teams.launcher",
+                 launch_prepared=lambda spec: calls.append(("team", spec["run_id"])))
+    _stub_module(monkeypatch, "playground.launcher",
+                 launch_prepared=lambda spec: calls.append(("scenario", spec["run_id"])))
+
+    worker_mod._launch({"kind": "team", "run_id": "tr-1"})
+    worker_mod._launch({"kind": "scenario", "run_id": "sr-1"})
+
+    assert calls == [("team", "tr-1"), ("scenario", "sr-1")]
+
+
+def _queued_entity_run(kind: str, run_id: str, entity_id: str = "e1"):
+    """A pending entity_runs record plus its queue row: the database half of
+    a team/scenario launch a launcher would have prepared before dispatch."""
+    id_field, entity_field = entity_runs.KIND_FIELDS[kind]
+    entity_runs.upsert({
+        "run_id": run_id, id_field: run_id, "kind": kind,
+        entity_field: entity_id, "entity_id": entity_id, "status": "pending",
+    }, kind=kind, merge=False)
+    run_queue.enqueue(run_id, kind, {"kind": kind, "run_id": run_id})
+
+
+def test_worker_claims_and_reaps_a_team_and_a_scenario_launch(monkeypatch):
+    """A queued team and scenario spec are dispatched to their own launcher
+    (stubbed) and, once their child looks dead, reaped like any other kind."""
+    def _mark_running(spec):
+        entity_runs.mark_running(spec["run_id"], pid=4242, host="h")
+
+    _stub_module(monkeypatch, "teams.launcher", launch_prepared=_mark_running)
+    _stub_module(monkeypatch, "playground.launcher", launch_prepared=_mark_running)
+
+    _queued_entity_run("team", "tr-3")
+    _queued_entity_run("scenario", "sr-3")
+
+    w = worker_mod.Worker(concurrency=4, modes=["local"], owner="w1")
+    assert w.tick() == 2
+    assert "tr-3" in w.tracked and "sr-3" in w.tracked
+    assert entity_runs.get("tr-3")["status"] == "running"
+    assert entity_runs.get("sr-3")["status"] == "running"
+
+    monkeypatch.setattr(worker_mod, "_child_alive", lambda spec: False)
+    w.tick()
+    assert "tr-3" not in w.tracked and "sr-3" not in w.tracked
+    assert run_queue.get("tr-3")["status"] == run_queue.STATUS_DONE
+    assert run_queue.get("sr-3")["status"] == run_queue.STATUS_DONE
+
+
+def test_child_alive_reads_entity_runs_for_non_task_kinds():
+    """_child_alive's generic path (runtime.entity_launch.child_alive) for a
+    kind other than task: a completed run is never alive, whatever its pid."""
+    entity_runs.upsert({
+        "run_id": "tr-4", "team_run_id": "tr-4", "kind": "team",
+        "team_id": "team-x", "entity_id": "team-x", "status": "completed",
+        "pid": 999999, "host": "",
+    }, kind="team", merge=False)
+    assert worker_mod._child_alive({"kind": "team", "run_id": "tr-4"}) is False

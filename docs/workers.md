@@ -35,18 +35,18 @@ AGENTS_HUB_WORKER_MODES=local ah worker --concurrency 8
 ## The queue
 
 `run_queue` is one table. A row is a launch request: the run id, its kind
-(`task` or `flow`), the workspace, whether it wants a container, a priority,
-and a JSON spec that is everything the launcher needs. A worker claims the
-highest-priority oldest row it can run under a lease it renews every couple
-of seconds while the child is alive, then closes the row when the child
-exits.
+(`task`, `flow`, `team` or `scenario`), the workspace, whether it wants a
+container, a priority, and a JSON spec that is everything the launcher needs.
+A worker claims the highest-priority oldest row it can run under a lease it
+renews every couple of seconds while the child is alive, then closes the row
+when the child exits.
 
 The child is detached from the worker. A worker that dies does not take its
-runs down: the run keeps writing its own heartbeat (below), the watchdog
-keeps treating it as alive, and the queue sweep closes the orphaned row. A
-worker that died before it managed to spawn leaves a row whose lease lapses;
-the sweep hands it back to the queue for another worker, up to three
-attempts, after which the run fails with the last error the workers saw.
+runs down: the run keeps writing its own heartbeat (below), the watchdog keeps
+treating it as alive, and the queue sweep closes the orphaned row. A worker
+that died before it managed to spawn leaves a row whose lease lapses; the sweep
+hands it back to the queue for another worker, up to three attempts, after which
+the run fails with the last error the workers saw.
 
 On `SIGTERM` a worker stops claiming, keeps the rows of its running children
 leased for up to `AGENTS_HUB_WORKER_DRAIN_SECONDS` (default 300) so a
@@ -54,17 +54,18 @@ replacement never double-launches them, releases its leases and exits.
 
 ## Heartbeats instead of pids
 
-Every agent run stamps `runs.heartbeat_at` every `RUN_HEARTBEAT_SECONDS`
+Every agent run and every entity run stamps `heartbeat_at` every `RUN_HEARTBEAT_SECONDS`
 (default 15) through its state transport, so it works from a container with
-the HTTP relay too. The watchdog reads that first: a run quiet for
-`RUN_HEARTBEAT_STALE_SECONDS` (default 180) is dead whatever its pid says,
-and a run with a fresh heartbeat is alive whatever its pid says. The pid and
-container probes remain for records without a heartbeat, and only on the
-host that started the run (`host` on the record).
+the HTTP relay too. The watchdog reads that first: a run quiet for its kind's
+threshold (agent runs: `RUN_HEARTBEAT_STALE_SECONDS` default 180 seconds;
+flows/teams/scenarios: per-kind defaults with loops at 900 s) is dead whatever
+its pid says, and a run with a fresh heartbeat is alive whatever its pid says.
+The pid and container probes remain for records without a heartbeat, and only
+on the host that started the run (`host` on the record).
 
 A stop requested for a run on another host cannot send it a signal. The stop
-marks the record `stop`; the run's next heartbeat reads that back and sends
-itself the same signal a local stop would have.
+marks the record `stopping`; the run's next heartbeat reads that back and stops
+at its next safe point.
 
 ## Checkpoint and resume
 

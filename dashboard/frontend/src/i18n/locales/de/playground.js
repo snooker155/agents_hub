@@ -40,6 +40,8 @@ export default {
   descriptionHint: 'Erscheint in der Szenarioliste und über der Chronik jedes Laufs. Die Figuren lesen sie nie — was sie über die Welt erfahren, ist die Beschreibung der Welt selbst.',
   environment: 'Umgebung',
   estimate: 'Schätzung',
+  resume: 'Fortsetzen',
+  resumeFailed: 'Der Lauf konnte nicht fortgesetzt werden.',
   stop: 'Stoppen',
   live: 'live',
   follow: 'Folgen',

@@ -3,11 +3,11 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, Play, Square, Trash2, Loader, Save, AlertTriangle, X, Crown,
   Wand2, MessageSquare, DollarSign, Eye, ExternalLink, Radio, Plus, DoorOpen,
-  History, Settings as SettingsIcon, UsersRound,
+  History, Settings as SettingsIcon, UsersRound, RotateCcw,
 } from 'lucide-react';
 import {
   getTeam, updateTeam, estimateTeam, startTeamRun, getTeamRuns, getTeamRun,
-  getTeamMessages, stopTeamRun, suggestTeamManifest, getTeamBriefing, getAgents,
+  getTeamMessages, stopTeamRun, resumeTeamRun, suggestTeamManifest, getTeamBriefing, getAgents,
   getTeamChat, clearTeamChat, stopTeamChat, teamChatUrl,
 } from '../api';
 import EntityChat from '../components/EntityChat';
@@ -40,6 +40,22 @@ const KIND_STYLES = {
   verdict: 'border-l-4 border-green-500 bg-green-50/50',
   error: 'border-l-4 border-red-400 bg-red-50/50',
 };
+
+/**
+ * How long ago a run's process last beat its heartbeat, for the run header.
+ * Null when there is no heartbeat yet (a pending run with no process) or the
+ * timestamp does not parse.
+ */
+function heartbeatAge(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.round(m / 60)}h`;
+}
 
 const TABS = [
   { id: 'work', label: 'Work', icon: MessageSquare },
@@ -222,6 +238,7 @@ export default function TeamDetails() {
   const [addAgent, setAddAgent] = useState('');
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const boardEndRef = useRef(null);
@@ -339,7 +356,10 @@ export default function TeamDetails() {
     boardEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [messages.length]);
 
-  const live = isLive(run?.status);
+  // A run is now born "pending" — queued for a process, not yet spawned — and
+  // is just as much "in progress" as "running" is; components/teamModes.js's
+  // isLive predates that status, so it is widened here rather than there.
+  const live = isLive(run?.status) || run?.status === 'pending';
 
   const handleStart = async () => {
     if (!team) return;
@@ -372,6 +392,21 @@ export default function TeamDetails() {
       loadRun(run.team_run_id);
     } finally {
       setStopping(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!run?.team_run_id) return;
+    setResuming(true); setMessage('');
+    try {
+      const { data } = await resumeTeamRun(run.team_run_id);
+      setRun(data);
+      setTab('work');
+      loadRuns();
+    } catch (e) {
+      setMessage(e.response?.data?.detail || t('teamDetails.startFailed'));
+    } finally {
+      setResuming(false);
     }
   };
 
@@ -453,15 +488,28 @@ export default function TeamDetails() {
                 Stop
               </button>
             ) : (
-              <button
-                onClick={handleStart}
-                disabled={starting || !team.members.length}
-                className="inline-flex items-center px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {starting ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
-                          : <Play className="w-3.5 h-3.5 mr-1" />}
-                Run
-              </button>
+              <>
+                {run?.has_checkpoint && ['stopped', 'failed'].includes(run?.status) && (
+                  <button
+                    onClick={handleResume} disabled={resuming}
+                    title="Continue this run from where it left off"
+                    className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-60"
+                  >
+                    {resuming ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
+                              : <RotateCcw className="w-3.5 h-3.5 mr-1" />}
+                    {t('teamDetails.resume')}
+                  </button>
+                )}
+                <button
+                  onClick={handleStart}
+                  disabled={starting || !team.members.length}
+                  className="inline-flex items-center px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {starting ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
+                            : <Play className="w-3.5 h-3.5 mr-1" />}
+                  Run
+                </button>
+              </>
             )}
         </>}
       />
@@ -571,6 +619,19 @@ export default function TeamDetails() {
                   <span className="text-sm text-gray-600">${(run.total_cost || 0).toFixed(4)}</span>
                   {run.stop_reason && (
                     <span className="text-sm text-gray-500 italic">— {run.stop_reason.replace(/_/g, ' ')}</span>
+                  )}
+                  {run.host && (
+                    <span className="text-xs text-gray-400">on {run.host}</span>
+                  )}
+                  {live && heartbeatAge(run.heartbeat_at) && (
+                    <span className="text-xs text-gray-400">
+                      last beat {heartbeatAge(run.heartbeat_at)} ago
+                    </span>
+                  )}
+                  {run.resume_attempts > 0 && (
+                    <span className="text-xs text-gray-400">
+                      {t('teamDetails.resumedTimes', { n: run.resume_attempts })}
+                    </span>
                   )}
                   {run.task_id && (
                     <Link to={`/tasks/${run.task_id}`} className="text-xs text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1">

@@ -375,7 +375,7 @@ def build_task_driver(
 
     def _should_stop() -> bool:
         _fr = run_store.get_flow_run(run_id)
-        return bool(_fr and _fr.get("status") in ("stop", "stopped"))
+        return bool(_fr and _fr.get("status") in ("stop", "stopping", "stopped"))
 
     def _on_node_start(ev: dict) -> None:
         if ev.get("is_agent"):

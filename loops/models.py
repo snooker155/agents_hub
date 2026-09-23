@@ -204,10 +204,14 @@ class LoopRun:
     loop_run_id: str = field(default_factory=lambda: new_id("lrun"))
     loop_id: str = ""
     workspace: Optional[str] = None
-    status: str = "running"          # running | stopping | completed | stopped | failed
+    # The shared vocabulary of common/run_status.py. A loop runs on a thread
+    # of the process that started it, so it is born ``running``.
+    status: str = "running"
     goal: str = ""
     task_id: Optional[str] = None
     session_id: Optional[str] = None
+    # The run this one executes inside (a flow node that is a loop), if any.
+    parent_run_id: Optional[str] = None
     iterations_done: int = 0
     best_score: Optional[float] = None
     final_score: Optional[float] = None
@@ -215,6 +219,11 @@ class LoopRun:
     result: str = ""
     error: Optional[str] = None
     total_cost: float = 0.0
+    #: Which process carries the loop and when it last showed a sign of life,
+    #: mirrored from the position into the columns every kind of run shares.
+    host: Optional[str] = None
+    heartbeat_at: Optional[str] = None
+    created_at: str = field(default_factory=utc_iso)
     started_at: str = field(default_factory=utc_iso)
     finished_at: Optional[str] = None
     #: Where the run has got to, written after every iteration: enough to pick
@@ -232,10 +241,13 @@ class LoopRun:
             "loop_run_id": self.loop_run_id, "loop_id": self.loop_id,
             "workspace": self.workspace, "status": self.status, "goal": self.goal,
             "task_id": self.task_id, "session_id": self.session_id,
+            "parent_run_id": self.parent_run_id,
             "iterations_done": self.iterations_done,
             "best_score": self.best_score, "final_score": self.final_score,
             "stop_reason": self.stop_reason, "result": self.result,
             "error": self.error, "total_cost": self.total_cost,
+            "host": self.host, "heartbeat_at": self.heartbeat_at,
+            "created_at": self.created_at,
             "started_at": self.started_at, "finished_at": self.finished_at,
             "position": dict(self.position), "resume_attempts": self.resume_attempts,
         }
