@@ -310,10 +310,19 @@ def run_scenario_target(case, cfg, evalset, eval_run_id: str, workspace: Optiona
     scenario = sim_store.get_scenario(cfg.target_id)
     if not scenario:
         return Outcome(ok=False, error=f"scenario not found: {cfg.target_id!r}")
+    from playground.runner import roles_from_team
+
     config = scenario.to_dict()
     settings = dict(cfg.settings or {})
     if settings.get("max_ticks"):
         config["max_ticks"] = int(settings["max_ticks"])
+    # A scenario cast by a team (Scenario.team_id, no roles of its own) gets
+    # its roster here, before the recipient of the case input is chosen and
+    # before the model override is applied: the runner would fill it in
+    # anyway, but too late for either of those, and the case would then be
+    # delivered to nobody.
+    if not config.get("roles") and config.get("team_id"):
+        config["roles"] = [r.to_dict() for r in roles_from_team(Scenario.from_dict(config))]
     if cfg.model or cfg.provider:
         config["default_provider"] = cfg.provider or config.get("default_provider")
         config["default_model"] = cfg.model or config.get("default_model")

@@ -544,3 +544,56 @@ def test_a_run_that_decides_its_hypothesis_stops_with_that_reason(monkeypatch, s
     kinds = sorted(v["kind"] for v in vstore.views_owned_by("scenario", run.sim_run_id))
     assert kinds == ["document"]
     assert run.final_state["views"]["report"]
+
+
+def test_eval_delivers_the_case_to_a_team_cast_scenario(monkeypatch):
+    """A scenario cast only by a team has no roles on its record; the eval
+    adapter must still deliver the case input to somebody, and the model
+    override must reach the team's roles too."""
+    import playground.runner as runner_mod
+    import runtime.entity_heartbeat as hb_mod
+    from evals.models import Case, EvalSet, RunConfig
+    from evals.targets import run_scenario_target
+
+    team = _team()
+    scenario = store.save_scenario(Scenario(name="lab", environment="lab", team_id=team.team_id))
+
+    delivered = []
+    seen_config = {}
+
+    class _Heartbeat:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    def fake_run_simulation(scenario_id, workspace=None, run=None, on_start=None, **_):
+        seen_config.update(run.config)
+        run.status = "completed"
+        run.scores = {}
+        run.final_state = {}
+        run.total_cost = 0.0
+        if on_start:
+            on_start(run)
+        return run
+
+    monkeypatch.setattr(hb_mod, "EntityHeartbeat", _Heartbeat)
+    monkeypatch.setattr(runner_mod, "run_simulation", fake_run_simulation)
+    monkeypatch.setattr(runner_mod, "trigger_agent",
+                        lambda run_id, agent, text, sender="": delivered.append((agent, text)))
+
+    cfg = RunConfig(target={"kind": "scenario", "id": scenario.scenario_id}, model="gpt-5")
+    case = Case(case_id="c1", input="Is the mean near 0.5?")
+    evalset = EvalSet(name="repro", cases=[case])
+    outcome = run_scenario_target(case, cfg, evalset, "erun", None, prompt=case.input)
+
+    assert outcome.ok
+    # The team's leader (Ada) opens the scene and receives the case.
+    assert delivered == [("Ada", "Is the mean near 0.5?")]
+    # The frozen roster came from the team and carries the override.
+    assert [r["name"] for r in seen_config["roles"]] == ["Ada", "beta", "beta 2"]
+    assert {r["model"] for r in seen_config["roles"]} == {"gpt-5"}

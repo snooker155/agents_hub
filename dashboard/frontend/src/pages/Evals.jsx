@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   FlaskConical, Plus, Play, Trash2, Loader, ChevronRight, ChevronDown,
   AlertTriangle, DollarSign, CheckCircle, XCircle, X, Save, History, GitCompare,
@@ -197,7 +198,9 @@ export default function Evals() {
     })();
   }, [currentWorkspace]);
 
-  const selectSet = async (id) => {
+  // `runId` opens that run of the set instead of the newest one: a deep link
+  // (?set=&run=) from the page that started the run lands on it.
+  const selectSet = async (id, runId = null) => {
     setActiveRun(null);
     setEstimate(null);
     setMessage('');
@@ -212,14 +215,33 @@ export default function Evals() {
       setConfigs(baseline
         ? [{ target: baseline, provider: '', model: '', label: 'baseline', repeats: 1 }]
         : []);
-      if ((hist.eval_runs || []).length) {
-        const { data: latest } = await getEvalRun(hist.eval_runs[0].eval_run_id);
-        setActiveRun(latest);
+      const history = hist.eval_runs || [];
+      const wanted = runId && history.find((r) => r.eval_run_id === runId) ? runId : null;
+      if (wanted || history.length) {
+        const { data: run } = await getEvalRun(wanted || history[0].eval_run_id);
+        setActiveRun(run);
       }
     } catch {
       setMessage(t('evals.loadFailed'));
     }
   };
+
+  // Deep link: /evals?set=<eval_set_id>&run=<eval_run_id>, the link the
+  // scenario page's reproducibility button and a finished run's notification
+  // carry. Consumed once, after the sets have loaded, so a later click on
+  // another set is not undone by the URL.
+  const [searchParams] = useSearchParams();
+  const deepLinkConsumed = useRef(false);
+  useEffect(() => {
+    if (loading || deepLinkConsumed.current) return;
+    const setId = searchParams.get('set');
+    if (!setId) return;
+    deepLinkConsumed.current = true;
+    selectSet(setId, searchParams.get('run'));
+    // selectSet is a plain closure over state setters and t; it is stable enough
+    // for a once-only effect and listing it would re-run this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, searchParams]);
 
   // The run right before the one on screen, in this set's history (newest
   // first) — what "compare with previous" means without asking the user to
