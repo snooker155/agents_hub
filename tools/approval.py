@@ -48,6 +48,9 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     "delete_file",
     "apply_unified_diff",
     # Deleting a hub entity: the record and its history go with it.
+    # Deleting branches from the system workspace's repository copy: a
+    # branch is a patch a human has not reviewed yet (tools/system_ops.py).
+    "system_prune_branches",
     "delete_agent_tool",
     "delete_flow_tool",
     "delete_team_tool",

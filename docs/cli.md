@@ -70,6 +70,7 @@ ah task create "Build a REST API" --decompose
 ah task list --status todo
 ah workspace list
 ah node list
+ah doctor                               # judge the service: each check ok, warn, fail or skip (--json; exits 1 on fail)
 ah db status                            # which database backend, schema version, row counts
 ah db migrate --to postgresql://...     # copy the database into Postgres (or back to a file)
 ah worker                               # claim launches from the run queue and spawn them here (see workers.md)

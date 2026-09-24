@@ -36,6 +36,13 @@ context between them.
 `default` always exists and cannot be deleted. Agents marked
 `default_workspace_only` are hidden everywhere else.
 
+## The system workspace
+
+`system` is seeded at startup (turn it off with `SYSTEM_WORKSPACE=false`). Its
+project is a git copy of this repository under the state directory, and a
+scheduled loop proposes fixes to the service there as branches, never pushing.
+See [system-workspace](system-workspace.md).
+
 ## Gotchas
 
 - Removing a custom agent from a workspace does not delete it; it stays in the
@@ -45,4 +52,4 @@ context between them.
 - Files live in the workspace folder, not in the project folder, unless the
   agent was told a project. A file "gone missing" is usually one level up.
 
-Related: [projects](projects.md), [agents](agents.md), [memory](memory.md), [costs](costs.md).
+Related: [projects](projects.md), [agents](agents.md), [memory](memory.md), [costs](costs.md), [system-workspace](system-workspace.md).

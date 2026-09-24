@@ -57,4 +57,7 @@ times, and review starts on every resolve when the code_reviewer agent is availa
   iteration cap and the cost ceiling still mean what they said. The wall clock
   restarts with the process: it bounds one sitting, not the whole run.
 
-Related: [flows](flows.md), [costs](costs.md).
+The [system workspace](system-workspace.md) ships one loop of its own,
+`system_loop`, scheduled through a job of kind `loop` that starts paused.
+
+Related: [flows](flows.md), [costs](costs.md), [system-workspace](system-workspace.md).

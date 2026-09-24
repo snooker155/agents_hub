@@ -12,6 +12,9 @@ class JobKind(str, Enum):
     notification = "notification"
     agent_task = "agent_task"
     flow = "flow"
+    # Starts a run of a loop (loops/launcher.py). Used by the system
+    # workspace's maintenance loop (common/system_workspace.py).
+    loop = "loop"
 
 
 class JobStatus(str, Enum):
@@ -83,6 +86,9 @@ class ScheduledJob(BaseModel):
     flow_id: Optional[str] = None
     seed: Optional[Dict[str, Any]] = None
     max_concurrent: int = 1
+    # loop only: the loop to start. A firing is skipped, with an error on the
+    # job, while a run of the same loop is still active.
+    loop_id: Optional[str] = None
     # Delivery channels for notifications ("dashboard"; "telegram" later).
     channels: List[str] = Field(default_factory=lambda: ["dashboard"])
 

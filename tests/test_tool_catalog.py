@@ -26,7 +26,8 @@ OLD_CATEGORIES = {
     "documentation", "entity_runs", "evals", "execution", "filesystem",
     "flow_management", "geometry", "loop_management", "memory",
     "project_management", "reasoning", "scenario_management",
-    "schedule_management", "service_ops", "task_management", "team_management",
+    "schedule_management", "service_ops", "system_ops", "task_management",
+    "team_management",
     "visualization", "web", "world_management",
 }
 
@@ -75,6 +76,7 @@ def _tool_objects_by_id() -> dict:
     from tools.entity_runs import ENTITY_RUN_TOOLS
     from tools.git_publish import GIT_PUBLISH_TOOLS
     from tools.service_ops import SERVICE_OPS_TOOLS
+    from tools.system_ops import SYSTEM_OPS_TOOLS
     from tools.docs_tool import DOCS_TOOLS
     from tools.eval_ops import EVAL_TOOLS
     from tools.schedule_management import (
@@ -108,7 +110,7 @@ def _tool_objects_by_id() -> dict:
         *SCENARIO_MANAGEMENT_TOOLS, *WORLD_MANAGEMENT_TOOLS,
         *TEAM_MANAGEMENT_TOOLS, *LOOP_MANAGEMENT_TOOLS,
         *PROJECT_MANAGEMENT_TOOLS,
-        *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *SERVICE_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
+        *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
         schedule_notification, schedule_task, notify_user, list_scheduled,
         cancel_scheduled, update_scheduled,
         *WEB_TOOLS, *BROWSER_TOOLS, run_code,

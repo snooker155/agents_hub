@@ -11,6 +11,9 @@ The snapshot itself lives in ``common.health`` so the Service Agent's
 ``service_health`` tool reports exactly what this endpoint does, without either
 of them going through HTTP to reach the other.
 
+``GET /api/health/doctor`` judges that snapshot (common/doctor.py): the same
+checks ``ah doctor`` and the ``run_diagnostics`` tool report.
+
 The Service Agent's own chat lives here too, under ``/api/health/chat``. It is
 the one build chat with nothing to build: the subject is the running service, so
 the "entity" is a single fixed id rather than a row in a store.
@@ -40,6 +43,17 @@ async def health(request: Request):
     # its routes. See docs/playground.md, "Turning the playground off".
     result["features"] = {"playground": playground_enabled()}
     return result
+
+
+@router.get("/health/doctor")
+async def doctor(request: Request):
+    """The doctor's checks over the snapshot (common/doctor.py): each ok, warn,
+    fail or skip with a summary and a docs anchor, plus the overall status.
+    Run in a worker thread: some checks probe the network with a timeout, and
+    the event loop must keep serving meanwhile. Never raises."""
+    from starlette.concurrency import run_in_threadpool
+    from common.doctor import run_doctor
+    return await run_in_threadpool(run_doctor, request.app.state)
 
 
 # ── The Service Agent's chat ─────────────────────────────────────────────────

@@ -99,4 +99,14 @@ export default {
   pdf: 'PDF',
   render: 'Rendern',
   text: 'Text',
+  systemPatch: {
+    title: 'System Patch',
+    branch: 'Branch',
+    commit: 'Commit',
+    fetchCommand: 'Fetch Befehl',
+    copyCommand: 'Befehl kopieren',
+    copied: 'In die Zwischenablage kopiert',
+    copyFailed: 'Automatisches Kopieren war nicht möglich, der Befehl ist zum manuellen Kopieren markiert',
+    humanNote: 'Diesen Branch pusht und den Pull Request öffnet weiterhin ein Mensch.',
+  },
 };

@@ -472,6 +472,10 @@ def fire_job(job: ScheduledJob) -> Dict[str, Any]:
                 result["notification_id"] = str(n.id)
             elif job.kind == JobKind.flow:
                 result["task_id"] = _fire_flow(job)
+            elif job.kind == JobKind.loop:
+                fired = _fire_loop(job)
+                result["task_id"] = fired.get("task_id")
+                result["loop_run_id"] = fired.get("loop_run_id")
             else:
                 result["task_id"] = _fire_agent_task(job)
         except Exception as e:
@@ -484,7 +488,7 @@ def fire_job(job: ScheduledJob) -> Dict[str, Any]:
         "last_fired_at": now,
         "last_error": error,
     }
-    if job.kind in (JobKind.agent_task, JobKind.flow) and result.get("task_id"):
+    if job.kind in (JobKind.agent_task, JobKind.flow, JobKind.loop) and result.get("task_id"):
         fields["created_task_ids"] = [*job.created_task_ids, result["task_id"]]
     if job.recurrence == Recurrence.none:
         fields["status"] = JobStatus.failed if error else JobStatus.fired
@@ -620,6 +624,48 @@ def _fire_flow(job: ScheduledJob) -> str:
         channels=job.channels,
     )
     return result["task_id"]
+
+
+def _fire_loop(job: ScheduledJob) -> Dict[str, Any]:
+    """Start a run of the job's loop. Returns ``{"loop_run_id", "task_id"}``.
+
+    Goes through ``loops.launcher.start_loop_run``, the same door the loop
+    route uses (dashboard/backend/routes/loops.py), so a scheduled run is a
+    process of its own, queued for a worker in the ``api`` role. A run of the
+    same loop that is still active makes this firing raise, which
+    ``fire_job`` records as ``last_error``: two maintenance passes over the
+    same repository copy at once would only trip over each other.
+    """
+    if not job.loop_id:
+        raise ValueError("loop job has no loop_id")
+
+    from common.run_status import ACTIVE_STATUSES
+    from loops import store as loop_store
+    from loops.launcher import start_loop_run
+
+    loop = loop_store.get_loop(job.loop_id)
+    if loop is None:
+        raise ValueError(f"Loop not found: {job.loop_id}")
+    active = [r for r in loop_store.list_runs(job.loop_id, limit=20)
+              if r.status in ACTIVE_STATUSES]
+    if active:
+        raise RuntimeError(
+            f"skipped: run {active[0].loop_run_id} of loop '{job.loop_id}' is still "
+            f"{active[0].status}")
+
+    run = start_loop_run(
+        job.loop_id, job.message or "", workspace=job.workspace or loop.workspace,
+        seed=dict(job.seed or {}),
+    )
+    create_notification(
+        title=f"Scheduled loop started: {job.title}",
+        body=f"Loop '{job.loop_id}' was started by scheduled job {job.id}.",
+        source={"job_id": str(job.id), "task_id": run.task_id, "loop_id": job.loop_id,
+                "loop_run_id": run.loop_run_id},
+        workspace=job.workspace,
+        channels=job.channels,
+    )
+    return {"loop_run_id": run.loop_run_id, "task_id": run.task_id}
 
 
 def claim_due_jobs(

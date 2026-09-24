@@ -120,6 +120,25 @@ def service_health() -> str:
         return _json_err(f"Failed to read health: {e}", code="internal")
 
 
+@tool("run_diagnostics", args_schema=NoArgs)
+def run_diagnostics() -> str:
+    """Run the doctor: a list of checks, each ok, warn, fail or skip, with a
+    one sentence summary, the numbers behind it and the docs section that says
+    how to fix it (pending migrations, the default provider answering, stale
+    runs and expired leases, the launch queue, the outbox, free disk, the
+    browser service, docker, the frontend build, the system workspace).
+
+    Use it when the question is "what is wrong", not "what is the state":
+    service_health reports the raw snapshot, this judges it. Statuses and
+    numbers only, never log content.
+    """
+    try:
+        from common.doctor import run_doctor
+        return _json_ok({"doctor": run_doctor()})
+    except Exception as e:
+        return _json_err(f"Failed to run the doctor: {e}", code="internal")
+
+
 # ── containers ───────────────────────────────────────────────────────────────
 
 @tool("list_containers", args_schema=NoArgs)
@@ -643,7 +662,7 @@ def prune_run_logs(older_than_days: int = 30, user_approved: bool = False) -> st
 
 #: Read-only tools: safe to call on a hunch.
 SERVICE_READ_TOOLS = [
-    service_health,
+    service_health, run_diagnostics,
     list_containers, container_logs,
     list_nodes, node_logs,
     list_instances, instance_timeline,
@@ -658,7 +677,7 @@ SERVICE_ACTION_TOOLS = [stop_run, stop_node, restart_node, stop_container, prune
 SERVICE_OPS_TOOLS = [*SERVICE_READ_TOOLS, *SERVICE_ACTION_TOOLS]
 
 __all__ = [
-    "service_health", "list_containers", "container_logs", "list_nodes", "node_logs",
+    "service_health", "run_diagnostics", "list_containers", "container_logs", "list_nodes", "node_logs",
     "list_instances", "instance_timeline", "list_sessions", "list_runs", "run_log",
     "search_errors", "routing_log", "web_log_recent", "costs_summary",
     "stop_run", "stop_node", "restart_node", "stop_container", "prune_run_logs",

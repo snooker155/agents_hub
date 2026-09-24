@@ -395,4 +395,35 @@ def ensure_initial_state() -> dict[str, bool]:
     result["system_agents_added"] = bool(_ensure_system_agents())
     result["system_agents_synced"] = bool(_sync_system_agents())
     result["capabilities_grandfathered"] = bool(_grandfather_capability_violations())
+    result["system_workspace"] = _seed_system_workspace()
+    result["demo_workspace"] = _seed_demo_workspace()
     return result
+
+
+def _seed_system_workspace() -> bool:
+    """Seed the system workspace (common/system_workspace.py) when the setting
+    is on. Additive and never raising: a failure here must not stop the
+    service from starting, it is reported by the doctor instead."""
+    try:
+        from common.config import settings
+        if not bool(getattr(settings, "system_workspace", True)):
+            return False
+        from common.system_workspace import ensure_system_workspace
+        return bool(ensure_system_workspace())
+    except Exception:  # noqa: BLE001 - startup must not raise; the doctor reports a missing system workspace
+        log.debug("system workspace seed skipped", exc_info=True)
+        return False
+
+
+def _seed_demo_workspace() -> bool:
+    """Seed the demo workspace (common/demo_workspace.py) when the setting is
+    on. Additive and never raising, like the system workspace."""
+    try:
+        from common.config import settings
+        if not bool(getattr(settings, "demo_workspace", False)):
+            return False
+        from common.demo_workspace import ensure_demo_workspace
+        return bool(ensure_demo_workspace())
+    except Exception:  # noqa: BLE001 - startup must not raise; a missing demo is only a missing demo
+        log.debug("demo workspace seed skipped", exc_info=True)
+        return False

@@ -710,6 +710,7 @@
       "system": true,
       "tools": [
         "service_health",
+        "run_diagnostics",
         "list_containers",
         "container_logs",
         "list_nodes",
@@ -835,6 +836,7 @@
         "modify_scenario_tool",
         "delete_scenario_tool",
         "validate_scenario_tool",
+        "create_scenario_from_template_tool",
         "run_scenario_tool",
         "get_scenario_run_tool",
         "stop_scenario_run_tool",
@@ -995,6 +997,72 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
+      "skills_enabled": false
+    },
+    {
+      "id": "system_doctor",
+      "name": "System Doctor",
+      "type": "langchain",
+      "entrypoint": "agents.agent_factory:build_agent_executor",
+      "description": "Runs the service's diagnostics and error search and turns every finding that is not already tracked into a [system] task in the system workspace, marked with whether it needs a code change. Reads only; holds no way to push or send anything outside.",
+      "domain": "operations",
+      "system": true,
+      "tools": [
+        "run_diagnostics",
+        "search_errors",
+        "list_runs",
+        "run_log",
+        "list_tasks",
+        "get_task",
+        "create_task",
+        "search_docs",
+        "read_doc"
+      ],
+      "commands": [],
+      "capacity": 1,
+      "memory_type": "none",
+      "memory_data": null,
+      "default_workspace_only": false,
+      "shared": false,
+      "temperature": 0.0,
+      "skills_enabled": false
+    },
+    {
+      "id": "system_engineer",
+      "name": "System Engineer",
+      "type": "langchain",
+      "entrypoint": "agents.agent_factory:build_agent_executor",
+      "description": "Takes open [system] tasks that need code, makes the smallest fix in the system workspace's copy of this repository, runs the relevant tests, commits on a system/ branch and attaches the patch to the task. Never pushes: a human fetches, reviews and pushes the branch.",
+      "domain": "operations",
+      "system": true,
+      "tools": [
+        "list_tasks",
+        "get_task",
+        "update_task",
+        "get_task_result",
+        "system_repo_sync",
+        "list_files",
+        "read_file",
+        "search_text",
+        "write_file",
+        "apply_unified_diff",
+        "create_file",
+        "system_run_tests",
+        "system_commit",
+        "system_attach_patch",
+        "search_docs",
+        "read_doc"
+      ],
+      "approval_exempt": [
+        "apply_unified_diff"
+      ],
+      "commands": [],
+      "capacity": 1,
+      "memory_type": "none",
+      "memory_data": null,
+      "default_workspace_only": false,
+      "shared": false,
+      "temperature": 0.0,
       "skills_enabled": false
     }
   ]

@@ -745,6 +745,10 @@ def add_agent(
         list(spec.tools or []) + secret_grant_ids(spec.secrets),
         previous_tools=(list(_prev.tools or []) + secret_grant_ids(_prev.secrets)) if _prev else None,
         override=bool(spec.capability_override),
+        # The workspace the record is owned by, so a brand new agent of the
+        # system workspace meets the no push rule at save time, not only at
+        # build time (agents.capability_guard.is_system_workspace_agent).
+        workspace=getattr(spec, "owner_workspace", None),
         # The spec being saved, not the (possibly stale-or-absent) registry
         # record: a brand-new agent, or one whose delegates list is being
         # narrowed in this very call, must be judged on the allowlist it is

@@ -461,6 +461,11 @@ class AgentFactory:
         # service needs the whole view — a partial one produces guesses. The
         # action half is gated inside the tools rather than split off here.
         service_ops_tools = list(SERVICE_OPS_TOOLS)
+        # The maintenance loop's own tools: git work on the system workspace's
+        # repository copy and a test run in it. Only agents of that workspace
+        # may hold them (agents.capability_guard, the system workspace rule).
+        from tools.system_ops import SYSTEM_OPS_TOOLS
+        system_ops_tools = list(SYSTEM_OPS_TOOLS)
         # This product's own documentation, as a searchable corpus. Granted
         # widely: any agent a person talks to should be able to explain the
         # service rather than guess at it.
@@ -562,7 +567,7 @@ class AgentFactory:
         # NB: think/plan are intentionally NOT auto-included here. They are
         # added by create_agent() based on the agent's reasoning config, which
         # is the source of truth for the reasoning capabilities.
-        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
+        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly

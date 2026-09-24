@@ -99,4 +99,14 @@ export default {
   pdf: 'PDF',
   render: 'Render',
   text: 'Text',
+  systemPatch: {
+    title: 'System patch',
+    branch: 'Branch',
+    commit: 'Commit',
+    fetchCommand: 'Fetch command',
+    copyCommand: 'Copy command',
+    copied: 'Copied to clipboard',
+    copyFailed: 'Could not copy automatically, the command is selected for you to copy',
+    humanNote: 'A human still pushes this branch and opens the pull request.',
+  },
 };

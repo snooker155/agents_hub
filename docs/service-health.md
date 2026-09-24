@@ -104,6 +104,80 @@ collector forwarding to a second backend would.
 | A 3D view will not build | `blender.available` and `blender.engines_running` |
 | An agent fetched something odd | the [web access log](web-logs.md) for that run |
 
+## Doctor
+
+The snapshot reports state; the doctor judges it. `GET /api/health/doctor`,
+`ah doctor` (add `--json` for the raw result; exits 1 when a check fails) and
+the Service Agent's `run_diagnostics` tool all run the same checks
+(`common/doctor.py`). Each comes back `ok`, `warn`, `fail` or `skip` with one
+sentence, the numbers behind it, and a link to its section below. The overall
+status is the worst check; `skip` does not count. A check that errors reports
+`fail` with the error, so the doctor itself never crashes.
+
+### Check: migrations
+
+Schema migrations the database has not applied, or ones it has that this build
+does not know. Fail either way. Fix: restart the backend (it applies pending
+migrations on start); a database ahead of the code means an older build is
+running against a newer database, so upgrade the code.
+
+### Check: provider
+
+The default provider answers a model listing within 5 s, the same request the
+Settings page's test button makes. Skip when no key is set or the provider is
+a custom backend. Fix: check the key and base URL on the Settings page, and
+the provider's status page.
+
+### Check: stale runs
+
+Agent runs still `running` whose heartbeat is older than the watchdog's
+threshold (`RUN_HEARTBEAT_STALE_SECONDS`, 180 s), and expired singleton
+leases. Warn; fail when there are stale runs and the run watchdog is not
+running. Fix: the watchdog fails dead runs on its own; if it is down, restart
+the backend. An expired lease means the process holding that role died.
+
+### Check: run queue
+
+Launches waiting in the queue. Warn when more than 10 wait, or one has waited
+over 5 minutes, and no worker is alive. Fix: start a worker (`ah worker`, see
+[workers](workers.md)), or run the backend in the `all` role.
+
+### Check: outbox
+
+Outbound notifications not yet delivered. Warn when any was given up on after
+every retry, or more than 100 wait. Fix: check the notification endpoints'
+URLs and credentials; the outbox lease holder delivers them.
+
+### Check: disk
+
+Free space under the state directory. Warn under 2 GB, fail under 500 MB. Fix:
+prune old run logs (`prune_run_logs`), prune old `system/` branches, or give
+the volume more room.
+
+### Check: browser
+
+The browser service's `/healthz` answers. Skip when `AGENTS_HUB_BROWSER_URL`
+is not set; warn when it answers but `AGENTS_HUB_BROWSER_TOKEN` is missing.
+Fix: start `deploy/browser`, check the URL and the token.
+
+### Check: docker
+
+A docker daemon answers. Fail when agents are set to run in docker; warn when
+`run_code` needs it (no `CODE_RUNNER_FALLBACK=local`); skip otherwise. Fix:
+start Docker, or check that this process can reach its socket.
+
+### Check: frontend build
+
+`dashboard/frontend/dist/index.html` is newer than every file under
+`dashboard/frontend/src`. Skip when there is no build (the dev server serves
+the frontend). Fix: `npm run build` in `dashboard/frontend`.
+
+### Check: system workspace
+
+The [system workspace](system-workspace.md) exists and its repository copy
+has been made. Skip when `SYSTEM_WORKSPACE=false`. Fix: restart to seed it,
+then sync the copy (`POST /api/system/sync`).
+
 ## The Service Agent
 
 The [system agent](system-agents.md) that owns this. It reads health,
@@ -120,4 +194,4 @@ hold whatever the service handled, so giving it a way out would turn the
 service's own diagnostics into an exfiltration path. See
 [tools-and-capabilities](tools-and-capabilities.md).
 
-Related: [nodes](nodes.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md).
+Related: [nodes](nodes.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md), [system-workspace](system-workspace.md).

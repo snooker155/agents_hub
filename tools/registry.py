@@ -467,6 +467,14 @@ def _service_ops_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="service_ops") for t in SERVICE_OPS_TOOLS]
 
 
+def _system_ops_specs() -> List[ToolSpec]:
+    # The system workspace's repository copy (tools/system_ops.py,
+    # common/system_workspace.py): its own category, because these tools only
+    # ever act on the copy under the state directory, never on a project.
+    from tools.system_ops import SYSTEM_OPS_TOOLS
+    return [spec_from_tool(t, category="system_ops") for t in SYSTEM_OPS_TOOLS]
+
+
 def _evals_specs() -> List[ToolSpec]:
     from tools.eval_ops import EVAL_TOOLS
     return [spec_from_tool(t, category="evals") for t in EVAL_TOOLS]
@@ -508,6 +516,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _web_specs,
     _browser_specs,
     _service_ops_specs,
+    _system_ops_specs,
     _evals_specs,
     _documentation_specs,
     _geometry_specs,

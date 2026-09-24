@@ -12,7 +12,12 @@ Two enforcement points, per the design:
   clarify-gate, project graph, reasoning tools all append to the list).
 
 Both honour ``settings.capability_guard`` (``block`` | ``warn`` | ``off``) and
-the per-agent ``capability_override``.
+the per-agent ``capability_override``, with one exception: the system
+workspace rule (``tools.capabilities.check_system_workspace_tools``). An agent
+of the system workspace (one of the maintenance loop's seeded agents, or any
+agent owned by the ``system`` workspace) may never hold a push, shell,
+delegation or outbound tool, and that is checked first, in every mode, with no
+override and no grandfathering. See docs/system-workspace.md.
 
 **Grandfathering.** Turning a hard block on over an existing roster breaks
 agents that already violate. ``add_agent`` therefore only refuses a violation
@@ -31,11 +36,45 @@ from tools.capabilities import (
     channel_capabilities,
     check_combination,
     check_effective_combination,
+    SYSTEM_WORKSPACE_RULE_ID,
+    check_system_workspace_tools,
     effective_capabilities,
     effective_capability_sources,
 )
 
 log = logging.getLogger(__name__)
+
+
+def _owner_workspace(agent_id: str) -> Optional[str]:
+    """The stored record's ``owner_workspace``, or None (lazy import, the same
+    cycle ``_resolve_agent_tools`` avoids)."""
+    try:
+        from agents.registry import get_agent
+        spec = get_agent(agent_id)
+    except Exception:  # noqa: BLE001 - an unreadable registry means "not known to be owned"
+        return None
+    return getattr(spec, "owner_workspace", None) if spec is not None else None
+
+
+def is_system_workspace_agent(agent_id: str, workspace: Optional[str] = None) -> bool:
+    """Whether the system workspace rule applies: one of the loop's seeded
+    agents, or an agent owned by the system workspace (the ``workspace``
+    passed in, else the stored record's owner)."""
+    from common.system_workspace import SYSTEM_LOOP_AGENTS, WORKSPACE
+    if agent_id in SYSTEM_LOOP_AGENTS:
+        return True
+    owner = workspace if workspace is not None else _owner_workspace(agent_id)
+    return (owner or "") == WORKSPACE
+
+
+def system_workspace_violation(
+    agent_id: str, tools: Sequence[str], *, workspace: Optional[str] = None,
+) -> Optional[Violation]:
+    """The system workspace rule for one agent, or None when it does not apply
+    or the tool set is clean. Never softened by mode, override or history."""
+    if not is_system_workspace_agent(agent_id, workspace):
+        return None
+    return check_system_workspace_tools(tools)
 
 
 def _resolve_agent_tools(agent_id: str) -> List[str]:
@@ -145,8 +184,13 @@ def check_agent_tools(
     previous_tools: Optional[Sequence[str]] = None,
     override: bool = False,
     delegates: Optional[Sequence[str]] = None,
+    workspace: Optional[str] = None,
 ) -> Optional[Violation]:
     """Save-time check. Returns the violation to report, or None to allow.
+
+    The system workspace rule comes first and is returned whatever the mode,
+    override or stored record (``workspace`` is the agent's owner workspace
+    when the caller knows it; otherwise the stored record's is used).
 
     Evaluated on the *effective* capability set — this agent's own tools plus
     whatever it can reach by delegation (``run_agent_tool`` and friends; see
@@ -165,6 +209,10 @@ def check_agent_tools(
     ``capability_override``, or when the stored record already formed the same
     violation — the grandfather clause that keeps an existing roster editable.
     """
+    system_violation = system_workspace_violation(agent_id, tools, workspace=workspace)
+    if system_violation is not None:
+        return system_violation
+
     if guard_mode() == "off":
         return None
 
@@ -207,13 +255,18 @@ def enforce_agent_tools(
     previous_tools: Optional[Sequence[str]] = None,
     override: bool = False,
     delegates: Optional[Sequence[str]] = None,
+    workspace: Optional[str] = None,
 ) -> None:
-    """Save-time enforcement. Raises :class:`CapabilityViolation` in block mode."""
+    """Save-time enforcement. Raises :class:`CapabilityViolation` in block mode,
+    and for the system workspace rule in every mode."""
     violation = check_agent_tools(
         agent_id, tools, previous_tools=previous_tools, override=override, delegates=delegates,
+        workspace=workspace,
     )
     if violation is None or not violation.blocking:
         return
+    if violation.rule_id == SYSTEM_WORKSPACE_RULE_ID:
+        raise CapabilityViolation(agent_id, violation)
     if guard_mode() == "warn":
         log.warning("capability guard (warn): agent %r — %s", agent_id, violation.message)
         return
@@ -241,8 +294,13 @@ def enforce_built_tools(
     *,
     override: bool = False,
     delegates: Optional[Sequence[str]] = None,
+    workspace: Optional[str] = None,
 ) -> None:
     """Build-time enforcement over the *resolved* tool instances.
+
+    The system workspace rule is checked first and raises in every mode: a
+    tool injected after the record was written must not give a loop agent a
+    way out either.
 
     Catches capabilities injected after the record was written. Evaluated on
     the effective capability set (own tools plus whatever is reachable by
@@ -257,11 +315,15 @@ def enforce_built_tools(
     agent by id can be stale mid-edit, so the caller (``agent_factory``, which
     already has the spec in hand) passes it directly.
     """
+    names = list(tool_names)
+    system_violation = system_workspace_violation(agent_id, names, workspace=workspace)
+    if system_violation is not None:
+        raise CapabilityViolation(agent_id, system_violation)
+
     mode = guard_mode()
     if mode == "off":
         return
 
-    names = list(tool_names)
     violation = _effective_violation(agent_id, names, delegates=delegates)
     if violation is None or not violation.blocking:
         return
@@ -328,6 +390,11 @@ def audit_roster() -> List[tuple]:
     from agents.registry import list_agents
     out = []
     for spec in list_agents():
+        v = system_workspace_violation(spec.id, list(spec.tools or []),
+                                       workspace=getattr(spec, "owner_workspace", None))
+        if v is not None:
+            out.append((spec.id, v))
+            continue
         v = _effective_violation(spec.id, list(spec.tools or []), delegates=list(spec.delegates or []))
         if v is not None and v.blocking:
             out.append((spec.id, v))

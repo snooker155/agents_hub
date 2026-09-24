@@ -47,6 +47,9 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
     "schedule_job", "create_view", "view_serve", "delegate",
     "stop_run", "stop_node", "restart_node", "stop_container", "prune_run_logs",
+    # The system workspace's repository copy (tools/system_ops.py): a commit,
+    # a written task result and a branch deletion have each already happened.
+    "system_commit", "system_attach_patch", "system_prune_branches",
 })
 
 
@@ -181,6 +184,19 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "list_instances": frozenset({READS_PRIVATE}),
     "list_sessions": frozenset({READS_PRIVATE}),
     "routing_log": frozenset({READS_PRIVATE}),
+
+    # ── system workspace (tools/system_ops.py) ───────────────────────────────
+    # system_run_tests returns the tail of a pytest run over the repository
+    # copy: the operator's own code and whatever it prints, so it reads
+    # private data. It does not claim can_exfiltrate, and that claim is only
+    # fully true in one of its two runners. In docker mode the run is a
+    # container with --network none, like run_code's sandbox. In local mode it
+    # is a subprocess with a stripped environment (no keys, no database URL,
+    # a throwaway state directory) but the host's network, so test code the
+    # agent wrote could open a socket; docs/system-workspace.md tells the
+    # operator to run the system workspace in docker for that reason. The
+    # other system_* tools grant nothing (REVIEWED_NO_GRANT below).
+    "system_run_tests": frozenset({READS_PRIVATE}),
 
     # ── outbound channels ────────────────────────────────────────────────────
     # These deliver free text to a chat transport (Telegram today). The
@@ -320,7 +336,7 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     "delete_world_tool",
     "list_environments_tool", "list_scenarios_tool", "create_scenario_tool",
     "get_scenario_tool", "modify_scenario_tool", "delete_scenario_tool",
-    "validate_scenario_tool",
+    "validate_scenario_tool", "create_scenario_from_template_tool",
     "list_teams_tool", "create_team_tool", "get_team_tool", "modify_team_tool",
     "delete_team_tool",
     "list_loops_tool", "create_loop_tool", "get_loop_tool", "modify_loop_tool",
@@ -392,6 +408,19 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # gate governs, not data.
     "service_health", "list_containers", "list_nodes", "costs_summary",
     "stop_run", "stop_node", "restart_node", "stop_container", "prune_run_logs",
+    # run_diagnostics (common/doctor.py) returns check statuses, counts and
+    # one sentence summaries, the same class of metadata as service_health.
+    "run_diagnostics",
+
+    # ── system workspace: the repository copy ────────────────────────────────
+    # system_repo_sync fetches the local repository into the local copy and
+    # returns a head and a branch name. system_commit writes a commit into the
+    # copy and echoes the branch, sha and file names the agent itself changed.
+    # system_attach_patch writes the diff into the task result (the product's
+    # own store) and returns the branch, commit and a diff stat.
+    # system_prune_branches deletes branches of the copy, which the approval
+    # gate governs. None of them moves data outside the system.
+    "system_repo_sync", "system_commit", "system_attach_patch", "system_prune_branches",
 })
 
 # Reviewed and classified, but outside the catalog.
@@ -805,6 +834,69 @@ def channel_capabilities(channel: Optional[str]) -> Set[str]:
     return set()
 
 
+# ── The system workspace rule ─────────────────────────────────────────────────
+#
+# The system workspace (common/system_workspace.py) runs a scheduled loop over a
+# clone of this repository. The product owner's rule is that it never pushes,
+# and that nothing it does can send anything out. That is enforced here, at the
+# agent level, not in a prompt: an agent of the system workspace may hold no
+# tool that pushes, runs a shell, sends data outside (any can_exfiltrate grant,
+# built in or MCP), or delegates to another agent that might. Without such a
+# tool in the set, an approval request for a push cannot even arise.
+#
+# Unlike the combination rules below, this one is not subject to
+# capability_override, grandfathering or CAPABILITY_GUARD=off: the guard
+# functions in agents/capability_guard.py check it before any of those.
+
+SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
+    # Pushing and shells, by name: git_push is not a catalog tool today, and is
+    # listed so it can never become one silently.
+    "git_publish", "git_push", "run_shell",
+    # Arbitrary code with the host's network unless container isolated.
+    "run_code",
+    # Every tool in the grant table that can send data outside.
+    "fetch_url", "browser_open", "browser_read", "browser_act", "browser_screenshot",
+    "notify_user", "schedule_notification", "view_serve", "schedule_management",
+    # Delegation reaches other agents' tools, which this rule cannot see.
+    "run_agent_tool", "wait_for_agent_tool", "run_flow_tool", "run_team_tool",
+    "run_loop_tool", "run_scenario_tool",
+})
+
+SYSTEM_WORKSPACE_RULE_ID = "system_workspace_no_push"
+
+
+def system_workspace_offenders(tool_ids: Iterable[str]) -> List[str]:
+    """Tool ids a system workspace agent may not hold: the named set plus
+    anything whose grant (built in, alias or MCP) includes can_exfiltrate."""
+    out: List[str] = []
+    for tid in tool_ids or []:
+        tid = str(tid)
+        if tid in out:
+            continue
+        if tid in SYSTEM_WORKSPACE_FORBIDDEN_TOOLS or CAN_EXFILTRATE in grants_of(tid):
+            out.append(tid)
+    return out
+
+
+def check_system_workspace_tools(tool_ids: Iterable[str]) -> Optional["Violation"]:
+    """The blocking violation a system workspace agent's tool set forms, or None."""
+    offenders = system_workspace_offenders(tool_ids)
+    if not offenders:
+        return None
+    return Violation(
+        rule_id=SYSTEM_WORKSPACE_RULE_ID,
+        title="System workspace: no way out",
+        explanation=(
+            "Agents of the system workspace work on a copy of this repository and "
+            "must never push, run a shell, delegate, or send anything outside. A "
+            "human fetches their branches and pushes them. Remove these tools."
+        ),
+        capabilities=frozenset({CAN_EXFILTRATE}),
+        sources={CAN_EXFILTRATE: offenders},
+        severity="block",
+    )
+
+
 # ── Blocked combinations ──────────────────────────────────────────────────────
 #
 # ``reads_private + can_exfiltrate`` and ``reads_private + ingests_untrusted``
@@ -1035,4 +1127,6 @@ __all__ = [
     "check_effective_combination",
     "SECRET_GRANT_PREFIX", "secret_grant_ids",
     "run_code_grants",
+    "SYSTEM_WORKSPACE_FORBIDDEN_TOOLS", "SYSTEM_WORKSPACE_RULE_ID",
+    "system_workspace_offenders", "check_system_workspace_tools",
 ]

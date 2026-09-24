@@ -261,6 +261,11 @@ class DirectBackend:
 
     # ---- settings ----
 
+    def doctor(self) -> dict:
+        """The doctor's checks (common/doctor.py), run in this process."""
+        from common.doctor import run_doctor
+        return run_doctor()
+
     def get_settings(self) -> dict:
         from dashboard.backend.routes.settings import get_settings as _get
         result = _run_coroutine(_get())
@@ -543,6 +548,11 @@ class HttpBackend:
     # credentials); the key acts as its owner, so ``username`` here names
     # nobody but the caller and is accepted only for symmetry with
     # DirectBackend's signature — see cli/main.py, which warns when it is set.
+
+    def doctor(self):
+        # Some checks probe the network with their own timeouts; allow for
+        # all of them in a row.
+        return self._request("GET", "/api/health/doctor", timeout=90)
 
     def whoami(self):
         return self._request("GET", "/api/auth/me")

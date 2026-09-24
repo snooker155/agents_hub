@@ -276,7 +276,8 @@
         "settings",
         "troubleshooting",
         "deployment",
-        "backup"
+        "backup",
+        "demo"
       ],
       "headings": [
         "Prerequisites",
@@ -314,7 +315,8 @@
       "surface": "Loops",
       "related": [
         "costs",
-        "flows"
+        "flows",
+        "system-workspace"
       ],
       "headings": [
         "The exit criterion",
@@ -473,6 +475,7 @@
       "headings": [
         "How a run works",
         "Designing one",
+        "The lab environment",
         "Gotchas"
       ]
     },
@@ -525,7 +528,8 @@
         "tools-and-capabilities",
         "troubleshooting",
         "web-logs",
-        "workers"
+        "workers",
+        "system-workspace"
       ],
       "headings": [
         "The snapshot",
@@ -533,6 +537,17 @@
         "Probes and metrics",
         "Exporting runs as spans",
         "The usual diagnoses",
+        "Doctor",
+        "Check: migrations",
+        "Check: provider",
+        "Check: stale runs",
+        "Check: run queue",
+        "Check: outbox",
+        "Check: disk",
+        "Check: browser",
+        "Check: docker",
+        "Check: frontend build",
+        "Check: system workspace",
         "The Service Agent"
       ]
     },
@@ -756,12 +771,15 @@
         "costs",
         "identity",
         "memory",
-        "projects"
+        "projects",
+        "system-workspace",
+        "demo"
       ],
       "headings": [
         "What a workspace holds",
         "Per-workspace memory",
         "The default workspace",
+        "The system workspace",
         "Gotchas"
       ]
     },
@@ -1080,6 +1098,51 @@
         "GitHub Enterprise Server",
         "Gotchas",
         "Related"
+      ]
+    },
+    {
+      "id": "system-workspace",
+      "title": "The system workspace",
+      "summary": "A workspace where the service looks after itself: a git copy of this repository under the state directory, a doctor agent that files [system] tasks and an engineer agent that proposes fixes as system/ branches of the copy. A scheduled maintenance loop, paused by default, never pushes; a human fetches and pushes.",
+      "surface": "Health",
+      "related": [
+        "service-health",
+        "loops",
+        "workspaces",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "The copy",
+        "The two agents",
+        "The flow and the loop",
+        "The schedule",
+        "The git rule",
+        "Taking a branch out",
+        "When the service runs in docker",
+        "Tests",
+        "Pruning",
+        "What the doctor checks",
+        "Routes",
+        "Deferred"
+      ]
+    },
+    {
+      "id": "demo",
+      "title": "The demo workspace",
+      "summary": "A workspace called demo, seeded end to end: a small sample web shop, three custom agents, a flow, a team, a scenario, views, tasks in every status and a couple of recorded chats. Turned on with --with-demo or a Settings toggle.",
+      "surface": "Settings",
+      "related": [
+        "installation",
+        "workspaces",
+        "agents",
+        "tools-and-capabilities",
+        "playground",
+        "views"
+      ],
+      "headings": [
+        "What it holds",
+        "Turning it on",
+        "The site's interactive demo"
       ]
     }
   ]

@@ -1162,6 +1162,41 @@ end"""
 
 
 # ---------------------------------------------------------------------------
+# doctor (common/doctor.py; docs/service-health.md, "Doctor")
+# ---------------------------------------------------------------------------
+
+_DOCTOR_COLORS = {"ok": "green", "warn": "yellow", "fail": "red", "skip": "dim"}
+
+
+@app.command("doctor")
+def doctor(
+    as_json: bool = typer.Option(False, "--json", help="Print the raw result as JSON."),
+):
+    """Check the service: migrations, the default provider, stale runs, the
+    launch queue, the outbox, disk, the browser service, docker, the frontend
+    build and the system workspace. Exits 1 when any check fails."""
+    result = call(hub().doctor)
+    if as_json:
+        typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    else:
+        table = Table(box=box.SIMPLE, show_header=True)
+        table.add_column("check")
+        table.add_column("status")
+        table.add_column("summary")
+        for c in result.get("checks") or []:
+            color = _DOCTOR_COLORS.get(c.get("status"), "white")
+            table.add_row(c.get("id", "?"), f"[{color}]{c.get('status')}[/{color}]",
+                          c.get("summary", ""))
+        console.print(table)
+        overall = result.get("status", "fail")
+        color = _DOCTOR_COLORS.get(overall, "white")
+        console.print(f"overall: [{color}]{overall}[/{color}]  "
+                      f"[dim]fixes: docs/service-health.md, section Doctor[/dim]")
+    if result.get("status") == "fail":
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # top-level config command
 # ---------------------------------------------------------------------------
 

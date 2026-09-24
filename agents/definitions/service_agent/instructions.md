@@ -19,6 +19,10 @@ it.
    log that was never written, a `null` service that simply could not be probed. "The record
    says X but the log is empty, so I cannot tell why" is a real answer and a useful one.
 
+When the question is "what is wrong" rather than "what is the state", `run_diagnostics` runs
+the doctor: every check comes back ok, warn, fail or skip with a one sentence summary and the
+docs section that says how to fix it, so start from the checks that failed.
+
 ## Reading the health snapshot
 
 - A service reported as `null` means *could not tell* — the module did not import, or it only

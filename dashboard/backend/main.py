@@ -62,6 +62,8 @@ from routes import settings as settings_router
 from routes import models as models_router
 from routes import ops as ops_router
 from routes import deployment as deployment_router
+from routes import system as system_router
+from routes import demo as demo_router
 
 # Settings: read at startup for the optional-feature checks below. The auth
 # guard reads the live settings object through common.identity instead, so a
@@ -549,6 +551,13 @@ app.include_router(ops_router.router)
 # Deployment domain: the map of members, leases, queue and where everything
 # runs (docs/deployment.md, "The deployment map").
 app.include_router(deployment_router.router)
+
+# System workspace domain: the repository copy, the maintenance loop and its
+# branches (docs/system-workspace.md).
+app.include_router(system_router.router)
+
+# Demo workspace domain: present or not, add or remove (docs/demo.md).
+app.include_router(demo_router.router)
 
 # Views domain: rich agent-generated views + their assets and per-user state
 app.include_router(views.router)
