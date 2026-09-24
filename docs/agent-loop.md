@@ -69,7 +69,7 @@ A run whose loop did more than call tools carries a `loop` block on its record, 
 - `guardrails`: every guardrail check and its result.
 - `structured`: repair attempts and whether the answer matched the schema.
 - `tool_decisions`: tool policy decisions.
-- `aux_calls`: model calls made for the run beside its loop (the tool policy classifier, guardrail judges, schema repairs, the outcome grader), each with its purpose, model and tokens, priced at its own model (see [costs](costs.md)).
+- `aux_calls`: model calls made for the run beside its loop (the tool policy classifier, guardrail judges, schema repairs), each with its purpose, model and tokens, priced at its own model (see [costs](costs.md)). The outcome grader is not among them: a grading is a run of its own (see [outcomes](outcomes.md)).
 
 The run page shows it in the loop panel, next to the agent version the run ran and a rollback to it (see [agents](agents.md)).
 

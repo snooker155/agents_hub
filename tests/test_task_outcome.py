@@ -624,48 +624,75 @@ def test_an_executor_at_the_attempt_limit_blocks(fake_grader, executor_launches,
     assert notifications
 
 
-def test_an_executors_grading_is_charged_to_its_run(fake_grader, executor_launches):
+def _grading_runs(task_id):
+    return [r for r in rm.load_runs()
+            if r.get("task_id") == str(task_id) and r.get("channel") == oc.GRADING_CHANNEL]
+
+
+def test_an_agent_runs_grading_is_a_run_of_its_own(fake_grader, no_launch):
+    from common.pricing import run_cost_usd
     fake_grader(_grade_json())
     t = _task_with_outcome()
-    # A team working a task opens a run record under its team run id.
-    rm.open_run("team-run-1", "team:team-1", task_id=str(t.id), status="running",
-                link_to_session=False)
+    rid = _finish_run(t.id)
+
+    [grading] = _grading_runs(t.id)
+    assert grading["agent_id"] == "outcome_grader" and grading["parent_run_id"] == rid
+    assert grading["status"] == "completed"
+    assert grading["process"]["token_usage"]["inbound_tokens"] == 1200
+    [ev] = ts.get_task(t.id).outcome_evaluations
+    assert ev["grading_run_id"] == grading["run_id"]
+    # The graded run keeps its own cost: nothing of the grading is added to it.
+    assert "loop" not in rm.get_run_by_id(rid) or "aux_calls" not in rm.get_run_by_id(rid)["loop"]
+    prices = {(grading["provider"], grading["model"]): (1.0, 2.0, 0.1)}
+    assert run_cost_usd(grading, prices) == pytest.approx(1200 / 1e6 * 1.0 + 80 / 1e6 * 2.0)
+
+
+def test_a_team_grading_is_tied_to_the_team_run_and_added_to_its_total(fake_grader, executor_launches):
+    from common import entity_runs
+    fake_grader(_grade_json())
+    t = _task_with_outcome()
+    entity_runs.upsert({"run_id": "team-run-1", "kind": "team", "entity_id": "team-1",
+                        "status": "completed", "total_cost": 0.5})
     _finish_executor(t.id)
 
-    [ev] = ts.get_task(t.id).outcome_evaluations
-    assert ev["cost_run_id"] == "team-run-1"
-    [call] = rm.get_run_by_id("team-run-1")["loop"]["aux_calls"]
-    assert call["purpose"] == "outcome_grader" and call["input_tokens"] == 1200
+    [grading] = _grading_runs(t.id)
+    assert grading["parent_run_id"] == "team-run-1"
+    assert entity_runs.get("team-run-1")["total_cost"] == pytest.approx(0.5 + 0.0042)
 
 
-def test_a_flow_grading_is_charged_to_the_tasks_last_run(fake_grader, executor_launches):
+def test_a_scenario_grading_joins_the_runs_of_its_scenario_run(fake_grader, executor_launches):
+    from common import entity_runs
     fake_grader(_grade_json())
     t = _task_with_outcome()
-    node = rm.new_unique_run_id()
-    rm.open_run(node, "writer", task_id=str(t.id), status="running", link_to_session=False)
-    rm.close_run(node, status="completed", exit_code=0)
-    _finish_executor(t.id, kind="flow")
-
-    [ev] = ts.get_task(t.id).outcome_evaluations
-    assert ev["cost_run_id"] == node
-    assert rm.get_run_by_id(node)["loop"]["aux_calls"][0]["purpose"] == "outcome_grader"
-
-
-def test_a_scenario_grading_is_charged_to_its_last_role_turn(fake_grader, executor_launches):
-    from playground import store as sim_store
-    from playground.models import AgentDecision, TickRecord
-
-    fake_grader(_grade_json())
-    t = _task_with_outcome()
-    # Every role's turn is a run of its own, tied to the scenario run, not the task.
+    entity_runs.upsert({"run_id": "scenario-run-1", "kind": "scenario", "entity_id": "sc-1",
+                        "status": "completed", "total_cost": 1.25})
+    # Every role's turn is a run of its own, tied to the scenario run.
     turn = rm.new_unique_run_id()
     rm.open_run(turn, "Critic", status="running", link_to_session=False, channel="sim",
                 sim_run_id="scenario-run-1")
     rm.close_run(turn, status="completed", exit_code=0)
-    sim_store.save_tick(TickRecord(sim_run_id="scenario-run-1", tick=3,
-                                   decisions=[AgentDecision(agent="Critic", run_id=turn)]))
     _finish_executor(t.id, kind="scenario")
 
-    [ev] = ts.get_task(t.id).outcome_evaluations
-    assert ev["cost_run_id"] == turn
-    assert rm.get_run_by_id(turn)["loop"]["aux_calls"][0]["purpose"] == "outcome_grader"
+    [grading] = _grading_runs(t.id)
+    assert grading["sim_run_id"] == "scenario-run-1" and grading["parent_run_id"] == "scenario-run-1"
+    # No role turn is charged with it; the scenario run's total includes it.
+    assert "aux_calls" not in (rm.get_run_by_id(turn).get("loop") or {})
+    assert entity_runs.get("scenario-run-1")["total_cost"] == pytest.approx(1.25 + 0.0042)
+    scenario_runs = [r for r in rm.load_runs() if r.get("sim_run_id") == "scenario-run-1"]
+    assert {r["run_id"] for r in scenario_runs} == {turn, grading["run_id"]}
+
+
+def test_a_flow_grading_joins_the_runs_of_its_flow_run(fake_grader, executor_launches):
+    fake_grader(_grade_json())
+    t = _task_with_outcome()
+    _finish_executor(t.id, kind="flow")
+    [grading] = _grading_runs(t.id)
+    assert grading["flow_run_id"] == "flow-run-1"
+
+
+def test_a_grading_run_is_never_graded_itself(fake_grader, no_launch):
+    fake_grader(_grade_json(), _grade_json())
+    t = _task_with_outcome()
+    rid = _finish_run(t.id)
+    run_id, _output = oc._latest_gradable_run(t.id)
+    assert run_id == rid

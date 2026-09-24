@@ -56,6 +56,6 @@ Loops take an optional `rubric` and `grader` (UI on the Loops page, and the Loop
 
 ## Cost
 
-The grader's tokens are added to a run record as `loop.aux_calls`, so they show on the [Costs](costs.md) page and count toward the task's money cap from the next run on: the graded run for an agent, the team's own run for a team, the task's latest run (a flow's or a loop's last node) for a flow or a loop, and for a scenario the run of the last role turn of its last tick (every role's turn is a run, whether a persona on a model or a real agent plays it).
+Every grading is one model call about a whole attempt, and it is recorded as a run of its own: agent `outcome_grader`, channel `outcome`, with the grader's model and tokens. It never adds to the runs it graded, which each keep their own cost. The grading run is tied to the task, so the [Costs](costs.md) page and the task's money cap count it once, and to the work it graded through `parent_run_id`: the agent run, or the flow, team, loop or scenario run. A scenario's grading also carries its `sim_run_id` and a flow's its `flow_run_id`, the link the runs of that scenario or flow share, so summing those runs includes it. For a team, a loop or a scenario, whose run keeps a total cost, the grading's cost is added to that total, so the attempt's total says what it cost including its grading. The evaluation records the grading run's id as `grading_run_id`.
 
 Related: [loops](loops.md), [evals](evals.md), [tasks](tasks.md).

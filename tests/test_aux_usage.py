@@ -1,8 +1,8 @@
 """
 Model calls a run makes beside its own loop (common/aux_usage.py): the tool
-policy classifier, guardrail judges, schema repairs and the outcome grader are
-listed on the run, priced at their own models and counted against the run's
-money cap.
+policy classifier, guardrail judges and schema repairs are listed on the run,
+priced at their own models and counted against the run's money cap. (The
+outcome grader is a run of its own: tests/test_task_outcome.py.)
 """
 from __future__ import annotations
 
@@ -94,17 +94,3 @@ def test_a_guardrail_judge_is_counted(state, monkeypatch):
     assert check_judge({"instruction": "no dates"}, "hello", guardrail_model="openai/small") == (None, None)
     [call] = state.aux_calls
     assert call["purpose"] == "guardrail" and call["provider"] == "openai" and call["output_tokens"] == 10
-
-
-def test_the_outcome_grader_is_added_to_the_graded_run():
-    from managers import run_manager as rm
-    from tasks.outcome import _count_on_run
-
-    rid = rm.new_unique_run_id()
-    rm.open_run(rid, "swe_agent", status="running", link_to_session=False)
-    rm.close_run(rid, status="completed", exit_code=0)
-    _count_on_run(rid, {"tokens": {"input": 1200, "output": 80},
-                        "grader": {"provider": "openai", "model": "small"}})
-    [call] = rm.get_run_by_id(rid)["loop"]["aux_calls"]
-    assert call == {"purpose": "outcome_grader", "provider": "openai", "model": "small",
-                    "input_tokens": 1200, "output_tokens": 80, "cached_tokens": 0}

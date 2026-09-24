@@ -51,7 +51,7 @@ MAX_CRITERIA = 30
 MAX_EVALUATIONS = 100
 
 #: Agents whose runs are not the work itself: routing, decomposition, review.
-NON_GRADED_AGENTS = frozenset({"orchestrator", "code_reviewer", "decomposer"})
+NON_GRADED_AGENTS = frozenset({"orchestrator", "code_reviewer", "decomposer", "outcome_grader"})
 
 #: Marks the note an outcome relaunch appends to the run's description, so a
 #: third attempt replaces the second attempt's note instead of stacking.
@@ -367,23 +367,86 @@ def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
     if extra.get("error"):
         evaluation["error"] = str(extra["error"])
         evaluation["passed"] = False
-    _count_on_run(run_id, evaluation)
     return evaluation
 
 
-def _count_on_run(run_id: Optional[str], evaluation: Dict[str, Any]) -> None:
-    """The grading is a model call made for the run it graded: its tokens go
-    onto that run's ``loop.aux_calls`` (common/aux_usage.py), so the Costs page
-    and the task's money cap (which prices the task's runs) include it."""
+#: The grading is recorded as a run of its own (see _record_grading_run):
+#: this agent id and channel mark it, and keep it out of the runs a grading
+#: looks for.
+GRADER_AGENT_ID = "outcome_grader"
+GRADING_CHANNEL = "outcome"
+
+
+def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id: Optional[str] = None,
+                        executor: Any = None) -> Optional[str]:
+    """Record one grading as its own run and return its id.
+
+    A grading is one model call about a whole attempt: an agent run, or a
+    flow, team, loop or scenario run made of many runs, each of which already
+    carries its own tokens. So it is not added to any of them. It gets a run
+    record of its own (agent ``outcome_grader``, channel ``outcome``) with the
+    grader's model and tokens, tied to the task (so the task's money cap and
+    the Costs page count it once) and to the work it graded through
+    ``parent_run_id`` (plus ``sim_run_id`` or ``flow_run_id``, the link the
+    runs of a scenario or a flow share, so summing those runs includes it).
+    For a flow, team, loop or scenario the grading's cost is also added to that
+    run's own total, when the run keeps one, so the attempt's total says what it
+    cost including its grading. Written without the start and finish
+    notifications of a task run: it is bookkeeping, not work on the task.
+    """
     tokens = evaluation.get("tokens") or {}
-    if not run_id or not (tokens.get("input") or tokens.get("output")):
-        return
+    inbound, outbound = int(tokens.get("input") or 0), int(tokens.get("output") or 0)
+    if not (inbound or outbound):
+        return None   # nothing was billed (the grader failed before answering)
     grader = evaluation.get("grader") or {}
-    from common import aux_usage
-    aux_usage.record_on_run(str(run_id), aux_usage.entry(
-        "outcome_grader", provider=str(grader.get("provider") or ""), model=str(grader.get("model") or ""),
-        tokens={"input_tokens": int(tokens.get("input") or 0),
-                "output_tokens": int(tokens.get("output") or 0), "cached_tokens": 0}))
+    try:
+        from managers import run_manager as rm
+        run_id = rm.new_unique_run_id()
+        when = str(evaluation.get("graded_at") or _utc_now_iso())
+        iteration = evaluation.get("iteration")
+        record: Dict[str, Any] = {
+            "run_id": run_id, "agent_id": GRADER_AGENT_ID, "channel": GRADING_CHANNEL,
+            "task_id": str(getattr(task, "id", "") or ""), "session_type": "task",
+            "workspace": getattr(task, "workspace", None), "status": "completed", "exit_code": 0,
+            "title": f"Outcome grading, attempt {iteration}" if iteration else "Outcome grading",
+            "provider": str(grader.get("provider") or ""), "model": str(grader.get("model") or ""),
+            "created_at": when, "started_at": when, "finished_at": when,
+            "parent_run_id": parent_run_id or None,
+            "output": _summary(evaluation),
+            "process": {"token_usage": {"inbound_tokens": inbound, "outbound_tokens": outbound,
+                                        "total_tokens": inbound + outbound}},
+            "outcome_grading": {"iteration": iteration, "trigger": evaluation.get("trigger"),
+                                "passed": bool(evaluation.get("passed")), "score": evaluation.get("score")},
+        }
+        kind = getattr(executor, "kind", None)
+        if kind == "scenario" and parent_run_id:
+            record["sim_run_id"] = parent_run_id
+        elif kind == "flow" and parent_run_id:
+            record["flow_run_id"] = parent_run_id
+        rm.upsert_run(record)
+    except Exception:  # noqa: BLE001 - the grading stands; only its separate cost record is missing
+        log.warning("outcome: could not record the grading run for task %s",
+                    getattr(task, "id", "?"), exc_info=True)
+        return None
+    evaluation["grading_run_id"] = run_id
+    if executor is not None and parent_run_id:
+        _add_to_run_total(parent_run_id, float(evaluation.get("cost_usd") or 0.0))
+    return run_id
+
+
+def _add_to_run_total(run_id: str, cost: float) -> None:
+    """Add a grading's cost to a flow, team, loop or scenario run's own total
+    (``entity_runs.total_cost``), for the kinds that keep one."""
+    if cost <= 0:
+        return
+    try:
+        from common import entity_runs
+        rec = entity_runs.get(run_id)
+        if rec is None or rec.get("total_cost") is None:
+            return
+        entity_runs.update(run_id, {"total_cost": round(float(rec["total_cost"]) + cost, 6)})
+    except Exception:  # noqa: BLE001 - the grading run still carries the cost
+        log.debug("outcome: could not add the grading to the total of %s", run_id, exc_info=True)
 
 
 def record_evaluation(task_id: Any, evaluation: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -548,6 +611,7 @@ def on_run_completed(task_id: Any, run: Dict[str, Any]) -> bool:
     run_id = str((run or {}).get("run_id") or "")
 
     evaluation = grade_outcome(task, _run_output(run, tid), run_id=run_id or None, trigger="run")
+    _record_grading_run(task, evaluation, parent_run_id=run_id or None)
     evaluations = record_evaluation(tid, evaluation)
     try:
         _ts.append_task_activity_log(
@@ -636,38 +700,6 @@ def _relaunch_executor(tid: UUID, task: Any, executor: Any, attempt: int, max_it
     return str((result or {}).get("run_id") or "")
 
 
-def _cost_run_for(tid: UUID, executor_run_id: str) -> Optional[str]:
-    """The ``runs`` record an executor's grading is charged to: the
-    executor's own record when it has one (a team working a task opens one
-    under its team run id); for a scenario, the run of the last decision of
-    its last tick (every role's turn is a run of its own in both modes, a
-    persona on a bare model or a real agent, but it is tied to the scenario
-    run rather than to the task); else the task's latest run (a flow's or a
-    loop's last node). None when nothing is found, and the cost stays on the
-    grading only."""
-    from managers import run_manager
-    try:
-        if executor_run_id and run_manager.get_run_by_id(executor_run_id):
-            return executor_run_id
-        from common import db
-        if executor_run_id:
-            tick = db.get_conn().execute(
-                "SELECT decisions FROM sim_ticks WHERE sim_run_id = ? ORDER BY tick DESC LIMIT 1",
-                (str(executor_run_id),)).fetchone()
-            for decision in reversed(db.loads(tick["decisions"], []) if tick is not None else []):
-                rid = str((decision or {}).get("run_id") or "")
-                if rid and run_manager.get_run_by_id(rid):
-                    return rid
-        row = db.get_conn().execute(
-            "SELECT run_id FROM runs WHERE task_id = ? "
-            "ORDER BY COALESCE(finished_at, started_at, created_at) DESC LIMIT 1",
-            (str(tid),)).fetchone()
-        return str(row["run_id"]) if row is not None else None
-    except Exception:  # noqa: BLE001 - no run to charge keeps the cost on the grading
-        log.debug("outcome: no run to charge the grading of %s to", tid, exc_info=True)
-        return None
-
-
 def on_executor_completed(task_id: Any) -> bool:
     """Grade what a flow, team, loop or scenario produced for the task.
 
@@ -696,15 +728,11 @@ def on_executor_completed(task_id: Any) -> bool:
     except Exception:  # noqa: BLE001 - no stored result grades as an empty answer
         log.debug("task results lookup failed for %s", tid, exc_info=True)
 
-    # An executor's run id names a flow, team, loop or scenario run; the
-    # grader's tokens go onto the run record that stands for that work (see
-    # _cost_run_for), so the Costs page and the task's cap include them.
+    # An executor's run id names a flow, team, loop or scenario run, which is
+    # what the grading's own run is tied to (see _record_grading_run).
     evaluation = grade_outcome(task, output, run_id=None, trigger="run")
     evaluation["run_id"] = run_id or None
-    cost_run = _cost_run_for(tid, run_id)
-    if cost_run:
-        evaluation["cost_run_id"] = cost_run
-        _count_on_run(cost_run, evaluation)
+    _record_grading_run(task, evaluation, parent_run_id=run_id or None, executor=executor)
     evaluations = record_evaluation(tid, evaluation)
     actor = f"{executor.kind}:{executor.id}"
     try:
@@ -769,6 +797,7 @@ def grade_now(task_id: Any) -> Dict[str, Any]:
     if not run_id and not output.strip():
         raise OutcomeError("the task has no completed run to grade")
     evaluation = grade_outcome(task, output, run_id=run_id, trigger="manual")
+    _record_grading_run(task, evaluation, parent_run_id=run_id)
     record_evaluation(tid, evaluation)
     try:
         _ts.append_task_activity_log(tid, "outcome_graded", _summary(evaluation) + " (graded on request)",

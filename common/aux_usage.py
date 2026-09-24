@@ -4,11 +4,12 @@ Model calls a run makes beside its own loop, and what they cost.
 A run's token totals come from the callbacks on its own model calls
 (agents/callbacks/run_statistics.py). Some policies call a model of their own
 on the run's behalf: the tool policy's classifier (tools/permission_policy.py),
-a guardrail's judge (guardrails/checks.py), the repair of an answer that does
-not match its schema (agents/loop_ext/structured.py), and, after the run, the
-grader of a task's outcome (tasks/outcome.py). Those calls are not in the
-run's totals, so they were free as far as the Costs page and the per-run
-money cap could tell.
+a guardrail's judge (guardrails/checks.py) and the repair of an answer that
+does not match its schema (agents/loop_ext/structured.py). Those calls are not
+in the run's totals, so they were free as far as the Costs page and the
+per-run money cap could tell. (The grader of a task's outcome runs after the
+run, about the whole attempt, and is recorded as a run of its own instead:
+tasks/outcome.py ``_record_grading_run``.)
 
 :func:`record` is the one place they are counted. Each call becomes an entry
 ``{purpose, provider, model, input_tokens, output_tokens, cached_tokens}`` on
@@ -16,9 +17,7 @@ the running loop's ``aux_calls`` (stored on the run as ``loop.aux_calls``),
 and its price is added to the process's spend that
 ``agents.callbacks.guards.RunBudgetGuard`` checks, so a classifier that runs
 often is stopped by the same cap as the agent. ``common.pricing.run_cost_usd``
-prices every entry at its own model. :func:`record_on_run` does the same for
-a call made after the run ended (the outcome grader), writing the entry onto
-that run's record instead.
+prices every entry at its own model.
 
 Every function here is best-effort: accounting must never fail the call it
 accounts for.
@@ -124,19 +123,4 @@ def record(purpose: str, *, provider: Optional[str] = None, model: Optional[str]
     return item
 
 
-def record_on_run(run_id: str, item: Dict[str, Any]) -> None:
-    """Append an entry to a finished run's ``loop.aux_calls`` (the outcome
-    grader grades a run after it closed)."""
-    if not run_id or not item:
-        return
-    try:
-        from managers import run_manager
-        run = run_manager.get_run_by_id(run_id) or {}
-        loop = dict(run.get("loop") or {}) if isinstance(run.get("loop"), dict) else {}
-        loop["aux_calls"] = [*list(loop.get("aux_calls") or []), dict(item)]
-        run_manager.update_run(run_id, {"loop": loop})
-    except Exception:  # noqa: BLE001 - see the module docstring
-        log.debug("aux usage: could not add an entry to run %s", run_id, exc_info=True)
-
-
-__all__ = ["entry", "record", "record_on_run", "usage_of"]
+__all__ = ["entry", "record", "usage_of"]

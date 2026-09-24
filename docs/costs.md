@@ -24,12 +24,17 @@ Evaluation channels (replays, eval runs) are tracked separately from production
 spend.
 
 Some model calls are made for a run beside its own loop: the [tool policy](tool-policy.md)
-classifier, a [guardrail](guardrails.md) judge, the repair of an answer that did not
-match its schema, and the [outcome](outcomes.md) grader that grades a finished run.
-Each is listed on the run's `loop.aux_calls` with its tokens and priced at its own
-model, and all but the grader (which runs after the run) count against the run's
-money cap while it runs. A call a [fallback model](agent-loop.md) answered is priced
-at the fallback's rate, not the agent's.
+classifier, a [guardrail](guardrails.md) judge and the repair of an answer that did not
+match its schema. Each is listed on the run's `loop.aux_calls` with its tokens, priced
+at its own model and counted against the run's money cap while it runs. A call a
+[fallback model](agent-loop.md) answered is priced at the fallback's rate, not the
+agent's.
+
+The [outcome](outcomes.md) grader is different: it grades a whole attempt after it
+ended, so each grading is a run of its own (agent `outcome_grader`, channel `outcome`),
+tied to the task and to the work it graded, and added to that work's total when it is
+a team, loop or scenario run. Every run in a scenario, a flow or a team keeps its own
+cost; the total of such a run is the sum of its runs, plus its gradings.
 
 ## Budgets
 
