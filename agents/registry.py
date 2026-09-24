@@ -186,6 +186,29 @@ class AgentSpec:
     # so pull requests come from the app's bot; "user" hands out the token of
     # the person who launched the run, when they connected their account.
     github_identity: str = "app"
+    # ── Loop policies (agents/agent_loop.py, fourth-cycle stage 2) ──────────
+    # Per-tool permission policy (tools/permission_policy.py): tool id, or
+    # "*" for this agent's default, mapped to "always_allow", "always_ask" or
+    # "auto" (a small model decides run / deny / ask per call). Empty means
+    # the workspace policy and the approval list decide, as before.
+    tool_policy: Dict[str, str] = field(default_factory=dict)
+    # Models tried in order when the agent's own model refuses, is rate
+    # limited or fails with a server error, as catalog ids "provider/model"
+    # (agents/loop_ext/fallback.py). Empty means no fallback.
+    fallback_models: List[str] = field(default_factory=list)
+    # JSON Schema the agent's final answer must match (agents/loop_ext/
+    # structured.py): validated, repaired by a retry, the run fails when it
+    # still does not match. None means free text.
+    output_schema: Optional[Dict[str, Any]] = None
+    # Guardrail ids (guardrails/) applied to this agent's runs on top of the
+    # workspace-wide ones.
+    guardrails: List[str] = field(default_factory=list)
+    # Tool search (agents/loop_ext/tool_search.py): None = automatic above
+    # the tool-count threshold, True = always, False = never.
+    tool_search: Optional[bool] = None
+    # In-loop compaction of old tool results (agents/loop_ext/compaction.py):
+    # None = the workspace/global default, True = on, False = off.
+    compaction: Optional[bool] = None
     # External-agent descriptor — empty for built-in agents. When ``type`` is
     # "remote" this holds everything needed to reach the agent over HTTP
     # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
@@ -333,6 +356,19 @@ class AgentSpec:
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
+        # Loop policies: only written when set, so default records stay clean.
+        if self.tool_policy:
+            d["tool_policy"] = dict(self.tool_policy)
+        if self.fallback_models:
+            d["fallback_models"] = list(self.fallback_models)
+        if self.output_schema:
+            d["output_schema"] = dict(self.output_schema)
+        if self.guardrails:
+            d["guardrails"] = list(self.guardrails)
+        if self.tool_search is not None:
+            d["tool_search"] = self.tool_search
+        if self.compaction is not None:
+            d["compaction"] = self.compaction
         # Only write the external-agent descriptor when the record has one, so
         # built-in agents keep a clean JSON shape.
         if self.remote:
@@ -466,6 +502,10 @@ def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
 
 essential_fields = ("id", "name", "type", "entrypoint")
 
+#: Modes of a per-tool permission policy (``AgentSpec.tool_policy``, see
+#: tools/permission_policy.py).
+TOOL_POLICY_MODES = ("always_allow", "always_ask", "auto")
+
 
 def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     # basic required fields
@@ -576,6 +616,23 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     if github_identity not in ("app", "user"):
         github_identity = "app"
 
+    raw_policy = ad.get("tool_policy") or {}
+    tool_policy: Dict[str, str] = {}
+    if isinstance(raw_policy, dict):
+        for key, mode in raw_policy.items():
+            k, m = str(key).strip(), str(mode or "").strip().lower()
+            if k and m in TOOL_POLICY_MODES:
+                tool_policy[k] = m
+    fallback_models = _id_list(ad.get("fallback_models"))
+    output_schema = ad.get("output_schema") or None
+    if not isinstance(output_schema, dict):
+        output_schema = None
+    guardrails = _id_list(ad.get("guardrails"))
+    _raw_ts = ad.get("tool_search")
+    tool_search = bool(_raw_ts) if _raw_ts is not None else None
+    _raw_cp = ad.get("compaction")
+    compaction = bool(_raw_cp) if _raw_cp is not None else None
+
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
 
@@ -626,6 +683,12 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         approval_exempt=approval_exempt,
         secrets=secrets,
         github_identity=github_identity,
+        tool_policy=tool_policy,
+        fallback_models=fallback_models,
+        output_schema=output_schema,
+        guardrails=guardrails,
+        tool_search=tool_search,
+        compaction=compaction,
         remote=remote,
     )
 

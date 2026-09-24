@@ -8,6 +8,7 @@
  */
 
 import { LANGUAGES, translate } from '../../../i18n';
+import { inHistory } from '../steering';
 
 // A conversation title is never allowed to run on; the same cap is used for
 // the auto-title and for the fallback title taken from the first message.
@@ -34,10 +35,13 @@ function buildAttachmentLine(t, { pendingAttachments, pendingReferences }) {
 
 // Up to the last 40 user/agent turns with actual text, sent as `history`.
 // Everything else a turn produced (tool calls, artifacts, thoughts) is
-// reconstructed server-side from the run log, not resent.
+// reconstructed server-side from the run log, not resent. A message sent
+// while a turn worked counts only once the model read it; one still waiting
+// is about to be sent as the turn itself.
 function buildHistoryPayload(messages) {
   return (messages || [])
     .filter((m) => (m.role === 'user' || m.role === 'agent') && String(m.content || '').trim())
+    .filter(inHistory)
     .slice(-40)
     .map((m) => ({ role: m.role, content: String(m.content || '') }));
 }

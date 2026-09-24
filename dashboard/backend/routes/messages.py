@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from typing import Optional
 from pathlib import Path
 
-from common import access, identity, live_runs
+from common import access, audit, identity, live_runs
 from managers import run_manager
 from managers.run_manager import update_run as update_message_run
 from tasks import service as tasks_service
@@ -32,6 +32,13 @@ from routes.sessions import (
 )
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
+
+# Separate router (its own prefix, /api/runs): the agent-version and rollback
+# endpoints below are about a run's *agent* rather than the run's own log/tool
+# data, and /api/messages/{run_id}/... would read oddly for "roll the agent
+# back". Registered in dashboard/backend/main.py alongside ``router`` above
+# (see that file's own app.include_router calls next to messages.router).
+runs_router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 FLOW_AGENT_IDS = {"flow-graph", "flow-custom-graph", "custom-graph"}
 
@@ -460,3 +467,124 @@ async def delete_message(run_id: str, request: Request, delete_log: bool = True)
             log_deleted = False
 
     return {"deleted": True, "run_id": run_id, "log_deleted": log_deleted}
+
+
+# -------------------- Agent version (pin, rollback) --------------------
+#
+# What agent version a run built from (agents/versions.py), and a one-button
+# way to make it the agent's current definition again — the run page's own
+# rollback, as opposed to picking a version off the agent's full history
+# (dashboard/backend/routes/agents.py already has that one).
+
+def _run_task(run: dict):
+    """The run's task, or None (no task_id, or it no longer exists)."""
+    task_id = run.get("task_id")
+    if not task_id:
+        return None
+    try:
+        from uuid import UUID
+        return tasks_service.get_task(UUID(str(task_id)))
+    except Exception:  # noqa: BLE001 - best-effort; a bad task_id must not break the run-version read
+        return None
+
+
+def _current_agent_version(agent_id: str) -> Optional[int]:
+    """The version number that holds the agent's live definition right now,
+    snapshotting it when history does not have it yet — see
+    agents.versions.ensure_current_version. None on any lookup failure."""
+    from agents import versions as agent_versions
+    try:
+        fp = agent_versions.definition_fingerprint(agent_id)
+        found = agent_versions.version_for_hash(agent_id, fp["hash"])
+        return found if found is not None else agent_versions.ensure_current_version(agent_id)
+    except Exception:  # noqa: BLE001 - best-effort; a lookup failure just means no current_version in the response
+        return None
+
+
+@runs_router.get("/{run_id}/agent-version")
+async def get_run_agent_version(run_id: str, request: Request):
+    """What agent and stored version this run built from.
+
+    ``version``/``hash`` are the run's own (``run.agent_version``,
+    ``managers.runs.lifecycle``); ``current_version`` is what the agent would
+    build today; ``is_current`` compares the two; ``pinned`` is true only when
+    the run's task itself carries this exact pin (as opposed to the run
+    merely having landed on the version that happens to be live).
+    """
+    run = run_manager.get_run_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    _require_run_visible(request, run)
+
+    agent_id = run.get("agent_id") or None
+    version = run.get("agent_version")
+
+    version_hash = run.get("definition_hash")
+    if agent_id and version is not None:
+        from agents import versions as agent_versions
+        row = agent_versions.get_version_row(agent_id, version)
+        if row is not None:
+            version_hash = row["hash"]
+
+    current_version = _current_agent_version(agent_id) if agent_id else None
+
+    task = _run_task(run)
+    pinned = bool(
+        task is not None and version is not None
+        and getattr(task, "agent_version", None) == version
+    )
+
+    return {
+        "agent_id": agent_id,
+        "version": version,
+        "hash": version_hash,
+        "current_version": current_version,
+        "is_current": version is not None and current_version is not None and version == current_version,
+        "pinned": pinned,
+    }
+
+
+@runs_router.post("/{run_id}/rollback-agent")
+async def rollback_run_agent(run_id: str, request: Request):
+    """Roll the agent back to the version this run ran.
+
+    Mirrors the checks of the per-agent rollback route
+    (``POST /api/agents/{agent_id}/versions/{version}/rollback``,
+    dashboard/backend/routes/agents.py): 404 when the agent or the version
+    row is gone, 400 when the restored tool set is now refused by the
+    capability guard. Recorded in the audit log like any other agent-record
+    write.
+    """
+    run = run_manager.get_run_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    _require_run_visible(request, run)
+
+    agent_id = run.get("agent_id") or None
+    version = run.get("agent_version")
+    if not agent_id or version is None:
+        raise HTTPException(status_code=400, detail="This run has no recorded agent version to roll back to")
+
+    from agents import registry
+    from agents import versions as agent_versions
+    from agents.capability_guard import CapabilityViolation
+
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    try:
+        restored = agent_versions.rollback_to(agent_id, version, actor="dashboard")
+    except CapabilityViolation as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    audit.record(
+        "agent.rollback",
+        principal=identity.request_principal(request),
+        object_type="agent", object_id=agent_id,
+        ip=identity.client_ip(request),
+        details={"version": version, "run_id": run_id},
+    )
+    return {"agent_id": agent_id, "restored_to": version, "agent": restored}

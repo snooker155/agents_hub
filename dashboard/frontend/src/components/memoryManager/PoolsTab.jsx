@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Database, Plus, Trash2, X, Save, ChevronRight, Edit3,
-  StickyNote, Layers, Activity, BookOpen, Share2, Brain,
+  StickyNote, Layers, Activity, BookOpen, Share2, Brain, History,
 } from 'lucide-react';
 import {
   getSharedMemory, createSharedMemory, deleteSharedMemory,
@@ -21,6 +21,7 @@ import { useToast, errorDetail } from '../toast';
 import { DEFAULT_BLOCK_NAMES, fmt } from './helpers';
 import { EpisodesPanel } from './EpisodesPanel';
 import { GraphPanel } from './GraphPanel';
+import { MemoryHistoryPanel } from './MemoryHistoryPanel';
 
 function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const { t } = useI18n();
@@ -60,6 +61,12 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const [newBlockLimit, setNewBlockLimit] = useState('2000');
   const [newBlockDesc, setNewBlockDesc] = useState('');
 
+  // Version history panel: null when closed, else { kind, itemKey, itemLabel }
+  // (kind and itemKey both undefined for the whole pool's history).
+  const [historyTarget, setHistoryTarget] = useState(null);
+  const openHistory = (target) => setHistoryTarget(target);
+  const closeHistory = () => setHistoryTarget(null);
+
   const selectPool = useCallback(async (id) => {
     try {
       const resp = await getSharedMemory(id);
@@ -69,6 +76,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
       setViewingNote(null); setShowAddNote(false); setEditingNote(null);
       setShowAddSlot(false); setEditingSlot(null);
       setBlockDrafts({}); setShowAddBlock(false);
+      setHistoryTarget(null);
     } catch (e) {
       toast.error(t('memoryManager.errors.openMemory'), errorDetail(e));
     }
@@ -410,6 +418,13 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                 {selected.description && <p className="text-sm text-gray-600 mt-1">{selected.description}</p>}
               </div>
               <div className="flex gap-2">
+                <button
+                  onClick={() => openHistory({})}
+                  className="flex items-center gap-1 text-sm border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+                  title={t('memoryVersions.poolHistory')}
+                >
+                  <History className="w-3.5 h-3.5" /> {t('memoryVersions.poolHistory')}
+                </button>
                 {contentTab === 'notes' && (
                   <button onClick={() => { setShowAddNote(true); setEditingNote(null); setViewingNote(null); }} className="flex items-center gap-1 text-sm border border-indigo-200 text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50">
                     <Plus className="w-3.5 h-3.5" /> {t('memoryManager.addNote')}
@@ -505,11 +520,20 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                           </p>
                           {block.description && <p className="text-xs text-gray-500 mt-0.5">{block.description}</p>}
                         </div>
-                        {!block.read_only && !isDefaultBlock(block.name) && (
-                          <button onClick={() => handleDeleteBlock(block)} className="text-gray-300 hover:text-red-500 p-1 shrink-0" title={t('memoryManager.blocks.deleteBlock')}>
-                            <Trash2 className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => openHistory({ kind: 'block', itemKey: block.name, itemLabel: block.name })}
+                            className="text-gray-300 hover:text-indigo-500 p-1"
+                            title={t('memoryVersions.viewHistory')}
+                          >
+                            <History className="w-3.5 h-3.5" />
                           </button>
-                        )}
+                          {!block.read_only && !isDefaultBlock(block.name) && (
+                            <button onClick={() => handleDeleteBlock(block)} className="text-gray-300 hover:text-red-500 p-1" title={t('memoryManager.blocks.deleteBlock')}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <textarea
                         value={value}
@@ -561,6 +585,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                           <p className="text-xs text-gray-300 mt-0.5">{fmt(n.created_at)}</p>
                         </div>
                         <div className="flex flex-col gap-0.5 ml-1 shrink-0">
+                          <button onClick={(e) => { e.stopPropagation(); openHistory({ kind: 'note', itemKey: n.id, itemLabel: n.title }); }} className="text-gray-300 hover:text-indigo-500 p-0.5" title={t('memoryVersions.viewHistory')}><History className="w-3 h-3" /></button>
                           <button onClick={(e) => { e.stopPropagation(); startEditNote(n); }} className="text-gray-300 hover:text-indigo-500 p-0.5"><Edit3 className="w-3 h-3" /></button>
                           <button onClick={(e) => { e.stopPropagation(); handleDeleteNote(n.id); }} className="text-gray-300 hover:text-red-500 p-0.5"><Trash2 className="w-3 h-3" /></button>
                         </div>
@@ -781,6 +806,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                         </span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0 ml-2">
+                        <button onClick={() => openHistory({ kind: 'slot', itemKey: slot, itemLabel: slot })} className="text-gray-300 hover:text-indigo-500 p-1" title={t('memoryVersions.viewHistory')}><History className="w-3.5 h-3.5" /></button>
                         <button onClick={() => startEditSlot(slot, data)} className="text-gray-300 hover:text-indigo-500 p-1"><Edit3 className="w-3.5 h-3.5" /></button>
                         <button onClick={() => handleDeleteSlot(slot)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
@@ -791,6 +817,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                       <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100">
                         <span className="font-mono text-sm font-semibold text-indigo-700">{slot}</span>
                         <div className="flex items-center gap-1">
+                          <button onClick={() => openHistory({ kind: 'slot', itemKey: slot, itemLabel: slot })} className="text-gray-300 hover:text-indigo-500 p-1" title={t('memoryVersions.viewHistory')}><History className="w-3.5 h-3.5" /></button>
                           <button onClick={() => startEditSlot(slot, data)} className="text-gray-300 hover:text-indigo-500 p-1"><Edit3 className="w-3.5 h-3.5" /></button>
                           <button onClick={() => handleDeleteSlot(slot)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
                         </div>
@@ -862,6 +889,19 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Version history: one item's history, or the whole pool's when
+          historyTarget carries no kind/itemKey. */}
+      {historyTarget && selected && (
+        <MemoryHistoryPanel
+          poolId={selected.id}
+          kind={historyTarget.kind}
+          itemKey={historyTarget.itemKey}
+          itemLabel={historyTarget.itemLabel}
+          onClose={closeHistory}
+          onChanged={() => selectPool(selected.id)}
+        />
       )}
     </div>
   );

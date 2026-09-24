@@ -26,6 +26,7 @@ export default {
   teams: 'Команды',
   nodes: 'Узлы',
   environments: 'Окружения',
+  guardrails: 'Guardrails',
   containers: 'Контейнеры',
   browser: 'Браузер',
   flows: 'Потоки агентов',

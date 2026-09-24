@@ -95,6 +95,9 @@ task with no workspace copies no files at all.
   / **tool_input_matches** / **no_error_tool_results**: trajectory graders,
   described below. Free and deterministic, like the output-based ones, but
   they read what the agent *did* rather than what it said.
+- **rubric**: grades the result against a markdown rubric, criterion by
+  criterion, with an independent model. Costs tokens. The same grader as
+  [task outcomes](outcomes.md).
 - **llm_judge** — a model grades the answer. The only grader that costs money,
   and the only one whose verdict is itself a model's opinion.
 

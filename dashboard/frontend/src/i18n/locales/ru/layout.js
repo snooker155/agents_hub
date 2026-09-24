@@ -66,6 +66,7 @@ export default {
     nodes: 'Узлы',
     nodeDetails: 'Детали узла',
     environments: 'Окружения',
+    guardrails: 'Guardrails',
     containers: 'Контейнеры',
     browser: 'Браузер',
     modelDetail: 'Модель',

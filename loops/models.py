@@ -56,6 +56,20 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
 
 
+def _grader_ref(value: Any) -> Optional[Dict[str, str]]:
+    """A stored grader as ``{"provider", "model"}``, or None when it names no
+    model. Accepts the ``"provider/model"`` string form too."""
+    if isinstance(value, str):
+        provider, sep, model = value.strip().partition("/")
+        value = {"provider": provider, "model": model} if sep else {"provider": "", "model": provider}
+    if not isinstance(value, dict):
+        return None
+    model = str(value.get("model") or "").strip()
+    if not model:
+        return None
+    return {"provider": str(value.get("provider") or "").strip(), "model": model}
+
+
 @dataclass
 class Loop:
     """A flow plus the terms on which repeating it should stop."""
@@ -87,6 +101,18 @@ class Loop:
     evaluator_agent_id: Optional[str] = None
     evaluator_provider: Optional[str] = None
     evaluator_model: Optional[str] = None
+    #: A markdown rubric. When set it replaces the evaluator above: every pass
+    #: is graded per criterion by an independent model call
+    #: (``evals.graders.grade_rubric``, the grader a task's outcome uses), the
+    #: loop stops once every criterion passes, and the unmet criteria with the
+    #: grader's feedback are what the next pass is told to fix. The mean
+    #: criterion score, as 0-100, is the iteration's score, so ``target_score``
+    #: acts as the pass threshold on it; clear it to require every criterion.
+    rubric: str = ""
+    #: ``{"provider", "model"}`` of the rubric grader. None means the
+    #: evaluator's own model when one is set, else the outcome grader default
+    #: (``AGENTS_HUB_OUTCOME_GRADER_MODEL``, then the workspace's model).
+    grader: Optional[Dict[str, str]] = None
 
     created_at: str = field(default_factory=utc_iso)
     updated_at: str = field(default_factory=utc_iso)
@@ -105,6 +131,8 @@ class Loop:
             "evaluator_agent_id": self.evaluator_agent_id,
             "evaluator_provider": self.evaluator_provider,
             "evaluator_model": self.evaluator_model,
+            "rubric": self.rubric,
+            "grader": dict(self.grader) if self.grader else None,
             "created_at": self.created_at, "updated_at": self.updated_at,
         }
 
@@ -130,6 +158,8 @@ class Loop:
             evaluator_agent_id=d.get("evaluator_agent_id") or None,
             evaluator_provider=d.get("evaluator_provider") or None,
             evaluator_model=d.get("evaluator_model") or None,
+            rubric=str(d.get("rubric") or ""),
+            grader=_grader_ref(d.get("grader")),
             created_at=str(d.get("created_at") or utc_iso()),
             updated_at=str(d.get("updated_at") or utc_iso()),
         )

@@ -23,6 +23,8 @@ import SystemPatchCard from '../components/SystemPatchCard';
 import { parseSystemPatch } from '../components/systemPatch';
 import ProcessGraph, { TokenPill } from '../components/ProcessGraph';
 import LiveRunStream from '../components/LiveRunStream';
+import TaskAgentVersionPin from '../components/task/TaskAgentVersionPin';
+import TaskOutcomeCard from '../components/task/TaskOutcomeCard';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import InlineEdit from '../components/InlineEdit';
@@ -1444,6 +1446,12 @@ const TaskDetails = () => {
           </div>
         )}
       </div>
+
+      {/* The run's pinned agent version and the task's outcome rubric with
+          its gradings (components/task/). Each renders nothing it has no
+          data for beyond its own compact header. */}
+      <TaskAgentVersionPin task={task} onChanged={fetchData} />
+      <TaskOutcomeCard task={task} onChanged={fetchData} />
 
       {/* Live agent output for this task's session. Renders nothing until the
           session channel produces events, so a task with nothing running keeps

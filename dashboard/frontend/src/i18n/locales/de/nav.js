@@ -26,6 +26,7 @@ export default {
   teams: 'Teams',
   nodes: 'Knoten',
   environments: 'Umgebungen',
+  guardrails: 'Guardrails',
   containers: 'Container',
   browser: 'Browser',
   flows: 'Agenten-Flows',

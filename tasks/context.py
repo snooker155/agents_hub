@@ -13,9 +13,12 @@ imported back out of it by ``runtime.node_run`` and ``runtime.flow_run``:
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from common.paths import PROJECTS_FILE
+
+_log = logging.getLogger(__name__)
 
 # Internal bookkeeping files that should never appear in a task's Files tab.
 _INTERNAL_PREFIXES = (".logs/", ".progress.json", ".task_result")
@@ -135,8 +138,10 @@ def build_task_instruction(task_id: str, base_instruction: str) -> str:
 
     Layers, in order: a task title prefix + the task description, then the
     ``base_instruction`` itself, then the parent task's goal (for subtasks),
-    result excerpts from the tasks this task ``depends`` on, and the most
-    recent prior agent output on this same task (re-run scenario). The task
+    result excerpts from the tasks this task ``depends`` on, the most
+    recent prior agent output on this same task (re-run scenario), and the
+    task's outcome: its rubric as the definition of done, plus the grader's
+    feedback when the previous attempt did not meet it. The task
     description and base instruction are both included when both are present.
     Each layer is best-effort — a failure to load any piece leaves the
     instruction as-is. Returns the final instruction (never empty for a task_id).
@@ -246,6 +251,17 @@ def build_task_instruction(task_id: str, base_instruction: str) -> str:
                 )
         except Exception:
             pass
+
+        # The task's definition of done and, after an attempt that did not
+        # meet it, the grader's per-criterion feedback (tasks/outcome.py).
+        # Last, so it is the freshest thing the agent reads before starting.
+        try:
+            from tasks.outcome import instruction_sections
+            outcome_block = instruction_sections(task)
+            if outcome_block:
+                instruction = f"{instruction}\n\n{outcome_block}"
+        except Exception:  # noqa: BLE001 - best-effort layer like the others, the instruction stands without it
+            _log.debug("outcome sections failed for task %s", task_id, exc_info=True)
     except Exception:
         pass
 

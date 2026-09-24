@@ -48,6 +48,63 @@ def _definition_hash_for(agent_id: Optional[str]) -> Optional[str]:
         return None
 
 
+def _agent_version_for(
+    agent_id: Optional[str],
+    *,
+    requested_version: Optional[int] = None,
+    definition_hash: Optional[str] = None,
+    route_experiment: bool = False,
+) -> Optional[int]:
+    """The stored agent version this run builds from, best-effort.
+
+    Three sources, in order:
+
+    1. ``requested_version`` — a task or launch pinned a version explicitly
+       (agents.agent_launcher / runtime.agent_run's ``--definition-version``).
+       Used only when that version's row still exists; a pin whose row is
+       gone is silently skipped (the factory falls back to the live
+       definition, and the next branch names the version that actually is).
+    2. An open A/B experiment on this agent (``evals.experiments``): the arm
+       ``open_run``'s own ``_route_experiment`` call, just above this one, has
+       already pinned for this run/context. Only asked when ``route_experiment``
+       is true (``open_run``, not the pre-spawn placeholder ``preopen_run``,
+       where no build is about to happen in this process/context).
+    3. Otherwise, the stored version whose hash equals ``definition_hash``
+       (the live definition's fingerprint, computed the same way
+       ``_definition_hash_for`` computes it) — the version a plain, unpinned
+       run actually built. When the live definition has no row yet,
+       :func:`agents.versions.ensure_current_version` writes one so a run
+       never carries a version-less hash it could otherwise be traced to.
+
+    Never raises: any lookup failure just means the run record carries no
+    ``agent_version``.
+    """
+    if not agent_id:
+        return None
+    try:
+        from agents import versions as agent_versions
+
+        if requested_version is not None:
+            if agent_versions.get_version_row(agent_id, int(requested_version)) is not None:
+                return int(requested_version)
+
+        if route_experiment:
+            from evals.experiments import peek_pin
+            pin = peek_pin(agent_id)
+            if pin is not None and pin.get("version") is not None:
+                pin_version = int(pin["version"])
+                if agent_versions.get_version_row(agent_id, pin_version) is not None:
+                    return pin_version
+
+        found = agent_versions.version_for_hash(agent_id, definition_hash)
+        if found is not None:
+            return found
+        return agent_versions.ensure_current_version(agent_id)
+    except Exception:  # noqa: BLE001 - best-effort (see docstring): logged, never raised
+        log.debug("could not resolve agent_version for '%s'", agent_id, exc_info=True)
+        return None
+
+
 def run_log_path(run_id: str) -> Path:
     """Canonical log file path for an agent run. Every run channel writes here
     so the UI can treat every run uniformly."""
@@ -79,6 +136,7 @@ def preopen_run(
     status: str = "pending",
     log_file: Optional[str] = None,
     link_to_session: bool = True,
+    agent_version_pin: Optional[int] = None,
     **extra: Any,
 ) -> str:
     """Pre-create a placeholder run record before the subprocess is spawned.
@@ -88,7 +146,10 @@ def preopen_run(
     It deliberately leaves started_at/pid null and writes no task execution-log
     entry: those are open_run()'s job once the run is actually running. Used for
     both pre-approval (status="awaiting_approval") and pre-spawn (status="pending")
-    placeholders. Extra kwargs are merged into the record. Returns run_id.
+    placeholders. Extra kwargs are merged into the record. ``agent_version_pin``
+    is the version a task or launch asked for (agents.agent_launcher), used to
+    resolve the record's own ``agent_version`` (see ``_agent_version_for``);
+    it is not stored on the record under that name. Returns run_id.
     """
     record: Dict[str, Any] = {
         "run_id": run_id,
@@ -111,6 +172,13 @@ def preopen_run(
         dh = _definition_hash_for(agent_id)
         if dh:
             record["definition_hash"] = dh
+    if "agent_version" not in record:
+        av = _agent_version_for(
+            agent_id, requested_version=agent_version_pin,
+            definition_hash=record.get("definition_hash"),
+        )
+        if av is not None:
+            record["agent_version"] = av
     _upsert_run(record)
     if link_to_session and session_id:
         try:
@@ -135,12 +203,17 @@ def open_run(
     pid: Optional[int] = None,
     status: str = "running",
     link_to_session: bool = True,
+    agent_version_pin: Optional[int] = None,
     **extra: Any,
 ) -> str:
     """Create a run record and optionally link it to a session.
 
     Extra keyword arguments are merged directly into the record (e.g.
-    execution_mode, provider, model, is_flow).  Returns run_id.
+    execution_mode, provider, model, is_flow). ``agent_version_pin`` is the
+    version a task or launch asked for (agents.agent_launcher /
+    runtime.agent_run's ``--definition-version``); it resolves the record's
+    ``agent_version`` (see ``_agent_version_for``) and is not itself stored.
+    Returns run_id.
     """
     record: Dict[str, Any] = {
         "run_id": run_id,
@@ -171,6 +244,13 @@ def open_run(
             record["definition_hash"] = dh
     _upsert_run(record)
     _route_experiment(run_id, agent_id, record)
+    if "agent_version" not in record:
+        av = _agent_version_for(
+            agent_id, requested_version=agent_version_pin,
+            definition_hash=record.get("definition_hash"), route_experiment=True,
+        )
+        if av is not None:
+            _update_run(run_id, {"agent_version": av})
     if link_to_session and session_id:
         try:
             from common.session_service import add_run_to_session as _link
@@ -238,6 +318,12 @@ def close_run_from_result(
     """
     ok = bool(getattr(result, "ok", False))
     output = (getattr(result, "agent_output", None) or "").strip()
+    # What the agent loop recorded beyond the tool trail (agents/agent_loop.py):
+    # the model that answered, compactions, steering messages, guardrail
+    # checks. Absent on a plain run, so its record keeps its old shape.
+    loop = getattr(result, "loop", None)
+    if isinstance(loop, dict) and loop and "loop" not in extra:
+        extra["loop"] = loop
     proc = extra.pop("process", None)
     if isinstance(proc, dict):
         structured = None

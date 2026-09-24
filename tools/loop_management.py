@@ -58,6 +58,10 @@ def _simplify(loop) -> Dict[str, Any]:
             "provider": d["evaluator_provider"],
             "model": d["evaluator_model"],
         },
+        # A rubric replaces the evaluator above: each pass is graded per
+        # criterion (evals.graders.grade_rubric, the grader task outcomes use).
+        "rubric": d.get("rubric") or "",
+        "grader": d.get("grader"),
     }
 
 
@@ -220,6 +224,19 @@ class CreateLoopInput(BaseModel):
     )
     evaluator_provider: Optional[str] = Field(None, description="Provider for the evaluator call")
     evaluator_model: Optional[str] = Field(None, description="Model for the evaluator call")
+    rubric: Optional[str] = Field(
+        None,
+        description=(
+            "Optional markdown rubric, one criterion per top-level bullet "
+            "('**Name**: what must hold'). When set, every pass is graded per "
+            "criterion instead of by the evaluator, the loop stops once every "
+            "criterion passes (or the mean score reaches target_score / 100), and "
+            "the unmet criteria are what the next pass is told to fix."
+        ),
+    )
+    grader: Optional[str] = Field(
+        None, description="Grader model for the rubric as 'provider/model' (default: the evaluator's model)",
+    )
     workspace: Optional[str] = Field(
         None, description="Workspace to attach the loop to; defaults to the active workspace"
     )
@@ -247,6 +264,19 @@ class ModifyLoopInput(BaseModel):
     evaluator_agent_id: Optional[str] = Field(None, description="The reviewing agent, for mode 'agent'")
     evaluator_provider: Optional[str] = Field(None, description="Provider for the evaluator call")
     evaluator_model: Optional[str] = Field(None, description="Model for the evaluator call")
+    rubric: Optional[str] = Field(
+        None,
+        description=(
+            "New markdown rubric (empty string removes it), one criterion per top-level bullet "
+            "('**Name**: what must hold'). When set, every pass is graded per "
+            "criterion instead of by the evaluator, the loop stops once every "
+            "criterion passes (or the mean score reaches target_score / 100), and "
+            "the unmet criteria are what the next pass is told to fix."
+        ),
+    )
+    grader: Optional[str] = Field(
+        None, description="Grader model for the rubric as 'provider/model' (default: the evaluator's model)",
+    )
 
     @field_validator("convergence", mode="before")
     @classmethod
@@ -309,6 +339,8 @@ def _create_loop(
     evaluator_agent_id: Optional[str] = None,
     evaluator_provider: Optional[str] = None,
     evaluator_model: Optional[str] = None,
+    rubric: Optional[str] = None,
+    grader: Optional[str] = None,
     workspace: Optional[str] = None,
 ) -> str:
     """Create an iteration loop: an existing flow, repeated until a criterion is met.
@@ -330,6 +362,8 @@ def _create_loop(
         "evaluator_agent_id": evaluator_agent_id or None,
         "evaluator_provider": evaluator_provider or None,
         "evaluator_model": evaluator_model or None,
+        "rubric": rubric or "",
+        "grader": grader or None,
     }
     unknown = _apply_convergence(payload, convergence)
 
@@ -376,6 +410,8 @@ def _modify_loop(
     evaluator_agent_id: Optional[str] = None,
     evaluator_provider: Optional[str] = None,
     evaluator_model: Optional[str] = None,
+    rubric: Optional[str] = None,
+    grader: Optional[str] = None,
 ) -> str:
     """Change an existing loop. Only the fields you pass are touched.
 
@@ -407,6 +443,10 @@ def _modify_loop(
         payload["evaluator_provider"] = evaluator_provider or None
     if evaluator_model is not None:
         payload["evaluator_model"] = evaluator_model or None
+    if rubric is not None:
+        payload["rubric"] = rubric
+    if grader is not None:
+        payload["grader"] = grader or None
     unknown = _apply_convergence(payload, convergence)
 
     errors, warnings = _validate(payload, payload.get("workspace"))

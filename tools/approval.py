@@ -263,6 +263,35 @@ def gate_refusal_text(tool_id: str, tool_input: Any, reason: str = "") -> str:
     )
 
 
+def policy_denied_text(tool_id: str, tool_input: Any, reason: str = "") -> str:
+    """The refusal a call gets when the tool policy (tools/permission_policy.py)
+    denied it outright.
+
+    Same JSON shape as :func:`approval_required_text` so an agent reads both
+    the same way, with ``code: "policy_denied"``: nobody is going to approve
+    this call, so the agent is told not to retry it and to take another route
+    or tell the user why it cannot go on.
+    """
+    try:
+        pretty = json.dumps(tool_input, ensure_ascii=False, sort_keys=True, default=str)
+    except Exception:  # noqa: BLE001 - any argument value still has a str()
+        pretty = str(tool_input)
+    why = reason or "The tool policy does not allow this call."
+    body: Dict[str, Any] = {
+        "ok": False,
+        "error": (
+            f"The tool policy denied `{tool_id}`. {why} Do not retry the same call. "
+            "Choose another way to reach the goal, or explain to the user why "
+            "this step cannot be done."
+        ),
+        "code": "policy_denied",
+        "action": tool_id,
+        "target": pretty,
+        "reason": why,
+    }
+    return json.dumps(body, ensure_ascii=False, indent=2, default=str)
+
+
 __all__ = [
     "NEEDS_APPROVAL",
     "NEVER_GATED",
@@ -272,5 +301,6 @@ __all__ = [
     "call_fingerprint",
     "gate_refusal_text",
     "needs_approval",
+    "policy_denied_text",
     "workspace_name",
 ]

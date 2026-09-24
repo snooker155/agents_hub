@@ -52,6 +52,10 @@ class JobCreate(BaseModel):
     # consecutive firing failures that pauses a recurring job on its own.
     environment_id: Optional[str] = None
     budget_usd: Optional[float] = None
+    # Agent version pin (agents/versions.py) copied onto every task this job
+    # creates; only meaningful together with agent_id (validated as such by
+    # plans.service.create_job).
+    agent_version: Optional[int] = None
     auto_pause_after: int = 3
 
     @model_validator(mode="after")
@@ -80,6 +84,7 @@ class JobUpdate(BaseModel):
     channels: Optional[List[str]] = None
     environment_id: Optional[str] = None
     budget_usd: Optional[float] = None
+    agent_version: Optional[int] = None
     auto_pause_after: Optional[int] = None
 
 
@@ -124,6 +129,7 @@ async def create_job(payload: JobCreate):
             channels=payload.channels,
             environment_id=payload.environment_id,
             budget_usd=payload.budget_usd,
+            agent_version=payload.agent_version,
             auto_pause_after=payload.auto_pause_after,
         )
     except ValueError as e:

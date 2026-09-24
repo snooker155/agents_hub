@@ -84,6 +84,17 @@ def _spec_parts(spec: Any) -> Dict[str, Any]:
         "response_format": spec.response_format,
         "clarify_gate": bool(spec.clarify_gate),
         "allow_self_delegation": bool(spec.allow_self_delegation),
+        # Loop policies. Read with getattr so a spec object from before they
+        # existed still fingerprints; left out while unset so the hash of an
+        # agent that uses none of them is the hash it always had.
+        **{k: v for k, v in {
+            "tool_policy": dict(getattr(spec, "tool_policy", None) or {}),
+            "fallback_models": list(getattr(spec, "fallback_models", None) or []),
+            "output_schema": getattr(spec, "output_schema", None),
+            "guardrails": sorted(getattr(spec, "guardrails", None) or []),
+            "tool_search": getattr(spec, "tool_search", None),
+            "compaction": getattr(spec, "compaction", None),
+        }.items() if v not in (None, {}, [])},
     }
 
 
@@ -216,6 +227,31 @@ def snapshot_if_changed(
     except Exception:
         log.warning("agent_versions: snapshot of '%s' failed, continuing without it",
                     agent_id, exc_info=True)
+        return None
+
+
+def version_for_hash(agent_id: str, definition_hash: Optional[str]) -> Optional[int]:
+    """The stored version whose hash equals ``definition_hash``, or None.
+
+    Used to stamp a run record with the version it actually ran (``agent_version``,
+    ``managers.runs.lifecycle``): a run that built from the live definition
+    still ran *some* version of it, and this finds which one without writing a
+    new snapshot. Callers that need a row to exist regardless (the live
+    definition has never been snapshotted) use :func:`ensure_current_version`
+    instead, which creates one. Best-effort: never raises, returns None on any
+    lookup failure so a run record is never blocked on this.
+    """
+    if not agent_id or not definition_hash:
+        return None
+    try:
+        row = db.get_conn().execute(
+            "SELECT version FROM agent_versions WHERE agent_id = ? AND hash = ? "
+            "ORDER BY version DESC LIMIT 1",
+            (str(agent_id), str(definition_hash)),
+        ).fetchone()
+        return int(row["version"]) if row is not None else None
+    except Exception:  # noqa: BLE001 - best-effort lookup; a run record must never fail over this
+        log.debug("version_for_hash lookup failed for '%s'", agent_id, exc_info=True)
         return None
 
 

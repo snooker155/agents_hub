@@ -16,12 +16,18 @@
         "memory",
         "sessions-and-runs",
         "system-agents",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "agent-loop",
+        "tasks",
+        "guardrails"
       ],
       "headings": [
         "What an agent is made of",
         "Where agents come from",
+        "The example roster",
         "System vs. custom",
+        "Versions",
+        "Versions and pinning",
         "Delegation",
         "Gotchas"
       ]
@@ -226,11 +232,16 @@
       ],
       "headings": [
         "The pieces",
+        "Targets",
+        "Cases from tasks",
         "Graders, cheapest first",
+        "Trajectory graders",
         "Cost",
+        "Repeats and variance",
+        "Diff of two runs",
         "The injection audit",
-        "Why bother",
-        "Online evals"
+        "Online evals",
+        "Why bother"
       ]
     },
     {
@@ -276,13 +287,15 @@
         "agents",
         "tasks",
         "tools-and-capabilities",
-        "workspaces"
+        "workspaces",
+        "tool-policy"
       ],
       "headings": [
         "In the dashboard",
         "Hooks",
         "The approval gate",
-        "What stays advisory"
+        "What stays advisory",
+        "Tool policy"
       ]
     },
     {
@@ -364,13 +377,15 @@
       "related": [
         "costs",
         "flows",
-        "system-workspace"
+        "system-workspace",
+        "outcomes"
       ],
       "headings": [
         "The exit criterion",
         "The bounds that stop it",
         "Running",
         "Checkpoint and resume",
+        "Rubric",
         "Gotchas"
       ]
     },
@@ -435,6 +450,10 @@
         "Episodes",
         "Getting knowledge in",
         "RAG",
+        "Chunking",
+        "Search: keyword and vector, fused",
+        "Deletion and reindexing",
+        "Version history",
         "Gotchas"
       ]
     },
@@ -619,7 +638,8 @@
         "costs",
         "instances",
         "service-health",
-        "workers"
+        "workers",
+        "agent-loop"
       ],
       "headings": [
         "Run",
@@ -696,13 +716,18 @@
         "projects",
         "sessions-and-runs",
         "notifications",
-        "costs"
+        "costs",
+        "outcomes"
       ],
       "headings": [
-        "Lifecycle",
+        "Status",
+        "Transition table",
         "Budget pause",
+        "Priority and deadlines",
         "Subtasks and decomposition",
         "Results",
+        "Outcome",
+        "Agent version",
         "Gotchas"
       ]
     },
@@ -1103,7 +1128,8 @@
         "sso",
         "scim",
         "api-keys",
-        "secrets"
+        "secrets",
+        "guardrails"
       ],
       "headings": [
         "What is recorded",
@@ -1288,6 +1314,115 @@
         "Handing a page to an agent",
         "Access",
         "API"
+      ]
+    },
+    {
+      "id": "tool-policy",
+      "title": "Tool policy",
+      "summary": "Three modes decide what an agent's tool call can do: always_allow runs it, always_ask holds it for approval, and auto sends it to a small model to classify.",
+      "surface": "Tool policy",
+      "related": [
+        "agents",
+        "hooks",
+        "tasks",
+        "workspaces",
+        "guardrails"
+      ],
+      "headings": [
+        "Setting a policy",
+        "What each mode does",
+        "What happens to a denied call",
+        "Where decisions are visible",
+        "Never gated",
+        "Gaps"
+      ]
+    },
+    {
+      "id": "outcomes",
+      "title": "Outcomes",
+      "summary": "A task can have an outcome: a markdown rubric that defines done, with max attempts, an optional grader model and an optional pass threshold.",
+      "surface": "Outcomes",
+      "related": [
+        "tasks",
+        "loops",
+        "evals"
+      ],
+      "headings": [
+        "The rubric format",
+        "Grading",
+        "Attempts",
+        "Choosing a grader model",
+        "Grade now",
+        "What the agent is told",
+        "Blocking",
+        "API and audit",
+        "In loops",
+        "Gaps"
+      ]
+    },
+    {
+      "id": "steering",
+      "title": "Steering",
+      "summary": "Send a message to a running run while it is still working, either injected into the conversation stream or interrupting it to restart on a new task.",
+      "surface": "Steering",
+      "related": [
+        "tasks",
+        "sessions-and-runs",
+        "containers"
+      ],
+      "headings": [
+        "The API",
+        "Inject",
+        "Interrupt",
+        "In the chat composer",
+        "On pages",
+        "Access and audit",
+        "Containers and remote agents",
+        "Gaps"
+      ]
+    },
+    {
+      "id": "agent-loop",
+      "title": "Agent loop",
+      "summary": "What happens between a run's model calls and the policies inside it: steering, compaction, tool search, structured output and fallback models, with guardrails and the tool policy around them, their agent and workspace settings, and the loop block a run records.",
+      "surface": "Agent loop",
+      "related": [
+        "agents",
+        "tool-policy",
+        "guardrails",
+        "steering",
+        "sessions-and-runs",
+        "costs"
+      ],
+      "headings": [
+        "Where the settings live",
+        "Steering",
+        "Compaction",
+        "Tool search",
+        "Structured output",
+        "Fallback models",
+        "Guardrails and the tool policy",
+        "What the run records"
+      ]
+    },
+    {
+      "id": "guardrails",
+      "title": "Guardrails",
+      "summary": "Workspace or global checks on a run's input and final answer, by a rule (regex, keywords, PII, length) or a judge model, that block the run or warn, with an event log and audit records.",
+      "surface": "Guardrails",
+      "related": [
+        "agent-loop",
+        "tool-policy",
+        "audit",
+        "agents"
+      ],
+      "headings": [
+        "What a guardrail is",
+        "Rule kinds",
+        "Judge guardrails",
+        "When checks run",
+        "Findings and audit",
+        "Managing guardrails"
       ]
     }
   ]

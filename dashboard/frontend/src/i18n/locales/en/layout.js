@@ -66,6 +66,7 @@ export default {
     nodes: 'Nodes',
     nodeDetails: 'Node Details',
     environments: 'Environments',
+    guardrails: 'Guardrails',
     containers: 'Containers',
     browser: 'Browser',
     modelDetail: 'Model',

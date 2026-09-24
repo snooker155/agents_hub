@@ -36,6 +36,9 @@ import ConfigTab from '../components/agent/ConfigTab';
 import ModelTab from '../components/agent/ModelTab';
 import DockerTab from '../components/agent/DockerTab';
 import SkillsTab from '../components/agent/SkillsTab';
+import ToolPolicyCard from '../components/agent/ToolPolicyCard';
+import LoopSettingsCard from '../components/agent/LoopSettingsCard';
+import AgentGuardrailsCard from '../components/agent/AgentGuardrailsCard';
 import LiveQualityCard from '../components/agent/LiveQualityCard';
 import ExperimentCard from '../components/agent/ExperimentCard';
 
@@ -787,17 +790,28 @@ const AgentDetails = () => {
       {activeTab === 'history' && <HistoryTab />}
       {activeTab === 'logs' && <LogsTab />}
       {activeTab === 'memory' && <MemoryTab />}
-      {activeTab === 'tools' && <ToolsTab />}
+      {activeTab === 'tools' && (
+        <>
+          <ToolsTab />
+          <ToolPolicyCard agentId={id} agent={agent} onSaved={fetchData} />
+        </>
+      )}
       {activeTab === 'nodes' && <NodesTab />}
       {activeTab === 'tasks' && <TasksTab />}
       {activeTab === 'commands' && <CommandsTab />}
       {activeTab === 'config' && (
         <>
           <ConfigTab />
+          <AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />
           <ExperimentCard agentId={id} />
         </>
       )}
-      {activeTab === 'model' && <ModelTab />}
+      {activeTab === 'model' && (
+        <>
+          <ModelTab />
+          <LoopSettingsCard agentId={id} agent={agent} onSaved={fetchData} />
+        </>
+      )}
       {activeTab === 'docker' && <DockerTab />}
       {activeTab === 'skills' && <SkillsTab />}
 

@@ -58,6 +58,7 @@ import {
   Layers,
   Container,
   Rocket,
+  ShieldCheck,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -341,6 +342,7 @@ const Layout = ({ children }) => {
         { name: t('nav.teams'), path: '/teams', icon: UsersRound },
         { name: t('nav.nodes'), path: '/nodes', icon: Server },
         { name: t('nav.environments'), path: '/environments', icon: Container },
+        { name: t('nav.guardrails'), path: '/guardrails', icon: ShieldCheck },
         { name: t('nav.containers'), path: '/containers', icon: Box },
         // The agent's browser on screen, and free browsing on the same service.
         { name: t('nav.browser'), path: '/browser', icon: Globe },

@@ -79,6 +79,18 @@ runs and a blocked tool combination is refused the same way. Rolling back a
 system agent marks it as user modified, the same as any other edit, so
 bootstrap sync leaves it alone afterward.
 
+## Versions and pinning
+
+A task or a scheduled `agent_task` job can be pinned to a stored agent version via `agent_version`; `null` means the live definition. The launcher passes `--definition-version N` to the runtime, which builds the agent from that stored version. A version whose row has been deleted falls back to the live definition (logged).
+
+Every agent run record carries `agent_version`: the pin if it still existed, the A/B experiment arm's version if an experiment routed the run, or the version matching the live definition's hash. The hash is snapshotted on first use, so it is never null for a registered agent.
+
+The run page panel shows that version against the agent's current one and offers rollback: `POST /api/runs/{run_id}/rollback-agent` (same checks as the agent's own rollback route: refuses a version whose tool set the capability guard now blocks; audited `agent.rollback`).
+
+The task page has a version picker (live or a stored version, via `PATCH /api/tasks/{id}` with `agent_version`, validated against the assigned agent's versions). The Deployments page job editor has the same picker for an `agent_task` job with an agent; `agent_version` requires `agent_id` on the job and is copied onto the task at fire time.
+
+A subtask never inherits its parent's pin, because a subtask usually runs a different agent. Environment and budget are inherited instead.
+
 ## Delegation
 
 `run_agent_tool` hands a self-contained goal to another agent and returns its
@@ -112,4 +124,4 @@ on the task page with the model the run used.
 - `run_agent_tool` is refused inside a tracked task. Use `delegate_task_tool`
   there (a subtask run, optionally on another model), or assign and start.
 
-Related: [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md).
+Related: [agent-loop](agent-loop.md), [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md), [tasks](tasks.md).

@@ -18,7 +18,7 @@ rows, so watching live and reviewing afterwards look identical.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -48,6 +48,12 @@ class LoopIn(BaseModel):
     evaluator_agent_id: Optional[str] = None
     evaluator_provider: Optional[str] = None
     evaluator_model: Optional[str] = None
+    # A markdown rubric graded per criterion (loops/evaluator.evaluate_with_rubric);
+    # when set it replaces the evaluator. grader: "provider/model" or
+    # {provider, model}; None falls back to the evaluator model, then the
+    # outcome grader default.
+    rubric: str = ""
+    grader: Optional[Union[str, Dict[str, Any]]] = None
 
 
 class RunIn(BaseModel):
@@ -96,6 +102,12 @@ def _validate(data: LoopIn) -> None:
             status_code=400,
             detail="evaluator_mode 'agent' needs evaluator_agent_id",
         )
+    if data.grader not in (None, "", {}):
+        from tasks.outcome import OutcomeError, parse_grader_ref
+        try:
+            parse_grader_ref(data.grader)
+        except OutcomeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if data.min_iterations > data.max_iterations:
         raise HTTPException(
             status_code=400, detail="min_iterations cannot exceed max_iterations",
@@ -119,6 +131,17 @@ def _enrich(loop: Loop) -> Dict[str, Any]:
     flow = _load_flow(loop.flow_id)
     out["flow_name"] = (flow or {}).get("name") or loop.flow_id
     out["flow_exists"] = flow is not None
+    if (loop.rubric or "").strip():
+        # A rubric replaces the evaluator: an independent model grades each
+        # criterion, so there is no judging agent to name.
+        from loops.evaluator import rubric_grader
+        from tasks.outcome import parse_rubric
+        out["resolved_evaluator"] = {
+            "mode": "rubric", "agent_id": None,
+            "grader": rubric_grader(loop, loop.workspace),
+            "criteria": parse_rubric(loop.rubric),
+        }
+        return out
     mode, agent_id = resolve_evaluator(loop, flow or {})
     out["resolved_evaluator"] = {"mode": mode, "agent_id": agent_id}
     return out

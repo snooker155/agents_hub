@@ -59,7 +59,27 @@ const emptyLoop = (workspace) => ({
   exit_criterion: '', max_iterations: 5, min_iterations: 1, target_score: 80,
   patience: 2, cost_ceiling: null, max_wall_seconds: 3600,
   evaluator_mode: 'final_agent', evaluator_agent_id: null,
+  rubric: '', grader: null,
 });
+
+// A loop's rubric grader as the one-line "provider/model" the form edits.
+const graderText = (g) => {
+  if (!g) return '';
+  if (typeof g === 'string') return g;
+  return g.model ? `${g.provider ? `${g.provider}/` : ''}${g.model}` : '';
+};
+
+// An iteration graded against a rubric keeps the whole grading as JSON in
+// evaluator_raw (loops/evaluator.evaluate_with_rubric); null for any other judge.
+const rubricGrading = (raw) => {
+  if (!raw || raw[0] !== '{') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.kind === 'rubric' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
 
 /** The score bar chart. Deliberately the first thing on the run panel. */
 function Trajectory({ iterations }) {
@@ -98,6 +118,7 @@ function Trajectory({ iterations }) {
 function IterationRow({ iteration, flowId }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const grading = useMemo(() => rubricGrading(iteration.evaluator_raw), [iteration.evaluator_raw]);
   const Chevron = open ? ChevronDown : ChevronRight;
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -133,6 +154,25 @@ function IterationRow({ iteration, flowId }) {
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">{t('loops.verdict')}</h4>
               <p className="text-sm text-gray-800 whitespace-pre-wrap">{iteration.reason}</p>
+            </div>
+          )}
+          {(grading?.criteria || []).length > 0 && (
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">
+                {t('outcomes.criteriaHeading')}
+              </h4>
+              <ul className="space-y-1">
+                {grading.criteria.map((c) => (
+                  <li key={c.name} className="flex items-start gap-2 text-sm">
+                    <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${c.passed ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <span className="min-w-0">
+                      <span className="font-medium text-gray-900">{c.name}</span>
+                      <span className="ml-2 text-xs text-gray-500">{Math.round((Number(c.score) || 0) * 100)}/100</span>
+                      {c.feedback && <span className="block text-gray-700 whitespace-pre-wrap">{c.feedback}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           {iteration.feedback && (
@@ -495,7 +535,11 @@ export default function Loops() {
                     <h2 className="text-lg font-bold text-gray-900 truncate">{selected.name}</h2>
                     <p className="text-xs text-gray-500">
                       {selected.flow_name} ·{' '}
-                      {t('loops.judgedBy', { agent: selected.resolved_evaluator?.agent_id || t('loops.aModelCall') })} ·{' '}
+                      {t('loops.judgedBy', {
+                        agent: selected.resolved_evaluator?.mode === 'rubric'
+                          ? t('outcomes.loopJudgedByRubric')
+                          : (selected.resolved_evaluator?.agent_id || t('loops.aModelCall')),
+                      })} ·{' '}
                       {t('loops.upToIterations', { count: selected.max_iterations })}
                     </p>
                   </div>
@@ -628,6 +672,34 @@ export default function Loops() {
                       not as a topic — a vague criterion produces a loop that never
                       converges or one that stops immediately.
                     </p>
+                  </div>
+
+                  <div>
+                    <label htmlFor="loop-rubric" className="block text-xs font-semibold text-gray-600 mb-1">
+                      {t('outcomes.loopRubric')}
+                    </label>
+                    <textarea
+                      id="loop-rubric"
+                      value={draft.rubric || ''} onChange={(e) => set({ rubric: e.target.value })}
+                      rows={4}
+                      placeholder={t('outcomes.rubricPlaceholder')}
+                      className="w-full text-sm font-mono border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">{t('outcomes.loopRubricHint')}</p>
+                    {(draft.rubric || '').trim() && (
+                      <div className="mt-2 max-w-md">
+                        <label htmlFor="loop-grader" className="block text-xs font-semibold text-gray-600 mb-1">
+                          {t('outcomes.loopGrader')}
+                        </label>
+                        <input
+                          id="loop-grader"
+                          value={graderText(draft.grader)}
+                          onChange={(e) => set({ grader: e.target.value.trim() || null })}
+                          placeholder={t('outcomes.loopGraderPlaceholder')}
+                          className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

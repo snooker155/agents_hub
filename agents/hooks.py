@@ -12,6 +12,11 @@ moment: *may this tool call happen?*
   goes past the linter) without touching an agent record or this repo.
 * **The approval gate** holds a call that needs a human yes (see
   tools/approval.py for which, and why the list is what it is).
+* **The tool policy** (tools/permission_policy.py) sets a mode per tool, per
+  agent or per workspace: ``always_allow``, ``always_ask``, or ``auto``, where a
+  small model decides run, deny or ask. It is applied after the hooks (a hook
+  deny or ask still wins) and, when nothing sets a mode, falls back to the
+  approval gate above, so a workspace without a policy behaves as before.
 
 Configuration lives per workspace, in ``<workspace>/.hooks.json`` or under a
 ``hooks`` key in the workspace metadata (the metadata wins when both exist, so a
@@ -369,6 +374,28 @@ def run_post_tool_use(
 
 # -------------------- the gate --------------------
 
+@dataclass
+class _Call:
+    """One tool call as the guard sees it while deciding."""
+
+    tool: str
+    input: Any
+    fingerprint: str
+    mode: str
+    source: str
+    task_id: str
+    run_id: str
+
+
+@dataclass
+class _Verdict:
+    """What :meth:`ToolGuard.evaluate` decided: run (both None), refuse with
+    ``refusal`` as the tool's output, or park on ``pending``."""
+
+    refusal: Optional[str] = None
+    pending: Optional[Dict[str, Any]] = None
+
+
 class ToolGuard:
     """Per-build policy shared by every wrapped tool of one agent.
 
@@ -401,6 +428,7 @@ class ToolGuard:
         self._pending = threading.local()
         self._config: Optional[Dict[str, List[Dict[str, Any]]]] = None
         self._gate_enabled: Optional[bool] = None
+        self._settings: Optional[Dict[str, Any]] = None
 
     @property
     def pending(self) -> Optional[Dict[str, Any]]:
@@ -434,6 +462,29 @@ class ToolGuard:
             self._gate_enabled = approval_gate_enabled(self.workspace)
         return self._gate_enabled
 
+    def settings(self) -> Dict[str, Any]:
+        """The workspace settings block, read once per agent build.
+
+        The tool policy (``settings.tool_policy``) and its classifier model
+        (``settings.tool_policy_model``) live there; cached for the same reason
+        as the gate flag.
+        """
+        if self._settings is None:
+            from tools.permission_policy import workspace_settings
+            self._settings = workspace_settings(self.workspace)
+        return self._settings
+
+    def has_policy(self) -> bool:
+        """True when the agent or the workspace sets any tool policy mode."""
+        from tools.permission_policy import has_policy
+        return has_policy(self.spec, self.settings())
+
+    def resolve(self, tool_id: str) -> tuple[str, str]:
+        """``(mode, source)`` for *tool_id* (tools/permission_policy.py)."""
+        from tools.permission_policy import resolve_mode
+        return resolve_mode(tool_id, self.spec, self.workspace,
+                            settings=self.settings(), gate_enabled=self.gate_enabled())
+
     # ---- context ----
 
     def _task_id(self) -> str:
@@ -449,64 +500,180 @@ class ToolGuard:
 
     @staticmethod
     def _run_id() -> str:
+        """The run this call belongs to: the loop's own record of it first
+        (a chat run in the backend has no ``AGENT_RUN_ID``), then the env."""
+        try:
+            from agents.agent_loop import current_state
+            state = current_state()
+            if state is not None and state.run_id:
+                return str(state.run_id)
+        except Exception:  # noqa: BLE001 - no loop state is a plain run, the env still names it
+            logger.debug("hooks: no loop state for the run id", exc_info=True)
         return str(os.environ.get("AGENT_RUN_ID") or "")
 
     # ---- the two halves of a call ----
 
-    def before(self, tool_id: str, tool_input: Any) -> Optional[str]:
+    def before(self, tool_id: str, tool_input: Any, description: str = "") -> Optional[str]:
         """Decide what happens to a call. Returns refusal text, or None to run it.
 
         Raises :class:`agents.callbacks.guards.ApprovalSignal` when the call has
         to wait for a human and there is a task to park it on.
         """
+        return self._apply(self.evaluate(tool_id, tool_input, description))
+
+    async def abefore(self, tool_id: str, tool_input: Any, description: str = "") -> Optional[str]:
+        """:meth:`before` for an async run.
+
+        The deciding half (hook processes, the ``auto`` classifier's model call)
+        runs in a worker thread so it does not stall the event loop; the parked
+        call is recorded back on this thread, because :attr:`pending` is kept
+        per thread and ``invoke_agent`` reads it from the run's own.
+        """
+        import asyncio
+        verdict = await asyncio.to_thread(self.evaluate, tool_id, tool_input, description)
+        return self._apply(verdict)
+
+    def _apply(self, verdict: "_Verdict") -> Optional[str]:
+        if verdict.pending is not None:
+            self.pending = verdict.pending
+            from agents.callbacks.guards import ApprovalSignal
+            raise ApprovalSignal(verdict.pending)
+        return verdict.refusal
+
+    def evaluate(self, tool_id: str, tool_input: Any, description: str = "") -> "_Verdict":
+        """What should happen to one call, without acting on it.
+
+        Order: a ``PreToolUse`` hook that denies or asks wins outright (it is the
+        workspace's rule about this very call); then the tool policy mode
+        (tools/permission_policy.py): ``always_allow`` runs, ``always_ask``
+        waits for a person, ``auto`` asks the classifier. With no policy set
+        anywhere the mode is the legacy one, so the approval list behaves
+        exactly as it did before modes existed.
+        """
+        from tools import permission_policy as policy
+        from tools.approval import call_fingerprint, needs_approval, policy_denied_text
+
         task_id = self._task_id()
+        run_id = self._run_id()
         outcome = run_pre_tool_use(
             tool_id, tool_input,
-            agent_id=self.agent_id, run_id=self._run_id(), task_id=task_id,
+            agent_id=self.agent_id, run_id=run_id, task_id=task_id,
             workspace=self.workspace, config=self.hooks(),
         )
+        mode, source = self.resolve(tool_id)
+        call = _Call(tool=tool_id, input=tool_input, fingerprint=call_fingerprint(tool_id, tool_input),
+                     mode=mode, source=source, task_id=task_id, run_id=run_id)
+
         if outcome.denied:
             # The hook's own words go back as the tool's output, so the agent
             # learns why and can choose a different route instead of retrying.
-            return outcome.reason
+            self._record(call, policy.DENY, outcome.reason, by="hook")
+            return _Verdict(refusal=outcome.reason)
+        if outcome.asks_approval:
+            return self._hold(call, outcome.reason, by="hook", hook=outcome.hook)
 
-        from tools.approval import call_fingerprint, gate_refusal_text, needs_approval
-        gated = outcome.asks_approval or (
-            self.gate_enabled() and needs_approval(tool_id, self.spec)
-        )
-        if not gated:
-            return None
+        if mode == policy.ALWAYS_ALLOW:
+            # An operator's explicit always_allow lifts the tool off the approval
+            # list. Worth a row: it is the call an auditor will ask about.
+            if (source in policy.EXPLICIT_SOURCES and self.gate_enabled()
+                    and needs_approval(tool_id, self.spec)):
+                self._record(call, policy.RUN,
+                             "always_allow overrides the approval list for this tool.", by="policy")
+            return _Verdict()
 
-        reason = outcome.reason or (
+        if mode == policy.AUTO:
+            return self._auto(call, description, policy_denied_text)
+
+        # always_ask, from the policy or from the approval list.
+        reason = (
             f"`{tool_id}` is on this workspace's approval list."
-            if not outcome.asks_approval else ""
+            if source == policy.SOURCE_APPROVAL_LIST
+            else f"The tool policy asks a person before `{tool_id}` runs."
         )
+        return self._hold(call, reason, by="policy")
 
-        if not task_id:
+    def _auto(self, call: "_Call", description: str, denied_text: Any) -> "_Verdict":
+        """Let the classifier decide, once per distinct call per run."""
+        from tools import permission_policy as policy
+
+        # A person already said yes to this exact call (a parked auto call,
+        # approved): that settles it, whatever the classifier would say now.
+        if call.task_id and self._consume(call):
+            self._record(call, policy.RUN, "A person approved this exact call.", by="auto")
+            return _Verdict()
+
+        cached = policy.cached_decision(call.fingerprint)
+        if cached is not None:
+            decision, reason = cached
+        else:
+            title, task_text = policy.task_context(call.task_id)
+            decision, reason = policy.classify(
+                tool_id=call.tool, tool_input=call.input, tool_description=description,
+                agent_id=self.agent_id, agent_spec=self.spec, workspace=self.workspace,
+                task_title=title, task_description=task_text, settings=self.settings(),
+            )
+            policy.remember_decision(call.fingerprint, decision, reason)
+
+        entry = self._record(call, decision, reason, by="auto", cached=cached is not None)
+        if cached is None and decision in (policy.DENY, policy.ASK):
+            policy.audit_decision(entry, agent_id=self.agent_id, run_id=call.run_id,
+                                  task_id=call.task_id, workspace=self.workspace)
+        if decision == policy.RUN:
+            return _Verdict()
+        if decision == policy.DENY:
+            return _Verdict(refusal=denied_text(call.tool, call.input, reason))
+        return self._hold(call, reason, by="auto", record=False, check_approved=False)
+
+    def _hold(self, call: "_Call", reason: str, *, by: str, hook: str = "",
+              record: bool = True, check_approved: bool = True) -> "_Verdict":
+        """A call that needs a person: park it in a task, refuse it in chat."""
+        from tools import permission_policy as policy
+        from tools.approval import gate_refusal_text
+
+        if not call.task_id:
             # Chat: there is nothing to park and nobody to answer a parked call,
             # so the gate stays advisory, exactly like tools/service_ops.py.
-            return gate_refusal_text(tool_id, tool_input, reason)
+            if record:
+                self._record(call, policy.ASK, reason, by=by)
+            return _Verdict(refusal=gate_refusal_text(call.tool, call.input, reason))
 
-        fingerprint = call_fingerprint(tool_id, tool_input)
+        if check_approved and self._consume(call):
+            # The operator already said yes to this exact call.
+            if record:
+                self._record(call, policy.RUN, "A person approved this exact call.", by=by)
+            return _Verdict()
+
+        if record:
+            self._record(call, policy.ASK, reason, by=by)
+        return _Verdict(pending={
+            "tool": call.tool,
+            "input": call.input,
+            "reason": reason,
+            "run_id": call.run_id,
+            "agent_id": self.agent_id,
+            "hook": hook,
+            "fingerprint": call.fingerprint,
+            "mode": call.mode,
+            "by": by,
+        })
+
+    @staticmethod
+    def _consume(call: "_Call") -> bool:
+        """Spend the operator's approval of this exact call, if there is one."""
         try:
             from tasks.service import consume_approved_call
-            if consume_approved_call(task_id, fingerprint):
-                return None  # the operator already said yes to this exact call
-        except Exception:
-            pass
+            return bool(consume_approved_call(call.task_id, call.fingerprint))
+        except Exception:  # noqa: BLE001 - an unreadable task means no approval to spend, so the call waits
+            return False
 
-        pending = {
-            "tool": tool_id,
-            "input": tool_input,
-            "reason": reason,
-            "run_id": self._run_id(),
-            "agent_id": self.agent_id,
-            "hook": outcome.hook,
-            "fingerprint": fingerprint,
-        }
-        self.pending = pending
-        from agents.callbacks.guards import ApprovalSignal
-        raise ApprovalSignal(pending)
+    def _record(self, call: "_Call", decision: str, reason: str, *, by: str,
+                cached: bool = False) -> Any:
+        from tools import permission_policy as policy
+        entry = policy.Decision(tool=call.tool, mode=call.mode, decision=decision, reason=reason or "",
+                                by=by, fingerprint=call.fingerprint, source=call.source, cached=cached)
+        policy.record(entry, agent_id=self.agent_id, run_id=call.run_id, task_id=call.task_id,
+                      workspace=self.workspace, tool_input=call.input)
+        return entry
 
     def after(self, tool_id: str, tool_input: Any, output: Any) -> Any:
         return run_post_tool_use(
@@ -555,7 +722,7 @@ class GuardedTool(BaseTool):
         # Strip the run manager LangChain injects; the inner tool manages its own.
         kwargs.pop("run_manager", None)
         tool_input = _merge_tool_input(args, kwargs)
-        refusal = self.guard.before(self.name, tool_input)
+        refusal = self.guard.before(self.name, tool_input, self.description)
         if refusal is not None:
             return refusal
         return self.guard.after(self.name, tool_input, self.inner.run(tool_input))
@@ -563,7 +730,7 @@ class GuardedTool(BaseTool):
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
         kwargs.pop("run_manager", None)
         tool_input = _merge_tool_input(args, kwargs)
-        refusal = self.guard.before(self.name, tool_input)
+        refusal = await self.guard.abefore(self.name, tool_input, self.description)
         if refusal is not None:
             return refusal
         return self.guard.after(self.name, tool_input, await self.inner.arun(tool_input))
@@ -576,18 +743,20 @@ def guard_action_tools(
     spec: Any = None,
     workspace: Optional[str] = None,
 ) -> list:
-    """Wrap every action tool so hooks and the approval gate apply to it.
+    """Wrap every action tool so hooks, the approval gate and the tool policy
+    apply to it.
 
     Reasoning tools (and ``ask_user``, the agent's own way to reach the human)
     are left alone: they have no effect outside the run, and gating the question
     tool would need approval to ask for approval. Returns the list unchanged when
-    the workspace has neither hooks nor the gate turned on, so an installation
-    that uses neither pays nothing but one config read per agent build.
+    the workspace has no hooks, no gate and no tool policy, and the agent sets no
+    tool policy either, so an installation that uses none of them pays nothing
+    but one config read per agent build.
     """
     from tools.approval import NEVER_GATED
 
     guard = ToolGuard(agent_id=agent_id, spec=spec, workspace=workspace)
-    if not guard.hooks() and not guard.gate_enabled():
+    if not guard.hooks() and not guard.gate_enabled() and not guard.has_policy():
         return tools
 
     wrapped = []

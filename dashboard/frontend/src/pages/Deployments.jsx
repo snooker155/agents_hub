@@ -16,6 +16,7 @@ import {
   getLoops,
   getEnvironments,
 } from '../api';
+import { getAgentVersions } from '../api/agentVersions';
 import {
   Rocket,
   Plus,
@@ -143,9 +144,28 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
   const [loopId, setLoopId] = useState(job?.loop_id || '');
   const [environmentId, setEnvironmentId] = useState(job?.environment_id || '');
   const [budgetUsd, setBudgetUsd] = useState(job?.budget_usd ?? '');
+  const [agentVersion, setAgentVersion] = useState(job?.agent_version ?? '');
+  const [agentVersions, setAgentVersions] = useState([]);
   const [autoPauseAfter, setAutoPauseAfter] = useState(job?.auto_pause_after ?? 3);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // The agent is only known once it is picked (on create) or already fixed
+  // (on edit, where the kind/agent selector above is hidden but job.agent_id
+  // still names it) — either way, the version list is this agent's own, so a
+  // change of agent on create clears whatever version was picked for the last one.
+  const pinnedAgentId = isEdit ? (job?.agent_id || '') : agentId;
+  useEffect(() => {
+    if (!pinnedAgentId || kind !== 'agent_task') { setAgentVersions([]); return; }
+    let cancelled = false;
+    getAgentVersions(pinnedAgentId)
+      .then(({ data }) => { if (!cancelled) setAgentVersions(data?.versions || []); })
+      .catch(() => { if (!cancelled) setAgentVersions([]); });
+    return () => { cancelled = true; };
+  }, [pinnedAgentId, kind]);
+  useEffect(() => {
+    if (!isEdit) setAgentVersion('');
+  }, [agentId, isEdit]);
 
   const handleSave = async () => {
     if (!title.trim()) { setError(t('deployments.errors.titleRequired')); return; }
@@ -166,6 +186,8 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
         catch_up: catchUp,
         environment_id: environmentId || null,
         budget_usd: budgetUsd === '' ? null : Number(budgetUsd),
+        // Only meaningful together with an agent_id, on an agent_task job.
+        agent_version: kind === 'agent_task' && agentVersion !== '' ? Number(agentVersion) : null,
         auto_pause_after: Number(autoPauseAfter) || 0,
       };
       if (isEdit) {
@@ -374,6 +396,27 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
             />
           </div>
         </div>
+
+        {kind === 'agent_task' && pinnedAgentId && agentVersions.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">
+              {t('agentVersionPin.jobFieldLabel')}
+            </label>
+            <select
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={agentVersion}
+              onChange={(e) => setAgentVersion(e.target.value)}
+              aria-label={t('agentVersionPin.jobFieldLabel')}
+            >
+              <option value="">{t('agentVersionPin.jobFieldLive')}</option>
+              {agentVersions.slice().reverse().map((v) => (
+                <option key={v.version} value={v.version}>
+                  {t('agentVersionPin.versionOption', { version: v.version })}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

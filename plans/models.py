@@ -92,13 +92,18 @@ class ScheduledJob(BaseModel):
     # Delivery channels for notifications ("dashboard"; "telegram" later).
     channels: List[str] = Field(default_factory=lambda: ["dashboard"])
 
-    # agent_task/flow/loop: the environment (environments/) and money cap
-    # (common/run_budget.py) copied onto every task this job creates. For a
-    # flow or loop firing the task is created by that launcher, not here, so
-    # plans.service applies these after the fact by updating the task it
-    # returns; None means "the task's own default" for both.
+    # agent_task/flow/loop: the environment (environments/), money cap
+    # (common/run_budget.py) and agent version pin (agents/versions.py)
+    # copied onto every task this job creates. For a flow or loop firing the
+    # task is created by that launcher, not here, so plans.service applies
+    # these after the fact by updating the task it returns; None means "the
+    # task's own default" for all three.
     environment_id: Optional[str] = None
     budget_usd: Optional[float] = None
+    # Only meaningful for an agent_task job with a preassigned agent_id — a
+    # flow/loop job's task has no single agent to pin at fire time. Validated
+    # against agent_id at create/update time (plans.service).
+    agent_version: Optional[int] = None
 
     last_fired_at: Optional[datetime] = None
     last_error: Optional[str] = None

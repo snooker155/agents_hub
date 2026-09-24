@@ -367,6 +367,28 @@ def _maybe_retry_failed_run(tid, executor, run_status: str, reason: str) -> bool
         return False
 
 
+_LIVE_RUN_STATUSES = frozenset({"pending", "queued", "starting", "running"})
+
+
+def _superseded(task_id: Any, run_id: str) -> bool:
+    """True when the task is assigned to a different run that is still live.
+
+    Only then: a task whose assignment was cleared, or that points at a run
+    that already ended, is finalized as before.
+    """
+    try:
+        from tasks import service as _ts
+        task = _ts.get_task(task_id)
+        owner = str(getattr(task, "assigned_agent_run_id", "") or "") if task else ""
+        if not owner or owner == str(run_id):
+            return False
+        other = get_run_by_id(owner) or {}
+        return str(other.get("status") or "").lower() in _LIVE_RUN_STATUSES
+    except Exception:  # noqa: BLE001 - an unreadable owner means "not superseded", the old behaviour
+        log.debug("superseded check failed for task %s", task_id, exc_info=True)
+        return False
+
+
 def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
     """Update the owning task's status after a run completes or fails."""
     try:
@@ -404,7 +426,14 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
         except Exception:  # noqa: BLE001 - best-effort memory episode (see comment), must not break finalization
             log.debug("silent_task_episode failed for run %s", run_id, exc_info=True)
 
-        if status == "completed":
+        if status == "completed" and _superseded(tid, run_id):
+            # The task has moved on to another live run (a steering interrupt
+            # relaunched it, routes/steering.py): a remote or container run
+            # that reports completion afterwards must not resolve the task
+            # over the run that now owns it.
+            log.info("run %s finished after task %s moved to another run; not moving the task",
+                     run_id, tid)
+        elif status == "completed":
             # Only advance to 'resolved' if the agent didn't already set a
             # terminal status itself (e.g. code_reviewer sets 'reviewed' or 'blocked').
             # Orchestrator and code_reviewer are not workers — they must not set 'resolved'.
@@ -418,6 +447,23 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
             }
             if agent_id_for_run not in non_resolving_agents:
                 current_task = _ts.get_task(tid)
+                # A task with an outcome is graded before it may resolve: an
+                # unmet outcome starts another attempt or blocks the task for
+                # a person (tasks/outcome.py), and either way the normal
+                # transition below is skipped. The session continuation at the
+                # end still runs; a relaunch has moved run-bound continuations
+                # onto the new run, so they wait for the last attempt.
+                outcome_handled = False
+                if current_task and current_task.status not in agent_set_statuses \
+                        and getattr(current_task, "outcome", None):
+                    try:
+                        from tasks.outcome import on_run_completed
+                        outcome_handled = on_run_completed(tid, run or {})
+                    except Exception:  # noqa: BLE001 - a broken outcome check must not stall the task, the normal path runs
+                        log.warning("outcome check failed for run %s", run_id, exc_info=True)
+                        outcome_handled = False
+                if outcome_handled:
+                    current_task = None
                 if current_task and current_task.status not in agent_set_statuses:
                     ws_name = str(getattr(current_task, "workspace", "") or "default")
                     try:

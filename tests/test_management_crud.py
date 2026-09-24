@@ -383,3 +383,22 @@ def test_a_handlers_docstring_becomes_the_tools_description():
     )
     tool, = build_entity_tools(spec)
     assert tool.description == "One line a catalog entry should show."
+
+
+def test_loop_tools_carry_a_rubric_and_its_grader(cast, one_flow, no_workspace):
+    """The Loop Creator can set, change and clear a rubric (loops graded per
+    criterion, evals.graders.grade_rubric) through its own tools."""
+    from tools.loop_management import create_loop_tool, get_loop_tool, modify_loop_tool
+
+    created = call(create_loop_tool, name="Graded", flow_id="flow-1",
+                   exit_criterion="good enough",
+                   rubric="- **Tests**: the suite passes", grader="openai/gpt-4o-mini")
+    lid = created["loop_id"]
+    loop = call(get_loop_tool, loop_id=lid)["loop"]
+    assert loop["rubric"].startswith("- **Tests**")
+    assert loop["grader"] == {"provider": "openai", "model": "gpt-4o-mini"}
+
+    call(modify_loop_tool, loop_id=lid, rubric="")
+    loop = call(get_loop_tool, loop_id=lid)["loop"]
+    assert loop["rubric"] == ""
+    assert loop["grader"] == {"provider": "openai", "model": "gpt-4o-mini"}

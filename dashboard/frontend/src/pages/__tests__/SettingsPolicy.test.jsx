@@ -21,6 +21,11 @@ const updateWorkspacePolicy = vi.fn((_name, patch) => ok({
   hooks: patch.hooks ?? HOOKS,
 }));
 
+// The tool policy and agent loop cards on this page have their own tests
+// (components/__tests__); here they would only need more of the api mocked.
+vi.mock('../../components/settings/ToolPolicySettings', () => ({ default: () => null }));
+vi.mock('../../components/settings/LoopSettingsWorkspace', () => ({ default: () => null }));
+
 vi.mock('axios', () => ({
   default: {
     create: () => ({

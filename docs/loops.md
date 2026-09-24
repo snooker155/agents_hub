@@ -47,6 +47,10 @@ A loop run claims its task as executor kind `loop`. Retry and review now apply:
 the workspace's orchestrator retries a failed loop up to `orchestrator.max_retries`
 times, and review starts on every resolve when the code_reviewer agent is available.
 
+## Rubric
+
+A loop can use an outcome rubric instead of the exit criterion and evaluator. Set an optional `rubric` and `grader` (UI on the Loops page, and the Loop Creator's `create_loop_tool` / `modify_loop_tool`). With a rubric, each pass is graded per criterion instead of by the evaluator. The loop stops when the rubric passes, the loop's `target_score` divided by 100 is the pass threshold on the mean score, and the unmet criteria with their feedback are what the next pass is told to fix. See [outcomes](outcomes.md).
+
 ## Gotchas
 
 - The judge sees the result, not the conversation. If the criterion depends on
@@ -60,4 +64,4 @@ times, and review starts on every resolve when the code_reviewer agent is availa
 The [system workspace](system-workspace.md) ships one loop of its own,
 `system_loop`, scheduled through a job of kind `loop` that starts paused.
 
-Related: [flows](flows.md), [costs](costs.md), [system-workspace](system-workspace.md).
+Related: [flows](flows.md), [outcomes](outcomes.md), [costs](costs.md), [system-workspace](system-workspace.md).

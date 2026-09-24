@@ -42,6 +42,15 @@ vi.mock('../../api', () => ({
   getEnvironments: (...args) => getEnvironments(...args),
 }));
 
+// Own module (src/api/agentVersions.js), not part of the ../../api contract
+// above: the version-pin select on an agent_task job only appears once this
+// resolves, so an empty list here keeps every existing case exactly as it
+// was before the field existed.
+const getAgentVersions = vi.fn(() => ok({ agent_id: 'agent-1', versions: [] }));
+vi.mock('../../api/agentVersions', () => ({
+  getAgentVersions: (...args) => getAgentVersions(...args),
+}));
+
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ workspaceFilter: undefined, selectedWorkspace: 'default' }),
 }));
@@ -128,6 +137,26 @@ describe('Deployments — editing one', () => {
     await waitFor(() => expect(updatePlanJob).toHaveBeenCalled());
     expect(updatePlanJob.mock.calls[0][0]).toBe('job-1');
     expect(updatePlanJob.mock.calls[0][1].title).toBe('Nightly scout run v2');
+  });
+
+  it('pins the job to a stored agent version', async () => {
+    getAgentVersions.mockImplementation(() => ok({
+      agent_id: 'agent-1',
+      versions: [{ version: 1, hash: 'h1' }, { version: 2, hash: 'h2' }],
+    }));
+    getPlanJobs.mockImplementation(() => ok([JOB]));
+    show();
+    await waitFor(() => expect(screen.getByText('Nightly scout run')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTitle('Edit'));
+    // Real I18nProvider is in play here (unlike the component-level tests,
+    // which stub useI18n), so the aria-label is the actual English string.
+    const select = await screen.findByLabelText('Agent version');
+    fireEvent.change(select, { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updatePlanJob).toHaveBeenCalled());
+    expect(updatePlanJob.mock.calls[0][1].agent_version).toBe(2);
   });
 });
 

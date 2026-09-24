@@ -38,6 +38,30 @@ class StreamDriveResult:
     # to link payloads — see ``common.entity_links``. The chat UI renders them as
     # links under the reply; text-only surfaces append them to the text.
     entities: list = field(default_factory=list)
+    # What the agent loop recorded beyond the tool trail (AgentResult.loop,
+    # agents/agent_loop.py): injected steering messages, the answering model,
+    # compactions. Stored on the run record as ``loop``; empty on a plain turn.
+    loop: dict = field(default_factory=dict)
+
+
+def _without_steering(user_message: str, history: list, full_prompt: str) -> tuple:
+    """Undo what a steering message does to the prompt split.
+
+    ``build_prompt_struct`` takes the last user message of the final model
+    call as the turn's message, and a message the user sent mid-turn is a user
+    message placed after the tool results (agents/loop_ext/steering.py). When
+    that is what it found, the turn's own message is the last non-steering
+    user entry of the history; everything after it is the turn's own loop
+    output and is dropped, as it is for a plain turn.
+    """
+    from agents.loop_ext.steering import is_steering_text
+    if not is_steering_text(user_message):
+        return user_message, history
+    for idx in range(len(history) - 1, -1, -1):
+        item = history[idx] if isinstance(history[idx], dict) else {}
+        if item.get("role") == "user" and not is_steering_text(item.get("content")):
+            return str(item.get("content") or ""), history[:idx]
+    return full_prompt, []
 
 
 async def drive_streaming_run(
@@ -104,6 +128,9 @@ async def drive_streaming_run(
     response_obj = None
     try:
         agent_result = await task
+        loop_summary = getattr(agent_result, "loop", None)
+        if isinstance(loop_summary, dict):
+            result.loop = dict(loop_summary)
         if agent_result.ok:
             final_response = str(agent_result.agent_output)
             response_obj = getattr(agent_result, "response", None)
@@ -172,6 +199,7 @@ async def drive_streaming_run(
     from chat.context import split_embedded_history
     prompt_text = last_struct.get("user_message") or full_prompt
     history = list(last_struct.get("history") or [])
+    prompt_text, history = _without_steering(prompt_text, history, full_prompt)
     if history:
         user_message = prompt_text
     else:

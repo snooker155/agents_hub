@@ -16,6 +16,8 @@ import { getDemo, setDemo } from '../api/demo';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { SectionCard, inputCls } from '../components/settingsUi';
 import { useI18n } from '../i18n';
+import ToolPolicySettings from '../components/settings/ToolPolicySettings';
+import LoopSettingsWorkspace from '../components/settings/LoopSettingsWorkspace';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
 
 
@@ -1375,6 +1377,11 @@ export default function Settings() {
                       </span>
                     </label>
                   </div>
+
+                  {/* The workspace's per-tool permission policy and the model
+                      that decides "auto" calls (tools/permission_policy.py). */}
+                  <ToolPolicySettings workspace={activeWorkspace} />
+                  <LoopSettingsWorkspace workspace={activeWorkspace} />
 
                   <div className="pt-4 border-t border-gray-100">
                     <div className="flex items-center justify-between gap-2 mb-1">

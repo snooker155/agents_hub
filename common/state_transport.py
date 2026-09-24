@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +91,20 @@ class StateTransport:
     def load_checkpoint(self, run_id: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
+    def claim_steering(self, run_id: str, step: int) -> Optional[List[Dict[str, Any]]]:
+        """Take the steering messages waiting for this run (``common.steering.
+        claim_pending``), marking them delivered at ``step``. Called before
+        every model call (agents/loop_ext/steering.py), so it must be cheap
+        when there is nothing. Returns None when the call did not go through,
+        which the loop reads as "nothing this time". A transport that does not
+        implement steering never has anything to deliver."""
+        return []
+
+    def delivered_steering(self, run_id: str) -> Optional[List[Dict[str, Any]]]:
+        """The steering messages this run already took (``common.steering.
+        delivered``), for a run that picks up again under the same id."""
+        return []
+
 
 class DirectStateTransport(StateTransport):
     """Calls the existing manager/task functions in-process. The default, and
@@ -144,6 +158,22 @@ class DirectStateTransport(StateTransport):
     def load_checkpoint(self, run_id: str) -> Optional[Dict[str, Any]]:
         from managers.runs.store import load_run_checkpoint
         return load_run_checkpoint(run_id)
+
+    def claim_steering(self, run_id: str, step: int) -> Optional[List[Dict[str, Any]]]:
+        from common import steering
+        try:
+            return steering.claim_pending(run_id, step)
+        except Exception:  # noqa: BLE001 - best-effort (see base docstring): the run goes on without the message this call
+            log.debug("claim_steering failed for %s", run_id, exc_info=True)
+            return None
+
+    def delivered_steering(self, run_id: str) -> Optional[List[Dict[str, Any]]]:
+        from common import steering
+        try:
+            return steering.delivered(run_id)
+        except Exception:  # noqa: BLE001 - best-effort (see base docstring)
+            log.debug("delivered_steering failed for %s", run_id, exc_info=True)
+            return None
 
 
 class HttpStateTransport(StateTransport):
@@ -213,6 +243,9 @@ class HttpStateTransport(StateTransport):
                 log.debug("response payload derivation failed for %s", run_id, exc_info=True)
                 response_payload = None
         error = getattr(result, "error", None)
+        loop = getattr(result, "loop", None)
+        if isinstance(loop, dict) and loop and "loop" not in extra:
+            extra = {**extra, "loop": loop}
         body = {
             "ok": ok,
             "agent_output": getattr(result, "agent_output", None),
@@ -252,6 +285,41 @@ class HttpStateTransport(StateTransport):
         data = self._call("GET", f"/runs/{run_id}/checkpoint", {})
         cp = (data or {}).get("checkpoint")
         return cp if isinstance(cp, dict) else None
+
+    #: Seconds a steering check may take. It runs before every model call, so
+    #: an unreachable backend must cost the run little, far less than the
+    #: ten seconds a record write is allowed.
+    STEERING_TIMEOUT = 3.0
+
+    def _steering_call(self, method: str, path: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            import requests
+            from common.auth import auth_headers
+            resp = requests.request(
+                method, f"{self._base}{path}", json=body, headers=auth_headers(),
+                timeout=min(self._timeout, self.STEERING_TIMEOUT),
+            )
+            if resp.status_code >= 400:
+                return None
+            data = resp.json()
+            return data if isinstance(data, dict) else None
+        except Exception:  # noqa: BLE001 - best-effort (see class docstring): None tells the loop the call did not go through
+            log.debug("steering call failed: %s %s", method, path, exc_info=True)
+            return None
+
+    def claim_steering(self, run_id: str, step: int) -> Optional[List[Dict[str, Any]]]:
+        data = self._steering_call("POST", f"/runs/{run_id}/steering/claim", {"step": int(step)})
+        if data is None:
+            return None
+        messages = data.get("messages")
+        return [m for m in messages if isinstance(m, dict)] if isinstance(messages, list) else []
+
+    def delivered_steering(self, run_id: str) -> Optional[List[Dict[str, Any]]]:
+        data = self._steering_call("GET", f"/runs/{run_id}/steering/delivered", {})
+        if data is None:
+            return None
+        messages = data.get("messages")
+        return [m for m in messages if isinstance(m, dict)] if isinstance(messages, list) else []
 
 
 def get_state_transport() -> StateTransport:

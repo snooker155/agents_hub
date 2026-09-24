@@ -11,6 +11,7 @@ import { ChatTrail, SystemNotice } from './BuildMessage';
 import { renderContent } from './markdown';
 import { MessageEntities, MessageFiles, ResponseButtons } from './messageParts';
 import { LiveThoughts } from './reasoning';
+import { steerCaption } from './steering';
 import { Bot, User } from 'lucide-react';
 
 function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifactsByPath }) {
@@ -70,6 +71,16 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
           ? <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
           : <div>{renderContent(msg.content)}</div>
         }
+        {/* A message sent while the turn worked: where it is (waiting for the
+            next step, delivered at step N, queued for the next turn). */}
+        {isUser && msg.steer && (() => {
+          const caption = steerCaption(msg.steer);
+          return caption ? (
+            <span className="mt-1 block text-[11px] text-indigo-100" data-testid="steer-caption">
+              {t(caption.key, caption.values)}
+            </span>
+          ) : null;
+        })()}
         {/* The thought currently being written, tailing three lines. Cleared as
             soon as the completed thought arrives as a ReasoningStep above.
             Gated on the buffer rather than `isStreaming` so agent-initiated

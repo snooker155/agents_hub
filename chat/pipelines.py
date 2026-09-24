@@ -55,6 +55,32 @@ from .broadcast import broadcast_turn
 from .streaming import StreamDriveResult, drive_streaming_run
 
 
+def _run_id_kwargs(agent, run_id: str) -> dict:
+    """``{"run_id": run_id}`` for an agent whose ``arun`` takes it (every hub
+    agent does, through ``**kwargs``); nothing for one with a narrower
+    signature, which is then called exactly as before."""
+    import inspect
+    try:
+        params = inspect.signature(agent.arun).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "run_id" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return {"run_id": run_id}
+    return {}
+
+
+def _settle_steering(run_id: str) -> list:
+    """The steering messages this turn ended without taking, marked expired
+    and returned as ``[{msg_id, body}]`` for the ``done`` event: a chat keeps
+    queue semantics, so the client sends them as its next turn rather than
+    losing them (common/steering.py)."""
+    try:
+        from common import steering
+        return [{"msg_id": m["msg_id"], "body": m["body"]} for m in steering.mark_expired(run_id)]
+    except Exception:  # noqa: BLE001 - a steering lookup failing must not break closing the turn
+        return []
+
+
 async def _run_chat_pipeline(request: ChatRequest):
     """
     Drive the full chat run lifecycle and yield events as dicts.
@@ -70,7 +96,11 @@ async def _run_chat_pipeline(request: ChatRequest):
     - callback events: token / thinking / tool_start / tool_end / tool_error / usage / error
     - {"type": "compaction", "folded", "summary_chars", ...} when the conversation
       was folded into a summary before the turn ran
-    - {"type": "done", "ok", "response", "error", "run_id", "session_id", "usage", "tool_calls", "duration_ms", "entities"}
+    - {"type": "steer_delivered", "msg_id", "after_step", "run_id"} when a message the
+      user sent while the turn worked reached the model (agents/loop_ext/steering.py)
+    - {"type": "done", "ok", "response", "error", "run_id", "session_id", "usage", "tool_calls",
+      "duration_ms", "entities", "undelivered"}; ``undelivered`` lists the steering
+      messages the turn ended without taking, which the client sends as its next turn
     """
     validate_chat_request(request)
     materialize_attachments(request)
@@ -143,8 +173,12 @@ async def _run_chat_pipeline(request: ChatRequest):
             return compaction
 
         compaction = await _compact(False)
+        # The run id reaches the agent loop so a message the user sends while
+        # this turn works (POST /api/runs/{id}/steer) is taken before the
+        # model's next step (agents/loop_ext/steering.py).
+        run_kwargs = _run_id_kwargs(agent, run_id)
         result = await agent.arun(full_prompt, history=compaction.messages,
-                                  callbacks=[callback])
+                                  callbacks=[callback], **run_kwargs)
 
         # The provider is the last word on what fits: when it says the turn was
         # too long anyway, fold the history and run the turn once more rather
@@ -153,7 +187,7 @@ async def _run_chat_pipeline(request: ChatRequest):
             retry = await _compact(True)
             if retry.folded:
                 result = await agent.arun(full_prompt, history=retry.messages,
-                                          callbacks=[callback])
+                                          callbacks=[callback], **run_kwargs)
         return result
 
     # Install the artifact recorder so filesystem tools report file changes as
@@ -184,6 +218,12 @@ async def _run_chat_pipeline(request: ChatRequest):
         ):
             yield event
 
+        # Settled before the run's status changes, so nothing reading the
+        # run as finished can expire these first: the client gets them back
+        # and sends them as its next turn.
+        undelivered = _settle_steering(run_id)
+        loop_extra = {"loop": drive.loop} if drive.loop else {}
+
         finished = utc_iso()
         duration_ms = drive.duration_ms
         usage = drive.usage
@@ -200,8 +240,9 @@ async def _run_chat_pipeline(request: ChatRequest):
                 "exit_code": 1,
                 "error": "stopped by user",
                 "process": process_payload,
+                **loop_extra,
             })
-            yield {
+            done_event = {
                 "type": "done",
                 "ok": False,
                 "response": "Stopped by user",
@@ -212,6 +253,9 @@ async def _run_chat_pipeline(request: ChatRequest):
                 "tool_calls": callback.tool_calls,
                 "duration_ms": duration_ms,
             }
+            if undelivered:
+                done_event["undelivered"] = undelivered
+            yield done_event
             return
 
         summary_line = (
@@ -246,6 +290,7 @@ async def _run_chat_pipeline(request: ChatRequest):
                 "finished_at": finished,
                 "exit_code": 0,
                 "process": process_payload,
+                **loop_extra,
             })
             done_event = {
                 "type": "done",
@@ -267,6 +312,8 @@ async def _run_chat_pipeline(request: ChatRequest):
             # the text via ``common.entity_links.append_entity_links``.
             if drive.entities:
                 done_event["entities"] = drive.entities
+            if undelivered:
+                done_event["undelivered"] = undelivered
             yield done_event
         else:
             err = final_error or "unknown error"
@@ -279,6 +326,7 @@ async def _run_chat_pipeline(request: ChatRequest):
                 "exit_code": 1,
                 "error": err,
                 "process": process_payload,
+                **loop_extra,
             })
             done_event = {
                 "type": "done",
@@ -298,6 +346,8 @@ async def _run_chat_pipeline(request: ChatRequest):
             code = error_code(err)
             if code:
                 done_event["error_code"] = code
+            if undelivered:
+                done_event["undelivered"] = undelivered
             yield done_event
     except asyncio.CancelledError:
         callback.cancelled = True

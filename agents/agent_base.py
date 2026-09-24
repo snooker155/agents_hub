@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, SerializeAsAny
 
 from langchain_core.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain.agents import AgentExecutor
 
 from agents.agent_utils import build_chat_model
 from agents.agent_response import AgentResponse
@@ -48,6 +48,12 @@ class AgentResult(BaseModel):
     # the plain-text fallback, so surfaces that ignore this keep working.
     # SerializeAsAny preserves subclass fields when AgentResult is serialized.
     response: SerializeAsAny[Optional[AgentResponse]] = None
+    # What the agent loop recorded beyond the tool trail
+    # (agents.agent_loop.LoopState.summary): the model that answered each
+    # call, compactions, steering messages, loaded tools, guardrail checks,
+    # structured-output validation. Empty on a plain run; stored on the run
+    # record as ``loop`` by managers.runs.lifecycle.close_run_from_result.
+    loop: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentBase(ABC):
@@ -71,8 +77,14 @@ class AgentBase(ABC):
         think_gate: Optional[Any] = None,
         thinking_level: Optional[str] = None,
         max_iterations: int = 60,
+        spec: Any = None,
     ):
         self.agent_id = agent_id
+        # The registry record this agent was built from: the live one, or a
+        # stored version when the build was pinned (agents/versions.py). The
+        # loop extensions and guardrails read their per-agent settings from it
+        # rather than from the registry, so a pinned run keeps its version's.
+        self.spec = spec
         self.name = name
         self.system_prompt = system_prompt
         self._tools = tools
@@ -102,6 +114,8 @@ class AgentBase(ABC):
         # The chat model behind the executor, kept so the effective provider can
         # be read back when the agent was configured to inherit it.
         self._llm: Optional[Any] = None
+        # Loop extensions active for this build (agents/agent_loop.py).
+        self._loop_extensions: List[Any] = []
     
     def effective_provider(self, llm: Any = None) -> str:
         """The provider actually behind this agent's model, lowercased.
@@ -147,7 +161,16 @@ class AgentBase(ABC):
             thinking_level=self.thinking_level,
         )
         self._llm = llm
-        
+
+        # The loop's own policies (steering, compaction, tool search, strict
+        # tool schemas, fallback models; see agents/agent_loop.py). Loaded
+        # before the prompt and the executor are built, because an extension
+        # may add to what they are built from: tool search adds its
+        # ``search_tools`` tool to ``self._tools``, structured output adds the
+        # answer schema to ``self.system_prompt``.
+        from agents.agent_loop import build_agent_runnable, load_extensions
+        self._loop_extensions = load_extensions(self)
+
         prompt = ChatPromptTemplate.from_messages([
             self._system_message(llm),
             # Prior turns travel as real messages rather than as text folded into
@@ -160,7 +183,10 @@ class AgentBase(ABC):
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
         
-        agent = create_tool_calling_agent(llm, self._tools, prompt)
+        # LangChain's tool-calling chain, rebuilt with the loop's hooks between
+        # its stages. With no extension active it is the same chain
+        # create_tool_calling_agent builds.
+        agent = build_agent_runnable(llm, self._tools, prompt, self._loop_extensions)
 
         executor = AgentExecutor(
             agent=agent,

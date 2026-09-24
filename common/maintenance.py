@@ -229,6 +229,22 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     except Exception:
         log.exception("fire journal pruning failed")
         summary["pruned_fires"] = 0
+    # Guardrail findings (guardrails/runtime.py, AGENTS_HUB_GUARDRAIL_EVENTS_
+    # RETENTION_DAYS) and tool policy decisions (tools/permission_policy.py,
+    # AGENTS_HUB_TOOL_POLICY_RETENTION_DAYS): both are append-only logs
+    # bounded by age. Isolated like the passes above.
+    try:
+        from guardrails.runtime import prune_events
+        summary["pruned_guardrail_events"] = int(prune_events() or 0)
+    except Exception:
+        log.exception("guardrail event pruning failed")
+        summary["pruned_guardrail_events"] = 0
+    try:
+        from tools.permission_policy import prune
+        summary["pruned_tool_decisions"] = int(prune(force=True) or 0)
+    except Exception:
+        log.exception("tool policy decision pruning failed")
+        summary["pruned_tool_decisions"] = 0
     if pruned_runs or pruned_files or summary.get("pruned_view_dirs") \
             or summary.get("pruned_connection_runs"):
         log.info("maintenance: pruned %d run(s), %d connection run(s), %d orphan file(s), "

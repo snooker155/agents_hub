@@ -84,6 +84,20 @@ def _validate_cron(expr: Optional[str]) -> str:
     return text
 
 
+def _validate_agent_version(agent_version: Optional[int], agent_id: Optional[str]) -> None:
+    """When set, ``agent_version`` must be a real stored version of
+    ``agent_id`` (agents/versions.py). Raises ``ValueError`` (a 400 at the
+    route) rather than accepting a pin that would fall back to the live
+    definition, silently, on every firing.
+    """
+    if agent_version is None:
+        return
+    if not agent_id:
+        raise ValueError("agent_version requires an agent_id (a flow/loop job has no single agent to pin)")
+    from tasks.service import validate_agent_version
+    validate_agent_version(agent_id, agent_version)
+
+
 def _validate_environment_id(environment_id: Optional[str], workspace: Optional[str]) -> None:
     """When set, the environment must exist, be usable from ``workspace`` (its
     own or global) and not be archived — the same check
@@ -128,11 +142,13 @@ def create_job(
     channels: Optional[List[str]] = None,
     environment_id: Optional[str] = None,
     budget_usd: Optional[float] = None,
+    agent_version: Optional[int] = None,
     auto_pause_after: int = 3,
 ) -> ScheduledJob:
     tz_name = _validate_timezone(timezone)
     cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
     _validate_environment_id(environment_id, workspace)
+    _validate_agent_version(agent_version, agent_id)
     job = ScheduledJob(
         kind=kind,
         title=title,
@@ -151,6 +167,7 @@ def create_job(
         channels=channels or ["dashboard"],
         environment_id=environment_id,
         budget_usd=budget_usd,
+        agent_version=agent_version,
         auto_pause_after=auto_pause_after,
     )
     saved = plan_store.add(job)
@@ -192,6 +209,11 @@ def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
         existing = plan_store.get(job_id)
         ws = existing.workspace if existing else None
         _validate_environment_id(fields["environment_id"], ws)
+    if "agent_version" in fields or "agent_id" in fields:
+        existing = plan_store.get(job_id)
+        agent_id = fields.get("agent_id", existing.agent_id if existing else None)
+        agent_version = fields.get("agent_version", existing.agent_version if existing else None)
+        _validate_agent_version(agent_version, agent_id)
     updated = plan_store.update(job_id, **fields)
     if updated:
         _notify_plan_changed()
@@ -766,6 +788,11 @@ def _fire_agent_task(job: ScheduledJob) -> str:
         workspace=ws_name,
         budget_usd=job.budget_usd,
         environment_id=job.environment_id,
+        # Only meaningful once job.agent_id names the agent it pins a version
+        # of (validated together at create/update time); a task this job
+        # creates unassigned carries the pin with no agent yet to check it
+        # against, same as a task the operator pins before assigning one.
+        agent_version=job.agent_version if job.agent_id else None,
     )
     tasks_service.append_task_activity_log(
         task.id, "scheduled_fire", f"Created by scheduled job {job.id}", job_id=str(job.id)

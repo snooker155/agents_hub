@@ -168,6 +168,29 @@ async def load_checkpoint_route(run_id: str):
     return {"checkpoint": load_run_checkpoint(run_id)}
 
 
+class ClaimSteeringBody(BaseModel):
+    step: int = 0
+
+
+@router.post("/runs/{run_id}/steering/claim")
+async def claim_steering_route(run_id: str, body: ClaimSteeringBody):
+    """Mirrors ``common.steering.claim_pending``: the messages a person sent
+    while the run worked, taken before its next model call
+    (agents/loop_ext/steering.py). One indexed SELECT when there are none."""
+    from common import steering
+
+    return {"messages": steering.claim_pending(run_id, body.step)}
+
+
+@router.get("/runs/{run_id}/steering/delivered")
+async def delivered_steering_route(run_id: str):
+    """Mirrors ``common.steering.delivered``, for a run that picks up again
+    under its own id and needs the messages it already took."""
+    from common import steering
+
+    return {"messages": steering.delivered(run_id)}
+
+
 # ── task-side transitions ────────────────────────────────────────────────────
 
 class PersistTaskResultBody(BaseModel):
@@ -233,7 +256,11 @@ async def finalize_task_route(run_id: str, body: FinalizeTaskBody):
     container: none of that spawns *inside* the container, it spawns from the
     backend process the same way a local run's finalize always has.
     """
+    import asyncio
+
     from managers.run_manager import finalize_task_from_run
 
-    finalize_task_from_run(run_id, body.status, body.exit_code)
+    # Finalizing may grade the task's outcome (tasks/outcome.py), a model
+    # call: off the event loop, like every other blocking call here.
+    await asyncio.to_thread(finalize_task_from_run, run_id, body.status, body.exit_code)
     return {"ok": True}

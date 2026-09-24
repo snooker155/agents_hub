@@ -13,6 +13,12 @@ scenario tick, every delegation is a run, and each carries:
 - token counts and duration
 - an error, when it failed
 - a log file with the full trace
+- a `loop` block when the agent loop did more than call tools: the model that
+  answered each call, compactions, steering messages, loaded tools, guardrail
+  checks, structured output validation and tool policy decisions, shown on the
+  run page
+
+See [agent-loop](agent-loop.md) for the policies that populate the loop block.
 
 ## Entity runs
 
@@ -87,7 +93,10 @@ once.
 
 Errors group usefully: the same message across several agents is a model or
 infrastructure problem, while one agent failing repeatedly with different
-messages is an agent problem.
+messages is an agent problem. A run stopped by a guardrail ends with status
+`guardrail_tripped` and an error naming the guardrail; a run that reached its
+money cap is not failed but paused, with its task waiting for approval (see
+[costs](costs.md)).
 
 ## Stale runs
 
@@ -133,4 +142,4 @@ view:
   data instead of trusting a stream that skipped a beat. The same happens on a
   `lagged` event.
 
-Related: [instances](instances.md), [service-health](service-health.md), [costs](costs.md), [workers](workers.md).
+Related: [agent-loop](agent-loop.md), [instances](instances.md), [service-health](service-health.md), [costs](costs.md), [workers](workers.md).

@@ -18,9 +18,9 @@ const TITLES = new Map(CORPUS.map((e) => [e.id, e.title]));
  */
 const GROUPS = [
   ['Start here', ['overview', 'installation', 'cli', 'troubleshooting']],
-  ['The work', ['workspaces', 'projects', 'tasks', 'scheduling', 'deployments']],
-  ['Agents', ['agents', 'system-agents', 'imported-agents', 'tools-and-capabilities', 'skills', 'memory']],
-  ['Talking to them', ['chat', 'page-chat', 'telegram']],
+  ['The work', ['workspaces', 'projects', 'tasks', 'outcomes', 'scheduling', 'deployments']],
+  ['Agents', ['agents', 'agent-loop', 'tool-policy', 'guardrails', 'system-agents', 'imported-agents', 'tools-and-capabilities', 'skills', 'memory']],
+  ['Talking to them', ['chat', 'page-chat', 'steering', 'telegram']],
   ['More than one agent', ['flows', 'loops', 'teams', 'nodes', 'instances']],
   ['What they produce', ['views', 'playground']],
   ['Measurement', ['evals', 'costs', 'web-logs', 'sessions-and-runs']],

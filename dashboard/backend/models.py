@@ -20,6 +20,11 @@ class TaskCreate(BaseModel):
     depends: Optional[List[str]] = None
     # Optional deadline, ISO 8601. Naive values are assumed UTC.
     due_at: Optional[datetime] = None
+    # Stored agent version the task's runs are built from (None = live).
+    agent_version: Optional[int] = None
+    # Outcome rubric: {"rubric", "max_iterations", "grader", "threshold"}
+    # (tasks/outcome.py). None = no outcome check.
+    outcome: Optional[Dict[str, Any]] = None
 
 
 class TaskWorkspaceUpdate(BaseModel):
@@ -38,6 +43,10 @@ class TaskUpdate(BaseModel):
     depends: Optional[List[str]] = None
     # Optional deadline, ISO 8601. Naive values are assumed UTC. Send null to clear it.
     due_at: Optional[datetime] = None
+    # Pin the task's runs to a stored agent version; null clears the pin.
+    agent_version: Optional[int] = None
+    # Outcome rubric (see TaskCreate); null clears it.
+    outcome: Optional[Dict[str, Any]] = None
 
 
 class AgentCreateCustom(BaseModel):

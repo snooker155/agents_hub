@@ -100,12 +100,21 @@ def create_task(
     due_at: Optional[datetime] = None,
     budget_usd: Optional[float] = None,
     environment_id: Optional[str] = None,
+    agent_version: Optional[int] = None,
+    outcome: Optional[Dict[str, Any]] = None,
     store: TaskStore = default_store,
 ) -> Task:
     """Create a new task and persist it in the store.
 
     When `depends` names tasks that are not yet completed, the new task is
     created blocked and is released automatically once they all finish.
+
+    ``agent_version`` pins the task's agent runs to a stored version
+    (agents/versions.py); a task is created with no assigned agent, so there
+    is nothing yet to validate the version against — the route layer
+    (dashboard/backend/routes/tasks.py) validates it once an agent is
+    assigned. ``outcome`` is the grading rubric (tasks/outcome.py), passed
+    through unvalidated the same way.
     """
     dep_ids = [d if isinstance(d, UUID) else UUID(str(d)) for d in (depends or [])]
     if dep_ids:
@@ -135,6 +144,8 @@ def create_task(
         due_at=due_at,
         budget_usd=budget_usd,
         environment_id=environment_id,
+        agent_version=agent_version,
+        outcome=outcome,
     )
     append_task_activity_log(task.id, "created", "Task created")
     if task.status == TaskStatus.blocked and (task.blocked_reason or "").startswith(DEPENDENCY_BLOCK_PREFIX):
@@ -146,6 +157,24 @@ def create_task(
 def get_task(task_id: UUID, *, store: TaskStore = default_store) -> Optional[Task]:
     """Return a task by id or None if not found."""
     return store.get(task_id)
+
+
+def validate_agent_version(agent_id: Optional[str], agent_version: Optional[int]) -> None:
+    """Raise ``ValueError`` unless ``agent_version`` names a real stored
+    version of ``agent_id`` (agents/versions.py, ``agent_versions`` table).
+
+    A no-op (never raises) when ``agent_version`` is None (a null pin always
+    clears cleanly) or when ``agent_id`` is falsy: a task with no assigned
+    agent has nothing to validate the pin against yet, so the route layer
+    (dashboard/backend/routes/tasks.py) calls this only once one is known —
+    the task's own ``assigned_agent_type`` on update, or not at all on
+    create, where no agent is assigned.
+    """
+    if agent_version is None or not agent_id:
+        return
+    from agents.versions import get_version_row
+    if get_version_row(agent_id, int(agent_version)) is None:
+        raise ValueError(f"Agent '{agent_id}' has no version {agent_version}")
 
 
 def get_tasks(task_ids, *, store: TaskStore = default_store) -> dict:
@@ -914,6 +943,7 @@ def add_subtask(
     created_by: CreatedBy = CreatedBy.orchestrator,
     budget_usd: Optional[float] = None,
     environment_id: Optional[str] = None,
+    agent_version: Optional[int] = None,
     store: TaskStore = default_store,
 ) -> Task:
     """Create a subtask under the given parent, by default with created_by=orchestrator.
@@ -924,6 +954,14 @@ def add_subtask(
     from. `depends` lets a decomposition express execution order between
     subtasks; a subtask with unfinished dependencies is created blocked and
     released automatically when they complete.
+
+    ``agent_version`` is deliberately NOT inherited from the parent (unlike
+    ``budget_usd``/``environment_id``): a subtask commonly runs a different
+    agent than its parent (delegate_task_tool picks its own delegate;
+    add_subtask itself creates the task agent-less, assigned later), and a
+    version pin only means something for the specific agent it names. A
+    caller that genuinely wants "same agent, same pin" passes this explicitly
+    alongside its own ``assign_agent`` call.
     """
     parent = store.get(parent_id)
     workspace = parent.workspace if parent else None
@@ -966,6 +1004,7 @@ def add_subtask(
         depends=dep_ids,
         budget_usd=budget_usd,
         environment_id=environment_id,
+        agent_version=agent_version,
     )
 
 
@@ -1023,6 +1062,12 @@ def park_task_awaiting_approval(
         "agent_id": str((pending or {}).get("agent_id") or agent_id or ""),
         "asked_at": datetime.now(timezone.utc).isoformat(),
     }
+    # Which tool policy mode held the call and who decided (tools/
+    # permission_policy.py): "always_ask", or "auto" with the classifier's
+    # reason, so the task page can say why this call waits.
+    for key in ("mode", "by"):
+        if (pending or {}).get(key):
+            record[key] = str(pending[key])
     # A run that reached its money cap parks here too (common/run_budget.py):
     # the decision is a new cap, not a call, so the record keeps what the
     # dashboard and the approve route need to offer one.
@@ -1469,6 +1514,7 @@ __all__ = [
     "order_for_dispatch",
     "create_task",
     "get_task",
+    "validate_agent_version",
     "list_tasks",
     "update_task",
     "delete_task",

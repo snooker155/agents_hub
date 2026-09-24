@@ -144,6 +144,11 @@ async def create_task(task: TaskCreate):
     if task.depends:
         depends_uuids = [_resolve_task_ref(d) for d in task.depends]
 
+    # An outcome is validated and given its defaults here, like on its own
+    # route (routes/outcomes.py), so a task never stores a rubric the grader
+    # cannot use.
+    outcome = _normalized_outcome(task.outcome)
+
     # Set project_id before creation so the Jira-style key uses the project prefix
     try:
         t = tasks_service.create_task(
@@ -156,6 +161,12 @@ async def create_task(task: TaskCreate):
             parent_id=parent_uuid,
             depends=depends_uuids,
             due_at=task.due_at,
+            # No agent is assigned at creation, so there is nothing yet to
+            # validate the pin against (tasks_service.validate_agent_version
+            # is a no-op without an agent id) — validation happens once an
+            # agent is assigned, on the /assign and PATCH routes.
+            agent_version=task.agent_version,
+            outcome=outcome,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -169,6 +180,18 @@ async def create_task(task: TaskCreate):
         t = tasks_service.get_task(t.id) or t
 
     return task_to_dict(t)
+
+
+def _normalized_outcome(raw):
+    """A task outcome in its stored shape (tasks/outcome.py), None to clear,
+    400 when the grader could not use it."""
+    if raw is None:
+        return None
+    from tasks.outcome import OutcomeError, normalize_outcome
+    try:
+        return normalize_outcome(raw)
+    except OutcomeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{task_id}", response_model=TaskDetail)
@@ -203,6 +226,13 @@ async def update_task(task_id: UUID, update: TaskUpdate):
         raise HTTPException(status_code=400, detail=f"Invalid priority: {fields['priority']}")
     if "depends" in fields and fields["depends"] is not None:
         fields["depends"] = [_resolve_task_ref(d) for d in fields["depends"]]
+    if "agent_version" in fields:
+        try:
+            tasks_service.validate_agent_version(t.assigned_agent_type, fields["agent_version"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    if "outcome" in fields:
+        fields["outcome"] = _normalized_outcome(fields["outcome"])
 
     # If task is being moved back to an unassigned state, clear the assignment
     # and delete any pre-start run record (awaiting_approval or node-queued assigned).

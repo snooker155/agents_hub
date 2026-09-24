@@ -384,6 +384,22 @@ class Task(BaseModel):
     # mode when it has none.
     environment_id: Optional[str] = Field(default=None, description="Environment the task's runs execute in")
 
+    # The stored agent version (agents/versions.py, ``agent_versions``) this
+    # task's agent runs are built from. None means the live definition. Set
+    # by the operator or copied from a scheduled job at fire time; a run
+    # records the version it actually ran as ``agent_version`` on its record.
+    agent_version: Optional[int] = Field(default=None, description="Agent version the task's runs are pinned to, None = live definition")
+
+    # What "done" means for this task, checked by an independent grader after
+    # every completed agent run (tasks/outcome.py). Shape:
+    # {"rubric": markdown, "max_iterations": int, "grader": {"provider",
+    # "model"} | None, "threshold": float | None}. None means no outcome check.
+    outcome: Optional[Dict[str, Any]] = Field(default=None, description="Outcome rubric and grading settings, None = no outcome check")
+    # One entry per grading: {"iteration", "run_id", "passed", "score",
+    # "criteria": [{"name", "passed", "score", "feedback"}], "feedback",
+    # "grader": {"provider", "model"}, "cost_usd", "graded_at"}.
+    outcome_evaluations: List[Dict[str, Any]] = Field(default_factory=list)
+
     @field_validator("priority", mode="before")
     @classmethod
     def _coerce_priority(cls, v):

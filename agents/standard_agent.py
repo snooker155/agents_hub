@@ -98,6 +98,7 @@ class StandardAgent(AgentBase):
         thinking_level: Optional[str] = None,
         native_reasoning: bool = False,
         max_iterations: int = 60,
+        spec: Optional[Any] = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -116,6 +117,7 @@ class StandardAgent(AgentBase):
             think_gate=think_gate,
             thinking_level=thinking_level,
             max_iterations=max_iterations,
+            spec=spec,
         )
         self.workspace = workspace
         # When native model reasoning is on (a positive thinking_level), the
@@ -183,14 +185,94 @@ class StandardAgent(AgentBase):
         except Exception:  # noqa: BLE001 - fails open, like the rest of the budget
             return None
 
+    # ── per-run policies around the loop ─────────────────────────────────
+
+    def _begin_loop(self, kwargs: dict):
+        """A fresh LoopState for this run, installed for its context.
+
+        Returns ``(state, token)``; :func:`agents.agent_loop.reset_state` takes
+        the token back when the run ends.
+        """
+        from agents.agent_loop import new_state, set_state
+        state = new_state(self, run_id=kwargs.get("run_id"),
+                          workspace=kwargs.get("workspace") or self.workspace)
+        return state, set_state(state)
+
+    def _guardrail_trip(self, state: Any, stage: str, text: str) -> Optional[AgentResult]:
+        """Run the workspace's guardrails on the run's input or output.
+
+        Returns the result that ends the run when a guardrail tripped, else
+        None. A guardrail module that is missing or fails is no guardrail: the
+        check is logged by guardrails.runtime itself and the run goes on.
+        """
+        try:
+            from guardrails import runtime as _guardrails
+            check = _guardrails.check_input if stage == "input" else _guardrails.check_output
+            trip = check(self, state, text)
+        except Exception:  # noqa: BLE001 - see docstring
+            return None
+        if not trip:
+            return None
+        reason = str(trip.get("reason") or "guardrail tripped")
+        name = str(trip.get("name") or trip.get("guardrail_id") or "guardrail")
+        return AgentResult(
+            ok=False,
+            status="guardrail_tripped",
+            error=f"Guardrail '{name}' stopped the run on its {stage}: {reason}",
+            agent_output=str(trip.get("message") or ""),
+            loop=state.summary(),
+        )
+
+    def _structured_output(self, state: Any, text: str) -> tuple:
+        """Validate the final answer against the agent's output schema.
+
+        Returns ``(text, error)``: the (possibly repaired) answer, and an error
+        string when it still does not match after the allowed retries. Agents
+        without a schema pass through unchanged.
+        """
+        try:
+            from agents.loop_ext import structured as _structured
+            return _structured.finalize_output(self, state, text)
+        except Exception:  # noqa: BLE001 - validation machinery failing keeps the plain answer
+            return text, None
+
+    def _finish(self, state: Any, result: Any) -> AgentResult:
+        """The AgentResult for a finished executor call, with the run's
+        output checks applied: structured output first (so a guardrail sees the
+        answer that will actually be returned), then the output guardrails."""
+        output = result.get("output", "") if isinstance(result, dict) else str(result)
+        clean_text, response_obj = self._finalize_output(output)
+        clean_text, schema_error = self._structured_output(state, clean_text)
+        if schema_error:
+            return AgentResult(ok=False, status="error", error=schema_error,
+                               agent_output=clean_text, steps=_collect_steps(result),
+                               loop=state.summary())
+        tripped = self._guardrail_trip(state, "output", clean_text)
+        if tripped is not None:
+            tripped.steps = _collect_steps(result)
+            return tripped
+        return AgentResult(
+            ok=True,
+            status="done",
+            agent_output=clean_text,
+            response=response_obj,
+            steps=_collect_steps(result),
+            loop=state.summary(),
+        )
+
     def run(self, instruction: str, **kwargs) -> AgentResult:
         """Execute the agent.
 
         ``history`` (keyword) carries the conversation before this turn as
         LangChain messages; see :meth:`_executor_input`.
         """
+        from agents.agent_loop import reset_state
         guard = ToolRepetitionGuard(max_repeats=self.max_tool_repeats)
+        state, token = self._begin_loop(kwargs)
         try:
+            tripped = self._guardrail_trip(state, "input", instruction)
+            if tripped is not None:
+                return tripped
             workspace = kwargs.get("workspace", self.workspace)
             callbacks = [guard, AskUserGuard()]
             ctx_guard = self._context_window_guard()
@@ -218,17 +300,7 @@ class StandardAgent(AgentBase):
             config = {"callbacks": callbacks} if callbacks else None
             result = self.executor.invoke(
                 self._executor_input(instruction, kwargs.get("history")), config=config)
-
-            output = result.get("output", "") if isinstance(result, dict) else str(result)
-            clean_text, response_obj = self._finalize_output(output)
-
-            return AgentResult(
-                ok=True,
-                status="done",
-                agent_output=clean_text,
-                response=response_obj,
-                steps=_collect_steps(result),
-            )
+            return self._finish(state, result)
         except AskUserSignal as sig:
             # The agent called ask_user: pause the run and hand the question back.
             return _awaiting_input_result(sig)
@@ -240,13 +312,17 @@ class StandardAgent(AgentBase):
                 ok=True,
                 status="stopped",
                 agent_output=output,
+                loop=state.summary(),
             )
         except Exception as e:
             return AgentResult(
                 ok=False,
                 status="error",
                 error=str(e),
+                loop=state.summary(),
             )
+        finally:
+            reset_state(token)
 
     async def arun(self, instruction: str, **kwargs) -> AgentResult:
         """Execute the agent asynchronously using ainvoke (no threads required).
@@ -254,8 +330,14 @@ class StandardAgent(AgentBase):
         Takes the same ``history`` keyword as :meth:`run`.
         """
         import asyncio
+        from agents.agent_loop import reset_state
         guard = ToolRepetitionGuard(max_repeats=self.max_tool_repeats)
+        state, token = self._begin_loop(kwargs)
         try:
+            # A judge-model guardrail is a blocking call; off the event loop.
+            tripped = await asyncio.to_thread(self._guardrail_trip, state, "input", instruction)
+            if tripped is not None:
+                return tripped
             callbacks = [guard, AskUserGuard(), *list(kwargs.get("callbacks") or [])]
             ctx_guard = self._context_window_guard()
             if ctx_guard:
@@ -266,10 +348,9 @@ class StandardAgent(AgentBase):
             config = {"callbacks": callbacks} if callbacks else None
             result = await self.executor.ainvoke(
                 self._executor_input(instruction, kwargs.get("history")), config=config)
-            output = result.get("output", "") if isinstance(result, dict) else str(result)
-            clean_text, response_obj = self._finalize_output(output)
-            return AgentResult(ok=True, status="done", agent_output=clean_text,
-                               response=response_obj, steps=_collect_steps(result))
+            # The structured-output repair and the output guardrails may call a
+            # model; keep them off the event loop.
+            return await asyncio.to_thread(self._finish, state, result)
         except asyncio.CancelledError:
             raise  # propagate so the asyncio task is properly marked cancelled
         except AskUserSignal as sig:
@@ -278,6 +359,8 @@ class StandardAgent(AgentBase):
             return _budget_paused_result(exc, self.agent_id, str(kwargs.get("run_id") or ""))
         except ToolRepetitionError as e:
             output = guard.last_llm_text or f"[Agent stopped: {e}]"
-            return AgentResult(ok=True, status="stopped", agent_output=output)
+            return AgentResult(ok=True, status="stopped", agent_output=output, loop=state.summary())
         except Exception as e:
-            return AgentResult(ok=False, status="error", error=str(e))
+            return AgentResult(ok=False, status="error", error=str(e), loop=state.summary())
+        finally:
+            reset_state(token)

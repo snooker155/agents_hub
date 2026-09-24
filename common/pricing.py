@@ -114,19 +114,51 @@ def run_cached_tokens(run: Dict[str, Any]) -> int:
 EVALUATION_CHANNELS = frozenset({"replay", "eval"})
 
 
-def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
-    """Estimated USD cost of a single run from catalog pricing. Unknown
-    (provider, model) pairs are treated as zero-cost (fail open, never wedge)."""
-    provider = (run.get("provider") or "").strip()
-    model = (run.get("model") or "").strip()
+def _tokens_cost(prices: PriceMap, provider: str, model: str,
+                 inbound: int, outbound: int, cached: int) -> float:
     in_price, out_price, cached_price = prices.get((provider, model), (0.0, 0.0, 0.0))
-    inbound, outbound = run_tokens(run)
     # Providers report cached tokens as a subset of the inbound count, never in
     # addition to it. Clamping keeps a malformed record from billing negatively.
-    cached = max(0, min(run_cached_tokens(run), inbound))
-    fresh = inbound - cached
+    cached = max(0, min(cached, inbound))
     return (
-        fresh / 1_000_000 * in_price
+        (inbound - cached) / 1_000_000 * in_price
         + cached / 1_000_000 * cached_price
         + outbound / 1_000_000 * out_price
     )
+
+
+def _fallback_calls(run: Dict[str, Any]) -> list:
+    """The calls of a run that a fallback model answered, each with its own
+    tokens (agents/loop_ext/fallback.py records them on ``loop.answered_by``)."""
+    loop = run.get("loop")
+    if not isinstance(loop, dict) or not loop.get("fallback_used"):
+        return []
+    return [a for a in (loop.get("answered_by") or [])
+            if isinstance(a, dict) and a.get("fallback") and "input_tokens" in a]
+
+
+def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
+    """Estimated USD cost of a single run from catalog pricing. Unknown
+    (provider, model) pairs are treated as zero-cost (fail open, never wedge).
+
+    A run's tokens are priced at its own model, except the calls a fallback
+    model answered: those are priced at the fallback's rate and taken out of
+    the run's totals first."""
+    provider = (run.get("provider") or "").strip()
+    model = (run.get("model") or "").strip()
+    inbound, outbound = run_tokens(run)
+    cached = run_cached_tokens(run)
+    extra = 0.0
+    for call in _fallback_calls(run):
+        try:
+            c_in = int(call.get("input_tokens") or 0)
+            c_out = int(call.get("output_tokens") or 0)
+            c_cached = int(call.get("cached_tokens") or 0)
+        except (TypeError, ValueError):
+            continue
+        extra += _tokens_cost(prices, str(call.get("provider") or provider),
+                              str(call.get("price_model") or call.get("model") or ""),
+                              c_in, c_out, c_cached)
+        inbound, outbound = max(0, inbound - c_in), max(0, outbound - c_out)
+        cached = max(0, cached - c_cached)
+    return _tokens_cost(prices, provider, model, inbound, outbound, cached) + extra

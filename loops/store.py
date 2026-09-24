@@ -19,7 +19,7 @@ from loops.models import Iteration, Loop, LoopRun, utc_iso
 _CONFIG_FIELDS = (
     "max_iterations", "min_iterations", "target_score", "patience",
     "cost_ceiling", "max_wall_seconds", "evaluator_mode", "evaluator_agent_id",
-    "evaluator_provider", "evaluator_model",
+    "evaluator_provider", "evaluator_model", "rubric", "grader",
 )
 
 

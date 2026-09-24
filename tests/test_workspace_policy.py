@@ -52,7 +52,8 @@ def _policy(client, ws):
 
 
 def test_policy_defaults_to_off_and_no_hooks(client, ws):
-    assert _policy(client, ws) == {"require_tool_approval": False, "hooks": {}}
+    assert _policy(client, ws) == {"require_tool_approval": False, "hooks": {},
+                                   "tool_policy": {}, "tool_policy_model": None}
 
 
 def test_policy_round_trips(client, ws):
@@ -140,3 +141,18 @@ def test_hooks_are_loaded_by_the_agent_hook_loader(client, ws):
     }})
     loaded = hooks.load_hooks(ws)
     assert loaded[hooks.PRE_TOOL_USE][0]["command"] == "./gate.sh"
+
+
+def test_settings_save_keeps_the_keys_other_routes_own(client, ws):
+    """The Settings page saves only its own form's keys; the approval gate and
+    the tool policy set through /policy must survive that Save."""
+    resp = client.put(f"/api/workspaces/{ws}/policy", json={
+        "require_tool_approval": True, "tool_policy": {"*": "auto"},
+    })
+    assert resp.status_code == 200
+    resp = client.put(f"/api/workspaces/{ws}/settings-overrides",
+                      json={"overrides": {"log_level": "DEBUG"}})
+    assert resp.status_code == 200
+    policy = _policy(client, ws)
+    assert policy["require_tool_approval"] is True
+    assert policy["tool_policy"] == {"*": "auto"}

@@ -130,6 +130,16 @@ def build_iteration_context(
     )
 
 
+def _criterion_of(loop: Loop) -> str:
+    """What the work must satisfy, as a pass reads it: the exit criterion,
+    the rubric, or both when the loop has both."""
+    parts = [str(loop.exit_criterion or "").strip()]
+    rubric = str(getattr(loop, "rubric", "") or "").strip()
+    if rubric:
+        parts.append(f"Rubric (graded per criterion):\n{rubric}")
+    return "\n\n".join(p for p in parts if p)
+
+
 def _seed_state(
     *, iteration: int, criterion: str, previous_output: str, verdict: Optional[Verdict],
     base_seed: Optional[Dict[str, Any]] = None,
@@ -522,12 +532,13 @@ def _execute_iteration(
     store.save_iteration(it)
     _publish(run.loop_run_id, {"type": "iteration_start", **it.to_dict()})
 
+    criterion = _criterion_of(loop)
     context = build_iteration_context(
-        goal=goal, criterion=loop.exit_criterion, iteration=iteration,
+        goal=goal, criterion=criterion, iteration=iteration,
         previous_output=previous_output, verdict=verdict,
     )
     seed_state = _seed_state(
-        iteration=iteration, criterion=loop.exit_criterion,
+        iteration=iteration, criterion=criterion,
         previous_output=previous_output, verdict=verdict, base_seed=seed,
     )
     try:

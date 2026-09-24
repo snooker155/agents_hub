@@ -119,7 +119,8 @@ class _Heartbeat(threading.Thread):
 
 # -------------------- Run lifecycle --------------------
 
-def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[str]) -> Optional[str]:
+def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[str],
+                        definition_version: Optional[int] = None) -> Optional[str]:
     """Create the run record at subprocess startup via run_manager.open_run."""
     try:
         # When invoked via CLI (not as a subprocess of agent_launcher), no log file
@@ -147,6 +148,10 @@ def _register_run_start(run_id: str, agent_id: str, ws: str, task_id: Optional[s
             # by a pid at all once it has started (managers/run_watchdog.py).
             host=socket.gethostname(),
             heartbeat_at=_utc_now_iso(),
+            # The version this run was launched pinned to (--definition-version),
+            # so managers.runs.lifecycle.open_run can resolve the record's own
+            # agent_version before the build below even starts.
+            agent_version_pin=definition_version,
         )
         return run_id
     except Exception:
@@ -246,6 +251,13 @@ def main():
     # the workspace cascade in create_agent; absent, the cascade decides.
     ap.add_argument("--provider", help="Provider for this run only")
     ap.add_argument("--model", help="Model for this run only")
+    # The stored agent version (agents/versions.py) this run is pinned to, set
+    # by a task's own pin or a one-off launch override (agents.agent_launcher).
+    # A version whose row has since disappeared falls back to the live
+    # definition (agents.agent_factory._load_snapshot logs it); the run
+    # record then carries whatever version actually got built, not this flag.
+    ap.add_argument("--definition-version", type=int,
+                     help="Build this stored version of the agent's definition instead of the live one")
 
     args = ap.parse_args()
 
@@ -303,7 +315,7 @@ def main():
 
     # Register the run record early so the dashboard sees pid + log_file
     # immediately, before the (potentially slow) agent build below.
-    _register_run_start(run_id, agent_id, ws, args.task_id)
+    _register_run_start(run_id, agent_id, ws, args.task_id, definition_version=args.definition_version)
 
     _state = get_state_transport()
     _heartbeat = _Heartbeat(run_id, _state)
@@ -351,6 +363,13 @@ def main():
     # the model a delegating agent picked for this run (--provider/--model).
     agent_overrides: dict = {"verbose": True} if args.verbose else {}
     agent_overrides.update(model_overrides(args.provider, args.model))
+    # A version pin (--definition-version): agent_factory.create_agent builds
+    # from that stored snapshot instead of the live definition, falling back
+    # to it (logged) when the version's row is gone. An experiment pin, if
+    # this agent has one, is skipped whenever this key is present (see
+    # AgentFactory.create_agent) — a task/launch pin always wins.
+    if args.definition_version is not None:
+        agent_overrides["definition_version"] = int(args.definition_version)
 
     # Session continuation: forward tokens/tool events to the SSE broker.
     _extra_callbacks = []

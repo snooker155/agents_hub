@@ -1,0 +1,33 @@
+export default {
+  poolHistory: 'Pool history',
+  historyOf: 'History: {{item}}',
+  viewHistory: 'View history',
+  noHistoryYet: 'No history yet.',
+  versionN: 'Version {{n}}',
+  kinds: {
+    block: 'block',
+    note: 'note',
+    slot: 'slot',
+  },
+  ops: {
+    create: 'Created',
+    update: 'Updated',
+    delete: 'Deleted',
+    restore: 'Restored',
+    redact: 'Redacted',
+  },
+  restore: 'Restore',
+  redact: 'Redact',
+  alsoCurrent: 'Also remove this text from the current value',
+  confirmRestore: 'Restore version {{version}}? This replaces the current value with what it held then.',
+  confirmRedact: 'Redact version {{version}}? Its stored content is replaced with a marker, and this cannot be undone.',
+  restored: 'Restored.',
+  redactedDone: 'Redacted.',
+  redactedMarker: 'This version was redacted, its content is no longer kept.',
+  system: 'system',
+  errors: {
+    load: 'Could not load the history',
+    restore: 'Could not restore this version',
+    redact: 'Could not redact this version',
+  },
+};

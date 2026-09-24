@@ -203,6 +203,14 @@ unbounded work by decomposing its own output.
 between agents: a reviewer reads the developer's result rather than re-reading
 the conversation.
 
+## Outcome
+
+An optional rubric that defines done, with maximum attempts, an optional grader model and an optional pass threshold. After every completed agent run, an independent model grades the result against the rubric and decides whether to retry or pass. See [outcomes](outcomes.md).
+
+## Agent version
+
+A task can be pinned to a stored agent version via `agent_version`; `null` means the live definition. The run page shows that version against the agent's current one and offers rollback. The task page has a version picker for live or stored versions. See [agents](agents.md) for details.
+
 ## Gotchas
 
 - A task with an agent assigned but never started sits forever. Assignment is
@@ -217,4 +225,4 @@ the conversation.
   a move the table does not grant to `agent` fails with `IllegalTransition`
   rather than silently changing the status to something else.
 
-Related: [projects](projects.md), [agents](agents.md), [hooks](hooks.md), [sessions-and-runs](sessions-and-runs.md), [costs](costs.md).
+Related: [projects](projects.md), [agents](agents.md), [outcomes](outcomes.md), [hooks](hooks.md), [sessions-and-runs](sessions-and-runs.md), [costs](costs.md).

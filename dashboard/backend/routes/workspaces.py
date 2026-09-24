@@ -536,6 +536,14 @@ async def set_workspace_default_model(name: str, payload: dict):
     return {"provider": provider, "model": model}
 
 
+# ``settings`` keys written by their own routes (the tool policy block below,
+# the agent mode, the loop settings of the agent loop's extensions), which the
+# settings-overrides Save must not drop.
+_SETTINGS_OWNED_ELSEWHERE = (
+    "require_tool_approval", "tool_policy", "tool_policy_model", "agent_mode", "loop",
+)
+
+
 @router.get("/{name}/settings-overrides")
 async def get_workspace_settings_overrides(name: str):
     """Return workspace-scoped settings (raw values, not resolved)."""
@@ -553,6 +561,14 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
         raise HTTPException(status_code=400, detail="overrides must be a key-value object")
     # Strip empty-string values (treat as cleared)
     cleaned = {k: v for k, v in overrides.items() if v is not None and str(v).strip() != ""}
+    # Keys other routes own live in the same ``settings`` block, and the
+    # Settings page sends only the keys of its own form. Carry them over unless
+    # the payload names them, or every Save would switch off the approval gate
+    # and drop the tool policy and the loop settings.
+    current = get_workspace_metadata(name).get("settings") or {}
+    for key in _SETTINGS_OWNED_ELSEWHERE:
+        if key not in overrides and key in current:
+            cleaned[key] = current[key]
     update_workspace_metadata(name, {"settings": cleaned})
     audit.record("workspace.settings", principal=identity.request_principal(request),
                  object_type="workspace", object_id=name, workspace=name,
@@ -635,12 +651,19 @@ def _validate_hooks(raw) -> dict:
 
 
 def _policy_payload(name: str) -> dict:
+    """What the Settings tool policy block shows. ``tool_policy`` and
+    ``tool_policy_model`` are the per-tool modes and the model that decides
+    ``auto`` calls (tools/permission_policy.py); they sit in ``settings`` next
+    to the gate flag, where the agent process reads them."""
+    from tools.permission_policy import clean_policy
     metadata = get_workspace_metadata(name)
     settings = metadata.get("settings") or {}
     hooks = metadata.get("hooks")
     return {
         "require_tool_approval": bool(settings.get("require_tool_approval")),
         "hooks": hooks if isinstance(hooks, dict) else {},
+        "tool_policy": clean_policy(settings.get("tool_policy")),
+        "tool_policy_model": str(settings.get("tool_policy_model") or "").strip() or None,
     }
 
 
@@ -654,18 +677,56 @@ async def get_workspace_policy(name: str):
 async def update_workspace_policy(request: Request, name: str, payload: dict):
     """Replace the workspace's tool policy.
 
-    ``require_tool_approval`` is written into the same ``settings`` block the
-    Settings page edits, so the gate reads it without a second lookup; ``hooks``
-    is a top-level metadata key, validated entry by entry before it is stored.
+    ``require_tool_approval``, ``tool_policy`` and ``tool_policy_model`` are
+    written into the same ``settings`` block the Settings page edits, so the
+    gate and the tool policy read them without a second lookup; ``hooks`` is a
+    top-level metadata key, validated entry by entry before it is stored. Each
+    key is optional: a request that names one leaves the others as they are.
     """
     _ensure_writable_workspace(name)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="policy must be a key-value object")
 
     updates: dict = {}
-    if "require_tool_approval" in payload:
+    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model")
+    if any(key in payload for key in settings_keys):
+        from tools.permission_policy import modes as _policy_modes, split_model_id
         settings = dict(get_workspace_metadata(name).get("settings") or {})
-        settings["require_tool_approval"] = bool(payload.get("require_tool_approval"))
+        if "require_tool_approval" in payload:
+            settings["require_tool_approval"] = bool(payload.get("require_tool_approval"))
+        if "tool_policy" in payload:
+            # Per-tool modes: tool id (or "*" for every other tool) to a mode.
+            # A bad entry is refused rather than dropped, so what the page saved
+            # is what the agent process will read.
+            raw = payload.get("tool_policy") or {}
+            if not isinstance(raw, dict):
+                raise HTTPException(status_code=400, detail="tool_policy must be an object of tool id to mode")
+            valid = _policy_modes()
+            cleaned: dict = {}
+            for key, mode in raw.items():
+                tool = str(key or "").strip()
+                value = str(mode or "").strip().lower()
+                if not tool:
+                    raise HTTPException(status_code=400, detail="tool_policy: a tool id cannot be empty")
+                if value not in valid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"tool_policy[{tool}]: mode must be one of {', '.join(valid)}",
+                    )
+                cleaned[tool] = value
+            settings["tool_policy"] = cleaned
+        if "tool_policy_model" in payload:
+            model_id = str(payload.get("tool_policy_model") or "").strip()
+            if model_id:
+                provider, model = split_model_id(model_id)
+                if not provider or not model:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="tool_policy_model must be a catalog id of the form provider/model",
+                    )
+                settings["tool_policy_model"] = model_id
+            else:
+                settings.pop("tool_policy_model", None)
         updates["settings"] = settings
     if "hooks" in payload:
         updates["hooks"] = _validate_hooks(payload.get("hooks"))
@@ -673,7 +734,8 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
         update_workspace_metadata(name, updates)
         audit.record("workspace.policy", principal=identity.request_principal(request),
                      object_type="workspace", object_id=name, workspace=name,
-                     ip=identity.client_ip(request), details={"keys": sorted(updates)})
+                     ip=identity.client_ip(request),
+                     details={"keys": sorted(k for k in payload if k in (*settings_keys, "hooks"))})
     return _policy_payload(name)
 
 

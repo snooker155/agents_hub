@@ -177,5 +177,13 @@ Run *assignment* approval (a task waiting for you to approve which agent should
 work it) is a different thing with a similar name: it is about who runs, not
 about what a running agent may call.
 
+## Tool policy
+
+A tool policy sets a mode per tool, for one agent or a whole workspace:
+`always_allow`, `always_ask`, or `auto`, where a small model decides run, deny
+or ask for each call. It applies after the hooks, so a hook that denies or asks
+still wins, and when nothing sets a mode the approval gate above decides as
+before. See [tool-policy](tool-policy.md).
+
 Related: [tools-and-capabilities](tools-and-capabilities.md),
-[tasks](tasks.md), [workspaces](workspaces.md), [settings](settings.md).
+[tool-policy](tool-policy.md), [tasks](tasks.md), [workspaces](workspaces.md), [settings](settings.md).

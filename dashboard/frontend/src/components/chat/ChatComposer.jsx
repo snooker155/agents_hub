@@ -1,14 +1,82 @@
 import ContextEntityPicker from '../ContextEntityPicker';
 import ContextMeter from '../ContextMeter';
-import { Paperclip, Send, Send as SendIcon, StopCircle, Terminal, Upload, X } from 'lucide-react';
+import { Clock, Paperclip, Send, Send as SendIcon, StopCircle, Terminal, Upload, X, Zap } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
+import { useChatSteering } from './useChatSteering';
+
+/**
+ * While a turn runs: how a message typed now reaches it (Steer, Interrupt,
+ * Queue; see ./steering.js), the one-line hint for the chosen way, and the
+ * messages waiting for the turn to end.
+ */
+function SteerBar({ steering, t }) {
+  const { modes, activeMode, setMode, queued, removeQueued, error, notice } = steering;
+  if (!steering.busy && !queued.length && !error && !notice) return null;
+  return (
+    <div className="mb-2 space-y-1.5" data-testid="steer-bar">
+      {steering.busy && modes.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-gray-500">{t('steering.modeLabel')}</span>
+          <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 p-0.5" role="radiogroup">
+            {modes.map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={activeMode === m}
+                onClick={() => setMode(m)}
+                className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${
+                  activeMode === m ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {t(`steering.modes.${m}`)}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-gray-400">{t(`steering.modeHints.${activeMode}`)}</span>
+        </div>
+      )}
+      {steering.busy && modes.length === 1 && (
+        <p className="text-[11px] text-gray-400">{t('steering.queueOnlyHint')}</p>
+      )}
+      {queued.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {queued.map((q) => (
+            <span
+              key={q.id}
+              title={t('steering.queuedTitle')}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800"
+            >
+              {q.interrupt ? <Zap className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
+              {q.interrupt && <span className="font-semibold">{t('steering.interruptTag')}</span>}
+              <span className="truncate max-w-[18rem]">{q.text}</span>
+              <button
+                type="button"
+                onClick={() => removeQueued(q.id)}
+                className="text-amber-500 hover:text-red-600"
+                title={t('steering.removeQueued')}
+                aria-label={t('steering.removeQueued')}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {notice === 'restored' && <p className="text-[11px] text-gray-500">{t('steering.restored')}</p>}
+      {error && <p className="text-[11px] text-red-600">{t('steering.failed', { error })}</p>}
+    </div>
+  );
+}
 
 /**
  * Writing the next turn: the box, the slash-command picker, the attachments and
- * the hub records that ride along with it.
+ * the hub records that ride along with it. The box stays open while a turn
+ * runs, so a message can steer it, interrupt it or wait for it.
  */
 export default function ChatComposer() {
+  const page = useChatPage();
   const {
     addReferences, attachMenuOpen, attachmentError, commandMenuIndex, commandMenuOpen,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage,
@@ -16,9 +84,20 @@ export default function ChatComposer() {
     onPickFiles, pendingAttachments, pendingReferences, pickerKind, removeAttachment,
     removeReference, resizeTextarea, selectCommand, selectedProject, selectedWorkspace,
     sendAsBot, sendMessage, setAttachMenuOpen, setCommandMenuIndex, setCommandMenuOpen,
-    setInput, setPickerKind, stopGeneration, t, telegramError, telegramReplyAllowed,
+    setInput, setPickerKind, t, telegramError, telegramReplyAllowed,
     telegramSending, textareaRef, toggleAttachmentStore,
-  } = useChatPage();
+  } = page;
+  const steering = useChatSteering(page);
+  // Enter while a turn runs goes to the turn (in the chosen mode) instead of
+  // starting a new one, which the page's own handler would refuse.
+  const onKeyDown = (e) => {
+    if (loading && e.key === 'Enter' && !e.shiftKey && !(commandMenuOpen && commandSuggestions.length > 0)) {
+      e.preventDefault();
+      steering.steer();
+      return;
+    }
+    handleKeyDown(e);
+  };
   return (
     <>
         {/* Input area */}
@@ -130,6 +209,8 @@ export default function ChatComposer() {
               className="mb-2 px-1"
             />
 
+            <SteerBar steering={steering} t={t} />
+
             <div
               className="flex items-center gap-3 border border-gray-300 rounded-2xl px-4 py-3
                 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
@@ -188,10 +269,10 @@ export default function ChatComposer() {
               <textarea
                 ref={textareaRef}
                 className="flex-1 resize-none text-base text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
-                placeholder={composerPlaceholder}
+                placeholder={loading ? t('steering.placeholderBusy') : composerPlaceholder}
                 rows={1}
                 value={input}
-                disabled={loading || !hasTarget}
+                disabled={!hasTarget}
                 onChange={(e) => {
                   const val = e.target.value;
                   setInput(val);
@@ -199,17 +280,32 @@ export default function ChatComposer() {
                   setCommandMenuOpen(val.startsWith('/'));
                   setCommandMenuIndex(0);
                 }}
-                onKeyDown={handleKeyDown}
+                onKeyDown={onKeyDown}
               />
 
               {loading ? (
-                <button
-                  onClick={stopGeneration}
-                  title={t('chat.stop')}
-                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
-                >
-                  <StopCircle className="w-4 h-4" />
-                </button>
+                <>
+                  {input.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => steering.steer()}
+                      title={steering.activeMode ? t(`steering.modeHints.${steering.activeMode}`) : t('steering.send')}
+                      data-testid="steer-send"
+                      className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
+                        bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold transition-colors"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      {steering.activeMode ? t(`steering.modes.${steering.activeMode}`) : t('steering.send')}
+                    </button>
+                  )}
+                  <button
+                    onClick={steering.stop}
+                    title={t('chat.stop')}
+                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
+                  >
+                    <StopCircle className="w-4 h-4" />
+                  </button>
+                </>
               ) : currentTelegramBinding ? (
                 <button
                   onClick={sendAsBot}

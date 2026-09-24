@@ -58,3 +58,19 @@ def test_agent_set_terminal_status_is_not_overwritten():
     rm.finalize_task_from_run(rid, "completed", 0)
 
     assert ts.get_task(t.id).status == TaskStatus.blocked
+
+
+def test_a_superseded_run_does_not_move_the_task():
+    # A steering interrupt relaunched the task on a new run; the old run (a
+    # container that reports late) completing must not resolve the task over
+    # the run that now owns it.
+    t = ts.create_task("work", status=TaskStatus.in_progress)
+    old = _run_for_task(t.id, "swe_agent")
+    new = _run_for_task(t.id, "swe_agent")
+    ts.assign_agent(t.id, "swe_agent", None, run_id=new)
+    rm.close_run(old, status="completed", exit_code=0)
+    rm.finalize_task_from_run(old, "completed", 0)
+
+    task = ts.get_task(t.id)
+    assert task.status == TaskStatus.in_progress
+    assert task.assigned_agent_run_id == new

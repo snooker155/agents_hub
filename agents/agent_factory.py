@@ -1030,6 +1030,9 @@ class AgentFactory:
                 else None
             ),
             native_reasoning=reasoning.get("thinking_level") not in (None, "", "off"),
+            # The record this build came from (a stored version when pinned),
+            # for the loop extensions and guardrails (agents/agent_loop.py).
+            spec=_spec,
         )
 
         return agent

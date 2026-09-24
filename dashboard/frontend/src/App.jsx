@@ -53,6 +53,7 @@ const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
 const Deployment = lazy(() => import('./pages/Deployment'));
 const Environments = lazy(() => import('./pages/Environments'));
+const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Models = lazy(() => import('./pages/Models'));
@@ -160,6 +161,7 @@ function AppRoutes() {
         <Route path="/nodes" element={guard(<Nodes />)} />
         <Route path="/nodes/:nodeId" element={guard(<NodeDetail />)} />
         <Route path="/environments" element={guard(<Environments />)} />
+        <Route path="/guardrails" element={guard(<Guardrails />)} />
         <Route path="/containers" element={guard(<Containers />)} />
         <Route path="/browser" element={guard(<Browser />)} />
         <Route path="/health" element={guard(<Health />)} />

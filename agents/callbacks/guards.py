@@ -189,7 +189,18 @@ class ContextWindowGuard(BaseCallbackHandler):
 
     ``raise_error = True`` is required so LangChain does not swallow the
     exception in its callback dispatch loop.
+
+    When the run's loop compacts its context (agents/loop_ext/compaction.py),
+    an overflow is first handed to compaction instead: the guard asks for a
+    forced pass on the next model call (clear old tool results, fold the
+    oldest steps) and lets the run go on. Only when that happens
+    ``OVERFLOW_RETRIES`` times in a row, so compaction had its chance and the
+    prompt still does not fit, is the run stopped as before.
     """
+
+    #: Consecutive overflows handed to compaction before the run is stopped.
+    #: One constant with agents.loop_ext.compaction.OVERFLOW_RETRIES.
+    OVERFLOW_RETRIES = 2
 
     def __init__(self, context_window: int, model_name: str = "") -> None:
         super().__init__()
@@ -197,18 +208,46 @@ class ContextWindowGuard(BaseCallbackHandler):
         self.context_window = int(context_window)
         self.model_name = model_name or "unknown"
 
+    @classmethod
+    def _compaction(cls) -> Optional[Dict[str, Any]]:
+        """The compaction record of the running loop, when compaction is on.
+
+        Read from the loop state of the run in this context (the state lives
+        in a context variable the executor carries into its callbacks), so a
+        guard that runs outside the agent loop, or on an agent without the
+        extension, sees None and behaves as it always did.
+        """
+        try:
+            from agents.agent_loop import current_state
+            state = current_state()
+        except ImportError:
+            return None
+        record = state.scratch.get("compaction") if state is not None else None
+        return record if isinstance(record, dict) and record.get("active") else None
+
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         if self.context_window <= 0:
             return
         p, _c, _t = normalize_usage(extract_token_usage(response))
-        if p > self.context_window:
-            raise ContextWindowExceededError(
-                f"Context window exceeded: the last prompt was {p} tokens but model "
-                f"'{self.model_name}' accepts at most {self.context_window}. The run was "
-                f"aborted because the accumulated history no longer fits the model. "
-                f"Split the task into smaller pieces or use a model with a larger "
-                f"context window."
-            )
+        compaction = self._compaction()
+        if p <= self.context_window:
+            if compaction is not None and p > 0:
+                compaction["overflows"] = 0
+            return
+        if compaction is not None:
+            tries = int(compaction.get("overflows") or 0)
+            if tries < self.OVERFLOW_RETRIES:
+                compaction["overflows"] = tries + 1
+                compaction["force"] = True
+                compaction["overflow_tokens"] = int(p)
+                return
+        raise ContextWindowExceededError(
+            f"Context window exceeded: the last prompt was {p} tokens but model "
+            f"'{self.model_name}' accepts at most {self.context_window}. The run was "
+            f"aborted because the accumulated history no longer fits the model. "
+            f"Split the task into smaller pieces or use a model with a larger "
+            f"context window."
+        )
 
 
 class ToolRepetitionError(RuntimeError):

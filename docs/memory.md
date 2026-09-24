@@ -146,6 +146,18 @@ content hash alongside its index status.
 Removing a file, de-indexing it, `forget(file=…)` or deleting the pool removes
 its chunks and vectors both.
 
+## Version history
+
+Every change to a memory pool's blocks, notes and structured slots is versioned automatically, whoever makes it: a person in the dashboard, an agent through its memory tools, or the API. Each changed item gets its own row and version counter in the `memory_versions` table, with operation type (create, update, delete, restore or redact), who did it (a user or the agent and run id inside a run) and when.
+
+Restore puts an item back to a past version's value, or deletes it again when that version recorded a deletion. Redact replaces a row's stored content with a marker without touching the live item unless `also_current` is set.
+
+History keeps the newest `AGENTS_HUB_MEMORY_VERSIONS_KEEP` versions per item (default 50).
+
+API: `GET /api/memory/{id}/versions?kind=&item_key=&limit=`, `GET /api/memory/{id}/versions/{version_id}`, `POST .../restore`, `POST .../redact` with `{also_current}`; audited as `memory.restore`, `memory.redact`.
+
+UI: Memory page, Pools tab, a "Pool history" button and a history icon next to each block, note and slot, with a diff against the previous version, Restore and Redact.
+
 ## Gotchas
 
 - Memory reads count as `reads_private`, which means an agent with memory access

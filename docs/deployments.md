@@ -27,6 +27,9 @@ Creating or editing one sets, on top of the usual schedule fields:
   only to the workspace's own default.
 - **auto_pause_after**: how many consecutive firing failures pause the job
   automatically; `0` turns auto-pause off. Defaults to `3`.
+- **agent_version** (agent_task jobs only): pin the job to a stored agent
+  version. Requires `agent_id` and is copied onto the task at fire time. See
+  [agents](agents.md).
 
 For an `agent_task` job the environment and budget are passed straight into
 `tasks_service.create_task` when the job fires. A `flow` or `loop` job creates

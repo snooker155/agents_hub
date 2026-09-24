@@ -66,6 +66,7 @@ export default {
     nodes: 'Knoten',
     nodeDetails: 'Knotendetails',
     environments: 'Umgebungen',
+    guardrails: 'Guardrails',
     containers: 'Container',
     browser: 'Browser',
     modelDetail: 'Modell',

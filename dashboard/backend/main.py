@@ -548,6 +548,9 @@ app.include_router(sessions.router)
 
 # Messages domain: individual agent run logs
 app.include_router(messages.router)
+# /api/runs/{id}/agent-version and rollback-agent: the agent version a run ran
+# and a rollback to it (routes/messages.py).
+app.include_router(messages.runs_router)
 
 # Live agent copies: what is running right now, and how to write to one.
 app.include_router(instances.router)
@@ -573,6 +576,22 @@ app.include_router(nodes.router)
 # Environments: execution profiles for runs, nodes and scheduled jobs
 from routes import environments as environments_router
 app.include_router(environments_router.router)
+
+# The agent loop's policies (fourth-cycle stage 2): per-tool permission
+# policy, task outcomes graded against a rubric, messages steering a running
+# turn, guardrails, per-agent loop settings (fallback models, output schema,
+# tool search, compaction) and the version history of memory pools.
+from routes import (
+    tool_policy as tool_policy_router,
+    outcomes as outcomes_router,
+    steering as steering_router,
+    guardrails as guardrails_router,
+    agent_loop_settings as agent_loop_settings_router,
+    memory_versions as memory_versions_router,
+)
+for _loop_router in (tool_policy_router, outcomes_router, steering_router, guardrails_router,
+                     agent_loop_settings_router, memory_versions_router):
+    app.include_router(_loop_router.router)
 
 # External domain: token-authenticated access for exposed nodes
 app.include_router(external.router)

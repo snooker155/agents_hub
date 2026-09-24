@@ -4,6 +4,7 @@ import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileTex
 
 import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun, getEvalSets, createEvalSet, addEvalCase } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
+import RunLoopPanel from '../components/run/RunLoopPanel';
 import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
 import MessageProcessFlow from '../components/MessageProcessFlow';
@@ -512,6 +513,11 @@ export default function MessageDetails() {
           </button>
         </>}
       />
+
+      {/* What the agent loop did beyond its tool trail: the agent version
+          it ran (with a rollback), the model that answered, compactions,
+          steering messages, guardrail checks (components/run/RunLoopPanel). */}
+      <RunLoopPanel run={message} onChanged={load} />
 
       {/* Metadata card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">

@@ -121,6 +121,18 @@ def prepare_run(
     params = as_param_dict(params)
     ws_name, ws_path = resolve_task_workspace(task, params)
 
+    # Agent version pin (agents/versions.py, docs/agent-versions.md): the
+    # task's own pin, or a one-off override for this launch alone
+    # (params["agent_version"], the same "one launch" convention as the
+    # provider/model override below). None means the live definition.
+    agent_version_pin: Optional[int] = None
+    _raw_pin = params.get("agent_version") if params.get("agent_version") is not None else getattr(task, "agent_version", None)
+    if _raw_pin is not None:
+        try:
+            agent_version_pin = int(_raw_pin)
+        except (TypeError, ValueError):
+            agent_version_pin = None
+
     # Budget gate: refuse to launch when the workspace has hit its hard cost cap.
     # Opt-in (only enforced when a hard cap is configured) and fail-open on any
     # lookup/pricing error, so a pricing hiccup never wedges a workspace.
@@ -174,6 +186,7 @@ def prepare_run(
         channel="local",
         instance_id=instance_id,
         workspace=ws_name,
+        agent_version_pin=agent_version_pin,
     )
 
     # agent_run.py's CLI: positional `agent` and optional positional `action`,
@@ -205,6 +218,12 @@ def prepare_run(
         value = str(params.get(key) or "").strip()
         if value:
             cli_args.extend([flag, value])
+
+    # The agent version this run is pinned to (see agent_version_pin above):
+    # passed as a flag like provider/model, so runtime/agent_run.py needs no
+    # lookup back into the task record to know what to build.
+    if agent_version_pin is not None:
+        cli_args.extend(["--definition-version", str(agent_version_pin)])
 
     # Continuing a paused run rather than starting one. Passed as flags like
     # everything else the subprocess needs to know, so nothing has to be read

@@ -10,6 +10,7 @@ import { appendIntoDelegation, appendUnderDelegation, mapDelegation, resolveDele
 import { stripUiBlock } from '../markdown';
 import { reduceGraphRun } from '../../graphRun';
 import { appendLiveThought, buildCompactionNotice, mergeMessageFile } from '../turnState';
+import { applyUndelivered, markSteerDelivered } from '../steering';
 
 // Which bubble a per-turn event belongs in: the single assistant bubble in
 // agent mode, or the bubble for the currently active node in flow mode.
@@ -438,6 +439,15 @@ function handleAgentEvent(event, ctx) {
         ),
       );
     }
+    // Messages the turn ended without taking: queued, and sent as the next
+    // turn once this one has closed (useChatSteering).
+    if (!isMultiAgent && Array.isArray(event.undelivered) && event.undelivered.length) {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id !== convId ? c : { ...c, messages: applyUndelivered(c.messages, event.undelivered, assistantId) },
+        ),
+      );
+    }
     if (processOpen && !isMultiAgent) {
       setProcessInsights((prev) => {
         const inTok = event.usage?.inbound_tokens || 0;
@@ -468,6 +478,14 @@ function handleAgentEvent(event, ctx) {
         };
       });
     }
+  } else if (event.type === 'steer_delivered') {
+    // A message sent while this turn worked reached the model (see
+    // components/chat/steering.js); its bubble now says at which step.
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id !== convId ? c : { ...c, messages: markSteerDelivered(c.messages, event.msg_id, event.after_step) },
+      ),
+    );
   } else if (event.type === 'compaction') {
     // Older history was folded into a summary. Inserted right before the
     // bubble it precedes: agent mode's single bubble already exists by the
