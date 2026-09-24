@@ -201,6 +201,38 @@ singleton loops (scheduler, watchdog, Telegram poller, outbox drainer) run
 under database leases so N replicas never run them twice. All of it is on
 its own page: [workers](workers.md).
 
+### Fencing tokens on the leases
+
+A lease alone does not stop a holder that stalls past its TTL (a long GC
+pause, a tick stuck on a slow call): another replica takes the role over,
+and the stalled one wakes up still believing it holds it. Every row in
+`service_leases` therefore carries a `version` (migration 0018), bumped on
+each insert and takeover and kept on a renewal. `common.leases.fencing_token(role)`
+is the version this process got; `leases.fenced(role, token)` opens the
+write's transaction, checks that the row's owner is this process, its
+version is the token and it has not expired, and raises `LeaseLost` before
+anything is written. The check and the write share one exclusive
+transaction, so no takeover slips in between them.
+
+What a lost lease does in each loop:
+
+- **Outbox drainer** (`notify/outbound.py`): each delivery's outcome is
+  written under the fence. On `LeaseLost` the drain stops and returns what it
+  delivered so far; the row whose outcome it could not record stays pending
+  and the new holder sends it again (at least once, never lost).
+- **Run watchdog** (`managers/run_watchdog.py`): every write that closes or
+  resumes a run is fenced, and the steps that launch a process check the
+  lease first. The sweep ends at the first failed check and leaves the rest
+  of the runs to the new holder.
+- **Plan scheduler** (`plans/service.py run_due_jobs`): jobs are still
+  claimed one row at a time, and the service lease is re-checked with the
+  token before each claimed job fires. A superseded leader fires nothing
+  more; the jobs it claimed keep their short claim until it lapses, then the
+  new leader fires them.
+
+The worker's launch queue needs none of this: each `run_queue` row carries
+its own `lease_owner` and every write already checks it.
+
 ## Limits
 
 - **State beside the database is still one host.** Run logs, workspaces,

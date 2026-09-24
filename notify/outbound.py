@@ -192,11 +192,17 @@ def prune(older_than_days: int = 7) -> int:
         return int(getattr(cur, "rowcount", 0) or 0)
 
 
-def _record_attempt(row_id: int, ok: bool, attempts: int, error: Optional[str]) -> None:
-    from common import db
+def _record_attempt(row_id: int, ok: bool, attempts: int, error: Optional[str],
+                    fence_token: Optional[int] = None) -> None:
+    """Write one delivery's outcome. With ``fence_token`` the write is fenced
+    by the ``outbox`` lease (``common.leases.fenced``): a drainer that lost
+    the lease while it was delivering raises ``LeaseLost`` here and writes
+    nothing, so the row stays with whoever holds the role now."""
+    from common import db, leases
 
     now = _now()
-    with db.transaction() as conn:
+    tx = leases.fenced(LEASE_ROLE, fence_token) if fence_token is not None else db.transaction()
+    with tx as conn:
         if ok:
             conn.execute(
                 "UPDATE outbox SET attempts = ?, delivered_at = ?, last_error = NULL WHERE id = ?",
@@ -214,19 +220,33 @@ def drain(*, require_lease: bool = True) -> int:
 
     Runs only on the holder of the ``outbox`` lease when ``require_lease`` is
     set (the default): with several replicas, one drains and the rest wait.
+    Each attempt's write is fenced by the lease version taken at the start,
+    so a drainer that stalled past its TTL and was superseded stops at the
+    next row instead of recording attempts for rows it no longer owns.
     """
+    from common import leases
+
+    token: Optional[int] = None
     if require_lease:
-        from common import leases
         if not leases.hold(LEASE_ROLE, ttl_seconds=max(POLL_SECONDS * 4, 60.0)):
             return 0
+        token = leases.fencing_token(LEASE_ROLE)
     delivered = 0
     for row in pending():
         attempts = int(row.get("attempts") or 0)
         if attempts >= MAX_ATTEMPTS:
             continue
         ok = deliver(row["endpoint"], row["event"])
-        _record_attempt(int(row["id"]), bool(ok), attempts + 1,
-                        None if ok else "endpoint did not accept the delivery")
+        try:
+            _record_attempt(int(row["id"]), bool(ok), attempts + 1,
+                            None if ok else "endpoint did not accept the delivery",
+                            fence_token=token)
+        except leases.LeaseLost:
+            # The delivery itself may have gone out; the row stays pending and
+            # the new holder sends it again. At least once, never lost.
+            log.warning("notify.outbound: lost the %s lease mid-drain, stopping after %d delivered",
+                        LEASE_ROLE, delivered)
+            return delivered
         if ok:
             delivered += 1
     return delivered

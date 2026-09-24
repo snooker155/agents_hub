@@ -73,6 +73,43 @@ export const setSessionToken = (token) => {
 export const getAuthToken = () => getSessionToken() || getApiToken();
 const activeToken = getAuthToken;
 
+/**
+ * A one-time, minute-long ticket (POST /api/auth/ticket) for a connection
+ * that cannot set a header: the SSE stream, the browser frame WebSocket, a
+ * full page navigation. Under AUTH_MODE=multi it is the only credential the
+ * backend accepts in a query string, so the session token never lands in a
+ * URL (docs/identity.md, "Tickets for streams"). Resolves to the ticket
+ * string; rejects when the call fails.
+ */
+export const mintAuthTicket = async () => {
+  const { data } = await api.post('/auth/ticket');
+  return data.ticket;
+};
+
+/**
+ * `url` with a credential in its query: `ticket=` when the backend can mint
+ * one, else (a backend older than tickets answers 404, or the call fails
+ * outright) the previous `token=` form. No credential at all when this
+ * browser holds none, which is the single-operator case.
+ */
+export const withAuthTicket = async (url) => {
+  const token = getAuthToken();
+  if (!token) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  try {
+    const ticket = await mintAuthTicket();
+    return `${url}${sep}ticket=${encodeURIComponent(ticket)}`;
+  } catch {
+    return `${url}${sep}token=${encodeURIComponent(token)}`;
+  }
+};
+
+// Mint a ticket, then leave for `url`: for links that must authenticate a
+// full navigation (the GitHub connect flow, an audit export download).
+export const navigateWithAuthTicket = async (url) => {
+  window.location.assign(await withAuthTicket(url));
+};
+
 // Headers a fetch() call outside the `api` instance needs to authenticate.
 // Every streaming endpoint below opens its own fetch (a long-lived response
 // body axios cannot hand back incrementally), so each has to attach this
@@ -164,10 +201,11 @@ export const deleteGroupMapping = (id) => api.delete(`/auth/group-mappings/${id}
 // object_type, object_id, since, until, text, result, limit, offset.
 export const getAuditLog = (params) => api.get('/audit', { params });
 export const getAuditActions = () => api.get('/audit/actions');
+// The export URL carries no credential: the page downloads it through
+// navigateWithAuthTicket, which adds a one-time ticket (the response is an
+// attachment, so the page stays where it is).
 export const auditExportUrl = (params, format = 'csv') => {
   const query = new URLSearchParams({ ...(params || {}), format });
-  const token = activeToken();
-  if (token) query.set('token', token);
   return `${API_ORIGIN}/api/audit/export?${query.toString()}`;
 };
 
@@ -1201,11 +1239,15 @@ export const setWorkspaceGitHubInstallation = (workspace, installationId) =>
 export const getMyGitHub = () => api.get('/auth/github');
 export const disconnectMyGitHub = () => api.delete('/auth/github');
 // A plain link (the browser leaves for github.com), so the credential rides
-// in the query the way auditExportUrl does.
+// in the query the way auditExportUrl does. githubConnectUrl is the legacy
+// ?token= form, refused under AUTH_MODE=multi; connectGitHub mints a
+// one-time ticket first and navigates, which works in every mode.
 export const githubConnectUrl = () => {
   const token = activeToken();
   return `${API_ORIGIN}/api/auth/github/connect${token ? `?token=${encodeURIComponent(token)}` : ''}`;
 };
+export const connectGitHub = () =>
+  navigateWithAuthTicket(`${API_ORIGIN}/api/auth/github/connect`);
 
 // Bundled agent-import presets (examples/imported-agents/): Claude Code and
 // Codex behind the hub's HTTP contract, ready to import with no repository

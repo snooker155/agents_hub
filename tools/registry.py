@@ -89,6 +89,8 @@ _CATALOG_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "apply_unified_diff": {"name": "Apply Diff"},
     "extract_from_text": {"name": "Extract from Text"},
     "run_agent_tool": {"name": "Run Agent (taskless)"},
+    "delegate_task_tool": {"name": "Delegate (subtask run)"},
+    "list_models_tool": {"name": "List Available Models"},
     "list_agents_tool": {"name": "List Available Agents"},
     "list_scheduled": {"name": "List Scheduled Jobs"},
     "cancel_scheduled": {"name": "Cancel Scheduled Job"},
@@ -337,10 +339,12 @@ def _agent_coordination_specs() -> List[ToolSpec]:
         run_flow_tool, reject_assignment_tool, stop_agent_tool,
         get_agent_status_tool, wait_for_agent_tool,
     )
+    from tools.delegation import delegate_task_tool, list_models_tool
     tools = [
         assign_agent_tool, start_agent_tool, run_agent_tool, list_flows_tool,
         run_flow_tool, reject_assignment_tool, stop_agent_tool,
         get_agent_status_tool, wait_for_agent_tool,
+        delegate_task_tool, list_models_tool,
     ]
     return [spec_from_tool(t, category="agent_coordination") for t in tools]
 

@@ -59,9 +59,10 @@ vi.mock('../../api', () => ({
   getAgents: () => ok({ agents: [] }),
 }));
 
-const mintPreviewTicket = vi.fn(() => ok({ url: '/preview/tkt-123abc/', expires_in: 3600 }));
+const mintPreviewTicket = vi.fn(() => ok({ url: '/preview/tkt-123abc/', expires_in: 600 }));
 vi.mock('../../api/preview', () => ({
   mintPreviewTicket: (...a) => mintPreviewTicket(...a),
+  renewPreviewTicket: () => ok({}),
 }));
 
 import Containers from '../Containers';

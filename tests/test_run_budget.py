@@ -20,7 +20,7 @@ from langchain_core.outputs import ChatGeneration, LLMResult
 import common.budget as budget
 import common.run_budget as run_budget
 from agents.callbacks import RunBudgetExceeded, RunBudgetGuard
-from agents.callbacks.guards import reset_run_budget_spend
+from agents.callbacks.guards import RunBudgetUnpriced, reset_run_budget_spend
 from tasks import service as ts
 from tasks.models import TaskStatus
 
@@ -106,7 +106,7 @@ def test_launch_env_is_empty_without_a_cap(monkeypatch):
 
 def test_launch_env_carries_cap_spend_and_prices(monkeypatch):
     monkeypatch.setattr("common.pricing.load_price_map", lambda: dict(PRICES))
-    monkeypatch.setattr(run_budget, "task_spend_usd", lambda task_id: 0.75)
+    monkeypatch.setattr(run_budget, "_task_spend_usd_strict", lambda task_id: 0.75)
     env = run_budget.launch_env(SimpleNamespace(id="t-1", budget_usd=2.0), "acme")
     assert float(env[run_budget.ENV_LIMIT]) == 2.0
     assert float(env[run_budget.ENV_SPENT]) == 0.75
@@ -117,7 +117,50 @@ def test_launch_env_fails_open(monkeypatch):
     def _boom(task_id):
         raise RuntimeError("db down")
     monkeypatch.setattr(run_budget, "price_rows", lambda: (_ for _ in ()).throw(RuntimeError("x")))
-    monkeypatch.setattr(run_budget, "task_spend_usd", _boom)
+    monkeypatch.setattr(run_budget, "_task_spend_usd_strict", _boom)
+    assert run_budget.launch_env(SimpleNamespace(id="t-1", budget_usd=2.0), "acme") == {}
+
+
+# -------------------- fail_closed --------------------
+
+def test_launch_env_carries_the_fail_closed_flag(monkeypatch):
+    monkeypatch.setattr(budget, "get_budget",
+                        lambda ws: {"run_limit_usd": 0.0, "fail_closed": True})
+    monkeypatch.setattr("common.pricing.load_price_map", lambda: dict(PRICES))
+    monkeypatch.setattr(run_budget, "_task_spend_usd_strict", lambda task_id: 0.0)
+    env = run_budget.launch_env(SimpleNamespace(id="t-1", budget_usd=2.0), "acme")
+    assert env[run_budget.ENV_FAIL_CLOSED] == "1"
+
+
+def test_launch_env_omits_the_flag_when_the_workspace_does_not_fail_closed(monkeypatch):
+    monkeypatch.setattr(budget, "get_budget",
+                        lambda ws: {"run_limit_usd": 0.0, "fail_closed": False})
+    monkeypatch.setattr("common.pricing.load_price_map", lambda: dict(PRICES))
+    monkeypatch.setattr(run_budget, "_task_spend_usd_strict", lambda task_id: 0.0)
+    env = run_budget.launch_env(SimpleNamespace(id="t-1", budget_usd=2.0), "acme")
+    assert run_budget.ENV_FAIL_CLOSED not in env
+
+
+def test_launch_env_raises_when_fail_closed_and_spend_cannot_be_computed(monkeypatch):
+    monkeypatch.setattr(budget, "get_budget",
+                        lambda ws: {"run_limit_usd": 0.0, "fail_closed": True})
+
+    def _boom(task_id):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(run_budget, "_task_spend_usd_strict", _boom)
+    with pytest.raises(run_budget.RunBudgetUnavailableError):
+        run_budget.launch_env(SimpleNamespace(id="t-1", budget_usd=2.0), "acme")
+
+
+def test_launch_env_still_fails_open_without_fail_closed_on_the_same_error(monkeypatch):
+    monkeypatch.setattr(budget, "get_budget",
+                        lambda ws: {"run_limit_usd": 0.0, "fail_closed": False})
+
+    def _boom(task_id):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(run_budget, "_task_spend_usd_strict", _boom)
     assert run_budget.launch_env(SimpleNamespace(id="t-1", budget_usd=2.0), "acme") == {}
 
 
@@ -198,6 +241,70 @@ def test_unknown_models_count_as_free():
     guard = RunBudgetGuard(1.0, prices=dict(PRICES), provider="other", model="mystery")
     guard.on_llm_end(_response(10_000_000, 10_000_000, model="mystery"), run_id="z")
     assert guard.spent_usd == 0.0
+
+
+# -------------------- fail_closed --------------------
+
+def test_from_env_reads_the_fail_closed_flag(monkeypatch):
+    monkeypatch.setenv(run_budget.ENV_LIMIT, "1.0")
+    monkeypatch.setenv(run_budget.ENV_FAIL_CLOSED, "1")
+    guard = RunBudgetGuard.from_env(provider="openai", model="gpt-x")
+    assert guard.fail_closed is True
+
+
+def test_from_env_defaults_fail_closed_to_false(monkeypatch):
+    monkeypatch.setenv(run_budget.ENV_LIMIT, "1.0")
+    guard = RunBudgetGuard.from_env(provider="openai", model="gpt-x")
+    assert guard.fail_closed is False
+
+
+def test_unknown_models_block_instead_of_free_under_fail_closed():
+    guard = RunBudgetGuard(1.0, prices=dict(PRICES), provider="other", model="mystery",
+                           fail_closed=True)
+    # Blocked before the call even starts: the guard already knows its own
+    # model ("mystery") has no catalog entry.
+    with pytest.raises(RunBudgetUnpriced):
+        guard.on_chat_model_start({}, [[]])
+    assert guard.spent_usd == 0.0
+
+
+def test_a_priced_model_is_unaffected_by_fail_closed():
+    guard = RunBudgetGuard(100.0, prices=dict(PRICES), provider="openai", model="gpt-x",
+                           fail_closed=True)
+    guard.on_chat_model_start({}, [[]])  # does not raise: gpt-x is priced
+    guard.on_llm_end(_response(1_000_000, 0), run_id="ok")
+    assert guard.spent_usd == pytest.approx(2.0)
+
+
+def test_an_unmatched_response_model_still_falls_back_to_the_agent_s_own_price():
+    # Same fallback cost_of already relies on (a gateway or dated alias prices
+    # like the configured model): fail_closed must not block what pricing
+    # itself already treats as the same model.
+    guard = RunBudgetGuard(100.0, prices=dict(PRICES), provider="openai", model="gpt-x",
+                           fail_closed=True)
+    guard.on_llm_end(_response(1_000_000, 0, model="totally-unknown-model"), run_id="u")
+    assert guard.spent_usd == pytest.approx(2.0)
+
+
+def test_an_unpriced_response_model_blocks_when_the_guard_has_no_configured_model():
+    # No agent model to fall back to (a guard built before it is known):
+    # fail_closed has only the response's own model to judge by.
+    guard = RunBudgetGuard(100.0, prices=dict(PRICES), provider="openai", model="",
+                           fail_closed=True)
+    guard.on_chat_model_start({}, [[]])  # no model yet to judge: does not raise
+    with pytest.raises(RunBudgetUnpriced):
+        guard.on_llm_end(_response(1_000_000, 0, model="totally-unknown-model"), run_id="u")
+
+
+def test_run_budget_unpriced_is_a_run_budget_exceeded():
+    # standard_agent.py catches RunBudgetExceeded broadly and parks the task;
+    # RunBudgetUnpriced must be caught the same way.
+    exc = RunBudgetUnpriced(0.5, 1.0, "mystery")
+    assert isinstance(exc, RunBudgetExceeded)
+    pending = exc.pending(agent_id="a1", run_id="r1")
+    assert pending["kind"] == "budget"
+    assert "mystery" in pending["reason"]
+    assert pending["spent_usd"] == 0.5 and pending["limit_usd"] == 1.0
 
 
 def test_a_dated_model_name_falls_back_to_the_agent_s_model():

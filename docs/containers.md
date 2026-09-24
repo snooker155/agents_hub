@@ -155,6 +155,19 @@ container being restarted (a new port) for as long as the ticket itself has
 not expired; it binds the user who minted it, so in `AUTH_MODE=multi` a
 revoked account's outstanding tickets stop working with it.
 
+A ticket lives ten minutes. While the preview is open and the tab visible, the
+dashboard checks every four minutes whether the current ticket would run out
+before the next check, and only then calls `POST /api/preview/tickets/renew`
+(body `{ticket}`, or the mint body once the old one has lapsed) and points the
+iframe at the new ticket. The ticket is only checked when the frame makes a
+request, so this reloads the page about once per ticket lifetime rather than
+on every renewal. The renewal re-checks the target and the caller's access and
+renews only the caller's own ticket. A client that can read response headers
+gets the same from the proxy: a request served on a ticket past half its life
+carries a successor in `X-Preview-Ticket`. A preview left in a hidden tab past
+its ten minutes shows the expired page, which asks the dashboard for a fresh
+ticket.
+
 The proxy rewrites an HTML response's absolute-path URLs (`href="/`, `src="/`,
 `action="/`) to stay under the ticket prefix and injects a `<base>` tag when
 the page has none, by a plain regex over the markup, not a parser: an

@@ -7,3 +7,8 @@
 import api from './index';
 
 export const mintPreviewTicket = (body) => api.post('/preview/tickets', body);
+
+// A successor for a preview that is still open: `body` is {ticket} (the
+// current one) or, once that has lapsed, the same target body as mint.
+// Answers like mint: {url, expires_in, expires_at}.
+export const renewPreviewTicket = (body) => api.post('/preview/tickets/renew', body);

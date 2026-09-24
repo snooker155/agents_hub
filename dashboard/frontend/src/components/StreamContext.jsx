@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { StreamContext } from './stream';
-import { API_ORIGIN, getAuthToken } from '../api';
+import { API_ORIGIN, getAuthToken, mintAuthTicket } from '../api';
 
 /*
  * Single multiplexed SSE connection for the whole dashboard.
@@ -95,15 +95,35 @@ export function StreamProvider({ children }) {
     let retry = null;
     let es = null;
 
+    // EventSource cannot set request headers, so the credential has to
+    // travel in the query string. What goes there is a one-time ticket
+    // minted just before each (re)connect (POST /api/auth/ticket), never
+    // the session itself: under AUTH_MODE=multi a ticket is the only query
+    // credential the backend accepts, and a spent one would be refused, so
+    // a reconnect always mints afresh. A backend too old to mint (404) or a
+    // failed mint falls back to the legacy `token=` form, which token mode
+    // still accepts. See docs/identity.md, "Tickets for streams".
+    const credentialParam = async (token) => {
+      try {
+        return `ticket=${encodeURIComponent(await mintAuthTicket())}`;
+      } catch {
+        return `token=${encodeURIComponent(token)}`;
+      }
+    };
+
+    // With no credential at all (the single-operator case) there is nothing
+    // to mint and the connection opens at once.
     const connect = () => {
       if (closed) return;
-      // EventSource cannot set request headers, so whichever credential this
-      // browser holds — a user's session under AUTH_MODE=multi, otherwise the
-      // operator token when one is configured — has to travel as a query
-      // parameter, the one form the backend's auth guard accepts besides a
-      // header. The same limitation is why the last event id travels as
-      // `since` rather than a real Last-Event-ID header: only the browser's
-      // own silent retry can set that, and this provider replaces the
+      const token = getAuthToken();
+      if (!token) { open(null); return; }
+      credentialParam(token).then((credential) => { if (!closed) open(credential); });
+    };
+
+    const open = (credential) => {
+      // The same limitation is why the last event id travels as `since`
+      // rather than a real Last-Event-ID header: only the browser's own
+      // silent retry can set that, and this provider replaces the
       // connection itself instead.
       //
       // `channels` carries the current dynamic channel set on every (re)connect
@@ -111,9 +131,8 @@ export function StreamProvider({ children }) {
       // does not recognise can still be caught up from the shared Redis stream
       // (see docs/scaling.md), but only for the channels this tab actually
       // wants, and only this provider knows what those are right now.
-      const token = getAuthToken();
       const params = [];
-      if (token) params.push(`token=${encodeURIComponent(token)}`);
+      if (credential) params.push(credential);
       if (clientIdRef.current) params.push(`client=${encodeURIComponent(clientIdRef.current)}`);
       if (lastEventIdRef.current != null) params.push(`since=${encodeURIComponent(lastEventIdRef.current)}`);
       const dynamicChannels = [...channelsRef.current.keys()];

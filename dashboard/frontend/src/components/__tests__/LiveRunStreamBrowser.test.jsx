@@ -23,6 +23,7 @@ vi.mock('../../api/browser', () => ({
   sendBrowserInput: (...a) => sendBrowserInput(...a),
   setBrowserControl: (...a) => setBrowserControl(...a),
   browserStreamUrl: (id) => `ws://test/${id}`,
+  browserStreamUrlWithTicket: (id) => Promise.resolve(`ws://test/${id}`),
 }));
 
 // jsdom would try to open a real socket; one that closes at once sends the

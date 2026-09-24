@@ -117,6 +117,30 @@ and the served calls are counted separately so they never mix with them.
 page. In `multi` mode an administrator sees everyone's calls and anyone else
 only their own.
 
+## Tokens per day
+
+`AGENTS_HUB_RATE_LIMIT_TOKENS_PER_DAY` (default 0, off) caps the tokens one
+caller may spend through `/v1/chat/completions` per UTC day: per personal key
+when one is presented, per person otherwise. A key can carry its own cap
+(see [api-keys](api-keys.md#rate-limits)). The day's total is read from
+`serving_usage` (successful calls only) and cached for 30 seconds. A caller at
+or over the cap gets, before any model is called:
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 3600
+
+{"error": {"message": "Daily token limit reached; it resets at 00:00 UTC",
+           "type": "rate_limit_error", "param": null,
+           "code": "tokens_per_day_exceeded"}}
+```
+
+`Retry-After` is the number of seconds until the next 00:00 UTC. The
+requests-per-minute limit (`AGENTS_HUB_RATE_LIMIT_PER_MINUTE`) applies to
+`/v1` as well, answered by the guard with `{"detail": "Rate limit exceeded",
+"retry_after": n}` rather than the OpenAI shape; OpenAI SDKs retry on the
+`429` and `Retry-After` either way.
+
 ## Audit
 
 Every completion, successful or not, also writes an audit row (see

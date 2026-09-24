@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   changeMyPassword, createMyApiKey, disconnectMyGitHub, getMyApiKeys, getMyGitHub,
-  getMySessions, getWorkspaces, githubConnectUrl, revokeMyApiKey, revokeMySession,
+  getMySessions, getWorkspaces, connectGitHub, revokeMyApiKey, revokeMySession,
   revokeOtherSessions,
 } from '../api';
 import { getMyPreferences, putMyPreferences } from '../api/palette';
@@ -520,9 +520,9 @@ function GitHubSection({ t }) {
               {t('account.github.disconnect')}
             </button>
           ) : canConnect && (
-            <a href={githubConnectUrl()} className={btnPrimary}>
+            <button type="button" onClick={() => connectGitHub()} className={btnPrimary}>
               <Link2 className="w-3.5 h-3.5" /> {t('account.github.connect')}
-            </a>
+            </button>
           )}
         </div>
       )}
@@ -612,6 +612,10 @@ function ApiKeysSection({ t, isAdmin }) {
   const [allWorkspaces, setAllWorkspaces] = useState(true);
   const [selected, setSelected] = useState([]);
   const [expiry, setExpiry] = useState('30');
+  // The key's own limits (docs/api-keys.md "Rate limits"): blank follows the
+  // hub-wide setting and is left out of the request.
+  const [perMinute, setPerMinute] = useState('');
+  const [perDay, setPerDay] = useState('');
   const [creating, setCreating] = useState(false);
   const [revokingId, setRevokingId] = useState('');
   const [justCreated, setJustCreated] = useState(null);
@@ -661,12 +665,16 @@ function ApiKeysSection({ t, isAdmin }) {
         workspaces: allWorkspaces ? null : selected,
         expires_in_days: expiry ? Number(expiry) : null,
       };
+      if (perMinute !== '') payload.rate_limit_per_minute = Number(perMinute);
+      if (perDay !== '') payload.tokens_per_day = Number(perDay);
       const { data } = await createMyApiKey(payload);
       setJustCreated(data);
       setCopied(false);
       setName('');
       setAllWorkspaces(true);
       setSelected([]);
+      setPerMinute('');
+      setPerDay('');
       await load();
     } catch (err) {
       setError(err?.response?.data?.detail || t('account.apiKeys.createFailed'));
@@ -764,6 +772,27 @@ function ApiKeysSection({ t, isAdmin }) {
               </option>
             ))}
           </select>
+        </div>
+        <div>
+          <div className="flex flex-wrap gap-3">
+            <div>
+              <label htmlFor="acct-key-rpm" className="block text-xs font-medium text-gray-500 mb-1">
+                {t('account.apiKeys.ratePerMinute')}
+              </label>
+              <input id="acct-key-rpm" type="number" min="0" step="1" value={perMinute}
+                onChange={(e) => setPerMinute(e.target.value)}
+                placeholder={t('account.apiKeys.limitPlaceholder')} className={inputCls + ' w-40'} />
+            </div>
+            <div>
+              <label htmlFor="acct-key-tpd" className="block text-xs font-medium text-gray-500 mb-1">
+                {t('account.apiKeys.tokensPerDay')}
+              </label>
+              <input id="acct-key-tpd" type="number" min="0" step="1" value={perDay}
+                onChange={(e) => setPerDay(e.target.value)}
+                placeholder={t('account.apiKeys.limitPlaceholder')} className={inputCls + ' w-40'} />
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">{t('account.apiKeys.limitsHint')}</p>
         </div>
         <button type="submit" disabled={creating} className={btnPrimary}>
           {creating ? <Loader className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}

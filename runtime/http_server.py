@@ -160,7 +160,11 @@ def create_app(node_id: str, agent_id: str, workspace: Optional[str] = None, log
             if _token:
                 if not authorization or not authorization.startswith("Bearer "):
                     raise HTTPException(status_code=401, detail="Authorization: Bearer <token> header required")
-                if authorization[7:] != _token:
+                # Constant time, so the response time leaks nothing about
+                # how much of a guessed token matched.
+                import hmac
+                if not hmac.compare_digest(authorization[7:].encode("utf-8"),
+                                           str(_token).encode("utf-8")):
                     raise HTTPException(status_code=403, detail="Invalid access token")
 
             from managers.run_manager import new_unique_run_id, open_run, close_run_from_result

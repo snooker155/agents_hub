@@ -3,15 +3,21 @@ External Nodes API – token-authenticated endpoint for exposed nodes.
 
 Allows external callers (outside the service) to send a task prompt to an
 exposed node using only its access token.  No dashboard auth required.
+
+Throttled per client address (``AGENTS_HUB_EXTERNAL_RATE_PER_MINUTE``,
+common/rate_limit.py): known and unknown tokens share the window, so a
+caller guessing tokens is as slow as one flooding a real node.
 """
 import time
 from datetime import datetime, timezone
 from uuid import uuid4, UUID
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
+from common import identity, rate_limit
 from managers import node_manager
 from notify.inbound import seen_delivery, verify_signature
 
@@ -39,11 +45,12 @@ async def external_run(token: str, body: ExternalRunRequest, request: Request):
     The request is logged to the node's connection history regardless of
     whether the node is currently running.
     """
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = identity.client_ip(request) or "unknown"
     timestamp = _utc_now()
     connection_id = str(uuid4())
     t_start = time.time()
 
+    within, retry_after = rate_limit.check_external(client_ip)
     node = node_manager.get_node_by_token(token)
 
     def _log(status_code: int, detail: str):
@@ -63,6 +70,16 @@ async def external_run(token: str, body: ExternalRunRequest, request: Request):
                 "elapsed_ms": elapsed_ms,
             },
         )
+
+    if not within:
+        # Logged only against a real node: an unknown token writes nothing,
+        # so guessing costs the hub no more than the lookup.
+        if node:
+            _log(429, f"rate_limited:retry_after={retry_after}")
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests from this address", "retry_after": retry_after},
+            headers={"Retry-After": str(retry_after)})
 
     if not node:
         raise HTTPException(status_code=404, detail="No exposed node found for this token")

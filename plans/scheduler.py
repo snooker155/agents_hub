@@ -85,7 +85,8 @@ class PlanScheduler:
                     pass
                 continue
             try:
-                results = await asyncio.to_thread(service.run_due_jobs, owner)
+                token = leases.fencing_token(self.LEASE_ROLE)
+                results = await asyncio.to_thread(service.run_due_jobs, owner, token)
                 for r in results:
                     if r.get("ok"):
                         log.info("fired job %s (%s)", r.get("job_id"), r.get("kind"))

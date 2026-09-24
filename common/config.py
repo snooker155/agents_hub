@@ -177,6 +177,25 @@ class Settings(BaseSettings):
     # ``Authorization: Bearer <token>`` (or ``X-Api-Token: <token>``). Empty
     # (default) keeps the API open, preserving the current local-only behaviour.
     api_token: str = Field(default="", validation_alias=AliasChoices("AGENTS_HUB_API_TOKEN", "api_token"))
+    # Rate limits (common/rate_limit.py, docs/api-keys.md "Rate limits"). All
+    # default to 0, off. Requests per minute apply to every /api and /v1
+    # request per principal (a personal key, a person, the shared token) and
+    # are counted in memory per API replica. Tokens per day apply to
+    # /v1/chat/completions, counted from serving_usage since 00:00 UTC. A
+    # personal key may carry its own values, which win over these.
+    rate_limit_per_minute: int = Field(
+        default=0,
+        validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_PER_MINUTE", "rate_limit_per_minute"))
+    rate_limit_tokens_per_day: int = Field(
+        default=0,
+        validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_TOKENS_PER_DAY",
+                                      "rate_limit_tokens_per_day"))
+    # Requests per minute per client address on POST /api/external/{token}/run,
+    # known and unknown tokens alike, so token guessing is slow. 0 disables.
+    external_rate_per_minute: int = Field(
+        default=30,
+        validation_alias=AliasChoices("AGENTS_HUB_EXTERNAL_RATE_PER_MINUTE",
+                                      "external_rate_per_minute"))
     # Identity posture. Three explicit modes, documented in docs/identity.md:
     #   "single" (default) — exactly one operator on this machine or host. No
     #     login, no users, no roles, no owner checks; the API behaves as it

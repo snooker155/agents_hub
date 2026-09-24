@@ -303,6 +303,25 @@ async def _api_token_guard(request, call_next):
     # onto a new record read it off a contextvar instead, so they need no
     # signature change (common.identity.current_user_id).
     request.state.principal = principal
+
+    # Requests per minute per principal (common/rate_limit.py, docs/api-keys.md
+    # "Rate limits"). Off unless AGENTS_HUB_RATE_LIMIT_PER_MINUTE or the key's
+    # own limit is set. The event stream is one long request the browser
+    # reopens on its own, and open paths have no principal to count against.
+    path = request.url.path
+    if (principal is not None and path.startswith(("/api", "/v1"))
+            and not path.startswith(("/api/stream", "/api/auth/ticket"))):
+        from common import auth as _auth
+        from common import rate_limit
+        if not _auth.is_open_path(request.method, path):
+            allowed_now, retry_after = rate_limit.check_request(principal)
+            if not allowed_now:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded", "retry_after": retry_after},
+                    headers={"Retry-After": str(retry_after)})
+
     token = identity.set_current_user(principal.id if principal else None)
     try:
         response = await call_next(request)
@@ -358,38 +377,37 @@ async def _invalid_workspace_name(request, exc):
 # CORS Configuration
 # ============================================================================
 # CORS configuration (safe defaults for local dev; override with ALLOW_ORIGINS)
-_env_allowed = os.getenv("ALLOW_ORIGINS", "").strip()
+_DEFAULT_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://0.0.0.0:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
-if _env_allowed == "*":
-    # Allow any origin (use only for local dev / proxies)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_origin_regex=r".*",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    _default_origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://0.0.0.0:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
-    _origins = (
-        [o.strip() for o in _env_allowed.split(",") if o.strip()]
-        or _default_origins
-    )
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_origins,
-        allow_origin_regex=r"http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+
+def cors_options(env_value: Optional[str]) -> dict:
+    """The CORSMiddleware keyword arguments for an ``ALLOW_ORIGINS`` value.
+
+    ``*`` allows any origin without credentials: browsers refuse a wildcard
+    with credentials anyway, and echoing any origin back with credentials
+    (what a catch-all regex would do) lets every site on the web call the API
+    as the signed-in person. The doctor's ``cors`` check flags ``*`` in
+    ``multi`` mode. A comma-separated list, or the local dev defaults when
+    empty, keeps credentials and the loopback regex.
+    """
+    value = (env_value or "").strip()
+    if value == "*":
+        return {"allow_origins": ["*"], "allow_credentials": False,
+                "allow_methods": ["*"], "allow_headers": ["*"]}
+    origins = [o.strip() for o in value.split(",") if o.strip()] or list(_DEFAULT_ORIGINS)
+    return {"allow_origins": origins,
+            "allow_origin_regex": r"http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?",
+            "allow_credentials": True,
+            "allow_methods": ["*"], "allow_headers": ["*"]}
+
+
+app.add_middleware(CORSMiddleware, **cors_options(os.getenv("ALLOW_ORIGINS", "")))
 
 # ============================================================================
 # Root Endpoint

@@ -8,11 +8,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const ok = (data) => Promise.resolve({ data });
 const getBrowserFrame = vi.fn(() => ok({ url: 'https://example.com/polled', title: 'Polled', width: 1280, height: 800, image: 'data:image/jpeg;base64,BBBB' }));
 const sendBrowserInput = vi.fn(() => ok({}));
+// The socket URL carries a one-time ticket minted before each connect; a
+// failed mint (an older backend) falls back to the legacy token URL.
+const browserStreamUrlWithTicket = vi.fn((id) => Promise.resolve(`ws://test/${id}?ticket=T1`));
 
 vi.mock('../../../api/browser', () => ({
   getBrowserFrame: (...a) => getBrowserFrame(...a),
   sendBrowserInput: (...a) => sendBrowserInput(...a),
   browserStreamUrl: (id) => `ws://test/${id}`,
+  browserStreamUrlWithTicket: (...a) => browserStreamUrlWithTicket(...a),
 }));
 
 import { useBrowserSession } from '../useBrowserSession';
@@ -38,7 +42,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe('useBrowserSession', () => {
   it('shows frames the socket pushes and sends input without polling', async () => {
     const { result, unmount } = renderHook(() => useBrowserSession('S1'));
-    expect(FakeSocket.instances[0].url).toBe('ws://test/S1');
+    await waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+    expect(FakeSocket.instances[0].url).toBe('ws://test/S1?ticket=T1');
     act(() => {
       FakeSocket.instances[0].onmessage({ data: JSON.stringify({
         type: 'frame', seq: 1, url: 'https://example.com/live', title: 'Live', width: 1280, height: 800,
@@ -60,11 +65,19 @@ describe('useBrowserSession', () => {
 
   it('falls back to polling when the socket closes before any frame', async () => {
     const { result } = renderHook(() => useBrowserSession('S2'));
+    await waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
     act(() => { FakeSocket.instances[0].onclose({ code: 1006 }); });
     await waitFor(() => expect(getBrowserFrame).toHaveBeenCalledWith('S2'));
     await waitFor(() => expect(result.current.frame?.url).toBe('https://example.com/polled'));
     expect(result.current.live).toBe('poll');
     expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it('falls back to the token URL when no ticket can be minted', async () => {
+    browserStreamUrlWithTicket.mockImplementationOnce(() => Promise.reject(new Error('404')));
+    renderHook(() => useBrowserSession('S4'));
+    await waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+    expect(FakeSocket.instances[0].url).toBe('ws://test/S4');
   });
 
   it('polls when asked to', async () => {

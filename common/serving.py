@@ -95,6 +95,24 @@ def _where(since: Optional[str], until: Optional[str],
     return ((" WHERE " + " AND ".join(where)) if where else ""), args
 
 
+def tokens_today(*, user_id: Optional[str] = None, key_id: Optional[str] = None,
+                 now: Optional[datetime] = None) -> int:
+    """Prompt plus completion tokens of the successful calls since 00:00 UTC,
+    for one personal key or one user (``common.rate_limit``'s tokens per day).
+    A failed call is not counted: it spent nothing the caller got back. Zero
+    when neither is given."""
+    if not user_id and not key_id:
+        return 0
+    now = now or datetime.now(timezone.utc)
+    since = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    column, value = ("key_id", key_id) if key_id else ("user_id", user_id)
+    row = db.get_conn().execute(
+        "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS used "
+        f"FROM serving_usage WHERE {column} = ? AND at >= ? AND status = 'ok'",
+        (str(value), since)).fetchone()
+    return int((row["used"] if row else 0) or 0)
+
+
 def usage(since: Optional[str] = None, until: Optional[str] = None,
           limit_recent: int = 50, *, user_id: Optional[str] = None) -> Dict[str, Any]:
     """Per-model totals, overall totals and the most recent calls.

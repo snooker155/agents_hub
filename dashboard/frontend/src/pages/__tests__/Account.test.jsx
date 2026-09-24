@@ -23,11 +23,12 @@ const revokeMyApiKey = vi.fn(() => ok({ deleted: true }));
 const getWorkspaces = vi.fn(() => ok([{ name: 'default' }, { name: 'acme' }]));
 const getMyGitHub = vi.fn();
 const disconnectMyGitHub = vi.fn(() => ok({ deleted: true }));
+const connectGitHub = vi.fn(() => Promise.resolve());
 
 vi.mock('../../api', () => ({
   getMyGitHub: (...a) => getMyGitHub(...a),
   disconnectMyGitHub: (...a) => disconnectMyGitHub(...a),
-  githubConnectUrl: () => '/api/auth/github/connect?token=t0k',
+  connectGitHub: (...a) => connectGitHub(...a),
   getMySessions: (...a) => getMySessions(...a),
   revokeMySession: (...a) => revokeMySession(...a),
   revokeOtherSessions: (...a) => revokeOtherSessions(...a),
@@ -165,6 +166,24 @@ describe('Account', () => {
     await waitFor(() => expect(screen.getByText('ahk_brandnewsecret')).toBeInTheDocument());
   });
 
+  it('sends the key limits only when they are filled in', async () => {
+    createMyApiKey.mockImplementation(() => ok({
+      id: 'k3', name: 'bot', hint: 'lmno', workspaces: null,
+      created_at: '2026-01-03T00:00:00Z', last_used_at: null, expires_at: null,
+      rate_limit_per_minute: 10, tokens_per_day: 0, key: 'ahk_limited',
+    }));
+    show();
+    await waitFor(() => expect(screen.getByPlaceholderText(/laptop CLI/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText(/laptop CLI/i), { target: { value: 'bot' } });
+    fireEvent.change(screen.getByLabelText(/requests per minute/i), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText(/tokens per day/i), { target: { value: '0' } });
+    fireEvent.click(screen.getByText(/create key/i));
+    await waitFor(() => expect(createMyApiKey).toHaveBeenCalledWith({
+      name: 'bot', workspaces: null, expires_in_days: 30,
+      rate_limit_per_minute: 10, tokens_per_day: 0,
+    }));
+  });
+
   it('revokes a key by its row', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     show();
@@ -174,10 +193,11 @@ describe('Account', () => {
     confirmSpy.mockRestore();
   });
 
-  it('offers to connect GitHub with the credential in the link', async () => {
+  it('connects GitHub through a one-time ticket, not a token in a link', async () => {
     show();
-    const link = await screen.findByText(/^connect$/i);
-    expect(link.closest('a').getAttribute('href')).toBe('/api/auth/github/connect?token=t0k');
+    const button = await screen.findByText(/^connect$/i);
+    fireEvent.click(button.closest('button'));
+    expect(connectGitHub).toHaveBeenCalled();
   });
 
   it('shows the connected GitHub login and disconnects', async () => {

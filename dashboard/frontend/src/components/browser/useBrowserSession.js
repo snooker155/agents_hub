@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getBrowserFrame, sendBrowserInput, browserStreamUrl } from '../../api/browser';
+import {
+  getBrowserFrame, sendBrowserInput, browserStreamUrl, browserStreamUrlWithTicket,
+} from '../../api/browser';
 import { errorDetail } from '../toast';
 
 // After a failed frame the poll slows down to this, so a session that is gone
@@ -85,6 +87,7 @@ export function useBrowserSession(sessionId, { active = true, intervalMs = 800, 
     let stopped = false;
     let timer = null;
     let socket = null;
+    let connecting = false;
 
     const stopAll = () => {
       if (timer) { clearTimeout(timer); timer = null; }
@@ -109,11 +112,26 @@ export function useBrowserSession(sessionId, { active = true, intervalMs = 800, 
       poll();
     };
 
-    const startStream = () => {
+    // The socket's URL carries a one-time ticket minted just before each
+    // (re)connect (a spent one would be refused), or the legacy token when
+    // the backend is too old to mint tickets.
+    const streamUrl = async () => {
+      try {
+        return await browserStreamUrlWithTicket(sessionId);
+      } catch {
+        return browserStreamUrl(sessionId);
+      }
+    };
+
+    const startStream = async () => {
       let gotFrame = false;
       let ws;
+      connecting = true;
+      const url = await streamUrl();
+      connecting = false;
+      if (stopped || hidden()) return;
       try {
-        ws = new WebSocket(browserStreamUrl(sessionId));
+        ws = new WebSocket(url);
       } catch {
         noStream.current.add(sessionId);
         startPolling();
@@ -164,7 +182,7 @@ export function useBrowserSession(sessionId, { active = true, intervalMs = 800, 
 
     const onVisibility = () => {
       if (hidden()) stopAll();
-      else if (!socket && timer == null && !stopped) start();
+      else if (!socket && timer == null && !connecting && !stopped) start();
     };
     start();
     document.addEventListener('visibilitychange', onVisibility);

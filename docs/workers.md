@@ -95,7 +95,11 @@ holding an unexpired lease on a role runs it, every other replica checks
 back each tick and takes over when the lease lapses (default TTL 90 s).
 Replicas release their roles on shutdown, so a restart is taken over at
 once. The health page lists every role, its holder and the age of the last
-renewal.
+renewal. Each row also carries a `version`, the fencing token of the current
+holder: it grows on every takeover, and a holder's writes check it inside the
+transaction, so a replica that stalled past its TTL and was superseded cannot
+write as if it still held the role (docs/scaling.md, "Fencing tokens on the
+leases").
 
 ## Outbox
 

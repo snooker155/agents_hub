@@ -6,7 +6,7 @@ Everything here needs the browser service (`deploy/browser/`) and the two settin
 
 ## Watching a run's browser
 
-A run that calls any `browser_*` tool gets a **Browser** panel in its live output (the task page, and everywhere else the live output appears), under the list of tool calls. The panel shows the page the run's session is on, pushed as the page paints: the hub relays the service's frame stream (Chromium's own screencast over CDP, JPEG frames of the viewport, one per paint and nothing while the page is still) over a WebSocket at `/api/browser/sessions/{id}/ws`. When that socket cannot be opened, or the service has no CDP for the page, the panel polls `/frame` a little faster than once a second instead; the service itself falls back to a screenshot every half second, sent only when the picture changed. The picture pauses while the tab is hidden and a dropped stream reconnects after three seconds. A finished run shows the page where it was left, once, without polling.
+A run that calls any `browser_*` tool gets a **Browser** panel in its live output (the task page, and everywhere else the live output appears), under the list of tool calls. The panel shows the page the run's session is on, pushed as the page paints: the hub relays the service's frame stream (Chromium's own screencast over CDP, JPEG frames of the viewport, one per paint and nothing while the page is still) over a WebSocket at `/api/browser/sessions/{id}/ws`, opened with a one-time ticket minted just before each connect. When that socket cannot be opened, or the service has no CDP for the page, the panel polls `/frame` a little faster than once a second instead; the service itself falls back to a screenshot every half second, sent only when the picture changed. The picture pauses while the tab is hidden and a dropped stream reconnects after three seconds. A finished run shows the page where it was left, once, without polling.
 
 The hub finds the session through the browser service, which records for every session the run it serves, its workspace, whether an agent or a person drives it, and a label (the agent or the person's name). The panel asks once the run's first browser tool appears, and asks again on the next browser tool if the first answer was "no session yet".
 
@@ -44,6 +44,17 @@ The run's browser tools then continue in that page, with the cookies and whateve
 
 A session can only be handed to an agent in its own workspace, since its domain policy is that workspace's.
 
+## A live check
+
+`scripts/smoke_browser_service.py` drives a running service with a real
+Chromium through the same steps: open a session, navigate, read, receive a
+frame over the WebSocket screencast, take control as a person, see the agent's
+navigate answered with 423 while reading stays open, send an input that
+refreshes the hold, wait for the hold to lapse after `BROWSER_CONTROL_IDLE`
+seconds, release, close. Start the service with a short idle window
+(`BROWSER_CONTROL_IDLE=3`) and pass `--control-idle 3` so the expiry step is
+quick. Last passed 2026-09-24 on the host with Playwright 1.49.
+
 ## Access
 
 In `AUTH_MODE=multi` a session belongs to its workspace. A member of the workspace sees it in the list, its frames and its run's panel. Driving it, closing it and handing it over need the editor role there. The session list only ever shows sessions of workspaces the caller can see.
@@ -60,7 +71,7 @@ All routes are under `/api/browser` and answer 503 with an explanation when the 
 | `GET /sessions/{id}` | one session |
 | `DELETE /sessions/{id}` | close it |
 | `GET /sessions/{id}/frame` | `{url, title, width, height, image, controlled_by}`, `image` a JPEG data URL of the viewport |
-| `WS /sessions/{id}/ws` | the frame stream: JSON messages of the `/frame` shape with `type: frame` and a `seq`, `type: keepalive` on a quiet page, one `type: error` before the close when the service cannot be reached. The credential rides `?token=`, as for the SSE stream |
+| `WS /sessions/{id}/ws` | the frame stream: JSON messages of the `/frame` shape with `type: frame` and a `seq`, `type: keepalive` on a quiet page, one `type: error` before the close when the service cannot be reached. The credential is a one-time `?ticket=` from `POST /api/auth/ticket`, as for the SSE stream (see [identity](identity.md#tickets-for-streams)); `?token=` works only outside `multi` mode |
 | `POST /sessions/{id}/control` | `{on}`: take or release control in the caller's name. Returns the session, with `controlled_by` |
 | `POST /sessions/{id}/input` | `{kind, x, y, text, key, dx, dy, url}`; `kind` is one of click, dblclick, mousemove, type, key, scroll, navigate, back, forward, reload; coordinates are viewport pixels. Returns `{url, title, blocked}` |
 | `GET /runs/{run_id}/session` | the session of a run, or 404 |

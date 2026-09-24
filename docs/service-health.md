@@ -128,6 +128,15 @@ Settings page's test button makes. Skip when no key is set or the provider is
 a custom backend. Fix: check the key and base URL on the Settings page, and
 the provider's status page.
 
+### Check: cors
+
+What `ALLOW_ORIGINS` lets browsers do. Ok for a list of origins or the local
+dev defaults. With `*` the hub allows any origin but without credentials
+(browsers refuse a wildcard with credentials anyway); that is fine in `single`
+and `token` mode, and a warning in `multi` mode, where any site can call the
+API with a token stolen from a person. Fix: set `ALLOW_ORIGINS` to the
+dashboard's origins, comma separated.
+
 ### Check: stale runs
 
 Agent runs still `running` whose heartbeat is older than the watchdog's

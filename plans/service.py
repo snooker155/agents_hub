@@ -958,10 +958,26 @@ def claim_job_now(
     return plan_store.force_claim_job(job_id, owner, lease_seconds=lease_seconds)
 
 
-def run_due_jobs(owner: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Claim and fire every due job once. Called by the scheduler loop each tick."""
+def run_due_jobs(owner: Optional[str] = None,
+                 fence_token: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Claim and fire every due job once. Called by the scheduler loop each tick.
+
+    ``fence_token`` is the ``scheduler`` service lease version the tick holds
+    (``common.leases.fencing_token``). The per-job claim already keeps two
+    replicas off the same job; the token is what stops a leader that stalled
+    past its TTL and was superseded from firing anything at all. It is
+    re-checked before each job, and the tick stops at the first failed check.
+    Jobs it claimed but did not fire keep their short claim until it lapses,
+    then the new leader takes them.
+    """
+    from common import leases
+    from plans.scheduler import PlanScheduler
+
     results = []
     for job in claim_due_jobs(owner=owner):
+        if fence_token is not None and not leases.verify(PlanScheduler.LEASE_ROLE, fence_token):
+            log.warning("scheduler lease lost mid-tick, not firing job %s or the rest", job.id)
+            break
         results.append(fire_job(job))
     return results
 

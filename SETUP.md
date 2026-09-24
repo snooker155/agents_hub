@@ -17,7 +17,7 @@ Install these once on your machine:
 
 | Tool                  | Version    | Used for                                              |
 | --------------------- | ---------- | ----------------------------------------------------- |
-| Python                | 3.10+      | Backend, CLI, agent runners                           |
+| Python                | 3.11+      | Backend, CLI, agent runners                           |
 | Node.js + npm         | 22+        | Frontend dashboard                                    |
 | Git                   | any        | Cloning the repo                                      |
 | Docker + Compose      | any recent | Only required for Path B or Docker agent execution    |
@@ -26,7 +26,7 @@ Install these once on your machine:
 Verify:
 
 ```bash
-python --version    # >= 3.10
+python --version    # >= 3.11
 node --version      # >= 22
 npm --version
 docker --version    # optional

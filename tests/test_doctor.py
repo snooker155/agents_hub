@@ -297,3 +297,21 @@ def test_service_tool_wraps_the_doctor(quiet_probes):
     out = json.loads(run_diagnostics.invoke({}))
     assert out["ok"] is True
     assert out["doctor"]["checks"]
+
+
+@pytest.mark.parametrize("origins,mode,expected", [
+    ("", "multi", "ok"),
+    ("https://hub.example.com", "multi", "ok"),
+    ("*", "multi", "warn"),
+    ("*", "single", "ok"),
+    ("*", "token", "ok"),
+])
+def test_cors_warns_only_for_a_wildcard_in_multi_mode(monkeypatch, origins, mode, expected):
+    from common import identity
+    monkeypatch.setenv("ALLOW_ORIGINS", origins)
+    monkeypatch.setattr(identity, "current_mode", lambda: mode)
+    status, summary, detail = doctor.check_cors(_snap())
+    assert status == expected
+    assert detail["auth_mode"] == mode
+    if expected == "warn":
+        assert "stolen token" in summary

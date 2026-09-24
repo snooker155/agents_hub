@@ -34,6 +34,7 @@ vi.mock('../../api/browser', () => ({
   getBrowserFrame: (...a) => getBrowserFrame(...a),
   setBrowserControl: (...a) => setBrowserControl(...a),
   browserStreamUrl: (id) => `ws://test/${id}`,
+  browserStreamUrlWithTicket: (id) => Promise.resolve(`ws://test/${id}`),
   sendBrowserInput: () => ok({}),
 }));
 

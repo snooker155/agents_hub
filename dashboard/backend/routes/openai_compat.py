@@ -407,6 +407,16 @@ async def chat_completions(request: Request):
         # bypasses it (a test app, a future router reuse).
         return _error(401, "Invalid or missing API key", type_="authentication_error",
                       code="invalid_api_key")
+    # Tokens per day (common/rate_limit.py): a caller that already used its
+    # day's tokens is refused before the model is touched, in the OpenAI
+    # error shape clients already retry on. Only successful calls count.
+    from common import rate_limit
+    within, retry_after = rate_limit.check_tokens_per_day(principal)
+    if not within:
+        response = _error(429, "Daily token limit reached; it resets at 00:00 UTC",
+                          type_="rate_limit_error", code="tokens_per_day_exceeded")
+        response.headers["Retry-After"] = str(retry_after)
+        return response
     try:
         body = await request.json()
     except ValueError:

@@ -316,6 +316,9 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # ``effective_capabilities`` for why create/modify granting nothing extra
     # still holds once delegation is considered.
     "list_agents_tool", "create_agent_tool", "modify_agent_tool", "delete_agent_tool",
+    # list_models_tool returns catalog ids and context windows, configuration
+    # the Models page shows to everyone, never a key or a prompt.
+    "list_models_tool",
 
     # ── schedule management: writes ──────────────────────────────────────────
     # schedule_task creates a job from caller-supplied fields; cancel_scheduled
@@ -570,7 +573,7 @@ def run_code_grants() -> FrozenSet[str]:
 # ``effective_capabilities`` below walks the graph these tools open and unions
 # in what is actually reachable.
 DELEGATING_TOOLS: FrozenSet[str] = frozenset({
-    "run_agent_tool", "wait_for_agent_tool", "run_flow_tool",
+    "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
     "run_team_tool", "run_loop_tool", "run_scenario_tool",
 })
 
@@ -858,8 +861,8 @@ SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
     "fetch_url", "browser_open", "browser_read", "browser_act", "browser_screenshot",
     "notify_user", "schedule_notification", "view_serve", "schedule_management",
     # Delegation reaches other agents' tools, which this rule cannot see.
-    "run_agent_tool", "wait_for_agent_tool", "run_flow_tool", "run_team_tool",
-    "run_loop_tool", "run_scenario_tool",
+    "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
+    "run_team_tool", "run_loop_tool", "run_scenario_tool",
 })
 
 SYSTEM_WORKSPACE_RULE_ID = "system_workspace_no_push"

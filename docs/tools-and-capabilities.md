@@ -47,11 +47,11 @@ a stricter setting it is only honoured for container-isolated, network-free runs
 ## Delegation counts as holding the capability
 
 An agent that cannot itself exfiltrate, but can hand a request to an agent
-that can, effectively can. `run_agent_tool`, `wait_for_agent_tool`,
-`run_flow_tool`, `run_team_tool`, `run_loop_tool` and `run_scenario_tool` are
-the edges of that graph: each one hands work (and, for the wait/poll tools,
-eventually the result) to another agent whose own tools are not in the
-caller's tool list at all.
+that can, effectively can. `run_agent_tool`, `delegate_task_tool`,
+`wait_for_agent_tool`, `run_flow_tool`, `run_team_tool`, `run_loop_tool` and
+`run_scenario_tool` are the edges of that graph: each one hands work (and, for
+the wait/poll tools, eventually the result) to another agent whose own tools
+are not in the caller's tool list at all.
 
 So the guard evaluates the *effective* set: an agent's own grants, unioned
 with the grants of every agent it can reach through one of those tools. An
@@ -76,7 +76,7 @@ just the tools:
 The tables backing all of this live in `tools/capabilities.py`: `CAPABILITY_GRANTS`
 (what a tool grants directly), `REVIEWED_NO_GRANT` (classified, grants nothing —
 a write into the hub's own store, a control action, a piece of configuration),
-and `DELEGATING_TOOLS` (the six edges above). Every catalog tool id ends up in
+and `DELEGATING_TOOLS` (the seven edges above). Every catalog tool id ends up in
 exactly one of them; a test enforces that, and `python -m agents.capability_guard`
 reports zero unclassified tools alongside the current roster's violations.
 

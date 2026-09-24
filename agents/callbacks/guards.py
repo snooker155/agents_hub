@@ -14,8 +14,9 @@ runner catches the exception and turns it into the appropriate AgentResult.
   callback).
 - ``ContextWindowGuard`` (+ ``ContextWindowExceededError``) — stops a run once
   its prompt exceeds the model's context window.
-- ``RunBudgetGuard`` (+ ``RunBudgetExceeded``) — pauses a run once the task's
-  runs have spent its money cap (see ``common/run_budget.py``).
+- ``RunBudgetGuard`` (+ ``RunBudgetExceeded``, ``RunBudgetUnpriced``) — pauses a
+  run once the task's runs have spent its money cap, or (fail_closed only) once
+  a call cannot be priced at all (see ``common/run_budget.py``).
 """
 from __future__ import annotations
 
@@ -296,6 +297,7 @@ class ToolRepetitionGuard(BaseCallbackHandler):
 RUN_BUDGET_ENV_LIMIT = "AGENTS_HUB_RUN_BUDGET_USD"
 RUN_BUDGET_ENV_SPENT = "AGENTS_HUB_RUN_BUDGET_SPENT_USD"
 RUN_BUDGET_ENV_PRICES = "AGENTS_HUB_RUN_PRICES"
+RUN_BUDGET_ENV_FAIL_CLOSED = "AGENTS_HUB_RUN_BUDGET_FAIL_CLOSED"
 
 
 class RunBudgetExceeded(RuntimeError):
@@ -325,6 +327,51 @@ class RunBudgetExceeded(RuntimeError):
             "reason": (
                 f"The run reached its money cap of ${self.limit_usd:.2f} "
                 f"(spent ${self.spent_usd:.2f}). Raise the cap to continue or stop the task."
+            ),
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "fingerprint": "",
+            "hook": "",
+        }
+
+
+class RunBudgetUnpriced(RunBudgetExceeded):
+    """Raised instead of :class:`RunBudgetExceeded` when a call's model has no
+    known price and the workspace requires fail-closed enforcement.
+
+    ``RunBudgetGuard`` normally counts an unpriced call as free (see its class
+    docstring): the cap fails open rather than guessing. A workspace that opted
+    into ``fail_closed`` (``common.budget``, carried here via
+    ``AGENTS_HUB_RUN_BUDGET_FAIL_CLOSED``) would rather stop the run than let an
+    unpriced model spend past a cap that can never see it coming, so this
+    blocks the call before it runs instead of pricing it as ``$0``.
+    """
+
+    def __init__(self, spent_usd: float, limit_usd: float, model: str) -> None:
+        self.model = model or "unknown"
+        # Deliberately skip RunBudgetExceeded.__init__: its "reached its money
+        # cap" message does not fit here, the cap was not necessarily met, the
+        # call's cost just cannot be trusted.
+        self.spent_usd = float(spent_usd)
+        self.limit_usd = float(limit_usd)
+        RuntimeError.__init__(
+            self,
+            f"Model '{self.model}' has no known price and this workspace requires "
+            f"fail-closed budget enforcement, so the call was blocked before it ran "
+            f"(spent ${self.spent_usd:.2f} of ${self.limit_usd:.2f})."
+        )
+
+    def pending(self, *, agent_id: str = "", run_id: str = "") -> Dict[str, Any]:
+        return {
+            "kind": "budget",
+            "spent_usd": round(self.spent_usd, 6),
+            "limit_usd": round(self.limit_usd, 6),
+            "tool": "",
+            "input": {},
+            "reason": (
+                f"Model '{self.model}' has no known price and this workspace requires "
+                f"fail-closed budget enforcement. The call was blocked before it ran. "
+                f"Price the model, raise the cap, or stop the task."
             ),
             "agent_id": agent_id,
             "run_id": run_id,
@@ -405,10 +452,13 @@ class RunBudgetGuard(BaseCallbackHandler):
     - ``on_llm_start`` / ``on_chat_model_start`` raise when the cap is already
       met, so a run launched over its cap parks before its first paid call.
 
-    A model with no known price counts as free: the cap fails open rather than
-    guessing. ``raise_error = True`` makes LangChain propagate the exception;
-    put this guard last in the callback list so the stats callback records the
-    call's tokens before it raises.
+    A model with no known price counts as free by default: the cap fails open
+    rather than guessing. A workspace with ``fail_closed`` set changes that (see
+    :class:`RunBudgetUnpriced`): an unpriced call blocks instead, since counting
+    it as free would let the cap it is meant to enforce silently never trip.
+    ``raise_error = True`` makes LangChain propagate the exception; put this
+    guard last in the callback list so the stats callback records the call's
+    tokens before it raises.
     """
 
     def __init__(
@@ -418,6 +468,7 @@ class RunBudgetGuard(BaseCallbackHandler):
         prices: Optional[Dict[Tuple[str, str], Tuple[float, float, float]]] = None,
         provider: str = "",
         model: str = "",
+        fail_closed: bool = False,
     ) -> None:
         super().__init__()
         self.raise_error = True
@@ -426,6 +477,7 @@ class RunBudgetGuard(BaseCallbackHandler):
         self.prices = dict(prices or {})
         self.provider = provider or ""
         self.model = model or ""
+        self.fail_closed = bool(fail_closed)
 
     @classmethod
     def from_env(cls, provider: str = "", model: str = "") -> Optional["RunBudgetGuard"]:
@@ -441,7 +493,8 @@ class RunBudgetGuard(BaseCallbackHandler):
         except ValueError:
             prior = 0.0
         prices = _parse_prices(os.environ.get(RUN_BUDGET_ENV_PRICES) or "")
-        return cls(limit, prior, prices, provider=provider, model=model)
+        fail_closed = os.environ.get(RUN_BUDGET_ENV_FAIL_CLOSED) not in (None, "", "0")
+        return cls(limit, prior, prices, provider=provider, model=model, fail_closed=fail_closed)
 
     @property
     def spent_usd(self) -> float:
@@ -463,6 +516,25 @@ class RunBudgetGuard(BaseCallbackHandler):
                     return price
         return (0.0, 0.0, 0.0)
 
+    def _has_price(self, model: str) -> bool:
+        """Whether ``model`` (or the guard's own configured model) matches a
+        catalog entry, using the same lookup order as :meth:`_price`.
+
+        Kept separate from ``_price`` because its ``(0.0, 0.0, 0.0)`` return
+        means both "not found" and "found, and it really is free" (the catalog
+        allows an explicit zero price) — ``fail_closed`` needs to tell those
+        apart, which the returned tuple alone cannot.
+        """
+        for key in ((self.provider, model), (self.provider, self.model)):
+            if key[1] and key in self.prices:
+                return True
+        for name in (model, self.model):
+            if not name:
+                continue
+            if any(mid == name for _prov, mid in self.prices):
+                return True
+        return False
+
     def cost_of(self, response: Any) -> float:
         """USD cost of one LLM response, 0 when unpriced or unreported."""
         usage = extract_token_usage(response)
@@ -476,6 +548,12 @@ class RunBudgetGuard(BaseCallbackHandler):
         )
 
     def _check(self) -> None:
+        # Under fail_closed, a call about to run through a model this guard
+        # cannot price is stopped here, before it happens: the "stop before it"
+        # side of the same trade-off on_llm_end applies after the fact for a
+        # call whose model only revealed itself in the response.
+        if self.fail_closed and self.model and not self._has_price(self.model):
+            raise RunBudgetUnpriced(self.spent_usd, self.limit_usd, self.model)
         spent = self.spent_usd
         if spent >= self.limit_usd:
             raise RunBudgetExceeded(spent, self.limit_usd)
@@ -488,7 +566,9 @@ class RunBudgetGuard(BaseCallbackHandler):
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         call_id = str(kwargs.get("run_id") or "")
+        model = ""
         try:
+            model = _response_model(response)
             cost = self.cost_of(response)
         except Exception:  # noqa: BLE001 - an unreadable response counts as free (fail open)
             cost = 0.0
@@ -498,4 +578,10 @@ class RunBudgetGuard(BaseCallbackHandler):
                 if call_id:
                     seen.add(call_id)
                 _PROCESS_SPEND["usd"] = float(_PROCESS_SPEND["usd"]) + cost
+        # The response can report a model this guard never saw before the call
+        # (a gateway or dated alias _price/_has_price still cannot match): the
+        # call already happened, but fail_closed still blocks the next one
+        # rather than let every following call price as free too.
+        if self.fail_closed and not self._has_price(model or self.model):
+            raise RunBudgetUnpriced(self.spent_usd, self.limit_usd, model or self.model)
         self._check()

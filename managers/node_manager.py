@@ -631,13 +631,23 @@ def unexpose_node(node_id: str) -> bool:
 
 
 def get_node_by_token(token: str) -> Optional[Dict[str, Any]]:
-    """Find an exposed node by its access token."""
-    if not token:
+    """Find an exposed node by its access token.
+
+    Compared in constant time, and every exposed node is compared, so how
+    long a lookup takes says nothing about how much of a guess was right.
+    """
+    import hmac
+    if not token or not isinstance(token, str):
         return None
+    presented = token.encode("utf-8")
+    found: Optional[Dict[str, Any]] = None
     for n in list_nodes():
-        if n.get("is_exposed") and n.get("expose_token") == token:
-            return n
-    return None
+        stored = n.get("expose_token")
+        if not n.get("is_exposed") or not isinstance(stored, str) or not stored:
+            continue
+        if hmac.compare_digest(stored.encode("utf-8"), presented) and found is None:
+            found = n
+    return found
 
 
 # ── Connection logging ────────────────────────────────────────────────────────

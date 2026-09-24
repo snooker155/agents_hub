@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw, ExternalLink, Loader } from 'lucide-react';
 
-import { mintPreviewTicket } from '../../api/preview';
+import { mintPreviewTicket, renewPreviewTicket } from '../../api/preview';
 import { useI18n } from '../../i18n';
 
 // Feature 7a: a container's or a project's web page, shown inside the hub
@@ -17,7 +17,26 @@ import { useI18n } from '../../i18n';
 // sandbox deliberately has no allow-same-origin: the previewed page runs in
 // an opaque origin and cannot touch this page's storage.
 //
+// A ticket lives ten minutes. The backend only checks it when the iframe
+// (or the page inside it) makes a request, so swapping the src early would
+// reload the page for nothing. Instead, every RENEW_EVERY_MS while the
+// preview is mounted and the tab visible, this asks whether the current
+// ticket would run out before the next check; only then does it renew
+// (POST /api/preview/tickets/renew) and swap the src, so the page reloads
+// at most about once per ticket lifetime.
+//
 // `target` is {kind: 'container', name} or {kind: 'project', project_id}.
+export const RENEW_EVERY_MS = 4 * 60 * 1000;
+const RENEW_MARGIN_MS = 60 * 1000;
+
+const ticketOf = (url) => (url || '').split('/').filter(Boolean)[1] || '';
+
+const expiryOf = (data) => {
+  if (data?.expires_at) return data.expires_at * 1000;
+  if (data?.expires_in) return Date.now() + data.expires_in * 1000;
+  return null;
+};
+
 export default function PreviewFrame({ target, height = 480 }) {
   const { t } = useI18n();
   const [ticketUrl, setTicketUrl] = useState(null); // e.g. '/preview/<ticket>/'
@@ -26,6 +45,11 @@ export default function PreviewFrame({ target, height = 480 }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const reMintedRef = useRef(false);
+  const expiresAtRef = useRef(null);
+  // Read by the renewal timer, which must not restart every time a parent
+  // passes a new but equal target object.
+  const targetRef = useRef(target);
+  targetRef.current = target;
 
   const mint = useCallback(async () => {
     setLoading(true);
@@ -33,6 +57,7 @@ export default function PreviewFrame({ target, height = 480 }) {
     try {
       const { data } = await mintPreviewTicket(target);
       setTicketUrl(data.url);
+      expiresAtRef.current = expiryOf(data);
     } catch (e) {
       setError(e?.response?.data?.detail || t('preview.mintFailed'));
       setTicketUrl(null);
@@ -66,6 +91,32 @@ export default function PreviewFrame({ target, height = 480 }) {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [mint]);
+
+  useEffect(() => {
+    if (!ticketUrl) return undefined;
+    let cancelled = false;
+    const check = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      const expiresAt = expiresAtRef.current;
+      if (expiresAt == null || expiresAt - Date.now() > RENEW_EVERY_MS + RENEW_MARGIN_MS) return;
+      try {
+        const { data } = await renewPreviewTicket({ ticket: ticketOf(ticketUrl), ...targetRef.current });
+        if (cancelled || !data?.url || data.url === ticketUrl) return;
+        expiresAtRef.current = expiryOf(data);
+        setTicketUrl(data.url);
+      } catch {
+        // Nothing to do: the expired page's message re-mints on the next
+        // navigation, the same path a preview left idle in a hidden tab takes.
+      }
+    };
+    const timer = setInterval(check, RENEW_EVERY_MS);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [ticketUrl]);
 
   const handleReload = () => {
     reMintedRef.current = false;

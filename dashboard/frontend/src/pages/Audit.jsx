@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ChevronDown, ChevronLeft, ChevronRight, Download, History, Loader, RefreshCw,
 } from 'lucide-react';
-import { getAuditLog, getAuditActions, auditExportUrl, getWorkspaces } from '../api';
+import {
+  getAuditLog, getAuditActions, auditExportUrl, getWorkspaces, navigateWithAuthTicket,
+} from '../api';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import DateInput from '../components/DateInput';
 import { useI18n } from '../i18n';
@@ -77,20 +79,20 @@ export default function Audit() {
         description={t('audit.description')}
         actions={(
           <>
-            <a
-              href={auditExportUrl(filters, 'csv')}
-              target="_blank" rel="noreferrer"
+            <button
+              type="button"
+              onClick={() => navigateWithAuthTicket(auditExportUrl(filters, 'csv'))}
               className="flex items-center gap-1.5 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700"
             >
               <Download className="w-3.5 h-3.5" /> {t('audit.exportCsv')}
-            </a>
-            <a
-              href={auditExportUrl(filters, 'jsonl')}
-              target="_blank" rel="noreferrer"
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateWithAuthTicket(auditExportUrl(filters, 'jsonl'))}
               className="flex items-center gap-1.5 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700"
             >
               <Download className="w-3.5 h-3.5" /> {t('audit.exportJsonl')}
-            </a>
+            </button>
             <button type="button" onClick={() => load(offset)}
               className="flex items-center gap-1.5 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700">
               <RefreshCw className="w-3.5 h-3.5" /> {t('common.refresh')}

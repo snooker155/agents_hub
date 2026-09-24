@@ -149,6 +149,28 @@ def check_provider(snap: Dict[str, Any]) -> Result:
     return ("fail", f"{provider} did not answer: {probe.get('error')}.", detail)
 
 
+# ── cors ─────────────────────────────────────────────────────────────────────
+
+def check_cors(snap: Dict[str, Any]) -> Result:
+    """``ALLOW_ORIGINS=*`` lets any web page call the API from a browser. The
+    hub drops credentials for it (dashboard/backend/main.py cors_options),
+    but a bearer token stolen from a person still works from any site, which
+    matters when there are people: ``multi`` mode."""
+    import os
+    value = os.getenv("ALLOW_ORIGINS", "").strip()
+    from common import identity
+    mode = identity.current_mode()
+    detail = {"allow_origins": value or "(local dev defaults)", "auth_mode": mode}
+    if value != "*":
+        return ("ok", "CORS allows a list of origins." if value
+                else "CORS allows the local dev origins only.", detail)
+    if mode == "multi":
+        return ("warn", "ALLOW_ORIGINS is *: any site can call the API with a stolen "
+                        "token; list the dashboard origins instead.", detail)
+    return ("ok", f"ALLOW_ORIGINS is * without credentials, acceptable in {mode} mode.",
+            detail)
+
+
 # ── stale runs and leases ────────────────────────────────────────────────────
 
 def _age_seconds(ts: Optional[str]) -> Optional[float]:
@@ -400,6 +422,7 @@ def check_system_workspace(snap: Dict[str, Any]) -> Result:
 CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("migrations", "Database migrations", check_migrations),
     ("provider", "Default model provider", check_provider),
+    ("cors", "Cross-origin access", check_cors),
     ("stale_runs", "Stale runs and leases", check_stale_runs),
     ("run_queue", "Launch queue", check_run_queue),
     ("outbox", "Outbound notifications", check_outbox),

@@ -200,6 +200,15 @@ With the default `repeats: 1` every attempt-level number collapses to the
 single-run number it always was, so nothing about an existing sweep changes
 unless a config actually asks for more than one repeat.
 
+A live pass of this path exists as `scripts/live_lab_eval.py`: it builds a
+small lab scenario from the template (six ticks, two experiments), wraps it in
+an eval set with one case and a regex grader, runs it three times on one cheap
+model (`--provider openai --model gpt-4o-mini` by default) and prints the
+per-attempt table and the aggregate. It spends real money, cents at the
+defaults, under `--cost-ceiling`. Last passed 2026-09-24: three attempts, all
+completed, about 20 seconds each, 0.6 cents in total; the scenario and the
+eval set stay in the `lab-smoke` workspace for the Playground and Evals pages.
+
 ## Diff of two runs
 
 `GET /api/evals/runs/{a}/diff/{b}` compares two runs of the same set cell by

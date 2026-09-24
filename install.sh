@@ -61,10 +61,10 @@ fi
 # 1. Python
 # ---------------------------------------------------------------------------
 
-command -v "$PYTHON" >/dev/null 2>&1 || die "No '$PYTHON' on PATH. Install Python 3.10+, or pass --python."
-"$PYTHON" - <<'PY' || die "Python 3.10 or newer is required."
+command -v "$PYTHON" >/dev/null 2>&1 || die "No '$PYTHON' on PATH. Install Python 3.11+, or pass --python."
+"$PYTHON" - <<'PY' || die "Python 3.11 or newer is required."
 import sys
-sys.exit(0 if sys.version_info >= (3, 10) else 1)
+sys.exit(0 if sys.version_info >= (3, 11) else 1)
 PY
 
 if [ "$USE_VENV" -eq 1 ]; then

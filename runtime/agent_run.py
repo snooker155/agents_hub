@@ -201,6 +201,21 @@ def _update_run_lifecycle(run_id: str, task_id, result, agent_id: str = "", proc
         pass
 
 
+def model_overrides(provider: Optional[str], model: Optional[str]) -> dict:
+    """The ``create_agent`` overrides for a model chosen for this run only.
+
+    Empty when neither flag was given, so the agent's own cascade decides;
+    otherwise only the given parts, so ``--model`` alone keeps the agent's
+    provider (a catalog id names both, a bare model id only the model).
+    """
+    out: dict = {}
+    if provider and str(provider).strip():
+        out["provider"] = str(provider).strip()
+    if model and str(model).strip():
+        out["model"] = str(model).strip()
+    return out
+
+
 # -------------------- Entry point --------------------
 
 def main():
@@ -226,6 +241,11 @@ def main():
     # the loop carries on from it under the same run id.
     ap.add_argument("--resume-checkpoint", metavar="RUN_ID",
                      help="Resume this run from its stored checkpoint")
+    # A model chosen for this one run (a delegation picks one from the
+    # catalog, tools/delegation.py). Both win over the agent's definition and
+    # the workspace cascade in create_agent; absent, the cascade decides.
+    ap.add_argument("--provider", help="Provider for this run only")
+    ap.add_argument("--model", help="Model for this run only")
 
     args = ap.parse_args()
 
@@ -325,10 +345,12 @@ def main():
 
     log.info(f"Running agent with instruction: {instruction}")
 
-    # Model config (provider/model/keys/temperature/...) is resolved entirely by
+    # Model config (provider/model/keys/temperature/...) is resolved by
     # create_agent via its cascade (agent definition → workspace override →
-    # workspace settings → global .env), so we pass no model overrides here.
+    # workspace settings → global .env); the only override passed from here is
+    # the model a delegating agent picked for this run (--provider/--model).
     agent_overrides: dict = {"verbose": True} if args.verbose else {}
+    agent_overrides.update(model_overrides(args.provider, args.model))
 
     # Session continuation: forward tokens/tool events to the SSE broker.
     _extra_callbacks = []

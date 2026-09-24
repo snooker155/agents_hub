@@ -914,22 +914,65 @@ def reset_current_user(token) -> None:
 # ── request resolution ───────────────────────────────────────────────────────
 
 def presented_credential(request) -> Optional[str]:
-    """The credential on a request, from any of the three places it may ride.
+    """The long-lived credential on a request: a session token, an API key,
+    the shared token or the service credential.
 
-    The ``?token=`` query form exists for the browser's EventSource, which
-    cannot set headers and is how the whole UI receives live updates.
+    Headers first. The ``?token=`` query form survives only outside ``multi``
+    (a ``token`` mode deployment's EventSource may still use it): in
+    ``multi`` a credential in a URL is a user's session, which would end up
+    in access logs and proxy histories, so a stream there presents a
+    one-time ``?ticket=`` instead (see :func:`_ticket_principal`).
     """
-    return (extract_bearer(request.headers.get("authorization"))
-            or request.headers.get("x-api-token")
-            or request.query_params.get("token"))
+    found = (extract_bearer(request.headers.get("authorization"))
+             or request.headers.get("x-api-token"))
+    if found:
+        return found
+    if current_mode() == MULTI:
+        return None
+    return request.query_params.get("token")
+
+
+def _ticket_principal(request) -> Optional[Principal]:
+    """The principal a ``?ticket=`` query parameter stands for, or None.
+
+    The ticket is a one-time, minute-long credential minted by ``POST
+    /api/auth/ticket`` (``common/preview_tickets.py``); verifying it spends
+    it. It resolves to the same shape the credential that minted it would:
+    a user (re-read, so a demoted or deleted account does not keep its old
+    role), the shared token's principal or the service principal.
+    """
+    ticket = request.query_params.get("ticket")
+    if not ticket:
+        return None
+    from common import preview_tickets
+    found = preview_tickets.verify_auth(ticket)
+    if found is None:
+        return None
+    kind = found.get("kind")
+    mode = current_mode()
+    if kind == "token":
+        return TOKEN_PRINCIPAL if mode == TOKEN else None
+    if kind == "service":
+        return SERVICE_PRINCIPAL if mode == MULTI else None
+    if kind != "user" or mode != MULTI:
+        return None
+    user = get_user(found["user"])
+    if user is None:
+        return None
+    scope = found.get("scope")
+    return Principal(id=user["id"], username=user["username"], role=user["role"],
+                     kind="user", via="ticket",
+                     scope=tuple(scope) if scope is not None else None)
 
 
 def current_principal(request) -> Optional[Principal]:
     """Resolve a request to a principal, or None when it is unauthenticated.
 
     Mode by mode: ``single`` is always the local operator, ``token`` matches
-    the shared token, and ``multi`` accepts a session token, the service
-    credential, or nothing.
+    the shared token, and ``multi`` accepts a session token, an API key, the
+    service credential, or nothing. In ``token`` and ``multi`` a one-time
+    ``?ticket=`` stands in for the credential that minted it (EventSource
+    and WebSocket connections, which cannot set headers).
     """
     mode = current_mode()
     if mode == SINGLE:
@@ -941,10 +984,10 @@ def current_principal(request) -> Optional[Principal]:
         configured = (settings.api_token or "").strip()
         if presented and hmac.compare_digest(presented, configured):
             return TOKEN_PRINCIPAL
-        return None
+        return _ticket_principal(request)
 
     if not presented:
-        return None
+        return _ticket_principal(request)
     if is_service_token(presented):
         return SERVICE_PRINCIPAL
     from common import api_keys

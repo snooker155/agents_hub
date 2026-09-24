@@ -8,7 +8,7 @@ shape.
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Python | 3.10+ (3.11 recommended) | Backend, CLI, agent runners |
+| Python | 3.11+ | Backend, CLI, agent runners |
 | Node.js + npm | 22+ | The dashboard |
 | Docker + Compose | any recent | Only for Path C, or Docker agent execution |
 | A provider key | | OpenAI, Anthropic, Google, or a local Ollama / LM Studio |
@@ -52,6 +52,11 @@ cd dashboard/frontend && npm install && cd ../..
 `pip install -e .` alone installs only the terminal client and its three
 dependencies. The extras are read from the requirement files in the repository,
 so `[backend]`, `[agents]` and `[rag]` stay in step with them.
+
+`requirements.lock` pins the exact resolution of those requirement files (minus
+`rag` and `postgres`) for Python 3.11 and 3.12; it is what the backend Docker
+image and CI install from, and `pip install -r requirements.lock` reproduces
+the same environment by hand.
 
 Editable is deliberate: the command follows the checkout, `git pull` included,
 instead of freezing a copy. What lands in site-packages is one package,

@@ -44,4 +44,13 @@ to look when it starts and immediately stops.
 A node can be exposed over HTTP with a token, so something outside can send it
 work. Unexpose removes the binding.
 
+`POST /api/external/{token}/run` is throttled per client address:
+`AGENTS_HUB_EXTERNAL_RATE_PER_MINUTE` requests in any 60 seconds (default 30,
+0 turns it off), counted in memory per API replica. Known and unknown tokens
+share the window, so guessing tokens is as slow as flooding a real node. Past
+the limit the route answers `429` with a `Retry-After` header (seconds) and
+`{"detail": ..., "retry_after": n}`; the refusal lands in the node's connection
+log with status 429 when the token belongs to a node, and nowhere when it does
+not. Tokens are compared in constant time, here and on the node's own `/run`.
+
 Related: [instances](instances.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [service-health](service-health.md), [environments](environments.md).

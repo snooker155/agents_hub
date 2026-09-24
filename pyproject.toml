@@ -7,7 +7,7 @@ name = "agents-hub"
 version = "0.1.0"
 description = "Agents Hub — agents, tasks and workspaces, from a terminal or a dashboard"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 # Only what the terminal client itself needs. Direct mode (the default) also
 # needs the service's own dependencies, which are extras below rather than
@@ -57,7 +57,7 @@ blobs = { file = ["requirements-blobs.txt"] }
 playground = { file = ["requirements-playground.txt"] }
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 # Generated/vendored/build output, and the frontend (its own ESLint config
 # covers it) — none of this is code we lint with ruff.
 exclude = ["node_modules", "chroma_db", "site", "dashboard/frontend", "__pycache__"]

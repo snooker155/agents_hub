@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Dict, Literal, Optional, Tuple
 from urllib.parse import urljoin, urlsplit
 
@@ -34,7 +35,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, Streamin
 from pydantic import BaseModel
 
 from common import access, identity
-from common.auth import LOCAL_OPERATOR_ID
+from common.auth import LOCAL_OPERATOR_ID, MULTI
 from common.paths import PROJECTS_FILE
 from common import preview_tickets
 from projects.proxy_service import _PinnedTransport, _validate_and_resolve  # noqa: PLC2701 - reuse by design, see module docstring
@@ -153,12 +154,56 @@ async def create_preview_ticket(payload: PreviewTicketRequest, request: Request)
 
     _url, workspace = resolved
     access.require_visible(principal, workspace)
+    return _minted(payload.kind, target_id, principal)
 
+
+def _minted(kind: str, target_id: str, principal) -> dict:
     principal_id = principal.id if principal else LOCAL_OPERATOR_ID
     ttl = preview_tickets.DEFAULT_TTL_SECONDS
-    ticket = preview_tickets.mint({"kind": payload.kind, "id": target_id},
+    ticket = preview_tickets.mint({"kind": kind, "id": target_id},
                                   principal_id=principal_id, ttl_seconds=ttl)
-    return {"url": f"/preview/{ticket}/", "expires_in": ttl}
+    return {"url": f"/preview/{ticket}/", "expires_in": ttl,
+            "expires_at": time.time() + ttl}
+
+
+class PreviewRenewRequest(BaseModel):
+    ticket: Optional[str] = None
+    kind: Optional[Literal["container", "project"]] = None
+    name: Optional[str] = None
+    project_id: Optional[str] = None
+
+
+@router.post("/tickets/renew")
+async def renew_preview_ticket(payload: PreviewRenewRequest, request: Request):
+    """A fresh ticket for a preview that is still open.
+
+    The body is the current ticket (``{ticket}``) or, when that one has
+    already lapsed, the same target body ``POST /tickets`` takes. A ticket
+    renews only for the user it was minted for (an administrator may renew
+    anyone's), and the target is re-resolved and its workspace re-checked,
+    so a renewal never outlives the caller's access. The dashboard calls
+    this every few minutes while a preview is on screen and swaps the
+    iframe only when the old ticket is about to run out.
+    """
+    principal = identity.request_principal(request)
+    current = preview_tickets.verify(payload.ticket) if payload.ticket else None
+    if current is not None:
+        if (identity.current_mode() == MULTI and principal is not None
+                and not principal.is_admin and current.get("user") != principal.id):
+            raise HTTPException(status_code=403, detail="This preview ticket is not yours")
+        kind, target_id = current["kind"], current["id"]
+    elif payload.kind:
+        kind = payload.kind
+        target_id = ((payload.name if kind == "container" else payload.project_id) or "").strip()
+        if not target_id:
+            raise HTTPException(status_code=400, detail="name or project_id is required")
+    else:
+        raise HTTPException(status_code=403, detail="The preview ticket has expired")
+    resolved = _resolve_target(kind, target_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="The preview target is no longer available")
+    access.require_visible(principal, resolved[1])
+    return _minted(kind, target_id, principal)
 
 
 # ── the proxy itself ─────────────────────────────────────────────────────────
@@ -341,6 +386,12 @@ async def preview_proxy(ticket: str, path: str, request: Request):
     content_type = resp.headers.get("content-type", "")
     is_html = content_type.split(";")[0].strip().lower() == "text/html"
     headers = _response_headers(resp.headers, ticket=ticket, base=base, requested_url=upstream_url)
+    # Past half its life, the ticket this request came in on is due for a
+    # successor: hand one back for a client that can read response headers
+    # (the dashboard's iframe cannot, it renews through /tickets/renew).
+    fresh = preview_tickets.renew(ticket)
+    if fresh:
+        headers["X-Preview-Ticket"] = fresh
 
     if is_html:
         content = await resp.aread()

@@ -5,7 +5,7 @@
  * belongs to the Browser page and the Browser panel in LiveRunStream.
  * See docs/browser.md.
  */
-import api, { API_ORIGIN, getAuthToken } from './index';
+import api, { API_ORIGIN, getAuthToken, withAuthTicket } from './index';
 
 // {configured, url}: whether the hub has a browser service to talk to.
 export const getBrowserStatus = () => api.get('/browser/status');
@@ -45,14 +45,22 @@ export const handoffBrowserSession = (id, { agentId, message, workspace }) =>
 export const setBrowserControl = (id, on) =>
   api.post(`/browser/sessions/${encodeURIComponent(id)}/control`, { on: !!on });
 
-// The WebSocket the hub relays the service's frame stream on. The credential
-// rides the query string, as it does for the SSE stream: a browser cannot put
-// a header on a WebSocket.
-export const browserStreamUrl = (id) => {
+// The WebSocket the hub relays the service's frame stream on. A browser
+// cannot put a header on a WebSocket, so the credential rides the query
+// string: browserStreamUrlWithTicket puts a one-time ticket there (the only
+// form AUTH_MODE=multi accepts), browserStreamUrl the legacy token.
+const streamBase = (id) => {
   const origin = API_ORIGIN || (typeof window !== 'undefined' ? window.location.origin : '');
   const url = new URL(`${origin}/api/browser/sessions/${encodeURIComponent(id)}/ws`);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url;
+};
+
+export const browserStreamUrl = (id) => {
+  const url = streamBase(id);
   const token = getAuthToken();
   if (token) url.searchParams.set('token', token);
   return url.toString();
 };
+
+export const browserStreamUrlWithTicket = (id) => withAuthTicket(streamBase(id).toString());

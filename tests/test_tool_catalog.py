@@ -64,6 +64,7 @@ def _tool_objects_by_id() -> dict:
         get_agent_status_tool, wait_for_agent_tool, create_agent_tool,
         get_agent_tool, modify_agent_tool, delete_agent_tool,
     )
+    from tools.delegation import delegate_task_tool, list_models_tool
     from tools.flow_management import (
         create_flow_tool, get_flow_tool, modify_flow_tool, delete_flow_tool,
         validate_flow_tool,
@@ -105,6 +106,7 @@ def _tool_objects_by_id() -> dict:
         list_flows_tool, run_flow_tool, reject_assignment_tool, stop_agent_tool,
         get_agent_status_tool, wait_for_agent_tool, create_agent_tool,
         get_agent_tool, modify_agent_tool, delete_agent_tool,
+        delegate_task_tool, list_models_tool,
         create_flow_tool, get_flow_tool, modify_flow_tool, delete_flow_tool,
         validate_flow_tool,
         *SCENARIO_MANAGEMENT_TOOLS, *WORLD_MANAGEMENT_TOOLS,

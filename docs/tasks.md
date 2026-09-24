@@ -208,7 +208,10 @@ the conversation.
 - A task with an agent assigned but never started sits forever. Assignment is
   not a launch.
 - Taskless delegation (`run_agent_tool`) is refused inside a task context on
-  purpose: tracked work goes through assign and start, so it stays visible.
+  purpose: tracked work goes through assign and start, or through
+  `delegate_task_tool`, which hands one part to another agent as a subtask run
+  (optionally on a model picked from the catalog) and returns its output, so
+  the delegation stays visible under the parent task.
 - A task's workspace is fixed at creation and decides where its files land.
 - An agent's `update_task` call is checked against the transition table above;
   a move the table does not grant to `agent` fails with `IllegalTransition`

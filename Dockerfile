@@ -31,14 +31,18 @@ RUN set -eux; \
     rm -rf /tmp/docker /tmp/docker.tgz; \
     docker --version
 
-COPY dashboard/backend/requirements.txt /tmp/requirements-backend.txt
-COPY requirements-agents.txt /tmp/requirements-agents.txt
+# requirements.lock is the pinned resolution of requirements-agents.txt,
+# dashboard/backend/requirements.txt and requirements-cli.txt (it is
+# universal, so the same file installs cleanly here); refresh it with the
+# command in its header when one of those three files changes.
+COPY requirements.lock /tmp/requirements.lock
 # The Postgres driver rides along: a few megabytes, and inert until
 # AGENTS_HUB_DATABASE_URL names a postgresql:// database (docs/scaling.md).
+# It is not part of requirements.lock (see that file's header), so it is
+# still installed from its own requirement file.
 COPY requirements-postgres.txt /tmp/requirements-postgres.txt
 
-RUN pip install --no-cache-dir -r /tmp/requirements-backend.txt \
-    && pip install --no-cache-dir -r /tmp/requirements-agents.txt \
+RUN pip install --no-cache-dir -r /tmp/requirements.lock \
     && pip install --no-cache-dir -r /tmp/requirements-postgres.txt
 
 # ---------- RAG extras ----------

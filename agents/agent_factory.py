@@ -51,6 +51,7 @@ from tools.langchain_tools import (
     modify_agent_tool,
     delete_agent_tool,
 )
+from tools.delegation import delegate_task_tool, list_models_tool
 from tools.flow_management import (
     create_flow_tool,
     get_flow_tool,
@@ -158,6 +159,25 @@ DELEGATION_PROMPT = (
     "the closest or least-bad agent and do NOT delegate anyway — a wrong agent must "
     "never be selected. Instead, tell the user plainly that no appropriate agent is "
     "available to handle the request."
+)
+
+# Injected whenever the agent can delegate inside a task (delegate_task_tool
+# present). Kept apart from DELEGATION_PROMPT because the two tools apply in
+# different contexts: run_agent_tool in chat, delegate_task_tool in a task run.
+TASK_DELEGATION_PROMPT = (
+    "## Delegating part of a task\n"
+    "While you work a task, `delegate_task_tool` hands one self-contained piece of it "
+    "to another agent as a subtask of your task, runs that agent, and returns its "
+    "output. Use it the way a lead hands work to a colleague: when a part needs a "
+    "different role or tools, when several independent parts can run one after another "
+    "while you keep the whole in view, or when a cheaper or stronger model suits that "
+    "part better. `list_agents_tool` shows who is available; `list_models_tool` shows "
+    "the models you may pick for the delegate (its `model` argument, `provider/model`), "
+    "the workspace default and your own. Put everything the delegate needs into "
+    "`input`: it sees neither your task nor this conversation. Prefer waiting for the "
+    "result (the default); start several without waiting only when they are independent, "
+    "then read each with get_task_result. A refused delegation is final: do not retry it "
+    "with another agent unless one clearly fits."
 )
 
 # Injected for delegators that cannot administer agents themselves (no
@@ -424,6 +444,8 @@ class AgentFactory:
             stop_agent_tool,
             get_agent_status_tool,
             wait_for_agent_tool,
+            delegate_task_tool,
+            list_models_tool,
         ]
         agent_management_tools = [
             create_agent_tool,
@@ -841,6 +863,13 @@ class AgentFactory:
                     + "\n\n---\n\n"
                     + AGENT_ADMIN_PROMPT
                 )
+
+        if "delegate_task_tool" in _tool_names:
+            config["system_prompt"] = (
+                config.get("system_prompt", "")
+                + "\n\n---\n\n"
+                + TASK_DELEGATION_PROMPT
+            )
 
         # Teach agents that carry task-tracker tools to use them instead of
         # storing tasks in memory (resolved tool instances, so group aliases count).

@@ -323,3 +323,21 @@ def test_no_trailing_slash_redirects_to_one(single, client, mock_upstream):
     resp = client.get(f"/preview/{ticket}", follow_redirects=False)
     assert resp.status_code == 307
     assert resp.headers["location"] == f"/preview/{ticket}/"
+
+
+def test_a_ticket_past_half_life_gets_a_successor_header(single, client, mock_upstream,
+                                                         monkeypatch):
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"ok")
+
+    mock_upstream(handler)
+    fresh = client.get(f"/preview/{_ticket()}/a")
+    assert "x-preview-ticket" not in fresh.headers
+    aging = preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id="local",
+                                 ttl_seconds=preview_tickets.DEFAULT_TTL_SECONDS)
+    later = time.time() + 400
+    monkeypatch.setattr(preview_tickets.time, "time", lambda: later)
+    resp = client.get(f"/preview/{aging}/a")
+    successor = resp.headers["x-preview-ticket"]
+    assert preview_tickets.verify(successor) == {"kind": "container", "id": "demo",
+                                                 "user": "local"}

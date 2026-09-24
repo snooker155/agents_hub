@@ -88,12 +88,28 @@ your instructions. Anything it needs must be in that string.
 An agent may carry a `delegates` allowlist restricting who it can call. An empty
 list means no restriction.
 
+Inside a task the tool is `delegate_task_tool`. It creates a subtask of the task
+the agent is working, launches the chosen agent on it as a real run (its own
+process or container, the task's environment and money cap, the live stream),
+waits for it by default, and returns the delegate's output together with the
+subtask and run ids. The `model` argument picks any enabled catalog model for
+that one run, as `provider/model`; `list_models_tool` lists them with the
+workspace default and the caller's own model. A delegate keeps its own model
+when none is given. Chains stop at `AGENTS_HUB_DELEGATION_MAX_DEPTH` levels (3),
+the wait is bounded by `AGENTS_HUB_DELEGATION_WAIT` seconds (900) or the call's
+`timeout_seconds`, and stopping the parent task's run stops the delegate. The
+same `delegates` allowlist and self-delegation rule apply. With `wait` false the
+call returns after the launch; `get_agent_status_tool` and `get_task_result` on
+the subtask id read the outcome later, and the subtask shows under its parent
+on the task page with the model the run used.
+
 ## Gotchas
 
 - Editing a system agent marks it as yours and stops it tracking shipped
   updates. That is deliberate, and irreversible without editing the registry.
 - An agent with a memory pool bound gets pool-bound memory tools with different
   names, so it never has to guess a pool id.
-- `run_agent_tool` is refused inside a tracked task. Use assign and start there.
+- `run_agent_tool` is refused inside a tracked task. Use `delegate_task_tool`
+  there (a subtask run, optionally on another model), or assign and start.
 
 Related: [chat](chat.md), [tools-and-capabilities](tools-and-capabilities.md), [instances](instances.md), [marketplace](marketplace.md), [imported-agents](imported-agents.md).

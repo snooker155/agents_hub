@@ -31,7 +31,8 @@ The Preview tab shows the project's frontend (`project.frontend.url`, or
 at it: **Direct**, the original same-origin iframe, and **Through the hub**
 (the default when a url or port is set), which loads the page through the
 same authenticated ticket proxy containers use, see docs/containers.md,
-"Preview through the hub", for how the ticket and the proxy work. Through the
+"Preview through the hub", for how the ticket and the proxy work (a ticket
+lives ten minutes and is renewed while the preview is open). Through the
 hub is what makes a project preview usable from anywhere the dashboard itself
 is reachable, not only from a browser that can also reach the frontend's
 host directly.

@@ -168,3 +168,89 @@ def test_normalize_budget_defaults():
     assert b["soft_limit_usd"] == 0.0
     # negatives clamp to zero
     assert budget.normalize_budget({"hard_limit_usd": -5})["hard_limit_usd"] == 0.0
+
+
+# -------------------- fail_closed --------------------
+
+def test_normalize_budget_fail_closed_defaults_false():
+    assert budget.normalize_budget({})["fail_closed"] is False
+    assert budget.normalize_budget(None)["fail_closed"] is False
+
+
+def test_normalize_budget_fail_closed_coerces_truthy_values():
+    assert budget.normalize_budget({"fail_closed": True})["fail_closed"] is True
+    assert budget.normalize_budget({"fail_closed": "yes"})["fail_closed"] is True
+    assert budget.normalize_budget({"fail_closed": 1})["fail_closed"] is True
+    assert budget.normalize_budget({"fail_closed": False})["fail_closed"] is False
+    assert budget.normalize_budget({"fail_closed": 0})["fail_closed"] is False
+    assert budget.normalize_budget({"fail_closed": ""})["fail_closed"] is False
+
+
+def test_check_budget_fail_closed_raises_when_spend_cannot_be_computed(monkeypatch):
+    monkeypatch.setattr(
+        budget, "get_budget",
+        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total",
+                    "fail_closed": True},
+    )
+
+    def _boom(workspace, period):
+        raise RuntimeError("run manager unreachable")
+
+    monkeypatch.setattr(budget, "_workspace_period_spend_strict", _boom)
+    with pytest.raises(budget.BudgetUnavailableError):
+        budget.check_budget("ws1")
+
+
+def test_check_budget_without_fail_closed_still_fails_open_on_the_same_error(monkeypatch):
+    monkeypatch.setattr(
+        budget, "get_budget",
+        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total",
+                    "fail_closed": False},
+    )
+
+    def _boom(workspace, period):
+        raise RuntimeError("run manager unreachable")
+
+    monkeypatch.setattr(budget, "_workspace_period_spend_strict", _boom)
+    budget.check_budget("ws1")  # no exception: fail_closed is off
+
+
+def test_check_budget_fail_closed_raises_on_an_empty_price_catalog(monkeypatch, tmp_path):
+    # A hard cap with fail_closed set, but nothing in the catalog to price the
+    # workspace's runs against: the estimate can't be trusted even though the
+    # computation itself did not raise.
+    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=0)
+    monkeypatch.setattr(
+        budget, "get_budget",
+        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total",
+                    "fail_closed": True},
+    )
+    monkeypatch.setattr(budget, "_workspace_period_spend_strict", lambda ws, period: (0.0, 0))
+    with pytest.raises(budget.BudgetUnavailableError):
+        budget.check_budget("ws1")
+
+
+def test_check_budget_fail_closed_does_not_raise_when_spend_is_confidently_under_cap(monkeypatch, tmp_path):
+    _seed_prices(monkeypatch, tmp_path)
+    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=0)  # $2.50
+    monkeypatch.setattr(
+        budget, "get_budget",
+        lambda ws: {"hard_limit_usd": 100.0, "soft_limit_usd": 0.0, "period": "total",
+                    "fail_closed": True},
+    )
+    budget.check_budget("ws1")  # priced, under cap: no exception
+
+
+def test_check_budget_fail_closed_still_raises_budget_exceeded_when_over_cap(monkeypatch, tmp_path):
+    _seed_prices(monkeypatch, tmp_path)
+    _make_run("r1", workspace="ws1", inbound=1_000_000, outbound=500_000)  # $7.50
+    monkeypatch.setattr(
+        budget, "get_budget",
+        lambda ws: {"hard_limit_usd": 5.0, "soft_limit_usd": 0.0, "period": "total",
+                    "fail_closed": True},
+    )
+    # A confident over-cap reading still raises the ordinary error, not the
+    # "could not be evaluated" one.
+    with pytest.raises(budget.BudgetExceededError) as exc:
+        budget.check_budget("ws1")
+    assert not isinstance(exc.value, budget.BudgetUnavailableError)

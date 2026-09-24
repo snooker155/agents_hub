@@ -47,6 +47,10 @@ class KeyCreate(BaseModel):
     # the key; an empty list is treated as None by common.api_keys.create_key.
     workspaces: Optional[List[str]] = None
     expires_in_days: Optional[int] = None
+    # The key's own limits (docs/api-keys.md "Rate limits"): None follows the
+    # hub-wide setting, 0 is unlimited.
+    rate_limit_per_minute: Optional[int] = None
+    tokens_per_day: Optional[int] = None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -213,13 +217,17 @@ async def post_my_key(request: Request, payload: KeyCreate):
     try:
         key, record = api_keys.create_key(
             principal.id, name=payload.name, workspaces=payload.workspaces,
-            expires_in_days=payload.expires_in_days)
+            expires_in_days=payload.expires_in_days,
+            rate_limit_per_minute=payload.rate_limit_per_minute,
+            tokens_per_day=payload.tokens_per_day)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     audit.record("key.create", principal=principal, object_type="api_key",
                  object_id=record["id"], ip=identity.client_ip(request),
                  details={"name": record["name"], "workspaces": record["workspaces"],
-                          "expires_at": record["expires_at"]})
+                          "expires_at": record["expires_at"],
+                          "rate_limit_per_minute": record["rate_limit_per_minute"],
+                          "tokens_per_day": record["tokens_per_day"]})
     # The key is returned exactly once: the record never carries it again.
     return {**record, "key": key}
 

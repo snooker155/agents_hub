@@ -165,6 +165,10 @@ class BudgetSettings(BaseModel):
     # Default money cap of a single task's runs (0 = off). A task's own
     # budget_usd overrides it; enforced in the child by RunBudgetGuard.
     run_limit_usd: float = 0.0
+    # Off by default (fails open, see common.budget). When set, a lookup or
+    # pricing failure while checking the budget refuses the run instead of
+    # letting it start unchecked.
+    fail_closed: bool = False
 
 
 @router.get("/budget")

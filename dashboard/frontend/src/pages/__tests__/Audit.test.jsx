@@ -15,12 +15,14 @@ const getAuditLog = vi.fn();
 const getAuditActions = vi.fn(() => ok(['auth.login', 'run.launch']));
 const getWorkspaces = vi.fn(() => ok([{ name: 'default' }, { name: 'acme' }]));
 const auditExportUrl = vi.fn((params, format) => `/api/audit/export?format=${format}&stub=1`);
+const navigateWithAuthTicket = vi.fn(() => Promise.resolve());
 
 vi.mock('../../api', () => ({
   getAuditLog: (...a) => getAuditLog(...a),
   getAuditActions: (...a) => getAuditActions(...a),
   getWorkspaces: (...a) => getWorkspaces(...a),
   auditExportUrl: (...a) => auditExportUrl(...a),
+  navigateWithAuthTicket: (...a) => navigateWithAuthTicket(...a),
 }));
 
 import Audit from '../Audit';
@@ -80,13 +82,13 @@ describe('Audit', () => {
     await waitFor(() => expect(screen.getByText(/"kind": "password"/)).toBeInTheDocument());
   });
 
-  it('points the export buttons at auditExportUrl with csv and jsonl', async () => {
+  it('downloads csv and jsonl exports through a one-time ticket', async () => {
     show();
     await waitFor(() => expect(screen.getByText('alice')).toBeInTheDocument());
-    const csvLink = screen.getByText(/export csv/i).closest('a');
-    const jsonlLink = screen.getByText(/export jsonl/i).closest('a');
-    expect(csvLink).toHaveAttribute('href', expect.stringContaining('format=csv'));
-    expect(jsonlLink).toHaveAttribute('href', expect.stringContaining('format=jsonl'));
+    fireEvent.click(screen.getByText(/export csv/i).closest('button'));
+    fireEvent.click(screen.getByText(/export jsonl/i).closest('button'));
+    expect(navigateWithAuthTicket).toHaveBeenCalledWith(expect.stringContaining('format=csv'));
+    expect(navigateWithAuthTicket).toHaveBeenCalledWith(expect.stringContaining('format=jsonl'));
   });
 
   it('re-queries from the first page when a filter changes', async () => {

@@ -184,7 +184,12 @@ def _agent(agent_id: str, *, secrets=(), github_identity="app"):
 
 
 def _connect(client, github, headers=None, token=None, login="alice-gh"):
-    params = {"token": token} if token else {}
+    # Multi mode takes no ?token= in a URL: a navigation carries a one-time
+    # ticket minted with the caller's header (docs/identity.md).
+    params = {}
+    if token:
+        minted = client.post("/api/auth/ticket", headers={"Authorization": f"Bearer {token}"})
+        params = {"ticket": minted.json()["ticket"]}
     start = client.get("/api/auth/github/connect", params=params, headers=headers or {})
     assert start.status_code == 302, start.text
     query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(start.headers["location"]).query))

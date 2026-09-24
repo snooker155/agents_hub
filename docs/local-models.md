@@ -153,6 +153,17 @@ A job's `kind` is `ollama_pull` or `hf_download`; `status` is `queued`,
 `running`, `done` or `error`. Runtime actions that cannot reach the service
 answer 502 with the reason; the service's own refusals keep their 4xx.
 
+## A live check
+
+`scripts/smoke_models_runtime.py` walks the whole path against a running
+runtime: health, a download from Hugging Face (Qwen2.5 0.5B Instruct at Q4_K_M
+by default, about 470 MB), load, the model on `/v1/models`, one question over
+`/v1/chat/completions`, the structure graph, unload and, unless `--keep`, the
+file's deletion. It takes `--url` and `--token` (or the `AGENTS_HUB_MODELS_*`
+settings) and stops at the first failing step with the runtime's answer. Last
+passed 2026-09-24 against the docker image on a laptop CPU: the download took
+about 20 seconds, the load and the answer a few seconds.
+
 ## Gotchas
 
 - A split GGUF (`-00001-of-00003.gguf`) is listed as one model named by its

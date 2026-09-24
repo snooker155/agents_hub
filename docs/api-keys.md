@@ -116,6 +116,31 @@ owner or an administrator, its owner is disabled or deleted, or its expiry
 passes. There is no grace period and no cache to wait out — `resolve()` is
 checked on every request.
 
+## Rate limits
+
+Two limits, both off by default, both answered with `429` and a
+`Retry-After` header in seconds (`common/rate_limit.py`):
+
+- **Requests per minute**, `AGENTS_HUB_RATE_LIMIT_PER_MINUTE`, on every `/api`
+  and `/v1` request. Counted per principal: per key when a personal key is
+  presented, otherwise per person (a session), or for the shared token as a
+  whole in `token` mode. Open paths (login, the mode probe, the external node
+  route, ingest), the event stream and the hub's own service credential are
+  not counted. The body is `{"detail": "Rate limit exceeded", "retry_after": n}`.
+  The window is kept in memory in each API process, so with several replicas
+  the effective limit is the setting times the number of replicas.
+- **Tokens per day**, `AGENTS_HUB_RATE_LIMIT_TOKENS_PER_DAY`, on
+  `POST /v1/chat/completions` only (see [hub-as-provider](hub-as-provider.md)).
+  Counted from `serving_usage` since 00:00 UTC, successful calls only, per key
+  when a key is used and per person otherwise. It holds across replicas; the
+  figure is cached for 30 seconds, so a burst can overshoot the cap slightly.
+
+A key may carry its own values, set when it is created on the Account page
+(or `rate_limit_per_minute` and `tokens_per_day` in `POST /api/auth/keys`).
+Empty follows the hub-wide setting, a number overrides it for that key, and 0
+means unlimited. They are stored on the key (migration 0017) and cannot be
+changed afterwards: cut a new key instead.
+
 ## The login throttle
 
 Not specific to keys, but the neighbour of everything else on this page:

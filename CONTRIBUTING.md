@@ -56,6 +56,22 @@ cd dashboard/frontend
 npx eslint .                    # frontend code
 ```
 
+**Blind excepts (BLE001, S110):** `common/`, `managers/`, `notify/`, `a2a/`,
+`mcp_client/` and `workspace/` are clean of bare `except Exception` and
+`try/except/pass` and enforce both rules as errors (`pyproject.toml`'s
+`per-file-ignores`). Every other package still has unreviewed ones, so CI
+does not fail on those outright; instead `scripts/ci/ruff_baseline.py check`
+compares the current count per file and rule code against
+`scripts/ci/ruff_baseline.txt` and fails only when a file gets a *new* one.
+The rule: don't add a new blind except or a swallowed exception anywhere in
+the codebase. If you touch code that has one, narrow it (catch a specific
+exception, or add logging) rather than leave it or add another next to it.
+When you do narrow one, re-record the baseline so the count drops with it:
+
+```bash
+python scripts/ci/ruff_baseline.py record
+```
+
 ## Adding an agent tool
 
 A tool is a LangChain `@tool` function in `tools/`. It shows up in four places, and the tests check that they agree: the function, the catalog entry the dashboard reads, the capability grant, and the agent's tool list. Read `tools/calculator.py` for the smallest complete example and `tools/capabilities.py` for the security model.

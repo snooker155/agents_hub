@@ -32,8 +32,16 @@ as they did.
 
 The hard limit is enforced at run launch, not merely displayed: when the
 period's estimated spend already meets it, the run is refused rather than
-started. Enforcement fails open: a pricing or lookup error means no enforcement,
-never a wedged workspace.
+started. By default, enforcement fails open: a pricing or lookup error means
+no enforcement, never a wedged workspace.
+
+A workspace can also turn on **Fail closed**. With it on, the same errors that
+would otherwise let a run through unchecked instead refuse it: a pricing or
+lookup failure while estimating spend, or a price catalog too thin to trust
+(empty), raises the same kind of refusal as a confirmed over-cap reading. The
+trade-off is the opposite of the default: a workspace that would rather lose a
+run than risk one no cap could stop turns this on; one where availability
+matters more than a stray unenforced run leaves it off (the default).
 
 Evaluation-channel runs are excluded from the aggregation, so measuring your
 agents never eats the budget your agents run on.
@@ -71,6 +79,14 @@ imported agent is not stopped mid-run when it crosses the cap. Its spend is
 still counted toward the task's total and the cap still applies to the
 *next* launch of that task, but nothing interrupts a run already in flight
 for those backends.
+
+The same workspace **Fail closed** flag that governs the period budget also
+governs the per-run limit. Off (the default), a launch whose cap or spend so
+far cannot be computed starts anyway with no cap, and `RunBudgetGuard` treats a
+call through a model it cannot price as free. On, `launch_env` refuses the
+launch instead of silently handing the run no cap, and the guard blocks a call
+through an unpriced model before it runs rather than letting it pass as free,
+since either one could otherwise let spend run past a cap that never sees it.
 
 ## What actually costs money
 

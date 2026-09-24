@@ -28,7 +28,9 @@ One shared secret gates the API. Set `AGENTS_HUB_API_TOKEN` and every `/api`
 request must present it, as an `Authorization: Bearer` header, an `X-Api-Token`
 header, or a `?token=` query parameter. The query form exists for the browser's
 `EventSource`, which cannot set headers and is how the dashboard receives live
-updates. `/api/ingest` is exempt: an external service reporting its runs
+updates; the dashboard now presents a one-time ticket there instead (see
+[Tickets for streams](#tickets-for-streams)), and `?token=` keeps working in
+this mode for older clients. `/api/ingest` is exempt: an external service reporting its runs
 carries its own connection credential, and requiring the operator's token there
 would hand every such service a key to the whole dashboard.
 
@@ -231,6 +233,29 @@ as `AGENTS_HUB_SERVICE_TOKEN` (see `common/subprocess_env.py`). It never
 reaches disk and dies with the process that issued it. Requests carrying it act
 as an administrator, because a run writes on behalf of whoever started it and
 may touch any workspace.
+
+## Tickets for streams
+
+An `EventSource` (the dashboard's live stream at `/api/stream`), a WebSocket
+(the browser frame stream at `/api/browser/sessions/{id}/ws`) and a full page
+navigation (the GitHub connect link) cannot set a header, so their credential
+has to ride the query string. Putting a session there would leave it in access
+logs and proxy histories, so the dashboard first calls `POST /api/auth/ticket`
+with its normal header and gets `{ticket, expires_in}` back, then opens the
+connection with `?ticket=<ticket>`.
+
+A ticket is signed (`common/preview_tickets.py`), lives 60 seconds and is good
+for one use: it stands for whoever minted it, a user (with an API key's
+workspace scope kept), the shared token or the service credential, and the
+role is read afresh when it is presented, so a deleted account's ticket dies
+with the account. A reconnect mints a new one. Used tickets are remembered per
+process, so behind several replicas a ticket could in principle be presented
+once to each replica within its minute.
+
+In `multi` mode a `?token=` query credential is no longer accepted at all:
+headers and tickets only. In `token` mode `?token=` still works alongside
+tickets, and `single` needs neither. A dashboard talking to a backend too old
+to mint tickets (a 404) falls back to `?token=`.
 
 ## How passwords and sessions are stored
 

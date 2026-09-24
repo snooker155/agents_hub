@@ -71,13 +71,38 @@ def _row_to_key(row) -> Dict[str, Any]:
         "workspaces": list(workspaces) if isinstance(workspaces, list) else None,
         "expires_at": row["expires_at"], "created_at": row["created_at"],
         "last_used_at": row["last_used_at"], "revoked_at": row["revoked_at"],
+        # Its own limits (migration 0017); None follows the hub-wide setting.
+        "rate_limit_per_minute": _opt_int(row, "rate_limit_per_minute"),
+        "tokens_per_day": _opt_int(row, "tokens_per_day"),
     }
 
 
+def _opt_int(row, column: str) -> Optional[int]:
+    try:
+        value = row[column]
+    except (IndexError, KeyError):
+        # A database not yet migrated to 0017: no per-key limit.
+        return None
+    return None if value is None else int(value)
+
+
+def _limit(value: Optional[int], name: str) -> Optional[int]:
+    if value is None:
+        return None
+    value = int(value)
+    if value < 0:
+        raise ValueError(f"{name} must be zero or positive")
+    return value
+
+
 def create_key(user_id: str, *, name: str = "", workspaces: Optional[List[str]] = None,
-               expires_in_days: Optional[int] = None) -> Tuple[str, Dict[str, Any]]:
+               expires_in_days: Optional[int] = None,
+               rate_limit_per_minute: Optional[int] = None,
+               tokens_per_day: Optional[int] = None) -> Tuple[str, Dict[str, Any]]:
     """Cut a key. Returns ``(the key, its record)``: the key is never
-    retrievable again."""
+    retrievable again. ``rate_limit_per_minute`` and ``tokens_per_day``
+    override the hub-wide limits for this key (0 is unlimited, None follows
+    the setting; common/rate_limit.py)."""
     from common import identity
     if identity.get_user(user_id) is None:
         raise ValueError(f"no such user: {user_id}")
@@ -92,16 +117,19 @@ def create_key(user_id: str, *, name: str = "", workspaces: Optional[List[str]] 
         if days <= 0:
             raise ValueError("expires_in_days must be positive")
         expires_at = (_now() + timedelta(days=days)).isoformat()
+    per_minute = _limit(rate_limit_per_minute, "rate_limit_per_minute")
+    per_day = _limit(tokens_per_day, "tokens_per_day")
     key = KEY_PREFIX + secrets.token_urlsafe(_KEY_BYTES)
     key_id = secrets.token_hex(8)
     now = _now().isoformat()
     with db.transaction() as conn:
         conn.execute(
             "INSERT INTO api_keys (key_id, key_hash, key_hint, user_id, name, workspaces, "
-            "expires_at, created_at, last_used_at, revoked_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+            "expires_at, created_at, last_used_at, revoked_at, rate_limit_per_minute, "
+            "tokens_per_day) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
             (key_id, _hash(key), key[-4:], str(user_id), (name or "").strip()[:120],
-             json.dumps(scope) if scope is not None else None, expires_at, now))
+             json.dumps(scope) if scope is not None else None, expires_at, now,
+             per_minute, per_day))
     return key, get_key(key_id)  # type: ignore[return-value]
 
 

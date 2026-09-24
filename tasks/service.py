@@ -911,19 +911,28 @@ def add_subtask(
     description: str = "",
     *,
     depends: Optional[Sequence[UUID]] = None,
+    created_by: CreatedBy = CreatedBy.orchestrator,
+    budget_usd: Optional[float] = None,
+    environment_id: Optional[str] = None,
     store: TaskStore = default_store,
 ) -> Task:
-    """Create a subtask under the given parent with created_by=orchestrator.
+    """Create a subtask under the given parent, by default with created_by=orchestrator.
 
-    The subtask inherits workspace, project, and project_id from its parent task.
-    `depends` lets a decomposition express execution order between subtasks;
-    a subtask with unfinished dependencies is created blocked and released
-    automatically when they complete.
+    The subtask inherits workspace, project, project_id, and, unless given
+    here, the parent's money cap (``budget_usd``) and environment, so a piece
+    of work an agent hands down runs under the same limits as the task it came
+    from. `depends` lets a decomposition express execution order between
+    subtasks; a subtask with unfinished dependencies is created blocked and
+    released automatically when they complete.
     """
     parent = store.get(parent_id)
     workspace = parent.workspace if parent else None
     project = parent.project if parent else None
     project_id = parent.project_id if parent else None
+    if budget_usd is None and parent is not None:
+        budget_usd = parent.budget_usd
+    if environment_id is None and parent is not None:
+        environment_id = parent.environment_id
 
     # A subtask created under an already-blocked parent inherits the block, so a
     # decomposition run cannot spawn immediately-runnable work under a blocked task.
@@ -947,7 +956,7 @@ def add_subtask(
     return store.create(
         title=title,
         description=description,
-        created_by=CreatedBy.orchestrator,
+        created_by=created_by,
         parent_id=parent_id,
         workspace=workspace,
         project=project,
@@ -955,6 +964,8 @@ def add_subtask(
         status=status,
         blocked_reason=blocked_reason,
         depends=dep_ids,
+        budget_usd=budget_usd,
+        environment_id=environment_id,
     )
 
 

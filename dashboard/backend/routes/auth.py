@@ -190,6 +190,27 @@ async def logout(request: Request):
     return {"ok": closed}
 
 
+@router.post("/api/auth/ticket")
+async def auth_ticket(request: Request):
+    """A one-time, minute-long ticket for a connection that cannot set a
+    header: the dashboard's EventSource on ``/api/stream``, the browser
+    frame WebSocket, a navigation such as the GitHub connect link.
+
+    Presented as ``?ticket=`` it stands for whoever minted it (a user, with
+    an API key's workspace scope kept; the shared token; the service
+    credential), so the long-lived credential never has to ride a URL. In
+    ``multi`` mode it is the only query credential accepted. See
+    docs/identity.md, "Tickets for streams".
+    """
+    from common import preview_tickets
+    principal = _principal(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    ttl = preview_tickets.AUTH_TTL_SECONDS
+    return {"ticket": preview_tickets.mint_auth(principal, ttl_seconds=ttl),
+            "expires_in": ttl}
+
+
 @router.get("/api/auth/me")
 async def me(request: Request):
     """Who the caller is, plus the workspaces they can reach.

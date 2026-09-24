@@ -22,18 +22,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Backend + agent deps carry the store/runtime libraries the tests import.
-          pip install -r dashboard/backend/requirements.txt
-          pip install -r requirements-agents.txt
-          # The CLI's own deps: tests/test_cli_*.py import typer's CliRunner and
-          # go through cli.main, which reaches for rich and requests as well.
-          pip install -r requirements-cli.txt
+          # requirements.lock is the pinned resolution of requirements-agents.txt,
+          # dashboard/backend/requirements.txt and requirements-cli.txt (backend +
+          # agent deps carry the store/runtime libraries the tests import; the
+          # CLI's own deps because tests/test_cli_*.py import typer's CliRunner
+          # and go through cli.main, which reaches for rich and requests too).
+          # It is universal, so it installs the same on 3.11 and 3.12.
+          pip install -r requirements.lock
           pip install pytest ruff
 
-      - name: Blind excepts (report only)
+      - name: Blind excepts (no new ones beyond the baseline)
         # --isolated so the per-file-ignores in pyproject.toml do not hide the
-        # packages that are not clean yet: this step counts what remains.
-        run: ruff check --isolated --select BLE001,S110 --exit-zero --statistics --exclude node_modules,chroma_db,site,dashboard/frontend,__pycache__ .
+        # packages that are not clean yet: this compares what remains against
+        # scripts/ci/ruff_baseline.txt and fails only on growth, per file and
+        # rule code. See CONTRIBUTING.md.
+        run: python scripts/ci/ruff_baseline.py check
 
       - name: Lint (ruff)
         run: ruff check .
@@ -75,9 +78,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r dashboard/backend/requirements.txt
-          pip install -r requirements-agents.txt
-          pip install -r requirements-cli.txt
+          pip install -r requirements.lock
           pip install -r requirements-postgres.txt
           pip install pytest
 

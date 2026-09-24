@@ -198,6 +198,14 @@ def prepare_run(
     if desc:
         cli_args.extend(["--desc", desc])
 
+    # A model picked for this run alone (a delegation choosing one from the
+    # catalog, tools/delegation.py): passed as flags, so the child needs no
+    # lookup and the run record shows what was asked for.
+    for key, flag in (("provider", "--provider"), ("model", "--model")):
+        value = str(params.get(key) or "").strip()
+        if value:
+            cli_args.extend([flag, value])
+
     # Continuing a paused run rather than starting one. Passed as flags like
     # everything else the subprocess needs to know, so nothing has to be read
     # back out of the task record on the other side.
@@ -526,12 +534,21 @@ def _launch_extras(task: Any, ws_name: Optional[str]) -> Tuple[Dict[str, str], O
     environment_id: Optional[str] = None
     execution_mode: Optional[str] = None
     try:
-        from common.run_budget import launch_env as _budget_env
-        env.update({str(k): str(v) for k, v in (_budget_env(task, ws_name) or {}).items()})
+        from common.run_budget import RunBudgetUnavailableError, launch_env as _budget_env
     except ImportError:
-        pass
-    except Exception:  # noqa: BLE001 - the cap is an addition; a failure to compute it never blocks the launch
-        _log.debug("run budget launch env failed for task %s", getattr(task, "id", None), exc_info=True)
+        RunBudgetUnavailableError = None  # type: ignore[assignment,misc]
+        _budget_env = None  # type: ignore[assignment]
+    if _budget_env is not None:
+        try:
+            env.update({str(k): str(v) for k, v in (_budget_env(task, ws_name) or {}).items()})
+        except Exception as exc:  # noqa: BLE001 - the cap is an addition; a failure to compute it never blocks the launch, unless the workspace asked for fail closed
+            if RunBudgetUnavailableError is not None and isinstance(exc, RunBudgetUnavailableError):
+                # The workspace's budget is fail closed (docs/costs.md): a cap
+                # that cannot be computed refuses the launch the same way
+                # check_budget does, so every caller's budget handling applies.
+                from common.budget import BudgetUnavailableError
+                raise BudgetUnavailableError(ws_name or "", "run", str(exc)) from exc
+            _log.debug("run budget launch env failed for task %s", getattr(task, "id", None), exc_info=True)
     try:
         from environments.launch import launch_fields
         fields = launch_fields(task, ws_name) or {}
