@@ -3,6 +3,7 @@
  * date formatting, status and colour maps, and the agent-to-pool lookup.
  */
 import { FileText, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { cssVar } from '../../lib/themeColors';
 
 // The blocks every pool is seeded with (memory/models.py default_blocks). They
 // are part of the prompt's shape rather than one pool's content, so the page
@@ -44,13 +45,32 @@ export function agentPools(a) {
 }
 
 // Knowledge graph node type colours (foreground, background), assigned by
-// encounter order among the graph's own node types.
-export const GRAPH_TYPE_PALETTE = [
-  ['#3f66d8', '#eef3ff'], ['#10b981', '#ecfdf5'], ['#f59e0b', '#fffbeb'],
-  ['#ef4444', '#fef2f2'], ['#3b82f6', '#eff6ff'], ['#a855f7', '#faf5ff'],
-  ['#14b8a6', '#f0fdfa'], ['#ec4899', '#fdf2f8'],
-];
+// encounter order among the graph's own node types. The foreground of each
+// entry reads the matching custom property fresh on every call (this is a
+// plain function, not a component, so it cannot use useThemeColors — see
+// src/lib/themeColors.js), so a brand or dark-mode change reaches these the
+// next time a caller re-renders; the light background tint has no dedicated
+// token (gen-theme.mjs only exposes an rgb triple and two text tiers per
+// hue, not a "50" shade) and stays a plain constant, same as 'purple' below
+// (a brand hue, remapped elsewhere, not one of the standalone chromatic ones).
+function hueRgb(name, fallback) {
+  return `rgb(${cssVar(`--hue-${name}-rgb`, fallback)})`;
+}
+
+export function graphTypePalette() {
+  return [
+    [cssVar('--brand-500', '#3f66d8'), cssVar('--brand-50', '#eef3ff')],
+    [hueRgb('emerald', '16, 185, 129'), '#ecfdf5'],
+    [hueRgb('amber', '245, 158, 11'), '#fffbeb'],
+    [hueRgb('red', '239, 68, 68'), '#fef2f2'],
+    [hueRgb('blue', '59, 130, 246'), '#eff6ff'],
+    ['#a855f7', '#faf5ff'],
+    [hueRgb('teal', '20, 184, 166'), '#f0fdfa'],
+    [hueRgb('pink', '236, 72, 153'), '#fdf2f8'],
+  ];
+}
 export function colorForType(type, allTypes) {
   const idx = allTypes.indexOf(type);
-  return GRAPH_TYPE_PALETTE[(idx >= 0 ? idx : 0) % GRAPH_TYPE_PALETTE.length];
+  const palette = graphTypePalette();
+  return palette[(idx >= 0 ? idx : 0) % palette.length];
 }

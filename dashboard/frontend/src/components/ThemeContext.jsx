@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ThemeContext } from './theme';
+import { ThemeContext, WORKSPACE_EVENT, effectiveMode, resolvePalette } from './theme';
 
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -31,13 +31,33 @@ export function ThemeProvider({ children }) {
     return () => mq.removeEventListener('change', handler);
   }, [theme]);
 
+  // The resolved palette (personal preference, then the workspace default,
+  // then the built-in one) needs the dark/light ramp a mode switch picks, so
+  // it is re-resolved on mount and whenever `theme` changes. `resolvePalette`
+  // (theme.js) is the same function Account.jsx and WorkspaceDetails.jsx call
+  // again right after they save or reset a palette.
+  useEffect(() => {
+    resolvePalette(theme);
+  }, [theme]);
+
+  // ThemeProvider sits above WorkspaceProvider in main.jsx, so it cannot read
+  // `useWorkspace()` to notice a workspace switch on its own. WorkspaceContext
+  // dispatches WORKSPACE_EVENT on window whenever the selection changes, and
+  // the palette is re-resolved then, since a workspace may carry a default
+  // palette of its own.
+  useEffect(() => {
+    const onWorkspace = () => resolvePalette(theme);
+    window.addEventListener(WORKSPACE_EVENT, onWorkspace);
+    return () => window.removeEventListener(WORKSPACE_EVENT, onWorkspace);
+  }, [theme]);
+
   const setTheme = (t) => {
     setThemeState(t);
     localStorage.setItem('theme', t);
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme }}>
+    <ThemeContext.Provider value={{ theme, setTheme, resolvedMode: effectiveMode(theme) }}>
       {children}
     </ThemeContext.Provider>
   );

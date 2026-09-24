@@ -3,6 +3,19 @@ import { useRuntime } from '../runtimes/useRuntime';
 import TimelineBar from '../TimelineBar';
 import { publish } from '../viewBus';
 import { useI18n } from '../../i18n';
+import { useThemeColors } from '../../lib/themeColors';
+
+// Canvas fills need resolved colours (a 2d context takes a value, not a
+// class); read through the palette so a custom brand or neutral retints the
+// simulation along with the rest of the page.
+const SIM_COLOR_SPEC = {
+  bg: ['--surface-sunken', '#f8fafc'],
+  bgDark: ['--surface-page', '#0b1120'],
+  obstacle: ['--neutral-300', '#cbd5e1'],
+  obstacleDark: ['--neutral-700', '#334155'],
+  goal: ['--hue-green-400', '#22c55e'],
+  agent: ['--brand-500', '#3f66d8'],
+};
 
 // A simulation view backed by the precise server tier (spec.compute set by
 // view_compute) renders streamed/recorded frames instead of a client runtime.
@@ -47,6 +60,7 @@ function ClientSimView({ view, theme, onOp }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   const dark = theme === 'dark';
+  const colors = useThemeColors(SIM_COLOR_SPEC);
 
   const getParams = useCallback(() => view?.spec?.params || {}, [view]);
   const { frame, t, playing, setPlaying, speed, setSpeed, stepOnce, reset } = useRuntime({
@@ -67,7 +81,7 @@ function ClientSimView({ view, theme, onOp }) {
     cv.width = W * dpr; cv.height = H * dpr;
     const ctx = cv.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = dark ? '#0b1120' : '#f8fafc';
+    ctx.fillStyle = dark ? colors.bgDark : colors.bg;
     ctx.fillRect(0, 0, W, H);
 
     // field frame (wave runtime): heatmap the values grid
@@ -94,13 +108,13 @@ function ClientSimView({ view, theme, onOp }) {
 
     // environment first: obstacles as filled circles, goals as rings (agents)
     if (frame.obstacles) {
-      ctx.fillStyle = dark ? '#334155' : '#cbd5e1';
+      ctx.fillStyle = dark ? colors.obstacleDark : colors.obstacle;
       for (const [x, y, r] of frame.obstacles) {
         ctx.beginPath(); ctx.arc(ox + x * s, oy + y * s, r * s, 0, Math.PI * 2); ctx.fill();
       }
     }
     if (frame.goals) {
-      ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5;
+      ctx.strokeStyle = colors.goal; ctx.lineWidth = 1.5;
       for (const [x, y] of frame.goals) {
         ctx.beginPath(); ctx.arc(ox + x * s, oy + y * s, 4, 0, Math.PI * 2); ctx.stroke();
       }
@@ -108,7 +122,7 @@ function ClientSimView({ view, theme, onOp }) {
 
     if (frame.heading) {
       // boids/agents — triangles pointing along heading
-      ctx.fillStyle = '#3f66d8';
+      ctx.fillStyle = colors.agent;
       for (const [x, y, a] of positions) {
         const px = ox + x * s; const py = oy + y * s;
         ctx.save(); ctx.translate(px, py); ctx.rotate(a);
@@ -124,7 +138,7 @@ function ClientSimView({ view, theme, onOp }) {
         ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI * 2); ctx.fill();
       }
     }
-  }, [frame, dark]);
+  }, [frame, dark, colors]);
 
   if (!runtimeName) {
     return <div className="text-sm text-gray-500 p-4">{translateSim('viewSimView.noRuntime')}</div>;

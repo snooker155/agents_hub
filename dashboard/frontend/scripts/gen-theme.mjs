@@ -61,6 +61,20 @@ const BRAND_DARK_VARS = {
 const BRAND_HUES = ['indigo', 'violet', 'purple', 'fuchsia'];
 const NEUTRAL_HUES = ['gray', 'slate', 'zinc', 'neutral', 'stone'];
 
+// The general-purpose neutral ramp exposed as --neutral-N (src/lib/palette.js
+// reads and overwrites it, then mirrors it into --surface-*/--text-*/--border-*
+// itself). Not consumed by the matrix below — the neutral *utility* classes
+// (bg-gray-100 and friends) go through their own bg/text/border ladders,
+// unchanged in light mode and NEUTRAL_DARK-derived in dark mode, same as
+// before this ramp existed. It ships as Tailwind's own slate scale so a
+// default install and a person who has never touched Settings → Account see
+// the same grays either way.
+const NEUTRAL_LIGHT = {
+  50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1', 400: '#94a3b8',
+  500: '#64748b', 600: '#475569', 700: '#334155', 800: '#1e293b', 900: '#0f172a',
+  950: '#020617',
+};
+
 // Navy-tinted neutral ladder. Backgrounds go page < sunken < card < raised.
 const NEUTRAL_DARK = {
   bg: {
@@ -98,22 +112,49 @@ const HUES = {
 
 const SHADES = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
 
-/* ── mapping ────────────────────────────────────────────────────────────── */
+/* ── mapping ──────────────────────────────────────────────────────────────
+ *
+ * Every mapper below has two faces: a *literal* one (returns a concrete hex /
+ * rgba string, computed from the tables above) and a *var* one (returns a
+ * `var(--token)` reference into the tokens block, so a palette applied at
+ * runtime — src/lib/palette.js's applyPalette — repaints these utilities
+ * without a rebuild). The literal face is still what defines the tokens'
+ * *default* values and what a Tailwind opacity modifier (`bg-x-500/50`) is
+ * computed from, since baking an arbitrary `/NN` blend into a `var()` chain
+ * at build time isn't worth the extra custom property per shade it would
+ * take; a `/NN` utility stays fixed to the shipped palette. Plain utilities
+ * (no `/NN`) always go through the var face, which is what actually moves
+ * when a person or a workspace picks a different palette. */
 
-/** Light-mode value for a brand-hue utility (null = leave alone). */
+/** Light-mode literal value for a brand-hue utility (null = leave alone). */
 function lightValue(prefix, hue, shade) {
   if (!BRAND_HUES.includes(hue)) return null;
   return BRAND_LIGHT[shade] ?? null;
 }
 
-/** Dark-mode value for any color utility (null = leave alone). */
-function darkValue(prefix, hue, shade) {
-  const kind =
+/** Light-mode var() reference for the same utility, or null. */
+function lightVarValue(prefix, hue, shade) {
+  if (!BRAND_HUES.includes(hue)) return null;
+  // `from`/`via`/`to` (gradient stops) fall back to the literal value: their
+  // PROP handler computes a same-color-but-transparent stop with fade(), which
+  // needs a real hex to compute from, not a var() reference.
+  if (prefix === 'from' || prefix === 'via' || prefix === 'to') return null;
+  return BRAND_LIGHT[shade] != null ? `var(--brand-${shade})` : null;
+}
+
+function _darkKind(prefix) {
+  return (
     prefix === 'bg' ? 'bg' :
     prefix === 'text' || prefix === 'placeholder' || prefix === 'fill' || prefix === 'stroke' ? 'text' :
     prefix === 'border' || prefix === 'divide' || prefix === 'ring' || prefix === 'ring-offset' || prefix === 'outline' || prefix === 'decoration' ? 'border' :
     prefix === 'accent' || prefix === 'caret' ? 'bg' :
-    prefix === 'from' || prefix === 'to' || prefix === 'via' ? 'bg' : null;
+    prefix === 'from' || prefix === 'to' || prefix === 'via' ? 'bg' : null
+  );
+}
+
+/** Dark-mode literal value for any color utility (null = leave alone). */
+function darkValue(prefix, hue, shade) {
+  const kind = _darkKind(prefix);
   if (!kind) return null;
 
   if (BRAND_HUES.includes(hue)) return BRAND_DARK[kind][shade] ?? null;
@@ -144,6 +185,45 @@ function darkValue(prefix, hue, shade) {
   if (shade === 100) return `rgba(${h.rgb}, 0.26)`;
   if (shade === 200) return `rgba(${h.rgb}, 0.36)`;
   if (shade === 300) return `rgba(${h.rgb}, 0.46)`;
+  return null;
+}
+
+/** Dark-mode var() reference for the same utility, or null. Mirrors
+ * darkValue()'s branches exactly, one level of indirection removed. */
+function darkVarValue(prefix, hue, shade) {
+  const kind = _darkKind(prefix);
+  if (!kind) return null;
+  // See lightVarValue(): gradient stops stay literal so fade() still has a
+  // real hex to derive a matching transparent stop from.
+  if (prefix === 'from' || prefix === 'via' || prefix === 'to') return null;
+
+  if (BRAND_HUES.includes(hue)) {
+    return BRAND_DARK[kind][shade] != null ? `var(--brand-${kind}-${shade})` : null;
+  }
+
+  if (NEUTRAL_HUES.includes(hue)) {
+    const k = (kind === 'bg' && prefix === 'accent') ? 'bg' : kind;
+    return NEUTRAL_DARK[k][shade] != null ? `var(--neutral-${k}-${shade})` : null;
+  }
+
+  const h = HUES[hue];
+  if (!h) return null;
+  const rgbVar = `var(--hue-${hue}-rgb)`;
+  if (kind === 'bg') {
+    if (shade === 50) return `rgba(${rgbVar}, 0.14)`;
+    if (shade === 100) return `rgba(${rgbVar}, 0.22)`;
+    if (shade === 200) return `rgba(${rgbVar}, 0.30)`;
+    return null;
+  }
+  if (kind === 'text') {
+    if (shade >= 700) return `var(--hue-${hue}-300)`;
+    if (shade === 600 || shade === 500) return `var(--hue-${hue}-400)`;
+    return null;
+  }
+  if (shade === 50) return `rgba(${rgbVar}, 0.18)`;
+  if (shade === 100) return `rgba(${rgbVar}, 0.26)`;
+  if (shade === 200) return `rgba(${rgbVar}, 0.36)`;
+  if (shade === 300) return `rgba(${rgbVar}, 0.46)`;
   return null;
 }
 
@@ -263,7 +343,7 @@ for (const prefix of ['bg', 'text', 'border', 'ring', 'divide'])
 
 const tokens = new Set([...baseTokens, ...used]);
 
-function emit(list, mapper, label, isDark = false) {
+function emit(list, mapper, varMapper, label, isDark = false) {
   // Group selectors that end up with the same declaration — the generated
   // sheet is large and near-identical rules compress badly when repeated.
   const groups = new Map();
@@ -271,9 +351,14 @@ function emit(list, mapper, label, isDark = false) {
     const parsed = parse(token);
     if (!parsed) continue;
     const { prefix, hue, shade, alpha } = parsed;
-    let value = mapper(prefix, hue, shade);
-    if (!value) continue;
-    if (alpha != null) value = withAlpha(value, alpha);
+    const literal = mapper(prefix, hue, shade);
+    if (!literal) continue;
+    // A plain utility (no `/NN`) goes through the var() face, so applyPalette
+    // can repaint it at runtime; a `/NN` opacity modifier is baked from the
+    // literal default, since re-theming that blend would need one more
+    // custom property per shade for no real benefit (see the comment above
+    // the mapper functions).
+    const value = alpha != null ? withAlpha(literal, alpha) : (varMapper(prefix, hue, shade) || literal);
     const built = selectorFor(token, prefix);
     if (!built) continue;
     // A `dark:` utility already scopes itself with `.dark`, so it needs the
@@ -290,8 +375,8 @@ function emit(list, mapper, label, isDark = false) {
   return { lines, count: [...groups.values()].reduce((n, s) => n + s.length, 0) };
 }
 
-const light = emit(tokens, lightValue, ':where(html) ');
-const dark = emit(tokens, darkValue, ':where(html.dark) ', true);
+const light = emit(tokens, lightValue, lightVarValue, ':where(html) ');
+const dark = emit(tokens, darkValue, darkVarValue, ':where(html.dark) ', true);
 
 
 /* Hand-written pieces the matrix cannot express: white/black surfaces,
@@ -380,6 +465,10 @@ ${SHADES.map((s) => `  --brand-${s}: ${BRAND_LIGHT[s]};`).join('\n')}
   --brand-contrast:  #ffffff;
   --brand-rgb:       ${BRAND_RGB};
 
+${SHADES.map((s) => `  --neutral-${s}: ${NEUTRAL_LIGHT[s]};`).join('\n')}
+
+${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --hue-${name}-400: ${h.t400};\n  --hue-${name}-300: ${h.t300};`).join('\n')}
+
   --ok:      #15803d;
   --warn:    #b45309;
   --danger:  #b91c1c;
@@ -414,6 +503,23 @@ html.dark {
 ${Object.entries(BRAND_DARK_VARS).map(([s, v]) => `  --brand-${s}: ${v};`).join('\n')}
   --brand:           #3f66d8;
   --brand-contrast:  #ffffff;
+  --brand-rgb:       ${BRAND_RGB};
+
+  /* The three brand/neutral roles the dark-theme matrix below paints with:
+     bg (tint fills), text (labels on a dark page) and border (rings, dividers).
+     Defaults are exactly BRAND_DARK / NEUTRAL_DARK above — this just gives
+     each entry a custom property so applyPalette() can move it at runtime. */
+${SHADES.filter((s) => BRAND_DARK.bg[s] != null).map((s) => `  --brand-bg-${s}: ${BRAND_DARK.bg[s]};`).join('\n')}
+${[300, 400, 500, 600, 700, 800, 900, 950].map((s) => `  --brand-text-${s}: ${BRAND_DARK.text[s]};`).join('\n')}
+${[50, 100, 200, 300, 400, 500, 600, 700, 800, 900].map((s) => `  --brand-border-${s}: ${BRAND_DARK.border[s]};`).join('\n')}
+
+${SHADES.map((s) => `  --neutral-bg-${s}: ${NEUTRAL_DARK.bg[s]};`).join('\n')}
+${[300, 400, 500, 600, 700, 800, 900, 950].map((s) => `  --neutral-text-${s}: ${NEUTRAL_DARK.text[s]};`).join('\n')}
+${SHADES.filter((s) => NEUTRAL_DARK.border[s] != null).map((s) => `  --neutral-border-${s}: ${NEUTRAL_DARK.border[s]};`).join('\n')}
+
+${SHADES.map((s) => `  --neutral-${s}: ${NEUTRAL_LIGHT[s]};`).join('\n')}
+
+${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --hue-${name}-400: ${h.t400};\n  --hue-${name}-300: ${h.t300};`).join('\n')}
 
   --ok:      #6ee7b7;
   --warn:    #fcd34d;

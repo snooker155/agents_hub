@@ -23,6 +23,28 @@ export default {
     noWorkspaces: 'Noch keine',
   },
 
+  palette: {
+    title: 'Farbpalette',
+    description: 'Wählen Sie 2 bis 4 Basisfarben; alles andere (Farbtöne, Flächen, Ränder) wird daraus berechnet. Gilt für Sie persönlich, zusätzlich zur Standardpalette des Arbeitsbereichs.',
+    loadFailed: 'Die Palette konnte nicht geladen werden.',
+    saveFailed: 'Die Palette konnte nicht gespeichert werden.',
+    brand: 'Markenfarbe',
+    neutral: 'Neutraler Farbton',
+    ok: 'Erfolgsakzent',
+    danger: 'Gefahrenakzent',
+    preview: 'Vorschau',
+    presets: {
+      navy: 'Marineblau',
+      forest: 'Wald',
+      slate: 'Schiefer',
+      sunset: 'Sonnenuntergang',
+      custom: 'Benutzerdefiniert',
+    },
+    contrastWarning: 'Geringer Kontrast: {{pair}} liegt bei nur {{ratio}}:1, unter dem von WCAG AA geforderten 4.5:1.',
+    save: 'Palette speichern',
+    reset: 'Auf Standard zurücksetzen',
+  },
+
   sessions: {
     title: 'Sitzungen',
     description: 'Jedes Gerät, auf dem Sie gerade angemeldet sind.',

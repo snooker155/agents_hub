@@ -23,6 +23,28 @@ export default {
     noWorkspaces: 'None yet',
   },
 
+  palette: {
+    title: 'Palette',
+    description: 'Pick 2 to 4 base colors; everything else (shades, panels, borders) is computed from them. Applies to you, everywhere, on top of the workspace default.',
+    loadFailed: 'Could not load your palette.',
+    saveFailed: 'Could not save your palette.',
+    brand: 'Brand',
+    neutral: 'Neutral tint',
+    ok: 'Success accent',
+    danger: 'Danger accent',
+    preview: 'Preview',
+    presets: {
+      navy: 'Navy',
+      forest: 'Forest',
+      slate: 'Slate',
+      sunset: 'Sunset',
+      custom: 'Custom',
+    },
+    contrastWarning: 'Low contrast: {{pair}} is only {{ratio}}:1, under the 4.5:1 that WCAG AA asks for.',
+    save: 'Save palette',
+    reset: 'Reset to default',
+  },
+
   sessions: {
     title: 'Sessions',
     description: 'Every device signed in as you right now.',

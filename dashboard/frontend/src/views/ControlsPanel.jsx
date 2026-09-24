@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Play, Pause, ChevronRight, ChevronDown } from 'lucide-react';
+import { cssVar } from '../lib/themeColors';
 
 // Agent-authored control panel. Renders the view's `controls` (a keyed map in
 // the live op shape; a list is also accepted) uniformly, and reports a change as
@@ -208,7 +209,7 @@ function ControlInput({ c, value, onChange, onAction }) {
         </select>
       );
     case 'color':
-      return <input type="color" value={value ?? '#2a4fbd'} onChange={(e) => onChange(e.target.value)} className="h-8 w-16 rounded" />;
+      return <input type="color" value={value ?? cssVar('--brand-600', '#2a4fbd')} onChange={(e) => onChange(e.target.value)} className="h-8 w-16 rounded" />;
     case 'button':
       return (
         <button

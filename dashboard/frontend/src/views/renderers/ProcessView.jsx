@@ -44,12 +44,20 @@ function layout(nodes, edges) {
   return pos;
 }
 
+// SVG paint attributes accept CSS custom properties, so the palette tokens
+// (src/theme.css, overridden by Account -> Palette) are referenced directly
+// and follow a palette or theme change with no re-render.
 const TYPE_STYLE = {
-  start: { fill: '#16a34a', shape: 'circle' },
-  end: { fill: '#dc2626', shape: 'circle' },
-  gateway: { fill: '#d97706', shape: 'diamond' },
-  task: { fill: '#2a4fbd', shape: 'rect' },
+  start: { fill: 'var(--ok, #16a34a)', shape: 'circle' },
+  end: { fill: 'var(--danger, #dc2626)', shape: 'circle' },
+  gateway: { fill: 'var(--warn, #d97706)', shape: 'diamond' },
+  task: { fill: 'var(--brand-600, #2a4fbd)', shape: 'rect' },
 };
+const EDGE_STROKE = 'var(--neutral-400, #94a3b8)';
+const EDGE_TEXT = 'var(--text-muted, #64748b)';
+const NODE_TEXT = 'var(--text-secondary, #475569)';
+const TOKEN_FILL = 'var(--hue-amber-400, #f59e0b)';
+const ACTIVE_STROKE = 'var(--hue-amber-400, #fbbf24)';
 
 export default function ProcessView({ view }) {
   // `t` below is the runtime clock — alias the translator.
@@ -82,8 +90,8 @@ export default function ProcessView({ view }) {
             if (!a || !b) return null;
             return (
               <g key={eid}>
-                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
-                {e.label && <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 4} fontSize="9" fill="#64748b" textAnchor="middle">{e.label}</text>}
+                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={EDGE_STROKE} strokeWidth="1.5" markerEnd="url(#arrow)" />
+                {e.label && <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 4} fontSize="9" fill={EDGE_TEXT} textAnchor="middle">{e.label}</text>}
               </g>
             );
           })}
@@ -91,7 +99,7 @@ export default function ProcessView({ view }) {
             const a = pos[tk.from]; const b = pos[tk.to];
             if (!a || !b) return null;
             const x = a.x + (b.x - a.x) * tk.p; const y = a.y + (b.y - a.y) * tk.p;
-            return <circle key={i} cx={x} cy={y} r="4" fill="#f59e0b" />;
+            return <circle key={i} cx={x} cy={y} r="4" fill={TOKEN_FILL} />;
           })}
           {Object.entries(nodes).map(([id, n]) => {
             const p = pos[id]; if (!p) return null;
@@ -99,16 +107,16 @@ export default function ProcessView({ view }) {
             const on = active.has(id);
             return (
               <g key={id} transform={`translate(${p.x},${p.y})`}>
-                {st.shape === 'circle' && <circle r="16" fill={st.fill} opacity={on ? 1 : 0.85} stroke={on ? '#fbbf24' : 'none'} strokeWidth="3" />}
-                {st.shape === 'diamond' && <rect x="-14" y="-14" width="28" height="28" transform="rotate(45)" fill={st.fill} opacity={on ? 1 : 0.85} stroke={on ? '#fbbf24' : 'none'} strokeWidth="3" />}
-                {st.shape === 'rect' && <rect x="-40" y="-16" width="80" height="32" rx="6" fill={st.fill} opacity={on ? 1 : 0.85} stroke={on ? '#fbbf24' : 'none'} strokeWidth="3" />}
-                <text y="34" fontSize="10" fill="#475569" textAnchor="middle">{n?.label || id}</text>
+                {st.shape === 'circle' && <circle r="16" fill={st.fill} opacity={on ? 1 : 0.85} stroke={on ? ACTIVE_STROKE : 'none'} strokeWidth="3" />}
+                {st.shape === 'diamond' && <rect x="-14" y="-14" width="28" height="28" transform="rotate(45)" fill={st.fill} opacity={on ? 1 : 0.85} stroke={on ? ACTIVE_STROKE : 'none'} strokeWidth="3" />}
+                {st.shape === 'rect' && <rect x="-40" y="-16" width="80" height="32" rx="6" fill={st.fill} opacity={on ? 1 : 0.85} stroke={on ? ACTIVE_STROKE : 'none'} strokeWidth="3" />}
+                <text y="34" fontSize="10" fill={NODE_TEXT} textAnchor="middle">{n?.label || id}</text>
               </g>
             );
           })}
           <defs>
             <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-              <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8" />
+              <path d="M0,0 L7,3 L0,6 Z" fill={EDGE_STROKE} />
             </marker>
           </defs>
         </svg>

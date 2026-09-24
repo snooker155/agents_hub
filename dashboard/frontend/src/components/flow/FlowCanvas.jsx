@@ -12,6 +12,13 @@ import 'reactflow/dist/style.css';
 import { ChevronDown, ChevronRight, Link2, WandSparkles } from 'lucide-react';
 import FlowNode from './FlowNode';
 import { useI18n } from '../../i18n';
+import { useThemeColors } from '../../lib/themeColors';
+
+// The dot-grid background reads the neutral ramp so a custom neutral tint
+// (Account -> Palette) or dark mode retints it along with everything else;
+// the cyan edge/marker color has no dedicated palette token (it is not one
+// of the 2-4 base colors a person or workspace sets) and stays literal.
+const CANVAS_COLOR_SPEC = { gridDot: ['--neutral-300', '#cbd5e1'] };
 
 const nodeTypes = {
   flowNode: FlowNode,
@@ -26,6 +33,7 @@ const CATEGORY_LABELS = {
   condition: 'Conditions',
   transform: 'Transforms',
   interrupt: 'Interrupts',
+  container: 'Nested runs',
 };
 
 export function EntityPalette({ entitiesByCategory = {} }) {
@@ -40,7 +48,7 @@ export function EntityPalette({ entitiesByCategory = {} }) {
   };
 
   const cats = Object.keys(entitiesByCategory).sort((a, b) => {
-    const order = ['agent', 'processor', 'condition', 'transform', 'interrupt'];
+    const order = ['agent', 'processor', 'condition', 'transform', 'interrupt', 'container'];
     const ia = order.indexOf(a); const ib = order.indexOf(b);
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
   });
@@ -113,6 +121,7 @@ function FlowCanvasInner({
   const wrapperRef = useRef(null);
   const reactFlow = useReactFlow();
   const [isOver, setIsOver] = useState(false);
+  const colors = useThemeColors(CANVAS_COLOR_SPEC);
 
   const enrichedNodes = useMemo(
     () => nodes.map((n) => ({ ...n, data: { ...n.data, isActive: n.id === activeNodeId } })),
@@ -219,7 +228,7 @@ function FlowCanvasInner({
           }}
         >
           <MiniMap pannable zoomable className="flow-minimap" />
-          <Background gap={24} color="#cbd5e1" />
+          <Background gap={24} color={colors.gridDot} />
           <Controls className="!shadow-none" />
         </ReactFlow>
       </div>

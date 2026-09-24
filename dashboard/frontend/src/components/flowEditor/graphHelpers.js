@@ -1,16 +1,24 @@
 // Pure graph helpers: turning a stored flow node into the shape ReactFlow
 // renders, and back. No React here, so these are cheap to unit test on their
 // own and safe to import from both the canvas wiring and the inspector.
+import { cssVar } from '../../lib/themeColors';
 
+// Read once, at module load (there is no component here to re-render on a
+// later palette change — see src/lib/themeColors.js's useThemeColors for the
+// reactive version components use). The fallbacks are the literal defaults
+// this module always shipped, so nothing changes for anyone who never
+// touches Account -> Palette. 'design' has no dedicated hue token (violet is
+// a brand hue, remapped navy elsewhere, not one of the standalone chromatic
+// hues gen-theme.mjs exposes) and stays a plain constant.
 export const DOMAIN_COLORS = {
-  management: '#22d3ee',
-  analysis: '#fbbf24',
+  management: cssVar('--hue-cyan-400', '#22d3ee'),
+  analysis: cssVar('--hue-amber-400', '#fbbf24'),
   design: '#a78bfa',
-  development: '#34d399',
-  testing: '#fb7185',
-  operations: '#fb923c',
-  flow: '#94a3b8',
-  general: '#94a3b8',
+  development: cssVar('--hue-emerald-400', '#34d399'),
+  testing: cssVar('--hue-rose-400', '#fb7185'),
+  operations: cssVar('--hue-orange-400', '#fb923c'),
+  flow: cssVar('--neutral-400', '#94a3b8'),
+  general: cssVar('--neutral-400', '#94a3b8'),
 };
 
 export function normalizeNode(node, onRunNode) {

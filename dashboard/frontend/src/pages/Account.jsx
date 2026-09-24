@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Check, Copy, Github, KeyRound, Laptop, Link2, Loader, Lock, LogOut, Plus,
+  AlertTriangle, Check, Copy, Github, KeyRound, Laptop, Link2, Loader, Lock, LogOut, Palette, Plus,
   RefreshCw, Trash2, User as UserIcon,
 } from 'lucide-react';
 import {
@@ -9,9 +9,12 @@ import {
   getMySessions, getWorkspaces, githubConnectUrl, revokeMyApiKey, revokeMySession,
   revokeOtherSessions,
 } from '../api';
+import { getMyPreferences, putMyPreferences } from '../api/palette';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { SectionCard, inputCls } from '../components/settingsUi';
 import { useAuth } from '../components/auth';
+import { useTheme, resolvePalette } from '../components/theme';
+import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
 import { useFormatters, useI18n } from '../i18n';
 
 const btnPrimary = 'flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white '
@@ -48,6 +51,7 @@ export default function Account() {
       <PageHeader icon={UserIcon} title={t('account.title')} description={t('account.description')} />
       <div className="space-y-6">
         <ProfileSection user={user} t={t} />
+        <PaletteSection t={t} />
         <SessionsSection t={t} />
         {user?.has_password && features?.local_passwords && (
           <PasswordSection t={t} onChanged={onPasswordChanged} />
@@ -96,6 +100,194 @@ function Field({ label, value }) {
     <div>
       <dt className="text-xs font-medium text-gray-500">{label}</dt>
       <dd className="mt-0.5 text-gray-800">{value || '—'}</dd>
+    </div>
+  );
+}
+
+// ── palette ──────────────────────────────────────────────────────────────────
+
+/**
+ * A personal color palette (docs/settings.md "Palette"): 2 to 4 base colors —
+ * brand is always set, neutral/ok/danger are opt-in — saved through
+ * GET/PUT /api/auth/preferences (dashboard/backend/routes/account.py). The
+ * resolution order (this, then the workspace default, then the built-in
+ * palette) lives in components/theme.js's resolvePalette, called again here
+ * right after a save or a reset so the change takes effect at once.
+ */
+function PaletteSection({ t }) {
+  const { theme, resolvedMode } = useTheme();
+  const [saved, setSaved] = useState(null); // what the backend has, or null
+  const [draft, setDraft] = useState(PRESETS.navy);
+  const [enabled, setEnabled] = useState({ neutral: false, ok: false, danger: false });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await getMyPreferences();
+      const p = data?.palette && Object.keys(data.palette).length ? data.palette : null;
+      setSaved(p);
+      setDraft({ ...PRESETS.navy, ...(p || {}) });
+      setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
+      setError('');
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('account.palette.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const applyPreset = (name) => {
+    setDraft(PRESETS[name]);
+    setEnabled({ neutral: true, ok: true, danger: true });
+  };
+
+  const activePalette = () => {
+    const payload = { brand: draft.brand };
+    if (enabled.neutral) payload.neutral = draft.neutral;
+    if (enabled.ok) payload.ok = draft.ok;
+    if (enabled.danger) payload.danger = draft.danger;
+    return payload;
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const payload = activePalette();
+      await putMyPreferences({ palette: payload });
+      setSaved(payload);
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 2000);
+      await resolvePalette(theme);
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('account.palette.saveFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await putMyPreferences({ palette: {} });
+      setSaved(null);
+      setDraft(PRESETS.navy);
+      setEnabled({ neutral: false, ok: false, danger: false });
+      await resolvePalette(theme);
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('account.palette.saveFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const preset = matchPreset(activePalette());
+  const ramp = rampFromColor(draft.brand, { mode: resolvedMode });
+  const warnings = checkPalette(activePalette(), resolvedMode);
+
+  return (
+    <SectionCard title={t('account.palette.title')}>
+      <p className="text-sm text-gray-600">{t('account.palette.description')}</p>
+      {error && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+      )}
+      {loading ? (
+        <p className="text-sm text-gray-500 flex items-center gap-2">
+          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            {PRESET_ORDER.map((name) => (
+              <button key={name} type="button" onClick={() => applyPreset(name)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${
+                  preset === name ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}>
+                {t(`account.palette.presets.${name}`)}
+              </button>
+            ))}
+            <span className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
+              preset ? 'text-gray-400' : 'border border-indigo-500 bg-indigo-50 text-indigo-700'
+            }`}>
+              {t('account.palette.presets.custom')}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <ColorField label={t('account.palette.brand')} value={draft.brand} required
+              onChange={(v) => setDraft((d) => ({ ...d, brand: v }))} />
+            <ColorField label={t('account.palette.neutral')} value={draft.neutral}
+              enabled={enabled.neutral} onToggle={(v) => setEnabled((e) => ({ ...e, neutral: v }))}
+              onChange={(v) => setDraft((d) => ({ ...d, neutral: v }))} />
+            <ColorField label={t('account.palette.ok')} value={draft.ok}
+              enabled={enabled.ok} onToggle={(v) => setEnabled((e) => ({ ...e, ok: v }))}
+              onChange={(v) => setDraft((d) => ({ ...d, ok: v }))} />
+            <ColorField label={t('account.palette.danger')} value={draft.danger}
+              enabled={enabled.danger} onToggle={(v) => setEnabled((e) => ({ ...e, danger: v }))}
+              onChange={(v) => setDraft((d) => ({ ...d, danger: v }))} />
+          </div>
+
+          <div>
+            <span className="block text-xs font-medium text-gray-500 mb-1">{t('account.palette.preview')}</span>
+            <div className="flex items-center gap-1">
+              {SHADES.map((s) => (
+                <div key={s} className="w-6 h-6 rounded" style={{ backgroundColor: ramp[s] }} title={String(s)} />
+              ))}
+            </div>
+          </div>
+
+          {warnings.length > 0 && (
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 space-y-1">
+              {warnings.map((w) => (
+                <div key={w.label}>
+                  {t('account.palette.contrastWarning', { pair: w.label, ratio: w.ratio.toFixed(2) })}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={save} disabled={busy} className={btnPrimary}>
+              {busy ? <Loader className="w-4 h-4 animate-spin" /> : justSaved ? <Check className="w-4 h-4" /> : <Palette className="w-4 h-4" />}
+              {t('account.palette.save')}
+            </button>
+            <button type="button" onClick={reset} disabled={busy || !saved} className={btnGhost}>
+              <RefreshCw className="w-3.5 h-3.5" /> {t('account.palette.reset')}
+            </button>
+          </div>
+        </>
+      )}
+    </SectionCard>
+  );
+}
+
+function ColorField({ label, value, onChange, required, enabled, onToggle }) {
+  const active = required || enabled;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-medium text-gray-500">{label}</span>
+        {!required && (
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+            <input type="checkbox" checked={Boolean(enabled)} onChange={(e) => onToggle(e.target.checked)} />
+          </label>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <input type="color" value={value || '#000000'} disabled={!active}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-10 h-9 rounded border border-gray-200 disabled:opacity-40" />
+        <input type="text" value={value || ''} disabled={!active}
+          onChange={(e) => onChange(e.target.value)}
+          className={inputCls + ' font-mono text-xs disabled:opacity-40'} />
+      </div>
     </div>
   );
 }

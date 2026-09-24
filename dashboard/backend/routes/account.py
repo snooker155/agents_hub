@@ -159,6 +159,34 @@ async def change_password(request: Request, payload: PasswordChange):
     return {"ok": True, "relogin": True}
 
 
+# ── personal preferences ─────────────────────────────────────────────────────
+
+@router.get("/api/auth/preferences")
+async def get_preferences(request: Request) -> dict:
+    """The caller's own preferences: today just a palette
+    (docs/settings.md "Palette"), read by the frontend's palette resolution
+    (dashboard/frontend/src/components/theme.js) ahead of the workspace
+    default and the built-in one."""
+    principal = _require_account(request)
+    return identity.get_preferences(principal.id)
+
+
+@router.put("/api/auth/preferences")
+async def put_preferences(request: Request, payload: dict):
+    """Merge into the caller's stored preferences: a partial update (just
+    ``{"palette": {...}}``) never touches a preference key it did not name.
+    Setting a key to an empty object clears it (the frontend's "Reset" sends
+    ``{"palette": {}}``), since that is a value, not an omission."""
+    principal = _require_account(request)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="preferences must be a key-value object")
+    merged = {**identity.get_preferences(principal.id), **payload}
+    identity.set_preferences(principal.id, merged)
+    audit.record("account.preferences", principal=principal, object_type="user",
+                 object_id=principal.id, ip=identity.client_ip(request))
+    return merged
+
+
 # ── my API keys ──────────────────────────────────────────────────────────────
 
 @router.get("/api/auth/keys")

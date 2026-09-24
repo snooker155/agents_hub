@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -723,6 +724,40 @@ def revoke_other_sessions(user_id: str, keep_session_id: Optional[str]) -> int:
     return int(cursor.rowcount or 0)
 
 
+# ── personal preferences ─────────────────────────────────────────────────────
+
+def get_preferences(user_id: str) -> Dict[str, Any]:
+    """A user's own preferences (today: a palette, docs/settings.md
+    "Palette"), stored as JSON on their row. ``{}`` for a user with none set
+    and for an unknown user, the same "nothing here yet" answer either way."""
+    row = db.get_conn().execute(
+        "SELECT preferences FROM users WHERE user_id = ?", (str(user_id),)).fetchone()
+    if row is None:
+        return {}
+    keys = row.keys() if hasattr(row, "keys") else ()
+    raw = row["preferences"] if "preferences" in keys else None
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def set_preferences(user_id: str, preferences: Dict[str, Any]) -> bool:
+    """Replace a user's stored preferences wholesale. The route
+    (``routes/account.py``) merges a partial update into what
+    :func:`get_preferences` already returns before calling this, so a
+    preference key nobody touched in this call is not lost; this function
+    itself just persists whatever dict it is handed."""
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            "UPDATE users SET preferences = ?, updated_at = ? WHERE user_id = ?",
+            (json.dumps(preferences or {}), _iso(_now()), str(user_id)))
+    return bool(cursor.rowcount)
+
+
 # ── workspace membership ─────────────────────────────────────────────────────
 
 def membership_role(workspace: str, user_id: str) -> Optional[str]:
@@ -1036,7 +1071,7 @@ __all__ = [
     "SOURCE_LOCAL", "SOURCE_OIDC", "SOURCE_SCIM",
     "authorize_request", "bootstrap_required", "claim_workspace", "client_ip",
     "create_first_admin", "create_user", "current_mode", "current_principal",
-    "current_user_id", "delete_user", "get_user", "get_user_by_email",
+    "current_user_id", "delete_user", "get_preferences", "get_user", "get_user_by_email",
     "get_user_by_external", "get_user_by_external_id", "get_user_by_username",
     "hash_password", "is_service_token", "list_members", "list_sessions", "list_users",
     "local_passwords_enabled", "login", "login_throttled",
@@ -1044,7 +1079,8 @@ __all__ = [
     "principal_dict",
     "remove_member", "request_principal", "require_role", "reset_current_user",
     "revoke_other_sessions", "revoke_session",
-    "service_token", "session_for_token", "set_current_user", "set_member", "set_password",
+    "service_token", "session_for_token", "set_current_user", "set_member",
+    "set_password", "set_preferences",
     "update_user", "upsert_external_user", "user_count", "user_for_session",
     "verify_password", "workspace_roles_for_user", "workspaces_for_user",
     "required_workspace_role",

@@ -3,6 +3,18 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { compile } from '../runtimes/expr';
 import { useI18n } from '../../i18n';
+import { useThemeColors } from '../../lib/themeColors';
+
+// The plot draws on a canvas, so its colours are resolved from the palette
+// tokens (a 2d context cannot read a CSS class) and passed into the draw
+// functions; the component re-draws when the palette or theme changes.
+const MATH_COLOR_SPEC = {
+  axis: ['--border-default', '#e2e8f0'],
+  axisDark: ['--neutral-700', '#334155'],
+  curve: ['--brand-500', '#3f66d8'],
+  label: ['--text-muted', '#64748b'],
+  labelDark: ['--neutral-400', '#94a3b8'],
+};
 
 // Math (plot) renderer — evaluates spec.expr with spec.params over spec.domain,
 // drawing on a canvas. Three modes (spec.mode):
@@ -48,13 +60,13 @@ function heat(v) {
   return `rgb(${r},${g},${b})`;
 }
 
-function drawAxes(ctx, w, h, sx, sy, x0, x1, ymin, ymax, dark) {
-  ctx.strokeStyle = dark ? '#334155' : '#e2e8f0'; ctx.lineWidth = 1;
+function drawAxes(ctx, w, h, sx, sy, x0, x1, ymin, ymax, dark, c) {
+  ctx.strokeStyle = dark ? c.axisDark : c.axis; ctx.lineWidth = 1;
   if (ymin < 0 && ymax > 0) { ctx.beginPath(); ctx.moveTo(0, sy(0)); ctx.lineTo(w, sy(0)); ctx.stroke(); }
   if (x0 < 0 && x1 > 0) { ctx.beginPath(); ctx.moveTo(sx(0), 0); ctx.lineTo(sx(0), h); ctx.stroke(); }
 }
 
-function drawFunction2d(ctx, w, h, evalFns, params, variable, domain, dark) {
+function drawFunction2d(ctx, w, h, evalFns, params, variable, domain, dark, c) {
   const evalFn = evalFns[0];
   const [x0, x1] = domain;
   const N = Math.max(50, Math.floor(w));
@@ -70,8 +82,8 @@ function drawFunction2d(ctx, w, h, evalFns, params, variable, domain, dark) {
   const pad = (ymax - ymin) * 0.1; ymin -= pad; ymax += pad;
   const sx = (x) => ((x - x0) / (x1 - x0)) * w;
   const sy = (y) => h - ((y - ymin) / (ymax - ymin)) * h;
-  drawAxes(ctx, w, h, sx, sy, x0, x1, ymin, ymax, dark);
-  ctx.strokeStyle = '#3f66d8'; ctx.lineWidth = 2; ctx.beginPath();
+  drawAxes(ctx, w, h, sx, sy, x0, x1, ymin, ymax, dark, c);
+  ctx.strokeStyle = c.curve; ctx.lineWidth = 2; ctx.beginPath();
   let started = false;
   for (let i = 0; i <= N; i++) {
     const y = ys[i];
@@ -82,10 +94,10 @@ function drawFunction2d(ctx, w, h, evalFns, params, variable, domain, dark) {
   ctx.stroke();
 }
 
-function drawParametric(ctx, w, h, evalFns, params, variable, domain, dark, hint) {
+function drawParametric(ctx, w, h, evalFns, params, variable, domain, dark, hint, c) {
   const [fx, fy] = evalFns;
   if (!fy) {
-    ctx.fillStyle = dark ? '#94a3b8' : '#64748b'; ctx.font = '13px sans-serif';
+    ctx.fillStyle = dark ? c.labelDark : c.label; ctx.font = '13px sans-serif';
     ctx.fillText(hint, 12, 24);
     return;
   }
@@ -109,8 +121,8 @@ function drawParametric(ctx, w, h, evalFns, params, variable, domain, dark, hint
   xmin -= padX; xmax += padX; ymin -= padY; ymax += padY;
   const sx = (x) => ((x - xmin) / (xmax - xmin)) * w;
   const sy = (y) => h - ((y - ymin) / (ymax - ymin)) * h;
-  drawAxes(ctx, w, h, sx, sy, xmin, xmax, ymin, ymax, dark);
-  ctx.strokeStyle = '#3f66d8'; ctx.lineWidth = 2; ctx.beginPath();
+  drawAxes(ctx, w, h, sx, sy, xmin, xmax, ymin, ymax, dark, c);
+  ctx.strokeStyle = c.curve; ctx.lineWidth = 2; ctx.beginPath();
   let started = false;
   for (const [x, y] of pts) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) { started = false; continue; }
@@ -119,7 +131,7 @@ function drawParametric(ctx, w, h, evalFns, params, variable, domain, dark, hint
   ctx.stroke();
 }
 
-function drawSurface3d(ctx, w, h, evalFns, params, domain, domain2, dark) {
+function drawSurface3d(ctx, w, h, evalFns, params, domain, domain2, dark, c) {
   const f = evalFns[0];
   const [x0, x1] = domain;
   const [y0, y1] = domain2;
@@ -165,7 +177,7 @@ function drawSurface3d(ctx, w, h, evalFns, params, domain, domain2, dark) {
       ctx.closePath(); ctx.fill(); ctx.stroke();
     }
   }
-  ctx.fillStyle = dark ? '#94a3b8' : '#64748b'; ctx.font = '11px monospace';
+  ctx.fillStyle = dark ? c.labelDark : c.label; ctx.font = '11px monospace';
   ctx.fillText(`z ∈ [${zmin.toFixed(2)}, ${zmax.toFixed(2)}]`, 8, h - 8);
 }
 
@@ -191,6 +203,7 @@ export default function MathView({ view, theme, onOp }) {
   const canvasRef = useRef(null);
   const { w, h } = useSize(wrapRef);
   const dark = theme === 'dark';
+  const colors = useThemeColors(MATH_COLOR_SPEC);
 
   const evalFns = useMemo(() => {
     const parts = mode === 'parametric' ? splitTopLevel(spec.expr) : [spec.expr || '0'];
@@ -205,10 +218,10 @@ export default function MathView({ view, theme, onOp }) {
     const ctx = cv.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    if (mode === 'parametric') drawParametric(ctx, w, h, evalFns, params, paramVariable, domain, dark, t('viewMathView.parametricHint'));
-    else if (mode === 'surface3d') drawSurface3d(ctx, w, h, evalFns, params, domain, domain2, dark);
-    else drawFunction2d(ctx, w, h, evalFns, params, variable, domain, dark);
-  }, [w, h, evalFns, mode, params, domain, domain2, variable, paramVariable, dark, t]);
+    if (mode === 'parametric') drawParametric(ctx, w, h, evalFns, params, paramVariable, domain, dark, t('viewMathView.parametricHint'), colors);
+    else if (mode === 'surface3d') drawSurface3d(ctx, w, h, evalFns, params, domain, domain2, dark, colors);
+    else drawFunction2d(ctx, w, h, evalFns, params, variable, domain, dark, colors);
+  }, [w, h, evalFns, mode, params, domain, domain2, variable, paramVariable, dark, colors, t]);
 
   const eqHtml = useMemo(() => {
     if (!spec.latex) return null;

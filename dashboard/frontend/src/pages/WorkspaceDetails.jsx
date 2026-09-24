@@ -2,12 +2,16 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
-import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow } from 'lucide-react';
+import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader } from 'lucide-react';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
 import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
 import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
+import { useAuth, isAdmin, isMultiUser } from '../components/auth';
+import { useTheme, resolvePalette } from '../components/theme';
+import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
+import { inputCls } from '../components/settingsUi';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -1088,6 +1092,10 @@ const WorkspaceDetails = () => {
           See components/workspace/WorkspaceMembers.jsx. */}
       {activeTab === 'agents' && <WorkspaceMembers workspace={name} />}
       {activeTab === 'agents' && <WorkspaceSecrets workspace={name} agents={ws?.metadata?.allowed_agents || []} />}
+      {/* This workspace's default palette (docs/settings.md "Palette"): renders
+          nothing for a non-admin in multi mode, since only an admin may set a
+          default that reaches everyone in the workspace. */}
+      {activeTab === 'agents' && <WorkspacePaletteDefault workspace={name} />}
 
       {activeTab === 'instructions' && (
         <div className="bg-white p-6 shadow-md rounded-lg">
@@ -1136,5 +1144,216 @@ const WorkspaceDetails = () => {
     </PageContainer>
   );
 };
+
+// ── default palette ──────────────────────────────────────────────────────────
+
+/**
+ * The workspace's default palette: 2 to 4 base colors stored at
+ * `settings.palette` inside the workspace's metadata, read and written
+ * through the settings-overrides route every other per-workspace setting
+ * already uses (routes/workspaces.py, workspace/storage.py). Visible to an
+ * admin always, and to anyone outside `multi` mode, where there is only one
+ * operator and every distinction between "mine" and "the workspace's"
+ * default palette blurs into "the same setting".
+ */
+function WorkspacePaletteDefault({ workspace }) {
+  const { t } = useI18n();
+  const { theme, resolvedMode } = useTheme();
+  const auth = useAuth();
+  const visible = !isMultiUser(auth) || isAdmin(auth);
+
+  const [overrides, setOverrides] = useState(null);
+  const [draft, setDraft] = useState(PRESETS.navy);
+  const [enabled, setEnabled] = useState({ neutral: false, ok: false, danger: false });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!workspace || !visible) return;
+    setLoading(true);
+    try {
+      const { data } = await getWorkspaceSettingsOverrides(workspace);
+      const all = data?.overrides && typeof data.overrides === 'object' ? data.overrides : {};
+      setOverrides(all);
+      const p = all.palette && typeof all.palette === 'object' && Object.keys(all.palette).length ? all.palette : null;
+      setDraft({ ...PRESETS.navy, ...(p || {}) });
+      setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
+      setError('');
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('workspaceDetails.palette.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [workspace, visible, t]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!visible) return null;
+
+  const applyPreset = (name) => {
+    setDraft(PRESETS[name]);
+    setEnabled({ neutral: true, ok: true, danger: true });
+  };
+
+  const activePalette = () => {
+    const payload = { brand: draft.brand };
+    if (enabled.neutral) payload.neutral = draft.neutral;
+    if (enabled.ok) payload.ok = draft.ok;
+    if (enabled.danger) payload.danger = draft.danger;
+    return payload;
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const payload = activePalette();
+      const nextOverrides = { ...(overrides || {}), palette: payload };
+      await updateWorkspaceSettingsOverrides(workspace, nextOverrides);
+      setOverrides(nextOverrides);
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 2000);
+      await resolvePalette(theme);
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('workspaceDetails.palette.saveFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const nextOverrides = { ...(overrides || {}) };
+      delete nextOverrides.palette;
+      await updateWorkspaceSettingsOverrides(workspace, nextOverrides);
+      setOverrides(nextOverrides);
+      setDraft(PRESETS.navy);
+      setEnabled({ neutral: false, ok: false, danger: false });
+      await resolvePalette(theme);
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('workspaceDetails.palette.saveFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const preset = matchPreset(activePalette());
+  const ramp = rampFromColor(draft.brand, { mode: resolvedMode });
+  const warnings = checkPalette(activePalette(), resolvedMode);
+  const hasDefault = Boolean(overrides?.palette && Object.keys(overrides.palette).length);
+
+  return (
+    <div className="bg-white p-6 shadow-md rounded-lg space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <PaletteIcon className="w-5 h-5 text-indigo-500" />
+            {t('workspaceDetails.palette.title')}
+          </h3>
+          <p className="text-sm text-gray-500 mt-0.5">{t('workspaceDetails.palette.description')}</p>
+        </div>
+      </div>
+      {error && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+      )}
+      {loading ? (
+        <p className="text-sm text-gray-500 flex items-center gap-2">
+          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            {PRESET_ORDER.map((name) => (
+              <button key={name} type="button" onClick={() => applyPreset(name)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${
+                  preset === name ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}>
+                {t(`workspaceDetails.palette.presets.${name}`)}
+              </button>
+            ))}
+            <span className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
+              preset ? 'text-gray-400' : 'border border-indigo-500 bg-indigo-50 text-indigo-700'
+            }`}>
+              {t('workspaceDetails.palette.presets.custom')}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <PaletteColorField label={t('workspaceDetails.palette.brand')} value={draft.brand} required
+              onChange={(v) => setDraft((d) => ({ ...d, brand: v }))} />
+            <PaletteColorField label={t('workspaceDetails.palette.neutral')} value={draft.neutral}
+              enabled={enabled.neutral} onToggle={(v) => setEnabled((e) => ({ ...e, neutral: v }))}
+              onChange={(v) => setDraft((d) => ({ ...d, neutral: v }))} />
+            <PaletteColorField label={t('workspaceDetails.palette.ok')} value={draft.ok}
+              enabled={enabled.ok} onToggle={(v) => setEnabled((e) => ({ ...e, ok: v }))}
+              onChange={(v) => setDraft((d) => ({ ...d, ok: v }))} />
+            <PaletteColorField label={t('workspaceDetails.palette.danger')} value={draft.danger}
+              enabled={enabled.danger} onToggle={(v) => setEnabled((e) => ({ ...e, danger: v }))}
+              onChange={(v) => setDraft((d) => ({ ...d, danger: v }))} />
+          </div>
+
+          <div>
+            <span className="block text-xs font-medium text-gray-500 mb-1">{t('workspaceDetails.palette.preview')}</span>
+            <div className="flex items-center gap-1">
+              {SHADES.map((s) => (
+                <div key={s} className="w-6 h-6 rounded" style={{ backgroundColor: ramp[s] }} title={String(s)} />
+              ))}
+            </div>
+          </div>
+
+          {warnings.length > 0 && (
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 space-y-1">
+              {warnings.map((w) => (
+                <div key={w.label}>
+                  {t('workspaceDetails.palette.contrastWarning', { pair: w.label, ratio: w.ratio.toFixed(2) })}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={save} disabled={busy}
+              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50">
+              {busy ? <Loader className="w-4 h-4 animate-spin" /> : justSaved ? <Check className="w-4 h-4" /> : <PaletteIcon className="w-4 h-4" />}
+              {t('workspaceDetails.palette.save')}
+            </button>
+            <button type="button" onClick={reset} disabled={busy || !hasDefault}
+              className="flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50">
+              <RefreshCw className="w-3.5 h-3.5" /> {t('workspaceDetails.palette.reset')}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PaletteColorField({ label, value, onChange, required, enabled, onToggle }) {
+  const active = required || enabled;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-medium text-gray-500">{label}</span>
+        {!required && (
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+            <input type="checkbox" checked={Boolean(enabled)} onChange={(e) => onToggle(e.target.checked)} />
+          </label>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <input type="color" value={value || '#000000'} disabled={!active}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-10 h-9 rounded border border-gray-200 disabled:opacity-40" />
+        <input type="text" value={value || ''} disabled={!active}
+          onChange={(e) => onChange(e.target.value)}
+          className={inputCls + ' font-mono text-xs disabled:opacity-40'} />
+      </div>
+    </div>
+  );
+}
 
 export default WorkspaceDetails;
