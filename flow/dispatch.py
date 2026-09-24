@@ -279,6 +279,55 @@ class EntityNode(FlowEntity):
         return DispatchResult(ok=True, text=text, written=written, goto=goto)
 
 
+
+@register_category("container")
+class ContainerEntity(EntityNode):
+    """A node that runs a whole team, loop or flow as a nested run.
+
+    The callable (flow/entities/containers/) launches the child with the flow
+    run as its parent, waits for it to finish and returns ``{"result",
+    "child_run_id", "child_kind"}``. The result lands under the node's first
+    declared output key; the child's id and kind are reported beside it in
+    ``written`` so the flow log names the run the node started, without
+    putting them into flow state where two container nodes would collide.
+
+    The node's ``timeout_seconds`` is handed to the callable as
+    ``_timeout_seconds``: the engine's own timeout cannot interrupt the
+    waiting thread, so the callable enforces it itself and stops the child.
+    """
+
+    def run(self, node: Dict[str, Any], state: FlowState, ctx: RunContext) -> DispatchResult:
+        _inputs, outputs, config = self._resolve_io(node)
+        timeout = node_field(node, "timeout_seconds")
+        if timeout not in (None, ""):
+            config["_timeout_seconds"] = timeout
+        try:
+            fn = self.spec.load_callable()
+        except Exception as e:  # noqa: BLE001
+            return DispatchResult(ok=False, error=f"entity '{self.id}' not callable: {e}")
+        try:
+            payload = fn(state, config, ctx)
+        except Exception as e:  # noqa: BLE001 - a child that fails fails the node
+            return DispatchResult(ok=False, error=str(e) or type(e).__name__)
+        if isinstance(payload, NodeResult):
+            payload = payload.outputs
+        payload = payload if isinstance(payload, dict) else {"result": payload}
+        result = payload.get("result")
+        output_key = (list(outputs) or ["result"])[0]
+        try:
+            written = state.apply([output_key], {output_key: result})
+        except Exception as e:  # StateMutationError or similar
+            return DispatchResult(ok=False, error=str(e))
+        child_id = str(payload.get("child_run_id") or "")
+        child_kind = str(payload.get("child_kind") or "")
+        written["child_run_id"] = child_id
+        written["child_kind"] = child_kind
+        text = result if isinstance(result, str) else _preview(result)
+        return DispatchResult(
+            ok=True, text=f"{child_kind} run {child_id}: {_preview(text)}",
+            output=text, written=written,
+        )
+
 # -------------------- backward-compatible module API --------------------
 # These wrappers preserve the original function names used by runtime.flow_run and
 # flow.validate while delegating to the class system above.

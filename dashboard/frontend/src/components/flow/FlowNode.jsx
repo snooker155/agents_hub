@@ -1,5 +1,6 @@
 import React from 'react';
 import { Handle, Position } from 'reactflow';
+import { Boxes } from 'lucide-react';
 
 const TAG_STYLES = {
   management: 'bg-cyan-50 text-cyan-700',
@@ -9,11 +10,14 @@ const TAG_STYLES = {
   testing: 'bg-rose-50 text-rose-700',
   operations: 'bg-orange-50 text-orange-700',
   automation: 'bg-slate-100 text-slate-600',
+  // A node that runs a team, a loop or a flow as a nested run.
+  container: 'bg-indigo-50 text-indigo-700',
   general: 'bg-slate-100 text-slate-600',
 };
 
 function FlowNode({ data, selected }) {
-  const tagStyle = TAG_STYLES[data.domain] || TAG_STYLES.general;
+  const isContainer = data.category === 'container';
+  const tagStyle = TAG_STYLES[isContainer ? 'container' : data.domain] || TAG_STYLES.general;
   const { isActive } = data;
 
   return (
@@ -33,8 +37,9 @@ function FlowNode({ data, selected }) {
         </span>
       )}
       <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-2 !border-white !bg-cyan-500" />
-      <div className={`mb-1 block truncate rounded px-1 py-0.5 text-[7px] font-bold uppercase tracking-wide ${tagStyle}`}>
-        {data.domain || 'general'}
+      <div className={`mb-1 flex items-center gap-0.5 truncate rounded px-1 py-0.5 text-[7px] font-bold uppercase tracking-wide ${tagStyle}`}>
+        {isContainer ? <Boxes className="h-2 w-2 shrink-0" aria-hidden="true" /> : null}
+        <span className="truncate">{data.domain || 'general'}</span>
       </div>
       <div className="text-[9px] font-semibold leading-tight text-slate-900 line-clamp-2">
         {data.label}

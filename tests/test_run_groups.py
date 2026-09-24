@@ -322,3 +322,21 @@ def test_the_route_answers_404_for_an_unknown_group_and_400_for_an_unknown_kind(
     assert client.get("/api/runs/groups/flow/nope").status_code == 404
     assert client.get("/api/runs/groups/nope/x").status_code == 400
     assert client.get("/api/runs/groups", params={"kind": "nope"}).status_code == 400
+
+
+def test_a_flow_groups_cost_includes_the_runs_nested_inside_it():
+    """A container node (flow/entities/containers) launches a team, loop or
+    flow run with the flow run as its parent. The parent's total is its own
+    node runs plus those nested groups, and every leaf is still priced once:
+    the nested run's leaves belong to the nested group, not to the parent's
+    own node list."""
+    from common import entity_runs
+
+    _a_flow_run("fr-parent")
+    _agent_run("run-own", inbound=100_000, flow_run_id="fr-parent")
+    _a_flow_run("fr-child")
+    entity_runs.update("fr-child", {"parent_run_id": "fr-parent"})
+    _agent_run("run-nested", inbound=200_000, flow_run_id="fr-child")
+
+    assert run_groups.group_cost("flow", "fr-child") == pytest.approx(2.0)
+    assert run_groups.group_cost("flow", "fr-parent") == pytest.approx(3.0)

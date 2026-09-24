@@ -96,4 +96,13 @@ export default {
   selectedRun: 'Ausgewählter Lauf',
   stepCount: '{{count}} Schritte',
   selectWorkspaceFirst: 'Wählen Sie zuerst einen Workspace für diesen Flow.',
+  container: {
+    run_team: 'Team',
+    run_loop: 'Schleife',
+    run_flow: 'Flow',
+    choose: 'Auswählen...',
+    goal: 'Ziel',
+    seedKeys: 'Zustandsschlüssel für den Kindlauf',
+    hint: 'Läuft als verschachtelter Lauf dieses Flows: wartet auf das Ende des Kindlaufs, wird mit ihm gestoppt und hängt sich beim Fortsetzen wieder an denselben Lauf.',
+  },
 };

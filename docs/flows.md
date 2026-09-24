@@ -19,6 +19,7 @@ it costs anything to run.
 - **Condition** — routes down one branch or another.
 - **Transform** — reshapes data between nodes without a model call.
 - **Processor** — non-agent work in the middle of a pipeline.
+- **Container**: runs a whole team, loop or flow as a nested run (see below).
 
 ## Running
 
@@ -77,6 +78,62 @@ flow state. If the process dies, the run is not lost: `POST
 is left. The watchdog does this by itself, twice at most, for a run whose
 heartbeat has gone quiet; a run with no checkpoint, or one that has used up its
 attempts, is failed as before.
+
+## Nested runs: team, loop and flow nodes
+
+Three container nodes run a whole entity as one step of a flow: **Run Team**
+(`run_team`, config `team_id` and `goal`), **Run Loop** (`run_loop`, config
+`loop_id`, `goal` and `seed_keys`) and **Run Flow** (`run_flow`, config
+`flow_id`, `goal`, `params` and `seed_keys`). The goal may reference state keys
+in braces, `"Review {draft}"`, filled from the live flow state the same way a
+human interrupt question is. `seed_keys` copies those state keys into the
+child's initial state; `params` are fixed values laid under them.
+
+**Launching.** The node starts the child through that kind's own launcher
+(teams/launcher.py, loops/launcher.py, flow/launcher.py) with the flow run as
+`parent_run_id`, in the flow's workspace. The child gets a task of its own
+rather than the parent's: a team or loop claims the task it is handed and closes
+it when it ends, and a flow closes its task on its last node, either of which
+would close the parent's task while the parent is still running.
+
+**Waiting.** The node polls the child's entity run every 2 seconds until it is
+completed, stopped or failed. It writes the child's result into its output key
+(the team's final answer, the loop's accepted output, the child flow's last node
+output or, when that is empty, its final state) and reports `child_run_id` and
+`child_kind` beside it, so the flow log names the run the node started. A child
+that ends stopped or failed fails the node, and `on_error` decides the rest.
+The node's `timeout_seconds` stops the child when it runs out, and a stop
+request on the parent run stops the child at the next poll.
+
+**Checkpoint and resume.** Right after the launch, before any waiting, the child
+record gets `flow_node_id` and the parent flow run gets `children: {node_id:
+child_run_id}`. A flow resume re-runs every node that was not done, and a
+container node first looks for the child it launched before: a live one is
+waited for, a stopped or failed one is resumed through its launcher, a completed
+one gives its result straight away. Only when there is no child, or the old one
+has nothing to resume from, is a new one launched. A resumed parent therefore
+never pays for the same team or loop twice.
+
+**Cycles.** Validation walks every flow reachable through `run_flow` nodes and
+through the flow each `run_loop` node's loop repeats, and refuses a flow that
+reaches itself, naming the chain (`a -> flow b -> loop l (flow a)`). A container
+node with no id, or one naming a flow or loop that does not exist, is refused
+the same way.
+
+**Depth.** `MAX_NESTING_DEPTH` in flow/validate.py is 4. Validation refuses a
+chain of nested flows deeper than that, and at run time every container node
+checks again: its depth is the larger of `AGENTS_HUB_RUN_DEPTH` in its own
+environment and the length of the `parent_run_id` chain above its run. The
+child gets one more in `AGENTS_HUB_RUN_DEPTH` (runtime/entity_launch.child_env,
+which the launch spec carries to a worker as well), and a node whose child
+would pass the limit fails with a clear error instead of launching.
+
+**Cost.** A child is an ordinary entity run hanging off the flow run through
+`parent_run_id`. Its agent runs belong to the child, not to the container node,
+so each call is priced once, in the child's own run group; the parent flow's
+total then adds the nested groups on top of its own node runs, so the run
+groups page shows the whole tree's spend on the parent. A stop of the parent
+group reaches the child through the same tree (`stop_tree`).
 
 ### Why not LangGraph for flows
 

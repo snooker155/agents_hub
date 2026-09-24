@@ -91,6 +91,11 @@ class SocialEnvironment(Environment):
     ]
 
     OBJECTIVES = ["items_held", "allies", "locations_visited"]
+    # A character weighing a trade or a bargain may want to do the sums, and
+    # one whose scenario carries reference documents may want to consult one
+    # in full instead of the clipped excerpt in its prompt. Nothing that
+    # reaches outside the world: no shell, no web, no other agent.
+    TOOL_ALLOWLIST = ("calculator", "read_file")
 
     def __init__(self, params: Optional[Dict[str, Any]] = None, seed: int = 42):
         super().__init__(params, seed=seed)

@@ -54,8 +54,10 @@ import os
 import socket
 import subprocess
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterator, Mapping, Optional
 
 from common.paths import PROJECT_ROOT
 
@@ -87,6 +89,25 @@ def utc_now_iso() -> str:
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
+#: Extra environment for every launch dispatched inside :func:`child_env`.
+_CHILD_ENV: ContextVar[Optional[Dict[str, str]]] = ContextVar("entity_launch_child_env", default=None)
+
+
+@contextmanager
+def child_env(extra: Mapping[str, Any]) -> Iterator[None]:
+    """Give every launch dispatched inside this block extra environment
+    variables. A caller that launches through another kind's launcher (a flow
+    node starting a team) cannot reach the spec that launcher builds, so the
+    values ride on a context variable and :func:`dispatch` copies them into the
+    spec's ``env`` key, which travels through the queue to a worker as well."""
+    merged = {**(_CHILD_ENV.get() or {}), **{str(k): str(v) for k, v in extra.items()}}
+    token = _CHILD_ENV.set(merged)
+    try:
+        yield
+    finally:
+        _CHILD_ENV.reset(token)
+
+
 def dispatch(spec: Dict[str, Any], launch: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
     """Spawn here, or hand the spec to a worker, by this process's role.
 
@@ -104,6 +125,9 @@ def dispatch(spec: Dict[str, Any], launch: Optional[Callable[[Dict[str, Any]], N
     # with no request in flight) can resolve user-scoped secrets.
     spec.setdefault("launched_by", current_user_id())
     spec.setdefault("execution_mode", "local")
+    extra_env = _CHILD_ENV.get()
+    if extra_env:
+        spec["env"] = {**extra_env, **(spec.get("env") or {})}
     if hub_role() == "api":
         from common import run_queue
         run_queue.enqueue(str(spec["run_id"]), kind, spec, workspace=spec.get("workspace"),
@@ -157,6 +181,11 @@ def build_env(spec: Dict[str, Any]) -> Dict[str, str]:
                 log_file=str(spec.get("log_file") or "") or None)
     env["AGENTS_HUB_ENTITY_RUN_ID"] = str(spec["run_id"])
     env["AGENTS_HUB_ENTITY_RUN_KIND"] = kind
+    # Optional extra variables a launcher put on the spec (see child_env).
+    extra = spec.get("env")
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            env[str(key)] = str(value)
     return env
 
 
@@ -288,5 +317,5 @@ def child_alive(rec: Dict[str, Any]) -> Optional[bool]:
 
 __all__ = [
     "ENTRYPOINTS", "LAUNCHERS", "dispatch", "launcher_for", "execution_mode_for",
-    "build_env", "spawn_local", "spawn_docker", "launch_prepared", "child_alive",
+    "build_env", "child_env", "spawn_local", "spawn_docker", "launch_prepared", "child_alive",
 ]

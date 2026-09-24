@@ -394,3 +394,40 @@ def test_agent_state_for_team_executor_maps_completed():
     })
 
     assert ts.get_task(t.id).agent_state == AgentState.completed
+
+
+def test_assign_executor_to_task_dispatches_scenario(monkeypatch):
+    started = []
+
+    def fake_start_scenario_run(scenario_id, *, workspace=None, task_id=None, **kw):
+        started.append((scenario_id, task_id))
+        return SimpleNamespace(sim_run_id="sim-run-1", task_id=task_id)
+
+    import playground.launcher as playground_launcher
+    monkeypatch.setattr(playground_launcher, "start_scenario_run", fake_start_scenario_run)
+
+    t = ts.create_task("simulate")
+    result = assign_executor_to_task(t.id, Executor(kind="scenario", id="scn-a"), None,
+                                     task_to_dict=task_to_dict)
+
+    assert started == [("scn-a", str(t.id))]
+    assert result["run_id"] == "sim-run-1"
+    updated = ts.get_task(t.id)
+    assert updated.executor == Executor(kind="scenario", id="scn-a")
+    assert updated.assigned_agent_run_id == "sim-run-1"
+    assert updated.status == TaskStatus.in_progress
+
+
+def test_assign_scenario_configuration_refusal_is_a_400(monkeypatch):
+    from tasks.assign import AssignError
+    import playground.launcher as playground_launcher
+
+    def refuse(scenario_id, **kw):
+        raise ValueError("agents mode needs docker execution")
+
+    monkeypatch.setattr(playground_launcher, "start_scenario_run", refuse)
+    t = ts.create_task("simulate")
+    with pytest.raises(AssignError) as exc:
+        assign_executor_to_task(t.id, Executor(kind="scenario", id="scn-a"), None,
+                                task_to_dict=task_to_dict)
+    assert exc.value.status == 400

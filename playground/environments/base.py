@@ -58,6 +58,14 @@ class Environment(ABC):
     # environment ships exactly one of these; a world that offered none could
     # never end except on a cap.
     IDLE_ACTIONS: Tuple[str, ...] = ("observe",)
+    # Hub tool ids a role may use on top of this environment's own action API,
+    # when the scenario runs in agents mode (playground.models.AGENTS). Empty
+    # by default: a role gets no hub tools at all, only the actions above. An
+    # environment that declares more still keeps it small and reviewed — see
+    # tools/capabilities.py for what each id grants, and
+    # agents.capability_guard.enforce_built_tools, which still applies to the
+    # agent built for the role.
+    TOOL_ALLOWLIST: Tuple[str, ...] = ()
 
     def __init__(self, params: Optional[Dict[str, Any]] = None, seed: int = 42):
         self.params = self._coerce_params(params or {})

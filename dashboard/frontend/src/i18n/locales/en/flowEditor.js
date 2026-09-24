@@ -96,4 +96,13 @@ export default {
   selectedRun: 'Selected run',
   stepCount: '{{count}} steps',
   selectWorkspaceFirst: 'Select a workspace for this flow first.',
+  container: {
+    run_team: 'Team',
+    run_loop: 'Loop',
+    run_flow: 'Flow',
+    choose: 'Choose...',
+    goal: 'Goal',
+    seedKeys: 'State keys passed to the child',
+    hint: 'Runs as a nested run of this flow: it waits for the child to finish, is stopped with it, and reattaches to the same child on resume.',
+  },
 };

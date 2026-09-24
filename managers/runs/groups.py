@@ -209,15 +209,29 @@ def _flow_group(flow_run_id: str) -> Optional[RunGroup]:
     return _flow_group_from_record(rec)
 
 
+def _nested_cost(run_id: str) -> float:
+    """Cost of the entity runs nested inside ``run_id`` (a flow's team, loop
+    or flow container nodes, flow/entities/containers). Each nested run sums
+    its own leaves, so every call is still counted exactly once."""
+    from common import entity_runs
+    total = 0.0
+    for child in entity_runs.children(run_id):
+        kind = str(child.get("kind") or "")
+        if kind in ("flow", "loop", "team", "scenario"):
+            total += group_cost(kind, str(child.get("run_id")))
+    return total
+
+
 def _flow_group_from_record(rec: Dict[str, Any]) -> RunGroup:
-    children = _flow_children(str(rec.get("flow_run_id")))
+    flow_run_id = str(rec.get("flow_run_id"))
+    children = _flow_children(flow_run_id)
     return RunGroup(
         kind="flow",
-        id=str(rec.get("flow_run_id")),
+        id=flow_run_id,
         status=str(rec.get("status") or ""),
         started_at=rec.get("started_at") or rec.get("created_at"),
         finished_at=rec.get("finished_at"),
-        total_cost=_runs_cost(children),
+        total_cost=round(_runs_cost(children) + _nested_cost(flow_run_id), 6),
         error=rec.get("error"),
         children=children,
         workspace=rec.get("workspace"),

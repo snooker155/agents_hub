@@ -16,6 +16,15 @@ SYNCHRONOUS = "synchronous"
 TRIGGERED = "triggered"
 ACTIVATIONS = (SYNCHRONOUS, TRIGGERED)
 
+#: Who plays a role. ``personas``: the role is a bare chat model with no
+#: tools, given only the environment's action API, the original and default
+#: behaviour. ``agents``: the role is played by the real agent behind
+#: ``role.agent_id``, with a small, environment-declared tool allowlist on
+#: top of the action API. See ``playground.runner.decide``.
+PERSONAS = "personas"
+AGENTS = "agents"
+MODES = (PERSONAS, AGENTS)
+
 #: Why an agent was woken, recorded on its decision so the log answers "why did
 #: this one act and the others not".
 TRIGGER_MESSAGE = "message"       # a colleague (or the outside) addressed it
@@ -31,6 +40,13 @@ def _activation(value: Any) -> str:
     """Normalise an activation mode; anything unknown runs synchronously."""
     mode = str(value or SYNCHRONOUS).strip().lower()
     return mode if mode in ACTIVATIONS else SYNCHRONOUS
+
+
+def _mode(value: Any) -> str:
+    """Normalise a scenario mode; anything unknown falls back to personas,
+    the original, tool-free behaviour."""
+    mode = str(value or PERSONAS).strip().lower()
+    return mode if mode in MODES else PERSONAS
 
 
 def utc_iso() -> str:
@@ -155,6 +171,25 @@ class Scenario:
     env_params: Dict[str, Any] = field(default_factory=dict)
     roles: List[Role] = field(default_factory=list)
 
+    # Who plays a role: ``personas`` (default, a bare model, no tools) or
+    # ``agents`` (the real agent behind role.agent_id, with the environment's
+    # tool allowlist). See playground.runner.decide and docs/playground.md.
+    mode: str = PERSONAS
+    # How many tool calls one agents-mode decision may make in a single tick
+    # before it is cut off and recorded with an error. Ignored in personas
+    # mode, which has no tools to call.
+    max_tool_calls_per_tick: int = 8
+    # The task this scenario's runs work on, when it has one — passed into
+    # every SimRun and finalized the way a flow, a team or a loop finalizes
+    # its task (managers.runs.task_finalize.finalize_task).
+    task_id: Optional[str] = None
+    # Reference material injected into every role's system prompt, under a
+    # "Documents" section. Each entry is either {"name", "text"} or a plain
+    # string naming a workspace-relative file, resolved when a decision's
+    # prompt is built. Kept small on purpose: see playground.runner's
+    # document-clipping constants.
+    documents: List[Any] = field(default_factory=list)
+
     # How agents are activated. ``synchronous``: everybody acts every tick,
     # simultaneous resolution — the original loop. ``triggered``: an agent acts
     # only when something reached it (a message, an interaction, its own
@@ -201,6 +236,8 @@ class Scenario:
             "workspace": self.workspace,
             "environment": self.environment, "env_params": dict(self.env_params),
             "roles": [r.to_dict() for r in self.roles],
+            "mode": self.mode, "max_tool_calls_per_tick": self.max_tool_calls_per_tick,
+            "task_id": self.task_id, "documents": list(self.documents),
             "activation": self.activation,
             "max_ticks": self.max_ticks, "stall_timeout": self.stall_timeout,
             "max_turn_seconds": self.max_turn_seconds,
@@ -224,6 +261,10 @@ class Scenario:
             environment=str(d.get("environment") or "market"),
             env_params=dict(d.get("env_params") or {}),
             roles=[Role.from_dict(r) for r in (d.get("roles") or [])],
+            mode=_mode(d.get("mode")),
+            max_tool_calls_per_tick=int(d.get("max_tool_calls_per_tick", 8) or 8),
+            task_id=d.get("task_id"),
+            documents=list(d.get("documents") or []),
             activation=_activation(d.get("activation")),
             max_ticks=int(d.get("max_ticks", 20)),
             # ``tick_timeout`` is the pre-rename spelling: same knob, and it
@@ -404,6 +445,7 @@ class SimRun:
 
 __all__ = [
     "SIM_CHANNEL", "SYNCHRONOUS", "TRIGGERED", "ACTIVATIONS",
+    "PERSONAS", "AGENTS", "MODES",
     "TRIGGER_MESSAGE", "TRIGGER_INTERACTION", "TRIGGER_EXTERNAL",
     "TRIGGER_HEARTBEAT", "TRIGGER_OPENING", "TRIGGER_SYNC",
     "Role", "Scenario", "ActionResult", "AgentDecision",

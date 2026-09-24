@@ -50,7 +50,7 @@ router = APIRouter(prefix="/api/playground", tags=["playground"])
 if playground_enabled():
     from playground import store, story as story_lib
     from playground.environments import list_environments
-    from playground.models import ACTIVATIONS, Role, Scenario, utc_iso
+    from playground.models import ACTIVATIONS, MODES, Role, Scenario, utc_iso
     from playground.worlds import WorldSpec, new_world_id, validate_world, warnings_for
     from playground.runner import estimate_cost
     from playground.launcher import (
@@ -84,6 +84,19 @@ class ScenarioIn(BaseModel):
     environment: str = "market"
     env_params: Dict[str, Any] = {}
     roles: List[RoleIn] = []
+    # Who plays a role: personas (the default, a bare model) or agents (the
+    # real agent behind each role.agent_id, with the environment's tool
+    # allowlist). See playground.models.MODES and docs/playground.md.
+    mode: str = "personas"
+    # How many tool calls one agents-mode decision may make in a tick before
+    # it is cut off. Ignored in personas mode.
+    max_tool_calls_per_tick: int = 8
+    # The task this scenario's runs work on, when it has one. Optional on
+    # the wire so a client that predates it does not blank what was set.
+    task_id: Optional[str] = None
+    # Reference material injected into every role's system prompt. Each entry
+    # is either {"name", "text"} or a plain workspace-relative path string.
+    documents: Optional[List[Any]] = None
     activation: str = "synchronous"
     max_ticks: int = 20
     # Seconds of silence tolerated from a model, not seconds to a finished
@@ -114,6 +127,15 @@ def _scenario_from_in(data: ScenarioIn, existing: Optional[Scenario] = None) -> 
         environment=data.environment,
         env_params=dict(data.env_params or {}),
         roles=[Role.from_dict(r.model_dump()) for r in data.roles],
+        mode=(data.mode if data.mode in MODES else "personas"),
+        max_tool_calls_per_tick=data.max_tool_calls_per_tick,
+        # Omitted means unchanged, not cleared — the same rule ``narrative``
+        # follows above: a client that predates task_id/documents must not
+        # blank what an earlier save (or the build chat) set.
+        task_id=(data.task_id if data.task_id is not None
+                 else (existing.task_id if existing else None)),
+        documents=(list(data.documents) if data.documents is not None
+                   else (list(existing.documents) if existing else [])),
         activation=(data.activation if data.activation in ACTIVATIONS
                     else "synchronous"),
         max_ticks=data.max_ticks,

@@ -171,7 +171,7 @@ def assign_executor_to_task(
     *,
     task_to_dict,
 ) -> Dict[str, Any]:
-    """Assign an executor — an agent, a flow, a team or a loop — to a task and start it.
+    """Assign an executor (an agent, a flow, a team, a loop or a scenario) to a task and start it.
 
     Dispatches on ``executor.kind``: an agent goes through
     :func:`assign_agent_to_task` unchanged (allowed_agents, the decomposer
@@ -188,7 +188,7 @@ def assign_executor_to_task(
     and a team or a loop has no equivalent workspace allowlist today.
 
     Raises ``AssignError`` (status 400) for a malformed ``executor`` (missing
-    ``id``, or a ``kind`` that is not one of the four) rather than letting
+    ``id``, or a ``kind`` that is not one of the five) rather than letting
     pydantic's ``ValidationError`` escape — the route's only other catch-all
     is a 500, and a bad request body is not a server error.
     """
@@ -208,6 +208,8 @@ def assign_executor_to_task(
         return _assign_team_to_task(task_id, executor.id, params, task_to_dict=task_to_dict)
     if executor.kind == "loop":
         return _assign_loop_to_task(task_id, executor.id, params, task_to_dict=task_to_dict)
+    if executor.kind == "scenario":
+        return _assign_scenario_to_task(task_id, executor.id, params, task_to_dict=task_to_dict)
     raise AssignError(f"Unknown executor kind: {executor.kind}", status=400)  # pragma: no cover - Executor.kind is a Literal
 
 
@@ -300,6 +302,36 @@ def _assign_loop_to_task(
 
     loop_params = {"loop_id": loop_id, "workspace": t.workspace, **(params or {})}
     tasks_service.assign_executor(task_id, Executor(kind="loop", id=loop_id), loop_params, run_id=run_id)
+    tasks_service.update_task(task_id, status=TaskStatus.in_progress)
+    updated = tasks_service.get_task(task_id)
+    return {"task": task_to_dict(updated), "run_id": run_id, "pending_approval": False}
+
+
+def _assign_scenario_to_task(
+    task_id: UUID, scenario_id: str, params: Optional[Dict[str, Any]], *, task_to_dict,
+) -> Dict[str, Any]:
+    """Start a scenario run on a task through ``playground.launcher.start_scenario_run``.
+
+    The launcher records the assignment itself (it calls ``assign_executor``
+    with the run id, the way the loop launcher does) and the run finalizes
+    the task when it ends (``playground.runner.run_simulation``); this only
+    launches it and moves the task off ``todo``. A scenario that cannot run
+    (no roles, agents mode without docker) is a 400, not a 404: the scenario
+    exists, it is its configuration that refuses.
+    """
+    t = _assign_common_checks(task_id)
+
+    from playground.launcher import start_scenario_run
+    try:
+        run = start_scenario_run(scenario_id, workspace=t.workspace, task_id=str(task_id))
+    except ValueError as e:
+        status = 404 if "not found" in str(e).lower() else 400
+        raise AssignError(str(e), status=status)
+    run_id = getattr(run, "sim_run_id", None)
+
+    scenario_params = {"scenario_id": scenario_id, "workspace": t.workspace, **(params or {})}
+    tasks_service.assign_executor(task_id, Executor(kind="scenario", id=scenario_id),
+                                  scenario_params, run_id=run_id)
     tasks_service.update_task(task_id, status=TaskStatus.in_progress)
     updated = tasks_service.get_task(task_id)
     return {"task": task_to_dict(updated), "run_id": run_id, "pending_approval": False}

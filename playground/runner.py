@@ -62,13 +62,15 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, fields as dataclass_fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from langchain_core.callbacks import BaseCallbackHandler
+
 from playground import control, store
 from playground.environments import create_environment
 from playground.environments.base import Environment
 from playground.models import (
-    SIM_CHANNEL, SYNCHRONOUS, TRIGGERED, TRIGGER_CONTINUE, TRIGGER_HEARTBEAT,
-    TRIGGER_OPENING, TRIGGER_SYNC, ActionResult, AgentDecision, Role, Scenario,
-    SimRun, TickRecord, optional_seconds, utc_iso,
+    AGENTS, SIM_CHANNEL, SYNCHRONOUS, TRIGGERED, TRIGGER_CONTINUE,
+    TRIGGER_HEARTBEAT, TRIGGER_OPENING, TRIGGER_SYNC, ActionResult,
+    AgentDecision, Role, Scenario, SimRun, TickRecord, optional_seconds, utc_iso,
 )
 
 log = logging.getLogger(__name__)
@@ -114,7 +116,7 @@ class SimStopped(Exception):
 _SYSTEM_TEMPLATE = """You are {name}, {role} in a simulated world.
 
 YOUR GOAL: {goal}
-{private_block}{world_block}
+{private_block}{world_block}{documents_block}
 You act one tick at a time. Each tick you receive your own private observation
 of the world and choose exactly ONE action.
 
@@ -160,8 +162,89 @@ YOUR OBSERVATION (this is ground truth):
 Choose your action now. JSON only."""
 
 
+#: Documents are kept small on purpose: this is prompt budget, not storage,
+#: and a scenario's cast can carry several of them. Each document is clipped
+#: to at most this many characters, and the whole section to this total.
+_DOC_CLIP_PER_DOC = 2000
+_DOC_CLIP_TOTAL = 6000
+
+
+def _truncate(text: str, limit: int) -> str:
+    """A plain length clip that keeps a document's own line breaks, unlike
+    ``_clip`` below which flattens a journal line to one line."""
+    text = str(text or "")
+    return text if len(text) <= limit else text[:max(0, limit - 1)] + "…"
+
+
+def _read_workspace_document(path: str, workspace: Optional[str]) -> str:
+    """The text of a workspace-relative document path, or "" when it cannot
+    be read. Never raises: a missing or unreadable document must not stop a
+    decision, only leave it without that one document."""
+    if not path or not workspace:
+        return ""
+    try:
+        from pathlib import Path as _Path
+
+        from workspace import resolve_workspace_arg
+        ws_path, _ = resolve_workspace_arg(workspace)
+        if not ws_path:
+            return ""
+        base = _Path(ws_path).resolve()
+        target = (base / path).resolve()
+        if base != target and base not in target.parents:
+            return ""
+        return target.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _resolve_documents(documents: Optional[List[Any]],
+                       workspace: Optional[str]) -> List[Tuple[str, str]]:
+    """A scenario's raw ``documents`` list as ``(name, text)`` pairs.
+
+    Each entry is either ``{"name", "text"}`` (given whole) or a plain string
+    naming a file relative to the scenario's workspace (read here, since a
+    decision is built fresh every tick and the file may change between runs).
+    """
+    out: List[Tuple[str, str]] = []
+    for entry in documents or []:
+        if isinstance(entry, dict):
+            name = str(entry.get("name") or "").strip()
+            text = str(entry.get("text") or "")
+        else:
+            path = str(entry or "").strip()
+            if not path:
+                continue
+            name = path
+            text = _read_workspace_document(path, workspace)
+        if name or text:
+            out.append((name or "document", text))
+    return out
+
+
+def _documents_block(documents: Optional[List[Any]], workspace: Optional[str]) -> str:
+    """The "Documents" section of a role's system prompt, clipped to a sane
+    size. Empty when the scenario carries no documents."""
+    docs = _resolve_documents(documents, workspace)
+    if not docs:
+        return ""
+    budget = _DOC_CLIP_TOTAL
+    parts: List[str] = []
+    for name, text in docs:
+        if budget <= 0:
+            break
+        clipped = _truncate(text, min(_DOC_CLIP_PER_DOC, budget))
+        parts.append(f"--- {name} ---\n{clipped}")
+        budget -= len(clipped)
+    if not parts:
+        return ""
+    return "\nDOCUMENTS:\n" + "\n\n".join(parts) + "\n"
+
+
 def build_system_prompt(role: Role, env: Environment,
-                        activation: str = SYNCHRONOUS) -> str:
+                        activation: str = SYNCHRONOUS,
+                        documents: Optional[List[Any]] = None,
+                        workspace: Optional[str] = None) -> str:
     private = ""
     if role.private_knowledge.strip():
         private = (
@@ -173,12 +256,14 @@ def build_system_prompt(role: Role, env: Environment,
     # says the part its author could not express as a requirement.
     brief = env.world_brief(role.display_name()).strip()
     world_block = f"\nTHIS WORLD:\n{brief}\n" if brief else ""
+    documents_block = _documents_block(documents, workspace)
     prompt = _SYSTEM_TEMPLATE.format(
         name=role.display_name(),
         role=role.role or "a participant",
         goal=role.goal or "act in your own interest",
         private_block=private,
         world_block=world_block,
+        documents_block=documents_block,
         # Per character: a world may let one role take an action and not
         # another, and an agent should not read about moves it cannot make.
         actions=env.action_help(role.display_name()),
@@ -585,17 +670,31 @@ def decide(role: Role, observation: Dict[str, Any], env: Environment, tick: int,
     started = time.monotonic()
 
     provider, model = resolve_model(role, scenario, workspace)
-    system_prompt = build_system_prompt(role, env, scenario.activation)
+    system_prompt = build_system_prompt(role, env, scenario.activation,
+                                        documents=scenario.documents,
+                                        workspace=workspace)
     tick_prompt = build_tick_prompt(observation, tick, history, decision.triggers)
+    combined_prompt = f"{system_prompt}\n\n---\n\n{tick_prompt}"
 
     run_id = _open_decision_run(
         role=role, scenario=scenario, sim_run_id=sim_run_id, tick=tick,
         workspace=workspace, provider=provider, model=model,
-        prompt=f"{system_prompt}\n\n---\n\n{tick_prompt}",
+        prompt=combined_prompt,
     )
     decision.run_id = run_id
     if run_id:
         control.track(sim_run_id, run_id)
+
+    if scenario.mode == AGENTS:
+        # Agents mode: the role is played by the real agent behind
+        # role.agent_id rather than a bare model. See _decide_with_agent.
+        _decide_with_agent(
+            role=role, scenario=scenario, env=env, prompt=combined_prompt,
+            workspace=workspace, beat=beat, sim_run_id=sim_run_id,
+            run_id=run_id, decision=decision, started=started,
+            provider=provider, model=model,
+        )
+        return decision
 
     text, usage, streamed = "", {"inbound": 0, "outbound": 0}, False
     try:
@@ -656,6 +755,162 @@ def decide(role: Role, observation: Dict[str, Any], env: Environment, tick: int,
     _close_decision_run(run_id, sim_run_id, decision,
                         status="failed" if decision.error else "completed")
     return decision
+
+
+class ToolCallLimitError(RuntimeError):
+    """Raised when an agents-mode decision calls more tools in one tick than
+    its scenario's ``max_tool_calls_per_tick`` allows."""
+
+
+class _ToolCallLimitGuard(BaseCallbackHandler):
+    """Cuts an agents-mode decision off once it has made too many tool calls
+    in one tick.
+
+    Mirrors ``agents.callbacks.guards.ToolRepetitionGuard``: count on
+    ``on_tool_start``, raise on ``on_tool_end`` so the call that crossed the
+    limit is still recorded before the run stops, instead of being cut off
+    mid call.
+    """
+
+    def __init__(self, limit: int) -> None:
+        super().__init__()
+        self.raise_error = True  # tell LangChain to propagate our exception
+        self.limit = max(1, int(limit))
+        self.calls = 0
+        self.tripped = False
+
+    def on_tool_start(self, serialized: Any, input_str: Any, **kwargs: Any) -> None:
+        self.calls += 1
+
+    def on_tool_end(self, output: Any, **kwargs: Any) -> None:
+        if self.calls > self.limit:
+            self.tripped = True
+            raise ToolCallLimitError(
+                f"made {self.calls} tool call(s) this tick, over the "
+                f"scenario's limit of {self.limit}"
+            )
+
+
+class _BeatTouchCallback(BaseCallbackHandler):
+    """Keeps an agents-mode decision's :class:`Beat` alive across the agent's
+    own model and tool calls.
+
+    A bare model's call streams tokens, and every one of them touches the
+    beat (see ``_call_model``). An agent invocation is one blocking call with
+    no streaming visible here, so without this a working agent that is simply
+    busy calling tools would look silent to the stall detection in
+    ``_run_decisions`` and be cut off mid turn.
+    """
+
+    def __init__(self, beat: Beat) -> None:
+        super().__init__()
+        self.beat = beat
+
+    def on_llm_start(self, *args: Any, **kwargs: Any) -> None:
+        self.beat.touch(streaming=True)
+
+    def on_llm_end(self, *args: Any, **kwargs: Any) -> None:
+        self.beat.touch(streaming=True)
+
+    def on_tool_start(self, *args: Any, **kwargs: Any) -> None:
+        self.beat.touch(streaming=True)
+
+    def on_tool_end(self, *args: Any, **kwargs: Any) -> None:
+        self.beat.touch(streaming=True)
+
+
+def _decide_with_agent(*, role: Role, scenario: Scenario, env: Environment,
+                       prompt: str, workspace: Optional[str], beat: Beat,
+                       sim_run_id: str, run_id: str, decision: AgentDecision,
+                       started: float, provider: str, model: str) -> None:
+    """Agents mode: play this role with the real agent behind
+    ``role.agent_id`` instead of a bare model. Mutates ``decision`` in place
+    and closes its run record; never raises.
+
+    The agent is built through ``agents.agent_factory.create_agent`` exactly
+    as any agent build is, capability guard included, with its tool list
+    overridden to the environment's ``TOOL_ALLOWLIST`` — empty by default, so
+    a role gets no hub tools at all unless the environment declares some. The
+    combined system and tick prompt (the same text a bare model would see) is
+    handed to the agent as its instruction; the agent's own persona
+    (instructions.md) stays intact underneath it. Its final answer still has
+    to parse as a decision (``parse_decision``), the same contract personas
+    mode holds.
+    """
+    if control.is_stopped(sim_run_id) or beat.cancel.is_set():
+        decision.error = "stopped"
+        decision.duration_ms = int((time.monotonic() - started) * 1000)
+        _close_decision_run(run_id, sim_run_id, decision, status="stopped")
+        return
+
+    allowlist = list(getattr(env, "TOOL_ALLOWLIST", ()) or ())
+    overrides: Dict[str, Any] = {"tools": allowlist}
+    if provider:
+        overrides["provider"] = provider
+    if model:
+        overrides["model"] = model
+
+    try:
+        from agents.agent_factory import create_agent
+        agent = create_agent(role.agent_id, workspace, **overrides)
+    except Exception as e:  # noqa: BLE001
+        decision.error = f"could not build agent {role.agent_id!r}: {type(e).__name__}: {e}"
+        decision.duration_ms = int((time.monotonic() - started) * 1000)
+        _close_decision_run(run_id, sim_run_id, decision, status="failed")
+        return
+
+    limit = max(1, int(scenario.max_tool_calls_per_tick or 8))
+    call_guard = _ToolCallLimitGuard(limit)
+    callbacks: List[Any] = [_BeatTouchCallback(beat), call_guard]
+    if sim_run_id:
+        callbacks.append(control.SimStopCallback(sim_run_id))
+    if run_id:
+        try:
+            from agents.callbacks import RunStopCallback
+            callbacks.append(RunStopCallback(run_id))
+        except Exception:
+            pass
+
+    from agents.agent_invoke import invoke_agent
+    invocation = invoke_agent(agent, prompt, extra_callbacks=callbacks,
+                              run_id=run_id or None)
+    result = invocation.result
+
+    decision.duration_ms = int((time.monotonic() - started) * 1000)
+    usage = (invocation.process or {}).get("token_usage") or {}
+    decision.inbound_tokens = int(usage.get("inbound_tokens") or 0)
+    decision.outbound_tokens = int(usage.get("outbound_tokens") or 0)
+    decision.cost = _run_cost(
+        provider, model, decision.inbound_tokens, decision.outbound_tokens
+    )
+
+    output = str(getattr(result, "agent_output", "") or "")
+    decision.raw_output = output
+
+    if not getattr(result, "ok", False):
+        if call_guard.tripped:
+            decision.error = (
+                f"exceeded {limit} tool call(s) this tick and was cut off"
+            )
+        elif control.is_stopped(sim_run_id):
+            decision.error = "stopped"
+        else:
+            decision.error = str(getattr(result, "error", "") or "agent run failed")
+        _close_decision_run(
+            run_id, sim_run_id, decision,
+            status="stopped" if decision.error == "stopped" else "failed",
+        )
+        return
+
+    parsed = parse_decision(output)
+    if "error" in parsed:
+        decision.error = parsed["error"]
+    else:
+        decision.reasoning = parsed["reasoning"]
+        decision.action = {"action": parsed["action"], "args": parsed["args"]}
+
+    _close_decision_run(run_id, sim_run_id, decision,
+                        status="failed" if decision.error else "completed")
 
 
 def _enable_stream_usage(llm: Any) -> None:
@@ -903,6 +1158,18 @@ def validate_scenario_for_run(scenario: Scenario) -> None:
         raise ValueError("Two roles share a display name — names address agents in-world")
     if create_environment(scenario.environment, scenario.env_params, seed=scenario.seed) is None:
         raise ValueError(f"Unknown environment: {scenario.environment}")
+    if scenario.mode == AGENTS:
+        # Agents mode gives a role real tools, however small the allowlist.
+        # That is only safe in a container: local execution runs those tools
+        # against the host with no isolation at all, so it is refused here,
+        # before a run record even exists, not discovered mid tick.
+        from runtime.entity_launch import execution_mode_for
+        if execution_mode_for(scenario.workspace) != "docker":
+            raise ValueError(
+                "Agents mode scenarios must run in docker. Set this "
+                "workspace's execution mode to docker before running this "
+                "scenario, or switch it back to personas mode."
+            )
 
 
 _DECISION_FIELDS = {f.name for f in dataclass_fields(AgentDecision)}
@@ -993,6 +1260,11 @@ def run_simulation(
             # the live row, which the user is free to edit while the sim runs
             # and after it finishes.
             config=scenario.to_dict(),
+            # A scenario built for one task runs against it by default, the
+            # same way the launcher sets it (playground.launcher
+            # .start_scenario_run) — this is the door every direct caller
+            # (a tool, a test) still goes through with no launcher in front.
+            task_id=scenario.task_id,
         )
 
     heartbeat = None
@@ -1151,9 +1423,55 @@ def run_simulation(
     run.final_state = env.state()
     run.finished_at = utc_iso()
     store.save_sim_run(run)
+    _finalize_task(run)
     control.release(run.sim_run_id)
     _publish(run.sim_run_id, {"type": "done", **run.to_dict()})
     return run
+
+
+def _task_result_text(run: SimRun) -> str:
+    """A short, human-readable summary of a finished run, for the task's own
+    result text. Never the whole tick log: the tick log is already the
+    artifact of record, reachable from the run itself."""
+    bits = [f"Scenario run finished: {run.stop_reason or run.status}."]
+    if run.ticks_done:
+        bits.append(f"{run.ticks_done} tick(s) completed.")
+    if run.total_cost:
+        bits.append(f"Total cost: ${run.total_cost:.4f}.")
+    if run.scores:
+        bits.append("Scores: " + json.dumps(run.scores, ensure_ascii=False, default=str))
+    return " ".join(bits)
+
+
+def _finalize_task(run: SimRun) -> None:
+    """Advance the task this run worked on, when it has one.
+
+    Shared by every caller of :func:`run_simulation` (the launched subprocess,
+    through ``runtime/scenario_run.py``, and any in process caller), the same
+    way ``loops.runner.run_loop`` and ``teams.runner.run_team`` finalize their
+    own task on their own runner rather than in the subprocess entrypoint.
+    Best effort throughout: a task that cannot be advanced must never turn a
+    finished simulation into a reported failure.
+    """
+    if not run.task_id:
+        return
+    try:
+        from tasks.context import persist_task_result
+        persist_task_result(run.task_id, run.sim_run_id, _task_result_text(run),
+                            agent_id="scenario")
+    except Exception:  # noqa: BLE001 - best effort, see docstring
+        pass
+    try:
+        from managers.runs.task_finalize import finalize_task
+        from tasks.models import Executor
+        ok = run.status == "completed"
+        finalize_task(
+            run.task_id, "completed" if ok else "failed", 0 if ok else 1,
+            error=run.error, run_id=run.sim_run_id,
+            executor=Executor(kind="scenario", id=run.scenario_id),
+        )
+    except Exception:  # noqa: BLE001 - best effort, see docstring
+        pass
 
 
 def _check_between_ticks(sim_run_id: str, started: float,
@@ -1709,6 +2027,6 @@ __all__ = [
     "run_simulation", "stop_simulation", "trigger_agent", "estimate_cost",
     "decide", "resolve_model", "parse_decision", "build_system_prompt",
     "build_tick_prompt", "validate_scenario_for_run", "decision_run_id",
-    "SimStopped", "Beat",
+    "SimStopped", "Beat", "ToolCallLimitError",
     "MAX_TICKS", "MAX_AGENTS",
 ]

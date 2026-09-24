@@ -43,11 +43,17 @@ def start_flow_run(
     task_id: str,
     flow_id: str,
     params: Optional[Dict[str, Any]] = None,
+    *,
+    parent_run_id: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Launch a flow run subprocess and return (run_id, session_id).
 
     Creates a shared session for the whole flow, a meta run record to track
     overall status, and spawns runtime/flow_run.py which creates per-node run records.
+
+    ``parent_run_id`` is the run this one executes inside (a ``run_flow``
+    node of another flow, see flow/entities/containers/), so a recursive stop
+    and the cost of the run tree reach it.
     """
     from tasks import service as _ts
     from common.session_service import get_or_create_task_session
@@ -95,6 +101,7 @@ def start_flow_run(
         run_id, flow_id,
         task_id=str(task_id), session_id=session_id, workspace=ws_name,
         title=task.title, log_file=str(log_file), status="pending",
+        parent_run_id=parent_run_id,
     )
 
     # Audit trail (common/audit.py). No HTTP request is in flight here (a flow

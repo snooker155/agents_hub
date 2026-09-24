@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BookText, Save, Settings2, Users, Zap, Loader } from 'lucide-react';
-import { updateScenario } from '../../api';
+import {
+  BookText, Bot, FileText, Save, Settings2, Trash2, Users, Zap, Loader,
+} from 'lucide-react';
+import { updateScenario, getTasks } from '../../api';
 import { useToast } from '../../components/toast';
 import { useI18n } from '../../i18n';
 import { CharacterCard, CharacterDialog, ModelSelect } from './characters';
@@ -18,6 +20,20 @@ export function SetupPanel({
   // The role being edited: {index, role}. index -1 is a role being added, so
   // the dialog does not have to know the difference until it saves.
   const [editing, setEditing] = useState(null);
+  // The task picker's own options, read from this scenario's workspace.
+  // Best effort: a workspace with no tasks, or an unreachable one, just
+  // leaves the picker with nothing but "no task".
+  const [tasks, setTasks] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await getTasks(scenario.workspace);
+        if (!cancelled) setTasks(data?.tasks || data || []);
+      } catch { /* the task picker is optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, [scenario.workspace]);
 
   // The chat in the sidebar edits the same scenario this form does, so the
   // stored scenario can change while you are typing in it. Re-sync when it
@@ -238,6 +254,134 @@ export function SetupPanel({
             );
           })()}
         </div>
+      </div>
+
+      {/* Mode — who plays a role: a bare model (personas, the default) or the
+          real agent behind each role.agent_id (agents), which needs docker. */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+        <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+          <Bot className="w-4 h-4 text-indigo-500" /> {t('playground.roleMode.title')}
+        </h3>
+        <div className="flex flex-col md:flex-row gap-3">
+          {['personas', 'agents'].map((m) => (
+            <button
+              key={m}
+              onClick={() => setDraft({ ...draft, mode: m })}
+              className={`flex-1 min-w-0 text-left rounded-lg border p-3 ${
+                (draft.mode || 'personas') === m
+                  ? 'border-indigo-300 bg-indigo-50'
+                  : 'border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <div className="text-xs font-bold text-gray-900">
+                {t(`playground.roleMode.${m}`)}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">
+                {t(`playground.roleMode.${m}Hint`)}
+              </p>
+            </button>
+          ))}
+        </div>
+
+        {(draft.mode || 'personas') === 'agents' && (
+          <div className="mt-3">
+            <label className="block text-[11px] font-semibold text-gray-600 mb-0.5">
+              {t('playground.limits.maxToolCallsPerTick')}
+            </label>
+            <input
+              type="number" min={1} value={draft.max_tool_calls_per_tick ?? 8}
+              onChange={(e) => setDraft({
+                ...draft,
+                max_tool_calls_per_tick: parseInt(e.target.value, 10) || 8,
+              })}
+              className="w-32 text-sm border border-gray-300 rounded-md px-2 py-1.5"
+            />
+            <p className="text-[11px] text-amber-600 mt-1">
+              {t('playground.roleMode.agentsRequireDocker')}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-4 pt-3 border-t border-gray-100">
+          <label className="block text-[11px] font-semibold text-gray-600 mb-0.5">
+            {t('playground.roleMode.taskLabel')}
+          </label>
+          <select
+            value={draft.task_id || ''}
+            onChange={(e) => setDraft({ ...draft, task_id: e.target.value || null })}
+            className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5"
+          >
+            <option value="">{t('playground.roleMode.noTask')}</option>
+            {tasks.map((task) => (
+              <option key={task.id} value={task.id}>
+                {task.key ? `${task.key}: ${task.title}` : task.title}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            {t('playground.roleMode.taskHint')}
+          </p>
+        </div>
+      </div>
+
+      {/* Documents — reference material handed to every role's prompt, under
+          a clipped "Documents" section. A row is either freeform text or a
+          plain workspace file path (leave the text empty and name the file
+          under Name). */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+        <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-1 flex items-center gap-1.5">
+          <FileText className="w-4 h-4 text-indigo-500" /> {t('playground.documents.title')}
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">{t('playground.documents.description')}</p>
+        <div className="space-y-3">
+          {(draft.documents || []).map((doc, i) => {
+            const entry = typeof doc === 'string' ? { name: doc, text: '' } : (doc || {});
+            return (
+              <div key={i} className="border border-gray-200 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <input
+                    value={entry.name || ''}
+                    placeholder={t('playground.documents.namePlaceholder')}
+                    onChange={(e) => {
+                      const documents = [...draft.documents];
+                      documents[i] = { ...entry, name: e.target.value };
+                      setDraft({ ...draft, documents });
+                    }}
+                    className="flex-1 text-sm border border-gray-300 rounded-md px-2 py-1.5"
+                  />
+                  <button
+                    onClick={() => setDraft({
+                      ...draft, documents: draft.documents.filter((_, j) => j !== i),
+                    })}
+                    title={t('playground.documents.remove')}
+                    className="p-1.5 text-gray-400 hover:text-red-600"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <textarea
+                  rows={3}
+                  value={entry.text || ''}
+                  placeholder={t('playground.documents.textPlaceholder')}
+                  onChange={(e) => {
+                    const documents = [...draft.documents];
+                    documents[i] = { ...entry, text: e.target.value };
+                    setDraft({ ...draft, documents });
+                  }}
+                  className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5"
+                />
+              </div>
+            );
+          })}
+        </div>
+        <button
+          onClick={() => setDraft({
+            ...draft, documents: [...(draft.documents || []), { name: '', text: '' }],
+          })}
+          className="mt-3 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+        >
+          {t('playground.documents.add')}
+        </button>
       </div>
 
       {/* The cast — one card per character, edited in a dialog.

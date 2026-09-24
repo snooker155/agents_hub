@@ -31,6 +31,19 @@ os.environ["AGENTS_HUB_ROOT"] = str(_TEST_ROOT)
 TEST_DATABASE_URL = os.environ.get("AGENTS_HUB_TEST_DATABASE_URL", "").strip()
 os.environ["AGENTS_HUB_DATABASE_URL"] = TEST_DATABASE_URL
 
+# The backend's route modules import their request models as a top level
+# ``models`` package (``from models import TaskCreate``), which only resolves
+# with dashboard/backend on the path. Put it there before any test module is
+# collected: a test file run on its own used to depend on an earlier file
+# having done this, and a stray namespace package called ``models`` from
+# another project installed in the same interpreter would otherwise be cached
+# first and shadow it.
+import sys as _sys
+
+_BACKEND_DIR = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
+if _BACKEND_DIR not in _sys.path:
+    _sys.path.insert(0, _BACKEND_DIR)
+
 import pytest
 
 

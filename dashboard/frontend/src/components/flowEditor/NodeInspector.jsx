@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Plus, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n';
+import { getLoops, getTeams, listFlows } from '../../api';
+import { useWorkspace } from '../workspace';
 import { INPUT_CLS, fmtKeys, parseKeys } from './graphHelpers';
 
 // Per-node execution policy: how many times a failed attempt is repeated and
@@ -135,6 +137,90 @@ export function InterruptConfig({ node, onPatch }) {
   );
 }
 
+// Container nodes run a team, a loop or another flow as a nested run. Which
+// catalog the id comes from is keyed by entity id (the registry marks the same
+// field with a config_schema `source` hint: teams, loops or flows).
+const CONTAINER_FIELDS = {
+  run_team: { idKey: 'team_id', load: getTeams, pick: (d) => d?.teams, idOf: (x) => x.team_id, seed: false },
+  run_loop: { idKey: 'loop_id', load: getLoops, pick: (d) => d?.loops, idOf: (x) => x.loop_id, seed: true },
+  run_flow: { idKey: 'flow_id', load: listFlows, pick: (d) => d?.flows || d, idOf: (x) => x.id, seed: true },
+};
+
+export function ContainerConfig({ node, onPatch }) {
+  const { t } = useI18n();
+  const { selectedWorkspace } = useWorkspace();
+  const d = node.data || {};
+  const config = d.config || {};
+  const fields = CONTAINER_FIELDS[d.entity_id];
+  const [options, setOptions] = useState([]);
+  const patchConfig = (patch) => onPatch({ config: { ...config, ...patch } });
+
+  useEffect(() => {
+    if (!fields) return undefined;
+    let alive = true;
+    fields.load(selectedWorkspace || undefined)
+      .then((r) => {
+        const list = fields.pick(r.data);
+        if (alive) setOptions(Array.isArray(list) ? list : []);
+      })
+      .catch(() => { if (alive) setOptions([]); });
+    return () => { alive = false; };
+  }, [fields, selectedWorkspace]);
+
+  if (!fields) return null;
+  const current = config[fields.idKey] || '';
+  const known = options.some((o) => fields.idOf(o) === current);
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          {t(`flowEditor.container.${d.entity_id}`)}
+        </label>
+        <select
+          value={current}
+          onChange={(e) => patchConfig({ [fields.idKey]: e.target.value })}
+          className={INPUT_CLS}
+        >
+          <option value="">{t('flowEditor.container.choose')}</option>
+          {current && !known ? <option value={current}>{current}</option> : null}
+          {options.map((o) => (
+            <option key={fields.idOf(o)} value={fields.idOf(o)}>{o.name || fields.idOf(o)}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          {t('flowEditor.container.goal')}
+        </label>
+        <textarea
+          value={config.goal || ''}
+          onChange={(e) => patchConfig({ goal: e.target.value })}
+          rows={3}
+          placeholder={t('flowEditor.interruptQuestionPlaceholder')}
+          className={INPUT_CLS}
+        />
+        <p className="px-1 pt-1 text-[11px] text-slate-400">{t('flowEditor.interruptQuestionHint')}</p>
+      </div>
+      {fields.seed ? (
+        <div>
+          <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            {t('flowEditor.container.seedKeys')}
+          </label>
+          <input
+            value={fmtKeys(config.seed_keys)}
+            onChange={(e) => patchConfig({ seed_keys: parseKeys(e.target.value) })}
+            placeholder={t('flowEditor.commaSeparatedKeys')}
+            className={INPUT_CLS}
+          />
+        </div>
+      ) : null}
+      <p className="px-1 text-[11px] leading-5 text-slate-400">{t('flowEditor.container.hint')}</p>
+      <NodePolicy node={node} onPatch={onPatch} />
+    </div>
+  );
+}
+
 // Node inspector: edits label/description/task for any node, plus the state
 // contract (input/output keys) and config JSON for non-agent entity nodes.
 export function NodeInspector({ node, isAgent, onPatch, onRun, running }) {
@@ -218,6 +304,8 @@ export function NodeInspector({ node, isAgent, onPatch, onRun, running }) {
         </>
       ) : d.entity_id === 'human_interrupt' ? (
         <InterruptConfig node={node} onPatch={onPatch} />
+      ) : category === 'container' && CONTAINER_FIELDS[d.entity_id] ? (
+        <ContainerConfig node={node} onPatch={onPatch} />
       ) : (
         <div className="space-y-1">
           <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">

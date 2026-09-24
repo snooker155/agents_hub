@@ -35,6 +35,11 @@ _CONFIG_FIELDS = (
     "activation", "max_ticks", "stall_timeout", "max_turn_seconds", "seed",
     "max_concurrent", "cost_ceiling", "default_model", "default_provider",
     "max_wall_seconds", "idle_grace_seconds",
+    # Who plays a role (personas or agents), its per-tick tool call cap, the
+    # task this scenario works on, and the reference documents injected into
+    # every role's prompt. Rides in this JSON blob too, the same reasoning:
+    # one more knob here needs no migration.
+    "mode", "max_tool_calls_per_tick", "task_id", "documents",
 )
 
 

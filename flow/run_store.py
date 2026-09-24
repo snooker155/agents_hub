@@ -276,8 +276,12 @@ def open_flow_run(
     log_file: Optional[str] = None,
     pid: Optional[int] = None,
     status: str = "pending",
+    parent_run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Create (or reset) a flow-run record at launch and return it."""
+    """Create (or reset) a flow-run record at launch and return it.
+
+    ``parent_run_id`` is set when the run executes inside another run (a
+    ``run_flow`` node); left out, a reset keeps whatever parent it had."""
     rec: Dict[str, Any] = {
         "flow_run_id": flow_run_id,
         "flow_id": flow_id,
@@ -294,8 +298,36 @@ def open_flow_run(
         "exit_code": None,
         "error": None,
     }
+    if parent_run_id:
+        rec["parent_run_id"] = str(parent_run_id)
     upsert_flow_run(rec)
     return rec
+
+
+def add_flow_run_child(flow_run_id: str, node_id: str, child_run_id: str) -> Optional[Dict[str, Any]]:
+    """Record that node ``node_id`` of this flow run launched ``child_run_id``.
+
+    ``children`` on the record maps node id to child run id. ``update_flow_run``
+    merges top level keys only, so the map is read and rewritten inside one
+    transaction: two container nodes running in parallel both keep their entry.
+    Returns the merged record, or None when there is no such flow run.
+    """
+    from common import db
+
+    with db.transaction():
+        rec = _RUNS.read(flow_run_id)
+        if rec is None:
+            return None
+        children = dict(rec.get("children") or {})
+        children[str(node_id)] = str(child_run_id)
+        return _RUNS.update(flow_run_id, {"children": children})
+
+
+def flow_run_child(flow_run_id: str, node_id: str) -> Optional[str]:
+    """The child run id node ``node_id`` of this flow run launched, if any."""
+    rec = _RUNS.read(flow_run_id) if flow_run_id else None
+    value = ((rec or {}).get("children") or {}).get(str(node_id))
+    return str(value) if value else None
 
 
 def mark_running(flow_run_id: str, pid: int) -> None:

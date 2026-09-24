@@ -60,6 +60,9 @@ def start_scenario_run(
     runner.validate_scenario_for_run(scenario)
 
     ws = workspace or scenario.workspace
+    # A caller-supplied task_id wins; otherwise a scenario built for one task
+    # runs against it by default, the same way a loop's own task_id does.
+    task_id = task_id or scenario.task_id
     run = SimRun(
         scenario_id=scenario_id, workspace=ws, environment=scenario.environment,
         activation=scenario.activation,
@@ -73,6 +76,20 @@ def start_scenario_run(
     )
     run.log_file = str(_log_dir() / f"scenario_run_{run.sim_run_id}.log")
     store.save_sim_run(run)
+
+    if task_id:
+        # Point the task at this run, the way loops.launcher.start_loop_run
+        # does. Best effort: the run still launches even when the task
+        # cannot be updated, and the task page simply shows no run id yet.
+        try:
+            from tasks import service as _ts
+            _ts.assign_executor(
+                task_id, {"kind": "scenario", "id": scenario_id},
+                {"scenario_id": scenario_id, "workspace": ws},
+                run_id=run.sim_run_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     from runtime.entity_launch import dispatch, execution_mode_for
 
