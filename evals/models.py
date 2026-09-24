@@ -11,6 +11,40 @@ from typing import Any, Dict, List, Optional
 # not the workspace's production spend.
 EVAL_CHANNEL = "eval"
 
+#: What an eval can measure. ``agent`` is one agent answering one message;
+#: the others are containers (common/entity_runs.py) whose output is the
+#: container's own result. See ``evals.targets`` for what "output" means for
+#: each kind.
+TARGET_KINDS = ("agent", "flow", "team", "loop", "scenario")
+
+
+def normalize_target(target: Any = None, agent_id: Optional[str] = None) -> Dict[str, str]:
+    """``{"kind", "id"}`` from a target given in any accepted shape.
+
+    Accepts a dict (``{"kind": "team", "id": "t1"}``), a ``"kind:id"`` string,
+    or nothing, in which case a set ``agent_id`` means an agent target (the
+    shape every eval had before targets existed). Raises ``ValueError`` on a
+    kind that is not in :data:`TARGET_KINDS`.
+    """
+    kind, ident = "", ""
+    if isinstance(target, dict):
+        kind = str(target.get("kind") or "").strip().lower()
+        ident = str(target.get("id") or target.get("target_id") or "").strip()
+    elif isinstance(target, str) and target.strip():
+        text = target.strip()
+        if ":" in text:
+            kind, ident = (part.strip() for part in text.split(":", 1))
+            kind = kind.lower()
+        else:
+            kind, ident = "agent", text
+    if not kind:
+        kind = "agent"
+    if kind == "agent" and not ident:
+        ident = str(agent_id or "").strip()
+    if kind not in TARGET_KINDS:
+        raise ValueError(f"unknown target kind {kind!r} (expected one of {', '.join(TARGET_KINDS)})")
+    return {"kind": kind, "id": ident}
+
 
 def utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -32,6 +66,12 @@ class Case:
 
     ``source_run_id`` records where a case was seeded from, so a scored case can
     always be traced back to the real run it came from.
+
+    ``artifact`` is an optional task snapshot (``evals.snapshot.snapshot_task``):
+    ``{"task_id", "description", "context", "documents": [{"name", "text"}],
+    "files": [{"path", "text"}]}``. A case that carries one runs in an
+    isolated directory holding those files, with the description and context
+    prepended to its input as a "Task" block (``evals.runner.compose_input``).
     """
     case_id: str = field(default_factory=lambda: new_id("case"))
     input: str = ""
@@ -39,6 +79,7 @@ class Case:
     rubric: Optional[str] = None
     source_run_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    artifact: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -48,6 +89,7 @@ class Case:
             "rubric": self.rubric,
             "source_run_id": self.source_run_id,
             "metadata": dict(self.metadata),
+            "artifact": dict(self.artifact) if self.artifact else None,
         }
 
     @classmethod
@@ -59,6 +101,7 @@ class Case:
             rubric=d.get("rubric"),
             source_run_id=d.get("source_run_id"),
             metadata=dict(d.get("metadata") or {}),
+            artifact=dict(d["artifact"]) if isinstance(d.get("artifact"), dict) else None,
         )
 
 
@@ -95,10 +138,19 @@ MAX_REPEATS = 10
 
 @dataclass
 class RunConfig:
-    """One column of the score matrix: an agent under a given model.
+    """One column of the score matrix: a target under a given model.
+
+    ``target`` is ``{"kind", "id"}``, kind one of :data:`TARGET_KINDS`.
+    ``agent_id`` is the compatibility alias from before targets existed: a
+    config built with only ``agent_id`` targets that agent, and a config
+    whose target is an agent keeps ``agent_id`` equal to the target id.
 
     ``label`` names the column in the UI. Leaving provider/model unset means
-    "the agent's configured model", which is the baseline column.
+    "the target's configured model", which is the baseline column.
+
+    ``settings`` is a free dict of per kind overrides (a team's
+    ``max_rounds``, a loop's ``max_iterations``, a scenario's ``max_ticks``);
+    ``evals.targets`` documents which keys each kind honours.
 
     ``repeats`` runs each case this many times under this config, so variance
     from sampling temperature shows up as a spread instead of a single lucky
@@ -109,11 +161,32 @@ class RunConfig:
     model: Optional[str] = None
     label: str = ""
     repeats: int = 1
+    target: Dict[str, Any] = field(default_factory=dict)
+    settings: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.target = normalize_target(self.target or None, self.agent_id)
+        if self.target["kind"] == "agent":
+            self.agent_id = self.target["id"]
+        self.settings = dict(self.settings or {})
+
+    @property
+    def target_kind(self) -> str:
+        return self.target.get("kind") or "agent"
+
+    @property
+    def target_id(self) -> str:
+        if self.target_kind == "agent":
+            # An agent_id assigned after construction still wins, as it did
+            # before targets existed.
+            return self.agent_id or self.target.get("id") or ""
+        return self.target.get("id") or ""
 
     def resolved_label(self) -> str:
         if self.label:
             return self.label
-        parts = [self.agent_id or "?"]
+        ident = self.target_id or "?"
+        parts = [ident if self.target_kind == "agent" else f"{self.target_kind}:{ident}"]
         if self.model:
             parts.append(self.model)
         return " / ".join(parts)
@@ -122,10 +195,14 @@ class RunConfig:
         return max(1, min(MAX_REPEATS, int(self.repeats or 1)))
 
     def to_dict(self) -> Dict[str, Any]:
+        kind, ident = self.target_kind, self.target_id
         return {
-            "agent_id": self.agent_id, "provider": self.provider,
+            "target": {"kind": kind, "id": ident},
+            "agent_id": ident if kind == "agent" else None,
+            "provider": self.provider,
             "model": self.model, "label": self.resolved_label(),
             "repeats": self.resolved_repeats(),
+            "settings": dict(self.settings),
         }
 
     @classmethod
@@ -136,12 +213,20 @@ class RunConfig:
             model=d.get("model") or None,
             label=str(d.get("label") or ""),
             repeats=int(d.get("repeats") or 1),
+            target=normalize_target(d.get("target") or None, d.get("agent_id")),
+            settings=dict(d.get("settings") or {}),
         )
 
 
 @dataclass
 class EvalSet:
-    """A named dataset plus the graders that score it."""
+    """A named dataset plus the graders that score it.
+
+    ``target`` is the default target (the baseline column when a sweep names
+    no configs), ``{"kind", "id"}`` or None. ``agent_id`` is its compatibility
+    alias: set alone it means an agent target, and an agent target keeps it
+    equal to the target id.
+    """
     eval_set_id: str = field(default_factory=lambda: new_id("evs"))
     name: str = ""
     description: str = ""
@@ -151,14 +236,59 @@ class EvalSet:
     graders: List[GraderSpec] = field(default_factory=list)
     created_at: str = field(default_factory=utc_iso)
     updated_at: str = field(default_factory=utc_iso)
+    target: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        self.set_target(self.target, self.agent_id)
+
+    def set_target(self, target: Any = None, agent_id: Optional[str] = None) -> None:
+        """Set the default target from a target or a legacy ``agent_id``;
+        neither (or an empty id) clears it."""
+        norm = normalize_target(target or None, agent_id)
+        if not norm["id"]:
+            self.target, self.agent_id = None, None
+            return
+        self.target = norm
+        self.agent_id = norm["id"] if norm["kind"] == "agent" else None
+
+    def sync_alias(self) -> None:
+        """Follow an ``agent_id`` assigned after construction: for an agent
+        target (or none) the alias is the source of truth, as it was before
+        targets existed."""
+        if self.target and self.target.get("kind") != "agent":
+            return
+        current = self.target["id"] if self.target else None
+        if (self.agent_id or None) != (current or None):
+            self.set_target(None, self.agent_id)
+
+    @property
+    def target_kind(self) -> Optional[str]:
+        self.sync_alias()
+        return self.target["kind"] if self.target else None
+
+    @property
+    def target_id(self) -> Optional[str]:
+        self.sync_alias()
+        return self.target["id"] if self.target else None
+
+    def default_config(self) -> Optional["RunConfig"]:
+        """The baseline column for a sweep that names no configs, or None."""
+        self.sync_alias()
+        if not self.target or not self.target.get("id"):
+            return None
+        return RunConfig(target=dict(self.target), label="baseline")
 
     def to_dict(self) -> Dict[str, Any]:
+        self.sync_alias()
         return {
             "eval_set_id": self.eval_set_id,
             "name": self.name,
             "description": self.description,
             "workspace": self.workspace,
             "agent_id": self.agent_id,
+            "target": dict(self.target) if self.target else None,
+            "target_kind": self.target_kind,
+            "target_id": self.target_id,
             "cases": [c.to_dict() for c in self.cases],
             "graders": [g.to_dict() for g in self.graders],
             "case_count": len(self.cases),
@@ -174,6 +304,7 @@ class EvalSet:
             description=str(d.get("description") or ""),
             workspace=d.get("workspace"),
             agent_id=d.get("agent_id"),
+            target=d.get("target") or None,
             cases=[Case.from_dict(c) for c in (d.get("cases") or [])],
             graders=[GraderSpec.from_dict(g) for g in (d.get("graders") or [])],
             created_at=str(d.get("created_at") or utc_iso()),
@@ -207,6 +338,12 @@ class EvalResult:
     inbound_tokens: int = 0
     outbound_tokens: int = 0
     cost: float = 0.0
+    # The kind of target this cell ran (``TARGET_KINDS``), and what it did on
+    # the way: for an agent, its own run; for a container, one entry per leaf
+    # run or step, ``{"run_id", "kind", "summary"}``. ``run_id`` above is the
+    # container's run for a container kind.
+    target_kind: str = "agent"
+    trajectory: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -226,6 +363,8 @@ class EvalResult:
             "inbound_tokens": self.inbound_tokens,
             "outbound_tokens": self.outbound_tokens,
             "cost": self.cost,
+            "target_kind": self.target_kind,
+            "trajectory": [dict(t) for t in self.trajectory],
         }
 
 
@@ -260,6 +399,6 @@ class EvalRun:
 
 
 __all__ = [
-    "EVAL_CHANNEL", "MAX_REPEATS", "Case", "GraderSpec", "RunConfig", "EvalSet",
+    "EVAL_CHANNEL", "MAX_REPEATS", "TARGET_KINDS", "normalize_target", "Case", "GraderSpec", "RunConfig", "EvalSet",
     "EvalResult", "EvalRun", "utc_iso", "new_id",
 ]

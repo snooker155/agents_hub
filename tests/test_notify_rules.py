@@ -135,3 +135,22 @@ def test_evaluation_error_never_raises(ws, monkeypatch):
     notify_store.create_rule(ws, {"kind": "run_failed", "channels": ["dashboard"]})
     monkeypatch.setattr("notify.store.list_rules", lambda workspace: (_ for _ in ()).throw(RuntimeError("boom")))
     notify_rules.evaluate_run_finished({"status": "failed", "workspace": ws})  # must not raise
+
+
+def test_entity_run_reaching_a_terminal_status_evaluates_rules(ws, fired):
+    """A flow, team, loop or scenario run closing fires the same rules a leaf
+    run does (common/entity_runs.py hooks evaluate_run_finished on the
+    transition), and only once: a later bookkeeping write is not a second
+    finish."""
+    from common import entity_runs
+
+    notify_store.create_rule(ws, {"kind": "run_failed", "channels": ["dashboard"]})
+    entity_runs.upsert({"run_id": "team-x", "kind": "team", "entity_id": "team-a",
+                        "workspace": ws, "status": "running"})
+    assert fired == []
+
+    entity_runs.close("team-x", status="failed", exit_code=1, error="boom")
+    assert len(fired) == 1
+
+    entity_runs.update("team-x", {"error": "boom, again"})
+    assert len(fired) == 1

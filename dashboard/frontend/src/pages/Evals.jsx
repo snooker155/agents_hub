@@ -6,7 +6,7 @@ import {
 import {
   getEvalSets, createEvalSet, getEvalSet, deleteEvalSet, addEvalCase,
   deleteEvalCase, estimateEvalRun, runEvalSet, getEvalRuns, getEvalRun,
-  getEvalRunDiff, getEvalGraders, getAgents,
+  getEvalRunDiff, getEvalGraders, getAgents, listFlows, getTeams, getLoops, getScenarios,
   getEvalChat, clearEvalChat, stopEvalChat, evalChatUrl,
 } from '../api';
 import { useWorkspace } from '../components/workspace';
@@ -34,6 +34,67 @@ const scoreColor = (score, ok = true) => {
 };
 
 const pct = (n) => `${Math.round((n || 0) * 100)}%`;
+
+/** What an eval can target. The order is the order of the kind select. */
+const TARGET_KINDS = ['agent', 'flow', 'team', 'loop', 'scenario'];
+
+/** A set's or a config's target, read from `target` or the legacy `agent_id`. */
+const targetOf = (obj) => {
+  if (obj?.target?.id) return { kind: obj.target.kind || 'agent', id: obj.target.id };
+  if (obj?.agent_id) return { kind: 'agent', id: obj.agent_id };
+  return null;
+};
+
+/** Every catalog as `{id, name}`, whichever key each list endpoint uses. */
+const toOptions = (items, idKey) => (items || []).map((x) => ({
+  id: x[idKey] || x.id,
+  name: x.name || x[idKey] || x.id,
+})).filter((x) => x.id);
+
+/** Where a container run opens: the entity page with `?run=`. */
+const entityRunHref = (kind, entityId, runId) => {
+  if (!runId) return null;
+  switch (kind) {
+    case 'flow': return `/flows/${entityId}?run=${runId}`;
+    case 'team': return `/teams/${entityId}?run=${runId}`;
+    case 'loop': return `/loops?loop=${entityId}&run=${runId}`;
+    case 'scenario': return `/playground/${entityId}?run=${runId}`;
+    default: return `/messages/${runId}`;
+  }
+};
+
+/** A kind select plus an id select fed by that kind's catalog. */
+function TargetPicker({ value, onChange, catalogs, small }) {
+  const { t } = useI18n();
+  const kind = value?.kind || 'agent';
+  const cls = small
+    ? 'text-xs border border-gray-300 rounded-md px-2 py-1.5'
+    : 'text-sm border border-gray-300 rounded-md px-3 py-2';
+  return (
+    <div className="flex items-center gap-2 flex-1 min-w-0">
+      <select
+        value={kind}
+        onChange={(e) => onChange({ kind: e.target.value, id: '' })}
+        className={`${cls} w-28 shrink-0`}
+        title={t('evals.targetKind')}
+      >
+        {TARGET_KINDS.map((k) => (
+          <option key={k} value={k}>{t(`evals.kind_${k}`)}</option>
+        ))}
+      </select>
+      <select
+        value={value?.id || ''}
+        onChange={(e) => onChange({ kind, id: e.target.value })}
+        className={`${cls} flex-1 min-w-0`}
+      >
+        <option value="">{t('evals.selectTarget')}</option>
+        {(catalogs[kind] || []).map((o) => (
+          <option key={o.id} value={o.id}>{o.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 /**
  * The Eval Agent's chat, as one descriptor. Workspace-level rather than
@@ -80,7 +141,7 @@ export default function Evals() {
   const [runs, setRuns] = useState([]);
   const [activeRun, setActiveRun] = useState(null);
   const [graderCatalog, setGraderCatalog] = useState([]);
-  const [agents, setAgents] = useState([]);
+  const [catalogs, setCatalogs] = useState({ agent: [], flow: [], team: [], loop: [], scenario: [] });
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [estimate, setEstimate] = useState(null);
@@ -117,11 +178,22 @@ export default function Evals() {
 
   useEffect(() => {
     (async () => {
-      try {
-        const [g, a] = await Promise.all([getEvalGraders(), getAgents(currentWorkspace)]);
-        setGraderCatalog(g.data.graders || []);
-        setAgents(a.data.agents || a.data || []);
-      } catch { /* catalogs are optional decoration */ }
+      // Each catalog is optional decoration: one failing list leaves its
+      // select empty rather than the page broken.
+      const safe = (p) => p.then((r) => r.data).catch(() => null);
+      const [g, a, f, tm, l, sc] = await Promise.all([
+        safe(getEvalGraders()), safe(getAgents(currentWorkspace)),
+        safe(listFlows(currentWorkspace)), safe(getTeams(currentWorkspace)),
+        safe(getLoops(currentWorkspace)), safe(getScenarios(currentWorkspace)),
+      ]);
+      setGraderCatalog(g?.graders || []);
+      setCatalogs({
+        agent: toOptions(a?.agents || (Array.isArray(a) ? a : []), 'id'),
+        flow: toOptions(f?.flows || (Array.isArray(f) ? f : []), 'id'),
+        team: toOptions(tm?.teams || [], 'team_id'),
+        loop: toOptions(l?.loops || [], 'loop_id'),
+        scenario: toOptions(sc?.scenarios || [], 'scenario_id'),
+      });
     })();
   }, [currentWorkspace]);
 
@@ -136,8 +208,9 @@ export default function Evals() {
       ]);
       setSelected(set);
       setRuns(hist.eval_runs || []);
-      setConfigs(set.agent_id
-        ? [{ agent_id: set.agent_id, provider: '', model: '', label: 'baseline', repeats: 1 }]
+      const baseline = targetOf(set);
+      setConfigs(baseline
+        ? [{ target: baseline, provider: '', model: '', label: 'baseline', repeats: 1 }]
         : []);
       if ((hist.eval_runs || []).length) {
         const { data: latest } = await getEvalRun(hist.eval_runs[0].eval_run_id);
@@ -208,6 +281,10 @@ export default function Evals() {
   };
 
   const configLabels = (activeRun?.configs || []).map((c) => c.label);
+  // Config label to its target, so the matrix can say what each column ran.
+  const configTargets = Object.fromEntries(
+    (activeRun?.configs || []).map((c) => [c.label, targetOf(c)]),
+  );
 
   return (
     <PageContainer>
@@ -265,7 +342,15 @@ export default function Evals() {
                       <div className="text-sm font-semibold text-gray-900 truncate">{s.name}</div>
                       <div className="text-xs text-gray-500">
                         {s.case_count} case{s.case_count === 1 ? '' : 's'}
-                        {s.agent_id ? ` · ${s.agent_id}` : ''}
+                        {targetOf(s) && (
+                          <>
+                            {' · '}
+                            <span className="inline-flex items-center px-1.5 rounded bg-gray-100 text-gray-600 text-[10px] font-semibold uppercase">
+                              {t(`evals.kind_${targetOf(s).kind}`)}
+                            </span>
+                            {` ${targetOf(s).id}`}
+                          </>
+                        )}
                       </div>
                     </button>
                     <button
@@ -332,7 +417,7 @@ export default function Evals() {
                     </span>
                     <button
                       onClick={() => setConfigs([...configs, {
-                        agent_id: selected.agent_id || agents[0]?.id || '',
+                        target: targetOf(selected) || { kind: 'agent', id: catalogs.agent[0]?.id || '' },
                         provider: '', model: '', label: '', repeats: 1,
                       }])}
                       className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
@@ -342,26 +427,23 @@ export default function Evals() {
                   </div>
                   {configs.length === 0 && (
                     <p className="text-xs text-gray-500 italic">
-                      {t('evals.addAtLeastOneAgent')}
+                      {t('evals.addAtLeastOneTarget')}
                     </p>
                   )}
                   <div className="space-y-2">
                     {configs.map((c, i) => (
                       <div key={i} className="flex items-center gap-2">
-                        <select
-                          value={c.agent_id}
-                          onChange={(e) => {
+                        <TargetPicker
+                          small
+                          value={targetOf(c)}
+                          catalogs={catalogs}
+                          onChange={(target) => {
                             const next = [...configs];
-                            next[i] = { ...c, agent_id: e.target.value };
+                            // The target replaces the legacy agent_id alias.
+                            next[i] = { ...c, target, agent_id: undefined };
                             setConfigs(next);
                           }}
-                          className="text-xs border border-gray-300 rounded-md px-2 py-1.5 flex-1 min-w-0"
-                        >
-                          <option value="">{t('evals.selectAgent')}</option>
-                          {agents.map((a) => (
-                            <option key={a.id} value={a.id}>{a.name || a.id}</option>
-                          ))}
-                        </select>
+                        />
                         <input
                           value={c.model}
                           onChange={(e) => {
@@ -463,6 +545,11 @@ export default function Evals() {
                               ? <ChevronDown className="w-3.5 h-3.5 mt-0.5 text-gray-400 shrink-0" />
                               : <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-gray-400 shrink-0" />}
                             <span className="text-sm text-gray-800 truncate">{c.input || '(empty)'}</span>
+                            {c.artifact && (
+                              <span className="ml-1.5 shrink-0 inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-semibold">
+                                {t('evals.taskSnapshot')}
+                              </span>
+                            )}
                           </button>
                           <button
                             onClick={async () => {
@@ -497,6 +584,15 @@ export default function Evals() {
                               <a href={`/messages/${c.source_run_id}`} className="text-indigo-600 hover:underline">
                                 seeded from run {c.source_run_id.slice(0, 12)}
                               </a>
+                            )}
+                            {c.artifact && (
+                              <div className="text-gray-600">
+                                {t('evals.snapshotSummary', {
+                                  files: (c.artifact.files || []).length,
+                                  documents: (c.artifact.documents || []).length,
+                                })}
+                                {c.artifact.truncated ? ` · ${t('evals.snapshotTruncated')}` : ''}
+                              </div>
                             )}
                           </div>
                         )}
@@ -606,10 +702,18 @@ export default function Evals() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
                     {configLabels.map((label) => {
                       const s = activeRun.summary[label] || {};
+                      const target = configTargets[label];
                       const repeated = (s.total || 0) > Object.keys(s.cases || {}).length;
                       return (
                         <div key={label} className="rounded-lg border border-gray-200 p-3">
-                          <div className="text-xs font-semibold text-gray-500 truncate">{label}</div>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {target && (
+                              <span className="shrink-0 inline-flex items-center px-1.5 rounded bg-gray-100 text-gray-600 text-[10px] font-semibold uppercase">
+                                {t(`evals.kind_${target.kind}`)}
+                              </span>
+                            )}
+                            <div className="text-xs font-semibold text-gray-500 truncate">{label}</div>
+                          </div>
                           <div className="text-2xl font-bold text-gray-900 mt-1">{pct(s.score)}</div>
                           <div className="text-xs text-gray-500 mt-0.5">
                             {s.passed || 0}/{s.total || 0} passed
@@ -639,7 +743,14 @@ export default function Evals() {
                         <tr className="border-b border-gray-200">
                           <th className="text-left py-2 pr-4 text-xs font-bold text-gray-500 uppercase">{t('evals.case')}</th>
                           {configLabels.map((l) => (
-                            <th key={l} className="text-center py-2 px-2 text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{l}</th>
+                            <th key={l} className="text-center py-2 px-2 text-xs font-bold text-gray-500 uppercase whitespace-nowrap">
+                              {l}
+                              {configTargets[l] && configTargets[l].kind !== 'agent' && (
+                                <div className="text-[10px] font-semibold text-gray-400 normal-case">
+                                  {t(`evals.kind_${configTargets[l].kind}`)}
+                                </div>
+                              )}
+                            </th>
                           ))}
                         </tr>
                       </thead>
@@ -662,7 +773,7 @@ export default function Evals() {
                               return (
                                 <td key={label} className="text-center py-2 px-2">
                                   <button
-                                    onClick={() => setCellDetail({ cell, case: c, label, caseStats })}
+                                    onClick={() => setCellDetail({ cell, case: c, label, caseStats, target: configTargets[label] })}
                                     title={title}
                                     className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-semibold ${scoreColor(cell.score, cell.ok)}`}
                                   >
@@ -709,7 +820,7 @@ export default function Evals() {
 
       {showCreate && (
         <CreateSetModal
-          agents={agents}
+          catalogs={catalogs}
           graderCatalog={graderCatalog}
           workspace={currentWorkspace}
           onClose={() => setShowCreate(false)}
@@ -733,11 +844,11 @@ export default function Evals() {
 }
 
 
-function CreateSetModal({ agents, graderCatalog, workspace, onClose, onCreated }) {
+function CreateSetModal({ catalogs, graderCatalog, workspace, onClose, onCreated }) {
   const { t } = useI18n();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [agentId, setAgentId] = useState('');
+  const [target, setTarget] = useState({ kind: 'agent', id: '' });
   const [graders, setGraders] = useState([{ kind: 'substring', params: {}, weight: 1 }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -747,7 +858,7 @@ function CreateSetModal({ agents, graderCatalog, workspace, onClose, onCreated }
     setSaving(true);
     try {
       const { data } = await createEvalSet({
-        name, description, workspace, agent_id: agentId || null, cases: [], graders,
+        name, description, workspace, target: target.id ? target : null, cases: [], graders,
       });
       onCreated(data);
     } catch (e) {
@@ -768,12 +879,8 @@ function CreateSetModal({ agents, graderCatalog, workspace, onClose, onCreated }
         <input value={description} onChange={(e) => setDescription(e.target.value)}
                className="w-full text-sm border border-gray-300 rounded-md px-3 py-2" />
       </Field>
-      <Field label={t('evals.defaultAgent')} hint={t('evals.usedAsTheBaselineColumn')}>
-        <select value={agentId} onChange={(e) => setAgentId(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded-md px-3 py-2">
-          <option value="">{t('evals.none2')}</option>
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
-        </select>
+      <Field label={t('evals.defaultTarget')} hint={t('evals.usedAsTheBaselineColumn')}>
+        <TargetPicker value={target} onChange={setTarget} catalogs={catalogs} />
       </Field>
       <Field label={t('evals.graders')} hint={t('evals.everyGraderMustPassFor')}>
         <div className="space-y-2">
@@ -830,6 +937,7 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
   const [expected, setExpected] = useState('');
   const [rubric, setRubric] = useState('');
   const [fromRunId, setFromRunId] = useState('');
+  const [fromTaskId, setFromTaskId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -839,6 +947,7 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
       await addEvalCase(evalSetId, {
         input, expected: expected || null, rubric: rubric || null,
         from_run_id: fromRunId || null,
+        from_task_id: fromTaskId.trim() || null,
       });
       onAdded();
     } catch (e) {
@@ -854,6 +963,10 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
       <Field label={t('evals.seedFromRunId')} hint={t('evals.optionalPullsTheRunS')}>
         <input value={fromRunId} onChange={(e) => setFromRunId(e.target.value)}
                placeholder={t('evals.run')} className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 font-mono" />
+      </Field>
+      <Field label={t('evals.snapshotFromTask')} hint={t('evals.snapshotFromTaskHint')}>
+        <input value={fromTaskId} onChange={(e) => setFromTaskId(e.target.value)}
+               placeholder={t('evals.taskId')} className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 font-mono" />
       </Field>
       <Field label={t('evals.input')} hint={t('evals.theUserMessageSentTo')}>
         <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={3}
@@ -875,7 +988,12 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
 
 function CellDetailModal({ detail, onClose }) {
   const { t } = useI18n();
-  const { cell, case: c, label, caseStats } = detail;
+  const { cell, case: c, label, caseStats, target } = detail;
+  const kind = cell.target_kind || target?.kind || 'agent';
+  const containerHref = kind === 'agent'
+    ? (cell.run_id ? `/messages/${cell.run_id}` : null)
+    : entityRunHref(kind, target?.id, cell.run_id);
+  const trajectory = cell.trajectory || [];
   const repeated = caseStats && caseStats.attempts > 1;
   return (
     <Modal title={`${label} — ${c.input.slice(0, 60)}`} onClose={onClose} wide>
@@ -889,9 +1007,9 @@ function CellDetailModal({ detail, onClose }) {
             ${cell.cost.toFixed(4)}
             {cell.attempt > 1 && ` · ${t('evals.attempt', { n: cell.attempt })}`}
           </div>
-          {cell.run_id && (
-            <a href={`/messages/${cell.run_id}`} className="text-xs text-indigo-600 hover:underline ml-auto">
-              {t('evals.openFullRunTrace')}
+          {containerHref && (
+            <a href={containerHref} className="text-xs text-indigo-600 hover:underline ml-auto">
+              {kind === 'agent' ? t('evals.openFullRunTrace') : t('evals.openContainerRun', { kind: t(`evals.kind_${kind}`) })}
             </a>
           )}
         </div>
@@ -937,10 +1055,34 @@ function CellDetailModal({ detail, onClose }) {
           </div>
         )}
 
+        {kind !== 'agent' && trajectory.length > 0 && (
+          <div>
+            <div className="text-xs font-bold text-gray-500 uppercase mb-1.5">
+              {t('evals.trajectory')} ({trajectory.length})
+            </div>
+            <ol className="space-y-1 text-xs max-h-48 overflow-auto">
+              {trajectory.map((step, i) => {
+                const href = step.kind === 'run' ? `/messages/${step.run_id}` : containerHref;
+                return (
+                  <li key={`${step.run_id}-${i}`} className={`flex items-center gap-2 ${step.kind === 'run' ? 'pl-3' : ''}`}>
+                    <span className="text-gray-400 w-5 text-right shrink-0">{i + 1}</span>
+                    {href
+                      ? <a href={href} className="font-mono text-indigo-600 hover:underline">{String(step.run_id).slice(0, 12)}</a>
+                      : <span className="font-mono text-gray-600">{String(step.run_id).slice(0, 12)}</span>}
+                    {step.summary && <span className="text-gray-500 truncate">{step.summary}</span>}
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        )}
+
         {/* The raw output always sits next to the number: a grader is itself
             unreliable, and the score alone is not evidence. */}
         <div>
-          <div className="text-xs font-bold text-gray-500 uppercase mb-1.5">{t('evals.agentOutput')}</div>
+          <div className="text-xs font-bold text-gray-500 uppercase mb-1.5">
+            {kind === 'agent' ? t('evals.agentOutput') : t('evals.targetOutput')}
+          </div>
           <pre className="whitespace-pre-wrap text-xs text-gray-800 bg-gray-50 rounded-lg p-3 max-h-72 overflow-auto">
             {cell.output || '(empty)'}
           </pre>

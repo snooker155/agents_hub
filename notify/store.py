@@ -24,8 +24,11 @@ Two lists live here, under separate metadata keys.
 
     An ``online_eval`` rule also carries ``sample_rate`` (0..1), ``graders``
     (grader specs as an eval set stores them), ``min_score`` (0..1),
-    ``severity`` and optional ``expected`` / ``rubric`` for the graders that
-    read them; see ``evals/online.py``.
+    ``severity``, ``kinds`` (the run kinds it grades: agent, flow, team,
+    loop, scenario; default agent only) and optional ``expected`` /
+    ``rubric`` for the graders that read them; see ``evals/online.py``, whose
+    ``normalize_rule_fields`` validates every one of them on create and
+    update.
 
 **Secrets.** A webhook's secret is stored as the operator typed it and never
 sent back in a GET: :func:`masked_endpoint` replaces it with its last four

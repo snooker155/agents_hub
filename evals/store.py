@@ -19,12 +19,14 @@ def save_eval_set(evalset: EvalSet) -> EvalSet:
             db.upsert_sql(
                 "eval_sets",
                 ("eval_set_id", "name", "description", "workspace", "agent_id",
+                 "target_kind", "target_id",
                  "cases", "graders", "created_at", "updated_at"),
                 ("eval_set_id",),
             ),
             (
                 evalset.eval_set_id, evalset.name, evalset.description,
                 evalset.workspace, evalset.agent_id,
+                evalset.target_kind, evalset.target_id,
                 db.dumps([c.to_dict() for c in evalset.cases]),
                 db.dumps([g.to_dict() for g in evalset.graders]),
                 evalset.created_at, evalset.updated_at,
@@ -33,13 +35,26 @@ def save_eval_set(evalset: EvalSet) -> EvalSet:
     return evalset
 
 
+def _cell(row, column: str):
+    """A row's value for ``column``, or None on a row without that column."""
+    try:
+        return row[column]
+    except (KeyError, IndexError):
+        return None
+
+
 def _row_to_set(row) -> EvalSet:
+    # target_kind/target_id (migration 0015) win; a row written before them
+    # has only agent_id, which EvalSet reads as an agent target.
+    kind, ident = _cell(row, "target_kind"), _cell(row, "target_id")
+    target = {"kind": kind, "id": ident} if kind and ident else None
     return EvalSet(
         eval_set_id=row["eval_set_id"],
         name=row["name"] or "",
         description=row["description"] or "",
         workspace=row["workspace"],
         agent_id=row["agent_id"],
+        target=target,
         cases=[Case.from_dict(c) for c in (db.loads(row["cases"], []) or [])],
         graders=[GraderSpec.from_dict(g) for g in (db.loads(row["graders"], []) or [])],
         created_at=row["created_at"] or "",
@@ -167,7 +182,7 @@ def save_result(result: EvalResult) -> EvalResult:
                 ("result_id", "eval_run_id", "case_id", "config_label", "run_id",
                  "ok", "error", "output", "scores", "score", "passed",
                  "duration_ms", "inbound_tokens", "outbound_tokens", "cost",
-                 "attempt"),
+                 "attempt", "target_kind", "trajectory"),
                 ("result_id",),
             ),
             (
@@ -176,6 +191,7 @@ def save_result(result: EvalResult) -> EvalResult:
                 result.output, db.dumps(result.scores), result.score,
                 int(result.passed), result.duration_ms, result.inbound_tokens,
                 result.outbound_tokens, result.cost, int(result.attempt or 1),
+                result.target_kind or "agent", db.dumps(list(result.trajectory or [])),
             ),
         )
     return result
@@ -199,6 +215,8 @@ def _row_to_result(row) -> EvalResult:
         inbound_tokens=int(row["inbound_tokens"] or 0),
         outbound_tokens=int(row["outbound_tokens"] or 0),
         cost=float(row["cost"] or 0.0),
+        target_kind=_cell(row, "target_kind") or "agent",
+        trajectory=list(db.loads(_cell(row, "trajectory"), []) or []),
     )
 
 

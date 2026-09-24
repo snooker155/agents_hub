@@ -233,6 +233,7 @@ def upsert(record: Mapping[str, Any], *, kind: Optional[str] = None, merge: bool
         _write(conn, merged)
     if notify:
         _notify_record(merged, notify_fn)
+    _evaluate_rules_on_finish(existing or {}, merged)
     return merged
 
 
@@ -257,7 +258,27 @@ def update(run_id: str, updates: Mapping[str, Any], *, notify: bool = True,
         _write(conn, rec)
     if notify:
         _notify_record(rec, notify_fn)
+    _evaluate_rules_on_finish(existing, rec)
     return rec
+
+
+def _evaluate_rules_on_finish(old: Mapping[str, Any], new: Mapping[str, Any]) -> None:
+    """Run the workspace's alert rules once a container run reaches a
+    terminal status, the way managers/runs/notifications.py does for a leaf
+    run: run_failed, spend thresholds and online evals (evals/online.py reads
+    ``kind`` off the record to filter by run kind). Best effort, and only on
+    the transition itself so a later bookkeeping write never fires it twice.
+    """
+    try:
+        from common import run_status
+        if not run_status.is_terminal(str(new.get("status") or "")):
+            return
+        if run_status.is_terminal(str(old.get("status") or "")):
+            return
+        from notify import rules as notify_rules
+        notify_rules.evaluate_run_finished(dict(new))
+    except Exception:  # noqa: BLE001 - alert rules never break run bookkeeping
+        log.debug("entity_runs: alert rules failed for %s", new.get("run_id"), exc_info=True)
 
 
 def set_status(run_id: str, status: str, *, from_statuses: Optional[Iterable[str]] = None,

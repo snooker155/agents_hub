@@ -1,8 +1,9 @@
 """Online evals: graders run on a sample of production runs.
 
-An ``online_eval`` alert rule (``notify/store.py``) names an agent filter, a
-sample rate, a list of grader specs in the same form an eval set uses
-(``evals.models.GraderSpec``), a minimum score and a severity. The flow:
+An ``online_eval`` alert rule (``notify/store.py``) names an agent filter, the
+run kinds it grades (``kinds``, default ``["agent"]``), a sample rate, a list
+of grader specs in the same form an eval set uses (``evals.models.GraderSpec``),
+a minimum score and a severity. The flow:
 
 1. ``notify.rules.evaluate_run_finished`` calls :func:`maybe_enqueue` for each
    enabled ``online_eval`` rule when a run reaches a terminal status. The
@@ -42,6 +43,11 @@ POLL_SECONDS = 10.0
 BATCH = 20
 
 _GRADED_STATUSES = ("completed",)
+
+#: Run kinds a rule may grade. ``agent`` is a leaf run (``runs``); the others
+#: are container runs (``entity_runs``), graded on their own result.
+RUN_KINDS = ("agent", "flow", "team", "loop", "scenario")
+DEFAULT_KINDS = ("agent",)
 _SKIP_CHANNELS = frozenset({"eval", "replay"})
 
 
@@ -67,6 +73,32 @@ def normalize_graders(graders: Any) -> List[Dict[str, Any]]:
             raise ValueError(f"unknown grader {spec.kind!r}")
         out.append(spec.to_dict())
     return out
+
+
+def normalize_kinds(kinds: Any) -> List[str]:
+    """A rule's run kinds, validated; empty or missing means agents only."""
+    if kinds in (None, "", []):
+        return list(DEFAULT_KINDS)
+    if isinstance(kinds, str):
+        kinds = [k for k in kinds.split(",")]
+    if not isinstance(kinds, (list, tuple)):
+        raise ValueError("kinds must be a list of run kinds")
+    out: List[str] = []
+    for k in kinds:
+        k = str(k or "").strip().lower()
+        if not k:
+            continue
+        if k not in RUN_KINDS:
+            raise ValueError(f"unknown run kind {k!r} (expected one of {', '.join(RUN_KINDS)})")
+        if k not in out:
+            out.append(k)
+    return out or list(DEFAULT_KINDS)
+
+
+def run_kind(run: Dict[str, Any]) -> str:
+    """``agent`` for a leaf run, else the container kind of an entity run."""
+    kind = str(run.get("kind") or "")
+    return kind if kind in RUN_KINDS and kind != "agent" else "agent"
 
 
 def normalize_rule_fields(data: Dict[str, Any], *, partial: bool = False) -> Dict[str, Any]:
@@ -98,6 +130,8 @@ def normalize_rule_fields(data: Dict[str, Any], *, partial: bool = False) -> Dic
         out["severity"] = severity
     if not partial or "graders" in data:
         out["graders"] = normalize_graders(data.get("graders"))
+    if not partial or "kinds" in data:
+        out["kinds"] = normalize_kinds(data.get("kinds"))
     for key in ("expected", "rubric"):
         if not partial or key in data:
             value = data.get(key)
@@ -136,7 +170,12 @@ def maybe_enqueue(workspace: str, rule: Dict[str, Any], run: Dict[str, Any]) -> 
         return False
     if (run.get("channel") or "") in _SKIP_CHANNELS:
         return False
-    agent_id = str(run.get("agent_id") or "")
+    kind = run_kind(run)
+    if kind not in (rule.get("kinds") or DEFAULT_KINDS):
+        return False
+    # For a container run the rule's agent filter names the entity (the
+    # team, loop, flow or scenario id).
+    agent_id = str(run.get("agent_id") or "") if kind == "agent" else str(run.get("entity_id") or "")
     wanted = rule.get("agent_id")
     if wanted and wanted != agent_id:
         return False
@@ -202,13 +241,43 @@ def _finish(job_id: int, status: str, error: Optional[str] = None) -> None:
 
 # ── Grading ─────────────────────────────────────────────────────────────────
 
+def _entity_output(rec: Dict[str, Any]) -> Dict[str, str]:
+    """What a container run produced and what it was asked, for grading."""
+    kind = str(rec.get("kind") or "")
+    if kind == "scenario":
+        from evals.targets import render_scenario
+        return {"output": render_scenario(rec.get("scores") or {}, rec.get("final_state") or {}),
+                "input": str(rec.get("title") or "")}
+    output = str(rec.get("result") or rec.get("output") or "")
+    if not output and kind == "flow":
+        # A flow run keeps no result of its own: its last node run's output is it.
+        from evals.targets import leaf_run_ids
+        from managers import run_manager as rm
+        for leaf in reversed(leaf_run_ids("flow", str(rec.get("run_id") or ""))):
+            leaf_rec = rm.get_run_by_id(leaf) or {}
+            if leaf_rec.get("output"):
+                output = str(leaf_rec["output"])
+                break
+    return {"output": output, "input": str(rec.get("goal") or rec.get("title") or "")}
+
+
 def _load_run(run_id: str) -> Dict[str, Any]:
-    """The run record, its output and the user message it answered."""
+    """The run record, its output and the user message it answered.
+
+    A leaf run comes from ``runs``; a flow, team, loop or scenario run from
+    ``entity_runs``, graded on its own result (``_entity_output``).
+    """
     from managers import run_manager as rm
 
     run = rm.get_run_by_id(run_id)
     if not run:
-        raise ValueError(f"run {run_id} not found")
+        from common import entity_runs
+        rec = entity_runs.get(run_id)
+        if not rec:
+            raise ValueError(f"run {run_id} not found")
+        loaded = _entity_output(rec)
+        return {"run": {**rec, "agent_id": rec.get("entity_id")},
+                "output": loaded["output"], "input": loaded["input"]}
     try:
         proc = rm.get_run_process(run_id) or {}
     except Exception:
@@ -478,7 +547,8 @@ service = _Service()
 
 
 __all__ = [
-    "RULE_KIND", "SEVERITIES", "MAX_ATTEMPTS", "normalize_rule_fields", "normalize_graders",
+    "RULE_KIND", "SEVERITIES", "MAX_ATTEMPTS", "RUN_KINDS", "normalize_rule_fields",
+    "normalize_graders", "normalize_kinds", "run_kind",
     "sample_point", "is_sampled", "maybe_enqueue", "list_jobs", "grade_run",
     "process_job", "process_pending", "recent_results", "summary", "service",
 ]

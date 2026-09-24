@@ -570,7 +570,30 @@ def _load_run_payload(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
     try:
         from managers import run_manager as rm
         payload = rm.get_run_process(run_id)
-        return payload if isinstance(payload, dict) else None
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        return None
+    return _container_payload(run_id)
+
+
+def _container_payload(run_id: str) -> Optional[Dict[str, Any]]:
+    """For a flow, team, loop or scenario run: its leaf runs' tool calls,
+    concatenated in run order, so a trajectory grader reads what the whole
+    container did. None when ``run_id`` is not a container run."""
+    try:
+        from common import entity_runs
+        rec = entity_runs.get(run_id)
+        if not rec:
+            return None
+        from evals.targets import leaf_run_ids
+        from managers import run_manager as rm
+        calls: List[Dict[str, Any]] = []
+        for leaf in leaf_run_ids(str(rec.get("kind") or ""), run_id):
+            leaf_payload = rm.get_run_process(leaf)
+            if isinstance(leaf_payload, dict):
+                calls.extend(_tool_calls(leaf_payload))
+        return {"tool_calls": calls}
     except Exception:
         return None
 

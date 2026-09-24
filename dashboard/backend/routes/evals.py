@@ -3,7 +3,7 @@ Eval harness API — datasets, sweeps, score matrices.
 
 ``GET|POST /api/evals``                       list / create eval sets
 ``GET|PUT|DELETE /api/evals/{id}``            read / update / delete a set
-``POST /api/evals/{id}/cases``                add a case (optionally from a run)
+``POST /api/evals/{id}/cases``                add a case (from a run or a task)
 ``DELETE /api/evals/{id}/cases/{case_id}``    remove a case
 ``POST /api/evals/{id}/estimate``             projected spend before a sweep
 ``POST /api/evals/{id}/run``                  run the sweep (blocking, billable)
@@ -47,26 +47,45 @@ class CaseIn(BaseModel):
     # When set, the case is seeded from this run: its recorded user message
     # becomes the input and its output becomes `expected` unless overridden.
     from_run_id: Optional[str] = None
+    # When set, the case carries a snapshot of this task (evals.snapshot):
+    # its description, context, documents and a capped slice of its project
+    # files, and runs in an isolated directory holding those files.
+    from_task_id: Optional[str] = None
+    # A snapshot given directly, in the same shape snapshot_task returns.
+    artifact: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = {}
+
+
+class TargetIn(BaseModel):
+    kind: str = "agent"   # agent | flow | team | loop | scenario
+    id: str = ""
 
 
 class EvalSetIn(BaseModel):
     name: str = ""
     description: str = ""
     workspace: Optional[str] = None
+    # The default target (the baseline column). ``agent_id`` is the
+    # compatibility alias: set alone it means an agent target.
+    target: Optional[TargetIn] = None
     agent_id: Optional[str] = None
     cases: List[CaseIn] = []
     graders: List[GraderIn] = []
 
 
 class ConfigIn(BaseModel):
-    agent_id: str
+    target: Optional[TargetIn] = None
+    # Compatibility alias for an agent target.
+    agent_id: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
     label: str = ""
     # Runs each case this many times under this config (capped in RunConfig)
     # so sampling variance shows up as a spread instead of one lucky draw.
     repeats: int = 1
+    # Per kind overrides: max_rounds, max_iterations, max_ticks,
+    # trigger_agent (see evals/targets.py for which kind reads which).
+    settings: Dict[str, Any] = {}
 
 
 class RunEvalIn(BaseModel):
@@ -76,25 +95,46 @@ class RunEvalIn(BaseModel):
     cost_ceiling: Optional[float] = None
 
 
+def _artifact_from_in(c: CaseIn) -> Optional[Dict[str, Any]]:
+    if c.from_task_id:
+        from evals.snapshot import snapshot_task
+        return snapshot_task(c.from_task_id)
+    return dict(c.artifact) if c.artifact else None
+
+
 def _case_from_in(c: CaseIn) -> Case:
+    artifact = _artifact_from_in(c)
     if c.from_run_id:
         case = case_from_run(c.from_run_id, expected=c.expected, rubric=c.rubric)
         if c.input.strip():
             case.input = c.input
         case.metadata.update(c.metadata or {})
+        case.artifact = artifact
         return case
+    metadata = dict(c.metadata or {})
+    if c.from_task_id:
+        metadata.setdefault("task_id", c.from_task_id)
     return Case(
         input=c.input, expected=c.expected, rubric=c.rubric,
-        metadata=dict(c.metadata or {}),
+        metadata=metadata, artifact=artifact,
     )
 
 
+def _target_of(target: Optional[TargetIn]) -> Optional[Dict[str, str]]:
+    return target.model_dump() if target is not None and target.id else None
+
+
 def _configs_from_in(items: List[ConfigIn]) -> List[RunConfig]:
-    return [
-        RunConfig(agent_id=c.agent_id, provider=c.provider, model=c.model,
-                  label=c.label, repeats=c.repeats)
-        for c in items
-    ]
+    out = []
+    for c in items:
+        target = _target_of(c.target)
+        if not target and not c.agent_id:
+            raise ValueError("each config needs a target (or an agent_id)")
+        out.append(RunConfig(
+            agent_id=c.agent_id or "", target=target or {}, provider=c.provider,
+            model=c.model, label=c.label, repeats=c.repeats, settings=dict(c.settings or {}),
+        ))
+    return out
 
 
 # ── Eval sets ─────────────────────────────────────────────────────────────────
@@ -112,14 +152,18 @@ async def create_eval(data: EvalSetIn):
         cases = [_case_from_in(c) for c in data.cases]
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    evalset = EvalSet(
-        name=data.name.strip(),
-        description=data.description,
-        workspace=data.workspace,
-        agent_id=data.agent_id,
-        cases=cases,
-        graders=[GraderSpec(kind=g.kind, params=g.params, weight=g.weight) for g in data.graders],
-    )
+    try:
+        evalset = EvalSet(
+            name=data.name.strip(),
+            description=data.description,
+            workspace=data.workspace,
+            agent_id=data.agent_id,
+            target=_target_of(data.target),
+            cases=cases,
+            graders=[GraderSpec(kind=g.kind, params=g.params, weight=g.weight) for g in data.graders],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return store.save_eval_set(evalset).to_dict()
 
 
@@ -149,6 +193,7 @@ def _eval_state(workspace: str) -> Dict[str, Any]:
             "name": d.get("name"),
             "description": d.get("description"),
             "agent_id": d.get("agent_id"),
+            "target": d.get("target"),
             "cases": len(d.get("cases") or []),
             "graders": [g.get("kind") for g in (d.get("graders") or [])],
         })
@@ -281,8 +326,13 @@ async def update_eval(eval_set_id: str, data: EvalSetIn):
     if data.name.strip():
         evalset.name = data.name.strip()
     evalset.description = data.description
-    if data.agent_id is not None:
-        evalset.agent_id = data.agent_id
+    try:
+        if data.target is not None:
+            evalset.set_target(_target_of(data.target))
+        elif data.agent_id is not None:
+            evalset.set_target(None, data.agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if data.graders:
         evalset.graders = [
             GraderSpec(kind=g.kind, params=g.params, weight=g.weight) for g in data.graders
@@ -309,7 +359,9 @@ async def delete_eval(eval_set_id: str):
 @router.post("/evals/{eval_set_id}/cases")
 async def add_eval_case(eval_set_id: str, data: CaseIn):
     """Add a case. With ``from_run_id`` this is the "save this run as an eval
-    case" button — the cheapest way to seed a dataset from real traffic."""
+    case" button, the cheapest way to seed a dataset from real traffic. With
+    ``from_task_id`` the case carries a snapshot of that task (see
+    evals/snapshot.py for what is copied and what never is)."""
     try:
         case = _case_from_in(data)
     except ValueError as e:
@@ -336,11 +388,15 @@ async def estimate_eval(eval_set_id: str, data: RunEvalIn):
     evalset = store.get_eval_set(eval_set_id)
     if not evalset:
         raise HTTPException(status_code=404, detail="Eval set not found")
-    configs = _configs_from_in(data.configs)
-    if not configs and evalset.agent_id:
-        configs = [RunConfig(agent_id=evalset.agent_id, label="baseline")]
+    try:
+        configs = _configs_from_in(data.configs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not configs:
-        raise HTTPException(status_code=400, detail="No configs and no default agent_id on the set")
+        baseline = evalset.default_config()
+        configs = [baseline] if baseline else []
+    if not configs:
+        raise HTTPException(status_code=400, detail="No configs and no default target on the set")
     return project_cost(evalset, configs)
 
 

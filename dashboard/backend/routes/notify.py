@@ -167,6 +167,9 @@ class CreateRule(BaseModel):
     severity: Optional[str] = None
     expected: Optional[str] = None
     rubric: Optional[str] = None
+    # Which run kinds an online_eval rule grades (agent, flow, team, loop,
+    # scenario); left off, evals/online.py grades agent runs only.
+    kinds: Optional[List[str]] = None
 
 
 class UpdateRule(BaseModel):
@@ -181,6 +184,7 @@ class UpdateRule(BaseModel):
     severity: Optional[str] = None
     expected: Optional[str] = None
     rubric: Optional[str] = None
+    kinds: Optional[List[str]] = None
 
 
 @router.get("/api/notify/rules")

@@ -1,7 +1,9 @@
 """
 Eval runner — execute an eval set across one or more configs and score it.
 
-Reuses the existing machinery rather than reimplementing it: agents are built
+A target is an agent, a flow, a team, a loop or a scenario; each kind runs a
+case through its adapter in :data:`TARGET_RUNNERS` (the container kinds live
+in ``evals.targets``). For an agent the runner reuses the existing machinery rather than reimplementing it: agents are built
 by ``agent_factory.create_agent`` with the config's provider/model override,
 invoked through ``agents.agent_invoke.invoke_agent``, and recorded as real runs
 tagged ``channel="eval"``. That tag is what keeps evaluation spend out of the
@@ -19,11 +21,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from evals import store
+from evals import store, targets
 from evals.graders import COSTED_GRADERS, grade_all
 from evals.models import (
     EVAL_CHANNEL, Case, EvalResult, EvalRun, EvalSet, RunConfig, utc_iso,
 )
+from evals.targets import Outcome
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +116,7 @@ def _resolve_model(cfg: RunConfig) -> tuple:
         return provider, model
     try:
         from agents.registry import get_agent
-        spec = get_agent(cfg.agent_id)
+        spec = get_agent(cfg.target_id) if cfg.target_kind == "agent" else None
         if spec:
             provider = provider or (spec.provider or "")
             model = model or (spec.model or "")
@@ -138,19 +141,42 @@ def _resolve_model(cfg: RunConfig) -> tuple:
     return provider, model
 
 
-def run_case(case: Case, cfg: RunConfig, evalset: EvalSet,
-             eval_run_id: str, workspace: Optional[str], *, attempt: int = 1) -> EvalResult:
-    """Execute one cell: invoke the agent on the case, then grade the output.
+def compose_input(case: Case, work_dir: Optional[str] = None) -> str:
+    """The message a target receives for ``case``.
 
-    ``attempt`` is the 1-based repeat number for this (case, config) pair —
-    always 1 unless ``cfg.repeats`` asks for more.
+    A case without an artifact sends its input unchanged. A case with one gets
+    a "Task" block first: the snapshot's title, description and context, the
+    documents it carried, and where its files were written.
+    """
+    art = case.artifact or {}
+    if not art:
+        return case.input
+    lines = ["Task"]
+    if art.get("title"):
+        lines.append(f"Title: {art['title']}")
+    if art.get("description"):
+        lines.append(str(art["description"]).strip())
+    context = str(art.get("context") or "").strip()
+    if context:
+        lines += ["", "Context:", context]
+    for doc in art.get("documents") or []:
+        if isinstance(doc, dict) and doc.get("text"):
+            lines += ["", f"Document: {doc.get('name') or 'document'}", str(doc["text"])]
+    if work_dir and art.get("files"):
+        lines += ["", f"Working files: {work_dir}"]
+    block = "\n".join(lines).strip()
+    return f"{block}\n\n{case.input}" if case.input else block
+
+
+def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id: str,
+                      workspace: Optional[str], *, prompt: str,
+                      work_dir: Optional[str] = None, attempt: int = 1) -> Outcome:
+    """One agent run on the case, recorded as a real run tagged ``eval``.
+
+    ``work_dir``, when set, is the agent's working directory
+    (``create_agent(..., workspace=<path>)``).
     """
     from managers import run_manager as rm
-
-    result = EvalResult(
-        eval_run_id=eval_run_id, case_id=case.case_id,
-        config_label=cfg.resolved_label(), attempt=attempt,
-    )
 
     overrides: Dict[str, Any] = {}
     if cfg.provider:
@@ -158,13 +184,13 @@ def run_case(case: Case, cfg: RunConfig, evalset: EvalSet,
     if cfg.model:
         overrides["model"] = cfg.model
 
+    agent_id = cfg.target_id
     try:
         from agents.agent_factory import create_agent
-        agent = create_agent(cfg.agent_id, workspace, **overrides)
+        agent = create_agent(agent_id, work_dir or workspace, **overrides)
     except Exception as e:
-        result.ok = False
-        result.error = f"could not build agent {cfg.agent_id!r}: {type(e).__name__}: {e}"
-        return store.save_result(result)
+        return Outcome(ok=False,
+                       error=f"could not build agent {agent_id!r}: {type(e).__name__}: {e}")
 
     provider = getattr(agent, "provider", "") or ""
     model = getattr(agent, "model", "") or ""
@@ -175,7 +201,7 @@ def run_case(case: Case, cfg: RunConfig, evalset: EvalSet,
         title += f" (attempt {attempt})"
     rm.open_run(
         run_id,
-        cfg.agent_id,
+        agent_id,
         workspace=workspace,
         title=title,
         channel=EVAL_CHANNEL,
@@ -184,37 +210,106 @@ def run_case(case: Case, cfg: RunConfig, evalset: EvalSet,
         message_origin=EVAL_CHANNEL,
         provider=provider,
         model=model,
-        input=case.input,
+        input=prompt,
         link_to_session=False,
     )
-    rm.seed_run_input_context(run_id, getattr(agent, "system_prompt", "") or "", case.input)
-    result.run_id = run_id
+    rm.seed_run_input_context(run_id, getattr(agent, "system_prompt", "") or "", prompt)
+    outcome = Outcome(run_id=run_id)
 
     try:
         from agents.agent_invoke import invoke_agent
-        invocation = invoke_agent(agent, case.input, run_id=run_id)
+        invocation = invoke_agent(agent, prompt, run_id=run_id)
         rm.close_run_from_result(run_id, invocation.result, process=invocation.process)
     except Exception as e:
-        result.ok = False
-        result.error = f"{type(e).__name__}: {e}"
-        return store.save_result(result)
+        outcome.ok = False
+        outcome.error = f"{type(e).__name__}: {e}"
+        return outcome
 
     ok = bool(getattr(invocation.result, "ok", False))
-    output = str(getattr(invocation.result, "agent_output", "") or "") if ok else ""
-    result.ok = ok
-    result.error = None if ok else str(getattr(invocation.result, "error", "") or "agent error")
-    result.output = output
-    result.duration_ms = int(invocation.duration_ms or 0)
-
+    outcome.ok = ok
+    outcome.output = str(getattr(invocation.result, "agent_output", "") or "") if ok else ""
+    outcome.error = None if ok else str(getattr(invocation.result, "error", "") or "agent error")
+    outcome.duration_ms = int(invocation.duration_ms or 0)
     tu = (invocation.process or {}).get("token_usage") or {}
-    result.inbound_tokens = int(tu.get("inbound_tokens") or 0)
-    result.outbound_tokens = int(tu.get("outbound_tokens") or 0)
-    result.cost = _run_cost(provider, model, result.inbound_tokens, result.outbound_tokens)
+    outcome.inbound_tokens = int(tu.get("inbound_tokens") or 0)
+    outcome.outbound_tokens = int(tu.get("outbound_tokens") or 0)
+    outcome.cost = _run_cost(provider, model, outcome.inbound_tokens, outcome.outbound_tokens)
+    outcome.trajectory = [{"run_id": run_id, "kind": "run", "summary": agent_id}]
+    return outcome
 
-    # A failed run scores zero rather than being skipped: "the agent errored" is
-    # a regression, and dropping the cell would quietly inflate the average.
-    if ok:
-        scores, combined, passed = grade_all(output, case, evalset.graders, run_id=run_id)
+
+#: How each target kind runs one case: ``fn(case, cfg, evalset, eval_run_id,
+#: workspace, *, prompt, work_dir, attempt) -> Outcome``. Looked up per cell,
+#: so a test can swap one entry.
+TARGET_RUNNERS: Dict[str, Callable[..., Outcome]] = {
+    "agent": _run_agent_target,
+    "flow": targets.run_flow_target,
+    "team": targets.run_team_target,
+    "loop": targets.run_loop_target,
+    "scenario": targets.run_scenario_target,
+}
+
+
+def prepare_work_dir(case: Case, eval_run_id: str, workspace: Optional[str],
+                     attempt: int = 1) -> Optional[str]:
+    """The isolated directory a case with an artifact runs in, with the
+    artifact's files written; None for a case without one."""
+    if not case.artifact:
+        return None
+    from evals.snapshot import isolation_dir, materialize_artifact
+    directory = isolation_dir(workspace, eval_run_id, case.case_id, attempt)
+    return str(materialize_artifact(case.artifact, directory))
+
+
+def run_case(case: Case, cfg: RunConfig, evalset: EvalSet,
+             eval_run_id: str, workspace: Optional[str], *, attempt: int = 1) -> EvalResult:
+    """Execute one cell: run the target on the case, then grade the output.
+
+    The target's kind picks the adapter in :data:`TARGET_RUNNERS`. ``attempt``
+    is the 1-based repeat number for this (case, config) pair, always 1 unless
+    ``cfg.repeats`` asks for more.
+    """
+    kind = cfg.target_kind
+    result = EvalResult(
+        eval_run_id=eval_run_id, case_id=case.case_id,
+        config_label=cfg.resolved_label(), attempt=attempt, target_kind=kind,
+    )
+    adapter = TARGET_RUNNERS.get(kind)
+    if adapter is None:
+        result.ok = False
+        result.error = f"no runner for target kind {kind!r}"
+        return store.save_result(result)
+
+    try:
+        work_dir = prepare_work_dir(case, eval_run_id, workspace, attempt)
+    except Exception as e:  # noqa: BLE001 - recorded on the cell
+        result.ok = False
+        result.error = f"could not prepare the case's files: {type(e).__name__}: {e}"
+        return store.save_result(result)
+    prompt = compose_input(case, work_dir)
+
+    try:
+        outcome = adapter(case, cfg, evalset, eval_run_id, workspace,
+                          prompt=prompt, work_dir=work_dir, attempt=attempt)
+    except Exception as e:  # noqa: BLE001 - a crashing target is a failed cell
+        log.warning("eval: %s target %s raised", kind, cfg.target_id, exc_info=True)
+        outcome = Outcome(ok=False, error=f"{type(e).__name__}: {e}")
+
+    result.run_id = outcome.run_id
+    result.ok = bool(outcome.ok)
+    result.error = None if outcome.ok else (outcome.error or f"{kind} error")
+    result.output = outcome.output if outcome.ok else ""
+    result.trajectory = list(outcome.trajectory or [])
+    result.duration_ms = int(outcome.duration_ms or 0)
+    result.inbound_tokens = int(outcome.inbound_tokens or 0)
+    result.outbound_tokens = int(outcome.outbound_tokens or 0)
+    result.cost = float(outcome.cost or 0.0)
+
+    # A failed run scores zero rather than being skipped: "the target errored"
+    # is a regression, and dropping the cell would quietly inflate the average.
+    if result.ok:
+        scores, combined, passed = grade_all(result.output, case, evalset.graders,
+                                             run_id=result.run_id)
         result.scores, result.score, result.passed = scores, combined, passed
     else:
         result.scores, result.score, result.passed = {}, 0.0, False
@@ -243,9 +338,10 @@ def run_eval(
     ws = workspace or evalset.workspace
     configs = list(configs or [])
     if not configs:
-        if not evalset.agent_id:
-            raise ValueError("No configs given and the eval set has no default agent_id")
-        configs = [RunConfig(agent_id=evalset.agent_id, label="baseline")]
+        baseline = evalset.default_config()
+        if baseline is None:
+            raise ValueError("No configs given and the eval set has no default target")
+        configs = [baseline]
 
     run = EvalRun(eval_set_id=eval_set_id, workspace=ws, configs=configs)
     store.save_eval_run(run)
@@ -499,6 +595,7 @@ def case_from_run(run_id: str, *, expected: Optional[str] = None,
 
 
 __all__ = [
-    "run_eval", "run_case", "summarize", "diff_runs", "project_cost",
+    "run_eval", "run_case", "compose_input", "prepare_work_dir", "TARGET_RUNNERS",
+    "Outcome", "summarize", "diff_runs", "project_cost",
     "case_from_run", "EvalStopped",
 ]
