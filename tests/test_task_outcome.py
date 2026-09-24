@@ -649,3 +649,23 @@ def test_a_flow_grading_is_charged_to_the_tasks_last_run(fake_grader, executor_l
     [ev] = ts.get_task(t.id).outcome_evaluations
     assert ev["cost_run_id"] == node
     assert rm.get_run_by_id(node)["loop"]["aux_calls"][0]["purpose"] == "outcome_grader"
+
+
+def test_a_scenario_grading_is_charged_to_its_last_role_turn(fake_grader, executor_launches):
+    from playground import store as sim_store
+    from playground.models import AgentDecision, TickRecord
+
+    fake_grader(_grade_json())
+    t = _task_with_outcome()
+    # Every role's turn is a run of its own, tied to the scenario run, not the task.
+    turn = rm.new_unique_run_id()
+    rm.open_run(turn, "Critic", status="running", link_to_session=False, channel="sim",
+                sim_run_id="scenario-run-1")
+    rm.close_run(turn, status="completed", exit_code=0)
+    sim_store.save_tick(TickRecord(sim_run_id="scenario-run-1", tick=3,
+                                   decisions=[AgentDecision(agent="Critic", run_id=turn)]))
+    _finish_executor(t.id, kind="scenario")
+
+    [ev] = ts.get_task(t.id).outcome_evaluations
+    assert ev["cost_run_id"] == turn
+    assert rm.get_run_by_id(turn)["loop"]["aux_calls"][0]["purpose"] == "outcome_grader"

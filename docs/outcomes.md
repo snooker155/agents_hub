@@ -56,6 +56,6 @@ Loops take an optional `rubric` and `grader` (UI on the Loops page, and the Loop
 
 ## Cost
 
-The grader's tokens are added to a run record as `loop.aux_calls`, so they show on the [Costs](costs.md) page and count toward the task's money cap from the next run on: the graded run for an agent, the team's own run for a team, the task's latest run (a flow's or a loop's last node) for a flow or a loop. A scenario does not record its turns against the task, so its gradings keep their cost on the grading only.
+The grader's tokens are added to a run record as `loop.aux_calls`, so they show on the [Costs](costs.md) page and count toward the task's money cap from the next run on: the graded run for an agent, the team's own run for a team, the task's latest run (a flow's or a loop's last node) for a flow or a loop, and for a scenario the run of the last role turn of its last tick (every role's turn is a run, whether a persona on a model or a real agent plays it).
 
 Related: [loops](loops.md), [evals](evals.md), [tasks](tasks.md).

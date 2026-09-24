@@ -639,14 +639,25 @@ def _relaunch_executor(tid: UUID, task: Any, executor: Any, attempt: int, max_it
 def _cost_run_for(tid: UUID, executor_run_id: str) -> Optional[str]:
     """The ``runs`` record an executor's grading is charged to: the
     executor's own record when it has one (a team working a task opens one
-    under its team run id), else the task's latest run (a flow's or a loop's
-    last node). None when the task has none (a scenario records its roles'
-    turns without the task), and the cost stays on the grading only."""
+    under its team run id); for a scenario, the run of the last decision of
+    its last tick (every role's turn is a run of its own in both modes, a
+    persona on a bare model or a real agent, but it is tied to the scenario
+    run rather than to the task); else the task's latest run (a flow's or a
+    loop's last node). None when nothing is found, and the cost stays on the
+    grading only."""
     from managers import run_manager
     try:
         if executor_run_id and run_manager.get_run_by_id(executor_run_id):
             return executor_run_id
         from common import db
+        if executor_run_id:
+            tick = db.get_conn().execute(
+                "SELECT decisions FROM sim_ticks WHERE sim_run_id = ? ORDER BY tick DESC LIMIT 1",
+                (str(executor_run_id),)).fetchone()
+            for decision in reversed(db.loads(tick["decisions"], []) if tick is not None else []):
+                rid = str((decision or {}).get("run_id") or "")
+                if rid and run_manager.get_run_by_id(rid):
+                    return rid
         row = db.get_conn().execute(
             "SELECT run_id FROM runs WHERE task_id = ? "
             "ORDER BY COALESCE(finished_at, started_at, created_at) DESC LIMIT 1",
