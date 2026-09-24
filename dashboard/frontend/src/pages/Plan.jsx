@@ -41,6 +41,7 @@ import {
   Zap,
   Send,
   Workflow,
+  Rocket,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -56,13 +57,26 @@ const STATUS_STYLES = {
   failed:    { bg: 'bg-red-100',    text: 'text-red-700',    icon: XCircle },
 };
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, pausedReason }) {
+  const { t } = useI18n();
   const s = STATUS_STYLES[status] || { bg: 'bg-gray-100', text: 'text-gray-500', icon: AlertCircle };
   const Icon = s.icon;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
-      <Icon className="w-3 h-3" />
-      {status}
+    <span className="inline-flex items-center gap-1">
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
+        <Icon className="w-3 h-3" />
+        {status}
+      </span>
+      {/* A scheduled job (agent task, flow or loop) can pause itself after
+          repeated errors or a missing target, not just at the operator's
+          hand — see plans/service.py. The reason rides right next to the
+          badge rather than in its own column, since it only ever applies
+          while paused. */}
+      {status === 'paused' && pausedReason && (
+        <span className="text-[10px] font-medium text-amber-500 uppercase" title={t(`plan.pausedReason.${pausedReason}`, { defaultValue: pausedReason })}>
+          {t(`plan.pausedReason.${pausedReason}`, { defaultValue: pausedReason })}
+        </span>
+      )}
     </span>
   );
 }
@@ -527,6 +541,16 @@ export default function Plan() {
         title={t('plan.plan')}
         description={t('plan.scheduledJobsFutureRemindersAnd')}
         actions={<>
+          {/* Scheduled agent tasks, flows and loops now have a page of their
+              own with a firing journal, an environment and a per-run budget
+              (see Deployments.jsx); this page keeps one-off reminders and
+              notifications. */}
+          <Link
+            to="/deployments"
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+          >
+            <Rocket className="w-4 h-4" /> {t('plan.deployments')}
+          </Link>
           <button
             onClick={fetchData}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -655,7 +679,7 @@ export default function Plan() {
                           ? (job.flow_id || '—')
                           : '—'}
                     </div>
-                    <div className="md:text-center"><StatusBadge status={job.status} /></div>
+                    <div className="md:text-center"><StatusBadge status={job.status} pausedReason={job.paused_reason} /></div>
                     <div className="flex md:justify-end items-center gap-1.5">
                       {acting[job.id] ? (
                         <Loader className="w-4 h-4 animate-spin text-gray-400" />

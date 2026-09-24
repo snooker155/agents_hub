@@ -37,6 +37,12 @@ class AgentResult(BaseModel):
     # on the task and surfaces it to the user; ``agent_output`` holds the question
     # text so plain surfaces still show something.
     pending_question: Optional[Dict[str, Any]] = None
+    # Set when ``status == "awaiting_approval"``: what the run is parked on.
+    # A gated tool call has the shape documented on ``tasks.models.Task``; a run
+    # that reached its money cap (agents.callbacks.guards.RunBudgetGuard) carries
+    # ``{"kind": "budget", "spent_usd", "limit_usd", "reason", ...}``. The runner
+    # hands it to ``park_task_awaiting_approval``.
+    pending_approval: Optional[Dict[str, Any]] = None
     # Optional structured response (buttons, Telegram inline keyboard, …) parsed
     # from a <<<ui>>> block in the agent's output. ``agent_output`` always holds
     # the plain-text fallback, so surfaces that ignore this keep working.

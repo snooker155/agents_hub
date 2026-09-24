@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
-import { getNodes, startNode, stopNode, restartNode, deleteNode, getNodeLogs, getAgents, getWorkspace, setWorkspaceAgentMode, getSettings } from '../api';
+import { getNodes, startNode, stopNode, restartNode, deleteNode, getNodeLogs, getAgents, getWorkspace, setWorkspaceAgentMode, getSettings, getEnvironments } from '../api';
 import { useChannel } from '../components/stream';
 import {
   Play,
@@ -22,6 +22,7 @@ import {
   Globe,
   ExternalLink,
   Box,
+  Container,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -134,11 +135,12 @@ function LogsModal({ node, onClose }) {
 
 // ── Start Node modal ──────────────────────────────────────────────────────────
 
-function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, currentWorkspace, wsCapacityOverrides, wsAllowedAgents, agentMode, wsAgentMode, onSetAgentMode }) {
+function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, currentWorkspace, wsCapacityOverrides, wsAllowedAgents, agentMode, wsAgentMode, onSetAgentMode, environments }) {
   const { t } = useI18n();
   const [agentId, setAgentId] = useState(defaultAgentId || '');
   const [label, setLabel] = useState('');
   const [nodeType, setNodeType] = useState('worker');
+  const [environmentId, setEnvironmentId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -162,7 +164,7 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
     setError('');
     setSubmitting(true);
     try {
-      const r = await startNode({ agent_id: agentId, workspace: currentWorkspace || null, label: label || null, node_type: nodeType });
+      const r = await startNode({ agent_id: agentId, workspace: currentWorkspace || null, label: label || null, node_type: nodeType, environment_id: environmentId || null });
       onStarted(r.data);
     } catch (err) {
       setError(err.response?.data?.detail || t('nodes.startFailed'));
@@ -294,6 +296,22 @@ function StartNodeModal({ onClose, onStarted, agents, defaultAgentId, nodes, cur
             </div>
           </div>
 
+          {(environments || []).length > 0 && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+                {t('nodes.environment')} <span className="text-gray-400 font-normal normal-case">({t('common.optional')})</span>
+              </label>
+              <select
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={environmentId}
+                onChange={(e) => setEnvironmentId(e.target.value)}
+              >
+                <option value="">{t('nodes.environmentDefault')}</option>
+                {environments.map((env) => <option key={env.id} value={env.id}>{env.name}</option>)}
+              </select>
+            </div>
+          )}
+
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose}
               className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
@@ -349,6 +367,7 @@ export default function Nodes() {
   const { liveUpdates, workspaceFilter } = useWorkspace();
   const [nodes, setNodes]       = useState([]);
   const [agents, setAgents]     = useState([]);
+  const [environments, setEnvironments] = useState([]);
   const [loading, setLoading]   = useState(true);
   // agentId -> capacity override for current workspace filter
   const [wsCapacityOverrides, setWsCapacityOverrides] = useState({});
@@ -374,6 +393,12 @@ export default function Nodes() {
       .then((ar) => setAgents(ar.data))
       .catch(() => { /* the agent list stays empty */ });
   }, []);
+
+  useEffect(() => {
+    getEnvironments(workspaceFilter)
+      .then((r) => setEnvironments(r.data || []))
+      .catch(() => setEnvironments([]));
+  }, [workspaceFilter]);
 
   const [wsAllowedAgents, setWsAllowedAgents] = useState([]);
   // null = no workspace override (global setting applies), 'local' | 'docker' = workspace-specific
@@ -633,6 +658,12 @@ export default function Nodes() {
                                   {t('nodes.httpService')}
                                 </span>
                               )}
+                              {node.environment_name && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200 px-2 py-0.5 rounded-full" title={t('nodes.environment')}>
+                                  <Container className="w-3 h-3" />
+                                  {node.environment_name}
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td className="px-5 py-3 text-gray-600 text-xs">{node.label || '—'}</td>
@@ -745,6 +776,7 @@ export default function Nodes() {
           agentMode={wsAgentMode || globalAgentMode}
           wsAgentMode={wsAgentMode}
           onSetAgentMode={workspaceFilter && workspaceFilter !== 'default' ? handleSetWsAgentMode : null}
+          environments={environments}
         />
       )}
       {logsNode && (

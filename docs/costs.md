@@ -38,6 +38,40 @@ never a wedged workspace.
 Evaluation-channel runs are excluded from the aggregation, so measuring your
 agents never eats the budget your agents run on.
 
+## Per-run limit
+
+A workspace budget also carries a **per-run limit** (`run_limit_usd`, `0` is
+off): a default money cap on a single task's runs, separate from the period
+cap above. Where the hard limit protects the month, the per-run limit
+protects one task from spending it all in a single sitting between one launch
+check and the next.
+
+A task's own `budget_usd` overrides the workspace default when it is set: `0`
+marks the task deliberately uncapped even in a workspace with a default, and
+`None` (unset) falls back to the workspace's `run_limit_usd`.
+
+The cap travels with the run as three environment variables
+(`common/run_budget.py`): the limit, what the task has already spent, and
+the catalog's prices, so the running agent can price its own calls and stop
+itself without needing database access. `RunBudgetGuard`
+(`agents/callbacks/guards.py`) accumulates the cost of each finished LLM call
+and raises once the cap is met, which pauses the task in
+`awaiting_approval` with `pending_approval.kind: "budget"`, carrying
+`spent_usd` and `limit_usd`. The task page's card offers **Continue** (raise
+the cap and resume from where it stopped) or **Stop** (the task moves to
+`blocked` with the reason "Stopped at budget cap"). `POST
+/api/tasks/{id}/approve` takes `budget_usd` for the raised cap, which must
+exceed what the task already spent. Spend for this purpose is the same
+number the Costs page shows, summed over every run of the task including
+resumes, evaluation channels excluded.
+
+**This is enforced only for the built-in LangChain agent loop
+(`StandardAgent`).** A CLI backend (Claude Code, Codex), a remote agent or an
+imported agent is not stopped mid-run when it crosses the cap. Its spend is
+still counted toward the task's total and the cap still applies to the
+*next* launch of that task, but nothing interrupts a run already in flight
+for those backends.
+
 ## What actually costs money
 
 In rough order of surprise:
@@ -60,4 +94,4 @@ decision, not after.
   order makes that a one-field change.
 - Fewer team members. Three focused beats eight watching.
 
-Related: [models](models.md), [loops](loops.md), [playground](playground.md).
+Related: [models](models.md), [loops](loops.md), [playground](playground.md), [tasks](tasks.md), [deployments](deployments.md).

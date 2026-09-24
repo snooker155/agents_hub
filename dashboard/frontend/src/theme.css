@@ -1105,6 +1105,7 @@ html.dark {
 :where(html.dark) .text-cyan-600 { color: var(--hue-cyan-400); }
 :where(html) .dark .dark\:text-gray-400,
 :where(html) .dark .dark\:text-slate-400,
+:where(html.dark) .disabled\:hover\:text-gray-400:disabled:hover,
 :where(html.dark) .disabled\:text-gray-400:disabled,
 :where(html.dark) .placeholder-gray-400::placeholder,
 :where(html.dark) .placeholder-slate-400::placeholder,

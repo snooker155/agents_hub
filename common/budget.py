@@ -3,11 +3,16 @@ Per-workspace cost budgets.
 
 A workspace can carry a ``budget`` block in its metadata::
 
-    {"hard_limit_usd": 0.0, "soft_limit_usd": 0.0, "period": "monthly"}
+    {"hard_limit_usd": 0.0, "soft_limit_usd": 0.0, "period": "monthly",
+     "run_limit_usd": 0.0}
 
 ``period`` is one of ``total`` / ``daily`` / ``monthly`` (UTC). A limit of ``0``
 means *disabled* — the default, so existing workspaces keep their current
-behaviour (this feature is opt-in). ``hard_limit_usd`` is enforced at run launch:
+behaviour (this feature is opt-in). ``run_limit_usd`` is different in kind: it
+is not a period cap but the default money cap of a single task's runs, applied
+inside the running agent by ``common.run_budget`` and
+``agents.callbacks.guards.RunBudgetGuard`` (a task's own ``budget_usd`` wins
+over it). ``hard_limit_usd`` is enforced at run launch:
 when the period's estimated spend already meets or exceeds it, ``check_budget``
 raises :class:`BudgetExceededError` and the run is not started. Everything here
 fails open — any lookup/pricing error results in *no* enforcement rather than a
@@ -32,6 +37,7 @@ _DEFAULT_BUDGET: Dict[str, Any] = {
     "hard_limit_usd": 0.0,
     "soft_limit_usd": 0.0,
     "period": "monthly",
+    "run_limit_usd": 0.0,
 }
 
 
@@ -66,6 +72,7 @@ def normalize_budget(raw: Any) -> Dict[str, Any]:
         "hard_limit_usd": _num("hard_limit_usd"),
         "soft_limit_usd": _num("soft_limit_usd"),
         "period": period,
+        "run_limit_usd": _num("run_limit_usd"),
     }
 
 

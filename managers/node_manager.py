@@ -12,7 +12,7 @@ Connection history lives in the ``node_connections`` DocStore (see
 
 Public API
 ----------
-start_node(agent_id, workspace, label)  -> node_id
+start_node(agent_id, workspace, label, ..., environment_id) -> node_id
 stop_node(node_id)                      -> bool
 delete_node(node_id)                    -> bool   (remove stopped/failed record)
 list_nodes()                            -> List[dict]
@@ -261,11 +261,24 @@ def start_node(
     label: Optional[str] = None,
     is_default: bool = False,
     node_type: Optional[str] = None,
+    environment_id: Optional[str] = None,
 ) -> str:
-    """Launch a new agent node subprocess.  Returns node_id."""
+    """Launch a new agent node subprocess.  Returns node_id.
+
+    ``environment_id`` picks the environment the node runs in
+    (environments/, docs/environments.md); without one the workspace's
+    default environment applies, if any. The environment may pin the
+    execution mode, adds its variables (and the network allowlist) to the
+    node's environment and, in docker mode, shapes the container (network,
+    limits, image, packages). An explicit id that is unknown, archived or
+    belongs to another workspace raises ValueError: a node is a new pick and
+    must not silently start somewhere else.
+    """
     spec = get_agent(agent_id)
     if not spec:
         raise ValueError(f"Unknown agent: {agent_id}")
+
+    env_fields = _environment_fields(workspace, environment_id)
 
     node_id = str(uuid4())
     log_file = NODE_LOGS_DIR / f"node_{node_id}.log"
@@ -319,6 +332,12 @@ def start_node(
         except Exception:  # noqa: BLE001 - an unreadable workspace override falls back to the process-wide default
             log.debug("workspace agent_mode lookup failed for %s", workspace, exc_info=True)
     execution_mode = _ws_agent_mode or agent_execution_mode()
+    if env_fields.get("execution_mode") in ("local", "docker"):
+        execution_mode = env_fields["execution_mode"]
+    # The environment's variables win over the inherited process environment,
+    # the same precedence the run launcher gives them (launch_env).
+    env_vars: Dict[str, str] = {str(k): str(v) for k, v in (env_fields.get("env") or {}).items()}
+    env.update(env_vars)
     container_name: Optional[str] = None
     pid: Optional[int] = None
     http_url: Optional[str] = None
@@ -330,11 +349,19 @@ def start_node(
         docker_inner_cmd = inner_cmd + ["--write-stdout-to-log"]
         from .container_manager import start_node_container, container_name_for_node
         container_name = container_name_for_node(node_id)
+        # Only passed when the environment has something to say, so the call
+        # stays exactly as before for a node without one.
+        _env_kwargs: Dict[str, Any] = {}
+        if env_fields.get("docker"):
+            _env_kwargs["options"] = env_fields["docker"]
+        if env_vars:
+            _env_kwargs["extra_env"] = env_vars
         result = start_node_container(
             node_id, agent_id, docker_inner_cmd, workspace, env,
             http_expose=http_expose,
             http_port=http_port,
             http_host_port=http_host_port,
+            **_env_kwargs,
         )
         if not result["success"]:
             raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
@@ -386,6 +413,8 @@ def start_node(
         "http_port": http_port if http_expose else None,
         "http_host_port": (http_host_port if http_host_port is not None else http_port) if http_expose else None,
         "http_url": http_url,
+        "environment_id": env_fields.get("environment_id"),
+        "environment_name": env_fields.get("environment_name"),
     }
     _upsert_node(node_rec)
     try:
@@ -412,6 +441,34 @@ def start_node(
         ),
     )
     return node_id
+
+
+def _environment_fields(workspace: Optional[str], environment_id: Optional[str]) -> Dict[str, Any]:
+    """The environment's launch fields for a node (environments/launch.py).
+
+    An explicit id is validated strictly (unknown, archived or foreign raises
+    ValueError). The workspace default is looked up leniently: a broken
+    environments store must not stop a node that never asked for one.
+    """
+    try:
+        from environments import service as env_service
+        from environments.launch import fields_for
+    except ImportError:
+        if environment_id:
+            raise ValueError("environments are not available in this installation")
+        return {}
+    if environment_id:
+        try:
+            env = env_service.resolve_for(workspace, environment_id)
+        except env_service.EnvironmentServiceError as exc:
+            raise ValueError(str(exc)) from exc
+    else:
+        try:
+            env = env_service.default_for(workspace)
+        except Exception:  # noqa: BLE001 - no default reachable: the node starts as it always did
+            log.debug("default environment lookup failed for %s", workspace, exc_info=True)
+            return {}
+    return fields_for(env, workspace, owner={"kind": "node"}) if env is not None else {}
 
 
 def stop_node(node_id: str) -> bool:

@@ -183,8 +183,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning(f"⚠ Could not start run watchdog: {e}")
 
+    # The egress proxy for environments with a limited network
+    # (environments/egress.py); a no-op unless AGENTS_HUB_EGRESS_PROXY is on.
+    try:
+        from environments import egress as _egress
+        if _egress.start_background() is not None:
+            log.info("✓ Egress proxy started")
+    except Exception as e:
+        log.warning(f"⚠ Could not start the egress proxy: {e}")
+
     yield
 
+    try:
+        from environments import egress as _egress
+        _egress.stop_background()
+    except Exception:
+        pass
     task = getattr(app.state, "external_publisher", None)
     if task:
         task.cancel()
@@ -537,6 +551,10 @@ app.include_router(entity_chats.router)
 
 # Nodes domain: long-running agent node management
 app.include_router(nodes.router)
+
+# Environments: execution profiles for runs, nodes and scheduled jobs
+from routes import environments as environments_router
+app.include_router(environments_router.router)
 
 # External domain: token-authenticated access for exposed nodes
 app.include_router(external.router)

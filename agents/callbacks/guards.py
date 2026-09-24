@@ -14,15 +14,23 @@ runner catches the exception and turns it into the appropriate AgentResult.
   callback).
 - ``ContextWindowGuard`` (+ ``ContextWindowExceededError``) — stops a run once
   its prompt exceeds the model's context window.
+- ``RunBudgetGuard`` (+ ``RunBudgetExceeded``) — pauses a run once the task's
+  runs have spent its money cap (see ``common/run_budget.py``).
 """
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+import os
+import threading
+from typing import Any, Dict, Optional, Set, Tuple
 
 from langchain_core.callbacks import BaseCallbackHandler
 
-from agents.callbacks.run_statistics import extract_token_usage, normalize_usage
+from agents.callbacks.run_statistics import (
+    cached_input_tokens,
+    extract_token_usage,
+    normalize_usage,
+)
 
 # Reasoning scratchpad tools are exempt from the tool-repetition guard: calling
 # them repeatedly is the agent reasoning more, not looping. Kept in sync with
@@ -279,3 +287,215 @@ class ToolRepetitionGuard(BaseCallbackHandler):
                 f"Tool '{self._last_tool}' was called {self._consecutive} times in a row "
                 f"(limit={self.max_repeats}). Stopping agent to prevent infinite loop."
             )
+
+
+# -------------------- Money cap --------------------
+
+# Kept in step with common.run_budget (the launcher side); duplicated rather
+# than imported so a run container needs nothing from ``common`` to read them.
+RUN_BUDGET_ENV_LIMIT = "AGENTS_HUB_RUN_BUDGET_USD"
+RUN_BUDGET_ENV_SPENT = "AGENTS_HUB_RUN_BUDGET_SPENT_USD"
+RUN_BUDGET_ENV_PRICES = "AGENTS_HUB_RUN_PRICES"
+
+
+class RunBudgetExceeded(RuntimeError):
+    """Raised to pause a run that reached its task's money cap.
+
+    Like ``AskUserSignal`` it is a pause, not a failure: the agent runner turns
+    it into an ``awaiting_approval`` result with a ``kind: "budget"`` pending
+    record, and the operator raises the cap or stops the task.
+    """
+
+    def __init__(self, spent_usd: float, limit_usd: float) -> None:
+        self.spent_usd = float(spent_usd)
+        self.limit_usd = float(limit_usd)
+        super().__init__(
+            f"The run reached its money cap of ${self.limit_usd:.2f} "
+            f"(spent ${self.spent_usd:.2f})."
+        )
+
+    def pending(self, *, agent_id: str = "", run_id: str = "") -> Dict[str, Any]:
+        """The pending-approval record a task parks with."""
+        return {
+            "kind": "budget",
+            "spent_usd": round(self.spent_usd, 6),
+            "limit_usd": round(self.limit_usd, 6),
+            "tool": "",
+            "input": {},
+            "reason": (
+                f"The run reached its money cap of ${self.limit_usd:.2f} "
+                f"(spent ${self.spent_usd:.2f}). Raise the cap to continue or stop the task."
+            ),
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "fingerprint": "",
+            "hook": "",
+        }
+
+
+# What this process has spent on LLM calls, shared by every guard in it. A run
+# process serves one task, but its agent may delegate to others in the same
+# process (run_agent_tool), each building its own guard; sharing the total means
+# a sub-agent's calls count against the task too, and deduplicating by the LLM
+# call's run id keeps a call seen by two guards (callbacks inherited by a nested
+# executor) from being charged twice.
+_SPEND_LOCK = threading.Lock()
+_PROCESS_SPEND: Dict[str, Any] = {"usd": 0.0, "seen": set()}
+
+
+def reset_run_budget_spend() -> None:
+    """Forget what this process has spent (tests, and a process reused for a
+    new run)."""
+    with _SPEND_LOCK:
+        _PROCESS_SPEND["usd"] = 0.0
+        _PROCESS_SPEND["seen"] = set()
+
+
+def _parse_prices(raw: str) -> Dict[Tuple[str, str], Tuple[float, float, float]]:
+    prices: Dict[Tuple[str, str], Tuple[float, float, float]] = {}
+    try:
+        rows = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return prices
+    if not isinstance(rows, list):
+        return prices
+    for row in rows:
+        try:
+            provider, model, i, o, c = row
+            prices[(str(provider), str(model))] = (float(i or 0), float(o or 0), float(c or 0))
+        except (TypeError, ValueError):
+            continue
+    return prices
+
+
+def _response_model(response: Any) -> str:
+    """The model name the provider reported for this call, if any."""
+    try:
+        out = getattr(response, "llm_output", None) or {}
+        name = out.get("model_name") or out.get("model")
+        if name:
+            return str(name)
+    except Exception:
+        pass
+    try:
+        for grp in (getattr(response, "generations", []) or []):
+            for g in grp:
+                md = getattr(getattr(g, "message", None), "response_metadata", None) or {}
+                name = md.get("model_name") or md.get("model")
+                if name:
+                    return str(name)
+    except Exception:
+        pass
+    return ""
+
+
+class RunBudgetGuard(BaseCallbackHandler):
+    """Pause a run once the task's runs have spent its money cap.
+
+    Built from three environment variables the launcher sets
+    (``common.run_budget.launch_env``): the cap, what the task's earlier runs
+    already spent, and the catalog prices. Each finished LLM call is priced with
+    the same formula as ``common.pricing.run_cost_usd`` (fresh input, cached
+    input and output at their own rates) from the usage the provider reported.
+
+    Two checkpoints:
+
+    - ``on_llm_end`` raises when the call that just finished crossed the cap, so
+      the run stops before acting on (and paying for the follow-up of) it.
+    - ``on_llm_start`` / ``on_chat_model_start`` raise when the cap is already
+      met, so a run launched over its cap parks before its first paid call.
+
+    A model with no known price counts as free: the cap fails open rather than
+    guessing. ``raise_error = True`` makes LangChain propagate the exception;
+    put this guard last in the callback list so the stats callback records the
+    call's tokens before it raises.
+    """
+
+    def __init__(
+        self,
+        limit_usd: float,
+        prior_usd: float = 0.0,
+        prices: Optional[Dict[Tuple[str, str], Tuple[float, float, float]]] = None,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
+        super().__init__()
+        self.raise_error = True
+        self.limit_usd = float(limit_usd)
+        self.prior_usd = max(0.0, float(prior_usd or 0.0))
+        self.prices = dict(prices or {})
+        self.provider = provider or ""
+        self.model = model or ""
+
+    @classmethod
+    def from_env(cls, provider: str = "", model: str = "") -> Optional["RunBudgetGuard"]:
+        """A guard for this process's run, or None when the run has no cap."""
+        try:
+            limit = float(os.environ.get(RUN_BUDGET_ENV_LIMIT) or 0.0)
+        except ValueError:
+            return None
+        if limit <= 0:
+            return None
+        try:
+            prior = float(os.environ.get(RUN_BUDGET_ENV_SPENT) or 0.0)
+        except ValueError:
+            prior = 0.0
+        prices = _parse_prices(os.environ.get(RUN_BUDGET_ENV_PRICES) or "")
+        return cls(limit, prior, prices, provider=provider, model=model)
+
+    @property
+    def spent_usd(self) -> float:
+        """What the task has spent: earlier runs plus this process so far."""
+        with _SPEND_LOCK:
+            return self.prior_usd + float(_PROCESS_SPEND["usd"])
+
+    def _price(self, model: str) -> Tuple[float, float, float]:
+        for key in ((self.provider, model), (self.provider, self.model)):
+            if key[1] and key in self.prices:
+                return self.prices[key]
+        # The provider reported a model under a name the agent's provider does
+        # not list (a gateway, a dated alias): match by model id alone.
+        for name in (model, self.model):
+            if not name:
+                continue
+            for (_prov, mid), price in self.prices.items():
+                if mid == name:
+                    return price
+        return (0.0, 0.0, 0.0)
+
+    def cost_of(self, response: Any) -> float:
+        """USD cost of one LLM response, 0 when unpriced or unreported."""
+        usage = extract_token_usage(response)
+        prompt, completion, _total = normalize_usage(usage)
+        cached = max(0, min(cached_input_tokens(usage), prompt))
+        in_price, out_price, cached_price = self._price(_response_model(response))
+        return (
+            (prompt - cached) / 1_000_000 * in_price
+            + cached / 1_000_000 * cached_price
+            + completion / 1_000_000 * out_price
+        )
+
+    def _check(self) -> None:
+        spent = self.spent_usd
+        if spent >= self.limit_usd:
+            raise RunBudgetExceeded(spent, self.limit_usd)
+
+    def on_llm_start(self, serialized: Any, prompts: Any, **kwargs: Any) -> None:
+        self._check()
+
+    def on_chat_model_start(self, serialized: Any, messages: Any, **kwargs: Any) -> None:
+        self._check()
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        call_id = str(kwargs.get("run_id") or "")
+        try:
+            cost = self.cost_of(response)
+        except Exception:  # noqa: BLE001 - an unreadable response counts as free (fail open)
+            cost = 0.0
+        with _SPEND_LOCK:
+            seen: Set[str] = _PROCESS_SPEND["seen"]
+            if not call_id or call_id not in seen:
+                if call_id:
+                    seen.add(call_id)
+                _PROCESS_SPEND["usd"] = float(_PROCESS_SPEND["usd"]) + cost
+        self._check()

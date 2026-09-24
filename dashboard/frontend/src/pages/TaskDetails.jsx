@@ -7,7 +7,7 @@ import {
   Play, Pause, Square, Split, Trash2, Folder, FolderOpen, Plus, Check, X,
   User, UserPlus, Flag, GitBranch, Layers, ExternalLink, Loader,
   ChevronDown, ChevronRight, ThumbsUp, ThumbsDown, History, FileText, Eye, Code2, HelpCircle,
-  CheckSquare, ShieldQuestion, Calendar, Workflow, Users, RotateCw,
+  CheckSquare, ShieldQuestion, Calendar, Workflow, Users, RotateCw, DollarSign,
 } from 'lucide-react';
 import DateInput from '../components/DateInput';
 import {
@@ -40,6 +40,7 @@ function executorLabel(task) {
   const id = ex?.id || task?.assigned_agent_type || '';
   return { kind, id, Icon: EXECUTOR_KIND_ICON[kind] || User };
 }
+const fmtUsd = (n) => `$${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 // ─── File tree helpers (shared shape with WorkspaceDetails) ─────────────────────
 const buildFileTree = (paths) => {
   const root = { type: 'dir', children: {} };
@@ -609,6 +610,20 @@ const TaskDetails = () => {
   const [answerSubmitting, setAnswerSubmitting] = useState(false);
   const [approvalNote, setApprovalNote] = useState('');
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
+  // The new cap offered on a budget pause card, seeded once at twice the
+  // limit the run just hit (a plausible next stop, not a guess the operator
+  // has to type from scratch) and left alone after that so an edit sticks.
+  const [budgetCapDraft, setBudgetCapDraft] = useState('');
+  useEffect(() => {
+    if (task?.status === 'awaiting_approval' && task?.pending_approval?.kind === 'budget' && !budgetCapDraft) {
+      const limit = Number(task.pending_approval.limit_usd) || 0;
+      setBudgetCapDraft(String(limit > 0 ? limit * 2 : 10));
+    }
+    if (!(task?.status === 'awaiting_approval' && task?.pending_approval?.kind === 'budget') && budgetCapDraft) {
+      setBudgetCapDraft('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.status, task?.pending_approval?.kind, task?.pending_approval?.limit_usd]);
   const [activeTab, setActiveTab] = useState('execution');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null); // null = parent task, subtask obj otherwise
@@ -1019,6 +1034,25 @@ const TaskDetails = () => {
     }
   };
 
+  // Decide on a run parked at its money cap (pending_approval.kind ===
+  // 'budget'). Approving raises the cap to the operator's new number and
+  // resumes from where it stopped; refusing stops the task instead of
+  // resuming it, since there is no tool call to deny here.
+  const handleBudgetDecision = async (approved) => {
+    setApprovalSubmitting(true);
+    try {
+      const resp = await approveTaskCall(id, approved, approvalNote.trim(), approved ? Number(budgetCapDraft) : undefined);
+      if (resp.data?.run_id) setActiveRunId(resp.data.run_id);
+      setApprovalNote('');
+      setBudgetCapDraft('');
+      fetchData();
+    } catch (err) {
+      alert(`${t('taskDetails.errors.submitApproval')}: ` + (err.response?.data?.detail || err.message));
+    } finally {
+      setApprovalSubmitting(false);
+    }
+  };
+
   const handleApproveAssignment = async () => {
     try { await approveAssignment(id); fetchData(); }
     catch (err) { alert(`${t('taskDetails.errors.approve')}: ` + (err.response?.data?.detail || err.message)); }
@@ -1319,8 +1353,54 @@ const TaskDetails = () => {
           </div>
         )}
 
-        {/* Awaiting approval — the agent stopped before a tool call that needs a human yes */}
-        {task.status === 'awaiting_approval' && (
+        {/* Awaiting approval — either a tool call that needs a human yes, or a
+            run parked at its own money cap (task.pending_approval.kind ===
+            'budget', set by RunBudgetGuard; see common/run_budget.py). The
+            two share one status but ask a different question, so they get
+            different cards rather than one trying to cover both. */}
+        {task.status === 'awaiting_approval' && task.pending_approval?.kind === 'budget' ? (
+          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
+              <DollarSign className="w-4 h-4" /> {t('taskDetails.pausedAtMoneyCap')}
+            </p>
+            <p className="text-sm text-amber-900 mt-1">
+              {t('taskDetails.budgetPauseDetail', {
+                spent: fmtUsd(task.pending_approval?.spent_usd),
+                limit: fmtUsd(task.pending_approval?.limit_usd),
+              })}
+            </p>
+            {task.pending_approval?.reason && (
+              <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap">{task.pending_approval.reason}</p>
+            )}
+            <div className="flex items-center gap-2 mt-3">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wide">{t('taskDetails.newCapUsd')}</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={budgetCapDraft}
+                onChange={(e) => setBudgetCapDraft(e.target.value)}
+                className="w-28 px-2 py-1.5 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+              />
+              <button
+                type="button"
+                disabled={approvalSubmitting || !budgetCapDraft || Number(budgetCapDraft) <= Number(task.pending_approval?.spent_usd || 0)}
+                onClick={() => handleBudgetDecision(true)}
+                className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
+              >
+                {approvalSubmitting ? t('taskDetails.sending') : t('taskDetails.continueTask')}
+              </button>
+              <button
+                type="button"
+                disabled={approvalSubmitting}
+                onClick={() => handleBudgetDecision(false)}
+                className="px-4 py-2 rounded-lg border border-amber-300 bg-white text-amber-800 text-sm font-semibold hover:bg-amber-100 disabled:opacity-50"
+              >
+                {t('taskDetails.stopTask')}
+              </button>
+            </div>
+          </div>
+        ) : task.status === 'awaiting_approval' && (
           <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
             <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
               <ShieldQuestion className="w-4 h-4" /> {t('taskDetails.theAgentNeedsApproval')}

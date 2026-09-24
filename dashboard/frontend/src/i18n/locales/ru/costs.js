@@ -14,6 +14,8 @@ export default {
   allTime: 'За всё время',
   softCapUsd: 'Мягкий лимит (USD)',
   hardCapUsd: 'Жёсткий лимит (USD)',
+  runLimitUsd: 'Лимит на запуск (USD)',
+  runLimitHint: 'Ограничивает расход одного запуска, если у задачи нет своего лимита. 0 отключает ограничение.',
   loadingCosts: 'Загрузка расходов…',
   byModel: 'По моделям',
   byAgent: 'По агентам',

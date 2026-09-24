@@ -282,6 +282,8 @@ class TaskStore:
         external_source: Optional[dict] = None,
         depends: Optional[Sequence[UUID]] = None,
         due_at: Optional[datetime] = None,
+        budget_usd: Optional[float] = None,
+        environment_id: Optional[str] = None,
         timeout: float = 10.0,
     ) -> Task:
         # Key computation and insert happen in the same transaction so two
@@ -313,6 +315,8 @@ class TaskStore:
                 external_source=external_source,
                 depends=list(depends or []),
                 due_at=due_at,
+                budget_usd=budget_usd,
+                environment_id=environment_id,
             )
             _write_task_row(conn, task)
         return task

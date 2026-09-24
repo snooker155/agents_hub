@@ -14,6 +14,8 @@ export default {
   allTime: 'All time',
   softCapUsd: 'Soft cap (USD)',
   hardCapUsd: 'Hard cap (USD)',
+  runLimitUsd: 'Per-run limit (USD)',
+  runLimitHint: 'Caps the money one run may spend, unless the task sets its own cap. 0 disables it.',
   loadingCosts: 'Loading costs…',
   byModel: 'By model',
   byAgent: 'By agent',

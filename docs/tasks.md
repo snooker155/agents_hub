@@ -20,7 +20,7 @@ A task moves through twelve statuses: `todo`, `ready`, `pending`,
 - **blocked** — work cannot proceed; `blocked_reason` says why.
 - **awaiting_input** — paused because the agent asked the user a question.
 - **awaiting_approval** — paused in front of a tool call that needs a yes
-  (see [hooks](hooks.md)).
+  (see [hooks](hooks.md)), or in front of its money cap (see below).
 - **stopped** — aborted or paused by the user.
 - **resolved** — a worker finished; nothing has reviewed it yet.
 - **reviewing** — a reviewer is running.
@@ -159,8 +159,22 @@ Source of truth: `tasks.models.TRANSITIONS`, `USER_TARGETS`,
   just dependencies laid out in a line.
 - **Pausing** is not failing. A task waits in `awaiting_input` when its agent
   asked you a question, and in `awaiting_approval` when it stopped in front of a
-  tool call that needs your yes (see [hooks](hooks.md)). Both are answered from
-  the task page, and both resume the agent where it left off.
+  tool call that needs your yes (see [hooks](hooks.md)) or reached its money
+  cap. All are answered from the task page, and all resume the agent where it
+  left off.
+
+## Budget pause
+
+A task with a money cap (its own `budget_usd`, or the workspace's default
+per-run limit; see [costs](costs.md)) parks in `awaiting_approval` when its
+runs spend that cap, with `pending_approval.kind: "budget"` carrying
+`spent_usd` and `limit_usd`. The task page shows a "Paused at its money cap"
+card instead of the usual tool-call approval card: **Continue** takes a new,
+higher cap and resumes the task from where it stopped, **Stop** blocks the
+task with the reason "Stopped at budget cap" and clears its agent
+assignment. This only interrupts a run mid-flight for the built-in agent
+loop; a CLI, remote or imported agent still has its spend counted against the
+cap but is not stopped while it is running (see [costs](costs.md)).
 
 ## Priority and deadlines
 
@@ -200,4 +214,4 @@ the conversation.
   a move the table does not grant to `agent` fails with `IllegalTransition`
   rather than silently changing the status to something else.
 
-Related: [projects](projects.md), [agents](agents.md), [hooks](hooks.md), [sessions-and-runs](sessions-and-runs.md).
+Related: [projects](projects.md), [agents](agents.md), [hooks](hooks.md), [sessions-and-runs](sessions-and-runs.md), [costs](costs.md).

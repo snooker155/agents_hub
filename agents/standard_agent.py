@@ -18,7 +18,13 @@ from agents.agent_utils import (
     ToolRepetitionError,
     ToolRepetitionGuard,
 )
-from agents.callbacks.guards import AskUserGuard, AskUserSignal, ContextWindowGuard
+from agents.callbacks.guards import (
+    AskUserGuard,
+    AskUserSignal,
+    ContextWindowGuard,
+    RunBudgetExceeded,
+    RunBudgetGuard,
+)
 
 
 def _awaiting_input_result(sig: AskUserSignal) -> AgentResult:
@@ -28,6 +34,23 @@ def _awaiting_input_result(sig: AskUserSignal) -> AgentResult:
         status="awaiting_input",
         agent_output=sig.question,
         pending_question={"question": sig.question, "choices": sig.choices},
+    )
+
+
+def _budget_paused_result(exc: RunBudgetExceeded, agent_id: str, run_id: str = "") -> AgentResult:
+    """Build the AgentResult for a run paused at its task's money cap.
+
+    Same status as a tool call waiting for approval, so the runner parks the
+    task through the one path it already has (``park_task_awaiting_approval``);
+    the ``kind: "budget"`` on the pending record is what tells the dashboard and
+    the approve route that the decision is about money, not about a call.
+    """
+    pending = exc.pending(agent_id=agent_id, run_id=run_id)
+    return AgentResult(
+        ok=True,
+        status="awaiting_approval",
+        agent_output=pending["reason"],
+        pending_approval=pending,
     )
 
 
@@ -151,6 +174,15 @@ class StandardAgent(AgentBase):
             return ContextWindowGuard(window, model_name=self.model or "")
         return None
 
+    def _run_budget_guard(self) -> Optional[RunBudgetGuard]:
+        """The money-cap guard for this run, or None when the launcher set no
+        cap (see common/run_budget.py). Never raises: a cap that cannot be read
+        is no cap."""
+        try:
+            return RunBudgetGuard.from_env(provider=self.provider or "", model=self.model or "")
+        except Exception:  # noqa: BLE001 - fails open, like the rest of the budget
+            return None
+
     def run(self, instruction: str, **kwargs) -> AgentResult:
         """Execute the agent.
 
@@ -177,6 +209,11 @@ class StandardAgent(AgentBase):
                 callbacks.extend(extra_callbacks)
             elif extra_callbacks:
                 callbacks.append(extra_callbacks)
+            # Last, so the stats callback has recorded the call's tokens before
+            # the guard raises on it.
+            budget_guard = self._run_budget_guard()
+            if budget_guard:
+                callbacks.append(budget_guard)
 
             config = {"callbacks": callbacks} if callbacks else None
             result = self.executor.invoke(
@@ -195,6 +232,8 @@ class StandardAgent(AgentBase):
         except AskUserSignal as sig:
             # The agent called ask_user: pause the run and hand the question back.
             return _awaiting_input_result(sig)
+        except RunBudgetExceeded as exc:
+            return _budget_paused_result(exc, self.agent_id, str(kwargs.get("run_id") or ""))
         except ToolRepetitionError as e:
             output = guard.last_llm_text or f"[Agent stopped: {e}]"
             return AgentResult(
@@ -221,6 +260,9 @@ class StandardAgent(AgentBase):
             ctx_guard = self._context_window_guard()
             if ctx_guard:
                 callbacks.append(ctx_guard)
+            budget_guard = self._run_budget_guard()
+            if budget_guard:
+                callbacks.append(budget_guard)
             config = {"callbacks": callbacks} if callbacks else None
             result = await self.executor.ainvoke(
                 self._executor_input(instruction, kwargs.get("history")), config=config)
@@ -232,6 +274,8 @@ class StandardAgent(AgentBase):
             raise  # propagate so the asyncio task is properly marked cancelled
         except AskUserSignal as sig:
             return _awaiting_input_result(sig)
+        except RunBudgetExceeded as exc:
+            return _budget_paused_result(exc, self.agent_id, str(kwargs.get("run_id") or ""))
         except ToolRepetitionError as e:
             output = guard.last_llm_text or f"[Agent stopped: {e}]"
             return AgentResult(ok=True, status="stopped", agent_output=output)

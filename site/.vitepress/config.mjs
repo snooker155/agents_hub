@@ -18,13 +18,13 @@ const TITLES = new Map(CORPUS.map((e) => [e.id, e.title]));
  */
 const GROUPS = [
   ['Start here', ['overview', 'installation', 'cli', 'troubleshooting']],
-  ['The work', ['workspaces', 'projects', 'tasks', 'scheduling']],
+  ['The work', ['workspaces', 'projects', 'tasks', 'scheduling', 'deployments']],
   ['Agents', ['agents', 'system-agents', 'imported-agents', 'tools-and-capabilities', 'skills', 'memory']],
   ['Talking to them', ['chat', 'page-chat', 'telegram']],
   ['More than one agent', ['flows', 'loops', 'teams', 'nodes', 'instances']],
   ['What they produce', ['views', 'playground']],
   ['Measurement', ['evals', 'costs', 'web-logs', 'sessions-and-runs']],
-  ['Running the service', ['settings', 'models', 'marketplace', 'containers', 'service-health']],
+  ['Running the service', ['settings', 'models', 'marketplace', 'containers', 'environments', 'service-health']],
 ];
 
 const placed = new Set(GROUPS.flatMap(([, ids]) => ids));

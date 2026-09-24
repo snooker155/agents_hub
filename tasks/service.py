@@ -98,6 +98,8 @@ def create_task(
     external_source: Optional[Dict[str, Any]] = None,
     depends: Optional[Sequence[UUID]] = None,
     due_at: Optional[datetime] = None,
+    budget_usd: Optional[float] = None,
+    environment_id: Optional[str] = None,
     store: TaskStore = default_store,
 ) -> Task:
     """Create a new task and persist it in the store.
@@ -131,6 +133,8 @@ def create_task(
         external_source=external_source,
         depends=dep_ids,
         due_at=due_at,
+        budget_usd=budget_usd,
+        environment_id=environment_id,
     )
     append_task_activity_log(task.id, "created", "Task created")
     if task.status == TaskStatus.blocked and (task.blocked_reason or "").startswith(DEPENDENCY_BLOCK_PREFIX):
@@ -1008,6 +1012,17 @@ def park_task_awaiting_approval(
         "agent_id": str((pending or {}).get("agent_id") or agent_id or ""),
         "asked_at": datetime.now(timezone.utc).isoformat(),
     }
+    # A run that reached its money cap parks here too (common/run_budget.py):
+    # the decision is a new cap, not a call, so the record keeps what the
+    # dashboard and the approve route need to offer one.
+    is_budget = str((pending or {}).get("kind") or "") == "budget"
+    if is_budget:
+        record["kind"] = "budget"
+        for key in ("spent_usd", "limit_usd"):
+            try:
+                record[key] = float((pending or {}).get(key) or 0.0)
+            except (TypeError, ValueError):
+                record[key] = 0.0
     updated = update_task(
         tid, store=store,
         status=TaskStatus.awaiting_approval,
@@ -1016,11 +1031,15 @@ def park_task_awaiting_approval(
     try:
         append_task_activity_log(
             tid, "awaiting_approval",
-            f"Agent wants to call {record['tool']}",
+            (f"Run paused at its money cap (${record['spent_usd']:.2f} of ${record['limit_usd']:.2f})"
+             if is_budget else f"Agent wants to call {record['tool']}"),
             run_id=record["run_id"], agent_id=record["agent_id"],
         )
     except Exception:
         pass
+    if is_budget:
+        _notify_budget_park(tid, record, store=store)
+        return updated
     # Surface it the same way a question is surfaced: a call nobody is told
     # about is a task that silently stops.
     try:
@@ -1037,6 +1056,65 @@ def park_task_awaiting_approval(
     except Exception:
         pass
     return updated
+
+
+def _notify_budget_park(tid: UUID, record: Dict[str, Any], *, store: TaskStore) -> None:
+    """Tell the operator a run stopped at its money cap.
+
+    A paused run that nobody hears about is a task that silently never
+    finishes, and this one needs a decision only a person can make (spend more
+    or stop). Best effort: a notification failure never undoes the park.
+    """
+    try:
+        from plans import service as _plan_service
+        current = get_task(tid, store=store)
+        title = str(getattr(current, "title", "") or "") or str(tid)
+        _plan_service.create_notification(
+            title="Run paused at its money cap",
+            body=(f"Task \"{title}\" spent ${record.get('spent_usd', 0.0):.2f} of its "
+                  f"${record.get('limit_usd', 0.0):.2f} cap. Raise the cap to continue or stop the task."),
+            severity="warning",
+            source={"origin": "budget", "task_id": str(tid), "run_id": str(record.get("run_id") or "")},
+            workspace=str(getattr(current, "workspace", "") or "") or None,
+            channels=["dashboard"],
+        )
+    except Exception:  # noqa: BLE001 - best effort, the park stands either way
+        pass
+
+
+def resolve_budget_pause(
+    task_id: UUID,
+    *,
+    approved: bool,
+    budget_usd: Optional[float] = None,
+    store: TaskStore = default_store,
+) -> Optional[Task]:
+    """Apply the operator's answer to a run parked at its money cap.
+
+    ``approved`` stores the new cap on the task (the route re-launches it,
+    and the launcher hands the new cap to the run). A refusal ends the task:
+    it is blocked with the reason "stopped at budget cap", the assignment is
+    released and the pending record cleared, so nothing picks it up again
+    until someone reassigns it. The route checks the new cap first.
+    """
+    tid = _uuid_from_str(task_id)
+    task = get_task(tid, store=store)
+    if task is None:
+        return None
+    pending = dict(getattr(task, "pending_approval", None) or {})
+    if approved:
+        return update_task(tid, store=store, budget_usd=float(budget_usd or 0.0))
+    reason = (f"Stopped at budget cap: spent ${float(pending.get('spent_usd') or 0.0):.2f} "
+              f"of ${float(pending.get('limit_usd') or 0.0):.2f}.")
+    update_task(tid, store=store, status=TaskStatus.blocked, blocked_reason=reason,
+                pending_approval=None)
+    clear_agent(tid, store=store)
+    try:
+        append_task_activity_log(tid, "budget_stop", reason,
+                                 run_id=str(pending.get("run_id") or ""))
+    except Exception:
+        pass
+    return get_task(tid, store=store)
 
 
 def approve_tool_call(
@@ -1387,6 +1465,7 @@ __all__ = [
     "stop_task",
     "block_task",
     "park_task_awaiting_approval",
+    "resolve_budget_pause",
     "approve_tool_call",
     "consume_approved_call",
     "set_dependencies",

@@ -135,11 +135,13 @@
         "nodes",
         "settings",
         "tools-and-capabilities",
-        "workers"
+        "workers",
+        "environments"
       ],
       "headings": [
         "Execution modes",
         "Images",
+        "Environments: image, limits, network",
         "The Containers page",
         "Preview through the hub",
         "Why it matters beyond isolation",
@@ -156,13 +158,58 @@
         "models",
         "playground",
         "workspaces",
-        "notifications"
+        "notifications",
+        "tasks",
+        "deployments"
       ],
       "headings": [
         "Where the numbers come from",
         "Budgets",
+        "Per-run limit",
         "What actually costs money",
         "Reducing it"
+      ]
+    },
+    {
+      "id": "deployments",
+      "title": "Deployments",
+      "summary": "Scheduled agent_task, flow and loop jobs shown as production deployments: a per-run money cap, an environment, and a firing journal that shows whether each firing actually worked.",
+      "surface": "Deployments",
+      "related": [
+        "scheduling",
+        "environments",
+        "costs",
+        "tasks"
+      ],
+      "headings": [
+        "What a deployment is",
+        "The firing journal",
+        "Auto pause",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "environments",
+      "title": "Environments",
+      "summary": "A named execution profile: mode, image, packages, network policy, limits and plain variables a task, node or scheduled job runs in.",
+      "surface": "Environments",
+      "related": [
+        "containers",
+        "nodes",
+        "deployments",
+        "scheduling",
+        "service-health"
+      ],
+      "headings": [
+        "Scope and defaults",
+        "Mode, image and packages",
+        "Limits",
+        "Network",
+        "Plain variables",
+        "Archiving and deletion",
+        "Where it applies",
+        "The Environments page",
+        "Gotchas"
       ]
     },
     {
@@ -420,11 +467,13 @@
         "containers",
         "instances",
         "service-health",
-        "sessions-and-runs"
+        "sessions-and-runs",
+        "environments"
       ],
       "headings": [
         "Two node types",
         "Starting and stopping",
+        "Environment",
         "Reading a node's state",
         "Exposure"
       ]
@@ -503,19 +552,24 @@
     {
       "id": "scheduling",
       "title": "Scheduling and the Plan page",
-      "summary": "Future work: notifications, agent tasks and flow triggers, plus the inbox showing what fired.",
+      "summary": "Future work: notifications, agent tasks, flow and loop triggers, plus the inbox showing what fired.",
       "surface": "Plan",
       "related": [
         "service-health",
         "tasks",
         "telegram",
-        "notifications"
+        "notifications",
+        "deployments",
+        "environments"
       ],
       "headings": [
         "Job kinds",
         "Recurrence",
         "Scheduling from a conversation",
         "The scheduler itself",
+        "Lease and idempotency",
+        "The firing journal",
+        "Auto pause",
         "Gotchas"
       ]
     },
@@ -641,10 +695,12 @@
         "hooks",
         "projects",
         "sessions-and-runs",
-        "notifications"
+        "notifications",
+        "costs"
       ],
       "headings": [
         "Lifecycle",
+        "Budget pause",
         "Subtasks and decomposition",
         "Results",
         "Gotchas"

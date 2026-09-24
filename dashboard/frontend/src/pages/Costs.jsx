@@ -93,6 +93,7 @@ export default function Costs() {
         hard_limit_usd: Number(budget.hard_limit_usd) || 0,
         soft_limit_usd: Number(budget.soft_limit_usd) || 0,
         period: budget.period || 'monthly',
+        run_limit_usd: Number(budget.run_limit_usd) || 0,
       });
       setBudgetState(data);
     } catch (e) {
@@ -194,13 +195,18 @@ export default function Costs() {
               <input type="number" min="0" step="0.01" value={budget.hard_limit_usd}
                 onChange={(e) => setBudgetState({ ...budget, hard_limit_usd: e.target.value })} className={`${inputCls} w-28`} />
             </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1" title={t('costs.runLimitHint')}>{t('costs.runLimitUsd')}</label>
+              <input type="number" min="0" step="0.01" value={budget.run_limit_usd ?? 0}
+                onChange={(e) => setBudgetState({ ...budget, run_limit_usd: e.target.value })} className={`${inputCls} w-28`} />
+            </div>
             <button onClick={saveBudget} disabled={savingBudget}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-60">
               {savingBudget ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
             </button>
           </div>
           <p className="text-xs text-gray-500 mt-3">
-            The hard cap pauses new task runs for this workspace once reached (set to 0 to disable). The soft cap is advisory. Enforcement fails open — a pricing error never blocks a run.
+            The hard cap pauses new task runs for this workspace once reached (set to 0 to disable). The soft cap is advisory. The per-run limit parks one run at its own money cap instead, unless the task sets its own (set to 0 to disable). Enforcement fails open: a pricing error never blocks a run.
           </p>
         </div>
       )}

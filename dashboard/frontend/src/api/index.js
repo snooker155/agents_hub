@@ -460,8 +460,10 @@ export const rejectAssignment = (taskId) => api.post(`/tasks/${taskId}/reject-as
 export const stopAgent = (taskId) => api.post(`/tasks/${taskId}/stop-agent`);
 export const answerTask = (taskId, answer) => api.post(`/tasks/${taskId}/answer`, { answer });
 // The decision on a tool call a task is parked on (status awaiting_approval).
-export const approveTaskCall = (taskId, approved, note = '') =>
-  api.post(`/tasks/${taskId}/approve`, { approved, note });
+// `budget_usd` is only meaningful when `pending_approval.kind === 'budget'`:
+// the new cap to resume with on approval (see TaskDetails' budget pause card).
+export const approveTaskCall = (taskId, approved, note = '', budget_usd) =>
+  api.post(`/tasks/${taskId}/approve`, { approved, note, ...(budget_usd !== undefined ? { budget_usd } : {}) });
 export const getAgentStatus = (taskId) => api.get(`/tasks/${taskId}/agent-status`);
 export const getAgentWorkspaceCapacities = (agentId) => api.get(`/agents/${encodeURIComponent(agentId)}/workspace-capacities`);
 export const setDefaultChatAgent = (agentId, workspace) =>
@@ -689,6 +691,32 @@ export const setNodeInboundSecret = (nodeId, secret) => api.put(`/nodes/${nodeId
 export const clearNodeInboundSecret = (nodeId) => api.delete(`/nodes/${nodeId}/inbound-secret`);
 export const getNodeConnections = (nodeId) => api.get(`/nodes/${nodeId}/connections`);
 export const getNodeRuns = (nodeId, limit = 50) => api.get(`/nodes/${nodeId}/runs`, { params: { limit } });
+
+// Environments API (routes/environments.py) — reusable execution profiles (local
+// vs. docker, network policy, resource limits) a task or node can run in.
+// `workspace` scopes the listing to the global environments plus that
+// workspace's own; a node or job that names no environment falls back to the
+// workspace's default (see environments/service.py resolve_for).
+export const getEnvironments = (workspace, includeArchived = false) =>
+  api.get('/environments', { params: {
+    ...(workspace ? { workspace } : {}),
+    ...(includeArchived ? { include_archived: true } : {}),
+  } });
+export const createEnvironment = (data) => api.post('/environments', data);
+export const getEnvironment = (id) => api.get(`/environments/${encodeURIComponent(id)}`);
+export const updateEnvironment = (id, data) => api.patch(`/environments/${encodeURIComponent(id)}`, data);
+export const archiveEnvironment = (id) => api.post(`/environments/${encodeURIComponent(id)}/archive`);
+export const deleteEnvironment = (id) => api.delete(`/environments/${encodeURIComponent(id)}`);
+export const setDefaultEnvironment = (id) => api.post(`/environments/${encodeURIComponent(id)}/default`);
+export const getEnvironmentUsage = (id) => api.get(`/environments/${encodeURIComponent(id)}/usage`);
+// Docker mode only: builds the derived image (base + pip packages) now,
+// instead of waiting for the first run that needs it.
+export const buildEnvironmentImage = (id) => api.post(`/environments/${encodeURIComponent(id)}/build`);
+export const resolveEnvironment = (workspace, environmentId) =>
+  api.get('/environments/resolve', { params: {
+    ...(workspace ? { workspace } : {}),
+    ...(environmentId ? { environment_id: environmentId } : {}),
+  } });
 
 // Legacy Factory API
 export const getFactoryGraph = () => api.get('/factory/graph');
@@ -938,8 +966,15 @@ export const ensureDockerNetwork = () => api.post('/containers/network/ensure');
 export const getAgentsBuildStatus = () => api.get('/containers/agents-status');
 
 // Plan API — scheduled jobs (future notifications / agent tasks)
-export const getPlanJobs = (workspace, status) =>
-  api.get('/plan/jobs', { params: { ...(workspace ? { workspace } : {}), ...(status ? { status } : {}) } });
+// `kinds` narrows the listing to a comma list ('agent_task,flow,loop', or an
+// array the same set of values) — what the Deployments page uses to leave
+// plain notifications out of its table.
+export const getPlanJobs = (workspace, status, kinds) =>
+  api.get('/plan/jobs', { params: {
+    ...(workspace ? { workspace } : {}),
+    ...(status ? { status } : {}),
+    ...(kinds ? { kinds: Array.isArray(kinds) ? kinds.join(',') : kinds } : {}),
+  } });
 export const createPlanJob = (data) => api.post('/plan/jobs', data);
 export const getPlanJob = (id) => api.get(`/plan/jobs/${id}`);
 export const updatePlanJob = (id, data) => api.patch(`/plan/jobs/${id}`, data);
@@ -948,6 +983,11 @@ export const pausePlanJob = (id) => api.post(`/plan/jobs/${id}/pause`);
 export const resumePlanJob = (id) => api.post(`/plan/jobs/${id}/resume`);
 export const cancelPlanJob = (id) => api.post(`/plan/jobs/${id}/cancel`);
 export const runPlanJobNow = (id) => api.post(`/plan/jobs/${id}/run-now`);
+// The firing journal: one record per attempt, newest first. Per job, or across
+// every job in a workspace (the Deployments detail drawer and a future
+// cross-job view respectively).
+export const getJobFires = (id, params) => api.get(`/plan/jobs/${id}/fires`, { params });
+export const getFires = (params) => api.get('/plan/fires', { params });
 
 // Notifications API — user inbox fed by the plan scheduler
 export const getNotifications = (params) => api.get('/plan/notifications', { params });

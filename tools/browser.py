@@ -128,6 +128,17 @@ def session_policy() -> Dict[str, Any]:
     deny = tuple(ws.get("web_deny_domains") or ()) or tuple(settings.web_deny_domains or ())
     allow = tuple(ws.get("web_allow_domains") or ()) or tuple(settings.web_allow_domains or ())
     enabled = bool(settings.web_domain_policy_enabled) or bool(ws.get("web_domain_policy_enabled"))
+    # The run's environment fence (AGENTS_HUB_NETWORK / AGENTS_HUB_ALLOWED_HOSTS,
+    # tools.web.environment_network_policy) narrows what the page itself may
+    # load too, not only where browser_open may go: "none" allows nothing,
+    # "limited" replaces the allow list with the environment's hosts (still
+    # checked against the workspace lists hub-side by validate_url).
+    from tools.web import environment_network_policy
+    net, env_hosts = environment_network_policy()
+    if net == "none":
+        allow, enabled = (), True
+    elif net == "limited":
+        allow, enabled = env_hosts, True
     return {
         "deny_domains": [str(d) for d in deny],
         "allow_domains": [str(d) for d in allow],

@@ -180,3 +180,10 @@ state lives in SQLite.
 ecosystem, Chroma / Pinecone / Qdrant for RAG, Typer for the CLI, Docker for
 optional isolation. Frontend: React 19, Vite, Tailwind, React Router, React Flow,
 and the view renderers (Vega-Lite, Cytoscape, three.js, Mermaid, KaTeX).
+
+## License
+
+Source-available under the [Agents Hub Personal Evaluation License](./LICENSE):
+one person may read, run and modify it on a machine they control, for
+evaluation and personal use. Redistribution, hosting for others, commercial
+and production use need a separate agreement with the copyright holder.

@@ -1,0 +1,114 @@
+Agents Hub Personal Evaluation License
+Version 1.0, 24 September 2026
+
+Copyright (c) 2026 Anton (izub.anton@gmail.com). All rights reserved.
+
+This license lets one person look at, run and modify Agents Hub on a machine
+they control, to evaluate it and to use it for themselves. It is not an open
+source license: it does not allow redistribution, hosting for others,
+commercial use or production use. Those need a separate written agreement
+with the copyright holder.
+
+1. Definitions
+
+   "Software" means the contents of this repository: source code,
+   documentation, configuration, images and any other files, including
+   modified versions you make of them.
+
+   "Licensor" means the copyright holder named above.
+
+   "You" means the single natural person exercising the rights granted by
+   this license. A company, team or other organisation may not be the
+   licensee; each person who uses the Software under this license is a
+   separate licensee.
+
+   "Local Installation" means an installation of the Software on one or more
+   computers that You own or control (including virtual machines and
+   containers on them), where the Software is used only by You.
+
+2. Grant
+
+   Subject to the conditions below, the Licensor grants You a personal,
+   non-exclusive, non-transferable, non-sublicensable, royalty-free right to:
+
+   a. download and read the Software;
+   b. install and run the Software on a Local Installation;
+   c. modify the Software for Your own use on that Local Installation;
+   d. connect the Software to model providers, tools and services You are
+      entitled to use, at Your own cost and under their terms;
+
+   for the purposes of evaluating the Software and of personal,
+   non-commercial use by You alone.
+
+3. Conditions and restrictions
+
+   You may not:
+
+   a. give, sell, lease, lend, publish or otherwise distribute the Software
+      or any modified version of it to anyone else, in source or binary
+      form, in whole or in part;
+   b. make the Software, or any service built on it, available to anyone
+      other than You, over a network or otherwise, including as a hosted or
+      managed service, an internal company tool, or a component of another
+      product;
+   c. use the Software for any commercial purpose, including providing
+      services to third parties, in any business process of an organisation,
+      or in production for any purpose other than Your own evaluation and
+      personal use;
+   d. remove or alter this license, the copyright notice, or any notice of
+      third-party rights contained in the Software;
+   e. use the Licensor's name or the name "Agents Hub" to endorse or promote
+      products or services derived from the Software without prior written
+      permission.
+
+   Forking the repository on a public code hosting platform for the purpose
+   of proposing contributions back to the Licensor is permitted, provided
+   the fork keeps this license and notice intact.
+
+4. Contributions
+
+   If You submit a contribution (a pull request, patch, issue with code, or
+   similar) to the Licensor, You grant the Licensor a perpetual, worldwide,
+   irrevocable, royalty-free right to use, modify, distribute, sublicense
+   and relicense that contribution as part of the Software or otherwise,
+   and You confirm that You have the right to grant it.
+
+5. Third-party components
+
+   The Software depends on and bundles components published by third
+   parties under their own licenses (listed in the requirement and package
+   files of the repository). Those components remain under their own
+   licenses; nothing in this license restricts rights You have under them.
+
+6. Termination
+
+   This license ends automatically if You breach any of its conditions.
+   On termination You must stop using the Software and delete every copy of
+   it in Your possession. Sections 5 to 9 survive termination.
+
+7. Other uses
+
+   Any use not covered by section 2, including commercial use, use by an
+   organisation, hosting for others and redistribution, requires a separate
+   written agreement with the Licensor. Contact the address above.
+
+8. No warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. The Software runs
+   language-model agents that can execute code, change files and call
+   external services; You are responsible for where and how You run it.
+
+9. Limitation of liability
+
+   IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE, INCLUDING ANY COSTS INCURRED WITH MODEL
+   PROVIDERS OR OTHER SERVICES THE SOFTWARE WAS CONNECTED TO.
+
+10. Reservation of rights
+
+   All rights not expressly granted in this license are reserved by the
+   Licensor.

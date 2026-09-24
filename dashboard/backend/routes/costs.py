@@ -162,6 +162,9 @@ class BudgetSettings(BaseModel):
     hard_limit_usd: float = 0.0
     soft_limit_usd: float = 0.0
     period: str = "monthly"  # total | daily | monthly
+    # Default money cap of a single task's runs (0 = off). A task's own
+    # budget_usd overrides it; enforced in the child by RunBudgetGuard.
+    run_limit_usd: float = 0.0
 
 
 @router.get("/budget")

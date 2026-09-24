@@ -227,6 +227,18 @@ def prepare_run(
             pass
     execution_mode = _ws_agent_mode or agent_execution_mode()
 
+    # Two optional contributions to the launch, each a module that may be
+    # absent or fail without changing the launch: the per-run money cap
+    # (common/run_budget.py, docs/costs.md) puts the cap and the task's
+    # spend so far into the child's environment; the environment the run
+    # executes in (environments/launch.py, docs/environments.md) may add
+    # environment variables, replace the execution mode and shape the docker
+    # profile. Everything they return travels on the spec, so a worker on
+    # another host applies it in launch_prepared.
+    launch_env, docker_options, environment_id, env_mode = _launch_extras(task, ws_name)
+    if env_mode in ("local", "docker"):
+        execution_mode = env_mode
+
     # Audit trail (common/audit.py): who launched this run. No HTTP request is
     # in flight here (a launch may be re-queued by a worker), so the actor
     # comes from the current-user contextvar rather than a principal, "local"
@@ -248,9 +260,20 @@ def prepare_run(
     except Exception:
         pass
 
+    if environment_id:
+        try:
+            _update_run(run_id, {"environment_id": environment_id})
+        except Exception:  # noqa: BLE001 - the run still launches without the environment note on its record
+            pass
+
     spec: Dict[str, Any] = {
         "kind": QUEUE_KIND,
         "run_id": run_id,
+        # Contributions from the run budget and the environment (see
+        # _launch_extras): plain strings and JSON, applied in launch_prepared.
+        "launch_env": launch_env,
+        "docker_options": docker_options,
+        "environment_id": environment_id,
         "task_id": str(task_id),
         "agent_id": agent_id,
         "session_id": session_id,
@@ -324,9 +347,16 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     if isinstance(extra, dict):
         for key, value in extra.items():
             env.setdefault(str(key), str(value))
+    # The launcher's own contributions (run budget, environment) are not
+    # caller hints, so they win over the base environment.
+    launch_env = spec.get("launch_env")
+    if isinstance(launch_env, dict):
+        for key, value in launch_env.items():
+            env[str(key)] = str(value)
 
     if execution_mode == "docker":
-        _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id)
+        _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id,
+                             docker_options=spec.get("docker_options") or None)
         return
 
     args = [sys.executable, str(PROJECT_ROOT / "runtime" / "agent_run.py")] + cli_args
@@ -371,6 +401,7 @@ def _start_run_in_docker(
     env: Dict[str, str],
     log_file: Path,
     instance_id: Optional[str],
+    docker_options: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Launch a task run in a sandboxed container instead of a subprocess.
 
@@ -421,8 +452,12 @@ def _start_run_in_docker(
         lf.write(f"Command (in container): {inner_cmd}\nWorkspace: {str(ws_path)}\n"
                  f"Host: {socket.gethostname()}\n\n")
 
+    # docker_options is what the run's environment asks of the container
+    # (environments/launch.py: network, limits, image, see docs/environments.md);
+    # None keeps the plain hardened profile and the call exactly as before.
+    _runner_kwargs: Dict[str, Any] = {"options": docker_options} if docker_options else {}
     result = docker_runner.start_run_container(
-        run_id, agent_id, inner_cmd, cwd=str(ws_path), env=docker_env,
+        run_id, agent_id, inner_cmd, cwd=str(ws_path), env=docker_env, **_runner_kwargs,
     )
 
     if not result.get("success"):
@@ -464,6 +499,51 @@ def _start_run_in_docker(
 def _current_user_id() -> str:
     from common.identity import current_user_id
     return current_user_id()
+
+
+def _launch_extras(task: Any, ws_name: Optional[str]) -> Tuple[Dict[str, str], Optional[Dict[str, Any]],
+                                                              Optional[str], Optional[str]]:
+    """What the run budget and the environment add to a launch.
+
+    Returns ``(env, docker_options, environment_id, execution_mode)``:
+
+    - ``env``: environment variables for the child, from
+      ``common.run_budget.launch_env(task, ws_name)`` (the money cap and the
+      task's spend so far) and ``environments.launch.launch_fields(...)["env"]``.
+    - ``docker_options``: the environment's docker profile (network, limits,
+      image), or None.
+    - ``environment_id``: the environment the run executes in, or None.
+    - ``execution_mode``: ``"local"`` / ``"docker"`` when the environment pins
+      one, else None.
+
+    Either module being absent, or raising, leaves the launch as it was:
+    these are additions, never a reason not to start a run.
+    """
+    import logging
+    _log = logging.getLogger(__name__)
+    env: Dict[str, str] = {}
+    docker_options: Optional[Dict[str, Any]] = None
+    environment_id: Optional[str] = None
+    execution_mode: Optional[str] = None
+    try:
+        from common.run_budget import launch_env as _budget_env
+        env.update({str(k): str(v) for k, v in (_budget_env(task, ws_name) or {}).items()})
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - the cap is an addition; a failure to compute it never blocks the launch
+        _log.debug("run budget launch env failed for task %s", getattr(task, "id", None), exc_info=True)
+    try:
+        from environments.launch import launch_fields
+        fields = launch_fields(task, ws_name) or {}
+        env.update({str(k): str(v) for k, v in (fields.get("env") or {}).items()})
+        docker_options = fields.get("docker") or None
+        environment_id = fields.get("environment_id") or None
+        execution_mode = fields.get("execution_mode") or None
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001 - same: an environment that cannot be resolved falls back to the workspace's mode
+        _log.debug("environment launch fields failed for task %s", getattr(task, "id", None), exc_info=True)
+    return env, docker_options, environment_id, execution_mode
 
 
 def _build_env(ws_name: str, session_id: str, log_file: str,

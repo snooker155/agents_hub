@@ -5,8 +5,10 @@ Periodic state maintenance: run retention and orphan-file pruning.
 run logs and process sidecars accumulate forever. This module trims terminal
 run records older than ``run_retention_days``, trims each external connection
 back to its own run cap (``connections.retention``, a count rather than an age,
-because a reporting graph outgrows an age limit), and deletes the on-disk log/
-sidecar files left behind by any deleted or long-gone run.
+because a reporting graph outgrows an age limit), deletes the on-disk log/
+sidecar files left behind by any deleted or long-gone run, and prunes the
+scheduler's firing journal (``plans.storage.FireStore``) past
+``AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS`` (default 90 days, 0 disables it).
 
 It is invoked once a day by the plan scheduler (see ``plans.scheduler``), guarded
 by a ``last_maintenance`` marker in the DB ``meta`` table so it runs at most once
@@ -16,6 +18,7 @@ restarts. Everything runs off the event loop in a worker thread.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict
 
@@ -28,6 +31,9 @@ _MAINTENANCE_INTERVAL_HOURS = 24
 # Only these run states are ever pruned — an in-flight or paused run is kept
 # regardless of age so retention can never delete active work.
 _TERMINAL_STATUSES = ("completed", "failed", "stopped", "error")
+# Not on common.config.Settings (this module is the only reader): a plain
+# env var kept it out of that shared file. 0 disables the prune.
+_DEFAULT_PLAN_FIRES_RETENTION_DAYS = 90
 
 
 def _now() -> datetime:
@@ -129,6 +135,23 @@ def prune_orphan_files() -> int:
     return removed
 
 
+def prune_old_fires(retention_days: int) -> int:
+    """Delete scheduler firing-journal rows (``plans.storage.FireStore``,
+    ``plan_fires``) recorded before the cutoff. Returns the number removed.
+    0 disables pruning.
+
+    The journal gets one row per tick that finds a job due, forever, with
+    nothing else bounding it (unlike run retention, which only touches
+    terminal runs); this is its only cleanup.
+    """
+    if retention_days <= 0:
+        return 0
+    from plans.service import fire_store
+
+    cutoff = _now() - timedelta(days=retention_days)
+    return fire_store.prune_older_than(cutoff)
+
+
 def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     """Run all maintenance passes if due (or ``force``); record the timestamp.
 
@@ -191,6 +214,21 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     except Exception:
         log.exception("audit prune failed")
         summary["pruned_audit_rows"] = 0
+    # Scheduler firing journal (plans.storage.FireStore): unlike run retention
+    # above, every row is terminal the moment it is written, so there is no
+    # "still active" check here, only an age cutoff. Isolated like the passes
+    # above.
+    try:
+        retention_days = int(
+            os.environ.get(
+                "AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS", str(_DEFAULT_PLAN_FIRES_RETENTION_DAYS)
+            )
+            or _DEFAULT_PLAN_FIRES_RETENTION_DAYS
+        )
+        summary["pruned_fires"] = prune_old_fires(retention_days)
+    except Exception:
+        log.exception("fire journal pruning failed")
+        summary["pruned_fires"] = 0
     if pruned_runs or pruned_files or summary.get("pruned_view_dirs") \
             or summary.get("pruned_connection_runs"):
         log.info("maintenance: pruned %d run(s), %d connection run(s), %d orphan file(s), "
@@ -200,4 +238,4 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     return summary
 
 
-__all__ = ["run_maintenance", "prune_old_runs", "prune_orphan_files"]
+__all__ = ["run_maintenance", "prune_old_runs", "prune_orphan_files", "prune_old_fires"]

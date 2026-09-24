@@ -28,6 +28,8 @@ export default {
   refresh: 'Обновить',
   cancel: 'Отмена',
   nodeType: 'Тип узла',
+  environment: 'Окружение',
+  environmentDefault: 'По умолчанию для пространства',
   taskWorker: 'Исполнитель задач',
   taskWorkerDesc: 'Забирает назначенные задачи',
   httpServiceType: 'HTTP-сервис',

@@ -28,6 +28,8 @@ export default {
   refresh: 'Aktualisieren',
   cancel: 'Abbrechen',
   nodeType: 'Knotentyp',
+  environment: 'Umgebung',
+  environmentDefault: 'Workspace-Standard',
   taskWorker: 'Aufgaben-Worker',
   taskWorkerDesc: 'Fragt zugewiesene Aufgaben ab',
   httpServiceType: 'HTTP-Dienst',

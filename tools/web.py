@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import socket  # noqa: F401  (kept so tests can monkeypatch web.socket.getaddrinfo)
 from typing import Any, Dict, List, Optional, Tuple
@@ -93,19 +94,51 @@ def _host_matches(host: str, pattern: str) -> bool:
     return host == pattern or host.endswith("." + pattern)
 
 
-def check_domain_policy(url: str) -> Tuple[bool, str]:
-    """Apply the deny list, then the opt-in allow list.
+def environment_network_policy() -> Tuple[Optional[str], Tuple[str, ...]]:
+    """The network fence of the environment this process runs in, if any.
 
-    The deny list always applies. The allow list is opt-in per workspace (or
-    globally), mirroring ``shell_allowlist_enabled``: off by default so web
-    access works out of the box, on in environments that want it fenced.
+    environments/launch.py puts it in the run's (or node's) environment:
+    ``AGENTS_HUB_NETWORK`` ("none" or "limited") and, for limited,
+    ``AGENTS_HUB_ALLOWED_HOSTS`` (comma list). Returns ``(type, hosts)``,
+    ``(None, ())`` outside an environment. Read per call: the variables are
+    set per process and tests set them.
     """
+    net = os.environ.get("AGENTS_HUB_NETWORK", "").strip().lower() or None
+    raw = os.environ.get("AGENTS_HUB_ALLOWED_HOSTS", "")
+    hosts = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
+    if net is None and raw.strip():
+        net = "limited"
+    return (net if net in ("none", "limited") else None), hosts
+
+
+def _environment_check(host: str) -> Tuple[bool, str]:
+    net, hosts = environment_network_policy()
+    if net == "none":
+        return False, "this run's environment has no network access"
+    if net == "limited" and not any(_host_matches(host, h) for h in hosts):
+        return False, f"host {host!r} is not on this run's environment allowlist"
+    return True, ""
+
+
+def check_domain_policy(url: str) -> Tuple[bool, str]:
+    """Apply the environment's fence, the deny list, then the opt-in allow list.
+
+    The run's environment (``AGENTS_HUB_NETWORK`` / ``AGENTS_HUB_ALLOWED_HOSTS``,
+    see :func:`environment_network_policy`) is checked first and cannot be
+    widened by the workspace lists. The deny list always applies. The allow
+    list is opt-in per workspace (or globally), mirroring
+    ``shell_allowlist_enabled``: off by default so web access works out of
+    the box, on in environments that want it fenced.
+    """
+    host = (urlparse(url).hostname or "").lower()
+    ok, reason = _environment_check(host)
+    if not ok:
+        return False, reason
+
     try:
         from common.config import settings
     except Exception:
         return True, ""
-
-    host = (urlparse(url).hostname or "").lower()
     ws = _workspace_web_settings()
 
     deny = tuple(ws.get("web_deny_domains") or ()) or tuple(settings.web_deny_domains or ())

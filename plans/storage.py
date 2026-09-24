@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from common.docstore import DocStore
 from common.paths import PLANS_FILE as DEFAULT_PLANS_FILE
 from common.paths import NOTIFICATIONS_FILE as DEFAULT_NOTIFICATIONS_FILE
-from .models import JobStatus, Notification, ScheduledJob
+from .models import FireRecord, JobStatus, Notification, ScheduledJob
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -186,6 +186,64 @@ class PlanStore(_ModelStore):
             return updated
 
 
+class FireStore(_ModelStore):
+    """The scheduler's firing journal: one :class:`FireRecord` per attempt.
+
+    No legacy JSON file — this collection is new, so there is nothing to
+    import (``_ModelStore.__init__`` is given ``path=None``, which makes
+    ``DocStore._ensure_imported`` a no-op).
+    """
+
+    def __init__(self):
+        super().__init__("plan_fires", None, FireRecord)
+
+    def _sorted(self, items: List[FireRecord]) -> List[FireRecord]:
+        return sorted(items, key=lambda f: _aware(f.at), reverse=True)
+
+    def list_for_job(
+        self, job_id: UUID | str, *, only_errors: bool = False, limit: int = 50,
+    ) -> List[FireRecord]:
+        """Newest first, for the job's detail-drawer journal."""
+        items = [f for f in self.list() if str(f.job_id) == str(job_id)]
+        if only_errors:
+            items = [f for f in items if not f.ok]
+        return self._sorted(items)[: max(0, limit)]
+
+    def last_for_job(self, job_id: UUID | str) -> Optional[FireRecord]:
+        items = self.list_for_job(job_id, limit=1)
+        return items[0] if items else None
+
+    def list_all(
+        self, *, workspace: Optional[str] = None, only_errors: bool = False, limit: int = 100,
+    ) -> List[FireRecord]:
+        """Newest first across every job, for the cross-job journal view."""
+        items = self.list()
+        if workspace:
+            items = [f for f in items if (f.workspace or "").strip() == workspace]
+        if only_errors:
+            items = [f for f in items if not f.ok]
+        return self._sorted(items)[: max(0, limit)]
+
+    def prune_older_than(self, cutoff: datetime) -> int:
+        """Delete records at or before ``cutoff``. Returns the count removed.
+
+        Used by ``common.maintenance.run_maintenance`` for retention; the
+        journal otherwise grows forever, one row per tick that finds a job
+        due.
+        """
+        cutoff = _aware(cutoff)
+        removed = 0
+        with self.docs.transaction():
+            for key, doc in self.docs.all().items():
+                item = self._parse_or_none(doc)
+                if item is None or item.at is None:
+                    continue
+                if _aware(item.at) < cutoff:
+                    self.docs.delete(key)
+                    removed += 1
+        return removed
+
+
 class NotificationStore(_ModelStore):
     # Inbox cap — oldest entries are dropped when exceeded.
     MAX_ENTRIES = 500
@@ -216,4 +274,4 @@ class NotificationStore(_ModelStore):
             return changed
 
 
-__all__ = ["PlanStore", "NotificationStore"]
+__all__ = ["PlanStore", "FireStore", "NotificationStore"]

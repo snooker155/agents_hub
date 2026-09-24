@@ -7,7 +7,7 @@ lives in ``managers/container_manager.py``.
 Public API
 ----------
 start_node_container(node_id, agent_id, inner_cmd, workspace, env) -> dict
-start_run_container(run_id, agent_id, inner_cmd, cwd, env)         -> dict
+start_run_container(run_id, agent_id, inner_cmd, cwd, env, options) -> dict
 stop_container(name)                                                -> bool
 container_running(name)                                             -> bool
 container_name_for_node(node_id)                                    -> str
@@ -21,6 +21,7 @@ from managers.container_manager import (
     container_name_for_node,
     container_name_for_run,
     container_running,
+    options_to_kwargs,
     start_container,
     stop_container,
 )
@@ -70,6 +71,7 @@ def start_run_container(
     inner_cmd: List[str],
     cwd: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
+    options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Start a detached, sandboxed container for a one-shot agent run.
 
@@ -79,9 +81,18 @@ def start_run_container(
     (agents, custom providers, model catalog: common/snapshot.py) mounted
     read-only. See managers.container_manager.build_run_command and
     docs/containers.md.
+
+    ``options`` is the docker profile of the run's environment
+    (environments/launch.py, docs/environments.md): ``memory``, ``cpus``,
+    ``pids_limit`` (replacing the
+    run defaults), ``image`` (instead of the agent's image) and ``packages``
+    (baked into a derived image once, see
+    managers.container_manager.ensure_environment_image). None or {} keeps the
+    plain hardened profile.
     """
     from common import snapshot
     name = container_name_for_run(run_id)
+    kwargs = options_to_kwargs(agent_id, options) if options else {}
     return start_container(
         container_name=name,
         agent_id=agent_id,
@@ -90,4 +101,5 @@ def start_run_container(
         env=env,
         hardened=True,
         snapshot_dir=str(snapshot.write_snapshots(run_id)),
+        **kwargs,
     )

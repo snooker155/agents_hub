@@ -14,6 +14,8 @@ export default {
   allTime: 'Gesamter Zeitraum',
   softCapUsd: 'Weiches Limit (USD)',
   hardCapUsd: 'Hartes Limit (USD)',
+  runLimitUsd: 'Limit pro Lauf (USD)',
+  runLimitHint: 'Begrenzt, was ein einzelner Lauf ausgeben darf, sofern die Aufgabe kein eigenes Limit setzt. 0 deaktiviert es.',
   loadingCosts: 'Kosten werden geladen…',
   byModel: 'Nach Modell',
   byAgent: 'Nach Agent',

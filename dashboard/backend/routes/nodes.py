@@ -21,6 +21,9 @@ class NodeCreate(BaseModel):
     workspace: Optional[str] = None
     label: Optional[str] = None
     node_type: Optional[str] = None
+    # The environment the node runs in (docs/environments.md); None = the
+    # workspace's default environment, if it has one.
+    environment_id: Optional[str] = None
 
 
 def _enrich(node: dict) -> dict:
@@ -36,6 +39,10 @@ def _enrich(node: dict) -> dict:
     return {
         **public,
         "inbound_secret_configured": bool(node.get("inbound_secret")),
+        # Present on every node, None for one started without an environment
+        # (or before environments existed).
+        "environment_id": node.get("environment_id"),
+        "environment_name": node.get("environment_name"),
         "agent_name": spec.name if spec else agent_id,
         "agent_domain": getattr(spec, "domain", "") if spec else "",
         "running_sessions_count": len(running_sessions),
@@ -86,9 +93,14 @@ async def start_node(data: NodeCreate):
             workspace=data.workspace,
             label=data.label,
             node_type=data.node_type,
+            environment_id=(data.environment_id or "").strip() or None,
         )
         node = node_manager.get_node(node_id)
         return _enrich(node)
+    except ValueError as e:
+        # An unknown agent was checked above, so this is the environment:
+        # unknown, archived or from another workspace.
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

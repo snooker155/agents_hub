@@ -9,6 +9,17 @@ showing what fired.
   Telegram when asked.
 - **agent_task** — creates and starts a real task at the appointed time. With an
   agent named, that agent runs it; without, the orchestrator routes it.
+- **flow**: triggers a flow run, with an optional JSON seed merged into its
+  initial state and a concurrency cap so a recurring flow job cannot stack up
+  runaway instances.
+- **loop**: starts a run of a loop. A firing is skipped, and recorded as an
+  error, while a run of the same loop is already active.
+
+`agent_task`, `flow` and `loop` jobs may also carry an `environment_id` (see
+[environments](environments.md)) and a `budget_usd`, both copied onto every
+task the job creates. These three kinds, shown as production deployments
+rather than reminders, get their own page: see
+[deployments](deployments.md).
 
 ## Recurrence
 
@@ -66,6 +77,35 @@ run-now click) claims it first, so callers never need to do the two-step
 claim-then-fire dance by hand; a job whose lease is already held elsewhere
 comes back as locked instead of firing a second time.
 
+## The firing journal
+
+Every firing attempt, including a skipped duplicate slot, writes one record:
+when, which slot, whether it was the automatic tick or a manual run-now
+(`trigger`), whether it succeeded, and on failure an error type and message.
+Error types are `agent_missing`, `flow_missing`, `loop_missing`, `loop_busy`,
+`budget_exceeded`, `capacity`, `workspace_missing` and `other`, classified
+conservatively: an error matching nothing known lands in `other` rather than
+guessed at. `GET /api/plan/jobs/{id}/fires` reads one job's journal,
+`GET /api/plan/fires` reads across all of them; both take `only_errors` and
+`limit`. Rows older than `AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS` (default 90,
+`0` disables it) are pruned by the daily maintenance sweep. The
+[Deployments page](deployments.md) is where this journal is actually read,
+with an only-failures filter and a link from each row to the task it created.
+
+## Auto pause
+
+A recurring job that keeps failing pauses itself: `auto_pause_after`
+consecutive failures (default 3, `0` turns it off) pauses the job with
+`paused_reason: "errors"`, and a failure classified as
+`agent_missing`/`flow_missing`/`loop_missing` pauses it immediately regardless
+of the counter, with `paused_reason: "target_missing"`: a target that no
+longer exists will not start existing again on its own. A success resets the
+counter; resuming a job clears both the reason and the counter. `run_at`
+still advances on a firing that auto-pauses, so resuming waits for the next
+natural slot instead of re-firing a stale one immediately. Run-now works on a
+paused job too, recorded with `trigger: "manual"`, so a fix can be retested
+without resuming first. Full detail: [deployments](deployments.md).
+
 ## Gotchas
 
 - A scheduled task is created at fire time, not now. Editing the job changes
@@ -76,4 +116,4 @@ comes back as locked instead of firing a second time.
 - A bad cron expression or an unknown timezone is rejected at create or update
   time with a clear error, not silently accepted.
 
-Related: [tasks](tasks.md), [telegram](telegram.md).
+Related: [tasks](tasks.md), [telegram](telegram.md), [deployments](deployments.md), [environments](environments.md).

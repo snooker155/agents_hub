@@ -4,6 +4,12 @@ export default {
   schedule: 'Запланировать',
   editScheduledJob: 'Изменить задание',
   refresh: 'Обновить',
+  deployments: 'Развёртывания',
+  pausedReason: {
+    manual: 'вручную',
+    errors: 'сбои',
+    target_missing: 'цель не найдена',
+  },
   markAllRead: 'Прочитать все',
   markRead: 'Отметить прочитанным',
   markUnread: 'Отметить непрочитанным',

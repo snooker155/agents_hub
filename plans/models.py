@@ -92,10 +92,34 @@ class ScheduledJob(BaseModel):
     # Delivery channels for notifications ("dashboard"; "telegram" later).
     channels: List[str] = Field(default_factory=lambda: ["dashboard"])
 
+    # agent_task/flow/loop: the environment (environments/) and money cap
+    # (common/run_budget.py) copied onto every task this job creates. For a
+    # flow or loop firing the task is created by that launcher, not here, so
+    # plans.service applies these after the fact by updating the task it
+    # returns; None means "the task's own default" for both.
+    environment_id: Optional[str] = None
+    budget_usd: Optional[float] = None
+
     last_fired_at: Optional[datetime] = None
     last_error: Optional[str] = None
     # Task IDs created by firings of this job (newest last).
     created_task_ids: List[str] = Field(default_factory=list)
+
+    # -------------------- auto pause on repeated failure --------------------
+    # A recurring job that keeps failing pauses itself rather than firing
+    # forever into the void. 0 turns this off (it still fires and records the
+    # journal, it just never auto-pauses).
+    auto_pause_after: int = 3
+    # Firing failures in a row, reset to 0 on the next success. Never consulted
+    # for a one-off job (recurrence == none): it is already terminal (failed)
+    # after its single firing.
+    consecutive_errors: int = 0
+    # Why a paused job is paused: "manual" (pause_job / the pause route),
+    # "errors" (auto_pause_after consecutive failures), "target_missing" (the
+    # agent/flow/loop this job points at no longer exists — that never fixes
+    # itself, so it pauses on the first such failure regardless of the
+    # counter). None for a job that was never auto/manually paused.
+    paused_reason: Optional[str] = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -105,6 +129,46 @@ class ScheduledJob(BaseModel):
             object.__setattr__(self, "updated_at", datetime.now(timezone.utc))
         except Exception:
             setattr(self, "updated_at", datetime.now(timezone.utc))
+
+
+class FireRecord(BaseModel):
+    """One attempt to fire a :class:`ScheduledJob`: what happened and how long
+    it took.
+
+    Kept in its own collection (``plans.storage.FireStore``, over
+    ``DocStore("plan_fires")``) rather than folded into the job record, so the
+    journal can grow without bound across every firing while the job itself
+    stays small and cheap to read on every list. Retention is a daily prune in
+    ``common.maintenance.run_maintenance`` (``AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS``),
+    not a cap on this model.
+
+    One record is written per :func:`plans.service.fire_job` call, including
+    the ``already_fired_this_slot`` skip (``ok=True``,
+    ``error_type="skipped_slot"``) so the journal shows every attempt, not
+    just the ones that did something.
+    """
+
+    id: UUID = Field(default_factory=uuid4)
+    job_id: UUID
+    workspace: Optional[str] = None
+    at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # The job's run_at this attempt was firing for (fire_job's docstring on
+    # last_fired_slot explains why a slot, not a wall-clock moment, is what
+    # idempotency is keyed on).
+    slot: Optional[datetime] = None
+    # "schedule": the automatic tick (plans.scheduler / run_due_jobs), the
+    # default for a bare fire_job() call. "manual": the run-now route.
+    trigger: str = "schedule"
+    ok: bool = True
+    # One of plans.service.classify_fire_error's buckets, or "skipped_slot"
+    # for the already-fired-this-slot case. None when ok is True and nothing
+    # was skipped.
+    error_type: Optional[str] = None
+    error: Optional[str] = None
+    task_id: Optional[str] = None
+    notification_id: Optional[str] = None
+    loop_run_id: Optional[str] = None
+    duration_ms: Optional[int] = None
 
 
 class Notification(BaseModel):
@@ -126,5 +190,6 @@ __all__ = [
     "JobStatus",
     "Recurrence",
     "ScheduledJob",
+    "FireRecord",
     "Notification",
 ]

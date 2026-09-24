@@ -208,6 +208,14 @@ class Worker:
         }, load_fn=lambda: {"tracked": len(self.tracked), "launched": self.launched,
                             "failed": self.failed, "stopping": self.stopping.is_set()})
         beat.start()
+        # The egress proxy for environments with a limited or no network
+        # (environments/egress.py): runs here too, since the URL a run gets
+        # names this host. A no-op unless AGENTS_HUB_EGRESS_PROXY is on.
+        try:
+            from environments import egress
+            egress.start_background()
+        except Exception:
+            log.warning("could not start the egress proxy", exc_info=True)
 
         if install_signals:
             for sig in (signal.SIGTERM, signal.SIGINT):
@@ -238,6 +246,11 @@ class Worker:
         except Exception:
             pass
         beat.stop()
+        try:
+            from environments import egress
+            egress.stop_background()
+        except Exception:
+            pass
         log.info("worker %s stopped (%d launched, %d failed)", self.owner, self.launched, self.failed)
 
     def request_stop(self) -> None:

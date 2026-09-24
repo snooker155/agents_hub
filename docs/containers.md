@@ -99,6 +99,34 @@ to see it.
 The generated Dockerfile for any agent can be previewed before building, which
 is the fastest way to see what an agent will actually have available.
 
+## Environments: image, limits, network
+
+A docker-mode [environment](environments.md) shapes a run container further,
+on top of the two profiles above. `managers/container_manager.options_to_kwargs`
+turns its docker options into `start_container`/`build_run_command`
+arguments:
+
+- **image**: the environment's own base image, or the agent's own when unset.
+- **packages**: pip requirements installed on top of that base image the
+  first time the combination is used, into a derived image tagged
+  `agents-hub-env:<hash>` (`ensure_environment_image`, cached by a hash of the
+  base image and the sorted package list) so the same environment only ever
+  builds once. A failed build falls back to running on the base image without
+  the packages, logged, rather than refusing the run.
+- **limits**: `memory`, `cpus` and `pids_limit` override the run profile's
+  own defaults (`AGENT_DOCKER_MEMORY`, `AGENT_DOCKER_CPUS`, the fixed
+  pids-limit) when the environment sets them.
+
+**Network** is not one of these container arguments. Every environment keeps
+the container on the normal agents-hub bridge, whatever its `network` type,
+because Docker's `--network none` would also cut the agent off from its own
+model provider. A `limited` or `none` environment is enforced instead by the
+hub's own web and browser tools reading `AGENTS_HUB_NETWORK` /
+`AGENTS_HUB_ALLOWED_HOSTS` from the container's environment, and, when the
+egress proxy is enabled (`AGENTS_HUB_EGRESS_PROXY=1`), by every client inside
+the container that honours the `HTTP_PROXY`/`HTTPS_PROXY` variables. See
+[environments](environments.md) for the full network model.
+
 ## The Containers page
 
 Lists running and stopped containers, reads their logs, stops and removes them.
@@ -157,4 +185,4 @@ refused combination survivable.
   not `execution_mode`; `managers/run_manager.py` and `managers/run_watchdog.py`
   key off it for that reason.
 
-Related: [nodes](nodes.md), [tools-and-capabilities](tools-and-capabilities.md), [settings](settings.md).
+Related: [nodes](nodes.md), [tools-and-capabilities](tools-and-capabilities.md), [settings](settings.md), [environments](environments.md).

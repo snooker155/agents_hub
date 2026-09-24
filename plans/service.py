@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -19,13 +20,19 @@ from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
-from .models import JobKind, JobStatus, Notification, Recurrence, ScheduledJob
-from .storage import NotificationStore, PlanStore
+from .models import FireRecord, JobKind, JobStatus, Notification, Recurrence, ScheduledJob
+from .storage import FireStore, NotificationStore, PlanStore
 
 log = logging.getLogger("plans.service")
 
 plan_store = PlanStore()
+fire_store = FireStore()
 notification_store = NotificationStore()
+
+# Firing failure types that never self-heal: the target this job points at
+# is simply gone, so a recurring job pauses on the first one instead of
+# waiting out its normal auto_pause_after counter.
+_TARGET_MISSING_ERROR_TYPES = frozenset({"agent_missing", "flow_missing", "loop_missing"})
 
 # Reserved session-broker channel for real-time notification push (SSE).
 NOTIFICATIONS_CHANNEL = "__notifications__"
@@ -77,6 +84,29 @@ def _validate_cron(expr: Optional[str]) -> str:
     return text
 
 
+def _validate_environment_id(environment_id: Optional[str], workspace: Optional[str]) -> None:
+    """When set, the environment must exist, be usable from ``workspace`` (its
+    own or global) and not be archived — the same check
+    ``environments.launch.launch_fields`` applies at fire time. Raises
+    ``ValueError`` (a 400 at the route) rather than silently accepting an id
+    that would resolve to nothing once the job actually fires.
+
+    Guarded by ``ImportError`` so a checkout without the ``environments``
+    package (part C) still runs plans unchanged; an id set in that case is
+    simply not checked, same as before this validation existed.
+    """
+    if not environment_id:
+        return
+    try:
+        from environments.service import EnvironmentServiceError, resolve_for
+    except ImportError:
+        return
+    try:
+        resolve_for(workspace, environment_id)
+    except EnvironmentServiceError as e:
+        raise ValueError(str(e)) from e
+
+
 # -------------------- Job CRUD --------------------
 
 def create_job(
@@ -96,9 +126,13 @@ def create_job(
     seed: Optional[Dict[str, Any]] = None,
     max_concurrent: int = 1,
     channels: Optional[List[str]] = None,
+    environment_id: Optional[str] = None,
+    budget_usd: Optional[float] = None,
+    auto_pause_after: int = 3,
 ) -> ScheduledJob:
     tz_name = _validate_timezone(timezone)
     cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
+    _validate_environment_id(environment_id, workspace)
     job = ScheduledJob(
         kind=kind,
         title=title,
@@ -115,6 +149,9 @@ def create_job(
         seed=seed,
         max_concurrent=max_concurrent,
         channels=channels or ["dashboard"],
+        environment_id=environment_id,
+        budget_usd=budget_usd,
+        auto_pause_after=auto_pause_after,
     )
     saved = plan_store.add(job)
     _notify_plan_changed()
@@ -151,6 +188,10 @@ def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
         existing = plan_store.get(job_id)
         cron_val = fields.get("cron") or (existing.cron if existing else None)
         fields["cron"] = _validate_cron(cron_val)
+    if "environment_id" in fields:
+        existing = plan_store.get(job_id)
+        ws = existing.workspace if existing else None
+        _validate_environment_id(fields["environment_id"], ws)
     updated = plan_store.update(job_id, **fields)
     if updated:
         _notify_plan_changed()
@@ -175,7 +216,7 @@ def pause_job(job_id: UUID | str) -> Optional[ScheduledJob]:
     job = plan_store.get(job_id)
     if job and job.status != JobStatus.scheduled:
         return None
-    updated = plan_store.update(job_id, status=JobStatus.paused)
+    updated = plan_store.update(job_id, status=JobStatus.paused, paused_reason="manual")
     if updated:
         _notify_plan_changed()
     return updated
@@ -185,7 +226,9 @@ def resume_job(job_id: UUID | str) -> Optional[ScheduledJob]:
     job = plan_store.get(job_id)
     if job and job.status != JobStatus.paused:
         return None
-    updated = plan_store.update(job_id, status=JobStatus.scheduled)
+    updated = plan_store.update(
+        job_id, status=JobStatus.scheduled, paused_reason=None, consecutive_errors=0,
+    )
     if updated:
         _notify_plan_changed()
     return updated
@@ -341,6 +384,35 @@ def notification_to_dict(n: Notification) -> Dict[str, Any]:
     return data
 
 
+def _upcoming_runs_at(job: ScheduledJob, count: int = 3) -> List[str]:
+    """The next ``count`` occurrences of a recurring, scheduled job, as ISO
+    strings. ``[]`` for a one-off job or one that will not fire again on its
+    own (paused, cancelled, failed, fired).
+
+    Reuses ``_next_run`` with a forced ``catch_up=True`` copy of the job: for
+    both the cron and the hourly/daily/weekly branches, that mode computes the
+    occurrence strictly after ``job.run_at`` regardless of the ``now`` it is
+    given (see ``_next_run``'s docstring), which is exactly "the slot after
+    this one" — independent of wall-clock time and of the job's own
+    catch_up setting, which only matters when it actually fires.
+    """
+    if job.recurrence == Recurrence.none or job.status != JobStatus.scheduled:
+        return []
+    try:
+        out: List[str] = []
+        current = _ensure_aware(job.run_at)
+        out.append(current.isoformat())
+        probe = job.model_copy(update={"catch_up": True})
+        for _ in range(max(0, count - 1)):
+            probe = probe.model_copy(update={"run_at": current})
+            current = _next_run(probe, current)
+            out.append(current.isoformat())
+        return out
+    except Exception:
+        log.debug("upcoming_runs_at failed for job %s", job.id, exc_info=True)
+        return []
+
+
 def job_to_dict(job: ScheduledJob) -> Dict[str, Any]:
     data = job.model_dump()
     data["id"] = str(data["id"])
@@ -353,7 +425,39 @@ def job_to_dict(job: ScheduledJob) -> Dict[str, Any]:
                 data[ts] = data[ts].isoformat()
             except Exception:
                 pass
+    data["upcoming_runs_at"] = _upcoming_runs_at(job)
+    try:
+        last = fire_store.last_for_job(job.id)
+    except Exception:
+        log.debug("last_fire lookup failed for job %s", job.id, exc_info=True)
+        last = None
+    data["last_fire"] = fire_to_dict(last) if last else None
     return data
+
+
+def fire_to_dict(f: FireRecord) -> Dict[str, Any]:
+    data = f.model_dump()
+    data["id"] = str(data["id"])
+    data["job_id"] = str(data["job_id"])
+    for ts in ("at", "slot"):
+        if data.get(ts) is not None:
+            try:
+                data[ts] = data[ts].isoformat()
+            except Exception:
+                pass
+    return data
+
+
+def list_job_fires(
+    job_id: UUID | str, *, only_errors: bool = False, limit: int = 50,
+) -> List[FireRecord]:
+    return fire_store.list_for_job(job_id, only_errors=only_errors, limit=limit)
+
+
+def list_fires(
+    *, workspace: Optional[str] = None, only_errors: bool = False, limit: int = 100,
+) -> List[FireRecord]:
+    return fire_store.list_all(workspace=workspace, only_errors=only_errors, limit=limit)
 
 
 # -------------------- Firing --------------------
@@ -420,7 +524,87 @@ def _next_run(job: ScheduledJob, now: datetime) -> datetime:
     return nxt.astimezone(timezone.utc)
 
 
-def fire_job(job: ScheduledJob) -> Dict[str, Any]:
+def classify_fire_error(exc_or_message: Any) -> str:
+    """Bucket a firing failure for the journal and the auto-pause decision.
+
+    String based and deliberately conservative: an error that does not match
+    a known pattern lands in ``"other"`` rather than a guess, since a wrong
+    bucket could pause a job that would have recovered on its own (or fail to
+    pause one that never will). Accepts either the exception itself (checked
+    by type first, for ``BudgetExceededError``) or a plain message string, so
+    a caller that only has ``last_error`` text (e.g. re-classifying an old
+    journal row) can use it too.
+    """
+    try:
+        from common.budget import BudgetExceededError
+        if isinstance(exc_or_message, BudgetExceededError):
+            return "budget_exceeded"
+    except Exception:
+        pass
+
+    text = str(exc_or_message) if exc_or_message is not None else ""
+    low = text.lower()
+    if not low:
+        return "other"
+    if "unknown agent_id" in low or "agent not found" in low:
+        return "agent_missing"
+    if "flow not found" in low:
+        return "flow_missing"
+    if "loop not found" in low:
+        return "loop_missing"
+    if "loop" in low and "is still" in low:
+        return "loop_busy"
+    if "budget" in low and ("cap" in low or "exceeded" in low):
+        return "budget_exceeded"
+    if "locked by another firing" in low or "capacity" in low:
+        return "capacity"
+    if "workspace" in low and ("does not exist" in low or "invalid workspace name" in low):
+        return "workspace_missing"
+    return "other"
+
+
+def _notify_job_paused(job: ScheduledJob, error: Optional[str], consecutive_errors: int) -> None:
+    """Best-effort inbox alert when a job auto-pauses (errors or
+    target_missing); never raises, so a notification failure can never wedge
+    a firing tick."""
+    try:
+        create_notification(
+            title=f"Scheduled job paused after {consecutive_errors} failures",
+            body=f"'{job.title}' was paused after repeated failures: {error or 'unknown error'}",
+            severity="warning",
+            source={"job_id": str(job.id)},
+            workspace=job.workspace,
+        )
+    except Exception:
+        log.debug("auto-pause notification failed for job %s", job.id, exc_info=True)
+
+
+def _record_fire(
+    job: ScheduledJob, *, trigger: str, ok: bool, error_type: Optional[str],
+    error: Optional[str], task_id: Optional[str], notification_id: Optional[str],
+    loop_run_id: Optional[str], slot: datetime, duration_ms: int,
+) -> None:
+    """Append one journal row; never raises (a journal write must not turn a
+    successful, or already-failed, firing into a harder failure)."""
+    try:
+        fire_store.add(FireRecord(
+            job_id=job.id,
+            workspace=job.workspace,
+            slot=slot,
+            trigger=trigger,
+            ok=ok,
+            error_type=error_type,
+            error=error,
+            task_id=task_id,
+            notification_id=notification_id,
+            loop_run_id=loop_run_id,
+            duration_ms=duration_ms,
+        ))
+    except Exception:
+        log.debug("failed writing fire journal for job %s", job.id, exc_info=True)
+
+
+def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
     """Execute one due job and update its record. Returns a summary dict.
 
     ``fire_job`` only runs on a claimed job: if ``job`` was returned by
@@ -436,6 +620,20 @@ def fire_job(job: ScheduledJob) -> Dict[str, Any]:
     the side effect but before this bookkeeping wrote), the side effect is
     skipped and only the bookkeeping below is completed — so a job fires at
     most once per slot even across a crash and a retried lease.
+
+    ``trigger`` is recorded on the journal row this call writes (see
+    ``FireRecord`` / ``FireStore``) and nowhere else: it does not change what
+    firing does. It defaults to ``"schedule"`` (the automatic tick, via
+    ``run_due_jobs``); the run-now route passes ``"manual"`` explicitly.
+
+    Every call, including the ``already_fired_this_slot`` skip, appends one
+    row to the firing journal (``plans.storage.FireStore``) and, on a
+    recurring job, tracks ``consecutive_errors``: a run of failures reaching
+    ``auto_pause_after`` (or a single failure classified as the job's agent,
+    flow or loop no longer existing) pauses the job and raises a
+    notification, since a target that is gone will not come back on its own.
+    A success resets the counter. Journal writes and the auto-pause
+    notification are both best-effort and never raise past this function.
     """
     if not job.lease_owner:
         claimed = plan_store.force_claim_job(job.id, _default_owner())
@@ -446,14 +644,17 @@ def fire_job(job: ScheduledJob) -> Dict[str, Any]:
             }
         job = claimed
 
+    started = time.monotonic()
     now = _now()
     slot = _ensure_aware(job.run_at)
     already_fired = job.last_fired_slot is not None and _ensure_aware(job.last_fired_slot) == slot
     result: Dict[str, Any] = {"job_id": str(job.id), "kind": job.kind.value}
     error: Optional[str] = None
+    error_type: Optional[str] = None
 
     if already_fired:
         result["skipped"] = "already_fired_this_slot"
+        error_type = "skipped_slot"
     else:
         # Record the slot as fired *before* running the side effect. If the
         # process crashes between the side effect and the completion write
@@ -480,6 +681,7 @@ def fire_job(job: ScheduledJob) -> Dict[str, Any]:
                 result["task_id"] = _fire_agent_task(job)
         except Exception as e:
             error = str(e)
+            error_type = classify_fire_error(e)
 
     fields: Dict[str, Any] = {
         "lease_until": None,
@@ -490,9 +692,32 @@ def fire_job(job: ScheduledJob) -> Dict[str, Any]:
     }
     if job.kind in (JobKind.agent_task, JobKind.flow, JobKind.loop) and result.get("task_id"):
         fields["created_task_ids"] = [*job.created_task_ids, result["task_id"]]
+
+    # -------------------- consecutive errors + auto pause --------------------
+    # A one-off job (recurrence == none) is already terminal below (failed on
+    # error), so the counter and auto-pause only matter for a recurring job:
+    # pausing a job that will never fire again would just be confusing status.
+    recurring = job.recurrence != Recurrence.none
+    if already_fired:
+        pass  # a skipped duplicate slot is not a failure of the job itself.
+    elif error is not None:
+        fields["consecutive_errors"] = job.consecutive_errors + 1
+        if recurring:
+            target_missing = error_type in _TARGET_MISSING_ERROR_TYPES
+            threshold_hit = job.auto_pause_after > 0 and fields["consecutive_errors"] >= job.auto_pause_after
+            if target_missing or threshold_hit:
+                fields["status"] = JobStatus.paused
+                fields["paused_reason"] = "target_missing" if target_missing else "errors"
+                _notify_job_paused(job, error, fields["consecutive_errors"])
+    else:
+        fields["consecutive_errors"] = 0
+
     if job.recurrence == Recurrence.none:
         fields["status"] = JobStatus.failed if error else JobStatus.fired
     else:
+        # Advance run_at regardless of whether this firing auto-paused the
+        # job: a later resume then waits for the next natural slot instead of
+        # finding a stale, already-past run_at and firing again immediately.
         try:
             fields["run_at"] = _next_run(job, now)
         except Exception as e:
@@ -504,6 +729,14 @@ def fire_job(job: ScheduledJob) -> Dict[str, Any]:
     result["ok"] = error is None
     if error:
         result["error"] = error
+        result["error_type"] = error_type
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    _record_fire(
+        job, trigger=trigger, ok=error is None, error_type=error_type, error=error,
+        task_id=result.get("task_id"), notification_id=result.get("notification_id"),
+        loop_run_id=result.get("loop_run_id"), slot=slot, duration_ms=duration_ms,
+    )
     return result
 
 
@@ -531,6 +764,8 @@ def _fire_agent_task(job: ScheduledJob) -> str:
         created_by=CreatedBy.user,
         status=TaskStatus.todo,
         workspace=ws_name,
+        budget_usd=job.budget_usd,
+        environment_id=job.environment_id,
     )
     tasks_service.append_task_activity_log(
         task.id, "scheduled_fire", f"Created by scheduled job {job.id}", job_id=str(job.id)
@@ -595,6 +830,33 @@ def _fire_agent_task(job: ScheduledJob) -> str:
     return str(task.id)
 
 
+def _apply_job_fields_to_task(task_id: str, job: ScheduledJob) -> None:
+    """Copy the job's ``budget_usd``/``environment_id`` onto a task a flow or
+    loop launcher created, after the fact.
+
+    ``_fire_agent_task`` passes both straight into ``tasks_service.create_task``
+    because it creates the task itself; a flow or loop firing does not — the
+    task is created inside ``flow.launcher.trigger_flow`` / ``loops.launcher.
+    start_loop_run``, outside this module's files, so this function is the
+    equivalent for those two paths, applied to the task id they hand back.
+    A no-op when the job sets neither (the common case), and best-effort
+    otherwise: a task already exists and is running by the time this runs, so
+    a failure here must not turn a successful firing into a failed one.
+    """
+    if job.budget_usd is None and job.environment_id is None:
+        return
+    try:
+        from tasks import service as tasks_service
+        tasks_service.update_task(
+            UUID(str(task_id)), budget_usd=job.budget_usd, environment_id=job.environment_id,
+        )
+    except Exception:
+        log.debug(
+            "failed applying budget/environment to task %s for job %s", task_id, job.id,
+            exc_info=True,
+        )
+
+
 def _fire_flow(job: ScheduledJob) -> str:
     """Trigger a flow run for a scheduled ``flow`` job. Returns the task id.
 
@@ -616,6 +878,7 @@ def _fire_flow(job: ScheduledJob) -> str:
         max_concurrent=job.max_concurrent,
         created_by="schedule",
     )
+    _apply_job_fields_to_task(result["task_id"], job)
     create_notification(
         title=f"Scheduled flow started: {job.title}",
         body=f"Flow '{job.flow_id}' was triggered by scheduled job {job.id}.",
@@ -657,6 +920,7 @@ def _fire_loop(job: ScheduledJob) -> Dict[str, Any]:
         job.loop_id, job.message or "", workspace=job.workspace or loop.workspace,
         seed=dict(job.seed or {}),
     )
+    _apply_job_fields_to_task(run.task_id, job)
     create_notification(
         title=f"Scheduled loop started: {job.title}",
         body=f"Loop '{job.loop_id}' was started by scheduled job {job.id}.",
@@ -705,6 +969,7 @@ def run_due_jobs(owner: Optional[str] = None) -> List[Dict[str, Any]]:
 __all__ = [
     "NOTIFICATIONS_CHANNEL",
     "plan_store",
+    "fire_store",
     "notification_store",
     "create_job",
     "get_job",
@@ -722,6 +987,10 @@ __all__ = [
     "delete_notification",
     "notification_to_dict",
     "job_to_dict",
+    "fire_to_dict",
+    "list_job_fires",
+    "list_fires",
+    "classify_fire_error",
     "due_jobs",
     "claim_due_jobs",
     "claim_job_now",

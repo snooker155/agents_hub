@@ -52,6 +52,8 @@ const NodeDetail = lazy(() => import('./pages/NodeDetail'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
 const Deployment = lazy(() => import('./pages/Deployment'));
+const Environments = lazy(() => import('./pages/Environments'));
+const Deployments = lazy(() => import('./pages/Deployments'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Models = lazy(() => import('./pages/Models'));
 const ModelDetail = lazy(() => import('./pages/ModelDetail'));
@@ -127,6 +129,7 @@ function AppRoutes() {
         <Route path="/tasks" element={guard(<TaskManager />)} />
         <Route path="/tasks/:id" element={guard(<TaskDetails />)} />
         <Route path="/plan" element={guard(<Plan />)} />
+        <Route path="/deployments" element={guard(<Deployments />)} />
         <Route path="/agents" element={guard(<AgentManager />)} />
         <Route path="/agents/:id" element={guard(<AgentDetails />)} />
         <Route path="/marketplace" element={guard(<Marketplace />)} />
@@ -156,6 +159,7 @@ function AppRoutes() {
         <Route path="/instances/:instanceId" element={guard(<InstanceDetail />)} />
         <Route path="/nodes" element={guard(<Nodes />)} />
         <Route path="/nodes/:nodeId" element={guard(<NodeDetail />)} />
+        <Route path="/environments" element={guard(<Environments />)} />
         <Route path="/containers" element={guard(<Containers />)} />
         <Route path="/browser" element={guard(<Browser />)} />
         <Route path="/health" element={guard(<Health />)} />

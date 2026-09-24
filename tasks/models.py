@@ -371,6 +371,19 @@ class Task(BaseModel):
     # Optional deadline. Naive values are assumed UTC (see the validator below).
     due_at: Optional[datetime] = Field(default=None, description="Optional deadline for the task")
 
+    # Money cap for this task's runs in USD, summed across every run the task
+    # makes (a resume after a pause counts against the same cap). None means
+    # the workspace's per-run limit applies (common/run_budget.py); 0 means
+    # no cap at all for this task. Set by a scheduled job (its ``budget_usd``
+    # is copied here at fire time) or by the operator, and raised when a run
+    # is continued after pausing at the cap.
+    budget_usd: Optional[float] = Field(default=None, description="Money cap in USD for this task's runs, None = workspace default, 0 = uncapped")
+
+    # The environment (environments/) the task's runs execute in. None means
+    # the workspace's default environment, or the plain workspace execution
+    # mode when it has none.
+    environment_id: Optional[str] = Field(default=None, description="Environment the task's runs execute in")
+
     @field_validator("priority", mode="before")
     @classmethod
     def _coerce_priority(cls, v):

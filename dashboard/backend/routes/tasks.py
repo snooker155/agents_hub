@@ -4,7 +4,7 @@ Task-related API routes.
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 import json
 import threading
@@ -728,6 +728,9 @@ class TaskApproval(BaseModel):
     """
     approved: bool = True
     note: str = ""
+    # Only for a run parked at its money cap (pending kind "budget"): the new
+    # cap in USD, which must exceed what the task has already spent.
+    budget_usd: Optional[float] = None
 
 
 @router.post("/{task_id}/approve")
@@ -751,6 +754,10 @@ async def approve_task_call(request: Request, task_id: UUID, payload: TaskApprov
 
     pending = getattr(t, "pending_approval", None) or {}
     agent_id = pending.get("agent_id") or t.assigned_agent_type
+    # A run parked at its money cap: stopping it needs no agent, so this is
+    # answered before the agent checks below (the approving branch makes them).
+    if str(pending.get("kind") or "") == "budget":
+        return _answer_budget_pause(request, task_id, t, pending, agent_id, payload)
     if not agent_id:
         raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
     if not registry.get_agent(agent_id):
@@ -821,6 +828,74 @@ async def approve_task_call(request: Request, task_id: UUID, payload: TaskApprov
         return {"task": task_to_dict(updated), "run_id": run_id, "approved": payload.approved}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _answer_budget_pause(request: Request, task_id: UUID, t: Any, pending: Dict[str, Any],
+                         agent_id: str, payload: TaskApproval) -> Dict[str, Any]:
+    """The approve route's answer for a run parked at its money cap.
+
+    There is no call to approve here, so nothing goes through
+    ``approve_tool_call``: approving means a new, higher cap stored on the task
+    (the launcher hands it to the resumed run, which also starts from the
+    task's spend so far, see common/run_budget.py); refusing ends the task
+    blocked with "stopped at budget cap" instead of resuming it.
+    """
+    spent = float(pending.get("spent_usd") or 0.0)
+    note = (payload.note or "").strip()
+    principal = identity.request_principal(request)
+    ip = identity.client_ip(request)
+
+    if not payload.approved:
+        tasks_service.resolve_budget_pause(task_id, approved=False)
+        audit.record("budget.stop", principal=principal, object_type="task",
+                     object_id=str(task_id), ip=ip, workspace=getattr(t, "workspace", None),
+                     details={"spent_usd": spent, "limit_usd": pending.get("limit_usd"), "note": note})
+        return {"task": task_to_dict(tasks_service.get_task(task_id)), "run_id": None, "approved": False}
+
+    new_cap = payload.budget_usd
+    if new_cap is None or float(new_cap) <= spent:
+        raise HTTPException(
+            status_code=400,
+            detail=f"budget_usd must be greater than what the task already spent (${spent:.2f})",
+        )
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    new_cap = float(new_cap)
+    tasks_service.resolve_budget_pause(task_id, approved=True, budget_usd=new_cap)
+    resume_desc = (
+        "Your task was paused because it reached its money cap; the operator raised it "
+        f"to ${new_cap:.2f}. Continue the task from where you stopped."
+        + (f'\nThe operator added: "{note}"' if note else "")
+    )
+    params = {"description": resume_desc}
+    try:
+        run_id, session_id = agent_launcher.start_run(str(task_id), agent_id, params)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    tasks_service.assign_agent(task_id, agent_id, params, run_id=run_id)
+    tasks_service.update_task(task_id, status=TaskStatus.in_progress, pending_approval=None)
+    audit.record("budget.raise", principal=principal, object_type="task",
+                 object_id=str(task_id), ip=ip, workspace=getattr(t, "workspace", None),
+                 details={"spent_usd": spent, "limit_usd": pending.get("limit_usd"),
+                          "budget_usd": new_cap, "note": note})
+    try:
+        from common.session_service import rebind_continuations_to_run
+        rebind_continuations_to_run(str(task_id), run_id)
+    except Exception:
+        pass
+    if session_id:
+        try:
+            add_event_to_session(session_id, {
+                "type": "budget_raise",
+                "agent_id": agent_id,
+                "timestamp": run_manager.utc_now_iso(),
+                "description": f"Money cap raised to ${new_cap:.2f}" + (f": {note}" if note else ""),
+            })
+        except Exception:
+            pass
+    return {"task": task_to_dict(tasks_service.get_task(task_id)), "run_id": run_id, "approved": True}
 
 
 @router.get("/{task_id}/agent-status")

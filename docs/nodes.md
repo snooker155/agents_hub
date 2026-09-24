@@ -19,6 +19,17 @@ Stopping a node **fails every session in progress on it**. That is not a
 side effect to discover afterwards; it is the reason to check what is running
 first.
 
+## Environment
+
+Starting a node can name an [environment](environments.md), an execution
+profile shaping its mode, image, packages, network fence, limits and plain
+variables. Without one, the node gets its workspace's default environment, if
+any. The node record carries `environment_id` and `environment_name` once
+resolved, shown in its row. An explicit id that is unknown, archived or
+belongs to another workspace refuses the start rather than silently landing
+the node somewhere else; a workspace with no default environment starts a
+node exactly as it always did.
+
 ## Reading a node's state
 
 The record and the process are two different things. A node whose row says
@@ -33,4 +44,4 @@ to look when it starts and immediately stops.
 A node can be exposed over HTTP with a token, so something outside can send it
 work. Unexpose removes the binding.
 
-Related: [instances](instances.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [service-health](service-health.md).
+Related: [instances](instances.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [service-health](service-health.md), [environments](environments.md).

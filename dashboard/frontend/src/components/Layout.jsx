@@ -56,6 +56,8 @@ import {
   Link2,
   Plug,
   Layers,
+  Container,
+  Rocket,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -301,6 +303,7 @@ const Layout = ({ children }) => {
         { name: t('nav.projects'), path: '/projects', icon: FolderGit2 },
         { name: t('nav.tasks'), path: '/tasks', icon: CheckSquare },
         { name: t('nav.plan'), path: '/plan', icon: CalendarClock },
+        { name: t('nav.deployments'), path: '/deployments', icon: Rocket },
         { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle },
         { name: t('nav.runGroups'), path: '/run-groups', icon: Layers },
         { name: t('nav.messages'), path: '/messages', icon: ScrollText },
@@ -337,6 +340,7 @@ const Layout = ({ children }) => {
         { name: t('nav.orchestrator'), path: '/orchestrator', icon: Network },
         { name: t('nav.teams'), path: '/teams', icon: UsersRound },
         { name: t('nav.nodes'), path: '/nodes', icon: Server },
+        { name: t('nav.environments'), path: '/environments', icon: Container },
         { name: t('nav.containers'), path: '/containers', icon: Box },
         // The agent's browser on screen, and free browsing on the same service.
         { name: t('nav.browser'), path: '/browser', icon: Globe },

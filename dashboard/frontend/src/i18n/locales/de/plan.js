@@ -4,6 +4,12 @@ export default {
   schedule: 'Planen',
   editScheduledJob: 'Geplanten Job bearbeiten',
   refresh: 'Aktualisieren',
+  deployments: 'Deployments',
+  pausedReason: {
+    manual: 'manuell',
+    errors: 'Fehler',
+    target_missing: 'Ziel fehlt',
+  },
   markAllRead: 'Alle als gelesen',
   markRead: 'Als gelesen markieren',
   markUnread: 'Als ungelesen markieren',

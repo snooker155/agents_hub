@@ -28,6 +28,8 @@ export default {
   refresh: 'Refresh',
   cancel: 'Cancel',
   nodeType: 'Node Type',
+  environment: 'Environment',
+  environmentDefault: 'Workspace default',
   taskWorker: 'Task Worker',
   taskWorkerDesc: 'Polls for assigned tasks',
   httpServiceType: 'HTTP Service',
