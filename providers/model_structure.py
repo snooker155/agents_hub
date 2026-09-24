@@ -220,14 +220,64 @@ class _Reader:
         return [self.value(etype) for _ in range(n)], n
 
 
+#: llama.cpp's split naming, <stem>-00001-of-00003.gguf: the first part
+#: carries the model's metadata, every part lists its own tensors.
+SPLIT_RE = re.compile(r"^(?P<stem>.+)-(?P<idx>\d{5})-of-(?P<n>\d{5})\.gguf$", re.IGNORECASE)
+
+
+def split_parts(path: Path) -> List[Path]:
+    """The parts of a split GGUF in order, first part first, missing ones
+    left out; ``[path]`` for a plain file."""
+    m = SPLIT_RE.match(path.name)
+    if not m:
+        return [path]
+    stem, n = m.group("stem"), int(m.group("n"))
+    found = [path.with_name(f"{stem}-{i:05d}-of-{n:05d}.gguf") for i in range(1, n + 1)]
+    return [q for q in found if q.is_file()] or [path]
+
+
 def parse_gguf(path: Union[str, Path]) -> Dict[str, Any]:
     """The metadata and tensor list of a GGUF file, from its header alone.
 
     Tensors carry ``name``, ``shape``, ``dtype`` (the GGML type name),
     ``n_elements``, ``bytes`` and ``offset`` (relative to the data section).
     Arrays keep their length under ``<key>.length``; long ones keep only that.
+
+    A split model (``-00001-of-0000N``) is read whole from any of its parts:
+    the metadata comes from the first part, the tensors from every part that
+    is on disk (each tagged with its ``file``), ``file_size`` is their sum,
+    and ``split.count``, ``split.parts_found`` and ``split.missing`` say what
+    was there.
     """
     p = Path(path)
+    m = SPLIT_RE.match(p.name)
+    if m is None:
+        return _parse_gguf_one(p)
+    first = p.with_name(f"{m.group('stem')}-00001-of-{m.group('n')}.gguf")
+    parts = split_parts(first if first.is_file() else p)
+    head = parts[0]
+    parsed = _parse_gguf_one(head)
+    tensors: List[Dict[str, Any]] = []
+    size = 0
+    for part in parts:
+        one = parsed if part == head else _parse_gguf_one(part)
+        for t in one["tensors"]:
+            t["file"] = part.name
+        tensors.extend(one["tensors"])
+        size += one["file_size"]
+    n = int(m.group("n"))
+    present = {int(SPLIT_RE.match(q.name).group("idx")) for q in parts}  # type: ignore[union-attr]
+    parsed["metadata"]["split.count"] = n
+    parsed["metadata"]["split.parts_found"] = len(parts)
+    parsed["metadata"]["split.missing"] = [i for i in range(1, n + 1) if i not in present]
+    parsed["tensors"] = tensors
+    parsed["file_size"] = size
+    parsed["files"] = [q.name for q in parts]
+    return parsed
+
+
+def _parse_gguf_one(p: Path) -> Dict[str, Any]:
+    """One GGUF file's header, split or not."""
     try:
         size = p.stat().st_size
         f = p.open("rb")
@@ -707,8 +757,8 @@ def structure_from_file(path: Union[str, Path], *, provider: str = "file",
             ggufs = sorted(p.glob("*.gguf"))
             if not ggufs:
                 raise ModelStructureError(f"{p.name} holds no GGUF or safetensors files", 404)
-            # A split GGUF (-00001-of-0000N) lists its tensors across files;
-            # the first one carries the metadata and is what is read here.
+            # A split GGUF (-00001-of-0000N) is read whole from its first
+            # part; parse_gguf gathers the other parts itself.
             p = ggufs[0]
             source, parsed = "gguf", parse_gguf(p)
     elif p.suffix.lower() == ".safetensors":

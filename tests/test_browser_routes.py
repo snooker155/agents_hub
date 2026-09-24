@@ -74,6 +74,9 @@ class FakeService:
         if action == "navigate":
             s["url"] = kw["json"]["url"]
             return _Resp(data={"url": s["url"], "title": "T", "status": 200, "blocked": []})
+        if action == "control":
+            s["controlled_by"] = kw["json"]["by"] if kw["json"]["on"] else ""
+            return _Resp(data=s)
         if action == "input":
             if kw["json"].get("kind") == "click" and kw["json"].get("x") == 666:
                 return _Resp(403, {"detail": "refused the page the input led to: private address"})
@@ -177,6 +180,53 @@ def test_run_session_lookup(service, client):
     service.add("A1", run_id="r1", owner="agent")
     found = client.get("/api/browser/runs/r1/session")
     assert found.status_code == 200 and found.json()["session_id"] == "A1"
+
+
+def test_control_is_taken_and_released_in_the_callers_name(service, client):
+    service.add("A1", owner="agent", run_id="r1")
+    taken = client.post("/api/browser/sessions/A1/control", json={"on": True})
+    assert taken.status_code == 200 and taken.json()["controlled_by"] == "local"
+    assert service.calls[-1][2]["json"] == {"on": True, "by": "local"}
+    released = client.post("/api/browser/sessions/A1/control", json={"on": False})
+    assert released.json()["controlled_by"] == ""
+
+
+def test_the_websocket_relays_the_services_frames(service, client, monkeypatch):
+    from routes import browser as browser_routes
+    service.add("A1", owner="agent")
+    frames = [json.dumps({"type": "frame", "seq": 1, "image": "data:image/jpeg;base64,AAAA"}),
+              json.dumps({"type": "keepalive", "seq": 1})]
+
+    async def fake_frames(session_id):
+        assert session_id == "A1"
+        for f in frames:
+            yield f
+
+    monkeypatch.setattr(browser_routes, "_service_frames", fake_frames)
+    with client.websocket_connect("/api/browser/sessions/A1/ws") as ws:
+        assert ws.receive_json()["type"] == "frame"
+        assert ws.receive_json()["type"] == "keepalive"
+
+
+def test_the_websocket_reports_a_dead_service_and_closes(service, client, monkeypatch):
+    from routes import browser as browser_routes
+    from starlette.websockets import WebSocketDisconnect
+    service.add("A1", owner="agent")
+
+    async def broken(session_id):
+        raise OSError("connection refused")
+        yield  # unreachable, but it makes this an async generator
+
+    monkeypatch.setattr(browser_routes, "_service_frames", broken)
+    with client.websocket_connect("/api/browser/sessions/A1/ws") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "error" and "connection refused" in first["detail"]
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
+    # An unknown session never gets accepted.
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/browser/sessions/nope/ws"):
+            pass
 
 
 def test_handoff_creates_a_task_and_launches_with_the_session(service, client, monkeypatch):

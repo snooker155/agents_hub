@@ -190,6 +190,18 @@ describe('Models, Local tab', () => {
     }));
   });
 
+  it('offers to resume a job the service closed as resumable', async () => {
+    jobs = [{
+      id: 'job-9', kind: 'hf_download', name: 'org/r/m.gguf', status: 'error', resumable: true,
+      completed: 1000, total: 5000, percent: 20, message: '', error: 'interrupted by a restart',
+      meta: { repo: 'org/r', file: 'm.gguf', revision: 'main', dest: 'm.gguf' },
+    }];
+    await openLocalTab();
+    fireEvent.click(await screen.findByText('Resume'));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/models/local/runtime/download',
+      { repo: 'org/r', file: 'm.gguf', revision: 'main' }));
+  });
+
   it('shows the serving base url, usage rows and totals', async () => {
     await openLocalTab();
     await screen.findByText('https://hub.example.com/v1');

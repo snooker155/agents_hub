@@ -102,18 +102,37 @@ def _now() -> str:
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
 
+def _jobs_file() -> Path:
+    """Where the job list lives between restarts: beside the models, hidden."""
+    return MODELS_DIR / ".jobs.json"
+
+
+#: A job's progress is written to disk at most this often; the terminal
+#: states and a status change are written at once.
+_JOBS_WRITE_INTERVAL = 0.5
+
+
 class Jobs:
     """Downloads and their progress; the same job shape the hub's own
-    registry uses (providers/local_models.py), so the UI reads both alike."""
+    registry uses (providers/local_models.py), so the UI reads both alike.
+
+    The list is kept in a JSON file next to the models, so a restart of the
+    service does not lose what was downloading. A job that was running when
+    the process died comes back as ``error`` with ``resumable`` set: its
+    ``.part`` file is still there, and asking for the same download again
+    continues from where it stopped (see :func:`run_download`).
+    """
 
     def __init__(self, keep: int = JOBS_KEPT) -> None:
         self.keep = keep
         self._jobs: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
         self._lock = threading.Lock()
+        self._last_write = 0.0
 
-    def create(self, kind: str, name: str) -> Dict[str, Any]:
+    def create(self, kind: str, name: str, *, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         job = {"id": uuid.uuid4().hex[:12], "kind": kind, "name": name, "status": "queued",
                "completed": 0, "total": 0, "percent": 0.0, "message": "", "error": None,
+               "resumable": False, "meta": dict(meta or {}),
                "started_at": _now(), "finished_at": None}
         with self._lock:
             self._jobs[job["id"]] = job
@@ -123,12 +142,17 @@ class Jobs:
                 if victim is None:
                     break
                 self._jobs.pop(victim)
+            self._write(force=True)
         return dict(job)
 
     def update(self, job_id: str, **fields: Any) -> None:
         with self._lock:
-            if job_id in self._jobs:
-                self._jobs[job_id].update(fields)
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            status_changed = "status" in fields and fields["status"] != job.get("status")
+            job.update(fields)
+            self._write(force=status_changed or job.get("status") in ("done", "error"))
 
     def get(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -138,6 +162,66 @@ class Jobs:
     def list(self) -> List[Dict[str, Any]]:
         with self._lock:
             return [dict(j) for j in reversed(self._jobs.values())]
+
+    def running_for(self, dest_name: str) -> Optional[Dict[str, Any]]:
+        """The queued or running download of ``dest_name``, if any."""
+        with self._lock:
+            for j in self._jobs.values():
+                if (j["kind"] == "hf_download" and j["status"] in ("queued", "running")
+                        and (j.get("meta") or {}).get("dest") == dest_name):
+                    return dict(j)
+        return None
+
+    # The lock is held by every caller of the two below.
+
+    def _write(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_write < _JOBS_WRITE_INTERVAL:
+            return
+        self._last_write = now
+        path = _jobs_file()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(list(self._jobs.values())), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:  # a full disk must not fail the job it records
+            log.warning("could not write %s: %s", path, exc)
+
+    def load(self) -> int:
+        """Read the list back after a start. Whatever was still queued or
+        running belongs to a process that is gone: it is closed as an error,
+        and marked resumable when its partial file survived."""
+        path = _jobs_file()
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+        except (OSError, ValueError) as exc:
+            log.warning("could not read %s: %s", path, exc)
+            return 0
+        interrupted = 0
+        with self._lock:
+            self._jobs.clear()
+            for j in raw if isinstance(raw, list) else []:
+                if not isinstance(j, dict) or not j.get("id"):
+                    continue
+                j.setdefault("resumable", False)
+                j.setdefault("meta", {})
+                if j.get("status") in ("queued", "running"):
+                    dest = (j.get("meta") or {}).get("dest") or ""
+                    part = MODELS_DIR / f"{dest}.part" if dest else None
+                    j["status"] = "error"
+                    j["finished_at"] = _now()
+                    if part is not None and part.is_file():
+                        j["resumable"] = True
+                        j["error"] = (f"interrupted by a restart at {part.stat().st_size} bytes; "
+                                      "download it again to resume")
+                    else:
+                        j["error"] = "interrupted by a restart"
+                    interrupted += 1
+                self._jobs[str(j["id"])] = j
+            if interrupted:
+                self._write(force=True)
+        return interrupted
 
 
 jobs = Jobs()
@@ -153,25 +237,99 @@ def _hf_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 
 
+def _part_meta_path(part: Path) -> Path:
+    return part.with_name(part.name + ".json")
+
+
+def _read_part_meta(part: Path) -> Dict[str, Any]:
+    try:
+        data = json.loads(_part_meta_path(part).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_part_meta(part: Path, meta: Dict[str, Any]) -> None:
+    try:
+        _part_meta_path(part).write_text(json.dumps(meta), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _discard_part(part: Path) -> None:
+    for p in (part, _part_meta_path(part)):
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _content_range_total(value: str) -> int:
+    # "bytes 1000-4999/5000" -> 5000; "*" when the server does not know.
+    tail = (value or "").rsplit("/", 1)[-1].strip()
+    return int(tail) if tail.isdigit() else 0
+
+
 def run_download(job_id: str, url: str, dest: Path) -> None:
     """Stream ``url`` into ``dest``: written to ``<dest>.part`` and renamed only
-    when complete, so a half file never shows up as a model."""
+    when complete, so a half file never shows up as a model.
+
+    A ``.part`` left by an earlier attempt is continued, not restarted: the
+    request carries ``Range`` from its size and ``If-Range`` with the ETag
+    the first answer gave (kept in ``<dest>.part.json``), so a file that
+    changed on the Hub in the meantime comes back whole (200) instead of
+    being glued to the old bytes. A failure short of a 4xx keeps the part
+    for the next attempt and marks the job resumable.
+    """
     part = dest.with_name(dest.name + ".part")
-    jobs.update(job_id, status="running", message=f"downloading {dest.name}")
+    existing = part.stat().st_size if part.is_file() else 0
+    meta = _read_part_meta(part) if existing else {}
+    jobs.update(job_id, status="running",
+                message=(f"resuming {dest.name} from {existing} bytes" if existing
+                         else f"downloading {dest.name}"))
+    keep_part = False
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
+        headers = _hf_headers()
+        if existing:
+            headers["Range"] = f"bytes={existing}-"
+            if meta.get("etag"):
+                headers["If-Range"] = str(meta["etag"])
         timeout = httpx.Timeout(30.0, read=300.0)
         with http_client(timeout=timeout) as client:
-            with client.stream("GET", url, headers=_hf_headers()) as resp:
+            with client.stream("GET", url, headers=headers) as resp:
+                if resp.status_code == 416 and existing:
+                    # Past the end: the part is the whole file, or the file
+                    # shrank. Either way a fresh whole download settles it.
+                    _discard_part(part)
+                    return run_download(job_id, url, dest)
                 if resp.status_code >= 400:
                     hint = " (a gated repo needs HF_TOKEN)" if resp.status_code in (401, 403) else ""
                     raise RuntimeError(f"Hugging Face answered HTTP {resp.status_code}{hint}")
-                total = int(resp.headers.get("content-length") or 0)
-                jobs.update(job_id, total=total)
-                done = 0
+                resumed = resp.status_code == 206 and existing > 0
+                length = int(resp.headers.get("content-length") or 0)
+                if resumed:
+                    total = _content_range_total(resp.headers.get("content-range", "")) or (existing + length)
+                    done = existing
+                    mode = "ab"
+                else:
+                    # 200: the server ignored the range or the file changed.
+                    total = length
+                    done = 0
+                    mode = "wb"
+                    existing = 0
+                etag = resp.headers.get("etag") or meta.get("etag") or ""
+                _write_part_meta(part, {"url": url, "etag": etag, "total": total})
+                jobs.update(job_id, total=total, completed=done,
+                            percent=round(100.0 * done / total, 1) if total else 0.0,
+                            message=(f"resumed {dest.name} at {existing} bytes" if resumed
+                                     else f"downloading {dest.name}"))
                 last = 0.0
-                with open(part, "wb") as fh:
-                    for chunk in resp.iter_bytes(1 << 20):
+                keep_part = True
+                with open(part, mode) as fh:
+                    # Chunks as they arrive, not batched up to a size: what
+                    # reached the disk before a drop is what a resume keeps.
+                    for chunk in resp.iter_bytes():
                         fh.write(chunk)
                         done += len(chunk)
                         now = time.monotonic()
@@ -182,15 +340,17 @@ def run_download(job_id: str, url: str, dest: Path) -> None:
         if total and done != total:
             raise RuntimeError(f"download ended at {done} of {total} bytes")
         part.replace(dest)
+        _discard_part(part)
         jobs.update(job_id, status="done", completed=done, total=total or done, percent=100.0,
-                    message=f"saved {dest.name}", finished_at=_now())
+                    resumable=False, message=f"saved {dest.name}", finished_at=_now())
     except Exception as exc:  # noqa: BLE001 - the job records the failure
-        try:
-            part.unlink(missing_ok=True)
-        except OSError:
-            pass
-        jobs.update(job_id, status="error", error=f"{type(exc).__name__}: {exc}"[:500],
-                    finished_at=_now())
+        resumable = keep_part and part.is_file() and part.stat().st_size > 0
+        if not resumable:
+            _discard_part(part)
+        error = f"{type(exc).__name__}: {exc}"[:400]
+        if resumable:
+            error += f"; {part.stat().st_size} bytes kept, download it again to resume"
+        jobs.update(job_id, status="error", error=error, resumable=resumable, finished_at=_now())
 
 
 # ── Loaded models ────────────────────────────────────────────────────────────
@@ -223,8 +383,41 @@ def _lock() -> asyncio.Lock:
     return state.lock
 
 
+#: llama.cpp's split naming: <stem>-00001-of-00003.gguf. The first part is the
+#: file to load; llama-server finds the rest by this pattern.
+_SPLIT_RE = re.compile(r"^(?P<stem>.+)-(?P<idx>\d{5})-of-(?P<n>\d{5})\.gguf$", re.IGNORECASE)
+
+
 def model_name(file: str) -> str:
+    """The name a file is served under: without ``.gguf``, and for a split
+    model without the part suffix, so every part names the same model."""
+    m = _SPLIT_RE.match(file)
+    if m:
+        return m.group("stem")
     return file[:-5] if file.lower().endswith(".gguf") else file
+
+
+def split_parts(path: Path) -> List[Path]:
+    """Every part of a split GGUF, first part first, or ``[path]`` for a
+    plain file. Parts that are missing on disk are simply not listed."""
+    m = _SPLIT_RE.match(path.name)
+    if not m:
+        return [path]
+    stem, n = m.group("stem"), int(m.group("n"))
+    out = []
+    for i in range(1, n + 1):
+        candidate = path.with_name(f"{stem}-{i:05d}-of-{n:05d}.gguf")
+        if candidate.is_file():
+            out.append(candidate)
+    return out or [path]
+
+
+def _first_part(path: Path) -> Path:
+    m = _SPLIT_RE.match(path.name)
+    if not m or int(m.group("idx")) == 1:
+        return path
+    first = path.with_name(f"{m.group('stem')}-00001-of-{m.group('n')}.gguf")
+    return first if first.is_file() else path
 
 
 def _safe_file(file: str) -> str:
@@ -241,11 +434,17 @@ def _model_path(file: str) -> Path:
     name without the extension (see ``model_name``)."""
     f = _safe_file(file)
     path = MODELS_DIR / f
-    if not path.exists() and not f.lower().endswith(".gguf") and (MODELS_DIR / f"{f}.gguf").is_file():
-        path = MODELS_DIR / f"{f}.gguf"
+    if not path.exists() and not f.lower().endswith(".gguf"):
+        if (MODELS_DIR / f"{f}.gguf").is_file():
+            path = MODELS_DIR / f"{f}.gguf"
+        else:
+            # A split model is named by its stem; its file is the first part.
+            firsts = sorted(MODELS_DIR.glob(f"{f}-00001-of-*.gguf"))
+            if firsts:
+                path = firsts[0]
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"no model file {f!r} in {MODELS_DIR}")
-    return path
+    return _first_part(path)
 
 
 def _find_loaded(name_or_file: str) -> Optional[Loaded]:
@@ -261,13 +460,25 @@ def list_models() -> List[Dict[str, Any]]:
         if p.name.startswith("."):
             continue
         if p.is_file() and p.name.lower().endswith(".gguf"):
+            m = _SPLIT_RE.match(p.name)
+            if m and int(m.group("idx")) != 1:
+                continue  # listed under its first part
+            parts = split_parts(p)
             loaded = state.loaded.get(model_name(p.name))
-            out.append({"name": model_name(p.name), "file": p.name, "format": "gguf",
-                        "loadable": True, "size_bytes": p.stat().st_size,
-                        "loaded": loaded is not None,
-                        "port": loaded.port if loaded else None,
-                        "context_length": loaded.context_length if loaded else None,
-                        "loaded_at": loaded.loaded_at if loaded else None})
+            entry = {"name": model_name(p.name), "file": p.name, "format": "gguf",
+                     "loadable": True, "size_bytes": sum(x.stat().st_size for x in parts),
+                     "loaded": loaded is not None,
+                     "port": loaded.port if loaded else None,
+                     "context_length": loaded.context_length if loaded else None,
+                     "loaded_at": loaded.loaded_at if loaded else None}
+            if m:
+                entry["parts"] = int(m.group("n"))
+                entry["parts_found"] = len(parts)
+                if len(parts) != int(m.group("n")):
+                    entry["loadable"] = False
+                    entry["note"] = (f"split model: {len(parts)} of {m.group('n')} parts are here; "
+                                     "download the rest before loading it")
+            out.append(entry)
         elif p.is_dir() and (p / "config.json").is_file() and any(p.glob("*.safetensors")):
             size = sum(f.stat().st_size for f in p.iterdir() if f.is_file())
             out.append({"name": p.name, "file": p.name, "format": "safetensors",
@@ -497,6 +708,9 @@ async def lifespan(_app: FastAPI):
     if not TOKEN:
         raise RuntimeError("MODELS_TOKEN is not set; the model runtime refuses to run without one")
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    interrupted = jobs.load()
+    if interrupted:
+        log.info("%d job(s) were interrupted by the last restart", interrupted)
     try:
         yield
     finally:
@@ -562,9 +776,13 @@ async def delete_model(file: str) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail=f"{path.name} is loaded; unload it first")
     if path.is_dir():
         shutil.rmtree(path)
+        deleted = [path.name]
     else:
-        path.unlink()
-    return {"ok": True, "deleted": path.name}
+        deleted = []
+        for part in split_parts(path):
+            part.unlink()
+            deleted.append(part.name)
+    return {"ok": True, "deleted": path.name, "files": deleted}
 
 
 def _structure_reader() -> Any:
@@ -619,11 +837,19 @@ async def download(body: DownloadBody) -> Dict[str, Any]:
     if not src or ".." in src.split("/") or not src.lower().endswith(".gguf"):
         raise HTTPException(status_code=400, detail="file must be a .gguf path inside the repo")
     dest_name = _safe_file(src.rsplit("/", 1)[-1])
-    job = jobs.create("hf_download", f"{repo}/{src}")
+    running = jobs.running_for(dest_name)
+    if running is not None:
+        raise HTTPException(status_code=409, detail=f"{dest_name} is already downloading (job {running['id']})")
+    if (MODELS_DIR / dest_name).is_file():
+        raise HTTPException(status_code=409, detail=f"{dest_name} is already here; delete it to download again")
+    part = MODELS_DIR / f"{dest_name}.part"
+    resuming = part.is_file() and part.stat().st_size > 0
+    job = jobs.create("hf_download", f"{repo}/{src}",
+                      meta={"repo": repo, "file": src, "revision": revision, "dest": dest_name})
     url = f"{HF_BASE}/{repo}/resolve/{revision}/{src}"
     threading.Thread(target=run_download, args=(job["id"], url, MODELS_DIR / dest_name),
                      name=f"download-{job['id']}", daemon=True).start()
-    return {"job_id": job["id"], "file": dest_name}
+    return {"job_id": job["id"], "file": dest_name, "resuming": resuming}
 
 
 @app.get("/jobs", dependencies=auth)

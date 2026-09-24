@@ -1,8 +1,8 @@
-import { Loader, CheckCircle, AlertCircle } from 'lucide-react';
+import { Loader, CheckCircle, AlertCircle, RotateCcw } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { ACTIVE_JOB_STATUSES as ACTIVE, humanBytes } from './jobs';
 
-function JobBar({ job }) {
+function JobBar({ job, onResume }) {
   const { t } = useI18n();
   const pct = job.percent != null
     ? Math.max(0, Math.min(100, job.percent))
@@ -42,13 +42,25 @@ function JobBar({ job }) {
       </div>
       {job.message && job.total ? <p className="mt-0.5 text-xs text-gray-400">{job.message}</p> : null}
       {isError && job.error && <p className="mt-0.5 text-xs text-red-600">{job.error}</p>}
+      {isError && job.resumable && onResume && (
+        <button
+          type="button"
+          onClick={() => onResume(job)}
+          className="mt-1 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs font-medium text-gray-700 hover:border-indigo-300 hover:text-indigo-700"
+        >
+          <RotateCcw className="w-3 h-3" />
+          {t('localModels.jobs.resume')}
+        </button>
+      )}
     </div>
   );
 }
 
 // Renders the shared job list. Nothing to show, nothing rendered: this is a
 // running log of activity, not a fixture of the page.
-export default function JobProgress({ jobs }) {
+// `onResume(job)` starts a resumable job again (a download continues from
+// its partial file, a pull picks up the layers Ollama already has).
+export default function JobProgress({ jobs, onResume }) {
   const { t } = useI18n();
   if (!jobs || jobs.length === 0) return null;
   // Most recent first (jobs already arrive in some order from the backend;
@@ -60,7 +72,7 @@ export default function JobProgress({ jobs }) {
         <span className="text-sm font-semibold text-gray-800">{t('localModels.jobs.title')}</span>
       </div>
       <div className="px-4 py-1">
-        {ordered.map((job) => <JobBar key={job.id} job={job} />)}
+        {ordered.map((job) => <JobBar key={job.id} job={job} onResume={onResume} />)}
       </div>
     </div>
   );

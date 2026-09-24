@@ -117,6 +117,30 @@ def test_parse_gguf_reads_metadata_and_tensor_sizes(tmp_path):
     assert by_name["output.weight"]["offset"] == 5 * 1024
 
 
+def test_split_gguf_is_read_from_every_part(tmp_path):
+    first = [t for t in TENSORS if not t[0].startswith("blk.1")]
+    second = [t for t in TENSORS if t[0].startswith("blk.1")]
+    write_gguf(tmp_path / "big-00001-of-00003.gguf", tensors=first)
+    write_gguf(tmp_path / "big-00002-of-00003.gguf", tensors=second)
+    # Part 3 is not on disk: the model is still read, and says what is missing.
+    for start in ("big-00001-of-00003.gguf", "big-00002-of-00003.gguf"):
+        parsed = ms.parse_gguf(tmp_path / start)
+        md = parsed["metadata"]
+        assert md["general.name"] == "Tiny"  # the first part's metadata, whichever part was named
+        assert (md["split.count"], md["split.parts_found"], md["split.missing"]) == (3, 2, [3])
+        names = {t["name"]: t["file"] for t in parsed["tensors"]}
+        assert names["blk.0.attn_q.weight"] == "big-00001-of-00003.gguf"
+        assert names["blk.1.attn_q.weight"] == "big-00002-of-00003.gguf"
+        assert len(names) == len(TENSORS)
+        assert parsed["file_size"] == sum(
+            (tmp_path / f).stat().st_size for f in ("big-00001-of-00003.gguf", "big-00002-of-00003.gguf"))
+    structure = ms.structure_from_file(tmp_path / "big-00002-of-00003.gguf")
+    assert structure["model"]["layers"] == 2
+    assert [b["kind"] for b in structure["blocks"]][:3] == ["embedding", "layer", "layer"]
+    assert ms.split_parts(tmp_path / "big-00001-of-00003.gguf") == [
+        tmp_path / "big-00001-of-00003.gguf", tmp_path / "big-00002-of-00003.gguf"]
+
+
 def test_gguf_structure_blocks_roles_and_memory(tmp_path):
     s = ms.structure_from_file(str(write_gguf(tmp_path / "tiny.gguf")))
     assert s["kind"] == "structure" and s["source"] == "gguf"

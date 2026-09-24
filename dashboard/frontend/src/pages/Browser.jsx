@@ -8,7 +8,7 @@ import { useI18n } from '../i18n';
 import { getAgents, getWorkspaces } from '../api';
 import {
   getBrowserStatus, listBrowserSessions, createBrowserSession, closeBrowserSession,
-  handoffBrowserSession,
+  handoffBrowserSession, setBrowserControl,
 } from '../api/browser';
 import { BrowserToolbar, BrowserViewport, useBrowserSession } from '../components/browser';
 
@@ -107,6 +107,16 @@ function OpenSession({ session, workspace, onClosed, onHandedOff }) {
   const [handoff, setHandoff] = useState(false);
   const { frame, loading, send, navigate, inputError, status } = useBrowserSession(session.session_id);
   const control = isUser || controlling;
+  // An agent's session: the hold is registered with the service so the
+  // agent waits while the person drives, and dropped when they leave.
+  const toggleControl = () => {
+    const next = !controlling;
+    setControlling(next);
+    setBrowserControl(session.session_id, next).catch(() => {});
+  };
+  useEffect(() => () => {
+    if (!isUser && controlling) setBrowserControl(session.session_id, false).catch(() => {});
+  }, [isUser, controlling, session.session_id]);
 
   const close = async () => {
     try {
@@ -132,7 +142,7 @@ function OpenSession({ session, workspace, onClosed, onHandedOff }) {
         onReload={control ? () => send({ kind: 'reload' }) : undefined}
         onNavigate={control ? navigate : undefined}
         controlling={controlling}
-        onToggleControl={isUser ? undefined : () => setControlling((c) => !c)}
+        onToggleControl={isUser ? undefined : toggleControl}
         onClose={close}
       >
         <button type="button" onClick={() => setHandoff(true)}
@@ -143,7 +153,10 @@ function OpenSession({ session, workspace, onClosed, onHandedOff }) {
       </BrowserToolbar>
       <BrowserViewport frame={frame} loading={loading} controllable={control} onInput={send} />
       {inputError && <p className="text-xs text-red-600">{inputError}</p>}
-      <p className="text-xs text-gray-400">{control ? t('browser.controlHint') : t('browser.watchHint')}</p>
+      <p className="text-xs text-gray-400">
+        {control ? t('browser.controlHint') : t('browser.watchHint')}
+        {!isUser && controlling ? ` ${t('browser.agentWaits')}` : ''}
+      </p>
       {handoff && (
         <HandoffDialog
           session={session}

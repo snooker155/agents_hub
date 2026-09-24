@@ -104,6 +104,27 @@ def test_pull_route_starts_a_job(api, monkeypatch):
     assert api.get("/api/models/local/jobs/nope").status_code == 404
 
 
+def test_the_job_list_merges_the_runtimes_downloads(api, monkeypatch):
+    monkeypatch.setattr(lm, "runtime_configured", lambda: True)
+    download = {"id": "dl1", "kind": "hf_download", "name": "org/r/m.gguf", "status": "error",
+                "resumable": True, "meta": {"repo": "org/r", "file": "m.gguf", "revision": "main"},
+                "started_at": "2099-01-01T00:00:00+00:00", "completed": 5, "total": 10, "percent": 50.0,
+                "message": "", "error": "interrupted", "finished_at": None}
+    monkeypatch.setattr(lm.RuntimeClient, "jobs", lambda self: [download])
+    monkeypatch.setattr(lm, "ollama_pull_stream", lambda name: iter([{"status": "success"}]))
+    pull_id = api.post("/api/models/local/ollama/pull", json={"name": "llama3.2"}).json()["job_id"]
+    lm.JOBS.wait(pull_id)
+    jobs = api.get("/api/models/local/jobs").json()["jobs"]
+    assert [j["id"] for j in jobs][:2] == ["dl1", pull_id]  # the far-future download sorts first
+    assert jobs[0]["source"] == "runtime" and jobs[1]["source"] == "hub"
+    one = api.get("/api/models/local/jobs/dl1").json()
+    assert one["resumable"] is True and one["meta"]["repo"] == "org/r"
+    # A runtime that does not answer costs the list nothing.
+    monkeypatch.setattr(lm.RuntimeClient, "jobs", lambda self: (_ for _ in ()).throw(lm.LocalModelError("down")))
+    ids = [j["id"] for j in api.get("/api/models/local/jobs").json()["jobs"]]
+    assert pull_id in ids and "dl1" not in ids
+
+
 # ── the job registry ─────────────────────────────────────────────────────────
 
 def test_registry_sums_layers_into_one_progress():
@@ -134,6 +155,29 @@ def test_registry_records_an_error_line_as_a_failed_job():
                                      {"error": "pull model manifest: file does not exist"}]))
     job = reg.wait(job_id)
     assert job["status"] == "error" and "does not exist" in job["error"]
+
+
+def test_registry_with_a_store_survives_a_new_instance_and_closes_running_jobs():
+    reg = lm.JobRegistry(store="test_jobs")
+    done = reg.start("ollama_pull", "a", lambda: iter([{"status": "success"}]), background=False)
+    running = reg.create("ollama_pull", "b", meta={"name": "b"})
+    reg.update(running["id"], status="running", completed=5, total=10)
+
+    again = lm.JobRegistry(store="test_jobs")
+    assert again.get(done)["status"] == "done"
+    b = again.get(running["id"])
+    assert b["status"] == "error" and b["resumable"] is True and "restart" in b["error"]
+    assert b["meta"] == {"name": "b"}
+    # Closing is written back, so a third instance sees it closed already.
+    assert lm.JobRegistry(store="test_jobs").get(running["id"])["status"] == "error"
+    assert [j["id"] for j in again.list()] == [running["id"], done]
+
+
+def test_registry_trim_forgets_the_stored_record_too():
+    reg = lm.JobRegistry(keep=2, store="test_jobs_trim")
+    ids = [reg.start("ollama_pull", str(i), lambda: iter([]), background=False) for i in range(3)]
+    assert lm.JobRegistry(store="test_jobs_trim").get(ids[0]) is None
+    assert lm.JobRegistry(store="test_jobs_trim").get(ids[2])["status"] == "done"
 
 
 def test_registry_keeps_the_last_n_jobs():

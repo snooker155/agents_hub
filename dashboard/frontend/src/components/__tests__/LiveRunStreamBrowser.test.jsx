@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../i18n';
@@ -15,12 +15,23 @@ const getBrowserFrame = vi.fn(() => ok({
   url: 'https://example.com/cart', title: 'Cart', width: 1280, height: 800, image: 'data:image/jpeg;base64,AAAA',
 }));
 const sendBrowserInput = vi.fn(() => ok({}));
+const setBrowserControl = vi.fn(() => ok({}));
 
 vi.mock('../../api/browser', () => ({
   getRunBrowserSession: (...a) => getRunBrowserSession(...a),
   getBrowserFrame: (...a) => getBrowserFrame(...a),
   sendBrowserInput: (...a) => sendBrowserInput(...a),
+  setBrowserControl: (...a) => setBrowserControl(...a),
+  browserStreamUrl: (id) => `ws://test/${id}`,
 }));
+
+// jsdom would try to open a real socket; one that closes at once sends the
+// hook down its polling path, which is what these tests look at.
+class ClosedSocket {
+  constructor() { setTimeout(() => this.onclose?.({ code: 1006 }), 0); }
+  close() {}
+}
+vi.stubGlobal('WebSocket', ClosedSocket);
 
 // The SSE channel needs the stream provider; the seed is enough here.
 vi.mock('../stream', () => ({ useChannel: () => {} }));
@@ -55,6 +66,18 @@ describe('LiveRunStream browser panel', () => {
     await waitFor(() => expect(getBrowserFrame).toHaveBeenCalledWith('B1'));
     expect(await screen.findByAltText('Cart')).toBeTruthy();
     expect(screen.getByText('Take control')).toBeTruthy();
+  });
+
+  it('tells the service when a person takes and releases control', async () => {
+    getRunBrowserSession.mockImplementation(() => ok({
+      session_id: 'B1', run_id: 'run-1', owner: 'agent', url: 'https://example.com/cart', title: 'Cart',
+    }));
+    show(seed(['browser_open']));
+    fireEvent.click(await screen.findByText('Take control'));
+    await waitFor(() => expect(setBrowserControl).toHaveBeenCalledWith('B1', true));
+    expect(screen.getByText(/browser steps wait while you hold the page/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Release'));
+    await waitFor(() => expect(setBrowserControl).toHaveBeenCalledWith('B1', false));
   });
 
   it('shows nothing extra when the lookup 404s', async () => {

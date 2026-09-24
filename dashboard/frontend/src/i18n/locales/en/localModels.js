@@ -87,6 +87,8 @@ export default {
     kindPull: 'Ollama pull',
     kindDownload: 'HF download',
     completedOfTotal: '{{completed}} of {{total}}',
+    resume: 'Resume',
+    resumeFailed: 'Could not resume the job',
     status: {
       queued: 'Queued',
       running: 'Running',

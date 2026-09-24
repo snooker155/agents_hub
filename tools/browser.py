@@ -282,6 +282,8 @@ def _call(method: str, action: str, *, create: bool = True, **kwargs: Any):
     if sid is None:
         raise BrowserError("no page is open in this run: call browser_open first")
     resp = _request(method, f"/sessions/{sid}/{action}", **kwargs)
+    if resp.status_code == 423:
+        resp = _wait_for_control(sid, method, action, resp, **kwargs)
     if resp.status_code == 404 and create:
         _forget_session()
         sid = _session_id(create=True)
@@ -289,6 +291,42 @@ def _call(method: str, action: str, *, create: bool = True, **kwargs: Any):
     elif resp.status_code == 404:
         _forget_session()
         raise BrowserError("the browser session expired: call browser_open again")
+    return resp
+
+
+#: How long a browser tool waits for a person to hand the page back before
+#: it gives up and tells the agent. Polled every CONTROL_POLL seconds.
+CONTROL_WAIT_ENV = "AGENTS_HUB_BROWSER_CONTROL_WAIT"
+CONTROL_POLL = 2.0
+
+
+def _control_wait() -> float:
+    try:
+        return max(0.0, float(os.environ.get(CONTROL_WAIT_ENV, "") or 300))
+    except ValueError:
+        return 300.0
+
+
+def _wait_for_control(sid: str, method: str, action: str, resp, **kwargs: Any):
+    """A 423 means a person has taken control of the page (docs/browser.md).
+
+    The agent's step is what gets paused: this waits, polling the session,
+    until the hold is released, then repeats the call. Past the wait limit
+    the 423 is returned as it is, and the tool tells the agent who has the
+    page, so the run can decide to wait more or do something else.
+    """
+    deadline = time.monotonic() + _control_wait()
+    log.info("browser session %s is under a person's control; %s %s waits", sid, method, action)
+    while time.monotonic() < deadline:
+        time.sleep(min(CONTROL_POLL, max(0.0, deadline - time.monotonic())))
+        try:
+            info = _request("GET", f"/sessions/{sid}")
+        except BrowserError:
+            return resp
+        if info.status_code == 404:
+            return info
+        if info.status_code == 200 and not (info.json() or {}).get("controlled_by"):
+            return _request(method, f"/sessions/{sid}/{action}", **kwargs)
     return resp
 
 
@@ -307,6 +345,12 @@ def _check_landing(url: str) -> Optional[str]:
         except Exception:
             pass
     return reason
+
+
+def _controlled_note(resp) -> str:
+    return (f"The browser is not yours right now: {_detail(resp)}. Waited "
+            f"{int(_control_wait())} seconds. Call browser_read to see what they are doing, "
+            "or try again later.")
 
 
 def _blocked_note(data: Dict[str, Any]) -> str:
@@ -357,6 +401,8 @@ def browser_open(url: str) -> str:
         call.set(status="refused", error=detail)
         call.add_flag("policy.refused", "medium", detail)
         return call.finish(f"browser_open refused: {detail}")
+    if resp.status_code == 423:
+        return call.set(status="error", error=_detail(resp)).finish(_controlled_note(resp))
     if resp.status_code != 200:
         detail = _detail(resp)
         return call.set(status="error", error=detail).finish(f"browser_open error: {detail}")
@@ -463,6 +509,8 @@ def browser_act(action: str, selector: str = "", text: str = "") -> str:
     if resp.status_code == 403:
         _forget_session()
         return f"browser_act refused: {_detail(resp)}"
+    if resp.status_code == 423:
+        return _controlled_note(resp)
     if resp.status_code != 200:
         return f"browser_act error: {_detail(resp)}"
     data = resp.json()

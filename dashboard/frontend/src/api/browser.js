@@ -5,7 +5,7 @@
  * belongs to the Browser page and the Browser panel in LiveRunStream.
  * See docs/browser.md.
  */
-import api from './index';
+import api, { API_ORIGIN, getAuthToken } from './index';
 
 // {configured, url}: whether the hub has a browser service to talk to.
 export const getBrowserStatus = () => api.get('/browser/status');
@@ -39,3 +39,20 @@ export const getRunBrowserSession = (runId) =>
 export const handoffBrowserSession = (id, { agentId, message, workspace }) =>
   api.post(`/browser/sessions/${encodeURIComponent(id)}/handoff`,
     { agent_id: agentId, message: message || '', workspace: workspace || '' });
+
+// Take (on) or release (off) control of a session. While held, the agent's
+// browser tools wait; the hold lapses when the person stops watching.
+export const setBrowserControl = (id, on) =>
+  api.post(`/browser/sessions/${encodeURIComponent(id)}/control`, { on: !!on });
+
+// The WebSocket the hub relays the service's frame stream on. The credential
+// rides the query string, as it does for the SSE stream: a browser cannot put
+// a header on a WebSocket.
+export const browserStreamUrl = (id) => {
+  const origin = API_ORIGIN || (typeof window !== 'undefined' ? window.location.origin : '');
+  const url = new URL(`${origin}/api/browser/sessions/${encodeURIComponent(id)}/ws`);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  const token = getAuthToken();
+  if (token) url.searchParams.set('token', token);
+  return url.toString();
+};

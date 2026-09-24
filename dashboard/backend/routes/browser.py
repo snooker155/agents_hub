@@ -20,12 +20,14 @@ an editor there may drive it, close it or hand it to an agent.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Literal, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from common import access, identity
@@ -186,6 +188,99 @@ async def get_frame(session_id: str, request: Request) -> Dict[str, Any]:
     info = _load(session_id)
     _check(request, info.get("workspace"))
     return _json(_service("GET", f"/sessions/{session_id}/frame"))
+
+
+class ControlBody(BaseModel):
+    on: bool = True
+
+
+@router.post("/sessions/{session_id}/control")
+async def set_control(session_id: str, body: ControlBody, request: Request) -> Dict[str, Any]:
+    """Take or release control of a session. While a person holds it the
+    agent's browser_open and browser_act wait (the service answers them 423),
+    so the two never drive the page at once; the hold lapses on its own when
+    the person stops watching (docs/browser.md)."""
+    info = _load(session_id)
+    _check(request, info.get("workspace"), write=True)
+    return _json(_service("POST", f"/sessions/{session_id}/control",
+                          json={"on": bool(body.on), "by": _username(request)}))
+
+
+async def _service_frames(session_id: str) -> AsyncIterator[str]:
+    """The service's frame stream for one session, message by message.
+    Tests replace this function."""
+    import websockets
+    base, token, _timeout = browser_tools._config()
+    ws_base = "ws" + base[len("http"):] if base.startswith("http") else base
+    async with websockets.connect(
+            f"{ws_base}/sessions/{session_id}/stream",
+            additional_headers={"Authorization": f"Bearer {token}"},
+            max_size=16 * 1024 * 1024, open_timeout=10) as upstream:
+        async for message in upstream:
+            yield message if isinstance(message, str) else message.decode("utf-8", "replace")
+
+
+@router.websocket("/sessions/{session_id}/ws")
+async def stream_session(websocket: WebSocket, session_id: str) -> None:
+    """Frames pushed as the page paints, relayed from the service's stream.
+
+    The auth middleware does not see WebSockets, so the credential is read
+    here the same way the SSE stream reads it (a header, or ``?token=`` for
+    a client that cannot set one) and the workspace check is the one every
+    other route makes. A failure to reach the service is sent as one
+    ``{"type": "error"}`` message before the close, which is the client's
+    cue to fall back to polling ``/frame``.
+    """
+    principal = identity.current_principal(websocket)
+    if principal is None:
+        await websocket.close(code=1008, reason="unauthorized")
+        return
+    websocket.state.principal = principal
+    if not browser_tools._configured():
+        await websocket.close(code=1008, reason="the browser service is not configured")
+        return
+    try:
+        info = await asyncio.to_thread(_load, session_id)
+        _check(websocket, info.get("workspace"))
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=str(exc.detail)[:120])
+        return
+    await websocket.accept()
+
+    async def _relay() -> None:
+        async for message in _service_frames(session_id):
+            await websocket.send_text(message)
+
+    async def _watch() -> None:
+        while True:
+            await websocket.receive()
+
+    relay = asyncio.create_task(_relay())
+    watch = asyncio.create_task(_watch())
+    try:
+        done, _pending = await asyncio.wait({relay, watch}, return_when=asyncio.FIRST_COMPLETED)
+        if relay in done and not relay.cancelled() and relay.exception() is not None:
+            exc = relay.exception()
+            if not isinstance(exc, WebSocketDisconnect):
+                log.warning("browser frame relay for %s failed: %s", session_id, exc)
+                try:
+                    await websocket.send_text(json.dumps({"type": "error", "detail": f"{type(exc).__name__}: {exc}"[:300]}))
+                    await websocket.close(code=1011, reason="frame stream failed")
+                except Exception:  # noqa: BLE001 - the client may be gone already
+                    pass
+        elif relay in done and not relay.cancelled():
+            try:
+                await websocket.close(code=1000)
+            except Exception:  # noqa: BLE001 - same
+                pass
+    finally:
+        for task in (relay, watch):
+            task.cancel()
+        for task in (relay, watch):
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 - cancelled or already failed, both fine here
+                pass
 
 
 @router.post("/sessions/{session_id}/input")

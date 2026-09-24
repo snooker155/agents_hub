@@ -87,6 +87,8 @@ export default {
     kindPull: 'Загрузка Ollama',
     kindDownload: 'Скачивание HF',
     completedOfTotal: '{{completed}} из {{total}}',
+    resume: 'Продолжить',
+    resumeFailed: 'Не удалось продолжить задание',
     status: {
       queued: 'В очереди',
       running: 'Выполняется',

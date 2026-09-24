@@ -17,6 +17,14 @@ const getBrowserFrame = vi.fn(() => ok({
   url: 'https://example.com/', title: 'Example', width: 1280, height: 800, image: 'data:image/jpeg;base64,AAAA',
 }));
 
+const setBrowserControl = vi.fn(() => ok({}));
+
+class ClosedSocket {
+  constructor() { setTimeout(() => this.onclose?.({ code: 1006 }), 0); }
+  close() {}
+}
+vi.stubGlobal('WebSocket', ClosedSocket);
+
 vi.mock('../../api/browser', () => ({
   getBrowserStatus: (...a) => getBrowserStatus(...a),
   listBrowserSessions: (...a) => listBrowserSessions(...a),
@@ -24,6 +32,8 @@ vi.mock('../../api/browser', () => ({
   closeBrowserSession: () => ok({ ok: true }),
   handoffBrowserSession: () => ok({ task_id: 't1', run_id: 'r1' }),
   getBrowserFrame: (...a) => getBrowserFrame(...a),
+  setBrowserControl: (...a) => setBrowserControl(...a),
+  browserStreamUrl: (id) => `ws://test/${id}`,
   sendBrowserInput: () => ok({}),
 }));
 
@@ -80,6 +90,16 @@ describe('Browser page', () => {
     // An agent's session is watched until the person takes control.
     expect(screen.getByText('Take control')).toBeTruthy();
     expect(screen.getByText('Hand to agent')).toBeTruthy();
+  });
+
+  it('registers control of an agent session with the service', async () => {
+    getBrowserStatus.mockImplementation(() => ok({ configured: true, url: 'http://browser:3000' }));
+    show();
+    fireEvent.click(await screen.findByText('Cart'));
+    fireEvent.click(await screen.findByText('Take control'));
+    await waitFor(() => expect(setBrowserControl).toHaveBeenCalledWith('A1aaaaaaaa', true));
+    fireEvent.click(screen.getByText('Release'));
+    await waitFor(() => expect(setBrowserControl).toHaveBeenCalledWith('A1aaaaaaaa', false));
   });
 
   it('creates a session from the address bar', async () => {

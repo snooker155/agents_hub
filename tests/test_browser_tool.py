@@ -8,6 +8,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -223,6 +224,9 @@ class _FakePage:
     async def title(self):
         return "Example"
 
+    async def content(self):
+        return "<html><body>Example</body></html>"
+
     async def screenshot(self, **kw):
         self.log.append(("screenshot", kw))
         return b"\xff\xd8\xff fake jpeg"
@@ -323,6 +327,70 @@ def test_input_that_lands_somewhere_refused_is_a_403(registry, monkeypatch):
         asyncio.run(registry.send_input("L1", registry.Input(kind="click", x=1, y=1)))
     assert err.value.status_code == 403
     assert ("goto", "about:blank") in s.page.log
+
+
+# ── Control by a person, and the frame stream ───────────────────────────────
+
+def test_a_person_in_control_locks_the_agents_driving_calls_but_not_reading(registry):
+    app = registry
+    s = _live(app)
+    out = asyncio.run(app.control("L1", app.Control(on=True, by="ann")))
+    assert out["controlled_by"] == "ann"
+    for call in (lambda: app.navigate("L1", app.Navigate(url="https://example.com/x")),
+                 lambda: app.act("L1", app.Act(action="click", selector="a"))):
+        with pytest.raises(app.HTTPException) as err:
+            asyncio.run(call())
+        assert err.value.status_code == 423 and "ann" in err.value.detail
+    assert ("goto", "https://example.com/x") not in s.page.log
+    # Reading and the person's own input keep working.
+    assert asyncio.run(app.read("L1"))["url"] == "https://example.com/"
+    asyncio.run(app.send_input("L1", app.Input(kind="click", x=1, y=2)))
+    assert ("click", 1, 2) in s.page.log
+    asyncio.run(app.control("L1", app.Control(on=False)))
+    assert asyncio.run(app.describe(s))["controlled_by"] == ""
+    asyncio.run(app.navigate("L1", app.Navigate(url="https://example.com/x")))
+    assert ("goto", "https://example.com/x") in s.page.log
+
+
+def test_control_lapses_when_the_person_stops_watching(registry, monkeypatch):
+    app = registry
+    s = _live(app)
+    asyncio.run(app.control("L1", app.Control(on=True, by="ann")))
+    monkeypatch.setattr(app, "CONTROL_IDLE", 0)
+    time.sleep(0.01)
+    assert s.controller() == "" and asyncio.run(app.describe(s))["controlled_by"] == ""
+    # A frame from the dashboard while the hold is on renews it.
+    monkeypatch.setattr(app, "CONTROL_IDLE", 60)
+    asyncio.run(app.control("L1", app.Control(on=True, by="ann")))
+    s.controlled_at -= 30
+    asyncio.run(app.frame("L1"))
+    assert time.monotonic() - s.controlled_at < 1
+
+
+def test_the_stream_pushes_frames_over_a_websocket(registry, monkeypatch):
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    app = registry
+    monkeypatch.setattr(app, "TOKEN", "tok")
+    monkeypatch.setattr(app, "STREAM_FALLBACK_MS", 10)
+    s = _live(app)
+    asyncio.run(app.control("L1", app.Control(on=True, by="ann")))
+    client = TestClient(app.app)
+    # No CDP on the fake page: the stream falls back to screenshots, and a
+    # picture that does not change is sent once.
+    with client.websocket_connect("/sessions/L1/stream?token=tok") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "frame" and first["seq"] == 1
+        assert first["image"].startswith("data:image/jpeg;base64,")
+        assert (first["width"], first["height"]) == (1280, 800)
+        assert first["controlled_by"] == "ann"
+    assert s.page.log[0] == ("screenshot", {"type": "jpeg", "quality": 60})
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/sessions/L1/stream?token=wrong"):
+            pass
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/sessions/nope/stream?token=tok"):
+            pass
 
 
 # ── Hub tools ────────────────────────────────────────────────────────────────
@@ -582,3 +650,39 @@ def test_a_session_retagged_with_the_run_id_is_found(configured, monkeypatch):
 
     monkeypatch.setattr(browser, "_request", fake)
     assert browser._session_id(create=False) == "T1"
+
+
+# ── Hub tools: a person holds the page ───────────────────────────────────────
+
+def test_act_waits_while_a_person_holds_control_and_then_goes_on(configured, monkeypatch):
+    _public_dns(monkeypatch)
+    browser._SESSIONS["default"] = "S1"
+    monkeypatch.setattr(browser, "CONTROL_POLL", 0.0)
+    monkeypatch.setenv(browser.CONTROL_WAIT_ENV, "5")
+    seen = []
+    holder = ["ann", "ann", ""]
+
+    def fake(method, path, **kw):
+        seen.append((method, path))
+        if path == "/sessions/S1" and method == "GET":
+            return _Resp(data={"session_id": "S1", "controlled_by": holder.pop(0)})
+        if path.endswith("/act"):
+            if len([x for x in seen if x[1].endswith("/act")]) == 1:
+                return _Resp(423, {"detail": "ann has taken control of this browser"})
+            return _Resp(data={"url": "https://example.com/next", "title": "Next"})
+        raise AssertionError(path)
+
+    monkeypatch.setattr(browser, "_request", fake)
+    out = browser.browser_act.invoke({"action": "click", "selector": "a"})
+    assert "click done" in out
+    assert [p for m, p in seen] == ["/sessions/S1/act", "/sessions/S1", "/sessions/S1", "/sessions/S1",
+                                     "/sessions/S1/act"]
+
+
+def test_act_tells_the_agent_when_the_person_keeps_the_page(configured, monkeypatch):
+    browser._SESSIONS["default"] = "S1"
+    monkeypatch.setenv(browser.CONTROL_WAIT_ENV, "0")
+    monkeypatch.setattr(browser, "_request",
+                        lambda m, p, **kw: _Resp(423, {"detail": "ann has taken control of this browser"}))
+    out = browser.browser_act.invoke({"action": "click", "selector": "a"})
+    assert "not yours right now" in out and "ann" in out and "browser_read" in out

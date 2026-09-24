@@ -21,11 +21,15 @@ Three parts:
 from __future__ import annotations
 
 import json
+import logging
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
+
+log = logging.getLogger(__name__)
 
 #: The custom backend id the hub runtime is registered under.
 HUB_LOCAL_ID = "hub-local"
@@ -184,6 +188,14 @@ def ollama_pull_stream(name: str) -> Iterator[Dict[str, Any]]:
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
 
+#: The database store the hub's jobs are kept in (common/docstore.py), so a
+#: pull survives a restart of the API process and shows on every replica.
+JOBS_STORE = "local_model_jobs"
+#: Progress is written to the store at most this often per job; a status
+#: change is written at once.
+_JOBS_WRITE_INTERVAL = 0.5
+
+
 class JobRegistry:
     """Long operations (a pull) and their progress, for the UI to poll.
 
@@ -192,21 +204,88 @@ class JobRegistry:
     describe one layer. Layers are summed, so the job's ``completed`` and
     ``total`` cover the whole model. The stream function is injected, which
     is what lets a test drive a job with a list of fake events.
+
+    With a ``store`` name the registry mirrors every job into that DocStore
+    and reads the list back on first use, so a restart does not lose it: a
+    job that was running when the process died is closed as an error and
+    marked ``resumable``, which for an Ollama pull means asking for the same
+    pull again (Ollama keeps the layers it already has). Without a store the
+    registry is in memory only, which is what the tests use.
     """
 
-    def __init__(self, keep: int = JOBS_KEPT) -> None:
+    def __init__(self, keep: int = JOBS_KEPT, *, store: Optional[str] = None) -> None:
         self.keep = keep
         self._jobs: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
         self._threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
+        self._store_name = store
+        self._store: Any = None
+        self._loaded = store is None
+        self._last_write: Dict[str, float] = {}
 
-    def create(self, kind: str, name: str) -> Dict[str, Any]:
+    # ── persistence ──────────────────────────────────────────────────────────
+
+    def _docs(self) -> Any:
+        if self._store is None and self._store_name:
+            from common.docstore import DocStore
+            self._store = DocStore(self._store_name)
+        return self._store
+
+    def _ensure_loaded(self) -> None:
+        """Read the stored list once, closing whatever a dead process left
+        open. Called under the lock by every reader and writer."""
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            docs = self._docs().values()
+        except Exception:  # noqa: BLE001 - no database yet (a run container's snapshot): memory only
+            log.debug("job store %s unreadable; jobs stay in memory", self._store_name, exc_info=True)
+            return
+        for j in docs:
+            if not isinstance(j, dict) or not j.get("id"):
+                continue
+            j.setdefault("resumable", False)
+            if j.get("status") in ("queued", "running"):
+                j.update(status="error", finished_at=_now(), resumable=True,
+                         error="interrupted by a restart of the service; start it again to resume")
+                self._persist(j, force=True)
+            self._jobs[str(j["id"])] = j
+        self._trim()
+
+    def _persist(self, job: Dict[str, Any], *, force: bool = False) -> None:
+        if not self._store_name:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_write.get(job["id"], 0.0) < _JOBS_WRITE_INTERVAL:
+            return
+        self._last_write[job["id"]] = now
+        try:
+            self._docs().put(job["id"], dict(job))
+        except Exception:  # noqa: BLE001 - a job must not fail because its record could not be written
+            log.debug("could not persist job %s", job["id"], exc_info=True)
+
+    def _forget(self, job_id: str) -> None:
+        self._threads.pop(job_id, None)
+        self._last_write.pop(job_id, None)
+        if self._store_name:
+            try:
+                self._docs().delete(job_id)
+            except Exception:  # noqa: BLE001 - see _persist
+                pass
+
+    # ── the list ─────────────────────────────────────────────────────────────
+
+    def create(self, kind: str, name: str, *, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         job = {"id": uuid.uuid4().hex[:12], "kind": kind, "name": name, "status": "queued",
                "completed": 0, "total": 0, "percent": 0.0, "message": "", "error": None,
+               "resumable": False, "meta": dict(meta or {}),
                "started_at": _now(), "finished_at": None}
         with self._lock:
+            self._ensure_loaded()
             self._jobs[job["id"]] = job
             self._trim()
+            self._persist(job, force=True)
         return dict(job)
 
     def _trim(self) -> None:
@@ -217,29 +296,34 @@ class JobRegistry:
             if victim is None:
                 break
             self._jobs.pop(victim, None)
-            self._threads.pop(victim, None)
+            self._forget(victim)
 
     def update(self, job_id: str, **fields: Any) -> None:
         with self._lock:
+            self._ensure_loaded()
             job = self._jobs.get(job_id)
             if job is not None:
+                changed = "status" in fields and fields["status"] != job.get("status")
                 job.update(fields)
+                self._persist(job, force=changed or job.get("status") in ("done", "error"))
 
     def get(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
+            self._ensure_loaded()
             job = self._jobs.get(job_id)
             return dict(job) if job else None
 
     def list(self) -> List[Dict[str, Any]]:
         """Newest first."""
         with self._lock:
+            self._ensure_loaded()
             return [dict(j) for j in reversed(self._jobs.values())]
 
     def start(self, kind: str, name: str, stream_fn: Callable[[], Iterable[Dict[str, Any]]],
-              *, background: bool = True) -> str:
+              *, background: bool = True, meta: Optional[Dict[str, Any]] = None) -> str:
         """Create a job and drive it with ``stream_fn()``: in a daemon thread,
         or inline when ``background`` is False (tests)."""
-        job = self.create(kind, name)
+        job = self.create(kind, name, meta=meta)
         if not background:
             self.drive(job["id"], stream_fn)
             return job["id"]
@@ -286,9 +370,10 @@ class JobRegistry:
                     completed=total or int(job.get("completed") or 0), finished_at=_now())
 
 
-#: The hub's own jobs (Ollama pulls). Downloads into the runtime live in the
-#: runtime service's registry and are read through ``RuntimeClient``.
-JOBS = JobRegistry()
+#: The hub's own jobs (Ollama pulls), kept in the database. Downloads into
+#: the runtime live in the runtime service's registry and are read through
+#: ``RuntimeClient``.
+JOBS = JobRegistry(store=JOBS_STORE)
 
 
 def start_ollama_pull(name: str, *, registry: Optional[JobRegistry] = None,
@@ -297,7 +382,7 @@ def start_ollama_pull(name: str, *, registry: Optional[JobRegistry] = None,
     """Start pulling ``name`` into Ollama; returns the job id."""
     reg = registry or JOBS
     fn = stream_fn or (lambda: ollama_pull_stream(name))
-    return reg.start("ollama_pull", name, fn, background=background)
+    return reg.start("ollama_pull", name, fn, background=background, meta={"name": name})
 
 
 # ── The hub runtime (deploy/models) ──────────────────────────────────────────

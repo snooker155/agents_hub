@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Radio, ChevronDown, ChevronRight, Brain, Wrench, AlertCircle, Globe } from 'lucide-react';
 import { useChannel } from './stream';
 import { useI18n } from '../i18n';
-import { getRunBrowserSession } from '../api/browser';
+import { getRunBrowserSession, setBrowserControl } from '../api/browser';
 import { BrowserToolbar, BrowserViewport, useBrowserSession } from './browser';
 
 /*
@@ -228,6 +228,18 @@ function RunBrowserPanel({ session, done }) {
   const { frame, loading, send, navigate, inputError, error, status } =
     useBrowserSession(open ? session.session_id : null, { active: live });
   const gone = status === 404;
+  // Taking control is told to the service, so the agent's next browser step
+  // waits instead of fighting the person for the page; releasing, or leaving
+  // the page, hands it back (a hold also lapses on its own when nobody
+  // watches).
+  const toggleControl = () => {
+    const next = !controlling;
+    setControlling(next);
+    setBrowserControl(session.session_id, next).catch(() => {});
+  };
+  useEffect(() => () => {
+    if (controlling) setBrowserControl(session.session_id, false).catch(() => {});
+  }, [controlling, session.session_id]);
   return (
     <div className="rounded-md border border-gray-200 bg-white" data-testid="run-browser-panel">
       <button
@@ -251,7 +263,7 @@ function RunBrowserPanel({ session, done }) {
                 title={frame?.title || session.title || ''}
                 sessionId={session.session_id}
                 controlling={controlling}
-                onToggleControl={done ? undefined : () => setControlling((c) => !c)}
+                onToggleControl={done ? undefined : toggleControl}
                 onBack={controlling ? () => send({ kind: 'back' }) : undefined}
                 onReload={controlling ? () => send({ kind: 'reload' }) : undefined}
                 onNavigate={controlling ? navigate : undefined}
@@ -264,6 +276,9 @@ function RunBrowserPanel({ session, done }) {
               />
               {(inputError || (error && !frame)) && (
                 <p className="text-xs text-red-600">{inputError || error}</p>
+              )}
+              {controlling && !done && (
+                <p className="text-xs text-gray-400">{t('browser.agentWaits')}</p>
               )}
             </>
           )}

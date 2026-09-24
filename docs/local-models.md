@@ -75,9 +75,21 @@ Give a repository (`org/name`, usually one whose name ends in `-GGUF`) and the
 card lists its `.gguf` files with sizes and the quantisation read from each
 name (`Q4_K_M`, `Q8_0`, `IQ2_XS`, ...), so you pick one that fits memory.
 The download streams `https://huggingface.co/<repo>/resolve/<revision>/<file>`
-into `MODELS_DIR` as `<file>.part` and renames it when complete; a failed
-download leaves nothing behind. A file in a subfolder of the repo is saved
-under its bare name. Gated repositories (Llama, Gemma) need `HF_TOKEN` in the
+into `MODELS_DIR` as `<file>.part` and renames it when complete. A download
+that breaks off (a dropped connection, a restart of the runtime) keeps its
+`.part` and the ETag the Hub gave for it, and the job is marked resumable:
+asking for the same download again, or the Resume button on the job, sends
+`Range` from the part's size with `If-Range` on that ETag, so the file is
+continued rather than fetched twice, and a file that changed on the Hub in
+the meantime comes back whole. Only a 4xx from the Hub (a wrong name, a gated
+repo without a token) discards the part. A file in a subfolder of the repo is
+saved under its bare name.
+
+Jobs are kept: the runtime writes its list to `MODELS_DIR/.jobs.json`, the hub
+keeps its pulls in the database (store `local_model_jobs`), and the Local tab
+reads both through one list, `GET /api/models/local/jobs`. A job that was
+running when either process died comes back as an error marked resumable; an
+Ollama pull resumed this way picks up the layers Ollama already has. Gated repositories (Llama, Gemma) need `HF_TOKEN` in the
 service's environment and the licence accepted on the Hub. Only `.gguf` files
 are downloaded.
 
@@ -143,13 +155,10 @@ answer 502 with the reason; the service's own refusals keep their 4xx.
 
 ## Gotchas
 
-- Jobs live in memory: the hub's pulls in the backend process, downloads in
-  the runtime. A restart forgets them (a pull already handed to Ollama keeps
-  going there), and with several backend replicas a job is visible only on
-  the replica that started it.
-- A download does not resume; restarting it starts over.
-- Split GGUF files (`-00001-of-00003.gguf`) must all be downloaded; load the
-  first one.
+- A split GGUF (`-00001-of-00003.gguf`) is listed as one model named by its
+  stem, with `parts` and `parts_found`; it is not loadable until every part is
+  there, deleting it removes every part, and its structure is read from all of
+  them. Each part is its own download.
 - `/v1/embeddings` only works for a server started with embeddings on, which
   a plain load is not.
 - The runtime's llama-server ports (8300 up) are not published: only the

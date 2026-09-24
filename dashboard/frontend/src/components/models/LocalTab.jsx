@@ -4,6 +4,9 @@ import RuntimeSection from './RuntimeSection';
 import ServingSection from './ServingSection';
 import JobProgress from './JobProgress';
 import { useLocalJobs, ACTIVE_JOB_STATUSES as ACTIVE } from './jobs';
+import { pullOllamaModel, downloadRuntimeModel } from '../../api/localModels';
+import { useToast, errorDetail } from '../toast';
+import { useI18n } from '../../i18n';
 
 /**
  * Feature 5's Local tab: an external Ollama, the hub's own model runtime, and
@@ -13,7 +16,23 @@ import { useLocalJobs, ACTIVE_JOB_STATUSES as ACTIVE } from './jobs';
  * of each section polling its own copy.
  */
 export default function LocalTab() {
+  const { t } = useI18n();
+  const toast = useToast();
   const { jobs, reload: reloadJobs } = useLocalJobs();
+
+  // A job the service closed as resumable (a restart, a dropped connection)
+  // is started again with what it remembers about itself: the runtime
+  // continues a download from its .part file, Ollama keeps pulled layers.
+  const resume = async (job) => {
+    const meta = job.meta || {};
+    try {
+      if (job.kind === 'hf_download') await downloadRuntimeModel(meta.repo, meta.file, meta.revision || undefined);
+      else await pullOllamaModel(meta.name || job.name);
+      reloadJobs();
+    } catch (err) {
+      toast.error(t('localModels.jobs.resumeFailed'), errorDetail(err));
+    }
+  };
   const [ollamaRefreshKey, setOllamaRefreshKey] = useState(0);
   const [runtimeRefreshKey, setRuntimeRefreshKey] = useState(0);
 
@@ -38,7 +57,7 @@ export default function LocalTab() {
     <div className="space-y-4">
       <OllamaSection refreshKey={ollamaRefreshKey} onJobStarted={reloadJobs} />
       <RuntimeSection refreshKey={runtimeRefreshKey} onJobStarted={reloadJobs} />
-      <JobProgress jobs={jobs} />
+      <JobProgress jobs={jobs} onResume={resume} />
       <ServingSection />
     </div>
   );

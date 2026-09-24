@@ -21,6 +21,8 @@ The answer is one of two shapes:
 
 Bytes per tensor come from the GGML type table (`GGML_TYPES`: type id to name, elements per block and bytes per block, from ggml's type traits), covering F32, F16, BF16, F64, the integer types, Q4_0 to Q8_1, the K quants, the IQ quants, TQ1_0, TQ2_0 and MXFP4. A type the table does not know gets the gap to the next tensor's offset as an estimate. Shapes are reported outermost first, like PyTorch, although GGUF stores them innermost first. The data section starts at the header's end rounded up to `general.alignment` (32 when absent).
 
+A split model (`-00001-of-0000N.gguf`) is read whole from any of its parts: the metadata from the first, the tensors from every part on disk (each tagged with its `file`), the size as their sum, and `split.count`, `split.parts_found` and `split.missing` in the metadata say what was there.
+
 The quantization shown is the file's `general.file_type` (Q4_K_M, Q5_K_S and so on); the per block quantization is the type that holds most bytes in that block, which is how a Q4_K_M file shows its Q6_K layers.
 
 ## safetensors
@@ -60,7 +62,7 @@ The KV cache estimate assumes an f16 cache: per token it is layers times 2 (keys
 
 ## Gotchas
 
-- A split GGUF (`-00001-of-0000N.gguf`) is read from its first file only, which carries the metadata; tensors in the later files are not listed.
+- A split GGUF with parts missing on disk still parses; the missing parts' tensors are simply absent, and `split.missing` names them.
 - GGUF from before version 2 is refused rather than guessed at.
 - Byte sizes of the IQ and TQ types follow ggml's block structs; a type added upstream after this table was written falls back to an offset based estimate.
 - A safetensors checkpoint that ties its head to the embedding and still stores `lm_head` shows both; the tie is only detected when the head tensor is absent.

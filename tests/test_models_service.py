@@ -6,6 +6,7 @@ replaced, and downloads go through an httpx MockTransport."""
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
@@ -165,7 +166,124 @@ def test_failed_download_leaves_no_file(svc, tmp_path, monkeypatch):
     svc.run_download(job["id"], "https://huggingface.co/a/b/resolve/main/x.gguf", tmp_path / "x.gguf")
     got = svc.jobs.get(job["id"])
     assert got["status"] == "error" and "HF_TOKEN" in got["error"]
-    assert list(tmp_path.iterdir()) == []
+    assert not got["resumable"]
+    # Only the job list itself is left behind: no model file, no .part.
+    assert [p.name for p in tmp_path.iterdir()] == [".jobs.json"]
+
+
+def _drive(client, job_id):
+    for _ in range(200):
+        job = client.get(f"/jobs/{job_id}", headers=AUTH).json()
+        if job["status"] in ("done", "error"):
+            return job
+        time.sleep(0.02)
+    return job
+
+
+def test_a_broken_download_keeps_its_part_and_resumes_with_a_range(client, svc, tmp_path, monkeypatch):
+    payload = b"GGUF" + bytes(range(256)) * 20
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append({"range": request.headers.get("range"), "if_range": request.headers.get("if-range")})
+        if len(calls) == 1:
+            # The first attempt dies after the first chunk: the transport
+            # raises mid-stream, the way a dropped connection does.
+            def broken():
+                yield payload[:1000]
+                raise httpx.ReadError("connection reset")
+            return httpx.Response(200, content=broken(), headers={"content-length": str(len(payload)),
+                                                                   "etag": '"abc"'})
+        start = int(request.headers["range"].split("=")[1].rstrip("-"))
+        return httpx.Response(206, content=payload[start:],
+                              headers={"content-range": f"bytes {start}-{len(payload) - 1}/{len(payload)}",
+                                       "content-length": str(len(payload) - start), "etag": '"abc"'})
+
+    monkeypatch.setattr(svc, "http_client",
+                        lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
+    first = client.post("/download", headers=AUTH, json={"repo": "org/r", "file": "m.gguf"}).json()
+    assert first["resuming"] is False
+    job = _drive(client, first["job_id"])
+    assert job["status"] == "error" and job["resumable"] is True
+    assert "1000 bytes kept" in job["error"]
+    assert (tmp_path / "m.gguf.part").stat().st_size == 1000
+    assert job["meta"] == {"repo": "org/r", "file": "m.gguf", "revision": "main", "dest": "m.gguf"}
+
+    second = client.post("/download", headers=AUTH, json={"repo": "org/r", "file": "m.gguf"}).json()
+    assert second["resuming"] is True
+    job = _drive(client, second["job_id"])
+    assert job["status"] == "done", job
+    assert calls[1] == {"range": "bytes=1000-", "if_range": '"abc"'}
+    assert job["completed"] == job["total"] == len(payload)
+    assert (tmp_path / "m.gguf").read_bytes() == payload
+    assert not (tmp_path / "m.gguf.part").exists() and not (tmp_path / "m.gguf.part.json").exists()
+    # A finished file is not downloaded twice by accident.
+    assert client.post("/download", headers=AUTH, json={"repo": "org/r", "file": "m.gguf"}).status_code == 409
+
+
+def test_a_changed_file_comes_back_whole_and_replaces_the_part(svc, tmp_path, monkeypatch):
+    part = tmp_path / "m.gguf.part"
+    part.write_bytes(b"OLDBYTES")
+    (tmp_path / "m.gguf.part.json").write_text(json.dumps({"etag": '"old"'}))
+    payload = b"GGUF" + b"\1" * 300
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["range"] == "bytes=8-" and request.headers["if-range"] == '"old"'
+        # If-Range did not match: the whole new file, status 200.
+        return httpx.Response(200, content=payload, headers={"content-length": str(len(payload))})
+
+    monkeypatch.setattr(svc, "http_client",
+                        lambda **kw: httpx.Client(transport=httpx.MockTransport(handler)))
+    job = svc.jobs.create("hf_download", "m", meta={"dest": "m.gguf"})
+    svc.run_download(job["id"], "https://huggingface.co/org/r/resolve/main/m.gguf", tmp_path / "m.gguf")
+    assert svc.jobs.get(job["id"])["status"] == "done"
+    assert (tmp_path / "m.gguf").read_bytes() == payload
+
+
+def test_jobs_survive_a_restart_and_running_ones_are_closed(svc, tmp_path):
+    done = svc.jobs.create("hf_download", "a", meta={"dest": "a.gguf"})
+    svc.jobs.update(done["id"], status="done", percent=100.0)
+    running = svc.jobs.create("hf_download", "b", meta={"dest": "b.gguf"})
+    svc.jobs.update(running["id"], status="running", completed=10, total=100)
+    (tmp_path / "b.gguf.part").write_bytes(b"0123456789")
+    queued = svc.jobs.create("hf_download", "c", meta={"dest": "c.gguf"})
+
+    fresh = svc.Jobs()
+    assert fresh.load() == 2
+    assert fresh.get(done["id"])["status"] == "done"
+    b = fresh.get(running["id"])
+    assert b["status"] == "error" and b["resumable"] is True and "10 bytes" in b["error"]
+    c = fresh.get(queued["id"])
+    assert c["status"] == "error" and c["resumable"] is False
+    # The closed state is written back, so a second start reads it as closed.
+    assert svc.Jobs().load() == 0
+
+
+def test_split_gguf_lists_as_one_model_and_deletes_every_part(client, svc, tmp_path):
+    for i in (1, 2, 3):
+        (tmp_path / f"big-Q4-{i:05d}-of-00003.gguf").write_bytes(b"GGUF" + b"\0" * (10 * i))
+    (tmp_path / "small.gguf").write_bytes(b"GGUF" + b"\0" * 5)
+    models = client.get("/models", headers=AUTH).json()["models"]
+    names = {m["name"]: m for m in models}
+    assert set(names) == {"big-Q4", "small"}
+    big = names["big-Q4"]
+    assert big["file"] == "big-Q4-00001-of-00003.gguf"
+    assert (big["parts"], big["parts_found"], big["loadable"]) == (3, 3, True)
+    assert big["size_bytes"] == sum(4 + 10 * i for i in (1, 2, 3))
+    assert svc.model_name("big-Q4-00002-of-00003.gguf") == "big-Q4"
+    # The stem resolves to the first part, which is the file llama-server takes.
+    assert svc._model_path("big-Q4").name == "big-Q4-00001-of-00003.gguf"
+    assert svc._model_path("big-Q4-00003-of-00003.gguf").name == "big-Q4-00001-of-00003.gguf"
+    r = client.delete("/models/big-Q4", headers=AUTH)
+    assert r.status_code == 200 and len(r.json()["files"]) == 3
+    assert [p.name for p in tmp_path.glob("*.gguf")] == ["small.gguf"]
+
+
+def test_split_gguf_with_a_missing_part_is_not_loadable(client, tmp_path):
+    (tmp_path / "big-00001-of-00002.gguf").write_bytes(b"GGUF")
+    m = client.get("/models", headers=AUTH).json()["models"][0]
+    assert (m["parts"], m["parts_found"], m["loadable"]) == (2, 1, False)
+    assert "download the rest" in m["note"]
 
 
 def test_download_rejects_non_gguf_and_bad_repo(client):

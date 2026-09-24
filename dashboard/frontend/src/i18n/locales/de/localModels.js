@@ -87,6 +87,8 @@ export default {
     kindPull: 'Ollama-Abruf',
     kindDownload: 'HF-Download',
     completedOfTotal: '{{completed}} von {{total}}',
+    resume: 'Fortsetzen',
+    resumeFailed: 'Der Auftrag konnte nicht fortgesetzt werden',
     status: {
       queued: 'Wartet',
       running: 'Läuft',

@@ -6,7 +6,7 @@ Everything here needs the browser service (`deploy/browser/`) and the two settin
 
 ## Watching a run's browser
 
-A run that calls any `browser_*` tool gets a **Browser** panel in its live output (the task page, and everywhere else the live output appears), under the list of tool calls. The panel shows the page the run's session is on, refreshed a little faster than once a second while the run is going and the panel is open. The picture pauses while the tab is hidden and slows to one every three seconds after an error. A finished run shows the page where it was left, once, without polling.
+A run that calls any `browser_*` tool gets a **Browser** panel in its live output (the task page, and everywhere else the live output appears), under the list of tool calls. The panel shows the page the run's session is on, pushed as the page paints: the hub relays the service's frame stream (Chromium's own screencast over CDP, JPEG frames of the viewport, one per paint and nothing while the page is still) over a WebSocket at `/api/browser/sessions/{id}/ws`. When that socket cannot be opened, or the service has no CDP for the page, the panel polls `/frame` a little faster than once a second instead; the service itself falls back to a screenshot every half second, sent only when the picture changed. The picture pauses while the tab is hidden and a dropped stream reconnects after three seconds. A finished run shows the page where it was left, once, without polling.
 
 The hub finds the session through the browser service, which records for every session the run it serves, its workspace, whether an agent or a person drives it, and a label (the agent or the person's name). The panel asks once the run's first browser tool appears, and asks again on the next browser tool if the first answer was "no session yet".
 
@@ -14,7 +14,9 @@ The hub finds the session through the browser service, which records for every s
 
 **Take control** turns the picture into an input surface on the same session the agent's `browser_act` works in. Clicks are mapped from the scaled picture back to the 1280x800 viewport, typed characters are sent in short batches, Enter, Backspace, Tab, Escape and the arrow keys are sent as key presses, and the mouse wheel scrolls the page. The toolbar adds back, reload and an address bar. **Release** hands the page back to watching.
 
-The session has one lock. A click that arrives while the agent is in the middle of an action waits for it, and so does a frame, so a person and an agent never interleave inside one step. There is no pause for the agent: taking control is for getting past something a model should not do (a login, a captcha, a consent banner), while the agent is thinking or waiting.
+The session has one lock. A click that arrives while the agent is in the middle of an action waits for it, so a person and an agent never interleave inside one step.
+
+Taking control also pauses the agent at its next browser step. The dashboard registers the hold with the service (`POST /sessions/{id}/control`), and while it is held the service answers the agent's `navigate` and `act` with 423; `browser_open` and `browser_act` then wait, polling the session every two seconds, until the hold is released, and only then go on. `browser_read` and `browser_screenshot` keep working, so the agent can see what the person is doing. The wait is bounded by `AGENTS_HUB_BROWSER_CONTROL_WAIT` (300 seconds by default): past it the tool tells the agent who has the page and suggests reading it and trying later. The hold is released by **Release**, by leaving the page, and on its own after `BROWSER_CONTROL_IDLE` seconds (120) without a frame or an input from the person, so a closed tab never parks a run for good. Taking control is for getting past something a model should not do (a login, a captcha, a consent banner).
 
 What a person does is subject to exactly what the agent is:
 
@@ -57,9 +59,11 @@ All routes are under `/api/browser` and answer 503 with an explanation when the 
 | `POST /sessions` | `{workspace, url?}`: a session a person drives. Returns `{session_id, url, title}`. A refused first address is a 400 and opens nothing |
 | `GET /sessions/{id}` | one session |
 | `DELETE /sessions/{id}` | close it |
-| `GET /sessions/{id}/frame` | `{url, title, width, height, image}`, `image` a JPEG data URL of the viewport |
+| `GET /sessions/{id}/frame` | `{url, title, width, height, image, controlled_by}`, `image` a JPEG data URL of the viewport |
+| `WS /sessions/{id}/ws` | the frame stream: JSON messages of the `/frame` shape with `type: frame` and a `seq`, `type: keepalive` on a quiet page, one `type: error` before the close when the service cannot be reached. The credential rides `?token=`, as for the SSE stream |
+| `POST /sessions/{id}/control` | `{on}`: take or release control in the caller's name. Returns the session, with `controlled_by` |
 | `POST /sessions/{id}/input` | `{kind, x, y, text, key, dx, dy, url}`; `kind` is one of click, dblclick, mousemove, type, key, scroll, navigate, back, forward, reload; coordinates are viewport pixels. Returns `{url, title, blocked}` |
 | `GET /runs/{run_id}/session` | the session of a run, or 404 |
 | `POST /sessions/{id}/handoff` | `{agent_id, message, workspace?}`: returns `{task_id, run_id}` |
 
-The service behind it (`deploy/browser/app.py`) adds `GET /sessions`, `GET` and `PATCH /sessions/{id}`, `GET /sessions/{id}/frame` and `POST /sessions/{id}/input` to the endpoints the agent's tools use. Its frames are JPEG at quality 60 of the fixed 1280x800 viewport; the dashboard scales them.
+The service behind it (`deploy/browser/app.py`) adds `GET /sessions`, `GET` and `PATCH /sessions/{id}`, `GET /sessions/{id}/frame`, the WebSocket `/sessions/{id}/stream`, `POST /sessions/{id}/input` and `POST /sessions/{id}/control` to the endpoints the agent's tools use. Its frames are JPEG at quality 60 of the fixed 1280x800 viewport; the dashboard scales them. `BROWSER_STREAM_FALLBACK_MS` (500) and `BROWSER_STREAM_KEEPALIVE` (15) tune the fallback and the keepalive.

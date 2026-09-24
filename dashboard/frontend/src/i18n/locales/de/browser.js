@@ -31,6 +31,7 @@ export default {
   panelTitle: 'Browser',
   sessionClosed: 'Diese Browser-Sitzung wurde geschlossen.',
   controlHint: 'Klicks, Eingaben und Scrollen gehen an die Seite. Adressen werden gegen die Domain-Richtlinie des Arbeitsbereichs geprüft.',
+  agentWaits: 'Solange Sie die Seite halten, warten die Browserschritte des Agenten; geben Sie die Steuerung frei, damit er weitermacht.',
   watchHint: 'Nur zusehen. Übernehmen Sie die Steuerung, um auf der Seite zu klicken und zu tippen.',
   handToAgent: 'An Agenten übergeben',
   handoffTitle: 'Diese Seite an einen Agenten übergeben',

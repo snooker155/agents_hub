@@ -32,6 +32,10 @@ Endpoints
     GET    /sessions/{id}/read                                -> {url, title, html, blocked}
     POST   /sessions/{id}/act             {action, selector, text} -> {url, title, blocked}
     GET    /sessions/{id}/screenshot?full_page=0              -> image/png
+    GET    /sessions/{id}/frame                               -> {url, title, width, height, image}
+    WS     /sessions/{id}/stream                              frames as JSON messages
+    POST   /sessions/{id}/input          {kind, x, y, ...}   -> {url, title, blocked}
+    POST   /sessions/{id}/control        {on, by}            -> the session
     DELETE /sessions/{id}
     GET    /healthz                                           (no token)
 
@@ -63,7 +67,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import urljoin, urlparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from policy import Policy, check_url
@@ -89,6 +93,16 @@ MAX_HTML_CHARS = _env_int("BROWSER_MAX_HTML_CHARS", 2_000_000)
 VIEWPORT = {"width": 1280, "height": 800}
 # Blocked requests remembered per session, reported back on the next call.
 _BLOCKED_KEEP = 20
+# A person who took control of a session and then went away (closed the tab)
+# loses it after this long without a frame or an input, so the agent is not
+# parked forever behind an empty chair.
+CONTROL_IDLE = _env_int("BROWSER_CONTROL_IDLE", 120)
+# The frame stream: CDP's screencast pushes a frame whenever the page paints.
+# Without CDP (or when it fails) the stream falls back to a screenshot this
+# often, sent only when the picture changed; either way a keepalive goes out
+# after this many quiet seconds so the connection is known to be alive.
+STREAM_FALLBACK_MS = _env_int("BROWSER_STREAM_FALLBACK_MS", 500)
+STREAM_KEEPALIVE = _env_int("BROWSER_STREAM_KEEPALIVE", 15)
 
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
@@ -108,10 +122,29 @@ class Session:
     label: str = ""
     created_at: float = field(default_factory=time.time)
     last_used_at: float = field(default_factory=time.time)
+    # Who took control from the dashboard, and when they last did anything.
+    controlled_by: str = ""
+    controlled_at: float = 0.0
 
     def touch(self) -> None:
         self.last_used = time.monotonic()
         self.last_used_at = time.time()
+
+    def person_touch(self) -> None:
+        """A frame or an input from the dashboard: the person is still there."""
+        self.controlled_at = time.monotonic()
+
+    def controller(self) -> str:
+        """Who holds control now, or "" once the holder has been idle for
+        :data:`CONTROL_IDLE` seconds (the hold is dropped on the spot)."""
+        if self.controlled_by and time.monotonic() - self.controlled_at > CONTROL_IDLE:
+            log.info("session %s: %s released control by inactivity", self.id, self.controlled_by)
+            self.controlled_by = ""
+        return self.controlled_by
+
+    def set_control(self, by: str) -> None:
+        self.controlled_by = (by or "").strip()[:200]
+        self.controlled_at = time.monotonic()
 
     def note_blocked(self, url: str, reason: str) -> None:
         self.blocked.append({"url": url[:500], "reason": reason})
@@ -385,7 +418,36 @@ async def describe(s: Session) -> Dict[str, Any]:
         "session_id": s.id, "run_id": s.run_id, "workspace": s.workspace,
         "owner": s.owner, "label": s.label, "url": getattr(s.page, "url", "") or "",
         "title": title, "created_at": s.created_at, "last_used_at": s.last_used_at,
+        "controlled_by": s.controller(),
     }
+
+
+def _agent_may_drive(s: Session) -> None:
+    """The agent's navigate and act wait while a person holds control: 423
+    (Locked), which the hub's tools turn into a wait and a retry. Reading and
+    screenshots stay open, so the agent can see what the person is doing."""
+    holder = s.controller()
+    if holder:
+        raise HTTPException(
+            status_code=423,
+            detail=f"{holder} has taken control of this browser; the page is theirs until they release it")
+
+
+class Control(BaseModel):
+    on: bool
+    by: str = ""
+
+
+@app.post("/sessions/{session_id}/control", dependencies=[Depends(require_token)])
+async def control(session_id: str, body: Control) -> Dict[str, Any]:
+    """Take or release control of a session for a person on the dashboard.
+    While held, the agent's driving calls answer 423 and its tools wait."""
+    s = _session(session_id)
+    if body.on:
+        s.set_control(body.by or "a person")
+    else:
+        s.controlled_by = ""
+    return await describe(s)
 
 
 @app.get("/sessions", dependencies=[Depends(require_token)])
@@ -449,6 +511,7 @@ async def _navigate(s: Session, url: str) -> Dict[str, Any]:
 @app.post("/sessions/{session_id}/navigate", dependencies=[Depends(require_token)])
 async def navigate(session_id: str, body: Navigate) -> Dict[str, Any]:
     s = _session(session_id)
+    _agent_may_drive(s)
     async with s.lock:
         return await _navigate(s, body.url)
 
@@ -510,6 +573,7 @@ async def perform(page: Any, action: str, selector: str, text: str) -> None:
 @app.post("/sessions/{session_id}/act", dependencies=[Depends(require_token)])
 async def act(session_id: str, body: Act) -> Dict[str, Any]:
     s = _session(session_id)
+    _agent_may_drive(s)
     async with s.lock:
         try:
             await perform(s.page, body.action, body.selector.strip(), body.text)
@@ -539,19 +603,161 @@ async def frame(session_id: str) -> Dict[str, Any]:
     what keeps a session someone is watching from being reaped.
     """
     s = _session(session_id)
+    s.person_touch()
     async with s.lock:
         jpeg = await s.page.screenshot(type="jpeg", quality=60)
-        try:
-            title = await s.page.title()
-        except Exception:
-            title = ""
-        size = getattr(s.page, "viewport_size", None) or VIEWPORT
+    return await _frame_message(s, jpeg)
+
+
+async def _frame_message(s: Session, jpeg: bytes, *, seq: int = 0,
+                         image_b64: Optional[str] = None) -> Dict[str, Any]:
+    """One frame as the dashboard reads it, from JPEG bytes or from the
+    base64 CDP already hands over."""
+    try:
+        title = await s.page.title()
+    except Exception:
+        title = ""
+    size = getattr(s.page, "viewport_size", None) or VIEWPORT
     return {
+        "type": "frame", "seq": seq,
         "url": s.page.url, "title": title,
         "width": int(size.get("width") or VIEWPORT["width"]),
         "height": int(size.get("height") or VIEWPORT["height"]),
-        "image": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
+        "image": "data:image/jpeg;base64," + (image_b64 or base64.b64encode(jpeg).decode("ascii")),
+        "controlled_by": s.controller(),
     }
+
+
+# ── The frame stream ─────────────────────────────────────────────────────────
+
+async def _screencast(s: Session, ws: WebSocket, seq: int) -> int:
+    """Push frames through CDP's screencast until the page changes or the
+    client goes away. Returns the last sequence number. Raises when CDP is not
+    available for this page, which the caller answers with screenshots."""
+    page = s.page
+    cdp = await s.context.new_cdp_session(page)
+    latest: asyncio.Queue = asyncio.Queue(maxsize=1)
+    loop = asyncio.get_running_loop()
+
+    def on_frame(params: Dict[str, Any]) -> None:
+        # Acknowledge at once, or Chromium stops sending; keep only the
+        # newest frame, a slow client must not build up a backlog.
+        loop.create_task(cdp.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]}))
+        if latest.full():
+            try:
+                latest.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        latest.put_nowait(params)
+
+    cdp.on("Page.screencastFrame", on_frame)
+    await cdp.send("Page.startScreencast", {
+        "format": "jpeg", "quality": 60,
+        "maxWidth": VIEWPORT["width"], "maxHeight": VIEWPORT["height"], "everyNthFrame": 1,
+    })
+    try:
+        while s.page is page:
+            try:
+                params = await asyncio.wait_for(latest.get(), timeout=STREAM_KEEPALIVE)
+            except asyncio.TimeoutError:
+                await ws.send_json({"type": "keepalive", "seq": seq, "url": page.url,
+                                    "controlled_by": s.controller()})
+                continue
+            seq += 1
+            s.touch()
+            s.person_touch()
+            await ws.send_json(await _frame_message(s, b"", seq=seq, image_b64=str(params.get("data") or "")))
+        return seq
+    finally:
+        for call in ({"method": "Page.stopScreencast"},):
+            try:
+                await cdp.send(call["method"])
+            except Exception:
+                pass
+        try:
+            await cdp.detach()
+        except Exception:
+            pass
+
+
+async def _screenshot_stream(s: Session, ws: WebSocket, seq: int) -> int:
+    """The fallback: a screenshot every STREAM_FALLBACK_MS, sent when the
+    picture changed, plus a keepalive when it has not for a while."""
+    last: bytes = b""
+    quiet = 0.0
+    while True:
+        async with s.lock:
+            jpeg = await s.page.screenshot(type="jpeg", quality=60)
+        if jpeg != last:
+            last = jpeg
+            seq += 1
+            quiet = 0.0
+            s.touch()
+            s.person_touch()
+            await ws.send_json(await _frame_message(s, jpeg, seq=seq))
+        else:
+            quiet += STREAM_FALLBACK_MS / 1000.0
+            if quiet >= STREAM_KEEPALIVE:
+                quiet = 0.0
+                await ws.send_json({"type": "keepalive", "seq": seq, "url": s.page.url,
+                                    "controlled_by": s.controller()})
+        await asyncio.sleep(STREAM_FALLBACK_MS / 1000.0)
+
+
+async def _stream_frames(s: Session, ws: WebSocket) -> None:
+    seq = 0
+    while True:
+        try:
+            seq = await _screencast(s, ws, seq)
+            continue  # the page changed (a new tab): attach to the new one
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - no CDP here (a test fake, an older Playwright)
+            log.debug("screencast unavailable for %s (%s); sending screenshots", s.id, exc)
+        await _screenshot_stream(s, ws, seq)
+        return
+
+
+@app.websocket("/sessions/{session_id}/stream")
+async def stream(ws: WebSocket, session_id: str, token: str = "") -> None:
+    """Frames as they happen, one JSON message each (the ``/frame`` shape plus
+    ``type`` and ``seq``), with a keepalive on quiet pages. The token rides
+    the Authorization header or, for a client that cannot set one, ``?token=``.
+    A frame is a sign the person is watching: it keeps the session alive and,
+    while they hold control, keeps that hold."""
+    authorized = token_ok(ws.headers.get("authorization"), TOKEN) or (
+        bool(token) and bool(TOKEN) and hmac.compare_digest(token.strip().encode(), TOKEN.encode()))
+    if not authorized:
+        await ws.close(code=1008, reason="missing or wrong token")
+        return
+    s = state.sessions.get(session_id)
+    if s is None:
+        await ws.close(code=1008, reason="no such session (closed or expired)")
+        return
+    await ws.accept()
+    s.touch()
+
+    async def _watch_client() -> None:
+        # The only thing a client sends is its departure.
+        while True:
+            await ws.receive()
+
+    sender = asyncio.create_task(_stream_frames(s, ws))
+    watcher = asyncio.create_task(_watch_client())
+    try:
+        done, _pending = await asyncio.wait({sender, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            exc = task.exception() if not task.cancelled() else None
+            if exc is not None and not isinstance(exc, (WebSocketDisconnect, RuntimeError)):
+                log.warning("frame stream for %s ended: %s", session_id, exc)
+    finally:
+        for task in (sender, watcher):
+            task.cancel()
+        for task in (sender, watcher):
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 - cancelled or already failed, both fine here
+                pass
 
 
 async def perform_input(page: Any, body: Input) -> None:
@@ -591,6 +797,7 @@ async def send_input(session_id: str, body: Input) -> Dict[str, Any]:
     may move as a result (a link, a form), so the landing is re-checked
     exactly as after an agent's ``/act``."""
     s = _session(session_id)
+    s.person_touch()
     async with s.lock:
         if body.kind == "navigate":
             return await _navigate(s, body.url.strip())

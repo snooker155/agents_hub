@@ -13,7 +13,7 @@ Two rules shape the answers:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -74,18 +74,39 @@ def ollama_delete(name: str) -> Dict[str, Any]:
 
 # ── Hub jobs ─────────────────────────────────────────────────────────────────
 
+def _runtime_jobs() -> List[Dict[str, Any]]:
+    """The runtime's own jobs (downloads), tagged with where they live; an
+    unconfigured or unreachable runtime contributes none rather than an
+    error, so the one job list the UI polls always answers."""
+    if not lm.runtime_configured():
+        return []
+    try:
+        return [{**j, "source": "runtime"} for j in lm.RuntimeClient().jobs()]
+    except lm.LocalModelError:
+        return []
+
+
 @router.get("/jobs")
 def list_jobs() -> Dict[str, Any]:
-    return {"jobs": lm.JOBS.list()}
+    """Every job the Local tab shows: the hub's own (Ollama pulls, kept in the
+    database) and the runtime's (downloads, kept in its jobs file), newest
+    first. Both survive a restart; a job that was running through one comes
+    back as an error marked ``resumable``."""
+    own = [{**j, "source": "hub"} for j in lm.JOBS.list()]
+    merged = own + _runtime_jobs()
+    merged.sort(key=lambda j: str(j.get("started_at") or ""), reverse=True)
+    return {"jobs": merged}
 
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str) -> Dict[str, Any]:
     job = lm.JOBS.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="no such job (finished jobs are kept for a while, "
-                                                    "and none survive a restart)")
-    return job
+    if job is not None:
+        return {**job, "source": "hub"}
+    for j in _runtime_jobs():
+        if j.get("id") == job_id:
+            return j
+    raise HTTPException(status_code=404, detail="no such job (finished jobs are kept for a while)")
 
 
 # ── The hub runtime ──────────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ export default {
   panelTitle: 'Browser',
   sessionClosed: 'This browser session has closed.',
   controlHint: 'Clicks, typing and scrolling go to the page. Addresses are checked against the workspace\'s domain policy.',
+  agentWaits: 'The agent\'s browser steps wait while you hold the page; release it to let it go on.',
   watchHint: 'Watching. Take control to click and type in this page.',
   handToAgent: 'Hand to agent',
   handoffTitle: 'Hand this page to an agent',
