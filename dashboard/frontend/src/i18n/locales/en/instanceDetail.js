@@ -24,6 +24,7 @@ export default {
     placeholder: 'Write to this instance… (⌘/Ctrl + Enter to send)',
     send: 'Send',
     queued: 'Queued — it will be answered as soon as the copy is free.',
+    steered: 'Sent to the running task: the agent reads it before its next step. If the run ends first, the copy answers it when it is free.',
     failed: 'Could not deliver the message',
     working: 'working…',
     pending_one: '1 message waiting to be delivered',

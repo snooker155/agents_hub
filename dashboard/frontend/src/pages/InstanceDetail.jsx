@@ -165,6 +165,9 @@ export default function InstanceDetail() {
       if (res.data?.mode === 'running') {
         setStreaming(true);
         setLiveText('');
+      } else if (res.data?.mode === 'steered') {
+        // Busy with a task run: the agent reads it before its next step.
+        setQueuedNote(t('instanceDetail.message.steered'));
       } else {
         setQueuedNote(t('instanceDetail.message.queued'));
       }

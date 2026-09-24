@@ -156,3 +156,13 @@ def test_nested_state_does_not_take_the_parent_run_id_from_env(monkeypatch):
         assert agent_loop.new_state(None, run_id="child").run_id == "child"
     finally:
         agent_loop.reset_state(token)
+
+
+def test_a_cancelled_run_leaves_its_summary_for_the_canceller():
+    state = LoopState(run_id="chat-run-1")
+    state.injections.append({"after_step": 1, "text": "stop that", "msg_id": "m1"})
+    agent_loop.keep_cancelled(state)
+    assert agent_loop.pop_cancelled_summary("chat-run-1")["injections"][0]["text"] == "stop that"
+    assert agent_loop.pop_cancelled_summary("chat-run-1") == {}   # once
+    agent_loop.keep_cancelled(LoopState())   # no run id: nothing kept
+    assert agent_loop.pop_cancelled_summary("") == {}

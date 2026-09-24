@@ -123,7 +123,15 @@ def _repair_prompt(original_text: str, schema: Dict[str, Any], errors: List[str]
     )
 
 
-def _repair_openai(llm: Any, schema: Dict[str, Any], prompt: str) -> Tuple[Any, Optional[str]]:
+def _count(llm: Any, response: Any, ref: Tuple[Optional[str], Optional[str]]) -> None:
+    """A repair is a model call on the run's behalf: count it on the run
+    (common/aux_usage.py), priced at the agent's own model."""
+    from common import aux_usage
+    aux_usage.record("structured_repair", provider=ref[0], model=ref[1], llm=llm, response=response)
+
+
+def _repair_openai(llm: Any, schema: Dict[str, Any], prompt: str,
+                   ref: Tuple[Optional[str], Optional[str]] = (None, None)) -> Tuple[Any, Optional[str]]:
     """Repair through OpenAI's strict Structured Outputs (``method="json_schema"``,
     ``strict=True``), the one combination the installed langchain-openai
     guarantees will validate exactly. On any failure (a schema shape the
@@ -140,6 +148,7 @@ def _repair_openai(llm: Any, schema: Dict[str, Any], prompt: str) -> Tuple[Any, 
         result = structured.invoke(prompt)
     except Exception as e:  # noqa: BLE001 - a rejected strict schema falls back to a plain prompt
         return None, f"strict structured-output call failed: {type(e).__name__}: {e}"
+    _count(llm, result.get("raw") if isinstance(result, dict) else None, ref)
     parsed = result.get("parsed") if isinstance(result, dict) else None
     if parsed is None:
         perr = result.get("parsing_error") if isinstance(result, dict) else None
@@ -147,7 +156,8 @@ def _repair_openai(llm: Any, schema: Dict[str, Any], prompt: str) -> Tuple[Any, 
     return parsed, None
 
 
-def _repair_plain(llm: Any, prompt: str) -> Tuple[Any, Optional[str]]:
+def _repair_plain(llm: Any, prompt: str,
+                  ref: Tuple[Optional[str], Optional[str]] = (None, None)) -> Tuple[Any, Optional[str]]:
     """Repair through a plain JSON-only prompt: the fallback for every provider
     whose langchain integration has no strict/schema-forced structured-output
     call (Anthropic, in the installed langchain-anthropic; see the module
@@ -157,6 +167,7 @@ def _repair_plain(llm: Any, prompt: str) -> Tuple[Any, Optional[str]]:
         raw = llm.invoke(prompt)
     except Exception as e:  # noqa: BLE001 - a failed repair call is reported, not raised
         return None, f"repair call failed: {type(e).__name__}: {e}"
+    _count(llm, raw, ref)
     text = content_text(getattr(raw, "content", raw))
     value = _extract_json(text)
     if value is None:
@@ -171,12 +182,13 @@ def _repair(agent: Any, original_text: str, schema: Dict[str, Any],
     except Exception as e:  # noqa: BLE001 - no repair model available is a failed attempt, not a crash
         return None, f"could not build a repair model: {type(e).__name__}: {e}"
     prompt = _repair_prompt(original_text, schema, errors)
+    ref = (_provider_of(agent) or None, getattr(agent, "model", None))
     if _provider_of(agent) == "openai":
-        parsed, err = _repair_openai(llm, schema, prompt)
+        parsed, err = _repair_openai(llm, schema, prompt, ref)
         if parsed is not None:
             return parsed, None
         log.debug("structured: strict repair failed (%s), falling back to a plain prompt", err)
-    return _repair_plain(llm, prompt)
+    return _repair_plain(llm, prompt, ref)
 
 
 # ── Public entry point (called directly by StandardAgent._structured_output) ─

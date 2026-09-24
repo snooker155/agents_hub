@@ -12,6 +12,10 @@ A person can talk to a run while it works: inject a message the agent reads befo
 
 Stored in the `run_steering` table. The agent loop checks before every model call and places the message after the tool results the run had at that moment, headed "[Message from the user, sent while you were working]". It stays there on every later model call in that run.
 
+A message that arrives while a task run writes its final answer is not lost: when the loop has answered, the run takes it and makes one more pass, in which the model sees its own answer and then the message, up to two such passes. A chat turn leaves it to the chat, which sends it as the next turn.
+
+A message written on the Instances page to a copy that is busy with a task run goes to that run the same way, and waits in the copy's inbox as well. Whichever takes it first answers it: the run before its next model step, or the copy once it is free if the run ended first (see [instances](instances.md)).
+
 Remote agents cannot take injects (409).
 
 ## Interrupt
@@ -42,6 +46,6 @@ A run in a container claims its messages over the run-state API (`POST /api/run-
 
 ## Gaps
 
-An inject that arrives while a task run writes its final answer expires ("Not delivered: the run ended first").
+Flows and teams in chat can only queue. Interrupting a chat turn from the run page stops the turn but does not send the message; send it from the chat.
 
 Related: [tasks](tasks.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md).

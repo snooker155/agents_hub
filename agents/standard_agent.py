@@ -236,6 +236,49 @@ class StandardAgent(AgentBase):
         except Exception:  # noqa: BLE001 - validation machinery failing keeps the plain answer
             return text, None
 
+    #: Extra passes a task run makes for messages that arrived while the model
+    #: wrote its final answer (agents/loop_ext/steering.claim_after_answer).
+    MAX_STEERING_FOLLOWUPS = 2
+
+    def _followup_input(self, state: Any, result: Any, instruction: str,
+                        history: Any) -> Optional[tuple]:
+        """The next executor input when messages arrived during the answer.
+
+        Returns ``(payload, injections)`` or None. Only for a task run: in chat
+        the client sends such a message as the next turn itself. The pass
+        continues the same conversation: the instruction and the answer just
+        given become history, the messages are the new human turn.
+        """
+        if not (state.run_id and state.task_id):
+            return None
+        try:
+            from agents.loop_ext.steering import claim_after_answer, format_injection
+            steps = result.get("intermediate_steps") if isinstance(result, dict) else None
+            fresh = claim_after_answer(state, len(steps or []))
+        except Exception:  # noqa: BLE001 - no follow-up is the behaviour before steering
+            return None
+        if not fresh:
+            return None
+        from langchain_core.messages import AIMessage, HumanMessage
+        answer = result.get("output", "") if isinstance(result, dict) else str(result)
+        prior = [*list(history or []), HumanMessage(content=instruction), AIMessage(content=answer or "")]
+        text = "\n\n".join(format_injection(str(i.get("text") or "")) for i in fresh)
+        return self._executor_input(text, prior), fresh
+
+    @staticmethod
+    def _merge_followup(state: Any, first: Any, second: Any, fresh: list, earlier: list) -> Any:
+        """One result for the whole run: the follow-up's answer, both tool
+        trails, and the injections of both passes on the state."""
+        for inj in fresh:
+            inj["final"] = True  # arrived during an answer, delivered by a follow-up pass
+        state.injections = [*earlier, *fresh, *state.injections]
+        if not isinstance(second, dict):
+            return second
+        merged = dict(second)
+        earlier_steps = list(first.get("intermediate_steps") or []) if isinstance(first, dict) else []
+        merged["intermediate_steps"] = [*earlier_steps, *list(second.get("intermediate_steps") or [])]
+        return merged
+
     def _finish(self, state: Any, result: Any) -> AgentResult:
         """The AgentResult for a finished executor call, with the run's
         output checks applied: structured output first (so a guardrail sees the
@@ -300,6 +343,16 @@ class StandardAgent(AgentBase):
             config = {"callbacks": callbacks} if callbacks else None
             result = self.executor.invoke(
                 self._executor_input(instruction, kwargs.get("history")), config=config)
+            turn, history = instruction, kwargs.get("history")
+            for _ in range(self.MAX_STEERING_FOLLOWUPS):
+                followup = self._followup_input(state, result, turn, history)
+                if followup is None:
+                    break
+                payload, fresh = followup
+                earlier, state.injections = state.injections, []
+                second = self.executor.invoke(payload, config=config)
+                result = self._merge_followup(state, result, second, fresh, earlier)
+                turn, history = payload["input"], payload.get("chat_history")
             return self._finish(state, result)
         except AskUserSignal as sig:
             # The agent called ask_user: pause the run and hand the question back.
@@ -348,10 +401,24 @@ class StandardAgent(AgentBase):
             config = {"callbacks": callbacks} if callbacks else None
             result = await self.executor.ainvoke(
                 self._executor_input(instruction, kwargs.get("history")), config=config)
+            turn, history = instruction, kwargs.get("history")
+            for _ in range(self.MAX_STEERING_FOLLOWUPS):
+                followup = await asyncio.to_thread(self._followup_input, state, result, turn, history)
+                if followup is None:
+                    break
+                payload, fresh = followup
+                earlier, state.injections = state.injections, []
+                second = await self.executor.ainvoke(payload, config=config)
+                result = self._merge_followup(state, result, second, fresh, earlier)
+                turn, history = payload["input"], payload.get("chat_history")
             # The structured-output repair and the output guardrails may call a
             # model; keep them off the event loop.
             return await asyncio.to_thread(self._finish, state, result)
         except asyncio.CancelledError:
+            # The caller that cancelled the run (a stopped chat turn) can still
+            # store what the loop did (agents.agent_loop.pop_cancelled_summary).
+            from agents.agent_loop import keep_cancelled
+            keep_cancelled(state)
             raise  # propagate so the asyncio task is properly marked cancelled
         except AskUserSignal as sig:
             return _awaiting_input_result(sig)

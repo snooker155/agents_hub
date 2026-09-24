@@ -30,7 +30,7 @@ import os
 import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import UUID
 
 log = logging.getLogger(__name__)
@@ -367,7 +367,23 @@ def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
     if extra.get("error"):
         evaluation["error"] = str(extra["error"])
         evaluation["passed"] = False
+    _count_on_run(run_id, evaluation)
     return evaluation
+
+
+def _count_on_run(run_id: Optional[str], evaluation: Dict[str, Any]) -> None:
+    """The grading is a model call made for the run it graded: its tokens go
+    onto that run's ``loop.aux_calls`` (common/aux_usage.py), so the Costs page
+    and the task's money cap (which prices the task's runs) include it."""
+    tokens = evaluation.get("tokens") or {}
+    if not run_id or not (tokens.get("input") or tokens.get("output")):
+        return
+    grader = evaluation.get("grader") or {}
+    from common import aux_usage
+    aux_usage.record_on_run(str(run_id), aux_usage.entry(
+        "outcome_grader", provider=str(grader.get("provider") or ""), model=str(grader.get("model") or ""),
+        tokens={"input_tokens": int(tokens.get("input") or 0),
+                "output_tokens": int(tokens.get("output") or 0), "cached_tokens": 0}))
 
 
 def record_evaluation(task_id: Any, evaluation: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -541,6 +557,20 @@ def on_run_completed(task_id: Any, run: Dict[str, Any]) -> bool:
     except Exception:  # noqa: BLE001 - an activity-log write is best-effort
         log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
 
+    return _act_on(tid, task, outcome, evaluation, evaluations, run_id=run_id,
+                   relaunch=lambda attempt, limit: _relaunch(tid, task, agent_id, attempt, limit),
+                   actor=agent_id)
+
+
+def _act_on(tid: UUID, task: Any, outcome: Dict[str, Any], evaluation: Dict[str, Any],
+            evaluations: List[Dict[str, Any]], *, run_id: str,
+            relaunch: Callable[[int, int], str], actor: str) -> bool:
+    """What a recorded grading means for the task, the same for an agent run
+    and for a flow, team, loop or scenario: pass (False, the finalizer goes
+    on as usual), block after repeated grader errors or at the attempt limit,
+    or start the next attempt through ``relaunch(attempt, max_iterations)``."""
+    from tasks import service as _ts
+
     if evaluation.get("passed"):
         return False
 
@@ -560,7 +590,7 @@ def on_run_completed(task_id: Any, run: Dict[str, Any]) -> bool:
         return True
 
     try:
-        new_run_id = _relaunch(tid, task, agent_id, attempts + 1, max_iterations)
+        new_run_id = relaunch(attempts + 1, max_iterations)
     except Exception as e:  # noqa: BLE001 - a launch that cannot start (budget, capacity) blocks rather than resolving unmet work
         log.warning("outcome relaunch failed for task %s", tid, exc_info=True)
         _block(tid, task, (
@@ -572,11 +602,84 @@ def on_run_completed(task_id: Any, run: Dict[str, Any]) -> bool:
         _ts.append_task_activity_log(
             tid, "outcome_retry",
             f"Outcome not met: attempt {attempts + 1}/{max_iterations} started with the grader's feedback",
-            run_id=new_run_id, agent_id=agent_id,
+            run_id=str(new_run_id or ""), agent_id=actor,
         )
     except Exception:  # noqa: BLE001 - an activity-log write is best-effort
         log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
     return True
+
+
+def _relaunch_executor(tid: UUID, task: Any, executor: Any, attempt: int, max_iterations: int) -> str:
+    """Start the task's flow, team, loop or scenario again for the next attempt.
+
+    Relaunched the way the retry policy relaunches a failed executor run
+    (``tasks.assign.assign_executor_to_task``). A flow builds its input with
+    ``tasks.context.build_task_instruction``, which already carries the
+    definition of done and the latest review; a team or a loop starts from a
+    goal, so the review goes into the goal itself.
+    """
+    from tasks import service as _ts
+    from tasks.assign import assign_executor_to_task
+    from tasks.serialize import task_to_dict
+
+    params: Dict[str, Any] = dict(getattr(task, "assigned_agent_params", None) or {})
+    params["description"] = _attempt_description(params, attempt, max_iterations)
+    if executor.kind in ("team", "loop"):
+        # The goal they start from, with this attempt's note and the review
+        # (the rubric and the grader's feedback) where a flow or an agent
+        # reads them in its instruction.
+        fresh = _ts.get_task(tid) or task
+        goal = str(params.get("goal") or getattr(fresh, "description", "") or getattr(fresh, "title", "") or "")
+        params["goal"] = _attempt_description({"description": goal}, attempt, max_iterations) \
+            + "\n\n" + instruction_sections(fresh)
+    result = assign_executor_to_task(tid, executor, params, task_to_dict=task_to_dict)
+    return str((result or {}).get("run_id") or "")
+
+
+def on_executor_completed(task_id: Any) -> bool:
+    """Grade what a flow, team, loop or scenario produced for the task.
+
+    The executor's counterpart of :func:`on_run_completed`, called by the
+    generic finalizer when such a run completes. The graded result is the
+    task's latest persisted result (every executor persists one before it
+    finalizes). Returns True when this decided what happens to the task.
+    """
+    from tasks import service as _ts
+
+    tid = task_id if isinstance(task_id, UUID) else UUID(str(task_id))
+    task = _ts.get_task(tid)
+    outcome = getattr(task, "outcome", None) if task else None
+    if not outcome or not str(outcome.get("rubric") or "").strip():
+        return False
+    executor = getattr(task, "executor", None)
+    if executor is None or executor.kind == "agent":
+        return False
+
+    run_id, output = "", ""
+    try:
+        results = _ts.get_task_results(tid) or []
+        if results:
+            run_id = str(results[-1].get("run_id") or "")
+            output = str(results[-1].get("result") or "")
+    except Exception:  # noqa: BLE001 - no stored result grades as an empty answer
+        log.debug("task results lookup failed for %s", tid, exc_info=True)
+
+    # An executor's run id names a flow, team, loop or scenario run, not a
+    # row of ``runs``, so the grading is not attached to a run record.
+    evaluation = grade_outcome(task, output, run_id=None, trigger="run")
+    evaluation["run_id"] = run_id or None
+    evaluations = record_evaluation(tid, evaluation)
+    actor = f"{executor.kind}:{executor.id}"
+    try:
+        _ts.append_task_activity_log(
+            tid, "outcome_graded", _summary(evaluation), run_id=run_id, agent_id=actor,
+            passed=bool(evaluation.get("passed")), score=evaluation.get("score"),
+        )
+    except Exception:  # noqa: BLE001 - an activity-log write is best-effort
+        log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
+    return _act_on(tid, task, outcome, evaluation, evaluations, run_id=run_id,
+                   relaunch=lambda attempt, limit: _relaunch_executor(tid, task, executor, attempt, limit),
+                   actor=actor)
 
 
 # ── Grading on request ───────────────────────────────────────────────────────

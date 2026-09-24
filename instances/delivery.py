@@ -68,6 +68,40 @@ def can_deliver_directly(instance: Dict[str, Any]) -> bool:
     return instance.get("state") != "active"
 
 
+def steer_running_task(instance: Dict[str, Any], body: str, inbox_msg_id: str) -> Optional[str]:
+    """Also hand a message for a busy copy to the task run it is working on.
+
+    The copy's agent loop reads it before its next model call (common/
+    steering.py) instead of after the whole run. It stays in the mailbox as
+    well: the loop takes it from there when it takes the steering message,
+    and if the run ends first the mailbox delivers it as before. Only a
+    running task run of a standard agent qualifies: a chat turn hands its
+    unread messages back to its own client, and a remote agent has no loop to
+    read one. Returns the run id, or None when the message only waits.
+    """
+    if instance.get("kind") in CARRIER_KINDS or instance.get("state") != "active":
+        return None
+    run_id = str(instance.get("current_run_id") or "")
+    if not run_id:
+        return None
+    try:
+        from agents.registry import get_agent
+        from common import steering
+        from managers.run_manager import get_run_by_id
+
+        run = get_run_by_id(run_id) or {}
+        if str(run.get("status") or "") != "running" or not run.get("task_id"):
+            return None
+        spec = get_agent(str(run.get("agent_id") or ""))
+        if spec is None or spec.is_remote():
+            return None
+        steering.post(run_id, body, author={
+            "id": f"{steering.INBOX_AUTHOR_PREFIX}{inbox_msg_id}", "name": "mailbox"})
+        return run_id
+    except Exception:  # noqa: BLE001 - the message still waits in the mailbox
+        return None
+
+
 async def deliver(instance: Dict[str, Any], body: str, *,
                   client_id: Optional[str] = None,
                   msg_id: Optional[str] = None) -> Dict[str, Any]:
@@ -80,6 +114,10 @@ async def deliver(instance: Dict[str, Any], body: str, *,
 
     if not can_deliver_directly(instance):
         queued = msg_id or inbox.enqueue(instance_id, body)
+        steered = steer_running_task(instance, body, queued)
+        if steered:
+            return {"mode": "steered", "instance_id": instance_id, "msg_id": queued,
+                    "run_id": steered}
         return {"mode": "queued", "instance_id": instance_id, "msg_id": queued}
 
     channel = channel_for(instance_id)

@@ -137,13 +137,35 @@ def _fallback_calls(run: Dict[str, Any]) -> list:
             if isinstance(a, dict) and a.get("fallback") and "input_tokens" in a]
 
 
+def _aux_cost(run: Dict[str, Any], prices: PriceMap) -> float:
+    """Calls made on the run's behalf beside its own loop (a policy
+    classifier, a guardrail judge, a schema repair, the outcome grader;
+    common/aux_usage.py). They are not in the run's token totals, so they are
+    added, each at its own model."""
+    loop = run.get("loop")
+    if not isinstance(loop, dict):
+        return 0.0
+    total = 0.0
+    for call in loop.get("aux_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        try:
+            total += _tokens_cost(prices, str(call.get("provider") or ""), str(call.get("model") or ""),
+                                  int(call.get("input_tokens") or 0), int(call.get("output_tokens") or 0),
+                                  int(call.get("cached_tokens") or 0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
 def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
     """Estimated USD cost of a single run from catalog pricing. Unknown
     (provider, model) pairs are treated as zero-cost (fail open, never wedge).
 
     A run's tokens are priced at its own model, except the calls a fallback
     model answered: those are priced at the fallback's rate and taken out of
-    the run's totals first."""
+    the run's totals first. Model calls made on the run's behalf (loop
+    ``aux_calls``) are added at their own models."""
     provider = (run.get("provider") or "").strip()
     model = (run.get("model") or "").strip()
     inbound, outbound = run_tokens(run)
@@ -161,4 +183,4 @@ def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
                               c_in, c_out, c_cached)
         inbound, outbound = max(0, inbound - c_in), max(0, outbound - c_out)
         cached = max(0, cached - c_cached)
-    return _tokens_cost(prices, provider, model, inbound, outbound, cached) + extra
+    return _tokens_cost(prices, provider, model, inbound, outbound, cached) + extra + _aux_cost(run, prices)

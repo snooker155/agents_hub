@@ -25,7 +25,7 @@ Settings are read when the agent is built. A task run builds its agent fresh, so
 
 ## Steering
 
-A message a person sends while the run works is placed before the model's next step, after the tool results the run had at that moment. See [steering](steering.md).
+A message a person sends while the run works is placed before the model's next step, after the tool results the run had at that moment. One that arrives while a task run writes its final answer gets one more pass. See [steering](steering.md).
 
 ## Compaction
 
@@ -69,6 +69,7 @@ A run whose loop did more than call tools carries a `loop` block on its record, 
 - `guardrails`: every guardrail check and its result.
 - `structured`: repair attempts and whether the answer matched the schema.
 - `tool_decisions`: tool policy decisions.
+- `aux_calls`: model calls made for the run beside its loop (the tool policy classifier, guardrail judges, schema repairs, the outcome grader), each with its purpose, model and tokens, priced at its own model (see [costs](costs.md)).
 
 The run page shows it in the loop panel, next to the agent version the run ran and a rollback to it (see [agents](agents.md)).
 

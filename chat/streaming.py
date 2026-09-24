@@ -138,7 +138,12 @@ async def drive_streaming_run(
         else:
             final_error = agent_result.error or "Agent returned no output"
     except asyncio.CancelledError:
-        pass
+        # A stopped turn has no result, but its loop may have done things
+        # worth keeping (steering, tool policy decisions, compactions).
+        from agents.agent_loop import pop_cancelled_summary
+        cancelled_loop = pop_cancelled_summary(run_id)
+        if cancelled_loop:
+            result.loop = cancelled_loop
     except Exception as e:
         final_error = str(e)
 

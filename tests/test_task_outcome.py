@@ -557,3 +557,68 @@ def test_task_routes_validate_an_outcome_on_create_and_update():
     assert client.patch(f"/api/tasks/{tid}", json={"outcome": {"rubric": "x", "max_iterations": 99}}).status_code == 400
     assert client.patch(f"/api/tasks/{tid}", json={"outcome": None}).status_code == 200
     assert ts.get_task(tid).outcome is None
+
+
+# ── A flow, team, loop or scenario finishing a task with an outcome ───────────
+
+def _finish_executor(task_id, kind="team", output="The team added the flag.", params=None):
+    from tasks.context import persist_task_result
+    from tasks.models import Executor
+    ts.assign_executor(task_id, Executor(kind=kind, id=f"{kind}-1"), params or {}, run_id=f"{kind}-run-1")
+    ts.update_task(task_id, status=TaskStatus.in_progress)
+    persist_task_result(str(task_id), f"{kind}-run-1", output, agent_id=kind)
+    rm.finalize_flow_task(str(task_id), "completed", 0)
+
+
+@pytest.fixture
+def executor_launches(monkeypatch):
+    calls = []
+
+    def _assign(tid, executor, params, *, task_to_dict):
+        calls.append((str(tid), executor.kind, dict(params or {})))
+        ts.update_task(tid, status=TaskStatus.in_progress)
+        return {"run_id": "next-run"}
+
+    import tasks.assign as ta
+    monkeypatch.setattr(ta, "assign_executor_to_task", _assign)
+    return calls
+
+
+def test_an_executor_that_meets_the_outcome_resolves(fake_grader, executor_launches):
+    fake = fake_grader(_grade_json())
+    t = _task_with_outcome()
+    _finish_executor(t.id)
+
+    task = ts.get_task(t.id)
+    assert task.status == TaskStatus.resolved
+    [ev] = task.outcome_evaluations
+    assert ev["passed"] is True and ev["run_id"] == "team-run-1"
+    assert executor_launches == []
+    assert "The team added the flag." in fake.human_text()
+
+
+def test_an_executor_that_misses_the_outcome_starts_again_with_the_review(fake_grader, executor_launches):
+    fake_grader(_grade_json(docs=False))
+    t = _task_with_outcome()
+    _finish_executor(t.id, params={"goal": "Add --flag"})
+
+    task = ts.get_task(t.id)
+    assert task.status == TaskStatus.in_progress
+    [(tid, kind, params)] = executor_launches
+    assert tid == str(t.id) and kind == "team"
+    # A team starts from a goal: the attempt note and the review go into it.
+    assert params["goal"].startswith("Add --flag") and "[Outcome attempt 2/3]" in params["goal"]
+    assert "OUTCOME REVIEW" in params["goal"].upper()
+    assert "outcome_retry" in [e["type"] for e in ts.get_task_activity_log(t.id)]
+
+
+def test_an_executor_at_the_attempt_limit_blocks(fake_grader, executor_launches, notifications):
+    fake_grader(_grade_json(docs=False))
+    t = _task_with_outcome(max_iterations=1)
+    _finish_executor(t.id, kind="flow")
+
+    task = ts.get_task(t.id)
+    assert task.status == TaskStatus.blocked
+    assert "Docs" in (task.blocked_reason or "")
+    assert executor_launches == []
+    assert notifications

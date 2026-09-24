@@ -20,4 +20,12 @@ export default {
   yes: 'да',
   no: 'нет',
   toolDecisions: 'Решения политики инструментов',
+  auxCalls: 'Другие вызовы модели',
+  auxTokens: 'токенов: {{input}} на входе, {{output}} на выходе',
+  auxPurpose: {
+    tool_policy: 'Классификатор политики',
+    guardrail: 'Судья guardrail',
+    structured_repair: 'Исправление по схеме',
+    outcome_grader: 'Грейдер outcome',
+  },
 };

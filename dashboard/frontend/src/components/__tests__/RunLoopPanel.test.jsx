@@ -107,6 +107,16 @@ describe('RunLoopPanel', () => {
     expect(screen.getByText('run_shell')).toBeInTheDocument();
   });
 
+  it('lists the model calls made for the run beside its loop', () => {
+    render(<RunLoopPanel run={{
+      run_id: 'r1',
+      loop: { aux_calls: [{ purpose: 'guardrail', provider: 'openai', model: 'gpt-4o-mini',
+                            input_tokens: 120, output_tokens: 8 }] },
+    }} />);
+    expect(screen.getByText('runLoop.auxCalls')).toBeInTheDocument();
+    expect(screen.getByText('openai/gpt-4o-mini')).toBeInTheDocument();
+  });
+
   it('counts structured-output attempts recorded as a list', () => {
     render(<RunLoopPanel run={{
       run_id: 'r1',

@@ -29,4 +29,9 @@ Messages can be queued to an instance and are claimed one at a time. A message
 sitting in the inbox of a standby instance means nothing picked it up, which is
 usually a node problem rather than an agent problem.
 
+A message to a copy that is busy with a task run is also handed to that run
+through [steering](steering.md): the agent reads it before its next model step.
+It stays in the inbox until one side takes it, so it is answered once, by the
+run, or by the copy when it is free if the run ended first.
+
 Related: [nodes](nodes.md), [sessions-and-runs](sessions-and-runs.md), [service-health](service-health.md).

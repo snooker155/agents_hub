@@ -82,6 +82,17 @@ def _author_fields(author: Any) -> tuple:
             str(getattr(author, "username", "") or getattr(author, "name", "") or "") or None)
 
 
+#: Author id prefix of a steering message that stands for an instance
+#: mailbox message (``inbox:<msg_id>``, see instances/delivery.py).
+INBOX_AUTHOR_PREFIX = "inbox:"
+
+
+def inbox_message_id(author_id: Any) -> str:
+    """The mailbox message a steering message stands for, or ""."""
+    value = str(author_id or "")
+    return value[len(INBOX_AUTHOR_PREFIX):] if value.startswith(INBOX_AUTHOR_PREFIX) else ""
+
+
 def post(run_id: str, body: str, *, mode: str = MODE_INJECT,
          author: Any = None) -> Dict[str, Any]:
     """Store one message for ``run_id``. Returns the stored row.
@@ -155,6 +166,20 @@ def claim_pending(run_id: str, step: int) -> List[Dict[str, Any]]:
             f"SELECT * FROM run_steering WHERE {_PENDING_WHERE} ORDER BY seq",
             (str(run_id),)).fetchall()
         for row in rows:
+            inbox_id = inbox_message_id(row["author_id"])
+            if inbox_id:
+                # A message written to a busy instance (instances/delivery.py)
+                # waits in its mailbox too. Taking it here takes it from the
+                # mailbox in the same transaction, so it is answered once:
+                # here, or by the mailbox if the run ended first.
+                took = tx.execute(
+                    "UPDATE instance_inbox SET delivered_at = ?, run_id = ? "
+                    "WHERE msg_id = ? AND delivered_at IS NULL",
+                    (when, str(run_id), inbox_id))
+                if getattr(took, "rowcount", 1) == 0:
+                    tx.execute("UPDATE run_steering SET status = ? WHERE msg_id = ?",
+                               (STATUS_EXPIRED, row["msg_id"]))
+                    continue
             cur = tx.execute(
                 "UPDATE run_steering SET delivered_at = ?, delivered_step = ?, status = ? "
                 "WHERE msg_id = ? AND delivered_at IS NULL AND status = 'pending'",

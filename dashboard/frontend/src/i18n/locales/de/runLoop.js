@@ -20,4 +20,12 @@ export default {
   yes: 'ja',
   no: 'nein',
   toolDecisions: 'Werkzeugrichtlinien Entscheidungen',
+  auxCalls: 'Weitere Modellaufrufe',
+  auxTokens: '{{input}} Tokens rein, {{output}} raus',
+  auxPurpose: {
+    tool_policy: 'Richtlinien-Klassifikator',
+    guardrail: 'Guardrail-Prüfer',
+    structured_repair: 'Schema-Reparatur',
+    outcome_grader: 'Outcome-Bewerter',
+  },
 };

@@ -475,6 +475,30 @@ def _response_model(response: Any) -> str:
     return ""
 
 
+def charge_aux_spend(provider: str, model: str, prompt: int, completion: int,
+                     cached: int = 0) -> float:
+    """Add a call made beside the agent's own loop (common/aux_usage.py) to
+    this process's spend, priced like any other call. Returns the cost added;
+    0 when the run has no cap (nothing checks the spend then).
+
+    The next check of the run's guard sees it, so a policy that calls a model
+    on every tool call is stopped by the same cap as the agent.
+    """
+    guard = RunBudgetGuard.from_env(provider=provider or "", model=model or "")
+    if guard is None:
+        return 0.0
+    in_price, out_price, cached_price = guard._price(model or "")
+    cached = max(0, min(int(cached or 0), int(prompt or 0)))
+    cost = (
+        (int(prompt or 0) - cached) / 1_000_000 * in_price
+        + cached / 1_000_000 * cached_price
+        + int(completion or 0) / 1_000_000 * out_price
+    )
+    with _SPEND_LOCK:
+        _PROCESS_SPEND["usd"] = float(_PROCESS_SPEND["usd"]) + cost
+    return cost
+
+
 class RunBudgetGuard(BaseCallbackHandler):
     """Pause a run once the task's runs have spent its money cap.
 

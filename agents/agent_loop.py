@@ -35,7 +35,9 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -81,6 +83,10 @@ class LoopState:
     #: (tools/permission_policy.py): ``{"tool", "mode", "decision", "reason",
     #: "by", "fingerprint"}``.
     tool_decisions: List[Dict[str, Any]] = field(default_factory=list)
+    #: Model calls made on the run's behalf beside its own loop (the tool
+    #: policy's classifier, a guardrail judge, a schema repair): one entry per
+    #: call with its tokens, priced at its own model (common/aux_usage.py).
+    aux_calls: List[Dict[str, Any]] = field(default_factory=list)
     #: Free-form per-extension working state, never serialised.
     scratch: Dict[str, Any] = field(default_factory=dict)
 
@@ -107,6 +113,8 @@ class LoopState:
             out["structured"] = dict(self.structured)
         if self.tool_decisions:
             out["tool_decisions"] = [dict(d) for d in self.tool_decisions]
+        if self.aux_calls:
+            out["aux_calls"] = [dict(a) for a in self.aux_calls]
         return out
 
 
@@ -129,6 +137,32 @@ def reset_state(token: Any) -> None:
         _CURRENT.reset(token)
     except (ValueError, RuntimeError):
         _CURRENT.set(None)
+
+
+#: States of runs whose loop was cancelled mid-way (a chat turn the person
+#: stopped), kept by run id so the caller that cancelled it can still store
+#: what the loop did. Bounded: the oldest are dropped.
+_CANCELLED: "OrderedDict[str, LoopState]" = OrderedDict()
+_CANCELLED_LOCK = threading.Lock()
+_CANCELLED_MAX = 64
+
+
+def keep_cancelled(state: LoopState) -> None:
+    """Remember a cancelled run's state for :func:`pop_cancelled_summary`."""
+    if not state.run_id:
+        return
+    with _CANCELLED_LOCK:
+        _CANCELLED[state.run_id] = state
+        _CANCELLED.move_to_end(state.run_id)
+        while len(_CANCELLED) > _CANCELLED_MAX:
+            _CANCELLED.popitem(last=False)
+
+
+def pop_cancelled_summary(run_id: str) -> Dict[str, Any]:
+    """The loop summary of a run that was cancelled, once; {} when none."""
+    with _CANCELLED_LOCK:
+        state = _CANCELLED.pop(str(run_id or ""), None)
+    return state.summary() if state is not None else {}
 
 
 def new_state(agent: Any = None, **kwargs: Any) -> LoopState:
@@ -332,7 +366,9 @@ __all__ = [
     "build_agent_runnable",
     "current_state",
     "load_extensions",
+    "keep_cancelled",
     "new_state",
+    "pop_cancelled_summary",
     "reset_state",
     "set_state",
 ]

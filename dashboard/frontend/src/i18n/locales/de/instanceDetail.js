@@ -24,6 +24,7 @@ export default {
     placeholder: 'Der Instanz schreiben… (⌘/Strg + Enter zum Senden)',
     send: 'Senden',
     queued: 'In der Warteschlange — die Antwort kommt, sobald die Kopie frei ist.',
+    steered: 'An die laufende Aufgabe gesendet: der Agent liest sie vor seinem nächsten Schritt. Endet der Lauf vorher, antwortet die Kopie, sobald sie frei ist.',
     failed: 'Nachricht konnte nicht zugestellt werden',
     working: 'arbeitet…',
     pending_one: '1 Nachricht wartet auf Zustellung',

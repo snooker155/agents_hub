@@ -23,6 +23,14 @@ priced as all-fresh input, which is exactly how they were always priced.
 Evaluation channels (replays, eval runs) are tracked separately from production
 spend.
 
+Some model calls are made for a run beside its own loop: the [tool policy](tool-policy.md)
+classifier, a [guardrail](guardrails.md) judge, the repair of an answer that did not
+match its schema, and the [outcome](outcomes.md) grader that grades a finished run.
+Each is listed on the run's `loop.aux_calls` with its tokens and priced at its own
+model, and all but the grader (which runs after the run) count against the run's
+money cap while it runs. A call a [fallback model](agent-loop.md) answered is priced
+at the fallback's rate, not the agent's.
+
 ## Budgets
 
 A budget belongs to a workspace: a **hard limit**, a **soft limit** and a

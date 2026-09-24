@@ -589,3 +589,119 @@ def test_prompt_split_ignores_a_steering_message():
     assert msg == "the turn's own message"
     assert hist == history[:2]
     assert _without_steering("plain", history, "x") == ("plain", history)
+
+
+# ── a message that arrives while the model writes its final answer ───────────
+
+class _PostingModel(_ToolModel):
+    """Posts a steering message while it produces its N-th answer."""
+
+    calls: int = 0
+    post_on_call: int = 0
+    post_args: tuple = ()
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        type(self).calls += 1
+        if type(self).calls == type(self).post_on_call:
+            steering.post(*type(self).post_args)
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
+def _standard_agent(monkeypatch, replies):
+    from agents import agent_base
+    from agents.standard_agent import StandardAgent
+
+    _PostingModel.seen, _PostingModel.calls = [], 0
+    model = _PostingModel(disable_streaming=True, messages=iter(replies))
+    monkeypatch.setattr(agent_base, "build_chat_model", lambda **kw: model)
+    return StandardAgent(agent_id="steered", name="steered", system_prompt="sys", tools=[echo])
+
+
+def test_a_task_run_takes_a_message_sent_during_its_final_answer(monkeypatch):
+    run_id = _rid()
+    monkeypatch.setenv("AGENT_TASK_ID", "task-1")
+    agent = _standard_agent(monkeypatch, [
+        AIMessage(content="", tool_calls=[{"name": "echo", "args": {"text": "one"}, "id": "c1"}]),
+        AIMessage(content="done"),
+        AIMessage(content="done, with the changelog line"),
+    ])
+    _PostingModel.post_on_call, _PostingModel.post_args = 2, (run_id, "also add a changelog line")
+
+    result = agent.run("add a flag", run_id=run_id)
+
+    assert result.ok and result.agent_output == "done, with the changelog line"
+    [inj] = result.loop["injections"]
+    assert inj["text"] == "also add a changelog line" and inj["final"] is True
+    assert steering.undelivered(run_id) == []
+    # The extra pass saw its own earlier answer and then the message.
+    last = _PostingModel.seen[-1]
+    assert any(isinstance(m, AIMessage) and m.content == "done" for m in last)
+    assert steer_ext.is_steering_text(last[-1].content)
+    assert [s.name for s in result.steps] == ["echo"]
+
+
+def test_a_chat_turn_leaves_such_a_message_to_the_client(monkeypatch):
+    run_id = _rid()
+    monkeypatch.delenv("AGENT_TASK_ID", raising=False)
+    agent = _standard_agent(monkeypatch, [AIMessage(content="done"), AIMessage(content="unused")])
+    _PostingModel.post_on_call, _PostingModel.post_args = 1, (run_id, "one more thing")
+
+    result = agent.run("hello", run_id=run_id)
+
+    assert result.agent_output == "done"
+    assert [m["body"] for m in steering.undelivered(run_id)] == ["one more thing"]
+
+
+# ── a message to a busy instance reaches its running task run ────────────────
+
+@pytest.fixture
+def busy_task_instance(monkeypatch):
+    from agents import registry as agent_registry
+    from instances import store as instance_store
+    from managers import run_manager as rm
+
+    monkeypatch.setattr(agent_registry, "get_agent",
+                        lambda aid: SimpleNamespace(is_remote=lambda: False) if aid == "worker" else None)
+    run_id = rm.new_unique_run_id()
+    rm.open_run(run_id, "worker", task_id="task-9", status="running", link_to_session=False)
+    instance = instance_store.create("worker", kind="task", state="active", current_run_id=run_id)
+    return instance, run_id
+
+
+def test_a_busy_task_copy_gets_the_message_before_its_next_step(busy_task_instance):
+    from instances import delivery, inbox
+
+    instance, run_id = busy_task_instance
+    msg_id = inbox.enqueue(instance["instance_id"], "use the staging database")
+    assert delivery.steer_running_task(instance, "use the staging database", msg_id) == run_id
+
+    [taken] = steering.claim_pending(run_id, 2)
+    assert taken["body"] == "use the staging database"
+    # Taken once: the mailbox no longer holds it, so the idle drain cannot answer it again.
+    assert inbox.claim_next(instance["instance_id"]) is None
+
+
+def test_the_mailbox_answers_it_when_the_run_ended_first(busy_task_instance):
+    from instances import delivery, inbox
+
+    instance, run_id = busy_task_instance
+    msg_id = inbox.enqueue(instance["instance_id"], "one more thing")
+    delivery.steer_running_task(instance, "one more thing", msg_id)
+    assert inbox.claim_next(instance["instance_id"])["msg_id"] == msg_id   # the idle drain got it
+
+    assert steering.claim_pending(run_id, 3) == []
+    [row] = steering.list_for_run(run_id)
+    assert row["status"] == steering.STATUS_EXPIRED
+
+
+def test_a_chat_or_idle_copy_is_not_steered(busy_task_instance):
+    from instances import delivery, inbox
+    from managers import run_manager as rm
+
+    instance, run_id = busy_task_instance
+    msg_id = inbox.enqueue(instance["instance_id"], "hi")
+    assert delivery.steer_running_task({**instance, "state": "idle"}, "hi", msg_id) is None
+    chat_run = rm.new_unique_run_id()
+    rm.open_run(chat_run, "worker", status="running", link_to_session=False)
+    assert delivery.steer_running_task({**instance, "current_run_id": chat_run}, "hi", msg_id) is None
+    assert steering.list_for_run(run_id) == []

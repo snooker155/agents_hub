@@ -55,6 +55,7 @@ def finalize_task(
         from tasks import service as _ts
         from uuid import UUID as _UUID
         tid = _UUID(str(task_id))
+        relaunched = False
 
         if status == "completed":
             agent_set_statuses = {
@@ -64,6 +65,24 @@ def finalize_task(
                 _ts.TaskStatus.done,
             }
             current_task = _ts.get_task(tid)
+            # A flow, team, loop or scenario that finished a task with an
+            # outcome is graded like an agent run (tasks/outcome.py): another
+            # attempt or a block replaces the normal transition. Only on the
+            # executor path (no run id): an agent run was graded already by
+            # finalize_task_from_run.
+            if (current_task and run_id is None and executor is None
+                    and current_task.status not in agent_set_statuses
+                    and getattr(current_task, "outcome", None)):
+                try:
+                    from tasks.outcome import on_executor_completed
+                    if on_executor_completed(tid):
+                        after = _ts.get_task(tid)
+                        # Started again: whatever waits on the task waits for
+                        # that attempt to finish, not for this one.
+                        relaunched = bool(after and after.status == _ts.TaskStatus.in_progress)
+                        current_task = None
+                except Exception:  # noqa: BLE001 - a failed grading falls back to the normal transition
+                    log.warning("outcome grading failed for task %s", tid, exc_info=True)
             if current_task and current_task.status not in agent_set_statuses:
                 ws_name = str(getattr(current_task, "workspace", "") or "default")
                 try:
@@ -99,6 +118,8 @@ def finalize_task(
         # caller passes run_id so only continuations bound to that specific run
         # fire; a flow/loop/team caller has no per-run concept here and fires
         # every continuation waiting on the task, as it always has.
+        if relaunched:
+            return
         try:
             from common.session_service import pop_continuations_for_task
             continuations = (

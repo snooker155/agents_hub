@@ -24,7 +24,7 @@ Rules are checked first and cost nothing. When a rule already blocked, the judge
 
 ## Judge guardrails
 
-A `judge` guardrail asks a small model whether the text breaks the guardrail's instruction (for example "the answer must not promise a delivery date"). The text reaches the model as delimited data, and the model answers strict JSON, `{"violation": true|false, "reason": "..."}`. The model is the guardrail's own `model` (`provider/model`), else `AGENTS_HUB_GUARDRAIL_MODEL`, else the workspace's default model; it runs at temperature 0 with a 20 second limit.
+A `judge` guardrail asks a small model whether the text breaks the guardrail's instruction (for example "the answer must not promise a delivery date"). The text reaches the model as delimited data, and the model answers strict JSON, `{"violation": true|false, "reason": "..."}`. The model is the guardrail's own `model` (`provider/model`), else `AGENTS_HUB_GUARDRAIL_MODEL`, else the workspace's default model; it runs at temperature 0 with a 20 second limit. Each judge call is listed on the run's `loop.aux_calls` and counted in the run's cost and against its money cap.
 
 A judge that cannot answer (an error, a timeout, an answer that is not the JSON above) follows `fail_closed`: on (the default) the check counts as a violation, off it passes with a logged warning.
 

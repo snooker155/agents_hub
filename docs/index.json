@@ -166,7 +166,11 @@
         "workspaces",
         "notifications",
         "tasks",
-        "deployments"
+        "deployments",
+        "agent-loop",
+        "tool-policy",
+        "guardrails",
+        "outcomes"
       ],
       "headings": [
         "Where the numbers come from",
@@ -1334,7 +1338,7 @@
         "What happens to a denied call",
         "Where decisions are visible",
         "Never gated",
-        "Gaps"
+        "Cost"
       ]
     },
     {

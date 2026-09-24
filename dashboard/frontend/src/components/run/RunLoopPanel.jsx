@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   History, RotateCcw, Bot, Layers, MessageSquareText, Wrench,
-  ShieldCheck, ShieldAlert, FileJson, KeySquare, Loader,
+  ShieldCheck, ShieldAlert, FileJson, KeySquare, Loader, Cpu,
 } from 'lucide-react';
 import { getRunAgentVersion, rollbackRunAgent } from '../../api/agentVersions';
 import { useI18n } from '../../i18n';
@@ -206,6 +206,25 @@ export default function RunLoopPanel({ run, onChanged }) {
                 <span className="font-mono text-xs">{d.tool}</span>
                 <span className="text-xs text-gray-500">{d.mode} → {d.decision}</span>
                 {d.reason && <span className="text-xs text-gray-400">{d.reason}</span>}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {/* Model calls made for the run beside its own loop (the tool policy's
+          classifier, a guardrail judge, a schema repair, the outcome grader):
+          counted in the run's cost at their own models (common/aux_usage.py). */}
+      {hasLoop && loop.aux_calls?.length > 0 && (
+        <Section icon={Cpu} title={t('runLoop.auxCalls')}>
+          <ul className="space-y-1">
+            {loop.aux_calls.map((c, i) => (
+              <li key={i} className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
+                <span className="text-xs">{t(`runLoop.auxPurpose.${c.purpose}`, { defaultValue: c.purpose })}</span>
+                <span className="font-mono text-xs text-gray-500">{[c.provider, c.model].filter(Boolean).join('/')}</span>
+                <span className="text-xs text-gray-400">
+                  {t('runLoop.auxTokens', { input: c.input_tokens ?? 0, output: c.output_tokens ?? 0 })}
+                </span>
               </li>
             ))}
           </ul>

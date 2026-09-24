@@ -410,9 +410,14 @@ def ask_model(provider: Optional[str], model: Optional[str], system: str, user: 
     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tool-policy")
     try:
         future = pool.submit(llm.invoke, [SystemMessage(content=system), HumanMessage(content=user)])
-        return _content_text(future.result(timeout=timeout))
+        reply = future.result(timeout=timeout)
     finally:
         pool.shutdown(wait=False)
+    # The classifier is a model call on the run's behalf: counted on the run
+    # and against its money cap (common/aux_usage.py).
+    from common import aux_usage
+    aux_usage.record("tool_policy", provider=provider, model=model, llm=llm, response=reply)
+    return _content_text(reply)
 
 
 def classify(

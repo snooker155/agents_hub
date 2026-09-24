@@ -47,8 +47,8 @@ Auto deny and ask outcomes are audited as `tool.policy`; agent policy edits as `
 
 Reasoning tools (`think`, `plan` and the other plan tools) and `ask_user` are never gated and are not wrapped at all, so neither the policy nor hooks run on them. Gating the question tool would mean needing approval to ask for approval.
 
-## Gaps
+## Cost
 
-The classifier call is not counted in the run's cost or token totals.
+Every classifier call is a model call made for the run: it is listed on the run's `loop.aux_calls` with its tokens, priced at the classifier's model on the [Costs](costs.md) page, and counted against the run's money cap, so a policy that asks on every call stops at the same cap as the agent.
 
 Related: [hooks](hooks.md), [tasks](tasks.md), [workspaces](workspaces.md).

@@ -20,4 +20,12 @@ export default {
   yes: 'yes',
   no: 'no',
   toolDecisions: 'Tool policy decisions',
+  auxCalls: 'Other model calls',
+  auxTokens: '{{input}} in, {{output}} out tokens',
+  auxPurpose: {
+    tool_policy: 'Tool policy classifier',
+    guardrail: 'Guardrail judge',
+    structured_repair: 'Schema repair',
+    outcome_grader: 'Outcome grader',
+  },
 };

@@ -230,6 +230,29 @@ class SteeringExtension(LoopExtension):
         return place_injections(scratchpad, steps, state.injections)
 
 
+def claim_after_answer(state: LoopState, step: int) -> List[Dict[str, Any]]:
+    """Messages that arrived while the model wrote its final answer.
+
+    The loop only looks for messages before a model call, so one sent during
+    the last call would never be seen. ``StandardAgent`` asks here once the
+    executor has answered; the messages are marked delivered at ``step`` and
+    returned as injections (not yet on ``state.injections``: the caller runs
+    one more pass with them and records them itself).
+    """
+    if not state.run_id or not _owns(state):
+        return []
+    try:
+        claimed = _transport(state).claim_steering(state.run_id, step)
+    except Exception:  # noqa: BLE001 - no follow-up pass is the old behaviour
+        log.debug("steering: after-answer claim failed for %s", state.run_id, exc_info=True)
+        return []
+    known = {i.get("msg_id") for i in state.injections}
+    fresh = [_as_injection(m, step) for m in (claimed or []) if m.get("msg_id") not in known]
+    if fresh:
+        _emit_delivered(state, fresh)
+    return fresh
+
+
 def extension_for(agent: Any) -> Optional[LoopExtension]:
     """Every standard agent can be steered: the per-call check is one indexed
     lookup, and with nothing written the messages are left as they are."""
@@ -242,6 +265,7 @@ def extension_for(agent: Any) -> Optional[LoopExtension]:
 
 __all__ = [
     "MAX_TRANSPORT_FAILURES",
+    "claim_after_answer",
     "STEER_HEADER",
     "SteeringExtension",
     "extension_for",

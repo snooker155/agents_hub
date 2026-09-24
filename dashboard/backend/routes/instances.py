@@ -209,6 +209,13 @@ async def message_instance(instance_id: str, body: InstanceMessage, request: Req
         msg_id = str((claimed or {}).get("msg_id") or msg_id)
         return await delivery.deliver(instance, text, client_id=body.client_id,
                                       msg_id=msg_id)
+    # A copy busy with a task run reads the message before its next model
+    # call (common/steering.py); it stays in the mailbox in case the run ends
+    # first, and is answered once either way.
+    steered = delivery.steer_running_task(instance, text, msg_id)
+    if steered:
+        return {"mode": "steered", "instance_id": instance_id, "msg_id": msg_id,
+                "run_id": steered, "channel": delivery.channel_for(instance_id)}
     return {"mode": "queued", "instance_id": instance_id, "msg_id": msg_id,
             "channel": delivery.channel_for(instance_id)}
 

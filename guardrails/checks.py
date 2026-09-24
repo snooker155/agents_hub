@@ -188,6 +188,12 @@ def _judge_model(guardrail_model: Optional[str], workspace: Optional[str]):
     ``AGENTS_HUB_GUARDRAIL_MODEL`` env var, else the workspace's default."""
     from agents.agent_utils import build_chat_model
 
+    provider, model = _judge_ref(guardrail_model, workspace)
+    return build_chat_model(provider=provider, model=model, temperature=0.0, streaming=False)
+
+
+def _judge_ref(guardrail_model: Optional[str], workspace: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """``(provider, model)`` the judge runs on, None parts for the global default."""
     spec = str(guardrail_model or os.environ.get("AGENTS_HUB_GUARDRAIL_MODEL") or "").strip()
     provider: Optional[str] = None
     model: Optional[str] = None
@@ -203,7 +209,7 @@ def _judge_model(guardrail_model: Optional[str], workspace: Optional[str]):
             model = cfg.get("model") or None
         except Exception:  # noqa: BLE001 - no workspace default is no default; build_chat_model still resolves the global one
             provider = model = None
-    return build_chat_model(provider=provider, model=model, temperature=0.0, streaming=False)
+    return provider, model
 
 
 def _judge_prompt(instruction: str, text: str) -> str:
@@ -253,6 +259,14 @@ def check_judge(config: Dict[str, Any], text: str, *, guardrail_model: Optional[
     except Exception as exc:  # noqa: BLE001 - a provider call can fail in any number of ways (rate limit, network, auth)
         return None, str(exc)
 
+    # A judge is a model call on the run's behalf: counted on the run and
+    # against its money cap (common/aux_usage.py).
+    try:
+        from common import aux_usage
+        ref = _judge_ref(guardrail_model, workspace)
+        aux_usage.record("guardrail", provider=ref[0], model=ref[1], llm=llm, response=response)
+    except Exception:  # noqa: BLE001 - accounting never changes the verdict
+        log.debug("guardrails: could not count the judge call", exc_info=True)
     raw = str(getattr(response, "content", response) or "")
     try:
         data = _parse_judge_json(raw)

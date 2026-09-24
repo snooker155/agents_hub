@@ -16,9 +16,9 @@ Each top-level bullet is one criterion. If the rubric has no bullets, its headin
 
 ## Grading
 
-After every completed agent run, an independent model grades the result criterion by criterion. It sees the task, the rubric, the final answer, and a short list of tool calls, but never the agent's conversation. Each criterion gets passed or not, a score from 0 to 1, and feedback.
+After every completed run of the task, whether an agent, a flow, a team, a loop or a scenario worked it, an independent model grades the result criterion by criterion (orchestrator, code_reviewer and decomposer runs are skipped). For an agent run the result is the run's final answer and the grader also sees a short list of its tool calls; for the other executors it is the result they stored on the task. The grader never sees the agent's conversation. Each criterion gets passed or not, a score from 0 to 1, and feedback.
 
-The outcome passes when every criterion passes, or when the mean score reaches the `threshold` if one is set (0 to 1). If it passes, the task resolves as usual. If not and attempts remain, the same agent starts again, and its instruction contains a "Definition of done" section plus "Outcome review of your previous attempt" with the grader's feedback per criterion.
+The outcome passes when every criterion passes, or when the mean score reaches the `threshold` if one is set (0 to 1). If it passes, the task resolves as usual. If not and attempts remain, the same agent or executor starts again. An agent and a flow read a "Definition of done" section plus "Outcome review of your previous attempt" with the grader's feedback per criterion in their instruction; a team or a loop gets the same text in the goal it starts from. Whatever waits on the task (an orchestrator continuation) waits for the last attempt.
 
 Once attempts are used up, the task is blocked with the unmet criteria and a dashboard notification is sent.
 
@@ -56,6 +56,6 @@ Loops take an optional `rubric` and `grader` (UI on the Loops page, and the Loop
 
 ## Gaps
 
-Grader cost is on the grading event, not aggregated on the Costs page or charged against the task budget. Flows, teams and scenarios executing a task are not graded.
+The grader's tokens are added to the graded agent run (`loop.aux_calls`), so they show on the [Costs](costs.md) page and count toward the task's money cap from the next run on. A flow, team, loop or scenario has no run record of its own for them, so their gradings keep the cost on the grading only.
 
 Related: [loops](loops.md), [evals](evals.md), [tasks](tasks.md).
