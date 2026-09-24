@@ -17,7 +17,7 @@ check is a no-op. A write lands in the audit log as ``agent.tool_policy``.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -71,6 +71,38 @@ def _validated(raw: Any) -> Dict[str, str]:
     return out
 
 
+def _expand_tools(tool_ids: List[str], workspace: Optional[str]) -> Tuple[List[str], Dict[str, List[str]]]:
+    """The agent's tool ids with every ``mcp:<server>`` group replaced by the
+    tools that server offered on its last connect (``tool_names`` on its
+    record, written by mcp_client when an agent is built), and the groups as
+    ``{alias: [tool ids]}``. No network call: a server never connected yet
+    keeps its alias, whose ``*`` entries still apply to it. A policy is set
+    per tool id, which is what a call carries, so an alias alone could not
+    be given a mode."""
+    from mcp_client.client import ALIAS_PREFIX, tool_id as mcp_tool_id
+    from mcp_client.store import get_server
+
+    expanded: List[str] = []
+    groups: Dict[str, List[str]] = {}
+    for tid in tool_ids:
+        if not tid.startswith(ALIAS_PREFIX):
+            expanded.append(tid)
+            continue
+        server_id = tid[len(ALIAS_PREFIX):].strip().lower()
+        try:
+            record = get_server(workspace, server_id) or {}
+        except Exception:  # noqa: BLE001 - an unreadable server list keeps the alias
+            record = {}
+        names = [str(n) for n in (record.get("tool_names") or []) if str(n).strip()]
+        if not names:
+            expanded.append(tid)
+            continue
+        ids = [mcp_tool_id(server_id, n) for n in names]
+        groups[tid] = ids
+        expanded.extend(i for i in ids if i not in expanded)
+    return expanded, groups
+
+
 def _payload(spec: Any, workspace: Optional[str]) -> Dict[str, Any]:
     """What the agent's Tool policy card shows.
 
@@ -81,7 +113,7 @@ def _payload(spec: Any, workspace: Optional[str]) -> Dict[str, Any]:
     """
     ws = workspace or getattr(spec, "owner_workspace", None) or None
     settings = policy.workspace_settings(ws)
-    tools: List[str] = [str(t) for t in (spec.tools or []) if str(t).strip()]
+    tools, groups = _expand_tools([str(t) for t in (spec.tools or []) if str(t).strip()], ws)
     provider, model = policy.classifier_model(spec, ws, settings=settings)
     # A tool id nobody could have configured, so resolution falls through to
     # the "*" entries and then to the legacy default.
@@ -94,6 +126,9 @@ def _payload(spec: Any, workspace: Optional[str]) -> Dict[str, Any]:
         "tool_policy": policy.clean_policy(getattr(spec, "tool_policy", None) or {}),
         "workspace_policy": policy.workspace_policy(settings),
         "effective": policy.effective_policy(tools, spec, ws),
+        # ``mcp:<server>`` groups on the record and the tools each stands for,
+        # so the card can show which server a tool came from.
+        "groups": groups,
         "default": {"mode": default_mode, "source": default_source},
         "modes": list(registry.TOOL_POLICY_MODES),
         "gate_enabled": bool(settings.get("require_tool_approval")),

@@ -11,7 +11,12 @@ right now, in one of two modes:
   then launched again on the same task and agent, with the message in its
   instruction; a chat turn is answered with ``{"next": "send"}`` and the
   client sends the message as its next turn itself, since it owns the
-  conversation's history.
+  conversation's history. With ``send`` (the run page, which does not own the
+  conversation) this route starts that turn itself: ``{"next": "sent"}``.
+
+``run_id`` may also name a team run (teams/store.py): an inject is posted on
+the team's board as the user's message for the next member to read, an
+interrupt stops the team.
 
 ``GET /api/runs/{run_id}/steer`` lists what was sent to a run and where each
 message is (pending, delivered at step N, expired, interrupted). A message
@@ -46,6 +51,16 @@ _LIVE_STATUSES = ("running", "pending", "queued", "stop")
 class SteerBody(BaseModel):
     message: str
     mode: str = steering.MODE_INJECT
+    # For an interrupted chat turn: send the message as the conversation's
+    # next turn from here, rather than leave it to the client. The run page
+    # asks for it, since it is not the chat that owns the conversation; the
+    # chat itself sends its own next turn.
+    send: bool = False
+
+
+# Background turns started here (an interrupted chat carried on from the run
+# page), kept referenced so they are not collected while they run.
+_TURNS: "set" = set()
 
 
 def _require_can_steer(request: Request, run: Dict[str, Any]):
@@ -67,13 +82,6 @@ def _require_can_steer(request: Request, run: Dict[str, Any]):
             raise HTTPException(status_code=403,
                                 detail="steering a run needs an editor's role in its workspace")
     return principal
-
-
-def _run_or_404(run_id: str) -> Dict[str, Any]:
-    run = run_manager.get_run_by_id(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    return run
 
 
 def _task_of(run: Dict[str, Any]):
@@ -126,6 +134,58 @@ def _restore_continuations(docs: List[Dict[str, Any]], task_id: str, new_run_id:
             )
         except Exception:  # noqa: BLE001 - one continuation failing must not stop the rest
             log.debug("steering: continuation restore failed for %s", task_id, exc_info=True)
+
+
+def _team_run(run_id: str):
+    """The team run with this id, or None. A team run is not a row of
+    ``runs``: its members are, and the team itself lives in teams/store.py."""
+    try:
+        from teams import store as team_store
+        return team_store.get_run(run_id)
+    except Exception:  # noqa: BLE001 - no teams store is no team run
+        return None
+
+
+def _next_chat_request(run: Dict[str, Any], text: str, *, team_run: Any = None):
+    """The ChatRequest that carries an interrupted chat on with ``text``: the
+    same conversation, the same target (an agent, a flow or a team)."""
+    from chat.models import ChatRequest
+    from chat.runs import build_conversation_history
+
+    conv_id = str(run.get("conversation_id") or run.get("task_id") or "")
+    if not conv_id:
+        return None
+    common = {"message": text, "workspace": run.get("workspace"), "conversation_id": conv_id,
+              "history": build_conversation_history(conv_id), "source": "steer"}
+    if team_run is not None:
+        return ChatRequest(team_id=team_run.team_id, **common)
+    if run.get("flow_id") and str(run.get("channel") or "") == "chat_flow":
+        return ChatRequest(flow_id=str(run["flow_id"]), **common)
+    agent_id = str(run.get("agent_id") or "")
+    return ChatRequest(agent_id=agent_id, **common) if agent_id else None
+
+
+def _send_next_turn(request_obj: Any) -> None:
+    """Run the next chat turn here, in the background. Every chat pipeline
+    broadcasts its turn to the conversation's channel (chat/broadcast.py), so
+    anyone with the conversation open sees it arrive."""
+    import asyncio
+
+    from chat.pipelines import run_chat_flow_pipeline, run_chat_pipeline, run_chat_team_pipeline
+
+    pipeline = (run_chat_team_pipeline if request_obj.team_id
+                else run_chat_flow_pipeline if request_obj.flow_id else run_chat_pipeline)
+
+    async def _pump() -> None:
+        try:
+            async for _event in pipeline(request_obj):
+                pass
+        except Exception:  # noqa: BLE001 - the turn records its own failure on its run
+            log.warning("steering: the next chat turn failed", exc_info=True)
+
+    task = asyncio.create_task(_pump())
+    _TURNS.add(task)
+    task.add_done_callback(_TURNS.discard)
 
 
 def interrupt_instruction(message: str, author: Optional[str] = None) -> str:
@@ -181,14 +241,8 @@ def _relaunch_task(run: Dict[str, Any], task: Any, message: str,
     return new_run_id
 
 
-@router.post("/api/runs/{run_id}/steer")
-async def steer_run(run_id: str, body: SteerBody, request: Request):
-    """Send a message to a running run: ``inject`` it before the next model
-    step, or ``interrupt`` the run and carry on with it (see module docstring).
-    409 with the run's status when the run is not running."""
-    run = _run_or_404(run_id)
-    principal = _require_can_steer(request, run)
-
+def _validated(body: SteerBody):
+    """``(mode, text)`` of a steer request, 400 on a bad one."""
     mode = (body.mode or steering.MODE_INJECT).strip().lower()
     if mode not in steering.MODES:
         raise HTTPException(status_code=400, detail=f"mode must be one of: {', '.join(steering.MODES)}")
@@ -198,6 +252,61 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
     if len(text) > steering.MAX_BODY_CHARS:
         raise HTTPException(status_code=400,
                             detail=f"The message is longer than {steering.MAX_BODY_CHARS} characters")
+    return mode, text
+
+
+def _steer_team(team_run: Any, body: SteerBody, request: Request) -> Dict[str, Any]:
+    """Steer a running team: an inject waits for the next member whose
+    prompt is built and is posted on the board as the user's message to
+    everyone (teams/runner.py ``_Board.take_steering``); an interrupt stops
+    the team, and the chat (or, with ``send``, this route) carries on with the
+    message as the conversation's next turn."""
+    run_id = team_run.team_run_id
+    principal = _require_can_steer(request, {"workspace": team_run.workspace})
+    mode, text = _validated(body)
+    status = str(team_run.status or "")
+    if status != "running":
+        raise HTTPException(status_code=409, detail={
+            "message": f"The team run is not running (status: {status or 'unknown'})",
+            "status": status,
+        })
+    msg = steering.post(run_id, text, mode=mode, author=principal)
+    result: Dict[str, Any] = {"message": msg, "run_id": run_id, "team": True}
+    if mode == steering.MODE_INJECT:
+        result["next"] = "wait"
+    else:
+        from teams.launcher import stop_team_run
+        stop_team_run(run_id)
+        result["message"] = steering.mark(msg["msg_id"], steering.STATUS_INTERRUPTED) or msg
+        conv_run = {"conversation_id": team_run.conversation_id, "workspace": team_run.workspace}
+        next_request = _next_chat_request(conv_run, text, team_run=team_run) if body.send else None
+        if next_request is not None:
+            _send_next_turn(next_request)
+            result["next"] = "sent"
+            result["conversation_id"] = next_request.conversation_id
+        else:
+            result["next"] = "send"
+    audit.record("run.steer", principal=principal, object_type="team_run", object_id=run_id,
+                 workspace=team_run.workspace,
+                 details={"mode": mode, "msg_id": msg["msg_id"], "next": result.get("next")})
+    return result
+
+
+@router.post("/api/runs/{run_id}/steer")
+async def steer_run(run_id: str, body: SteerBody, request: Request):
+    """Send a message to a running run: ``inject`` it before the next model
+    step, or ``interrupt`` the run and carry on with it (see module docstring).
+    409 with the run's status when the run is not running. ``run_id`` may also
+    name a team run: an inject goes on the team's board for the next member
+    to read, an interrupt stops the team."""
+    run = run_manager.get_run_by_id(run_id)
+    if not run:
+        team_run = _team_run(run_id)
+        if team_run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        return _steer_team(team_run, body, request)
+    principal = _require_can_steer(request, run)
+    mode, text = _validated(body)
 
     status = str(run.get("status") or "")
     if status != "running":
@@ -231,8 +340,14 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
             raise HTTPException(status_code=409, detail={
                 "message": "The run could not be stopped", "status": status})
         if is_chat:
-            result["next"] = "send"
             result["message"] = steering.mark(msg["msg_id"], steering.STATUS_INTERRUPTED) or msg
+            next_request = _next_chat_request(run, text) if body.send else None
+            if next_request is not None:
+                _send_next_turn(next_request)
+                result["next"] = "sent"
+                result["conversation_id"] = next_request.conversation_id
+            else:
+                result["next"] = "send"
         elif task is not None and agent_id:
             try:
                 new_run_id = _relaunch_task(run, task, text, author_name)
@@ -275,8 +390,15 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
 
 @router.get("/api/runs/{run_id}/steer")
 async def list_run_steering(run_id: str, request: Request):
-    """The messages sent to a run, oldest first, each with its state."""
-    run = _run_or_404(run_id)
+    """The messages sent to a run (or a team run), oldest first, each with its state."""
+    run = run_manager.get_run_by_id(run_id)
+    if not run:
+        team_run = _team_run(run_id)
+        if team_run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        access.require_visible(identity.request_principal(request), team_run.workspace)
+        return {"run_id": run_id, "status": team_run.status, "team": True,
+                "messages": steering.list_for_run(run_id)}
     access.require_visible(identity.request_principal(request), run.get("workspace"))
     status = str(run.get("status") or "")
     if status not in _LIVE_STATUSES and str(run.get("session_type") or "") != "chat":

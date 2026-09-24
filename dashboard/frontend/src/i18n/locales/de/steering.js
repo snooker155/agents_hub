@@ -30,6 +30,7 @@ export default {
   inputPlaceholder: 'Sagen Sie dem Agenten etwas, während er arbeitet…',
   relaunched: 'Der Lauf wurde gestoppt und als {{run}} neu gestartet.',
   sendFromChat: 'Der Durchgang wurde gestoppt. Senden Sie Ihre Nachricht aus dem Chat, zu dem die Unterhaltung gehört.',
+  sentAsNextTurn: 'Der Zug wurde gestoppt und Ihre Nachricht als nächster Zug des Gesprächs gesendet.',
   stoppedOnly: 'Der Lauf wurde gestoppt.',
   notRunning: 'Der Lauf läuft nicht mehr ({{status}}).',
   failed: 'Senden fehlgeschlagen: {{error}}',

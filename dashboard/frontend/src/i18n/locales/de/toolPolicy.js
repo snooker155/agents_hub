@@ -25,6 +25,7 @@ export default {
   mode: 'Modus',
   modeFor: 'Modus für {{tool}}',
   effective: 'Wirksam',
+  fromGroup: 'aus {{group}}',
   effectiveValue: '{{mode}} ({{source}})',
   effectiveAfterSave: 'Die Spalte „Wirksam“ zeigt die gespeicherte Richtlinie. Sie wird nach dem Speichern aktualisiert.',
   noTools: 'Der Eintrag dieses Agenten enthält keine Werkzeuge.',

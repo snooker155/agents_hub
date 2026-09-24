@@ -382,6 +382,13 @@ def _run_turns(
 
 # ── The run ──────────────────────────────────────────────────────────────────
 
+#: A message a person sent to a running team (``_Board.take_steering``):
+#: posted from ``user`` with its own kind; its ``run_id`` field carries the
+#: steering message id, so a chat can match it to the bubble it drew.
+STEER_SENDER = "user"
+STEER_KIND = "steer"
+
+
 class _Board:
     """The message bus: persists every entry, keeps it in memory for prompting,
     and streams it to whoever is watching."""
@@ -412,7 +419,24 @@ class _Board:
         return msg
 
     def view(self, viewer: str, *, see_all: bool = False) -> str:
+        self.take_steering()
         return board_block(self.messages, viewer, see_all=see_all)
+
+    def take_steering(self) -> None:
+        """Post what a person sent to this team run while it worked
+        (``POST /api/runs/{team_run_id}/steer``, common/steering.py) as a
+        message from the user to everyone. Called whenever a member's prompt
+        is built, so the next member to speak reads it."""
+        try:
+            from common import steering
+            taken = steering.claim_pending(self.run.team_run_id, len(self.messages))
+        except Exception:  # noqa: BLE001 - no steering table (an old database) is no messages
+            log.debug("team steering claim failed for %s", self.run.team_run_id, exc_info=True)
+            return
+        for msg in taken:
+            round_no = self.messages[-1].round if self.messages else 0
+            self.post(sender=STEER_SENDER, content=str(msg.get("body") or ""),
+                      round_no=round_no, kind=STEER_KIND, run_id=str(msg.get("msg_id") or "") or None)
 
 
 def _validate_for_run(team: Team) -> None:

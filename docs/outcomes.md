@@ -54,8 +54,8 @@ The same grader is available in [eval sets](evals.md) as the grader kind `rubric
 
 Loops take an optional `rubric` and `grader` (UI on the Loops page, and the Loop Creator's `create_loop_tool` / `modify_loop_tool`). With a rubric, each pass is graded per criterion instead of by the loop's evaluator. The loop stops when the rubric passes, the loop's `target_score` divided by 100 is the pass threshold on the mean score, and the unmet criteria with their feedback are what the next pass is told to fix.
 
-## Gaps
+## Cost
 
-The grader's tokens are added to the graded agent run (`loop.aux_calls`), so they show on the [Costs](costs.md) page and count toward the task's money cap from the next run on. A flow, team, loop or scenario has no run record of its own for them, so their gradings keep the cost on the grading only.
+The grader's tokens are added to a run record as `loop.aux_calls`, so they show on the [Costs](costs.md) page and count toward the task's money cap from the next run on: the graded run for an agent, the team's own run for a team, the task's latest run (a flow's or a loop's last node) for a flow or a loop. A scenario does not record its turns against the task, so its gradings keep their cost on the grading only.
 
 Related: [loops](loops.md), [evals](evals.md), [tasks](tasks.md).

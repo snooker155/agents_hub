@@ -49,7 +49,7 @@ describe('LiveRunStream steering', () => {
       { msg_id: 'm1', body: 'use the 2025 numbers', mode: 'inject', status: 'delivered', delivered_step: 3 },
     ] }));
     fireEvent.click(screen.getByRole('button', { name: /Steer/ }));
-    await waitFor(() => expect(steerRun).toHaveBeenCalledWith('run-1', 'use the 2025 numbers', 'inject'));
+    await waitFor(() => expect(steerRun).toHaveBeenCalledWith('run-1', 'use the 2025 numbers', 'inject', { send: false }));
     expect(await screen.findByText('Delivered at step 3')).toBeTruthy();
   });
 
@@ -61,8 +61,18 @@ describe('LiveRunStream steering', () => {
       { target: { value: 'wrong repo, stop' } });
     // The mode toggle is a radio group; the send button carries the mode's name.
     fireEvent.click(screen.getByRole('button', { name: /Interrupt/ }));
-    await waitFor(() => expect(steerRun).toHaveBeenCalledWith('run-1', 'wrong repo, stop', 'interrupt'));
+    await waitFor(() => expect(steerRun).toHaveBeenCalledWith('run-1', 'wrong repo, stop', 'interrupt', { send: true }));
     expect(await screen.findByText(/started again as abcdef12/)).toBeTruthy();
+  });
+
+  it('says the server sent the message on when it interrupts a chat turn', async () => {
+    steerRun.mockImplementation(() => ok({ next: 'sent', conversation_id: 'conv-1' }));
+    show('running');
+    fireEvent.click(await screen.findByRole('radio', { name: 'Interrupt' }));
+    fireEvent.change(screen.getByPlaceholderText('Tell the agent something while it works…'),
+      { target: { value: 'answer in German' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interrupt/ }));
+    expect(await screen.findByText(/sent as the next turn of the conversation/)).toBeTruthy();
   });
 
   it('says so when the run has already ended', async () => {

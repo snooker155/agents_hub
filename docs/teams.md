@@ -41,6 +41,11 @@ but now beats a heartbeat too. A team run claims its task as executor kind `team
 `GET /api/teams/runs/{id}` includes `has_checkpoint`, `host`, `heartbeat_at`,
 `resume_attempts`, `pid`, `log_file`.
 
+A person can talk to a running team: `POST /api/runs/{team_run_id}/steer`
+(or the chat composer while a team turn runs) puts the message on the board as
+a message from `user` to everyone, and the next member whose prompt is built
+reads it. An interrupt stops the team. See [steering](steering.md).
+
 ## Gotchas
 
 - Every member must exist and be available in the workspace.
@@ -49,4 +54,4 @@ but now beats a heartbeat too. A team run claims its task as executor kind `team
 - A centralized team with a weak leader degenerates into the leader doing all
   the work and paying for an audience.
 
-Related: [flows](flows.md), [agents](agents.md), [costs](costs.md).
+Related: [flows](flows.md), [agents](agents.md), [costs](costs.md), [steering](steering.md).

@@ -88,4 +88,14 @@ describe('ToolPolicyCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'toolPolicy.save' }));
     expect(await screen.findByText('Administrator access required')).toBeInTheDocument();
   });
+  it('shows which MCP group a tool came from', async () => {
+    api.getAgentToolPolicy.mockResolvedValue({ data: {
+      ...policyBody(),
+      effective: [{ tool: 'mcp__tickets__search', mode: 'always_allow', source: 'default' }],
+      groups: { 'mcp:tickets': ['mcp__tickets__search'] },
+    } });
+    render(<ToolPolicyCard agentId="a1" />);
+    expect(await screen.findByText('mcp__tickets__search')).toBeTruthy();
+    expect(screen.getByText(/toolPolicy.fromGroup.*mcp:tickets/)).toBeTruthy();
+  });
 });

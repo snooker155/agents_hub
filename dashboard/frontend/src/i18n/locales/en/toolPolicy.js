@@ -24,6 +24,7 @@ export default {
   mode: 'Mode',
   modeFor: 'Mode for {{tool}}',
   effective: 'Effective',
+  fromGroup: 'from {{group}}',
   effectiveValue: '{{mode}} ({{source}})',
   effectiveAfterSave: 'The effective column shows the saved policy. It updates once you save.',
   noTools: 'This agent has no tools on its record.',

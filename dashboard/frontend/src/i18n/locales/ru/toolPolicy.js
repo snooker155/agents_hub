@@ -25,6 +25,7 @@ export default {
   mode: 'Режим',
   modeFor: 'Режим для {{tool}}',
   effective: 'Действует',
+  fromGroup: 'из {{group}}',
   effectiveValue: '{{mode}} ({{source}})',
   effectiveAfterSave: 'Столбец «Действует» показывает сохранённую политику. Он обновится после сохранения.',
   noTools: 'В записи агента нет инструментов.',

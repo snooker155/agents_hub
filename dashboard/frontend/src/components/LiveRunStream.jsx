@@ -342,10 +342,14 @@ function RunSteer({ runId, done }) {
     setError('');
     setNote('');
     try {
-      const { data } = await steerRun(runId, body, mode);
+      // An interrupted chat turn is carried on by the server: this page does
+      // not own the conversation, so it cannot send the next turn itself.
+      const { data } = await steerRun(runId, body, mode, { send: mode === 'interrupt' });
       setText('');
       if (data?.next === 'relaunched') {
         setNote(t('steering.relaunched', { run: String(data.next_run_id || '').slice(0, 8) }));
+      } else if (data?.next === 'sent') {
+        setNote(t('steering.sentAsNextTurn'));
       } else if (data?.next === 'send') {
         setNote(t('steering.sendFromChat'));
       } else if (data?.next === 'none') {

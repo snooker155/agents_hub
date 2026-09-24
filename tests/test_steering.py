@@ -705,3 +705,95 @@ def test_a_chat_or_idle_copy_is_not_steered(busy_task_instance):
     rm.open_run(chat_run, "worker", status="running", link_to_session=False)
     assert delivery.steer_running_task({**instance, "current_run_id": chat_run}, "hi", msg_id) is None
     assert steering.list_for_run(run_id) == []
+
+
+# ── flows and teams in chat, and a chat turn carried on from the run page ────
+
+def test_a_message_a_finished_node_never_took_goes_to_the_next_node():
+    first, second = _rid(), _rid()
+    kept = steering.post(first, "use metric units")
+    assert steering.retarget_pending([first], second) == 1
+    [moved] = steering.claim_pending(second, 0)
+    assert moved["msg_id"] == kept["msg_id"]           # the client still follows it by its id
+    assert steering.claim_pending(first, 0) == []
+
+
+def test_a_multi_run_turn_settles_what_was_and_was_not_delivered():
+    node_a, node_b = _rid(), _rid()
+    taken = steering.post(node_a, "shorter please")
+    steering.claim_pending(node_a, 2)
+    left = steering.post(node_b, "and in German")
+    settled = steering.settle_turn([node_a, node_b])
+    assert settled["delivered"] == [{"msg_id": taken["msg_id"], "after_step": 2}]
+    assert settled["undelivered"] == [{"msg_id": left["msg_id"], "body": "and in German"}]
+
+
+def _team_run(status="running"):
+    from teams import store as team_store
+    from teams.models import TeamRun
+    run = TeamRun(team_id="team-1", workspace=None, status=status, goal="write a plan",
+                  conversation_id="conv-team")
+    team_store.save_run(run)
+    return run
+
+
+def test_a_team_board_posts_a_steered_message_for_the_next_member():
+    from teams.runner import STEER_KIND, STEER_SENDER, _Board
+
+    run = _team_run()
+    board = _Board(run)
+    board.post(sender="(request)", content="write a plan", round_no=0, kind="goal")
+    msg = steering.post(run.team_run_id, "keep it under a page")
+    view = board.view("writer")
+    assert "keep it under a page" in view and f"{STEER_SENDER}:" in view
+    posted = board.messages[-1]
+    assert posted.kind == STEER_KIND and posted.run_id == msg["msg_id"]
+    board.view("writer")
+    assert sum(1 for m in board.messages if m.kind == STEER_KIND) == 1   # taken once
+
+
+def test_the_route_steers_a_running_team(client, monkeypatch):
+    run = _team_run()
+    resp = client.post(f"/api/runs/{run.team_run_id}/steer", json={"message": "add costs"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["next"] == "wait" and resp.json()["team"] is True
+    listed = client.get(f"/api/runs/{run.team_run_id}/steer").json()
+    assert [m["body"] for m in listed["messages"]] == ["add costs"]
+
+    stopped = []
+    import teams.launcher as tl
+    monkeypatch.setattr(tl, "stop_team_run", lambda rid: stopped.append(rid) or True)
+    resp = client.post(f"/api/runs/{run.team_run_id}/steer",
+                       json={"message": "stop, do Y", "mode": "interrupt"})
+    assert resp.json()["next"] == "send" and stopped == [run.team_run_id]
+    done = _team_run(status="completed")
+    assert client.post(f"/api/runs/{done.team_run_id}/steer", json={"message": "x"}).status_code == 409
+
+
+def test_the_run_page_interrupt_sends_the_next_chat_turn_itself(client, monkeypatch):
+    from routes import steering as steering_routes
+
+    sent = []
+    monkeypatch.setattr(steering_routes, "_send_next_turn", lambda req: sent.append(req))
+    run_id = _rid()
+    _open(run_id, session_type="chat", task_id="conv-7", agent_id="helper")
+    resp = client.post(f"/api/runs/{run_id}/steer",
+                       json={"message": "answer in German", "mode": "interrupt", "send": True})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["next"] == "sent" and resp.json()["conversation_id"] == "conv-7"
+    [req] = sent
+    assert req.agent_id == "helper" and req.conversation_id == "conv-7"
+    assert req.message == "answer in German" and req.source == "steer"
+
+
+def test_an_interrupted_flow_node_carries_the_flow_on(client, monkeypatch):
+    from routes import steering as steering_routes
+
+    sent = []
+    monkeypatch.setattr(steering_routes, "_send_next_turn", lambda req: sent.append(req))
+    run_id = _rid()
+    _open(run_id, session_type="chat", task_id="conv-8", channel="chat_flow", flow_id="flow-9")
+    resp = client.post(f"/api/runs/{run_id}/steer",
+                       json={"message": "skip the review", "mode": "interrupt", "send": True})
+    assert resp.json()["next"] == "sent"
+    assert sent[0].flow_id == "flow-9" and sent[0].agent_id is None

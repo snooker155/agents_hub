@@ -30,6 +30,7 @@ export default {
   inputPlaceholder: 'Tell the agent something while it works…',
   relaunched: 'The run was stopped and started again as {{run}}.',
   sendFromChat: 'The turn was stopped. Send your message from the chat that owns the conversation.',
+  sentAsNextTurn: 'The turn was stopped and your message was sent as the next turn of the conversation.',
   stoppedOnly: 'The run was stopped.',
   notRunning: 'The run is no longer running ({{status}}).',
   failed: 'Could not send: {{error}}',

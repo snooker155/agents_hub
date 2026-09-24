@@ -44,13 +44,22 @@ describe('steer mode choice', () => {
 });
 
 describe('turn state', () => {
-  it('knows the run of the bubble being written, only for an agent turn', () => {
+  it('knows the run of the bubble being written, for an agent turn and a flow node', () => {
     const messages = [user('u1', 'hi'), agent('a1', { run_id: 'run-1' })];
     expect(inFlightRunId(messages, { loading: true, targetMode: 'agent' })).toBe('run-1');
     expect(inFlightRunId(messages, { loading: false, targetMode: 'agent' })).toBeNull();
-    expect(inFlightRunId(messages, { loading: true, targetMode: 'flow' })).toBeNull();
+    // A flow steers the node running now, the last agent bubble.
+    expect(inFlightRunId(messages, { loading: true, targetMode: 'flow' })).toBe('run-1');
     // Before the stream's meta event there is no run to talk to yet.
     expect(inFlightRunId([user('u1', 'hi'), agent('a1')], { loading: true, targetMode: 'agent' })).toBeNull();
+  });
+
+  it('steers a team turn by its team run', () => {
+    const messages = [user('u1', 'hi'), agent('lead', { run_id: 'm-1', team_run_id: 'trun-1' })];
+    expect(inFlightRunId(messages, { loading: true, targetMode: 'team' })).toBe('trun-1');
+    // Nothing of this turn yet: the previous turn's team run is not steered.
+    const fresh = [agent('old', { team_run_id: 'trun-0' }), user('u2', 'next')];
+    expect(inFlightRunId(fresh, { loading: true, targetMode: 'team' })).toBeNull();
   });
 
   it('offers all three modes with a run, only the queue without one, none when idle', () => {

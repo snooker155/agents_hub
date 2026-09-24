@@ -64,8 +64,22 @@ export function saveSteerMode(mode) {
  * no single run to talk to.
  */
 export function inFlightRunId(messages, { loading, targetMode }) {
-  if (!loading || targetMode !== 'agent') return null;
+  if (!loading) return null;
   const list = messages || [];
+  if (targetMode === 'team') {
+    // A team turn is steered as a whole, by its team run (the message goes
+    // on the team's board). Any of this turn's bubbles names it; the turn
+    // starts after the person's own request.
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const m = list[i];
+      if (m.role === 'user' && !m.steer) return null;
+      if (m.team_run_id) return m.team_run_id;
+    }
+    return null;
+  }
+  // An agent turn, or the flow node running now (each node is a run of its
+  // own; a message its node never took goes on to the next node).
+  if (targetMode !== 'agent' && targetMode !== 'flow') return null;
   const last = list[list.length - 1];
   if (!last || last.role !== 'agent') return null;
   return last.run_id || null;

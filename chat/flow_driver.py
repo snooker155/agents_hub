@@ -14,6 +14,7 @@ and returns ``(driver, state)`` — ``state`` exposes the per-node bookkeeping
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
@@ -158,6 +159,16 @@ def build_chat_driver(
             "agent_id": yaml_agent_id, "agent_name": label, "tag": node_domain,
             "content": f"Running {label}", "status": "running", "input": prompt,
         })
+        # A message sent to a node of this turn that finished without taking
+        # it goes to the node starting now (common/steering.py), so a person
+        # steering a flow is heard by whichever agent runs next.
+        try:
+            from common import steering
+            steering.retarget_pending(
+                [m.get("run_id") for m in node_meta.values() if m.get("run_id")], run_id)
+        except Exception:  # noqa: BLE001 - an unmoved message is settled with the turn instead
+            logging.getLogger(__name__).debug("steering: could not move messages to %s", run_id,
+                                              exc_info=True)
         node_meta[node_id] = {
             "run_id": run_id, "label": label, "agent_id": yaml_agent_id,
             "domain": node_domain, "log_file": log_file, "log_lines": log_lines,
@@ -198,8 +209,11 @@ def build_chat_driver(
                 create_agent, yaml_agent_id, workspace=workspace_abs, streaming=True
             )
             callback.bind_model(agent.provider or "", agent.model or "")
+            # The node's run id reaches its loop so a message sent to this
+            # node while it works is read before its next step.
+            from chat.pipelines import _run_id_kwargs
             return await agent.arun(prompt, history=state.node_history.get(node_id),
-                                    callbacks=[callback])
+                                    callbacks=[callback], **_run_id_kwargs(agent, run_id))
 
         # Per-node artifact recorder so each node's file changes are attributed to
         # its own run. create_task copies the context, so set→create→reset here.

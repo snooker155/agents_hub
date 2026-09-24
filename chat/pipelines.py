@@ -81,6 +81,17 @@ def _settle_steering(run_id: str) -> list:
         return []
 
 
+def _settle_turn(run_ids: list) -> dict:
+    """``{delivered, undelivered}`` for a turn made of several runs (a flow's
+    nodes, a team), only the non-empty lists; see common.steering.settle_turn."""
+    try:
+        from common import steering
+        settled = steering.settle_turn([r for r in run_ids if r])
+    except Exception:  # noqa: BLE001 - a steering lookup failing must not break closing the turn
+        return {}
+    return {k: v for k, v in settled.items() if v}
+
+
 async def _run_chat_pipeline(request: ChatRequest):
     """
     Drive the full chat run lifecycle and yield events as dicts.
@@ -535,12 +546,14 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
                     "status": "stopped" if ev.get("any_failure") else "completed",
                 })
                 flow_done = True
-                yield {
+                done_event = {
                     "type": "done", "ok": ev.get("ok"),
                     "flow_id": request.flow_id, "flow_name": flow_name,
                     "session_id": session_id, "run_id": state.last_run_id,
                     "responses": responses, "duration_ms": total_duration_ms,
                 }
+                done_event.update(_settle_turn([m.get("run_id") for m in node_meta.values()]))
+                yield done_event
     except asyncio.CancelledError:
         # The SSE client disconnected / pressed Stop mid-run, so the engine never
         # reached flow_finish. Finalize the History record as stopped here (the
@@ -683,6 +696,7 @@ async def _run_chat_team_pipeline(request: ChatRequest):
         "session_id": session_id, "rounds": run.rounds_done,
         "stop_reason": run.stop_reason, "total_cost": run.total_cost,
         "duration_ms": duration_ms,
+        **_settle_turn([run.team_run_id]),
     }
 
 

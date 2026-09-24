@@ -636,6 +636,27 @@ def _relaunch_executor(tid: UUID, task: Any, executor: Any, attempt: int, max_it
     return str((result or {}).get("run_id") or "")
 
 
+def _cost_run_for(tid: UUID, executor_run_id: str) -> Optional[str]:
+    """The ``runs`` record an executor's grading is charged to: the
+    executor's own record when it has one (a team working a task opens one
+    under its team run id), else the task's latest run (a flow's or a loop's
+    last node). None when the task has none (a scenario records its roles'
+    turns without the task), and the cost stays on the grading only."""
+    from managers import run_manager
+    try:
+        if executor_run_id and run_manager.get_run_by_id(executor_run_id):
+            return executor_run_id
+        from common import db
+        row = db.get_conn().execute(
+            "SELECT run_id FROM runs WHERE task_id = ? "
+            "ORDER BY COALESCE(finished_at, started_at, created_at) DESC LIMIT 1",
+            (str(tid),)).fetchone()
+        return str(row["run_id"]) if row is not None else None
+    except Exception:  # noqa: BLE001 - no run to charge keeps the cost on the grading
+        log.debug("outcome: no run to charge the grading of %s to", tid, exc_info=True)
+        return None
+
+
 def on_executor_completed(task_id: Any) -> bool:
     """Grade what a flow, team, loop or scenario produced for the task.
 
@@ -664,10 +685,15 @@ def on_executor_completed(task_id: Any) -> bool:
     except Exception:  # noqa: BLE001 - no stored result grades as an empty answer
         log.debug("task results lookup failed for %s", tid, exc_info=True)
 
-    # An executor's run id names a flow, team, loop or scenario run, not a
-    # row of ``runs``, so the grading is not attached to a run record.
+    # An executor's run id names a flow, team, loop or scenario run; the
+    # grader's tokens go onto the run record that stands for that work (see
+    # _cost_run_for), so the Costs page and the task's cap include them.
     evaluation = grade_outcome(task, output, run_id=None, trigger="run")
     evaluation["run_id"] = run_id or None
+    cost_run = _cost_run_for(tid, run_id)
+    if cost_run:
+        evaluation["cost_run_id"] = cost_run
+        _count_on_run(cost_run, evaluation)
     evaluations = record_evaluation(tid, evaluation)
     actor = f"{executor.kind}:{executor.id}"
     try:

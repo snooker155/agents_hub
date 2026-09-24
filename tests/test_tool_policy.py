@@ -460,3 +460,24 @@ def test_decisions_route_filters(client, settings, classifier, loop_state):
     assert [r["decision"] for r in rows] == ["deny"]
     rows = client.get("/api/tool-policy/decisions", params={"agent_id": "someone-else"}).json()["decisions"]
     assert rows == []
+
+
+def test_an_mcp_group_is_shown_as_the_tools_its_server_offered(client, ws):
+    from agents import registry
+    from mcp_client import store as mcp_store
+
+    mcp_store.create_server(ws, {"id": "tickets", "name": "Tickets", "transport": "http",
+                                 "url": "https://mcp.example.com/tickets"})
+    mcp_store.record_status(ws, "tickets", tool_names=["search", "close"])
+    mcp_store.create_server(ws, {"id": "wiki", "name": "Wiki", "transport": "http",
+                                 "url": "https://mcp.example.com/wiki"})
+    spec = AgentSpec(id=f"mcp-{uuid4().hex[:6]}", name="Mcp", type="local",
+                     entrypoint="agents.standard_agent:StandardAgent",
+                     tools=["read_file", "mcp:tickets", "mcp:wiki"], owner_workspace=ws)
+    registry.add_agent(spec)
+
+    body = client.get(f"/api/agents/{spec.id}/tool-policy").json()
+    tools = [r["tool"] for r in body["effective"]]
+    # A connected server's group becomes its tools; one never connected keeps its alias.
+    assert tools == ["read_file", "mcp__tickets__search", "mcp__tickets__close", "mcp:wiki"]
+    assert body["groups"] == {"mcp:tickets": ["mcp__tickets__search", "mcp__tickets__close"]}

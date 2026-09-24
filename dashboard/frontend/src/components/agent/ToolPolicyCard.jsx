@@ -75,6 +75,15 @@ export default function ToolPolicyCard({ agentId, agent, onSaved }) {
     [data],
   );
   const tools = (data?.effective || []).map((row) => row.tool);
+  // Tools an ``mcp:<server>`` group on the record stands for (the backend
+  // expands it from the server's last connect): shown with their group.
+  const groupOf = useMemo(() => {
+    const out = {};
+    for (const [alias, ids] of Object.entries(data?.groups || {})) {
+      for (const id of ids || []) out[id] = alias;
+    }
+    return out;
+  }, [data]);
 
   const setMode = (tool, mode) => {
     setMessage('');
@@ -171,7 +180,14 @@ export default function ToolPolicyCard({ agentId, agent, onSaved }) {
                     const locked = row?.source === 'never_gated';
                     return (
                       <tr key={tool} className="border-t border-gray-100">
-                        <td className="py-1.5 pr-3 font-mono text-xs">{tool}</td>
+                        <td className="py-1.5 pr-3 font-mono text-xs">
+                          {tool}
+                          {groupOf[tool] && (
+                            <span className="block font-sans text-[11px] text-gray-400">
+                              {t('toolPolicy.fromGroup', { group: groupOf[tool] })}
+                            </span>
+                          )}
+                        </td>
                         <td className="py-1.5 pr-3">
                           <select
                             value={draft[tool] || INHERIT}

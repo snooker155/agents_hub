@@ -441,10 +441,25 @@ function handleAgentEvent(event, ctx) {
     }
     // Messages the turn ended without taking: queued, and sent as the next
     // turn once this one has closed (useChatSteering).
-    if (!isMultiAgent && Array.isArray(event.undelivered) && event.undelivered.length) {
+    // A flow or a team turn is several runs and may not stream every
+    // delivered notice, so its done event also says which were delivered:
+    // those must not be sent again as the next turn.
+    if (Array.isArray(event.delivered) && event.delivered.length) {
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== convId) return c;
+          let messages = c.messages;
+          for (const d of event.delivered) messages = markSteerDelivered(messages, d.msg_id, d.after_step);
+          return { ...c, messages };
+        }),
+      );
+    }
+    if (Array.isArray(event.undelivered) && event.undelivered.length) {
       setConversations((prev) =>
         prev.map((c) =>
-          c.id !== convId ? c : { ...c, messages: applyUndelivered(c.messages, event.undelivered, assistantId) },
+          c.id !== convId ? c : {
+            ...c, messages: applyUndelivered(c.messages, event.undelivered, isMultiAgent ? null : assistantId),
+          },
         ),
       );
     }

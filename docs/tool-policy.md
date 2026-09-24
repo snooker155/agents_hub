@@ -8,6 +8,8 @@ Three modes decide what an agent's tool call can do: `always_allow` runs it, `al
 
 **Per workspace**, from Settings, Tool policy block, or `PUT /api/workspaces/{name}/policy`: the same.
 
+An `mcp:<server>` group on the agent is shown on the card as the tools that server offered on its last connect, each with its own mode, since a call carries the tool's own id (`mcp__<server>__<tool>`). A server never connected yet stays a group, and the `"*"` entries apply to its tools.
+
 The first match wins: the agent's tool entry, the agent's `"*"`, the workspace's tool entry, the workspace's `"*"`. With nothing set, the [approval gate](hooks.md) decides as before when `require_tool_approval` is on.
 
 ## What each mode does

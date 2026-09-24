@@ -743,7 +743,8 @@
       "related": [
         "agents",
         "costs",
-        "flows"
+        "flows",
+        "steering"
       ],
       "headings": [
         "Modes",
@@ -1361,7 +1362,7 @@
         "Blocking",
         "API and audit",
         "In loops",
-        "Gaps"
+        "Cost"
       ]
     },
     {
@@ -1381,8 +1382,7 @@
         "In the chat composer",
         "On pages",
         "Access and audit",
-        "Containers and remote agents",
-        "Gaps"
+        "Containers and remote agents"
       ]
     },
     {

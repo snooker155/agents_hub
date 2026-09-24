@@ -622,3 +622,30 @@ def test_an_executor_at_the_attempt_limit_blocks(fake_grader, executor_launches,
     assert "Docs" in (task.blocked_reason or "")
     assert executor_launches == []
     assert notifications
+
+
+def test_an_executors_grading_is_charged_to_its_run(fake_grader, executor_launches):
+    fake_grader(_grade_json())
+    t = _task_with_outcome()
+    # A team working a task opens a run record under its team run id.
+    rm.open_run("team-run-1", "team:team-1", task_id=str(t.id), status="running",
+                link_to_session=False)
+    _finish_executor(t.id)
+
+    [ev] = ts.get_task(t.id).outcome_evaluations
+    assert ev["cost_run_id"] == "team-run-1"
+    [call] = rm.get_run_by_id("team-run-1")["loop"]["aux_calls"]
+    assert call["purpose"] == "outcome_grader" and call["input_tokens"] == 1200
+
+
+def test_a_flow_grading_is_charged_to_the_tasks_last_run(fake_grader, executor_launches):
+    fake_grader(_grade_json())
+    t = _task_with_outcome()
+    node = rm.new_unique_run_id()
+    rm.open_run(node, "writer", task_id=str(t.id), status="running", link_to_session=False)
+    rm.close_run(node, status="completed", exit_code=0)
+    _finish_executor(t.id, kind="flow")
+
+    [ev] = ts.get_task(t.id).outcome_evaluations
+    assert ev["cost_run_id"] == node
+    assert rm.get_run_by_id(node)["loop"]["aux_calls"][0]["purpose"] == "outcome_grader"

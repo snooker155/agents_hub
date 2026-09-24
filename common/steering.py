@@ -126,6 +126,40 @@ def post(run_id: str, body: str, *, mode: str = MODE_INJECT,
     }
 
 
+def retarget_pending(from_run_ids: List[str], to_run_id: str) -> int:
+    """Hand the inject messages still waiting on ``from_run_ids`` to
+    ``to_run_id``, keeping their ids. A flow chat turn runs one agent run per
+    node: a message the node that finished never took goes to the node that
+    starts next, and the client that sent it can still follow it by its id.
+    Returns how many moved."""
+    ids = [str(r) for r in (from_run_ids or []) if r and str(r) != str(to_run_id)]
+    if not ids or not to_run_id:
+        return 0
+    marks = ", ".join("?" * len(ids))
+    with db.transaction() as conn:
+        cur = conn.execute(
+            f"UPDATE run_steering SET run_id = ? WHERE run_id IN ({marks}) "
+            "AND delivered_at IS NULL AND status = 'pending' AND mode = 'inject'",
+            (str(to_run_id), *ids))
+        return int(getattr(cur, "rowcount", 0) or 0)
+
+
+def settle_turn(run_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """What happened to the messages sent into a chat turn made of several
+    runs (a flow's nodes, a team): ``delivered`` as ``[{msg_id, after_step}]``
+    and ``undelivered`` as ``[{msg_id, body}]``, the latter marked expired so
+    the client sends them as its next turn. The client uses both to settle the
+    bubbles it drew, since a multi-run turn may not stream every notice."""
+    delivered_out: List[Dict[str, Any]] = []
+    undelivered_out: List[Dict[str, Any]] = []
+    for rid in [str(r) for r in (run_ids or []) if r]:
+        for m in delivered(rid):
+            delivered_out.append({"msg_id": m["msg_id"], "after_step": m.get("delivered_step")})
+        for m in mark_expired(rid):
+            undelivered_out.append({"msg_id": m["msg_id"], "body": m["body"]})
+    return {"delivered": delivered_out, "undelivered": undelivered_out}
+
+
 def get(msg_id: str) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT * FROM run_steering WHERE msg_id = ?", (str(msg_id),)).fetchone()
