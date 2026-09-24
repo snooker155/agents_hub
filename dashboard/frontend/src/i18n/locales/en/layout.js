@@ -65,6 +65,8 @@ export default {
     nodes: 'Nodes',
     nodeDetails: 'Node Details',
     containers: 'Containers',
+    browser: 'Browser',
+    modelDetail: 'Model',
     projects: 'Projects',
     projectDetails: 'Project Details',
     models: 'Models',

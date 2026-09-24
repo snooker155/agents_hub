@@ -61,6 +61,10 @@ revoked or its owner goes away.
   every `ah` command, and any direct call to `common.auth.auth_headers()`,
   authenticates as whichever account it was cut for, scoped to whatever
   workspace that job should touch.
+- **An OpenAI client calling the hub's models.** The key is the `api_key`
+  an OpenAI SDK sends to the hub's `/v1` (see
+  [the hub as a provider](hub-as-provider.md)); every call is counted and
+  audited under the key's owner.
 
 `common.auth.auth_headers()` tries `AGENTS_HUB_API_TOKEN`, then
 `AGENTS_HUB_SERVICE_TOKEN`, then `AGENTS_HUB_API_KEY`, in that order, so a

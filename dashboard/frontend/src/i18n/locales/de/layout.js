@@ -65,6 +65,8 @@ export default {
     nodes: 'Knoten',
     nodeDetails: 'Knotendetails',
     containers: 'Container',
+    browser: 'Browser',
+    modelDetail: 'Modell',
     projects: 'Projekte',
     projectDetails: 'Projektdetails',
     models: 'Modelle',

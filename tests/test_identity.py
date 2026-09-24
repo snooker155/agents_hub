@@ -68,6 +68,8 @@ def test_a_typo_falls_back_to_single_rather_than_failing_to_start():
     ("GET", "/api/auth/mode"),          # the frontend has to render something
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/bootstrap"),
+    ("GET", "/v1beta"),                 # only /v1 itself and below is closed
+    ("OPTIONS", "/v1/chat/completions"),  # preflight stays open
 ])
 def test_open_paths(method, path):
     assert is_open_path(method, path) is True
@@ -78,6 +80,9 @@ def test_open_paths(method, path):
     ("GET", "/api/auth/users"),
     ("POST", "/api/auth/mode"),      # only the GET of it is public
     ("GET", "/api/ingestion-report"),  # prefix match must be on a boundary
+    ("GET", "/v1"),                     # the model server, outside /api but closed
+    ("GET", "/v1/models"),
+    ("POST", "/v1/chat/completions"),
 ])
 def test_closed_paths(method, path):
     assert is_open_path(method, path) is False

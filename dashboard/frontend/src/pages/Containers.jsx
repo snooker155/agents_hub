@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { getAgents } from '../api';
+import PreviewFrame from '../components/preview/PreviewFrame';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -164,6 +165,7 @@ export default function Containers() {
   const [removing, setRemoving] = useState({});
   const [logViewer, setLogViewer] = useState(null);   // container name
   const [dockerfileViewer, setDockerfileViewer] = useState(null); // agent id
+  const [previewOpen, setPreviewOpen] = useState({});  // container name -> bool
   const [error, setError] = useState('');
   const [buildLog, setBuildLog] = useState('');
   const [noCache, setNoCache] = useState(false);
@@ -462,7 +464,8 @@ export default function Containers() {
           ) : (
             <div className="divide-y divide-gray-50">
               {visibleContainers.map(c => (
-                <div key={c.id || c.name} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                <div key={c.id || c.name} className="py-3 first:pt-0 last:pb-0">
+                <div className="flex items-center justify-between">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-800 flex items-center gap-1">
                       {stateIcon(c.state)}
@@ -489,6 +492,15 @@ export default function Containers() {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
+                    {c.http_url && c.state === 'running' && (
+                      <button
+                        onClick={() => setPreviewOpen(o => ({ ...o, [c.name]: !o[c.name] }))}
+                        title={t('preview.previewButton')}
+                        className="text-gray-400 hover:text-indigo-600 p-1.5 rounded hover:bg-indigo-50"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     <button
                       onClick={() => setLogViewer(c.name)}
                       title={t('containers.viewLogs')}
@@ -517,6 +529,12 @@ export default function Containers() {
                       </button>
                     )}
                   </div>
+                </div>
+                {previewOpen[c.name] && c.http_url && c.state === 'running' && (
+                  <div className="mt-3">
+                    <PreviewFrame target={{ kind: 'container', name: c.name }} height={420} />
+                  </div>
+                )}
                 </div>
               ))}
             </div>

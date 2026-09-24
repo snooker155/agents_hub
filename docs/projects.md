@@ -24,6 +24,18 @@ folder, a structure graph and a task tree.
    ordering and dependencies.
 4. Work the tasks, through the orchestrator or by hand.
 
+## Preview
+
+The Preview tab shows the project's frontend (`project.frontend.url`, or
+`http://localhost:{port}` when only a port is configured). Two ways to look
+at it: **Direct**, the original same-origin iframe, and **Through the hub**
+(the default when a url or port is set), which loads the page through the
+same authenticated ticket proxy containers use, see docs/containers.md,
+"Preview through the hub", for how the ticket and the proxy work. Through the
+hub is what makes a project preview usable from anywhere the dashboard itself
+is reachable, not only from a browser that can also reach the frontend's
+host directly.
+
 ## Gotchas
 
 - The architect reads what is there. A project pointed at an empty folder

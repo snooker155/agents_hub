@@ -8,6 +8,7 @@ import {
   getProjectSpecFromCode, syncProjectIssues, publishProjectBranch,
 } from '../api';
 import ImportRepoModal from '../components/ImportRepoModal';
+import PreviewFrame from '../components/preview/PreviewFrame';
 import ProjectGraph from '../components/flow/ProjectGraph';
 import PlannerChat from '../components/flow/PlannerChat';
 import TaskBoard from '../components/TaskBoard';
@@ -143,6 +144,12 @@ export default function ProjectDetails() {
   const [endpointSearch, setEndpointSearch] = useState('');
   const [expandedTags, setExpandedTags] = useState(new Set(['default']));
   const [manualBackendUrl, setManualBackendUrl] = useState('');
+  // Preview tab (feature 7a): 'hub' goes through the authenticated ticket
+  // proxy (dashboard/backend/routes/preview.py), 'direct' is the original
+  // same-origin iframe. Defaults to 'hub' whenever there is anything to
+  // preview at all: the tab renders nothing either way without a frontend
+  // url/port, so there is no wrong default for a project with neither.
+  const [previewMode, setPreviewMode] = useState('hub');
   const [swaggerSource, setSwaggerSource] = useState(null); // 'live' | 'code' | filename
   const [specFromCodeLoading, setSpecFromCodeLoading] = useState(false);
   const [specFromCodeError, setSpecFromCodeError] = useState('');
@@ -1092,22 +1099,43 @@ export default function ProjectDetails() {
         <div className="space-y-4">
           {project.frontend?.enabled && frontendUrl ? (
             <>
-              <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
-                <Globe className="w-4 h-4 text-blue-500" />
-                <span className="text-sm text-gray-600">{frontendUrl}</span>
-                <a href={frontendUrl} target="_blank" rel="noreferrer"
-                  className="ml-auto flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800">
-                  Open in new tab <ExternalLink className="w-3 h-3" />
-                </a>
+              <div className="bg-white rounded-xl border border-gray-200 p-2 inline-flex items-center gap-1">
+                {[['hub', t('preview.throughTheHub')], ['direct', t('preview.direct')]].map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    onClick={() => setPreviewMode(mode)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
+                      previewMode === mode
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" style={{ height: '70vh' }}>
-                <iframe
-                  src={frontendUrl}
-                  title={t('projectDetails.frontendPreview')}
-                  className="w-full h-full border-0"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                />
-              </div>
+              {previewMode === 'hub' ? (
+                <PreviewFrame target={{ kind: 'project', project_id: project.id }} height={600} />
+              ) : (
+                <>
+                  <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+                    <Globe className="w-4 h-4 text-blue-500" />
+                    <span className="text-sm text-gray-600">{frontendUrl}</span>
+                    <a href={frontendUrl} target="_blank" rel="noreferrer"
+                      className="ml-auto flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800">
+                      Open in new tab <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" style={{ height: '70vh' }}>
+                    <iframe
+                      src={frontendUrl}
+                      title={t('projectDetails.frontendPreview')}
+                      className="w-full h-full border-0"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                    />
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <div className="text-center py-16 text-gray-400">

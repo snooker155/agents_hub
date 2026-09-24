@@ -427,6 +427,23 @@ class Settings(BaseSettings):
     browser_timeout: float = Field(
         default=45.0, validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TIMEOUT", "browser_timeout"))
 
+    # ── Model runtime (providers/local_models.py, deploy/models/) ──────────────
+    # Base URL of the hub's own model runtime, e.g. http://models:8200 under
+    # the compose `models` profile or http://127.0.0.1:8200 in host mode.
+    # Empty (default) hides the runtime: the Local models card says it is not
+    # configured and the provider hub-local is never registered.
+    models_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_URL", "models_url"))
+    # Shared token the runtime requires on every call (its MODELS_TOKEN). It
+    # is also the api_key of the hub-local backend. The _TOKEN suffix keeps it
+    # out of run_shell's environment (scrubbed_env).
+    models_token: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_TOKEN", "models_token"))
+    # Seconds the hub waits for one call to the runtime. A load waits longer
+    # on its own (the runtime gives llama-server up to 120 s to come up).
+    models_timeout: float = Field(
+        default=60.0, validation_alias=AliasChoices("AGENTS_HUB_MODELS_TIMEOUT", "models_timeout"))
+
     # ── Sandboxed code execution (tools/run_code.py) ──────────────────────────
     # Image per language, as JSON ({"python": "python:3.12-slim"}) or as
     # comma-separated lang=image pairs. Languages left out keep their default

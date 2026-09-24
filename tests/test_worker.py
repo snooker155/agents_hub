@@ -60,6 +60,25 @@ def _queued_task_run(run_id: str = "r1"):
 
 # ── the api role hands launches to the queue ─────────────────────────────────
 
+def test_child_env_rides_on_the_spec_and_nothing_else_does(monkeypatch):
+    """A caller that wraps a launch in child_env (a browser session handed to
+    the agent, docs/browser.md) gets its variables onto the spec, so a worker
+    on another host still sets them; a launch outside such a block carries no
+    env key at all, which is what keeps secrets off the queue."""
+    import agents.agent_launcher as launcher
+    from runtime.entity_launch import child_env
+
+    monkeypatch.setenv("AGENTS_HUB_ROLE", "api")
+    t = ts.create_task("handed a browser session")
+    with child_env({"AGENTS_HUB_BROWSER_SESSION": "A1"}):
+        run_id, _ = launcher.start_run(str(t.id), "swe_agent", {"description": "hi"})
+    assert run_queue.get(run_id)["payload"]["env"] == {"AGENTS_HUB_BROWSER_SESSION": "A1"}
+
+    t2 = ts.create_task("plain")
+    run_id2, _ = launcher.start_run(str(t2.id), "swe_agent", {"description": "hi"})
+    assert "env" not in run_queue.get(run_id2)["payload"]
+
+
 def test_api_role_enqueues_instead_of_spawning(monkeypatch):
     import agents.agent_launcher as launcher
 

@@ -181,6 +181,150 @@ def test_perform_rejects_missing_arguments(service_app):
         asyncio.run(service_app.perform(object(), "press", "", ""))
 
 
+# ── Service: registry, frames and input ──────────────────────────────────────
+
+class _FakeMouse:
+    def __init__(self, log):
+        self.log = log
+
+    async def click(self, x, y):
+        self.log.append(("click", x, y))
+
+    async def dblclick(self, x, y):
+        self.log.append(("dblclick", x, y))
+
+    async def move(self, x, y):
+        self.log.append(("move", x, y))
+
+    async def wheel(self, dx, dy):
+        self.log.append(("wheel", dx, dy))
+
+
+class _FakeKeyboard:
+    def __init__(self, log):
+        self.log = log
+
+    async def type(self, text):
+        self.log.append(("type", text))
+
+    async def press(self, key):
+        self.log.append(("press", key))
+
+
+class _FakePage:
+    """Enough of a Playwright page for the frame and input endpoints."""
+
+    def __init__(self, url="https://example.com/"):
+        self.log = []
+        self.url = url
+        self.viewport_size = {"width": 1280, "height": 800}
+        self.mouse, self.keyboard = _FakeMouse(self.log), _FakeKeyboard(self.log)
+
+    async def title(self):
+        return "Example"
+
+    async def screenshot(self, **kw):
+        self.log.append(("screenshot", kw))
+        return b"\xff\xd8\xff fake jpeg"
+
+    async def wait_for_load_state(self, *a, **kw):
+        return None
+
+    async def goto(self, url, **kw):
+        self.log.append(("goto", url))
+        self.url = url
+        return type("R", (), {"status": 200})()
+
+    async def go_back(self, **kw):
+        self.log.append(("back",))
+
+
+def _live(service_app, **tags):
+    s = service_app.Session(id=tags.pop("id", "L1"), policy=service_app.Policy(),
+                            context=None, page=_FakePage(), **tags)
+    service_app.state.sessions[s.id] = s
+    return s
+
+
+@pytest.fixture
+def registry(service_app, monkeypatch):
+    monkeypatch.setattr(service_app.state, "sessions", {})
+    return service_app
+
+
+def test_create_records_the_metadata_and_list_filters_by_run(registry, monkeypatch):
+    app = registry
+
+    async def fake_new(pol):
+        return app.Session(id=f"N{len(app.state.sessions)}", policy=pol, context=None, page=_FakePage())
+
+    monkeypatch.setattr(app, "_new_session", fake_new)
+    body = app.CreateSession(policy={}, run_id="run-1", workspace="ws", owner="agent", label="scout")
+    sid = asyncio.run(app.create_session(body))["session_id"]
+    asyncio.run(app.create_session(app.CreateSession(workspace="other", owner="user", label="ann")))
+
+    listed = asyncio.run(app.list_sessions(run_id="run-1"))["sessions"]
+    assert [x["session_id"] for x in listed] == [sid]
+    one = listed[0]
+    assert (one["run_id"], one["workspace"], one["owner"], one["label"]) == ("run-1", "ws", "agent", "scout")
+    assert one["url"] == "https://example.com/" and one["title"] == "Example"
+    assert {"created_at", "last_used_at"} <= set(one)
+    assert len(asyncio.run(app.list_sessions(workspace="other"))["sessions"]) == 1
+    assert len(asyncio.run(app.list_sessions())["sessions"]) == 2
+
+
+def test_patch_retags_a_session_for_a_hand_off(registry):
+    _live(registry, owner="user", label="ann", workspace="ws")
+    out = asyncio.run(registry.patch_session("L1", registry.PatchSession(run_id="r9", owner="agent", label="scout")))
+    assert (out["run_id"], out["owner"], out["label"], out["workspace"]) == ("r9", "agent", "scout", "ws")
+
+
+def test_frame_is_a_jpeg_data_url_of_the_viewport(registry):
+    s = _live(registry)
+    out = asyncio.run(registry.frame("L1"))
+    assert out["image"].startswith("data:image/jpeg;base64,")
+    assert (out["width"], out["height"]) == (1280, 800)
+    assert out["url"] == "https://example.com/" and out["title"] == "Example"
+    assert s.page.log[0] == ("screenshot", {"type": "jpeg", "quality": 60})
+
+
+@pytest.mark.parametrize("body,expected", [
+    ({"kind": "click", "x": 10, "y": 20}, [("click", 10, 20)]),
+    ({"kind": "dblclick", "x": 1, "y": 2}, [("dblclick", 1, 2)]),
+    ({"kind": "type", "text": "hello"}, [("type", "hello")]),
+    ({"kind": "key", "key": "Enter"}, [("press", "Enter")]),
+    ({"kind": "scroll", "x": 5, "y": 6, "dx": 0, "dy": 400}, [("move", 5, 6), ("wheel", 0, 400)]),
+    ({"kind": "back"}, [("back",)]),
+])
+def test_input_kinds_map_to_the_page(registry, monkeypatch, body, expected):
+    _public_dns(monkeypatch)
+    s = _live(registry)
+    out = asyncio.run(registry.send_input("L1", registry.Input(**body)))
+    assert s.page.log == expected
+    assert out["url"] == "https://example.com/"
+
+
+def test_input_navigate_goes_through_the_policy(registry, monkeypatch):
+    _public_dns(monkeypatch, "10.0.0.7")
+    s = _live(registry)
+    with pytest.raises(registry.HTTPException) as err:
+        asyncio.run(registry.send_input("L1", registry.Input(kind="navigate", url="http://intranet/")))
+    assert err.value.status_code == 403
+    assert s.page.log == []
+
+
+def test_input_that_lands_somewhere_refused_is_a_403(registry, monkeypatch):
+    def dns(host, port):
+        return [(2, 1, 6, "", ("10.0.0.9" if host == "inside.example" else "93.184.216.34", 0))]
+    monkeypatch.setattr(web.socket, "getaddrinfo", dns)
+    s = _live(registry)
+    s.page.url = "http://inside.example/"
+    with pytest.raises(registry.HTTPException) as err:
+        asyncio.run(registry.send_input("L1", registry.Input(kind="click", x=1, y=1)))
+    assert err.value.status_code == 403
+    assert ("goto", "about:blank") in s.page.log
+
+
 # ── Hub tools ────────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -346,3 +490,95 @@ def test_browser_tools_are_in_the_catalog():
     for tool_id in ("browser_open", "browser_read", "browser_act", "browser_screenshot", "browser_close"):
         spec = get_tool_by_id(tool_id)
         assert spec is not None and spec.category == "web", tool_id
+
+
+# ── Hub tools: session tags and hand-off ─────────────────────────────────────
+
+def test_create_session_sends_run_workspace_and_owner(configured, monkeypatch):
+    from common.agent_context import current_agent_id
+    from common.workspace_context import _workspace_ctx
+    monkeypatch.setenv("AGENT_RUN_ID", "run-42")
+    monkeypatch.delenv(browser.ADOPT_ENV, raising=False)
+    seen = []
+
+    def fake(method, path, **kw):
+        seen.append((method, path, kw))
+        if method == "GET" and path == "/sessions":
+            return _Resp(data={"sessions": []})
+        return _Resp(data={"session_id": "S7"})
+
+    monkeypatch.setattr(browser, "_request", fake)
+    ws_token, agent_token = _workspace_ctx.set("acme"), current_agent_id.set("scout")
+    try:
+        assert browser._session_id() == "S7"
+    finally:
+        _workspace_ctx.reset(ws_token)
+        current_agent_id.reset(agent_token)
+    body = seen[-1][2]["json"]
+    assert (body["run_id"], body["workspace"], body["owner"], body["label"]) == ("run-42", "acme", "agent", "scout")
+    assert "policy" in body
+
+
+def _adoption_fake(seen, alive=("H1",)):
+    def fake(method, path, **kw):
+        seen.append((method, path))
+        if method == "GET" and path.startswith("/sessions/"):
+            sid = path.rsplit("/", 1)[-1]
+            return _Resp(data={"session_id": sid}) if sid in alive else _Resp(status=404, data={"detail": "gone"})
+        if method == "GET" and path == "/sessions":
+            return _Resp(data={"sessions": []})
+        if method == "PATCH":
+            return _Resp(data={})
+        return _Resp(data={"session_id": "FRESH"})
+    return fake
+
+
+def test_a_session_handed_over_through_the_environment_is_adopted(configured, monkeypatch):
+    monkeypatch.setenv("AGENT_RUN_ID", "run-env")
+    monkeypatch.setenv(browser.ADOPT_ENV, "H1")
+    monkeypatch.setattr(browser, "_ADOPT_TRIED", set())
+    seen = []
+    monkeypatch.setattr(browser, "_request", _adoption_fake(seen))
+    assert browser._session_id() == "H1"
+    assert ("GET", "/sessions/H1") in seen and ("PATCH", "/sessions/H1") in seen
+    assert ("POST", "/sessions") not in seen
+
+
+def test_a_dead_handed_over_session_is_ignored_once(configured, monkeypatch):
+    monkeypatch.setenv("AGENT_RUN_ID", "run-dead")
+    monkeypatch.setenv(browser.ADOPT_ENV, "DEAD")
+    monkeypatch.setattr(browser, "_ADOPT_TRIED", set())
+    seen = []
+    monkeypatch.setattr(browser, "_request", _adoption_fake(seen))
+    assert browser._session_id() == "FRESH"
+    browser._forget_session()
+    seen.clear()
+    assert browser._session_id() == "FRESH"
+    assert ("GET", "/sessions/DEAD") not in seen
+
+
+def test_adopt_session_in_process(configured, monkeypatch):
+    monkeypatch.delenv("AGENT_RUN_ID", raising=False)
+    monkeypatch.delenv(browser.ADOPT_ENV, raising=False)
+    monkeypatch.setattr(browser, "_ADOPT_TRIED", set())
+    seen = []
+    monkeypatch.setattr(browser, "_request", _adoption_fake(seen))
+    token = browser.adopt_session("H1")
+    try:
+        assert browser._session_id() == "H1"
+    finally:
+        browser.adopted_session.reset(token)
+
+
+def test_a_session_retagged_with_the_run_id_is_found(configured, monkeypatch):
+    monkeypatch.setenv("AGENT_RUN_ID", "run-tagged")
+    monkeypatch.delenv(browser.ADOPT_ENV, raising=False)
+
+    def fake(method, path, **kw):
+        if method == "GET" and path == "/sessions":
+            assert kw["params"] == {"run_id": "run-tagged"}
+            return _Resp(data={"sessions": [{"session_id": "T1"}]})
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(browser, "_request", fake)
+    assert browser._session_id(create=False) == "T1"

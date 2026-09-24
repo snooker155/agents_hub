@@ -248,7 +248,7 @@ def prepare_run(
     except Exception:
         pass
 
-    return {
+    spec: Dict[str, Any] = {
         "kind": QUEUE_KIND,
         "run_id": run_id,
         "task_id": str(task_id),
@@ -265,6 +265,23 @@ def prepare_run(
         "execution_mode": execution_mode,
         "priority": int(params.get("priority") or 0) if str(params.get("priority") or "").lstrip("-").isdigit() else 0,
     }
+    # Extra variables the caller asked every launch in its context to carry
+    # (runtime.entity_launch.child_env): a browser session handed to the
+    # agent, for one. Plain strings and never a secret, so they may travel
+    # through the queue; the key is absent when there are none.
+    extra = _child_env_extra()
+    if extra:
+        spec["env"] = extra
+    return spec
+
+
+def _child_env_extra() -> Dict[str, str]:
+    try:
+        from runtime.entity_launch import _CHILD_ENV
+        extra = _CHILD_ENV.get() or {}
+    except Exception:
+        return {}
+    return {str(k): str(v) for k, v in extra.items()}
 
 
 def enqueue_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -301,6 +318,12 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     log_file.parent.mkdir(parents=True, exist_ok=True)
     env = _build_env(ws_name, session_id, str(log_file), instance_id,
                      agent_id=agent_id, user_id=str(spec.get("launched_by") or "") or None)
+    # What the caller put on the spec through child_env fills the gaps only:
+    # the launcher's own values (credentials, relay token, run ids) always win.
+    extra = spec.get("env")
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            env.setdefault(str(key), str(value))
 
     if execution_mode == "docker":
         _start_run_in_docker(run_id, agent_id, cli_args, ws_name, ws_path, env, log_file, instance_id)

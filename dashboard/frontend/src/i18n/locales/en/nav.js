@@ -25,6 +25,7 @@ export default {
   teams: 'Teams',
   nodes: 'Nodes',
   containers: 'Containers',
+  browser: 'Browser',
   flows: 'Agent Flows',
   loops: 'Loops',
   registry: 'Registry',

@@ -22,13 +22,28 @@ Policy
     docs/tools-and-capabilities.md.
 
 Endpoints
-    POST   /sessions                      {policy}            -> {session_id}
+    POST   /sessions                      {policy, run_id, workspace, owner, label} -> {session_id}
+    GET    /sessions?run_id=&workspace=                       -> {sessions: [info]}
+    GET    /sessions/{id}                                     -> info
+    PATCH  /sessions/{id}                 {run_id, owner, label} -> info
+    GET    /sessions/{id}/frame                               -> {url, title, width, height, image}
+    POST   /sessions/{id}/input           {kind, x, y, text, key, dx, dy, url} -> {url, title, blocked}
     POST   /sessions/{id}/navigate        {url}               -> {url, title, status}
     GET    /sessions/{id}/read                                -> {url, title, html, blocked}
     POST   /sessions/{id}/act             {action, selector, text} -> {url, title, blocked}
     GET    /sessions/{id}/screenshot?full_page=0              -> image/png
     DELETE /sessions/{id}
     GET    /healthz                                           (no token)
+
+Who a session belongs to
+    The hub tags each session with the run it serves (``run_id``), the
+    workspace whose policy it carries, whether an agent or a person drives it
+    (``owner``) and a label. The registry lives here, in the one process that
+    owns the browsers, so the hub's API and its agent subprocesses find the
+    same session without sharing any state of their own. ``frame`` and
+    ``input`` are what the dashboard uses to show a session and to drive it
+    (docs/browser.md); both take the session lock, so a person's click and an
+    agent's action never interleave inside one page.
 
 ``read`` returns the rendered DOM as HTML, not text: the hub turns it into text
 with the same ``tools.web.html_to_text`` ``fetch_url`` uses, so both tools hand
@@ -37,6 +52,7 @@ the agent identically extracted, identically annotated content.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hmac
 import logging
 import os
@@ -69,6 +85,8 @@ IDLE_TIMEOUT = _env_int("BROWSER_IDLE_TIMEOUT", 300)
 NAV_TIMEOUT_MS = _env_int("BROWSER_NAV_TIMEOUT_MS", 20_000)
 ACTION_TIMEOUT_MS = _env_int("BROWSER_ACTION_TIMEOUT_MS", 5_000)
 MAX_HTML_CHARS = _env_int("BROWSER_MAX_HTML_CHARS", 2_000_000)
+# The page size every session gets; the dashboard maps clicks through it.
+VIEWPORT = {"width": 1280, "height": 800}
 # Blocked requests remembered per session, reported back on the next call.
 _BLOCKED_KEEP = 20
 
@@ -84,9 +102,16 @@ class Session:
     last_used: float = field(default_factory=time.monotonic)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     blocked: List[Dict[str, str]] = field(default_factory=list)
+    run_id: str = ""
+    workspace: str = ""
+    owner: str = "agent"
+    label: str = ""
+    created_at: float = field(default_factory=time.time)
+    last_used_at: float = field(default_factory=time.time)
 
     def touch(self) -> None:
         self.last_used = time.monotonic()
+        self.last_used_at = time.time()
 
     def note_blocked(self, url: str, reason: str) -> None:
         self.blocked.append({"url": url[:500], "reason": reason})
@@ -167,7 +192,7 @@ async def _new_session(policy: Policy) -> Session:
         # A service worker's own fetches bypass context routing; blocking
         # workers keeps every request on the checked path.
         service_workers="block",
-        viewport={"width": 1280, "height": 800},
+        viewport=dict(VIEWPORT),
         ignore_https_errors=False,
     )
     context.set_default_timeout(ACTION_TIMEOUT_MS)
@@ -292,8 +317,33 @@ async def _enforce_current_url(s: Session) -> Optional[str]:
 
 # ── API ───────────────────────────────────────────────────────────────────────
 
+Owner = Literal["agent", "user"]
+
+
 class CreateSession(BaseModel):
     policy: Dict[str, Any] = Field(default_factory=dict)
+    run_id: str = ""
+    workspace: str = ""
+    owner: Owner = "agent"
+    label: str = ""
+
+
+class PatchSession(BaseModel):
+    run_id: Optional[str] = None
+    owner: Optional[Owner] = None
+    label: Optional[str] = None
+
+
+class Input(BaseModel):
+    kind: Literal["click", "dblclick", "mousemove", "type", "key", "scroll",
+                  "navigate", "back", "forward", "reload"]
+    x: float = 0
+    y: float = 0
+    text: str = ""
+    key: str = ""
+    dx: float = 0
+    dy: float = 0
+    url: str = ""
 
 
 class Navigate(BaseModel):
@@ -318,33 +368,89 @@ async def create_session(body: CreateSession) -> Dict[str, Any]:
     if len(state.sessions) >= MAX_SESSIONS:
         raise HTTPException(status_code=429, detail=f"session limit reached ({MAX_SESSIONS})")
     s = await _new_session(Policy.from_dict(body.policy))
+    s.run_id, s.workspace, s.owner, s.label = (
+        body.run_id.strip(), body.workspace.strip(), body.owner, body.label.strip()[:200])
     state.sessions[s.id] = s
     return {"session_id": s.id, "idle_timeout": IDLE_TIMEOUT}
+
+
+async def describe(s: Session) -> Dict[str, Any]:
+    """One session as the listing shows it. Reading the title does not need
+    the lock: it is a snapshot, and a page mid-action just answers late."""
+    try:
+        title = await s.page.title()
+    except Exception:
+        title = ""
+    return {
+        "session_id": s.id, "run_id": s.run_id, "workspace": s.workspace,
+        "owner": s.owner, "label": s.label, "url": getattr(s.page, "url", "") or "",
+        "title": title, "created_at": s.created_at, "last_used_at": s.last_used_at,
+    }
+
+
+@app.get("/sessions", dependencies=[Depends(require_token)])
+async def list_sessions(run_id: str = "", workspace: str = "") -> Dict[str, Any]:
+    """Every open session, newest first, optionally narrowed to one run or one
+    workspace. Listing does not touch a session: only use keeps it alive."""
+    out = []
+    for s in sorted(state.sessions.values(), key=lambda x: x.created_at, reverse=True):
+        if run_id and s.run_id != run_id:
+            continue
+        if workspace and s.workspace != workspace:
+            continue
+        out.append(await describe(s))
+    return {"sessions": out}
+
+
+@app.get("/sessions/{session_id}", dependencies=[Depends(require_token)])
+async def get_session(session_id: str) -> Dict[str, Any]:
+    return await describe(_session(session_id))
+
+
+@app.patch("/sessions/{session_id}", dependencies=[Depends(require_token)])
+async def patch_session(session_id: str, body: PatchSession) -> Dict[str, Any]:
+    """Retag a session, for a hand-off: the page stays as it is, only who
+    drives it and which run it belongs to change. The policy never changes."""
+    s = _session(session_id)
+    if body.run_id is not None:
+        s.run_id = body.run_id.strip()
+    if body.owner is not None:
+        s.owner = body.owner
+    if body.label is not None:
+        s.label = body.label.strip()[:200]
+    return await describe(s)
+
+
+async def _navigate(s: Session, url: str) -> Dict[str, Any]:
+    """Go to ``url`` in ``s``, the caller holding the lock. Shared by the
+    agent's ``/navigate`` and a person's address bar, so both pass the same
+    check before the page moves and the same check on where it landed."""
+    ok, reason = await _checked(url, s.policy)
+    if not ok:
+        raise HTTPException(status_code=403, detail=f"refused {url}: {reason}")
+    status: Optional[int] = None
+    try:
+        resp = await s.page.goto(url, wait_until="domcontentloaded")
+        status = resp.status if resp is not None else None
+    except Exception as exc:
+        # A page script that navigates somewhere blocked interrupts goto;
+        # the refusal is recorded by the route handler a moment later.
+        await asyncio.sleep(0.3)
+        blocked = s.take_blocked()
+        if blocked:
+            raise HTTPException(status_code=403, detail=f"refused {blocked[-1]['url']}: {blocked[-1]['reason']}")
+        raise HTTPException(status_code=502, detail=f"navigation failed: {type(exc).__name__}: {exc}")
+    refused = await _enforce_current_url(s)
+    if refused:
+        raise HTTPException(status_code=403, detail=f"refused final URL: {refused}")
+    return {**await _page_info(s), "status": status}
 
 
 @app.post("/sessions/{session_id}/navigate", dependencies=[Depends(require_token)])
 async def navigate(session_id: str, body: Navigate) -> Dict[str, Any]:
     s = _session(session_id)
     async with s.lock:
-        ok, reason = await _checked(body.url, s.policy)
-        if not ok:
-            raise HTTPException(status_code=403, detail=f"refused {body.url}: {reason}")
-        status: Optional[int] = None
-        try:
-            resp = await s.page.goto(body.url, wait_until="domcontentloaded")
-            status = resp.status if resp is not None else None
-        except Exception as exc:
-            # A page script that navigates somewhere blocked interrupts goto;
-            # the refusal is recorded by the route handler a moment later.
-            await asyncio.sleep(0.3)
-            blocked = s.take_blocked()
-            if blocked:
-                raise HTTPException(status_code=403, detail=f"refused {blocked[-1]['url']}: {blocked[-1]['reason']}")
-            raise HTTPException(status_code=502, detail=f"navigation failed: {type(exc).__name__}: {exc}")
-        refused = await _enforce_current_url(s)
-        if refused:
-            raise HTTPException(status_code=403, detail=f"refused final URL: {refused}")
-        return {**await _page_info(s), "status": status}
+        return await _navigate(s, body.url)
 
 
 @app.get("/sessions/{session_id}/read", dependencies=[Depends(require_token)])
@@ -418,6 +524,91 @@ async def act(session_id: str, body: Act) -> Dict[str, Any]:
         refused = await _enforce_current_url(s)
         if refused:
             raise HTTPException(status_code=403, detail=f"refused the page the action led to: {refused}")
+        return await _page_info(s)
+
+
+@app.get("/sessions/{session_id}/frame", dependencies=[Depends(require_token)])
+async def frame(session_id: str) -> Dict[str, Any]:
+    """The viewport as a JPEG data URL, for the dashboard's live view.
+
+    Always the full 1280x800 viewport: the UI scales the image and maps a
+    click back through the size returned here, which keeps the coordinates of
+    ``/input`` in viewport pixels whatever the screen. Taken under the lock,
+    so a frame requested during an agent's action waits for it to finish and
+    never shows a half-applied step. Each frame touches the session, which is
+    what keeps a session someone is watching from being reaped.
+    """
+    s = _session(session_id)
+    async with s.lock:
+        jpeg = await s.page.screenshot(type="jpeg", quality=60)
+        try:
+            title = await s.page.title()
+        except Exception:
+            title = ""
+        size = getattr(s.page, "viewport_size", None) or VIEWPORT
+    return {
+        "url": s.page.url, "title": title,
+        "width": int(size.get("width") or VIEWPORT["width"]),
+        "height": int(size.get("height") or VIEWPORT["height"]),
+        "image": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
+    }
+
+
+async def perform_input(page: Any, body: Input) -> None:
+    """Replay one input a person made on the live view. Everything but
+    ``navigate``, which goes through :func:`_navigate` and its policy check.
+    Coordinates are viewport pixels."""
+    kind = body.kind
+    if kind == "click":
+        await page.mouse.click(body.x, body.y)
+    elif kind == "dblclick":
+        await page.mouse.dblclick(body.x, body.y)
+    elif kind == "mousemove":
+        await page.mouse.move(body.x, body.y)
+    elif kind == "type":
+        if body.text:
+            await page.keyboard.type(body.text)
+    elif kind == "key":
+        if not body.key:
+            raise ValueError("key needs a key, e.g. Enter")
+        await page.keyboard.press(body.key)
+    elif kind == "scroll":
+        await page.mouse.move(body.x, body.y)
+        await page.mouse.wheel(body.dx, body.dy)
+    elif kind == "back":
+        await page.go_back(wait_until="domcontentloaded")
+    elif kind == "forward":
+        await page.go_forward(wait_until="domcontentloaded")
+    elif kind == "reload":
+        await page.reload(wait_until="domcontentloaded")
+    else:
+        raise ValueError(f"unknown input {kind!r}")
+
+
+@app.post("/sessions/{session_id}/input", dependencies=[Depends(require_token)])
+async def send_input(session_id: str, body: Input) -> Dict[str, Any]:
+    """A click, keystroke, scroll or navigation from the dashboard. The page
+    may move as a result (a link, a form), so the landing is re-checked
+    exactly as after an agent's ``/act``."""
+    s = _session(session_id)
+    async with s.lock:
+        if body.kind == "navigate":
+            return await _navigate(s, body.url.strip())
+        try:
+            await perform_input(s.page, body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            # Back with no history, a reload interrupted by a blocked
+            # redirect: not worth failing the request, the frame shows it.
+            log.debug("input %s failed: %s", body.kind, exc)
+        try:
+            await s.page.wait_for_load_state("domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+        except Exception:
+            pass
+        refused = await _enforce_current_url(s)
+        if refused:
+            raise HTTPException(status_code=403, detail=f"refused the page the input led to: {refused}")
         return await _page_info(s)
 
 

@@ -338,6 +338,8 @@ const Layout = ({ children }) => {
         { name: t('nav.teams'), path: '/teams', icon: UsersRound },
         { name: t('nav.nodes'), path: '/nodes', icon: Server },
         { name: t('nav.containers'), path: '/containers', icon: Box },
+        // The agent's browser on screen, and free browsing on the same service.
+        { name: t('nav.browser'), path: '/browser', icon: Globe },
       ],
     },
     {

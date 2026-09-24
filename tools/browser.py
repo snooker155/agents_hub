@@ -22,7 +22,12 @@ content and can send data out (a URL, a form field). See tools/capabilities.py.
 
 One browser session per run, keyed by the run id (see :func:`_run_key`). The
 service closes idle sessions on its own, so a run that never calls
-``browser_close`` does not leak a browser.
+``browser_close`` does not leak a browser. Each session is tagged on the
+service with its run, workspace and agent, which is how the dashboard finds
+the page a run is on (docs/browser.md).
+
+A run can also continue in a session somebody else opened: a person hands
+their page to an agent from the Browser page. See :func:`_adopted_session`.
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ import logging
 import os
 import threading
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Tuple
 
@@ -49,6 +55,14 @@ NOT_CONFIGURED = (
 # run key -> browser service session id
 _SESSIONS: Dict[str, str] = {}
 _LOCK = threading.Lock()
+
+#: The environment variable a launcher sets to hand a run an existing session.
+ADOPT_ENV = "AGENTS_HUB_BROWSER_SESSION"
+#: The in-process counterpart of :data:`ADOPT_ENV`, see :func:`adopt_session`.
+adopted_session: ContextVar[Optional[str]] = ContextVar("browser_adopted_session", default=None)
+# (run key, session id) pairs already offered for adoption, so a dead handed
+# over session is verified once and then left alone.
+_ADOPT_TRIED: set = set()
 
 
 class BrowserError(Exception):
@@ -144,20 +158,108 @@ def _detail(resp) -> str:
         return resp.text or f"HTTP {resp.status_code}"
 
 
+def _run_id_of(key: str) -> str:
+    return key[len("run:"):] if key.startswith("run:") else ""
+
+
+def _agent_label() -> str:
+    try:
+        from common.agent_context import current_agent_id
+        return str(current_agent_id.get() or "")
+    except Exception:
+        return ""
+
+
+def _session_tags(key: str) -> Dict[str, Any]:
+    """What the service records about an agent's session: the run it serves,
+    the workspace whose policy it carries and the agent, so the dashboard can
+    find the page a run is on and show whose it is."""
+    workspace = ""
+    try:
+        from common.workspace_context import resolve_active_workspace
+        workspace = resolve_active_workspace() or ""
+    except Exception:
+        pass
+    return {"run_id": _run_id_of(key), "workspace": workspace,
+            "owner": "agent", "label": _agent_label()}
+
+
 def _create_session() -> str:
-    resp = _request("POST", "/sessions", json={"policy": session_policy()})
+    body = {"policy": session_policy(), **_session_tags(_run_key())}
+    resp = _request("POST", "/sessions", json=body)
     if resp.status_code != 200:
         raise BrowserError(f"could not open a browser session: {_detail(resp)}")
     return str(resp.json()["session_id"])
+
+
+def adopt_session(session_id: Optional[str]):
+    """Continue in ``session_id`` for runs started in this context.
+
+    The in-process form of a hand-off (a subprocess run gets
+    ``AGENTS_HUB_BROWSER_SESSION`` instead). Returns the context variable's
+    token, for ``adopted_session.reset`` by a caller that scopes it.
+    """
+    return adopted_session.set((session_id or "").strip() or None)
+
+
+def _adopted_session(key: str) -> Optional[str]:
+    """A session this run was handed rather than one it opens itself.
+
+    Three places, in order: the context variable :func:`adopt_session` sets,
+    the environment variable a launcher sets, and the service's own registry
+    (a session a hand-off retagged with this run's id). Each candidate is
+    checked once with ``GET /sessions/{id}``, so a session that expired
+    before the agent got to it is ignored and the run opens its own.
+    """
+    candidates = [adopted_session.get(), os.environ.get(ADOPT_ENV, "").strip() or None]
+    for sid in candidates:
+        if not sid or (key, sid) in _ADOPT_TRIED:
+            continue
+        _ADOPT_TRIED.add((key, sid))
+        try:
+            resp = _request("GET", f"/sessions/{sid}")
+        except BrowserError:
+            continue
+        if resp.status_code == 200:
+            _tag_adopted(sid, key)
+            return sid
+    run_id = _run_id_of(key)
+    if run_id:
+        try:
+            resp = _request("GET", "/sessions", params={"run_id": run_id})
+        except BrowserError:
+            return None
+        if resp.status_code == 200:
+            found = (resp.json() or {}).get("sessions") or []
+            if found:
+                return str(found[0]["session_id"])
+    return None
+
+
+def _tag_adopted(sid: str, key: str) -> None:
+    """Tell the service this session now belongs to this run and agent, so
+    the run's live view finds it. Best effort: the page works either way."""
+    tags = _session_tags(key)
+    body = {"owner": "agent", "label": tags["label"]}
+    if tags["run_id"]:
+        body["run_id"] = tags["run_id"]
+    try:
+        _request("PATCH", f"/sessions/{sid}", json=body)
+    except BrowserError:
+        pass
 
 
 def _session_id(create: bool = True) -> Optional[str]:
     key = _run_key()
     with _LOCK:
         sid = _SESSIONS.get(key)
-    if sid or not create:
+    if sid:
         return sid
-    sid = _create_session()
+    sid = _adopted_session(key)
+    if sid is None:
+        if not create:
+            return None
+        sid = _create_session()
     with _LOCK:
         _SESSIONS[key] = sid
     return sid
@@ -432,4 +534,5 @@ BROWSER_TOOLS = [browser_open, browser_read, browser_act, browser_screenshot, br
 __all__ = [
     "BROWSER_TOOLS", "browser_open", "browser_read", "browser_act",
     "browser_screenshot", "browser_close", "session_policy", "NOT_CONFIGURED",
+    "adopt_session", "adopted_session", "ADOPT_ENV",
 ]

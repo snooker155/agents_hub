@@ -32,6 +32,7 @@ or `token` reaches, whether or not the request logger is on:
 | `workspace.env` | `routes/workspaces.py` (`update_workspace_env`) | workspace-scoped environment variables changed |
 | `workspace.settings` | `routes/workspaces.py` (`update_workspace_settings_overrides`) | workspace-scoped settings changed |
 | `workspace.budget` | `routes/costs.py` (`set_budget`) | a workspace's budget caps changed |
+| `model.serve` | `routes/openai_compat.py` | a call to the hub's own `/v1/chat/completions`, with token counts (docs/hub-as-provider.md) |
 
 [Single sign-on](sso.md), [groups](identity.md), [SCIM](scim.md), [API
 keys](api-keys.md) and [secrets](secrets.md) record their own key points

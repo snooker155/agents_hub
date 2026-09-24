@@ -42,6 +42,7 @@ QUEUE_WARN_AGE_SECONDS = 300.0
 OUTBOX_WARN_PENDING = 100
 PROVIDER_TIMEOUT_SECONDS = 5.0
 BROWSER_TIMEOUT_SECONDS = 3.0
+MODELS_TIMEOUT_SECONDS = 3.0
 
 Result = Tuple[str, str, Dict[str, Any]]
 
@@ -288,6 +289,34 @@ def check_browser(snap: Dict[str, Any]) -> Result:
     return ("ok", "The browser service answers.", detail)
 
 
+# ── model runtime ────────────────────────────────────────────────────────────
+
+def check_models_runtime(snap: Dict[str, Any]) -> Result:
+    from common.config import settings
+    url = str(getattr(settings, "models_url", "") or "").strip().rstrip("/")
+    if not url:
+        return ("skip", "The model runtime is not configured.", {})
+    import httpx
+    try:
+        resp = httpx.get(f"{url}/healthz", timeout=MODELS_TIMEOUT_SECONDS)
+    except Exception as exc:  # noqa: BLE001 - reported as the check's result
+        return ("fail", f"The model runtime at {url} is unreachable: {type(exc).__name__}.",
+                {"url": url, "error": str(exc)[:300]})
+    detail: Dict[str, Any] = {"url": url, "status_code": resp.status_code}
+    if resp.status_code >= 400:
+        return ("fail", f"The model runtime answered HTTP {resp.status_code}.", detail)
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    if isinstance(body, dict):
+        detail["loaded"] = body.get("loaded")
+        detail["mode"] = body.get("mode")
+    if not str(getattr(settings, "models_token", "") or "").strip():
+        return ("warn", "The model runtime answers but AGENTS_HUB_MODELS_TOKEN is not set.", detail)
+    return ("ok", "The model runtime answers.", detail)
+
+
 # ── docker ───────────────────────────────────────────────────────────────────
 
 def check_docker(snap: Dict[str, Any]) -> Result:
@@ -376,6 +405,7 @@ CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("outbox", "Outbound notifications", check_outbox),
     ("disk", "Free disk", check_disk),
     ("browser", "Browser service", check_browser),
+    ("models_runtime", "Model runtime", check_models_runtime),
     ("docker", "Docker", check_docker),
     ("frontend_build", "Frontend build", check_frontend_build),
     ("system_workspace", "System workspace", check_system_workspace),

@@ -410,6 +410,51 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
 
+  # The hub's own model runtime (deploy/models/): llama.cpp's llama-server
+  # behind a token-protected API and an OpenAI-compatible gateway that the hub
+  # registers as the provider `hub-local`. Under the `models` profile, so a
+  # plain `docker compose up` never builds or starts it:
+  #   docker compose --profile models up --build
+  # .env needs:
+  #   AGENTS_HUB_MODELS_TOKEN=<a long random string>
+  #   AGENTS_HUB_MODELS_URL=http://models:8200        (backend in compose)
+  #   AGENTS_HUB_MODELS_URL=http://127.0.0.1:8200     (backend on the host)
+  # Unlike the browser service, the port is published, on loopback only: a
+  # backend run on the host (the usual dev setup) has to reach it, and it
+  # serves no untrusted content, so it needs no network of its own. Every
+  # call but /healthz still needs the token.
+  #
+  # CPU only by default. For NVIDIA, build from the llama.cpp :server-cuda
+  # image (deploy/models/Dockerfile) and add under this service:
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  # Docker on macOS has no GPU; run the runtime on the host there
+  # (docs/local-models.md, host mode).
+  models:
+    build:
+      context: .
+      dockerfile: deploy/models/Dockerfile
+    profiles:
+      - models
+    environment:
+      MODELS_TOKEN: ${AGENTS_HUB_MODELS_TOKEN:-}
+      MODELS_MAX_LOADED: ${MODELS_MAX_LOADED:-2}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - models_data:/models
+    ports:
+      - "127.0.0.1:${MODELS_PORT:-8200}:8200"
+    init: true
+    mem_limit: ${MODELS_MEM_LIMIT:-8g}
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
 networks:
   browser_net:
     driver: bridge
@@ -418,5 +463,7 @@ volumes:
   postgres_data:
   # MinIO's object data, used only under the `ha` profile.
   minio_data:
+  # GGUF files of the model runtime, used only under the `models` profile.
+  models_data:
 # Uncomment together with the redis volume above to persist Redis too.
 #   redis_data:

@@ -65,6 +65,8 @@ export default {
     nodes: 'Узлы',
     nodeDetails: 'Детали узла',
     containers: 'Контейнеры',
+    browser: 'Браузер',
+    modelDetail: 'Модель',
     projects: 'Проекты',
     projectDetails: 'Детали проекта',
     models: 'Модели',

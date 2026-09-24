@@ -54,6 +54,8 @@ const Health = lazy(() => import('./pages/Health'));
 const Deployment = lazy(() => import('./pages/Deployment'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Models = lazy(() => import('./pages/Models'));
+const ModelDetail = lazy(() => import('./pages/ModelDetail'));
+const Browser = lazy(() => import('./pages/Browser'));
 const Costs = lazy(() => import('./pages/Costs'));
 const Evals = lazy(() => import('./pages/Evals'));
 const Playground = lazy(() => import('./pages/Playground'));
@@ -155,6 +157,7 @@ function AppRoutes() {
         <Route path="/nodes" element={guard(<Nodes />)} />
         <Route path="/nodes/:nodeId" element={guard(<NodeDetail />)} />
         <Route path="/containers" element={guard(<Containers />)} />
+        <Route path="/browser" element={guard(<Browser />)} />
         <Route path="/health" element={guard(<Health />)} />
         <Route path="/deployment" element={guard(<Deployment />)} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
@@ -164,6 +167,7 @@ function AppRoutes() {
         <Route path="/studio" element={guard(<Studio />)} />
         <Route path="/studio/:viewId" element={guard(<Studio />)} />
         <Route path="/models" element={guard(<Models />)} />
+        <Route path="/models/:provider/:model" element={guard(<ModelDetail />)} />
         <Route path="/costs" element={guard(<Costs />)} />
         <Route path="/evals" element={guard(<Evals />)} />
         {/* The playground is optional (GET /api/health → features.playground).

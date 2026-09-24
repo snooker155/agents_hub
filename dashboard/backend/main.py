@@ -456,6 +456,32 @@ app.include_router(models_router.router)
 # Costs domain: token/$ spend breakdowns and per-workspace budget caps
 app.include_router(costs.router)
 
+# Local models (feature 5): an external Ollama managed from the UI and the
+# hub's own runtime under deploy/models. See docs/local-models.md.
+from routes import local_models as local_models_router
+app.include_router(local_models_router.router)
+
+# The hub as a provider (feature 5C): OpenAI-compatible /v1 served by the hub
+# itself, authorised by personal API keys. See docs/hub-as-provider.md.
+from routes import openai_compat as openai_compat_router
+app.include_router(openai_compat_router.router)
+app.include_router(openai_compat_router.serving_router)
+
+# Model structure (feature 6): GGUF and safetensors headers as one block graph.
+from routes import model_structure as model_structure_router
+app.include_router(model_structure_router.router)
+
+# Preview (feature 7a): project and container pages through the hub, behind a
+# short-lived ticket. See docs/containers.md.
+from routes import preview as preview_router
+app.include_router(preview_router.router)
+app.include_router(preview_router.public_router)
+
+# Browser (feature 7b): the agent's browser session on screen, and free
+# browsing on the same service. See docs/browser.md.
+from routes import browser as browser_router
+app.include_router(browser_router.router)
+
 # Replay domain: re-run a recorded run and diff outputs (regression eval)
 app.include_router(replay.router)
 

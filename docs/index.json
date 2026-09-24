@@ -141,6 +141,7 @@
         "Execution modes",
         "Images",
         "The Containers page",
+        "Preview through the hub",
         "Why it matters beyond isolation",
         "Gotchas"
       ]
@@ -397,6 +398,8 @@
       "surface": "Models",
       "related": [
         "costs",
+        "hub-as-provider",
+        "local-models",
         "settings"
       ],
       "headings": [
@@ -404,7 +407,8 @@
         "Defaults and overrides",
         "Pricing",
         "Context window",
-        "Providers"
+        "Providers",
+        "Local models"
       ]
     },
     {
@@ -492,6 +496,7 @@
       "headings": [
         "What a project adds over a bare workspace",
         "The usual sequence",
+        "Preview",
         "Gotchas"
       ]
     },
@@ -690,7 +695,8 @@
         "service-health",
         "system-agents",
         "web-logs",
-        "mcp"
+        "mcp",
+        "browser"
       ],
       "headings": [
         "The capability model",
@@ -1143,6 +1149,89 @@
         "What it holds",
         "Turning it on",
         "The site's interactive demo"
+      ]
+    },
+    {
+      "id": "local-models",
+      "title": "Local models",
+      "summary": "Managing local model servers from the hub: an external Ollama (pull, list, delete, disk size) and the hub's own runtime under deploy/models (llama.cpp server, downloads from Hugging Face, load and unload, memory), registered as the provider hub-local.",
+      "surface": "Models",
+      "related": [
+        "models",
+        "settings",
+        "containers",
+        "hub-as-provider",
+        "model-structure"
+      ],
+      "headings": [
+        "Ollama from the UI",
+        "The hub runtime",
+        "Downloads from Hugging Face",
+        "Load and unload and memory",
+        "The provider hub-local",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "hub-as-provider",
+      "title": "The hub as a provider",
+      "summary": "The hub serves an OpenAI-compatible /v1 (models, chat completions with streaming) so external clients can call any model the catalog enables through one address, authorised by personal API keys, with tokens counted and every call in the audit log.",
+      "surface": "Models",
+      "related": [
+        "api-keys",
+        "models",
+        "audit",
+        "local-models"
+      ],
+      "headings": [
+        "What it serves",
+        "Model names",
+        "Authentication",
+        "Streaming and tools",
+        "Token accounting",
+        "Audit",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "model-structure",
+      "title": "Model structure",
+      "summary": "A read-only view of a local model's structure from its GGUF or safetensors header without loading the weights: architecture, layers, tensors and memory, drawn as a 2D block diagram or a 3D stack, and a card for API models.",
+      "surface": "Models",
+      "related": [
+        "local-models",
+        "models"
+      ],
+      "headings": [
+        "What is read",
+        "GGUF",
+        "safetensors",
+        "Ollama models",
+        "The block graph",
+        "Memory",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "browser",
+      "title": "The browser",
+      "summary": "The agent's browser on screen: a live view of a run's browser session with the option to take control, and a free browsing page whose session can be handed to an agent. Built on the same browser service the browser tools use, under the same domain policy.",
+      "surface": "Chat",
+      "related": [
+        "tools-and-capabilities",
+        "sessions-and-runs",
+        "containers"
+      ],
+      "headings": [
+        "Watching a run's browser",
+        "Taking control",
+        "The Browser page",
+        "Handing a page to an agent",
+        "Access",
+        "API"
       ]
     }
   ]

@@ -103,6 +103,11 @@ has nothing to execute.
 Each run gets its own browser session (its own cookies and storage), keyed by
 the run id.
 
+A person can watch that session live from the run's output, take control of it
+(clicks, typing, an address bar, all under the same policy), browse on their
+own from the Browser page and hand a page to an agent, whose browser tools then
+continue in it. See [The browser](browser.md).
+
 ### Enabling it
 
 The browser runs as a separate service, `deploy/browser/`, in its own

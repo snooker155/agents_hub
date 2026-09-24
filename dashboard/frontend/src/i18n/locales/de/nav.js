@@ -25,6 +25,7 @@ export default {
   teams: 'Teams',
   nodes: 'Knoten',
   containers: 'Container',
+  browser: 'Browser',
   flows: 'Agenten-Flows',
   loops: 'Loops',
   registry: 'Registry',

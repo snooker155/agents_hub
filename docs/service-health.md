@@ -160,6 +160,10 @@ The browser service's `/healthz` answers. Skip when `AGENTS_HUB_BROWSER_URL`
 is not set; warn when it answers but `AGENTS_HUB_BROWSER_TOKEN` is missing.
 Fix: start `deploy/browser`, check the URL and the token.
 
+### Check: models runtime
+
+The [model runtime](local-models.md)'s `/healthz` answers. Skip when `AGENTS_HUB_MODELS_URL` is not set; warn when it answers but `AGENTS_HUB_MODELS_TOKEN` is missing. Fix: start `deploy/models` (compose profile `models`, or host mode), check the URL and the token.
+
 ### Check: docker
 
 A docker daemon answers. Fail when agents are set to run in docker; warn when

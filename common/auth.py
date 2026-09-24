@@ -254,17 +254,28 @@ def _has_prefix(path: str, prefixes) -> bool:
     return False
 
 
+#: Prefixes outside ``/api`` that are closed all the same. ``/v1`` is the
+#: OpenAI-compatible model server (docs/hub-as-provider.md): it spends the
+#: operator's provider credit on behalf of whoever calls it, so it takes the
+#: same credential as the rest of the API even though it lives outside
+#: ``/api``, where OpenAI clients expect to find it.
+CLOSED_OUTSIDE_API_PREFIXES = ("/v1",)
+
+
 def is_open_path(method: str, path: str) -> bool:
     """True for a request that needs no principal, whatever the mode.
 
-    CORS preflight, everything outside ``/api``, the self-authenticating ingest
-    routes, the token-in-path external routes, and the three public auth
-    routes. Kept separate from :func:`authorize` so the middleware can skip the
-    (database-touching) principal lookup entirely for these.
+    CORS preflight, everything outside ``/api`` except the model server under
+    ``/v1``, the self-authenticating ingest routes, the token-in-path external
+    routes, and the three public auth routes. Kept separate from
+    :func:`authorize` so the middleware can skip the (database-touching)
+    principal lookup entirely for these.
     """
     method = (method or "").upper()
     if method == "OPTIONS":
         return True
+    if _has_prefix(path, CLOSED_OUTSIDE_API_PREFIXES):
+        return False
     if not path.startswith("/api"):
         return True
     if _is_self_authenticating(path):

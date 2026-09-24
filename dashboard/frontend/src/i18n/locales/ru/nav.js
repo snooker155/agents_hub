@@ -25,6 +25,7 @@ export default {
   teams: 'Команды',
   nodes: 'Узлы',
   containers: 'Контейнеры',
+  browser: 'Браузер',
   flows: 'Потоки агентов',
   loops: 'Циклы',
   registry: 'Реестр',
