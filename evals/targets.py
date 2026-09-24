@@ -149,8 +149,15 @@ def token_totals(run_ids: List[str]) -> tuple:
         records = get_runs_by_ids(run_ids) or {}
     except Exception:  # noqa: BLE001
         return 0, 0
-    inbound = sum(int(r.get("prompt_tokens") or 0) for r in records.values())
-    outbound = sum(int(r.get("completion_tokens") or 0) for r in records.values())
+    # A run record carries its tokens under process.token_usage (the store
+    # folds the token columns in there, managers/runs/store.py); the flat
+    # prompt_tokens/completion_tokens keys are only a fallback for records
+    # built some other way.
+    inbound = outbound = 0
+    for r in records.values():
+        usage = ((r.get("process") or {}).get("token_usage") or {})
+        inbound += int(usage.get("inbound_tokens") or r.get("prompt_tokens") or 0)
+        outbound += int(usage.get("outbound_tokens") or r.get("completion_tokens") or 0)
     return inbound, outbound
 
 

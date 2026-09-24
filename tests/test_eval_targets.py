@@ -342,3 +342,35 @@ def test_online_loader_reads_an_entity_run_output():
     graded = online.grade_run({"graders": [{"kind": "exact", "params": {"expected": "hello"}}]},
                               loaded)
     assert graded["passed"] is True
+
+
+# ── Token totals over leaf runs ─────────────────────────────────────────────
+
+def test_token_totals_read_what_the_run_store_records():
+    """Leaf runs closed the way the playground, flows and teams close them
+    (tokens in ``process.token_usage``) are summed; the store hands them back
+    under that key, not as flat columns, which is what left every composite
+    target's cells at zero tokens."""
+    from managers.run_manager import close_run, open_run
+    from evals.targets import token_totals
+
+    ids = []
+    for inbound, outbound in ((1200, 80), (300, 20)):
+        rid = f"leaf-{uuid4().hex[:8]}"
+        open_run(rid, "writer", status="running", link_to_session=False)
+        close_run(rid, status="completed", exit_code=0, output="ok",
+                  process={"token_usage": {"inbound_tokens": inbound, "outbound_tokens": outbound}})
+        ids.append(rid)
+    no_usage = f"leaf-{uuid4().hex[:8]}"
+    open_run(no_usage, "writer", status="running", link_to_session=False)
+    close_run(no_usage, status="completed", exit_code=0, output="ok")
+
+    assert token_totals(ids + [no_usage]) == (1500, 100)
+    assert token_totals([]) == (0, 0)
+
+
+def test_token_totals_fall_back_to_flat_keys(monkeypatch):
+    from evals import targets
+    monkeypatch.setattr("managers.run_manager.get_runs_by_ids",
+                        lambda ids: {"a": {"prompt_tokens": 7, "completion_tokens": 3}})
+    assert targets.token_totals(["a"]) == (7, 3)
