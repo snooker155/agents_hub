@@ -189,6 +189,11 @@ class Scenario:
     # prompt is built. Kept small on purpose: see playground.runner's
     # document-clipping constants.
     documents: List[Any] = field(default_factory=list)
+    # A team whose members play this scenario when ``roles`` is empty: at run
+    # time (and in the estimate) each member becomes a role, see
+    # ``playground.runner.roles_from_team``. Roles written on the scenario
+    # win, so a team is a way to cast a world, not a second cast beside it.
+    team_id: Optional[str] = None
 
     # How agents are activated. ``synchronous``: everybody acts every tick,
     # simultaneous resolution — the original loop. ``triggered``: an agent acts
@@ -238,6 +243,7 @@ class Scenario:
             "roles": [r.to_dict() for r in self.roles],
             "mode": self.mode, "max_tool_calls_per_tick": self.max_tool_calls_per_tick,
             "task_id": self.task_id, "documents": list(self.documents),
+            "team_id": self.team_id,
             "activation": self.activation,
             "max_ticks": self.max_ticks, "stall_timeout": self.stall_timeout,
             "max_turn_seconds": self.max_turn_seconds,
@@ -265,6 +271,7 @@ class Scenario:
             max_tool_calls_per_tick=int(d.get("max_tool_calls_per_tick", 8) or 8),
             task_id=d.get("task_id"),
             documents=list(d.get("documents") or []),
+            team_id=(str(d.get("team_id")).strip() or None) if d.get("team_id") else None,
             activation=_activation(d.get("activation")),
             max_ticks=int(d.get("max_ticks", 20)),
             # ``tick_timeout`` is the pre-rename spelling: same knob, and it

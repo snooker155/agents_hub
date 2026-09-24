@@ -40,6 +40,9 @@ _CONFIG_FIELDS = (
     # every role's prompt. Rides in this JSON blob too, the same reasoning:
     # one more knob here needs no migration.
     "mode", "max_tool_calls_per_tick", "task_id", "documents",
+    # The team whose members play the scenario when it has no roles of its
+    # own (playground.runner.roles_from_team).
+    "team_id",
 )
 
 

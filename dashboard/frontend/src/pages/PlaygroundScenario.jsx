@@ -14,7 +14,7 @@ import { useScenarioChatDescriptor } from './playground/use-scenario-chat';
 import { useScenarioDocument } from './playground/use-scenario-document';
 import { useScenarioRun } from './playground/use-scenario-run';
 import { SetupPanel } from './playground/setup-panel';
-import { ScenarioSidebar } from './playground/scenario-sidebar';
+import { ReproducibilityButton, ScenarioSidebar } from './playground/scenario-sidebar';
 import { RunTransport } from './playground/run-transport';
 import { RunView, TWO_COLUMNS } from './playground/run-view';
 
@@ -278,7 +278,7 @@ export default function PlaygroundScenario() {
             ) : (
               <button
                 onClick={handleStart}
-                disabled={starting || !scenario.roles.length}
+                disabled={starting || (!scenario.roles.length && !scenario.team_id)}
                 className="inline-flex items-center px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >
                 {starting ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-1" />}
@@ -300,6 +300,14 @@ export default function PlaygroundScenario() {
                 {t('playground.resume', { defaultValue: 'Resume' })}
               </button>
             )}
+            {/* The same scenario N times, scored on the Evals page: whether a
+                result reproduces is a question about several runs, which no
+                single run's page can answer. */}
+            <ReproducibilityButton
+              scenarioId={scenario.scenario_id}
+              disabled={!scenario.roles.length && !scenario.team_id}
+              onMessage={setMessage}
+            />
             <button
               onClick={handleDelete}
               title={t('playground.deleteScenario')}

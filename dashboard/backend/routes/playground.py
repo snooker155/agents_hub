@@ -9,6 +9,9 @@ Agent Playground API — scenarios, simulation runs, the tick log.
 ``POST /api/playground/worlds/generate``       build a whole world from a description
 ``GET|POST|DELETE /api/playground/worlds/{id}/chat``   the world's build chat
 ``GET|POST /api/playground/scenarios``         list / create scenarios
+``GET  /api/playground/scenarios/templates``   ready made scenarios (the lab)
+``POST /api/playground/scenarios/from-template``   create one from a template
+``POST /api/playground/scenarios/{id}/repeat-eval``   reproducibility eval over N repeats
 ``GET|PUT|DELETE /api/playground/scenarios/{id}``
 ``POST /api/playground/scenarios/{id}/estimate``   projected spend
 ``POST /api/playground/scenarios/{id}/run``        start a simulation, as its own process
@@ -97,6 +100,10 @@ class ScenarioIn(BaseModel):
     # Reference material injected into every role's system prompt. Each entry
     # is either {"name", "text"} or a plain workspace-relative path string.
     documents: Optional[List[Any]] = None
+    # A team whose members play the scenario when it has no roles of its own
+    # (playground.runner.roles_from_team). Optional on the wire: omitted means
+    # unchanged, an empty string clears it.
+    team_id: Optional[str] = None
     activation: str = "synchronous"
     max_ticks: int = 20
     # Seconds of silence tolerated from a model, not seconds to a finished
@@ -136,6 +143,8 @@ def _scenario_from_in(data: ScenarioIn, existing: Optional[Scenario] = None) -> 
                  else (existing.task_id if existing else None)),
         documents=(list(data.documents) if data.documents is not None
                    else (list(existing.documents) if existing else [])),
+        team_id=((data.team_id.strip() or None) if data.team_id is not None
+                 else (existing.team_id if existing else None)),
         activation=(data.activation if data.activation in ACTIVATIONS
                     else "synchronous"),
         max_ticks=data.max_ticks,
@@ -766,10 +775,58 @@ async def get_scenarios(workspace: Optional[str] = None):
     ]}
 
 
+def _check_team(team_id: Optional[str]) -> None:
+    """Refuse a team id that names no team: a scenario cast by a missing team
+    fails at Run with no roles, and the save is where that is cheap to say."""
+    if not team_id:
+        return
+    from teams.store import get_team
+    if get_team(team_id) is None:
+        raise HTTPException(status_code=400, detail=f"team {team_id!r} does not exist")
+
+
+@router.get("/scenarios/templates")
+async def get_scenario_templates():
+    """Ready made scenarios to start from (``playground.scenario_templates``).
+
+    Declared before ``/scenarios/{scenario_id}`` so the path is not read as
+    a scenario id.
+    """
+    from playground.scenario_templates import list_templates
+    return {"templates": list_templates()}
+
+
+class FromTemplateIn(BaseModel):
+    template: str = "lab"
+    workspace: Optional[str] = None
+    # One agent plays every role, or a team's members play the scenario.
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    name: Optional[str] = None
+
+
+@router.post("/scenarios/from-template")
+async def create_scenario_from_template(data: FromTemplateIn):
+    """Create a scenario from a template, cast by one agent or by a team."""
+    from playground.scenario_templates import scenario_from_template
+    try:
+        payload = scenario_from_template(data.template, workspace=data.workspace,
+                                         agent_id=data.agent_id, team_id=data.team_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown template {data.template!r}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if data.name and data.name.strip():
+        payload["name"] = data.name.strip()
+    _check_team(payload.get("team_id"))
+    return store.save_scenario(Scenario.from_dict(payload)).to_dict()
+
+
 @router.post("/scenarios")
 async def create_scenario(data: ScenarioIn):
     if not data.name.strip():
         raise HTTPException(status_code=400, detail="name is required")
+    _check_team(data.team_id)
     return store.save_scenario(_scenario_from_in(data)).to_dict()
 
 
@@ -790,6 +847,7 @@ async def update_scenario(scenario_id: str, data: ScenarioIn):
     # nameless one is a blank row in every list that offers to run it.
     if not data.name.strip():
         raise HTTPException(status_code=400, detail="name is required")
+    _check_team(data.team_id)
     return store.save_scenario(_scenario_from_in(data, existing)).to_dict()
 
 
@@ -815,6 +873,107 @@ async def estimate_scenario(scenario_id: str):
     return estimate_cost(scenario)
 
 
+class RepeatEvalIn(BaseModel):
+    repeats: int = 3
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+def _repeat_eval_graders(scenario) -> List[Dict[str, Any]]:
+    """What a reproducibility run checks on every repeat.
+
+    The eval output of a scenario is ``evals.targets.render_scenario``: the
+    scores and the final state as text. The lab scores ``hypotheses_decided``
+    and ``experiments_run`` on every role, so "at least one hypothesis
+    decided, at least one experiment run" is two regex assertions over that
+    text; any other environment gets the generic check that the run produced
+    scores at all.
+    """
+    if scenario.environment == "lab":
+        checks = [
+            {"type": "matches", "value": r'"hypotheses_decided":\s*[1-9]'},
+            {"type": "matches", "value": r'"experiments_run":\s*[1-9]'},
+        ]
+    else:
+        checks = [{"type": "matches", "value": r"Scores:\n\s+\S"}]
+    return [{"kind": "assertions", "params": {"assertions": checks}, "weight": 1.0}]
+
+
+@router.post("/scenarios/{scenario_id}/repeat-eval")
+async def repeat_eval(scenario_id: str, data: RepeatEvalIn):
+    """Run the same scenario N times as an eval, to see whether it reproduces.
+
+    Creates an eval set "Reproducibility: <name>" with one case (the research
+    question, or the scenario's description) targeting this scenario with
+    ``repeats``, then starts the sweep through ``evals.runner.run_eval``, the
+    function ``POST /api/evals/{id}/run`` uses, on a background thread: a
+    sweep is N whole simulations. Returns once the eval run row exists, with
+    ``{eval_id, eval_run_id}`` for the Evals page to follow.
+    """
+    from evals import store as eval_store
+    from evals.models import MAX_REPEATS, Case, EvalSet, GraderSpec, RunConfig
+
+    scenario = store.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    repeats = int(data.repeats or 1)
+    if repeats < 1 or repeats > MAX_REPEATS:
+        raise HTTPException(status_code=400,
+                            detail=f"repeats must be between 1 and {MAX_REPEATS}")
+    question = str((scenario.env_params or {}).get("question") or "").strip()
+    evalset = EvalSet(
+        name=f"Reproducibility: {scenario.name or scenario_id}",
+        description=f"{repeats} repeats of scenario {scenario.name or scenario_id}",
+        workspace=scenario.workspace,
+        target={"kind": "scenario", "id": scenario_id},
+        cases=[Case(input=question or scenario.description or scenario.name,
+                    metadata={"scenario_id": scenario_id})],
+        graders=[GraderSpec.from_dict(g) for g in _repeat_eval_graders(scenario)],
+    )
+    eval_store.save_eval_set(evalset)
+    config = RunConfig(target={"kind": "scenario", "id": scenario_id},
+                       provider=data.provider or None, model=data.model or None,
+                       repeats=repeats)
+    eval_run_id = await asyncio.to_thread(
+        _start_eval_in_background, evalset.eval_set_id, config, scenario.workspace,
+    )
+    return {"eval_id": evalset.eval_set_id, "eval_run_id": eval_run_id,
+            "repeats": repeats}
+
+
+def _start_eval_in_background(eval_set_id: str, config, workspace: Optional[str],
+                              wait_seconds: float = 10.0) -> Optional[str]:
+    """Start ``run_eval`` on a daemon thread and return its run id.
+
+    ``run_eval`` writes the eval run row before its first cell and only
+    returns when the whole sweep is done, so the id is read back from the
+    store (the set is brand new: its only run is this one) rather than from
+    the return value. ``None`` when the row did not appear in time; the sweep
+    still runs, and the set's run history shows it.
+    """
+    import threading
+    import time as _time
+
+    from evals import store as eval_store
+    from evals.runner import run_eval
+
+    def _go() -> None:
+        try:
+            run_eval(eval_set_id, [config], workspace=workspace)
+        except Exception:  # noqa: BLE001 - a failed sweep is recorded on its run row
+            import logging
+            logging.getLogger(__name__).exception("reproducibility eval %s failed", eval_set_id)
+
+    threading.Thread(target=_go, name=f"repeat-eval-{eval_set_id}", daemon=True).start()
+    deadline = _time.monotonic() + wait_seconds
+    while _time.monotonic() < deadline:
+        runs = eval_store.list_eval_runs(eval_set_id, 1)
+        if runs:
+            return runs[0].eval_run_id
+        _time.sleep(0.05)
+    return None
+
+
 # ── Runs ──────────────────────────────────────────────────────────────────────
 
 @router.post("/scenarios/{scenario_id}/run")
@@ -831,7 +990,7 @@ async def start_run(scenario_id: str, workspace: Optional[str] = None):
     scenario = store.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
-    if not scenario.roles:
+    if not scenario.roles and not scenario.team_id:
         raise HTTPException(status_code=400, detail="Scenario has no roles")
 
     try:

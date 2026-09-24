@@ -105,6 +105,78 @@ crowd out the rest of the prompt. In agents mode, a role whose environment
 grants `read_file` can still read a document's full content from the
 workspace when the clipped excerpt is not enough.
 
+## The lab environment
+
+The `lab` environment is a research group working on one question, set in
+`env_params.question`. It is a world like the market: the bookkeeping is the
+environment's, the prose is the agents'.
+
+**State.** Hypotheses form a tree (a hypothesis may refine a parent), each
+with a status: proposed, testing (set when an experiment is designed for it),
+confirmed, refuted or needs_repeat. Experiments belong to a hypothesis and
+carry their design, their Python code, params, seed, status (designed,
+running, done, failed), the parsed result, stdout and stderr tails, the
+analysis, metrics, critiques and a history of every run. Finished experiments
+build a dataset, one row per experiment with every numeric metric. The report
+is a set of sections (`report_sections`, by default Abstract, Method, Results,
+Discussion) and a list of LaTeX formulas. The budget counts experiment runs
+against `max_experiments`.
+
+**Actions.** `propose_hypothesis`, `design_experiment`, `run_experiment`,
+`analyze`, `critique`, `decide` (confirmed, refuted or needs_repeat),
+`write_up`, `add_formula`, `speak_to` and `observe` (the idle action). In
+agents mode a role may also use `calculator`.
+
+**The experiment contract.** `run_experiment` runs the experiment's code with
+the same sandbox `run_code` uses. The program reads one JSON object from
+stdin, `{"params": {...}, "seed": 42}`, and must print one JSON object of
+numeric metrics as its last line of stdout. With `seed_experiments` on (the
+default) every run gets a seed, so a repeat is reproducible; a seed passed to
+`run_experiment` wins. The sandbox has no network and a timeout
+(`experiment_timeout`, capped by `CODE_RUNNER_MAX_TIMEOUT`), so a long
+computation is split into several experiments. Only the standard library is
+guaranteed. When the sandbox is unavailable (no docker and no
+`CODE_RUNNER_FALLBACK=local`) the experiment fails with that error and the
+budget is not charged. Once the budget is spent, `run_experiment` refuses.
+
+**Roles.** The lab names five: lead (decides), theorist (proposes and writes
+formulas), experimentalist (designs and runs), critic (critiques, may ask for
+a repeat) and scribe (writes the report). They shape the prompts only: any
+role may take any action.
+
+**Casting by team.** A scenario may set `team_id` instead of listing roles.
+When its own roles are empty, each team member becomes a role at run time
+(agent, name, role, and the member's goal or else its manifest), and the
+team's leader opens the scene. Roles written on the scenario win over the
+team.
+
+**Template.** `GET /api/playground/scenarios/templates` lists the ready made
+scenarios; `POST /api/playground/scenarios/from-template` with
+`{"template": "lab", "agent_id": ...}` or `{"template": "lab", "team_id": ...}`
+creates a complete lab (a sample question, five roles, triggered activation,
+30 ticks). The Playground page offers it under "New from template", and the
+Scenario Creator has `create_scenario_from_template_tool`.
+
+**Views.** While the run goes, the lab publishes views owned by the scenario
+run: a results table, a bar chart of the first numeric metric per experiment
+coloured by hypothesis, the formulas (once there are any) and the report as a
+document. Each is created on first sight and updated in place on later ticks,
+so a run ends with one of each. They are listed on the run view and in the
+Views gallery.
+
+**Stop reasons.** The run ends with `hypotheses_decided` when every top level
+hypothesis is confirmed or refuted, or `budget_exhausted` when the budget is
+spent and nothing is running. Both finish the run as completed. Otherwise the
+usual limits apply (`max_ticks`, cost, wall clock).
+
+**Reproducibility.** "Reproducibility run" on the scenario page (or
+`POST /api/playground/scenarios/{id}/repeat-eval` with `{"repeats": N}`)
+creates an eval set named `Reproducibility: <scenario name>` whose one case is
+the research question and whose config targets the scenario with N repeats,
+then starts the sweep. For a lab, each repeat passes when at least one
+hypothesis was decided and at least one experiment ran; the Evals page shows
+how the repeats agree.
+
 ## Gotchas
 
 - A scenario is bound to one world and one workspace; it cannot borrow a world

@@ -1,5 +1,10 @@
-import React from 'react';
+import React, { Suspense, lazy, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useI18n } from '../../i18n';
+
+// KaTeX is heavy and only a lab with formulas needs it, so the view that
+// wraps it is loaded on first use rather than with the playground.
+const LatexView = lazy(() => import('../../views/renderers/LatexView'));
 
 /**
  * World renderers, keyed by the `renderer` an environment declares.
@@ -298,6 +303,217 @@ function CustomView({ frame }) {
   );
 }
 
+/** Status colours for a hypothesis or an experiment. Tailwind tokens only,
+    so the palette switch recolours them with the rest of the page. */
+const LAB_STATUS_STYLES = {
+  proposed: 'bg-gray-100 text-gray-700 border-gray-200',
+  testing: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  confirmed: 'bg-green-50 text-green-700 border-green-200',
+  refuted: 'bg-red-50 text-red-700 border-red-200',
+  needs_repeat: 'bg-amber-50 text-amber-700 border-amber-200',
+  designed: 'bg-gray-100 text-gray-700 border-gray-200',
+  running: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  done: 'bg-green-50 text-green-700 border-green-200',
+  failed: 'bg-red-50 text-red-700 border-red-200',
+};
+
+function LabStatusChip({ status }) {
+  const { t } = useI18n();
+  return (
+    <span
+      data-testid="lab-status"
+      className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${
+        LAB_STATUS_STYLES[status] || LAB_STATUS_STYLES.proposed
+      }`}
+    >
+      {t(`playgroundRenderers.lab.status.${status}`, { defaultValue: status })}
+    </span>
+  );
+}
+
+function formatMetric(value) {
+  if (typeof value !== 'number') return String(value);
+  return Number.isInteger(value) ? String(value) : value.toPrecision(4);
+}
+
+function LabExperiment({ experiment }) {
+  const { t } = useI18n();
+  const metrics = Object.entries(experiment.metrics || {});
+  const critique = (experiment.critiques || []).slice(-1)[0];
+  return (
+    <div className="rounded-md border border-gray-100 bg-gray-50 px-2 py-1.5 text-[11px] space-y-0.5">
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono font-semibold text-gray-800">{experiment.id}</span>
+        <LabStatusChip status={experiment.status} />
+        {experiment.seed != null && (
+          <span className="text-gray-500">{t('playgroundRenderers.lab.seed', { seed: experiment.seed })}</span>
+        )}
+        <span className="text-gray-400 truncate">{experiment.author}</span>
+      </div>
+      {experiment.design && <div className="text-gray-600">{experiment.design}</div>}
+      {metrics.length > 0 && (
+        <div className="font-mono text-gray-700">
+          {metrics.map(([k, v]) => `${k}=${formatMetric(v)}`).join('  ')}
+        </div>
+      )}
+      {experiment.result?.error && (
+        <div className="text-red-600">{experiment.result.error}</div>
+      )}
+      {experiment.analysis && <div className="text-gray-600 italic">{experiment.analysis}</div>}
+      {critique && (
+        <div className="text-amber-700">
+          {t('playgroundRenderers.lab.latestCritique', { author: critique.author })}{' '}
+          {critique.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LabHypothesis({ node, experiments }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const mine = (node.experiments || []).map((id) => experiments[id]).filter(Boolean);
+  return (
+    <li data-testid="lab-hypothesis" data-depth={node.depth || 0}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-start gap-1.5 text-left py-1 hover:bg-gray-50 rounded"
+        aria-expanded={open}
+      >
+        {open
+          ? <ChevronDown className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />
+          : <ChevronRight className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />}
+        <span className="font-mono text-[11px] font-semibold text-gray-500 mt-0.5">{node.id}</span>
+        <span className="flex-1 text-xs text-gray-800">{node.text}</span>
+        <LabStatusChip status={node.status} />
+      </button>
+      {open && (
+        <div className="ml-5 mb-1 space-y-1">
+          {node.decision_note && (
+            <div className="text-[11px] text-gray-500">
+              {t('playgroundRenderers.lab.decidedBy', { who: node.decided_by })}{' '}
+              {node.decision_note}
+            </div>
+          )}
+          {mine.length === 0
+            ? <div className="text-[11px] text-gray-400 italic">{t('playgroundRenderers.lab.noExperiments')}</div>
+            : mine.map((e) => <LabExperiment key={e.id} experiment={e} />)}
+        </div>
+      )}
+      {(node.children || []).length > 0 && (
+        <ul className="ml-4 pl-2 border-l border-gray-100">
+          {node.children.map((c) => (
+            <LabHypothesis key={c.id} node={c} experiments={experiments} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function LabSection({ section, text }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border border-gray-100 rounded-md">
+      <button
+        type="button" onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-xs font-semibold text-gray-800"
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400" />}
+        {section}
+      </button>
+      {open && <div className="px-2 pb-2 text-xs text-gray-600 whitespace-pre-wrap">{text}</div>}
+    </div>
+  );
+}
+
+/**
+ * The research lab: the question, the budget, the hypothesis tree with each
+ * node's experiments on demand, the report and the formulas.
+ */
+export function LabView({ frame }) {
+  const { t } = useI18n();
+  if (!frame || !Array.isArray(frame.hypotheses)) {
+    return <Empty label={t('playgroundRenderers.noWorldStateYet')} />;
+  }
+  const budget = frame.budget || {};
+  const used = budget.experiments_used || 0;
+  const max = budget.experiments_max || 0;
+  const pct = max ? Math.min(100, Math.round((used / max) * 100)) : 0;
+  const experiments = Object.fromEntries((frame.experiments || []).map((e) => [e.id, e]));
+  return (
+    <div className="space-y-4">
+      {frame.question && (
+        <div>
+          <div className="text-[11px] font-bold text-gray-500 uppercase mb-0.5">{t('playgroundRenderers.lab.question')}</div>
+          <div className="text-sm text-gray-900">{frame.question}</div>
+        </div>
+      )}
+
+      <div>
+        <div className="flex items-baseline justify-between text-[11px] mb-1">
+          <span className="font-bold text-gray-500 uppercase">{t('playgroundRenderers.lab.budget')}</span>
+          <span className="font-semibold text-gray-700" data-testid="lab-budget">
+            {t('playgroundRenderers.lab.budgetUsed', { used, max })}
+          </span>
+        </div>
+        <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+          <div
+            className={`h-full ${pct >= 100 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-indigo-500'}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        {frame.stop_reason && (
+          <div className="mt-1 text-[11px] text-gray-500">
+            {t(`playground.stopReason.${frame.stop_reason}`, { defaultValue: frame.stop_reason })}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="text-[11px] font-bold text-gray-500 uppercase mb-1">{t('playgroundRenderers.lab.hypotheses')}</div>
+        {frame.hypotheses.length === 0
+          ? <div className="text-xs text-gray-400 italic">{t('playgroundRenderers.lab.noHypotheses')}</div>
+          : (
+            <ul className="space-y-0.5">
+              {frame.hypotheses.map((h) => (
+                <LabHypothesis key={h.id} node={h} experiments={experiments} />
+              ))}
+            </ul>
+          )}
+      </div>
+
+      {(frame.report || []).length > 0 && (
+        <div>
+          <div className="text-[11px] font-bold text-gray-500 uppercase mb-1">{t('playgroundRenderers.lab.report')}</div>
+          <div className="space-y-1">
+            {frame.report.map((r) => <LabSection key={r.section} section={r.section} text={r.text} />)}
+          </div>
+        </div>
+      )}
+
+      {(frame.formulas || []).length > 0 && (
+        <div>
+          <div className="text-[11px] font-bold text-gray-500 uppercase mb-1">{t('playgroundRenderers.lab.formulas')}</div>
+          <div className="space-y-1">
+            {frame.formulas.map((f, i) => (
+              <div key={i} className="text-xs">
+                <div className="text-gray-500">{f.label}</div>
+                <Suspense fallback={<code className="text-gray-700">{f.latex}</code>}>
+                  <LatexView view={{ spec: { latex: f.latex } }} />
+                </Suspense>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function JsonView({ frame }) {
   return (
     <pre className="text-xs text-gray-700 bg-gray-50 rounded-lg p-3 overflow-auto max-h-96">
@@ -306,7 +522,9 @@ function JsonView({ frame }) {
   );
 }
 
-const RENDERERS = { market: MarketView, social: SocialView, custom: CustomView };
+const RENDERERS = {
+  market: MarketView, social: SocialView, custom: CustomView, lab: LabView,
+};
 
 export default function WorldView({ frame }) {
   const { t } = useI18n();

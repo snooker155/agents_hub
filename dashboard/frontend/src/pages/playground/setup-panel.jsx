@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   BookText, Bot, FileText, Save, Settings2, Trash2, Users, Zap, Loader,
 } from 'lucide-react';
-import { updateScenario, getTasks } from '../../api';
+import { updateScenario, getTasks, getTeams } from '../../api';
 import { useToast } from '../../components/toast';
 import { useI18n } from '../../i18n';
 import { CharacterCard, CharacterDialog, ModelSelect } from './characters';
@@ -31,6 +31,19 @@ export function SetupPanel({
         const { data } = await getTasks(scenario.workspace);
         if (!cancelled) setTasks(data?.tasks || data || []);
       } catch { /* the task picker is optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, [scenario.workspace]);
+  // The teams that could play this scenario instead of its own characters.
+  // Optional the same way the task picker is.
+  const [teams, setTeams] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await getTeams(scenario.workspace);
+        if (!cancelled) setTeams(data?.teams || []);
+      } catch { /* the team picker is optional */ }
     })();
     return () => { cancelled = true; };
   }, [scenario.workspace]);
@@ -394,16 +407,46 @@ export function SetupPanel({
           <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide flex items-center gap-1.5">
             <Users className="w-4 h-4 text-indigo-500" /> {t('playground.characters')}
           </h3>
-          <button
-            onClick={() => setEditing({ index: -1, role: emptyCharacter(agents) })}
-            className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
-          >
-            {t('playground.addCharacter')}
-          </button>
+          {/* With a team, the cast is the team's: adding characters by hand
+              here would quietly take the scenario back from it. Existing
+              ones stay visible, and still win, so they can be removed. */}
+          {!draft.team_id && (
+            <button
+              onClick={() => setEditing({ index: -1, role: emptyCharacter(agents) })}
+              className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+            >
+              {t('playground.addCharacter')}
+            </button>
+          )}
         </div>
         <p className="text-xs text-gray-500 mb-4">
           {t('playground.charactersDescription')}
         </p>
+
+        <div className="mb-4">
+          <label htmlFor="scenario-team" className="block text-[11px] font-semibold text-gray-600 mb-0.5">
+            {t('playground.team.label')}
+          </label>
+          <select
+            id="scenario-team"
+            value={draft.team_id || ''}
+            /* An empty string is what clears a stored team on save (null
+               means "unchanged" to the API); a draft that never had one
+               stays null so choosing and unchoosing is not an edit. */
+            onChange={(e) => setDraft({
+              ...draft, team_id: e.target.value || (scenario.team_id ? '' : null),
+            })}
+            className="w-full md:w-72 text-sm border border-gray-300 rounded-md px-2 py-1.5"
+          >
+            <option value="">{t('playground.team.none')}</option>
+            {teams.map((tm) => (
+              <option key={tm.team_id} value={tm.team_id}>{tm.name || tm.team_id}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            {draft.team_id ? t('playground.team.rolesFromTeam') : t('playground.team.hint')}
+          </p>
+        </div>
 
         {draft.roles.length === 0 ? (
           <p className="text-xs text-gray-400 italic">{t('playground.noCharactersYet')}</p>

@@ -1140,8 +1140,55 @@ def trigger_agent(sim_run_id: str, agent: str, text: str,
     return delivered
 
 
+def roles_from_team(scenario: Scenario) -> List[Role]:
+    """The cast a scenario gets from its team, when it names one.
+
+    ``Scenario.team_id`` lets an existing team play a world without anybody
+    retyping its roster: each member becomes a role with the member's agent,
+    name, role and goal (the member's own goal, else its manifest, which is
+    what it committed to doing for that team). The team's leader opens the
+    scene in triggered mode. Display names are made unique with a suffix,
+    because names address agents in world and two members may share an
+    agent. An unknown team, or a scenario with no team, gives ``[]``.
+    """
+    if not getattr(scenario, "team_id", None):
+        return []
+    try:
+        from teams.store import get_team
+        team = get_team(scenario.team_id)
+    except Exception:  # noqa: BLE001 - a missing teams table reads as no team
+        log.exception("could not load team %s", scenario.team_id)
+        return []
+    if team is None:
+        return []
+    roles: List[Role] = []
+    seen: Dict[str, int] = {}
+    for member in team.members:
+        base = member.display_name() or member.agent_id or "member"
+        seen[base] = seen.get(base, 0) + 1
+        name = base if seen[base] == 1 else f"{base} {seen[base]}"
+        roles.append(Role(
+            agent_id=member.agent_id, name=name, role=member.role,
+            goal=member.goal or member.manifest,
+            provider=member.provider, model=member.model,
+            starts=bool(team.leader_agent_id and member.agent_id == team.leader_agent_id),
+        ))
+    return roles
+
+
+def _fill_roles_from_team(scenario: Scenario) -> None:
+    """Give a team backed scenario its cast, in place, when it has none."""
+    if not scenario.roles and getattr(scenario, "team_id", None):
+        scenario.roles = roles_from_team(scenario)
+
+
 def validate_scenario_for_run(scenario: Scenario) -> None:
     """Every check a scenario must pass before a run exists for it.
+
+    A scenario with a ``team_id`` and no roles of its own gets its cast from
+    the team here (see :func:`roles_from_team`), in place: the launcher
+    freezes the scenario into the run's config right after this call, so the
+    run carries the roster it started with even if the team changes later.
 
     Shared by ``playground.launcher.start_scenario_run``, which checks before
     it ever writes a run record, and this module's own head below — the tools'
@@ -1149,6 +1196,7 @@ def validate_scenario_for_run(scenario: Scenario) -> None:
     test suite still go straight through ``run_simulation`` with no launcher
     in front of it. Both fail the same way for the same scenario.
     """
+    _fill_roles_from_team(scenario)
     if not scenario.roles:
         raise ValueError("Scenario has no roles — a society needs participants")
     if len(scenario.roles) > MAX_AGENTS:
@@ -1241,6 +1289,11 @@ def run_simulation(
         raise ValueError(f"Unknown environment: {scenario.environment}")
 
     names = [r.display_name() for r in scenario.roles]
+    # The key -> view id mapping for the views this world publishes
+    # (playground.lab_views), carried by the checkpoint so a resume updates
+    # the views it already made instead of minting new ones.
+    env_views: Dict[str, str] = dict(((checkpoint or {}).get("env_views")) or {})
+    env_view_specs: Dict[str, str] = {}
     # Names *and* the roles they were cast in: an authored world places
     # characters by role and decides by role what each may do, and the role
     # string is a scenario's, not the environment's.
@@ -1363,6 +1416,7 @@ def run_simulation(
                 record = _run_tick(env, scenario, run.sim_run_id, tick, history, ws, plan)
                 store.save_tick(record)
             carry = _continuations(env, scenario, record, streaks)
+            _sync_env_views(env, run, env_views, env_view_specs)
             spend += record.cost
             run.ticks_done = tick
             run.total_cost = round(spend, 6)
@@ -1374,7 +1428,7 @@ def run_simulation(
             entity_runs.save_checkpoint(run.sim_run_id, {
                 "tick": tick, "env": env.snapshot(), "history": history,
                 "carry": carry, "streaks": streaks, "spend": spend,
-                "updated_at": utc_iso(),
+                "env_views": env_views, "updated_at": utc_iso(),
             })
             # The run's own counters ride with the tick: the page's meter reads
             # them, and without them it is stale until the next poll — which,
@@ -1400,7 +1454,15 @@ def run_simulation(
                 ending = str(getattr(env, "ending", "") or "").strip()
                 log.info("sim %s: environment reached a terminal state at tick %d",
                          run.sim_run_id, tick)
-                raise SimStopped("terminal",
+                # A world that knows *why* it ended (the lab: hypotheses
+                # decided, or budget exhausted) says so in its frame, and that
+                # is the more useful stop reason than "terminal".
+                reason = ""
+                try:
+                    reason = str((env.frame() or {}).get("stop_reason") or "").strip()
+                except Exception:  # noqa: BLE001 - a frame bug must not hide the ending
+                    reason = ""
+                raise SimStopped(reason or "terminal",
                                  ending or "the world reached a terminal state")
 
         raise SimStopped("max_ticks", f"reached the cap of {max_ticks} ticks")
@@ -1421,12 +1483,32 @@ def run_simulation(
 
     run.scores = env.score()
     run.final_state = env.state()
+    _sync_env_views(env, run, env_views)
+    if env_views:
+        run.final_state = {**run.final_state, "views": dict(env_views)}
     run.finished_at = utc_iso()
     store.save_sim_run(run)
     _finalize_task(run)
     control.release(run.sim_run_id)
     _publish(run.sim_run_id, {"type": "done", **run.to_dict()})
     return run
+
+
+def _sync_env_views(env: Environment, run: SimRun,
+                    view_ids: Optional[Dict[str, str]] = None,
+                    last_specs: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Publish the environment's views for this run (never raises).
+
+    See ``playground.lab_views.sync_env_views``: a key seen for the first
+    time creates a view owned by this scenario run, a key seen again updates
+    it in place. Most environments declare no views and this costs one call.
+    """
+    try:
+        from playground.lab_views import sync_env_views
+        return sync_env_views(env, run, view_ids, last_specs)
+    except Exception:  # noqa: BLE001 - views are a by-product, never a reason to fail a run
+        log.exception("sim %s: publishing environment views failed", run.sim_run_id)
+        return view_ids if view_ids is not None else {}
 
 
 def _task_result_text(run: SimRun) -> str:
@@ -1991,7 +2073,14 @@ def _run_decisions(env: Environment, scenario: Scenario, sim_run_id: str,
 
 def estimate_cost(scenario: Scenario, avg_inbound: int = 1200,
                   avg_outbound: int = 150) -> Dict[str, Any]:
-    """Projected spend for a full run, before a single call is made."""
+    """Projected spend for a full run, before a single call is made.
+
+    A team backed scenario with no roles of its own is estimated with the
+    cast it would get from its team (on a copy: estimating changes nothing).
+    """
+    if not scenario.roles and getattr(scenario, "team_id", None):
+        scenario = Scenario.from_dict({**scenario.to_dict(), "roles": [
+            r.to_dict() for r in roles_from_team(scenario)]})
     calls = len(scenario.roles) * max(1, int(scenario.max_ticks))
     per_call = 0.0
     for role in scenario.roles:
@@ -2027,6 +2116,7 @@ __all__ = [
     "run_simulation", "stop_simulation", "trigger_agent", "estimate_cost",
     "decide", "resolve_model", "parse_decision", "build_system_prompt",
     "build_tick_prompt", "validate_scenario_for_run", "decision_run_id",
+    "roles_from_team",
     "SimStopped", "Beat", "ToolCallLimitError",
     "MAX_TICKS", "MAX_AGENTS",
 ]

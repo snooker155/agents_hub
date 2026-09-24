@@ -60,6 +60,7 @@ def _simplify(scenario) -> Dict[str, Any]:
         "environment": d["environment"],
         "env_params": d["env_params"],
         "activation": d["activation"],
+        "team_id": d.get("team_id"),
         "roles": [
             {
                 "agent_id": r["agent_id"], "name": r["name"], "role": r["role"],
@@ -139,8 +140,19 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
         )
 
     roles = payload.get("roles") or []
-    if not roles:
-        errors.append("a scenario needs at least one role")
+    team_id = str(payload.get("team_id") or "").strip()
+    if team_id:
+        try:
+            from teams.store import get_team
+            team = get_team(team_id)
+        except Exception:  # noqa: BLE001 - an unreadable teams table reads as no team
+            team = None
+        if team is None:
+            errors.append(f"team '{team_id}' does not exist")
+        elif not roles and not team.members:
+            errors.append(f"team '{team_id}' has no members to play the scenario")
+    if not roles and not team_id:
+        errors.append("a scenario needs at least one role, or a team_id whose members play it")
 
     from agents.registry import list_agents as reg_list_agents
     all_specs = reg_list_agents()
@@ -371,6 +383,12 @@ class CreateScenarioInput(BaseModel):
     )
     default_provider: Optional[str] = Field(None, description="Provider for roles that name none")
     default_model: Optional[str] = Field(None, description="Model for roles that name none")
+    team_id: Optional[str] = Field(None, description=(
+        "A team whose members play the scenario. When set, `roles` may be an "
+        "empty list: at run time every member becomes a role (agent, name, "
+        "role and goal from the member, its manifest when it has no goal). "
+        "Roles given here win over the team."
+    ))
     workspace: Optional[str] = Field(
         None, description="Workspace to attach the scenario to; defaults to the active workspace"
     )
@@ -416,6 +434,11 @@ class ModifyScenarioInput(BaseModel):
     )
     default_provider: Optional[str] = Field(None, description="Provider for roles that name none")
     default_model: Optional[str] = Field(None, description="Model for roles that name none")
+    team_id: Optional[str] = Field(None, description=(
+        "Set the team whose members play the scenario when it has no roles of "
+        "its own (pass roles: [] to hand the cast to the team). An empty "
+        "string clears it."
+    ))
 
     @field_validator("roles", "add_roles", "remove_roles", "env_params", "limits", mode="before")
     @classmethod
@@ -441,6 +464,33 @@ class ValidateScenarioInput(BaseModel):
     )
 
     @field_validator("roles", "env_params", mode="before")
+    @classmethod
+    def coerce(cls, v):
+        return _coerce_json(v)
+
+
+class CreateScenarioFromTemplateInput(BaseModel):
+    template: str = Field(..., min_length=1, description=(
+        "Template id. 'lab': a research group of five (lead, theorist, "
+        "experimentalist, critic, scribe) testing a cheap claim with real "
+        "experiments in the code sandbox."
+    ))
+    agent_id: Optional[str] = Field(None, description=(
+        "Registered agent that plays every role of the template. Give this or team_id."
+    ))
+    team_id: Optional[str] = Field(None, description=(
+        "A team whose members play the scenario instead of the template's roles."
+    ))
+    name: Optional[str] = Field(None, description="Rename the scenario; defaults to the template's name")
+    env_params: Optional[Dict[str, Any]] = Field(None, description=(
+        "Environment parameters to merge over the template's, for example "
+        "{'question': '...'} for the lab"
+    ))
+    workspace: Optional[str] = Field(
+        None, description="Workspace to attach the scenario to; defaults to the active workspace"
+    )
+
+    @field_validator("env_params", mode="before")
     @classmethod
     def coerce(cls, v):
         return _coerce_json(v)
@@ -492,9 +542,13 @@ def _create_scenario(
     limits: Optional[Dict[str, Any]] = None,
     default_provider: Optional[str] = None,
     default_model: Optional[str] = None,
+    team_id: Optional[str] = None,
     workspace: Optional[str] = None,
 ) -> str:
     """Create a playground scenario: an environment, a cast of roles, and the run limits.
+
+    Instead of a cast, `team_id` may name a team whose members play the
+    scenario (pass roles: []); they become roles when the scenario runs.
 
     Every role's agent_id must be a registered agent (check with
     list_agents_tool) and the environment must exist (check with
@@ -517,6 +571,7 @@ def _create_scenario(
         activation=activation,
         default_provider=default_provider,
         default_model=default_model,
+        team_id=(team_id or "").strip() or None,
     )
     unknown = _apply_limits(payload, limits)
 
@@ -568,6 +623,7 @@ def _modify_scenario(
     limits: Optional[Dict[str, Any]] = None,
     default_provider: Optional[str] = None,
     default_model: Optional[str] = None,
+    team_id: Optional[str] = None,
 ) -> str:
     """Change an existing scenario. Only the fields you pass are touched.
 
@@ -601,6 +657,8 @@ def _modify_scenario(
         payload["default_provider"] = default_provider or None
     if default_model is not None:
         payload["default_model"] = default_model or None
+    if team_id is not None:
+        payload["team_id"] = team_id.strip() or None
     unknown = _apply_limits(payload, limits)
 
     if roles is not None:
@@ -723,6 +781,60 @@ def _validate_scenario(
     return _json_ok(out)
 
 
+def _create_scenario_from_template(
+    template: str,
+    agent_id: Optional[str] = None,
+    team_id: Optional[str] = None,
+    name: Optional[str] = None,
+    env_params: Optional[Dict[str, Any]] = None,
+    workspace: Optional[str] = None,
+) -> str:
+    """Create a complete scenario from a ready made template.
+
+    Templates: 'lab' (the research lab environment: five roles, a sample
+    question, an experiment budget; the run ends when every top level
+    hypothesis is decided or the budget is spent). Give `agent_id` to have
+    one registered agent play every role, or `team_id` to have a team's
+    members play it. `env_params` merges over the template's, so a lab can
+    get its own question. Validated like create_scenario_tool.
+    """
+    from playground import store
+    from playground.models import Scenario
+    from playground.scenario_templates import TEMPLATES, scenario_from_template
+
+    ws = normalize_workspace_name(workspace) or resolve_active_workspace()
+    try:
+        payload = scenario_from_template(template, workspace=ws, agent_id=agent_id,
+                                         team_id=team_id)
+    except KeyError:
+        return _json_err(f"unknown template '{template}'", code="invalid",
+                         extra={"templates": sorted(TEMPLATES)})
+    except ValueError as e:
+        return _json_err(str(e), code="invalid")
+    if name and name.strip():
+        payload["name"] = name.strip()
+    if env_params:
+        payload["env_params"] = {**payload.get("env_params", {}), **env_params}
+
+    errors, warnings = _validate(payload, ws)
+    if errors:
+        return _json_err(
+            "Scenario is invalid and was NOT created. Fix the problems and try again.",
+            code="invalid_scenario",
+            extra={"errors": errors, "warnings": warnings},
+        )
+    scenario = store.save_scenario(Scenario.from_dict(payload))
+    record_entity("scenario", scenario.scenario_id, "created", scenario.name)
+    out: Dict[str, Any] = {
+        "message": f"Scenario '{scenario.name}' created from template '{template}'",
+        "scenario_id": scenario.scenario_id,
+        "scenario": _simplify(scenario),
+    }
+    if warnings:
+        out["warnings"] = warnings
+    return _json_ok(out)
+
+
 # ── tools ─────────────────────────────────────────────────────────────────────
 
 _SPEC = EntityToolSpec(
@@ -751,10 +863,18 @@ list_environments_tool = _tool("list_environments_tool", args_schema=ListEnviron
     _list_environments
 )
 
+# A template is a create with the payload filled in, so it is hand-built for
+# the same reason list_environments_tool is: the factory's shape is one
+# create per entity.
+create_scenario_from_template_tool = _tool(
+    "create_scenario_from_template_tool", args_schema=CreateScenarioFromTemplateInput,
+)(_create_scenario_from_template)
+
 SCENARIO_MANAGEMENT_TOOLS = [
     list_environments_tool,
     list_scenarios_tool,
     create_scenario_tool,
+    create_scenario_from_template_tool,
     get_scenario_tool,
     modify_scenario_tool,
     delete_scenario_tool,
@@ -765,6 +885,7 @@ __all__ = [
     "list_environments_tool",
     "list_scenarios_tool",
     "create_scenario_tool",
+    "create_scenario_from_template_tool",
     "get_scenario_tool",
     "modify_scenario_tool",
     "delete_scenario_tool",

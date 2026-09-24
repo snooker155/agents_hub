@@ -312,6 +312,18 @@ class Environment(ABC):
         """Full state, for the final record. Defaults to the public frame."""
         return self.frame()
 
+    def views(self) -> List[Dict[str, Any]]:
+        """Views this world publishes while it runs: ``[]`` by default.
+
+        Each item is ``{"key", "kind", "title", "spec"}``: ``key`` is stable
+        across ticks so the runner (``playground.lab_views``) updates the same
+        view in place instead of minting one per tick, and ``kind``/``spec``
+        follow ``views.models`` (validated there). A world whose state is
+        better read as a table, a chart or a document than as a frame
+        declares them here; the rest never notice this exists.
+        """
+        return []
+
     # ── Checkpointing ────────────────────────────────────────────────────────
     #
     # A scenario run now checkpoints after every tick (playground/runner.py), so

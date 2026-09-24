@@ -320,6 +320,47 @@ def set_view_state(view_id: str, state: Dict[str, Any]) -> bool:
     return True
 
 
+def update_spec(view_id: str, spec: Dict[str, Any], *, title: Optional[str] = None,
+                summary: Optional[str] = None) -> bool:
+    """Replace a (non live) view's spec in place, validated against its kind.
+
+    For a producer that republishes the same view as its source changes, a
+    scenario run's results table growing tick by tick (playground.lab_views),
+    where minting a new view per change would bury the one that matters. The
+    view keeps its id, owner and state; ``view.json`` and ``base.json`` both
+    take the new spec so a later fold or revert does not resurrect the old
+    one. Returns False for an unknown view or a missing ``view.json``; raises
+    :class:`views.models.ViewValidationError` on an invalid spec.
+    """
+    from views.models import validate_spec
+
+    row = _row(view_id)
+    if not row:
+        return False
+    view_dir = _view_dir(row.get("workspace"), view_id)
+    view_file = view_dir / "view.json"
+    if not view_file.exists():
+        return False
+    env = json.loads(view_file.read_text(encoding="utf-8"))
+    env["spec"] = validate_spec(str(env.get("kind") or row.get("kind") or ""), spec)
+    if title is not None:
+        env["title"] = title
+    if summary is not None:
+        env["summary"] = summary
+    body = json.dumps(env, ensure_ascii=False, indent=2)
+    view_file.write_text(body, encoding="utf-8")
+    (view_dir / "base.json").write_text(body, encoding="utf-8")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE views SET title = ?, summary = ?, size_bytes = ?, updated_at = ? "
+            "WHERE view_id = ?",
+            (env.get("title") or "", env.get("summary") or "", _dir_size(view_dir),
+             utc_iso(), view_id),
+        )
+    _mirror_view_dir(view_dir)
+    return True
+
+
 def delete_view(view_id: str) -> bool:
     """Remove a view's dir (local and mirrored) and index row.
 
@@ -945,6 +986,7 @@ __all__ = [
     "list_views",
     "views_owned_by",
     "set_view_state",
+    "update_spec",
     "delete_view",
     "view_asset_path",
     "add_asset",
