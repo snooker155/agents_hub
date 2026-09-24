@@ -8,6 +8,12 @@ Views API — serve rendered views, their assets, and per-user view state.
 - ``DELETE /api/views/{view_id}``    remove a view
 - ``GET  /api/views/{view_id}/assets/{path}``  serve a contained view asset
 - ``GET|POST|DELETE /api/views/{view_id}/chat`` the Studio build chat (Visualizer)
+- ``GET  /api/views/{view_id}/code/versions``   a code view's recorded edit history
+- ``POST /api/views/{view_id}/code/versions``   record a user edit; returns the view
+- ``GET  /api/views/{view_id}/code/diff``       unified diff between two versions
+- ``POST /api/views/{view_id}/code/run``        run the snippet in the run_code sandbox
+- ``GET  /api/views/{view_id}/code/runs``       a code view's recorded run history
+- ``POST /api/views/{view_id}/code/save``       write the snippet into a project
 
 Asset serving is path-contained (guards ``..``/absolute like ``/file-raw``) and
 sends a strict CSP so future ``html`` views run origin-isolated; for Phase 1
@@ -40,11 +46,18 @@ from views.store import (
     save_checkpoint,
     list_checkpoints,
     checkpoint_seq,
+    list_code_versions,
+    add_code_version,
+    list_code_runs,
+    add_code_run,
+    add_code_save,
 )
 from views.serve import is_allowed_upstream
 from views.ops import OpError
 from views.models import SUPPORTED_KINDS
 from views.studio import create_studio_view, scene_context_note
+from views.code import diff_versions as _diff_code_versions, runner_language, resolve_project_save_path
+from tools import run_code as run_code_tool
 
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
@@ -118,6 +131,22 @@ class ApplyOpsRequest(BaseModel):
 
 class SnapshotRequest(BaseModel):
     data_url: str = ""   # "data:image/png;base64,...."
+
+
+class CodeVersionCreate(BaseModel):
+    body: str
+    note: str = ""
+
+
+class CodeRunRequest(BaseModel):
+    body: Optional[str] = None
+    mount_workspace: bool = False
+
+
+class CodeSaveRequest(BaseModel):
+    project_id: str
+    path: str
+    overwrite: bool = False
 
 
 @router.get("")
@@ -316,6 +345,148 @@ async def delete_one_view(view_id: str):
     if not delete_view(view_id):
         raise HTTPException(status_code=404, detail="View not found")
     return {"deleted": True, "view_id": view_id}
+
+
+# ── code views: versions, diff, run, save (Chat code panel) ───────────────────
+# The `code` view kind (views/models.py CodeSpec). These routes are user
+# actions on the Studio/Chat panel, not agent tools, so they carry no approval
+# gate — the same reasoning the rest of this file's routes already follow —
+# but the run route honours the view's own workspace scoping, same as every
+# other view route here.
+
+def _require_code_view(view_id: str) -> dict:
+    view = get_view(view_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="View not found")
+    if view.get("kind") != "code":
+        raise HTTPException(status_code=400, detail="Not a code view")
+    return view
+
+
+@router.get("/{view_id}/code/versions")
+async def get_code_versions(view_id: str):
+    """Every recorded version of a code view's body, oldest first."""
+    _require_code_view(view_id)
+    return {"versions": list_code_versions(view_id)}
+
+
+@router.post("/{view_id}/code/versions")
+async def create_code_version(view_id: str, payload: CodeVersionCreate):
+    """Record a user edit as a new version; return the updated view envelope."""
+    _require_code_view(view_id)
+    body = payload.body or ""
+    if not body.strip():
+        raise HTTPException(status_code=400, detail="body must not be empty")
+    updated = add_code_version(view_id, body, author="user", note=payload.note or "")
+    if updated is None:
+        raise HTTPException(status_code=404, detail="View not found")
+    return updated
+
+
+@router.get("/{view_id}/code/diff")
+async def get_code_diff(view_id: str, a: int, b: int):
+    """A unified diff between two recorded versions of a code view's body."""
+    _require_code_view(view_id)
+    try:
+        diff = _diff_code_versions(view_id, a, b)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"diff": diff}
+
+
+@router.post("/{view_id}/code/run")
+async def run_code_view(view_id: str, payload: CodeRunRequest):
+    """Run a code view's snippet in the same sandbox the run_code tool uses.
+
+    Runs the view's current body, or ``payload.body`` when given (recorded as
+    a new user version first, like any other edit). Refuses a non-runnable
+    language with 400. Appends the result to the view's run history (last 10).
+    """
+    view = _require_code_view(view_id)
+    spec = view.get("spec") or {}
+    language = str(spec.get("language") or "")
+    run_lang = runner_language(language)
+    if run_lang is None:
+        raise HTTPException(status_code=400, detail=(
+            f"language {language!r} is not runnable here (only python, "
+            "node/javascript and bash can be executed)"))
+
+    body = spec.get("body", "")
+    if payload.body is not None:
+        body = payload.body
+        if body != spec.get("body"):
+            updated = add_code_version(view_id, body, author="user", note="edited before running")
+            if updated is not None:
+                spec = updated.get("spec") or spec
+
+    workspace_path = None
+    if payload.mount_workspace:
+        ws_name = view.get("workspace")
+        if not ws_name:
+            raise HTTPException(status_code=400, detail="mount_workspace: this view has no workspace")
+        from workspace import get_workspace_folder
+        ws_dir = get_workspace_folder(ws_name)
+        if ws_dir is None:
+            raise HTTPException(status_code=400, detail="mount_workspace: workspace folder not found")
+        workspace_path = str(ws_dir)
+
+    result = run_code_tool.run_snippet(
+        run_lang, body, mount_workspace=payload.mount_workspace, workspace=workspace_path,
+    )
+    add_code_run(view_id, {
+        "version": int(spec.get("version") or 1),
+        "exit_code": result.get("exit_code"),
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
+        "duration_ms": result.get("duration_ms", 0),
+    })
+    return {
+        "ok": result.get("ok", False),
+        "exit_code": result.get("exit_code"),
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
+        "duration_ms": result.get("duration_ms", 0),
+        "language": result.get("language", run_lang),
+        "sandbox": result.get("sandbox", "unavailable"),
+        "error": result.get("error", ""),
+    }
+
+
+@router.get("/{view_id}/code/runs")
+async def get_code_runs(view_id: str):
+    """A code view's recorded run history (last 10), newest first.
+
+    ``views.store.list_code_runs`` itself keeps insertion order (oldest first,
+    the natural order to cap the last N in); this route reverses it for
+    display, matching the code panel's expectation (see api/code.js).
+    """
+    _require_code_view(view_id)
+    return {"runs": list(reversed(list_code_runs(view_id)))}
+
+
+@router.post("/{view_id}/code/save")
+async def save_code_view(view_id: str, payload: CodeSaveRequest):
+    """Write a code view's body into a project's own folder.
+
+    ``path`` must stay inside the project folder (no ``..``/absolute paths);
+    refuses to overwrite an existing file unless ``overwrite`` is set.
+    """
+    view = _require_code_view(view_id)
+    spec = view.get("spec") or {}
+    try:
+        target = resolve_project_save_path(payload.project_id, payload.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if target.exists() and not payload.overwrite:
+        raise HTTPException(status_code=409, detail=(
+            f"{payload.path} already exists in this project; pass overwrite to replace it"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(spec.get("body") or "", encoding="utf-8")
+    add_code_save(view_id, {
+        "project_id": payload.project_id, "path": payload.path,
+        "version": int(spec.get("version") or 1),
+    })
+    return {"ok": True, "path": payload.path}
 
 
 # ── the Studio build chat ─────────────────────────────────────────────────────

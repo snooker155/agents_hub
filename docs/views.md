@@ -43,6 +43,32 @@ without re-reading the whole document.
   pass. Optionally recorded as a replayable clip.
 - **Controls** — sliders and toggles wired to parameters
 - **Annotations and timelines** over the result
+- **Code**: a runnable, editable, versioned snippet, instead of a code fence
+  in prose. See [Code](#code) below.
+
+## Code
+
+The `code` kind is a snippet the agent hands back through `create_view`
+(`{"language": "python", "body": "print('hi')"}`), or the user starts from the
+Chat code panel. `language` names anything for display, but only Python,
+Node/JavaScript and Bash actually run; `filename` defaults from the language
+when left empty.
+
+- **Versions.** Every edit, by the agent or by you, is a new version: the
+  original body is version 1, and each save records who made it and why.
+  `GET /api/views/{id}/code/versions` lists them; `POST` with `{"body",
+  "note"}` records your own edit. `GET /api/views/{id}/code/diff?a=1&b=2`
+  returns a unified diff between any two versions.
+- **Run.** `POST /api/views/{id}/code/run` runs the current body (or a
+  `{"body": ...}` override, itself recorded as a new version first) in the
+  same sandbox `run_code` uses, see
+  [tools-and-capabilities](tools-and-capabilities.md#run_code). Non-runnable
+  languages are refused. `GET /api/views/{id}/code/runs` lists the last 10
+  results, newest first.
+- **Save to project.** `POST /api/views/{id}/code/save` with `{"project_id",
+  "path"}` writes the body into that project's own folder; it refuses to
+  overwrite an existing file unless `{"overwrite": true}`, and a path that
+  would land outside the project folder is rejected.
 
 ## Gotchas
 

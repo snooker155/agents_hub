@@ -101,7 +101,10 @@ class CreateViewInput(JsonArgsModel):
         "The kind-specific spec as a JSON object (string). Examples — "
         "chart: {\"vega_lite\": {...}}; table: {\"columns\": [...], \"rows\": [...]}; "
         "diagram: {\"mermaid\": \"flowchart LR\\n A-->B\"}; markdown: {\"markdown\": \"...\"}; "
-        "image: {\"src\": \"chart.png\", \"caption\": \"...\"}."))
+        "image: {\"src\": \"chart.png\", \"caption\": \"...\"}; "
+        "code: {\"language\": \"python\", \"body\": \"print('hi')\"} — use this kind "
+        "whenever you hand back a runnable or editable snippet, so the user gets "
+        "an editor with run/version/diff instead of a code fence in prose."))
     summary: str = Field("", description=(
         "One-line summary shown on non-visual surfaces and the card header. "
         "Always provide it."))
@@ -125,7 +128,7 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
     @tool("create_view", args_schema=CreateViewInput)
     def create_view(view_kind: str, title: str, spec: str, summary: str = "",
                     data: str = "", files: str = "", complexity: str = "inline") -> str:
-        """Create a rich view (chart, table, diagram, markdown, image) from a spec.
+        """Create a rich view (chart, table, diagram, markdown, image, code) from a spec.
 
         Use this for a view too large or multi-file for an inline block — a big
         dataset, an image, or a composed scene. Write any asset files first with

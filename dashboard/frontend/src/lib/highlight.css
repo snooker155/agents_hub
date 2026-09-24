@@ -1,0 +1,91 @@
+/*
+ * Token colours for read-only syntax highlighting (src/lib/highlight.js) and
+ * for the CodeMirror editor (src/components/chat/CodeEditor.jsx), which is
+ * themed to match. Light values first, dark values under `html.dark`, both
+ * built from the existing --brand-*/--text-* tokens (src/theme.css) so the
+ * palette stays in step with the rest of the app instead of hard-coding a
+ * separate scheme.
+ */
+
+.tok-keyword { color: var(--brand-strong, #4f46e5); font-weight: 600; }
+.tok-string { color: #0d9488; }
+.tok-number { color: #b45309; }
+.tok-comment { color: var(--text-tertiary, #9ca3af); font-style: italic; }
+.tok-function { color: #7c3aed; }
+.tok-type { color: #2563eb; }
+.tok-property { color: #0369a1; }
+.tok-variable { color: var(--text-primary, #111827); }
+.tok-tag { color: #be185d; }
+.tok-punctuation { color: var(--text-secondary, #6b7280); }
+.tok-operator { color: var(--text-secondary, #6b7280); }
+.tok-meta { color: var(--text-tertiary, #9ca3af); }
+.tok-heading { color: var(--brand-strong, #4f46e5); font-weight: 700; }
+.tok-strong { font-weight: 700; }
+.tok-emphasis { font-style: italic; }
+.tok-link { color: var(--brand-strong, #4f46e5); text-decoration: underline; }
+.tok-invalid { color: #dc2626; text-decoration: wavy underline; }
+
+html.dark .tok-keyword { color: #a5b4fc; }
+html.dark .tok-string { color: #5eead4; }
+html.dark .tok-number { color: #fbbf24; }
+html.dark .tok-comment { color: #7d8590; }
+html.dark .tok-function { color: #c4b5fd; }
+html.dark .tok-type { color: #93c5fd; }
+html.dark .tok-property { color: #7dd3fc; }
+html.dark .tok-variable { color: #e5e7eb; }
+html.dark .tok-tag { color: #f9a8d4; }
+html.dark .tok-punctuation { color: #9ca3af; }
+html.dark .tok-operator { color: #9ca3af; }
+html.dark .tok-meta { color: #9ca3af; }
+html.dark .tok-heading { color: #a5b4fc; }
+html.dark .tok-link { color: #a5b4fc; }
+html.dark .tok-invalid { color: #f87171; }
+
+/* The highlighted-block chrome shared by MarkdownRenderer's fenced blocks and
+   CodeView's body: a dark surface in both themes (code reads better on a
+   near-black panel even in light mode, matching the previous plain <pre>),
+   with the language label and Copy button docked in the header row. */
+.hl-code-block {
+  position: relative;
+  margin: 0.75rem 0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.hl-code-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.7rem;
+  color: #9ca3af;
+  text-transform: lowercase;
+}
+
+.hl-code-block__body {
+  margin: 0;
+  padding: 1rem;
+  overflow-x: auto;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #e5e7eb;
+  white-space: pre;
+}
+
+.hl-code-block .tok-comment { color: #7d8590; }
+.hl-code-block .tok-keyword { color: #a5b4fc; font-weight: 600; }
+.hl-code-block .tok-string { color: #5eead4; }
+.hl-code-block .tok-number { color: #fbbf24; }
+.hl-code-block .tok-function { color: #c4b5fd; }
+.hl-code-block .tok-type { color: #93c5fd; }
+.hl-code-block .tok-property { color: #7dd3fc; }
+.hl-code-block .tok-variable { color: #e5e7eb; }
+.hl-code-block .tok-tag { color: #f9a8d4; }
+.hl-code-block .tok-punctuation,
+.hl-code-block .tok-operator,
+.hl-code-block .tok-meta { color: #9ca3af; }

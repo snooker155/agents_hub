@@ -1,5 +1,5 @@
 import { AgentDropdown, FlowDropdown, TeamDropdown } from './targetPickers';
-import { AlertCircle, Bot, FileText, FolderGit2, MessageSquare, Terminal, UsersRound, Workflow, X } from 'lucide-react';
+import { AlertCircle, Bot, Code2, FileText, FolderGit2, MessageSquare, Terminal, UsersRound, Workflow, X } from 'lucide-react';
 import { useChatPage } from './context';
 
 /**
@@ -8,12 +8,22 @@ import { useChatPage } from './context';
  */
 export default function ChatTopBar() {
   const {
-    agentModel, agentProvider, agentTopology, currentConv, currentConvId, flows, graphRun,
-    messages, processOpen, projects, selectableAgents, selectedAgent, selectedFlow,
-    selectedProject, selectedTeam, selectedWorkspace, setConversations, setProcessOpen,
-    setSelectedAgent, setSelectedFlow, setSelectedProject, setSelectedTeam, setTargetMode,
-    setViewMode, t, targetMode, teams, viewMode,
+    agentModel, agentProvider, agentTopology, codeOpen, currentConv, currentConvId, flows,
+    graphRun, messages, processOpen, projects, selectableAgents, selectedAgent, selectedFlow,
+    selectedProject, selectedTeam, selectedWorkspace, setCodeOpen, setConversations,
+    setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject, setSelectedTeam,
+    setTargetMode, setViewMode, t, targetMode, teams, viewMode,
   } = useChatPage();
+  // The Code and Process panels are two tabs of the one side-panel slot in
+  // chat view (ChatSidePanel): opening either closes the other.
+  const toggleProcessPanel = () => {
+    setProcessOpen((v) => !v);
+    setCodeOpen(false);
+  };
+  const toggleCodePanel = () => {
+    setCodeOpen((v) => !v);
+    setProcessOpen(false);
+  };
   return (
     <>
 
@@ -157,7 +167,19 @@ export default function ChatTopBar() {
 
           {viewMode !== 'build' && (
             <button
-              onClick={() => setProcessOpen((v) => !v)}
+              onClick={toggleCodePanel}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-lg ${
+                codeOpen ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {codeOpen ? <X className="w-3.5 h-3.5" /> : <Code2 className="w-3.5 h-3.5" />}
+              {t('chat.code.toggle')}
+            </button>
+          )}
+
+          {viewMode !== 'build' && (
+            <button
+              onClick={toggleProcessPanel}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
             >
               {processOpen ? (

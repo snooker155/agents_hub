@@ -23,7 +23,7 @@ def test_supported_kinds():
     assert set(SUPPORTED_KINDS) == {
         "markdown", "table", "chart", "diagram", "image", "graph",
         "scene3d", "html", "latex", "math", "simulation", "process",
-        "slides", "document",
+        "slides", "document", "code",
     }
 
 

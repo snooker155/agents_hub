@@ -198,6 +198,14 @@ the whole trifecta, because the snippet then has the network and the host's
 filesystem. It is not idempotent, and with the approval gate on it needs a
 yes every time, like `run_shell`.
 
+The Chat code panel's Run button (see [chat](chat.md#code-panel) and
+[views](views.md#code)) goes through the same sandbox: `POST
+/api/views/{id}/code/run` calls the same `run_snippet` machinery this tool
+calls, with the same docker isolation and the same `CODE_RUNNER_FALLBACK`
+behaviour. It is a dashboard route, not an agent tool, so it carries no
+approval gate of its own, but it honours the view's own workspace scoping,
+mounting read-only exactly the way `mount_workspace` does here.
+
 ## Group aliases
 
 A tool list may name a group (`filesystem`, `task_management`, `service_ops`,

@@ -1,33 +1,42 @@
 import { ArtifactsPanel, ProcessPanelContent } from './panels';
-import { FileText, RefreshCw, X } from 'lucide-react';
+import CodePanel from './CodePanel';
+import { Code2, FileText, RefreshCw, X } from 'lucide-react';
 import { useChatPage } from './context';
 
 /**
- * The panel beside the transcript: what the agent's run looked like, and the
- * files it changed.
+ * The panel beside the transcript: what the agent's run looked like, the code
+ * it produced, and the files it changed.
  */
 export default function ChatSidePanel() {
   const {
-    activeRunId, agentTopology, artifacts, graphRun, loadProcessData, processError,
-    processInsights, processLoading, processOpen, setProcessOpen, t, viewMode,
+    activeRunId, agentTopology, artifacts, codeOpen, graphRun, loadProcessData, processError,
+    processInsights, processLoading, processOpen, setCodeOpen, setProcessOpen, t, viewMode,
   } = useChatPage();
   return (
     <>
       {/* ── Side panel ──
           Build view: Artifacts only, always open (file diffs live here; steps and
           tool calls are shown inline in the transcript, so there is no Process tab).
-          Chat view: the legacy Agent Process panel, toggled by "Show process". */}
+          Chat view: two tabs sharing this one slot, each toggled from the top
+          bar — the legacy Agent Process panel ("Show process") and the Code
+          panel ("Code"); opening one closes the other. */}
       {(() => {
         const isBuild = viewMode === 'build';
-        const panelVisible = isBuild || processOpen;
+        const panelVisible = isBuild || processOpen || codeOpen;
         if (!panelVisible) return null;
+        const isCode = !isBuild && codeOpen;
         return (
-          <div className={`${isBuild ? 'w-[560px]' : 'w-[420px]'} flex-shrink-0 bg-white border-l border-gray-200 flex flex-col`}>
+          <div className={`${isBuild || isCode ? 'w-[560px]' : 'w-[420px]'} flex-shrink-0 bg-white border-l border-gray-200 flex flex-col`}>
             <div className="px-4 h-[60px] border-b border-gray-200 flex items-center justify-between">
               {isBuild ? (
                 <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
                   <FileText className="w-4 h-4 text-indigo-500" />
                   {t('chat.artifacts')}
+                </h3>
+              ) : isCode ? (
+                <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                  <Code2 className="w-4 h-4 text-indigo-500" />
+                  {t('chat.code.panelTitle')}
                 </h3>
               ) : (
                 <div>
@@ -45,7 +54,16 @@ export default function ChatSidePanel() {
                   )}
                 </div>
               )}
-              {!isBuild && (
+              {isCode && (
+                <button
+                  onClick={() => setCodeOpen(false)}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                  title={t('chat.closePanel')}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+              {!isBuild && !isCode && (
                 <div className="flex items-center gap-1">
                   {activeRunId && (
                     <button
@@ -69,6 +87,8 @@ export default function ChatSidePanel() {
 
             {isBuild ? (
               <ArtifactsPanel artifacts={artifacts} />
+            ) : isCode ? (
+              <CodePanel />
             ) : !activeRunId ? (
               <div className="p-4 text-sm text-gray-500">
                 {t('chat.sendAMessageThenOpen')}

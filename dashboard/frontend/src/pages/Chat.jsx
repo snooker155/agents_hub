@@ -78,6 +78,8 @@ import useChatSend from '../components/chat/useChatSend';
 // Whether the agent-process panel is open. Persisted so navigating away from the
 // Chat page and back (which unmounts/remounts this component) keeps it open.
 const PROCESS_OPEN_KEY = 'agent_hub_chat_process_open';
+// Whether the code panel is open, persisted for the same reason.
+const CODE_OPEN_KEY = 'agent_hub_chat_code_open';
 // 'chat' vs 'build' view mode, persisted across navigation for the same reason.
 const VIEW_MODE_KEY = 'agent_hub_chat_view_mode';
 
@@ -152,6 +154,11 @@ export default function Chat() {
   const [processOpen, setProcessOpen] = useState(() => {
     try { return localStorage.getItem(PROCESS_OPEN_KEY) === '1'; } catch { return false; }
   });
+  // The Code panel and the Process panel are two tabs of the same side-panel
+  // slot in chat view (see ChatSidePanel): opening one closes the other.
+  const [codeOpen, setCodeOpen] = useState(() => {
+    try { return localStorage.getItem(CODE_OPEN_KEY) === '1'; } catch { return false; }
+  });
   // 'chat' = clean message bubbles (default). 'build' = full inline transcript
   // (messages + thinking + plan + tool calls) with an Artifacts (diffs) column.
   const [viewMode, setViewMode] = useState(() => {
@@ -182,6 +189,10 @@ export default function Chat() {
   useEffect(() => {
     try { localStorage.setItem(PROCESS_OPEN_KEY, processOpen ? '1' : '0'); } catch { /* storage unavailable */ }
   }, [processOpen]);
+
+  useEffect(() => {
+    try { localStorage.setItem(CODE_OPEN_KEY, codeOpen ? '1' : '0'); } catch { /* storage unavailable */ }
+  }, [codeOpen]);
 
   useEffect(() => {
     try { localStorage.setItem(VIEW_MODE_KEY, viewMode); } catch { /* storage unavailable */ }
@@ -708,17 +719,17 @@ export default function Chat() {
   // Published once for the five panes below; see `chat/context.js`.
   const page = {
     activeRunId, addReferences, agentModel, agentName, agentProvider, agentTopology, agents,
-    artifacts, attachMenuOpen, attachmentError, commandMenuIndex, commandMenuOpen,
-    commandSuggestions, composerPlaceholder, contextKinds, contextUsage, conversations,
-    currentConv, currentConvId, currentTelegramBinding, deleteConversation, fileInputRef,
-    flows, graphRun, handleKeyDown, hasTarget, input, jumpToArtifact, liveMessages, liveTurn,
-    loadProcessData, loading, messages, messagesEndRef, navigate, newConversation, onPickFiles,
-    pendingAttachments, pendingReferences, pickerKind, processError, processInsights,
+    artifacts, attachMenuOpen, attachmentError, codeOpen, commandMenuIndex, commandMenuOpen,
+    commandSuggestions, composerPlaceholder, contextKinds, contextUsage, conversationRunIds,
+    conversations, currentConv, currentConvId, currentTelegramBinding, deleteConversation,
+    fileInputRef, flows, graphRun, handleKeyDown, hasTarget, input, jumpToArtifact, liveMessages,
+    liveTurn, loadProcessData, loading, messages, messagesEndRef, navigate, newConversation,
+    onPickFiles, pendingAttachments, pendingReferences, pickerKind, processError, processInsights,
     processLoading, processOpen, projects, removeAttachment, removeReference, renderedMessages,
     resizeTextarea, runTimelineByRunId, selectCommand, selectableAgents, selectedAgent,
     selectedFlow, selectedProject, selectedTeam, selectedWorkspace, sendAsBot, sendMessage,
-    setAttachMenuOpen, setCommandMenuIndex, setCommandMenuOpen, setConversations, setInput,
-    setPickerKind, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
+    setAttachMenuOpen, setCodeOpen, setCommandMenuIndex, setCommandMenuOpen, setConversations,
+    setInput, setPickerKind, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
     setSelectedTeam, setTargetMode, setViewMode, stopGeneration, syncError, t, targetMode,
     teams, telegramError, telegramReplyAllowed, telegramSending, textareaRef,
     toggleAttachmentStore, viewMode, visibleConversations, visibleTelegramBindings

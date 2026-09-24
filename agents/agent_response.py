@@ -260,12 +260,17 @@ payoff (prose < table < chart < diagram):
 - `diagram`   — a process, sequence, hierarchy or state machine (Mermaid).
                 spec: {"mermaid": "flowchart LR\\n  A-->B"}
 - `image`     — an existing image by path or URL.  spec: {"src": "...", "caption": "..."}
+- `code`      — a runnable or editable snippet, instead of a code fence in
+                prose: gives the user an editor with run/version/diff.
+                spec: {"language": "python", "body": "print('hi')"}. Prefer the
+                `create_view` tool for this kind (below).
 
 Rules:
 - Always write a short `summary` — it is what non-visual surfaces (and the chat
   card header) show. Write your normal prose answer BEFORE the block.
-- Keep the inline spec small. For a large dataset, a 3D scene, or a multi-file
-  interactive app, use the `create_view` tool instead of this block.
+- Keep the inline spec small. For a large dataset, a 3D scene, a code snippet,
+  or a multi-file interactive app, use the `create_view` tool instead of this
+  block.
 - Output at most one block, and only when a view genuinely helps."""
 
 _FORMAT_PROMPTS = {"buttons": _BUTTONS_PROMPT, "telegram": _TELEGRAM_PROMPT,

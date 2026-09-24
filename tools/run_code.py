@@ -22,6 +22,12 @@ a plain subprocess in a temporary directory with ``scrubbed_env`` and the same
 timeout. That has none of the isolation above and is an explicit opt-in;
 without it the tool returns an error. Settings: common/config.py
 (``code_runner_*``); docs: docs/tools-and-capabilities.md.
+
+``run_snippet`` is the same sandbox as a plain function returning a structured
+result instead of the tool's formatted-string shape — shared with the code
+view's run route (dashboard/backend/routes/views.py, views/code.py), so a
+snippet run from the Chat code panel gets exactly the isolation an agent's
+``run_code`` call gets.
 """
 from __future__ import annotations
 
@@ -33,7 +39,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
@@ -215,18 +221,42 @@ def _write_snippet(language: str, code: str) -> Path:
 
 
 # ── Runners ──────────────────────────────────────────────────────────────────
+#
+# The ``_result`` functions do the actual work and return a structured dict
+# (never raise for an ordinary failure — a timeout, a missing interpreter, a
+# refused mount all come back as a result with ``error`` set). ``_run_docker``/
+# ``_run_local`` are thin string-formatting wrappers kept for the ``run_code``
+# tool (and the tests that patch them directly); ``run_snippet`` below is the
+# structured entry point shared with the code view's run route.
 
-def _run_docker(language: str, code_dir: Path, timeout: int, stdin: Optional[str],
-                mount_workspace: bool) -> str:
+def _resolve_mount_workspace(
+    mount_workspace: bool, workspace_override: Optional[str]
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """(ok, host workspace path or None, error message or None) for a mount request.
+
+    ``workspace_override`` — when given, used as-is (the code view's run route
+    passes the view's own workspace explicitly, since there is no in-process
+    agent run to resolve ``_workspace_dir()`` from); otherwise falls back to
+    the current run's workspace, exactly what the ``run_code`` tool always did.
+    """
+    if not mount_workspace:
+        return True, None, None
+    ws = workspace_override if workspace_override is not None else _workspace_dir()
+    if ws is None:
+        return False, None, "mount_workspace: this run has no workspace directory"
+    return True, ws, None
+
+
+def _run_docker_result(language: str, code_dir: Path, timeout: int, stdin: Optional[str],
+                       mount_workspace: bool, workspace_override: Optional[str] = None) -> Dict[str, Any]:
     s = _settings()
     image = parse_images(s.code_runner_images)[language]
-    workspace = None
-    if mount_workspace:
-        ws = _workspace_dir()
-        if ws is None:
-            return format_result(-1, 0, f"docker ({image})",
-                                 error="mount_workspace: this run has no workspace directory")
-        workspace = _host_path(ws)
+    runtime = f"docker ({image})"
+    ok, ws, err = _resolve_mount_workspace(mount_workspace, workspace_override)
+    if not ok:
+        return {"exit_code": -1, "duration_ms": 0, "runtime": runtime,
+                "stdout": "", "stderr": "", "error": err}
+    workspace = _host_path(ws) if ws else None
     name = f"{_CONTAINER_PREFIX}{uuid.uuid4().hex[:12]}"
     cmd = build_docker_command(
         language=language, code_dir=_host_path(str(code_dir)), image=image, name=name,
@@ -240,19 +270,24 @@ def _run_docker(language: str, code_dir: Path, timeout: int, stdin: Optional[str
     except subprocess.TimeoutExpired as exc:
         # Killing the docker CLI does not stop the container; remove it by name.
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
-        return format_result(
-            -1, int((time.monotonic() - started) * 1000), f"docker ({image})",
-            stdout=_as_text(exc.stdout), stderr=_as_text(exc.stderr),
-            error=f"timed out after {timeout}s",
-        )
+        return {"exit_code": -1, "duration_ms": int((time.monotonic() - started) * 1000),
+                "runtime": runtime, "stdout": _as_text(exc.stdout), "stderr": _as_text(exc.stderr),
+                "error": f"timed out after {timeout}s"}
     duration = int((time.monotonic() - started) * 1000)
     stderr = proc.stderr or ""
     # 125: docker itself failed (image pull, bad flag), not the snippet.
     if proc.returncode == 125:
-        return format_result(-1, duration, f"docker ({image})", stderr=stderr,
-                             error="docker could not start the container")
-    return format_result(proc.returncode, duration, f"docker ({image})",
-                         stdout=proc.stdout or "", stderr=stderr)
+        return {"exit_code": -1, "duration_ms": duration, "runtime": runtime,
+                "stdout": "", "stderr": stderr, "error": "docker could not start the container"}
+    return {"exit_code": proc.returncode, "duration_ms": duration, "runtime": runtime,
+            "stdout": proc.stdout or "", "stderr": stderr, "error": ""}
+
+
+def _run_docker(language: str, code_dir: Path, timeout: int, stdin: Optional[str],
+                mount_workspace: bool) -> str:
+    r = _run_docker_result(language, code_dir, timeout, stdin, mount_workspace)
+    return format_result(r["exit_code"], r["duration_ms"], r["runtime"],
+                         stdout=r["stdout"], stderr=r["stderr"], error=r["error"])
 
 
 def _as_text(value) -> str:
@@ -263,20 +298,21 @@ def _as_text(value) -> str:
     return str(value)
 
 
-def _run_local(language: str, code_dir: Path, timeout: int, stdin: Optional[str],
-               mount_workspace: bool) -> str:
+def _run_local_result(language: str, code_dir: Path, timeout: int, stdin: Optional[str],
+                      mount_workspace: bool, workspace_override: Optional[str] = None) -> Dict[str, Any]:
     file_name, _, candidates = _LANGS[language]
     interpreter = next((shutil.which(c) for c in candidates if shutil.which(c)), None)
     if interpreter is None:
-        return format_result(-1, 0, "local", error=f"no {language} interpreter on this host")
+        return {"exit_code": -1, "duration_ms": 0, "runtime": "local", "stdout": "", "stderr": "",
+                "error": f"no {language} interpreter on this host"}
     env = scrubbed_env()
     env["HOME"] = str(code_dir)
     note = ""
-    if mount_workspace:
-        ws = _workspace_dir()
-        if ws is None:
-            return format_result(-1, 0, "local",
-                                 error="mount_workspace: this run has no workspace directory")
+    ok, ws, err = _resolve_mount_workspace(mount_workspace, workspace_override)
+    if not ok:
+        return {"exit_code": -1, "duration_ms": 0, "runtime": "local", "stdout": "", "stderr": "",
+                "error": err}
+    if ws is not None:
         env["WORK"] = ws
         note = " (workspace at $WORK, not write-protected in local mode)"
     started = time.monotonic()
@@ -284,11 +320,90 @@ def _run_local(language: str, code_dir: Path, timeout: int, stdin: Optional[str]
         proc = subprocess.run([interpreter, str(code_dir / file_name)], cwd=str(code_dir),
                               input=stdin, capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
-        return format_result(-1, int((time.monotonic() - started) * 1000), "local" + note,
-                             stdout=_as_text(exc.stdout), stderr=_as_text(exc.stderr),
-                             error=f"timed out after {timeout}s")
-    return format_result(proc.returncode, int((time.monotonic() - started) * 1000), "local" + note,
-                         stdout=proc.stdout or "", stderr=proc.stderr or "")
+        return {"exit_code": -1, "duration_ms": int((time.monotonic() - started) * 1000),
+                "runtime": "local" + note, "stdout": _as_text(exc.stdout), "stderr": _as_text(exc.stderr),
+                "error": f"timed out after {timeout}s"}
+    return {"exit_code": proc.returncode, "duration_ms": int((time.monotonic() - started) * 1000),
+            "runtime": "local" + note, "stdout": proc.stdout or "", "stderr": proc.stderr or "", "error": ""}
+
+
+def _run_local(language: str, code_dir: Path, timeout: int, stdin: Optional[str],
+               mount_workspace: bool) -> str:
+    r = _run_local_result(language, code_dir, timeout, stdin, mount_workspace)
+    return format_result(r["exit_code"], r["duration_ms"], r["runtime"],
+                         stdout=r["stdout"], stderr=r["stderr"], error=r["error"])
+
+
+def run_snippet(
+    language: str,
+    code: str,
+    *,
+    timeout: Optional[int] = 60,
+    stdin: Optional[str] = None,
+    mount_workspace: bool = False,
+    workspace: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run a snippet in the same sandbox the ``run_code`` tool uses; return a
+    structured result instead of the tool's formatted-string shape.
+
+    Shared by the ``run_code`` tool's underlying machinery and the code view's
+    run route (dashboard/backend/routes/views.py, views/code.py), so a snippet
+    run from the Chat code panel gets exactly the isolation an agent's
+    ``run_code`` call gets. Returns ``{"ok", "exit_code", "duration_ms",
+    "stdout", "stderr", "runtime", "language", "sandbox": "docker"|"local"|
+    "unavailable", "error"}``; never raises — any failure (bad language, no
+    docker and no fallback, a timeout, a crashed interpreter) comes back as
+    ``ok: False`` with ``error`` set.
+
+    ``workspace`` overrides where ``mount_workspace`` mounts from: the route
+    passes the view's own workspace directory explicitly, since there is no
+    in-process agent run to resolve it from the way the tool does.
+    """
+    language = (language or "").strip().lower()
+    if language not in _LANGS:
+        return {"ok": False, "exit_code": -1, "duration_ms": 0, "stdout": "", "stderr": "",
+                "runtime": "none", "language": language, "sandbox": "unavailable",
+                "error": f"unsupported language {language!r} (expected python, node or bash)"}
+    s = _settings()
+    limit = max(1, int(s.code_runner_max_timeout or 300))
+    timeout = max(1, min(int(timeout or 60), limit))
+
+    use_docker = docker_available()
+    if not use_docker and str(s.code_runner_fallback or "").strip().lower() != "local":
+        return {"ok": False, "exit_code": -1, "duration_ms": 0, "stdout": "", "stderr": "",
+                "runtime": "none", "language": language, "sandbox": "unavailable", "error": (
+                    "docker is not available on this host, so run_code cannot start its sandbox. "
+                    "An operator can set CODE_RUNNER_FALLBACK=local to run snippets as plain "
+                    "subprocesses instead (no isolation).")}
+
+    code_dir = _write_snippet(language, code or "")
+    try:
+        if use_docker:
+            result = _run_docker_result(language, code_dir, timeout, stdin, mount_workspace,
+                                        workspace_override=workspace)
+            sandbox = "docker"
+        else:
+            result = _run_local_result(language, code_dir, timeout, stdin, mount_workspace,
+                                       workspace_override=workspace)
+            sandbox = "local"
+    except Exception as exc:
+        result = {"exit_code": -1, "duration_ms": 0, "runtime": "docker" if use_docker else "local",
+                  "stdout": "", "stderr": "", "error": str(exc)}
+        sandbox = "docker" if use_docker else "local"
+    finally:
+        shutil.rmtree(code_dir, ignore_errors=True)
+
+    return {
+        "ok": result["exit_code"] == 0 and not result.get("error"),
+        "exit_code": result["exit_code"],
+        "duration_ms": result["duration_ms"],
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
+        "runtime": result.get("runtime", sandbox),
+        "language": language,
+        "sandbox": sandbox,
+        "error": result.get("error", ""),
+    }
 
 
 # ── Tool ─────────────────────────────────────────────────────────────────────
@@ -342,4 +457,4 @@ def run_code(language: str, code: str, timeout: Optional[int] = 60,
 RUN_CODE_TOOLS = [run_code]
 
 __all__ = ["run_code", "RUN_CODE_TOOLS", "build_docker_command", "parse_images",
-           "docker_available", "format_result", "DEFAULT_IMAGES"]
+           "docker_available", "format_result", "DEFAULT_IMAGES", "run_snippet"]

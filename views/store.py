@@ -179,6 +179,10 @@ def create_view(
              env.summary, None, _dir_size(view_dir), now, now,
              env.owner.kind if env.owner else None, env.owner.id if env.owner else None),
         )
+    if env.kind == "code":
+        body = str(env.spec.get("body") or "")
+        if body:
+            _seed_code_version(env.view_id, workspace, body)
     _mirror_view_dir(view_dir)
     return env
 
@@ -730,6 +734,146 @@ def _broadcast_reset(view_id: str, doc: Dict[str, Any], seq: int) -> None:
         pass
 
 
+# ── code views: versions, runs, saves ─────────────────────────────────────────
+# A code view's edit history, run history and save-to-project history are
+# view-level facts, not a per-user preference — replacing them wholesale is
+# exactly what set_view_state does for a control's value, so they must not
+# share that column. They live in their own small JSON files beside
+# checkpoints.json/clips/, the same file-per-facet pattern already used there,
+# rather than a new table.
+
+MAX_CODE_RUNS = 10
+
+
+def _code_versions_file(view_id: str, workspace: Optional[str]) -> Path:
+    return _view_dir(workspace, view_id) / "code_versions.json"
+
+
+def _code_runs_file(view_id: str, workspace: Optional[str]) -> Path:
+    return _view_dir(workspace, view_id) / "code_runs.json"
+
+
+def _code_saves_file(view_id: str, workspace: Optional[str]) -> Path:
+    return _view_dir(workspace, view_id) / "code_saves.json"
+
+
+def _read_json_list(path: Path) -> List[Dict[str, Any]]:
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_json_list(path: Path, items: List[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_view_file(path)
+
+
+def _seed_code_version(view_id: str, workspace: Optional[str], body: str) -> None:
+    """Record version 1 at creation time (create_view calls this directly; the
+    envelope's view.json already carries the right spec.body/spec.version)."""
+    entry = {"version": 1, "body": body, "author": "agent", "note": "initial version",
+              "created_at": utc_iso()}
+    _write_json_list(_code_versions_file(view_id, workspace), [entry])
+
+
+def list_code_versions(view_id: str) -> List[Dict[str, Any]]:
+    """Every recorded version of a code view's body, oldest first. Empty for an
+    unknown view id or one with no recorded versions."""
+    row = _row(view_id)
+    if not row:
+        return []
+    return _read_json_list(_code_versions_file(view_id, row.get("workspace")))
+
+
+def add_code_version(view_id: str, body: str, *, author: str, note: str = "") -> Optional[Dict[str, Any]]:
+    """Record a new version of a code view's body; return the updated envelope.
+
+    Appends ``{"version", "body", "author", "note", "created_at"}`` to the
+    view's version history (oldest first), bumps ``spec.version`` and replaces
+    ``spec.body`` in the stored envelope. ``author`` is ``"agent"`` or
+    ``"user"``. Returns ``None`` for an unknown view id.
+    """
+    row = _row(view_id)
+    if not row:
+        return None
+    workspace = row.get("workspace")
+    versions = _read_json_list(_code_versions_file(view_id, workspace))
+    next_version = max((int(v.get("version", 0)) for v in versions), default=0) + 1
+    entry = {"version": next_version, "body": body, "author": author,
+              "note": note or "", "created_at": utc_iso()}
+    versions.append(entry)
+    _write_json_list(_code_versions_file(view_id, workspace), versions)
+
+    view_file = _view_dir(workspace, view_id) / "view.json"
+    try:
+        doc = json.loads(view_file.read_text(encoding="utf-8"))
+    except Exception:
+        doc = {}
+    spec = doc.setdefault("spec", {})
+    spec["body"] = body
+    spec["version"] = next_version
+    view_file.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_view_file(view_file)
+
+    with db.transaction() as conn:
+        conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
+                     (utc_iso(), _dir_size(_view_dir(workspace, view_id)), view_id))
+    return get_view(view_id)
+
+
+def list_code_runs(view_id: str) -> List[Dict[str, Any]]:
+    """The recorded run results for a code view, oldest first (capped at
+    MAX_CODE_RUNS). Empty for an unknown view id or one never run."""
+    row = _row(view_id)
+    if not row:
+        return []
+    return _read_json_list(_code_runs_file(view_id, row.get("workspace")))
+
+
+def add_code_run(view_id: str, run_record: Dict[str, Any]) -> bool:
+    """Append one run result, keeping only the last MAX_CODE_RUNS. False for an
+    unknown view id."""
+    row = _row(view_id)
+    if not row:
+        return False
+    workspace = row.get("workspace")
+    runs = _read_json_list(_code_runs_file(view_id, workspace))
+    runs.append({**run_record, "created_at": run_record.get("created_at") or utc_iso()})
+    runs = runs[-MAX_CODE_RUNS:]
+    _write_json_list(_code_runs_file(view_id, workspace), runs)
+    with db.transaction() as conn:
+        conn.execute("UPDATE views SET updated_at = ? WHERE view_id = ?", (utc_iso(), view_id))
+    return True
+
+
+def list_code_saves(view_id: str) -> List[Dict[str, Any]]:
+    """Every recorded save-to-project of a code view, oldest first."""
+    row = _row(view_id)
+    if not row:
+        return []
+    return _read_json_list(_code_saves_file(view_id, row.get("workspace")))
+
+
+def add_code_save(view_id: str, save_record: Dict[str, Any]) -> bool:
+    """Append one save-to-project record (``project_id``, ``path``, ``version``).
+    False for an unknown view id."""
+    row = _row(view_id)
+    if not row:
+        return False
+    workspace = row.get("workspace")
+    saves = _read_json_list(_code_saves_file(view_id, workspace))
+    saves.append({**save_record, "created_at": save_record.get("created_at") or utc_iso()})
+    _write_json_list(_code_saves_file(view_id, workspace), saves)
+    with db.transaction() as conn:
+        conn.execute("UPDATE views SET updated_at = ? WHERE view_id = ?", (utc_iso(), view_id))
+    return True
+
+
 # ── retention (maintenance job) ───────────────────────────────────────────────
 
 # Above this many ops, fold all but the tail into a fresh base so the log stays
@@ -817,4 +961,11 @@ __all__ = [
     "run_view_maintenance",
     "MAX_INLINE_SPEC_BYTES",
     "MAX_OPS_PER_VIEW",
+    "list_code_versions",
+    "add_code_version",
+    "list_code_runs",
+    "add_code_run",
+    "list_code_saves",
+    "add_code_save",
+    "MAX_CODE_RUNS",
 ]

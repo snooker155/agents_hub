@@ -9,8 +9,11 @@ view kind is "just" a new spec model + a frontend renderer.
 
 Phase 1 kinds: ``markdown``, ``table``, ``chart`` (Vega-Lite), ``diagram``
 (Mermaid), ``image``. Later kinds (``graph``, ``scene3d``, ``html``, ``latex``,
-``slides``, ``document``, ``math``, ``process``, ``simulation``) register the
-same way; unknown kinds fail validation with a message that lists the known set.
+``slides``, ``document``, ``math``, ``process``, ``simulation``, ``code``)
+register the same way; unknown kinds fail validation with a message that lists
+the known set. ``code`` is a runnable, versioned, editable snippet: see
+``views/code.py`` for its diff/run-language helpers and the ``/api/views/{id}/code/...``
+routes for its version, run and save-to-project history.
 """
 from __future__ import annotations
 
@@ -181,6 +184,48 @@ class DocumentSpec(BaseModel):
     css: str = ""
 
 
+#: A CodeSpec's ``language`` -> the filename its ``filename`` defaults to when
+#: left empty. Any other language still validates (for display), it just falls
+#: back to a generic name.
+CODE_LANGUAGE_FILENAMES: Dict[str, str] = {
+    "python": "main.py",
+    "node": "main.js",
+    "javascript": "main.js",
+    "bash": "main.sh",
+}
+
+#: Languages the run route (and ``tools.run_code.run_snippet``) can actually
+#: execute. A CodeSpec's ``language`` may name anything for display — sql, go,
+#: rust, … — but only these run.
+CODE_RUNNABLE_LANGUAGES: tuple[str, ...] = ("python", "node", "javascript", "bash")
+
+
+class CodeSpec(BaseModel):
+    """A code snippet: viewable, runnable (for a subset of languages), editable
+    and versioned. ``language`` is normalized lower case; ``filename`` defaults
+    from it when empty (``main.py``/``main.js``/``main.sh``, else
+    ``snippet.txt``). ``version`` mirrors the latest entry
+    ``views.store.add_code_version`` has recorded — a fresh view starts at 1.
+    ``dependencies`` names packages the snippet expects (informational; the
+    sandbox does not install them)."""
+    language: str
+    filename: str = ""
+    body: str
+    dependencies: List[str] = []
+    version: int = 1
+    description: str = ""
+
+    @model_validator(mode="after")
+    def _normalize(self):
+        self.language = (self.language or "").strip().lower()
+        if not self.language:
+            raise ValueError("a code view needs a non-empty 'language'")
+        if not self.body.strip():
+            raise ValueError("a code view needs a non-empty 'body' (the snippet's source)")
+        self.filename = self.filename.strip() or CODE_LANGUAGE_FILENAMES.get(self.language, "snippet.txt")
+        return self
+
+
 # kind -> spec model. Adding a kind = one entry here + a frontend renderer.
 KIND_REGISTRY: Dict[str, Type[BaseModel]] = {
     "markdown": MarkdownSpec,
@@ -197,6 +242,7 @@ KIND_REGISTRY: Dict[str, Type[BaseModel]] = {
     "process": ProcessSpec,
     "slides": SlidesSpec,
     "document": DocumentSpec,
+    "code": CodeSpec,
 }
 
 # Starting spec for a live (Studio-built) view of each kind — the empty document
@@ -217,6 +263,8 @@ _BASE_SPECS: Dict[str, Dict[str, Any]] = {
     "process": {"notation": "flowchart", "nodes": {}, "edges": {}, "lanes": {}},
     "slides": {"slides": {}, "theme": "light"},
     "document": {"markdown": "", "title": "", "css": ""},
+    "code": {"language": "", "filename": "", "body": "", "dependencies": [],
+             "version": 1, "description": ""},
 }
 
 
@@ -412,4 +460,7 @@ __all__ = [
     "ProcessSpec",
     "SlidesSpec",
     "DocumentSpec",
+    "CodeSpec",
+    "CODE_LANGUAGE_FILENAMES",
+    "CODE_RUNNABLE_LANGUAGES",
 ]

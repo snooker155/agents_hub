@@ -91,6 +91,17 @@ from the actual thing rather than your description of it.
 `/help`, `/clear`, `/new` and `/config` are handled in the page itself. An agent
 may also define its own commands, which appear in the same picker.
 
+## Code panel
+
+When an agent hands back a runnable or editable snippet (a `code` view, see
+[views](views.md#code)), it opens in its own panel instead of sitting in a code
+fence: an editor, plus Copy, Download, Run, Save to project, Discuss and Edit.
+The panel lists every code snippet from the session, so you can switch between
+several without losing your place. Editing and running both record a new
+version, and you can diff any two versions to see exactly what changed.
+"Discuss" hands the snippet back to the agent to keep working on; "Save to
+project" writes it into a project's own folder.
+
 ## Delegation from chat
 
 `run_agent_tool` is taskless delegation and only works here, not inside a

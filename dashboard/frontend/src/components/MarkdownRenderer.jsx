@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { CopyButton } from './chat/CopyButton';
+import { isKnownLanguage } from '../lib/highlight';
 
 // ---------------------------------------------------------------------------
 // Lightweight, dependency-free Markdown renderer.
@@ -58,6 +60,34 @@ function renderInline(text, keyPrefix = '') {
   return nodes;
 }
 
+// A fenced code block: highlighted lazily (the `@codemirror/lang-*` /
+// `@lezer/highlight` packages load only once a code block actually needs
+// them, via the dynamic import inside `highlightCode`), with a Copy button
+// and, when the language is recognised, a label naming it. An unknown
+// language, or a highlight failure, falls back to the plain body — no text is
+// ever lost waiting on the highlighter.
+function FencedCodeBlock({ lang, code }) {
+  const [nodes, setNodes] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!lang || !isKnownLanguage(lang)) { setNodes(null); return undefined; }
+    import('../lib/highlight').then(({ highlightCode }) => highlightCode(code, lang))
+      .then((result) => { if (!cancelled) setNodes(result); })
+      .catch(() => { if (!cancelled) setNodes(null); });
+    return () => { cancelled = true; };
+  }, [lang, code]);
+
+  return (
+    <div className="hl-code-block">
+      {lang && <div className="hl-code-block__header">{lang}</div>}
+      <pre className="hl-code-block__body">
+        <code>{nodes || code}</code>
+      </pre>
+      <CopyButton text={code} />
+    </div>
+  );
+}
+
 const HEADING_CLASSES = {
   1: 'text-xl font-bold text-gray-900 mt-4 mb-2',
   2: 'text-lg font-bold text-gray-900 mt-4 mb-2',
@@ -87,18 +117,7 @@ function MarkdownRenderer({ content = '', className = '' }) {
         i++;
       }
       i++; // skip closing fence
-      blocks.push(
-        <div key={key++} className="my-3">
-          {lang && (
-            <div className="bg-gray-800 text-gray-400 text-xs px-4 py-1.5 rounded-t-lg border-b border-gray-700">
-              {lang}
-            </div>
-          )}
-          <pre className={`bg-gray-900 text-gray-100 text-xs p-4 overflow-x-auto ${lang ? 'rounded-b-lg' : 'rounded-lg'} whitespace-pre`}>
-            {codeLines.join('\n')}
-          </pre>
-        </div>
-      );
+      blocks.push(<FencedCodeBlock key={key++} lang={lang} code={codeLines.join('\n')} />);
       continue;
     }
 
