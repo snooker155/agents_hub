@@ -873,6 +873,7 @@ html.dark {
 :where(html.dark) .border-indigo-700,
 :where(html.dark) .border-purple-700,
 :where(html.dark) .border-violet-700,
+:where(html) .dark .dark\:border-indigo-700,
 :where(html.dark) .divide-fuchsia-700 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-indigo-700 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-purple-700 > :not([hidden]) ~ :not([hidden]),

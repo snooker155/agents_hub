@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2,
+  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { MULTI, TOKEN, useAuth } from '../components/auth';
@@ -11,6 +11,7 @@ import {
   getWorkspacePolicy, updateWorkspacePolicy,
   updateSettings, getApiToken, setApiToken, API_ORIGIN,
 } from '../api';
+import { getDemo, setDemo } from '../api/demo';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { SectionCard, inputCls } from '../components/settingsUi';
@@ -47,6 +48,7 @@ const GROUPS = [
       { id: 'observability', key: 'observability', icon: Activity,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
       { id: 'apiAccess',     key: 'apiAccess',     icon: Lock },
+      { id: 'demo',          key: 'demo',          icon: Sparkles },
     ],
   },
 ];
@@ -166,6 +168,96 @@ function ProviderHeader({ status, testing, onTest }) {
 // ── Custom backends tab ───────────────────────────────────────────────────────
 
 const BLANK_BACKEND = { id: '', label: '', adapter: 'openai', base_url: '', api_key: '', default_model: '', headers: '' };
+
+// The demo workspace: a workspace named `demo` seeded with recorded data so a
+// new install has something to look at. Not workspace scoped: it adds or
+// removes a whole workspace, through its own endpoint.
+const DEMO_COUNT_KEYS = ['agents', 'projects', 'tasks', 'flows', 'teams', 'scenarios', 'views', 'runs'];
+
+function DemoWorkspaceTab() {
+  const { t } = useI18n();
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await getDemo();
+      setState(data || {});
+      setError(null);
+    } catch (e) {
+      setError(e?.response?.data?.detail || e?.message || t('settings.demo.loadFailed'));
+    }
+  }, [t]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = async () => {
+    const present = !!state?.present;
+    if (present && !window.confirm(t('settings.demo.confirmRemove', { workspace: state?.workspace || 'demo' }))) return;
+    setBusy(true);
+    try {
+      const { data } = await setDemo(!present);
+      setState(data && typeof data === 'object' ? { ...state, ...data, present: data.present ?? !present } : { ...state, present: !present });
+      setError(null);
+    } catch (e) {
+      setError(e?.response?.data?.detail || e?.message || t('settings.demo.saveFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const present = !!state?.present;
+  const counts = state?.counts || {};
+  const shown = DEMO_COUNT_KEYS.filter((k) => typeof counts[k] === 'number');
+
+  return (
+    <SectionCard
+      title={t('settings.demo.title')}
+      actions={state && (
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${present ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+          {present ? t('settings.demo.present') : t('settings.demo.absent')}
+        </span>
+      )}
+    >
+      <p className="text-sm text-gray-600">{t('settings.demo.intro')}</p>
+      {state && state.enabled === false && (
+        <p className="text-sm text-amber-700">{t('settings.demo.disabled')}</p>
+      )}
+      {present && shown.length > 0 && (
+        <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {shown.map((k) => (
+            <div key={k} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+              <dt className="text-[11px] uppercase tracking-wide text-gray-400">{t(`settings.demo.counts.${k}`)}</dt>
+              <dd className="text-lg font-semibold text-gray-800">{counts[k]}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {error && (
+        <p className="flex items-center gap-1.5 text-sm text-red-600"><AlertCircle className="w-4 h-4" />{error}</p>
+      )}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={toggle}
+          disabled={busy || !state || state.enabled === false}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 ${
+            present
+              ? 'border border-red-200 text-red-600 hover:bg-red-50'
+              : 'bg-indigo-600 text-white hover:bg-indigo-700'
+          }`}
+        >
+          {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : present ? <Trash2 className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+          {present ? t('settings.demo.remove') : t('settings.demo.add')}
+        </button>
+        {present && state?.workspace && (
+          <span className="text-xs text-gray-500">{t('settings.demo.workspaceName', { workspace: state.workspace })}</span>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
 
 function CustomBackendsTab() {
   const { t } = useI18n();
@@ -1130,6 +1222,9 @@ export default function Settings() {
 
             {/* Section: custom backends */}
             {active.id === 'custom' && <CustomBackendsTab />}
+
+            {/* Section: demo workspace */}
+            {active.id === 'demo' && <DemoWorkspaceTab />}
 
             {/* Section: Telegram connector */}
             {active.id === 'telegram' && <TelegramTab />}

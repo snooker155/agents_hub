@@ -500,6 +500,12 @@ export default function Chat() {
     setActiveRunId(latestRunMsg?.run_id || null);
   }, [currentConvId, currentConv]);
 
+  // Merge a streamed/persisted artifact into the per-path map (last write wins).
+  const mergeArtifact = useCallback((art) => {
+    if (!art || !art.path) return;
+    setArtifacts((prev) => ({ ...prev, [art.path]: { ...art } }));
+  }, []);
+
   useChatSessionStream({
     continuationMsgIdRef, currentConvId, mergeArtifact, messages, sessionId,
     setActiveRunId, setConversations,
@@ -519,12 +525,6 @@ export default function Chat() {
     setAttachmentError, setContextKinds, setPendingAttachments, setPendingReferences,
     textareaRef,
   });
-
-  // Merge a streamed/persisted artifact into the per-path map (last write wins).
-  const mergeArtifact = useCallback((art) => {
-    if (!art || !art.path) return;
-    setArtifacts((prev) => ({ ...prev, [art.path]: { ...art } }));
-  }, []);
 
   // ---- new conversation ----
   // Don't create a conversation record yet — just land on the empty start page.

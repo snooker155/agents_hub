@@ -353,7 +353,7 @@ export default {
     },
     reopenOnboarding: {
       q: 'Wie öffne ich dieses Onboarding erneut?',
-      a: 'Es ist immer hier — öffnen Sie Dokumentation → Erste Schritte. Das Popup beim ersten Start erscheint nur einmal (vermerkt im localStorage Ihres Browsers).',
+      a: 'Es ist immer hier: Öffnen Sie Dokumentation, dann Erste Schritte. Das Popup beim ersten Start erscheint nur einmal (vermerkt im localStorage Ihres Browsers). Die Schaltfläche Willkommenstour wiederholen dort führt erneut durch die wichtigsten Seiten.',
     },
   },
   feature: {
@@ -567,6 +567,8 @@ export default {
   },
   start: {
     lead: 'Agents Hub ist eine lokale Multi-Agenten-Umgebung, um KI-gestützte Arbeit zu planen, auszuführen und zu überwachen — Agenten, Flows, Loops, Teams, geplante Jobs, Evals und die Views, die Agenten zeichnen. Die Checkliste unten prüft Ihre laufende Instanz und hakt jeden Schritt ab, sobald er erledigt ist — beginnen Sie oben.',
+    replayTour: 'Willkommenstour wiederholen',
+    replayTourHint: 'Ein kurzer Rundgang durch Chat, Agenten, Aufgaben, Flows, Teams, Ansichten, Status und diese Dokumentation.',
     firstRun: 'Ihre ersten fünf Minuten',
     firstRun0: 'Richten Sie einen Anbieter in den [Einstellungen](/settings) ein — ein API-Schlüssel oder ein lokaler Ollama-/LM-Studio-Endpunkt — und aktivieren Sie dann mindestens ein Modell unter [Modelle](/models). Nur aktivierte Modelle erscheinen in der Auswahl oben.',
     firstRun1: 'Wählen oder erstellen Sie oben einen Arbeitsbereich. Alles Weitere — Aufgaben, Projekte, Gedächtnis, Views, Budget — hängt daran.',

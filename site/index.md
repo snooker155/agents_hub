@@ -16,6 +16,10 @@ hero:
       text: "Install it"
       link: /guide/installation
     - theme: alt
+      text: "Try the demo"
+      link: /demo/index.html
+      target: _self
+    - theme: alt
       text: "What this service is"
       link: /guide/overview
     - theme: alt
@@ -108,6 +112,9 @@ thought behind each move, the action it took and the state that changed.
 </div>
 
 </div>
+
+Every screen above is also live: the <a href="./demo/index.html" target="_self">demo</a> is the real
+dashboard running in your browser over recorded data, with no backend and nothing to install.
 
 <style scoped>
 /* Alternating rows: the screenshot on one side, its caption on the other, and

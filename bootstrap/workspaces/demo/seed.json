@@ -1,0 +1,207 @@
+{
+  "agents": [
+    {
+      "id": "demo_writer",
+      "name": "Demo Writer",
+      "description": "Writes and edits the pages of the sample Demo site project. demo: true",
+      "tools": ["read_file", "list_files", "create_file", "write_file", "search_docs", "read_doc"]
+    },
+    {
+      "id": "demo_analyst",
+      "name": "Demo Analyst",
+      "description": "Reads the sample shop's sales data and turns it into a table or a chart. demo: true",
+      "tools": ["calculator", "read_file", "list_files", "create_view", "view_get", "search_docs", "read_doc"]
+    },
+    {
+      "id": "demo_reviewer",
+      "name": "Demo Reviewer",
+      "description": "Reviews the Demo site content pipeline's output and leads the demo editorial team. demo: true",
+      "tools": ["get_task", "update_task", "read_file", "list_files", "search_docs", "read_doc"]
+    }
+  ],
+
+  "project": {
+    "id": "demo_project_site",
+    "name": "Demo site",
+    "description": "A small sample web shop, used to show the product end to end. demo: true",
+    "files": {
+      "README.md": "# Fernweh & Co.\n\nA small sample web shop selling travel gear: backpacks, water bottles and\ntrail maps. This project exists to give the demo workspace something real to\nwork on: a handful of pages, a tiny Flask app, and a month of sample sales.\n\n## Layout\n\n- `src/app.py`: the shop's tiny storefront, a few routes, no database.\n- `docs/notes.md`: running notes from the last content review.\n- `data/sales.csv`: one month of sample orders, by category.\n\nNothing here talks to a real payment provider or a real warehouse. It is a\nsandbox for the demo agents: the Demo Writer edits the copy, the Demo Analyst\nreads the sales data, and the Demo Reviewer signs off before anything counts\nas done.\n",
+      "src/app.py": "\"\"\"Fernweh & Co. storefront: a tiny Flask app with no database.\n\nThree pages: the catalog, one product, and the about page. Product data is a\nplain list in this file on purpose, so the whole storefront is readable in one\nsitting.\n\"\"\"\nfrom flask import Flask, render_template_string\n\napp = Flask(__name__)\n\nPRODUCTS = [\n    {\"slug\": \"trailpack-32\", \"name\": \"Trailpack 32L\", \"price\": 89.00,\n     \"category\": \"Backpacks\"},\n    {\"slug\": \"summit-bottle\", \"name\": \"Summit Bottle 1L\", \"price\": 24.00,\n     \"category\": \"Bottles\"},\n    {\"slug\": \"ridge-map-pack\", \"name\": \"Ridge Map Pack\", \"price\": 15.00,\n     \"category\": \"Maps\"},\n]\n\n\n@app.route(\"/\")\ndef catalog():\n    return render_template_string(\n        \"<h1>Fernweh & Co.</h1><ul>{% for p in products %}\"\n        \"<li>{{ p.name }}: ${{ p.price }}</li>{% endfor %}</ul>\",\n        products=PRODUCTS,\n    )\n\n\n@app.route(\"/product/<slug>\")\ndef product(slug):\n    match = next((p for p in PRODUCTS if p[\"slug\"] == slug), None)\n    if match is None:\n        return \"Not found\", 404\n    return render_template_string(\n        \"<h1>{{ p.name }}</h1><p>${{ p.price }}, {{ p.category }}</p>\",\n        p=match,\n    )\n\n\n@app.route(\"/about\")\ndef about():\n    return \"Fernweh & Co. sells travel gear for people who read maps for fun.\"\n\n\nif __name__ == \"__main__\":\n    app.run(debug=True)\n",
+      "docs/notes.md": "# Content review notes\n\nRunning notes from the last pass over the storefront copy. Kept short on\npurpose: this is a demo project, not a real backlog.\n\n## Open items\n\n- The catalog page still reads a little flat. A one-line description per\n  product would help more than another adjective on the headline.\n- \"About\" is one sentence. That is probably fine for a shop this size, but it\n  could name what makes the gear different (weight, materials) rather than\n  just tone.\n- No pricing copy explains why the Trailpack costs more than the bottle. A\n  short note on materials would answer the obvious question.\n\n## Done\n\n- Renamed \"Rucksack 32\" to \"Trailpack 32L\" everywhere, including the sales\n  data, so the name is consistent end to end.\n- Confirmed the three product categories (Backpacks, Bottles, Maps) match\n  what is actually sold in `data/sales.csv`.\n",
+      "data/sales.csv": "date,category,product,units,revenue\n2026-08-01,Backpacks,Trailpack 32L,3,267.00\n2026-08-02,Bottles,Summit Bottle 1L,8,192.00\n2026-08-03,Maps,Ridge Map Pack,12,180.00\n2026-08-04,Backpacks,Trailpack 32L,2,178.00\n2026-08-05,Bottles,Summit Bottle 1L,5,120.00\n2026-08-06,Maps,Ridge Map Pack,6,90.00\n2026-08-07,Backpacks,Trailpack 32L,4,356.00\n2026-08-08,Bottles,Summit Bottle 1L,9,216.00\n2026-08-09,Maps,Ridge Map Pack,3,45.00\n2026-08-10,Backpacks,Trailpack 32L,1,89.00\n2026-08-11,Bottles,Summit Bottle 1L,7,168.00\n2026-08-12,Maps,Ridge Map Pack,10,150.00\n2026-08-13,Backpacks,Trailpack 32L,5,445.00\n2026-08-14,Bottles,Summit Bottle 1L,6,144.00\n2026-08-15,Maps,Ridge Map Pack,8,120.00\n2026-08-16,Backpacks,Trailpack 32L,2,178.00\n2026-08-17,Bottles,Summit Bottle 1L,11,264.00\n2026-08-18,Maps,Ridge Map Pack,4,60.00\n2026-08-19,Backpacks,Trailpack 32L,3,267.00\n2026-08-20,Bottles,Summit Bottle 1L,4,96.00\n"
+    }
+  },
+
+  "flow": {
+    "id": "demo_content_pipeline",
+    "name": "Demo content pipeline",
+    "nodes": [
+      {
+        "id": "demo_flow_writer",
+        "agent_id": "demo_writer",
+        "data": {"agent_id": "demo_writer", "label": "Writer", "description": "Drafts the page copy. demo: true"},
+        "position": {"x": 0, "y": 0}
+      },
+      {
+        "id": "demo_flow_analyst",
+        "agent_id": "demo_analyst",
+        "data": {"agent_id": "demo_analyst", "label": "Analyst", "description": "Adds the sales table or chart."},
+        "position": {"x": 260, "y": 0}
+      },
+      {
+        "id": "demo_flow_reviewer",
+        "agent_id": "demo_reviewer",
+        "data": {"agent_id": "demo_reviewer", "label": "Reviewer", "description": "Signs off before the task is done."},
+        "position": {"x": 520, "y": 0}
+      }
+    ],
+    "edges": [
+      {"id": "demo_flow_e1", "source": "demo_flow_writer", "target": "demo_flow_analyst"},
+      {"id": "demo_flow_e2", "source": "demo_flow_analyst", "target": "demo_flow_reviewer"}
+    ],
+    "entry_point": "demo_flow_writer"
+  },
+
+  "team": {
+    "team_id": "demo_editorial_team",
+    "name": "Demo editorial team",
+    "description": "The Demo site's writer, analyst and reviewer, working together on one goal. demo: true",
+    "mode": "centralized",
+    "charter": "You keep the Fernweh & Co. sample shop's content accurate, plain and consistent with data/sales.csv. Nothing counts as finished until the Reviewer says so.",
+    "leader_agent_id": "demo_reviewer",
+    "members": [
+      {"agent_id": "demo_writer", "name": "Writer", "role": "writer", "manifest": "Drafts and edits the shop's page copy."},
+      {"agent_id": "demo_analyst", "name": "Analyst", "role": "analyst", "manifest": "Reads data/sales.csv and produces a table or chart of it."},
+      {"agent_id": "demo_reviewer", "name": "Reviewer", "role": "reviewer", "manifest": "Assigns the round's work and signs off when it is ready."}
+    ]
+  },
+
+  "scenario": {
+    "scenario_id": "demo_market",
+    "name": "Demo market",
+    "description": "A small two-trader market simulation used to show the Playground page. demo: true",
+    "narrative": "A quiet Tuesday at the Fernweh & Co. stall market: a shopkeeper watching stock and a shopper deciding what to buy.",
+    "environment": "market",
+    "mode": "personas",
+    "roles": [
+      {"agent_id": "demo_writer", "name": "Alice", "role": "shopkeeper", "goal": "Keep the stall stocked and answer questions about the gear honestly."},
+      {"agent_id": "demo_analyst", "name": "Bob", "role": "shopper", "goal": "Decide which one item is worth buying today, and say why."}
+    ],
+    "max_ticks": 6
+  },
+
+  "views": [
+    {
+      "id_hint": "demo_view_chart",
+      "kind": "chart",
+      "title": "Sales by category",
+      "summary": "Bar chart of Fernweh & Co.'s sample August sales, by category.",
+      "spec": {
+        "vega_lite": {
+          "mark": "bar",
+          "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "revenue", "type": "quantitative", "aggregate": "sum"}
+          }
+        }
+      },
+      "data": {
+        "inline": [
+          {"category": "Backpacks", "revenue": 1780.0},
+          {"category": "Bottles", "revenue": 1200.0},
+          {"category": "Maps", "revenue": 645.0}
+        ]
+      }
+    },
+    {
+      "id_hint": "demo_view_table",
+      "kind": "table",
+      "title": "August sales",
+      "summary": "The sample shop's raw August sales rows.",
+      "spec": {
+        "columns": ["date", "category", "product", "units", "revenue"],
+        "rows": [
+          ["2026-08-01", "Backpacks", "Trailpack 32L", 3, 267.0],
+          ["2026-08-02", "Bottles", "Summit Bottle 1L", 8, 192.0],
+          ["2026-08-03", "Maps", "Ridge Map Pack", 12, 180.0],
+          ["2026-08-04", "Backpacks", "Trailpack 32L", 2, 178.0],
+          ["2026-08-05", "Bottles", "Summit Bottle 1L", 5, 120.0]
+        ]
+      }
+    },
+    {
+      "id_hint": "demo_view_markdown",
+      "kind": "markdown",
+      "title": "Content review summary",
+      "summary": "The Demo Analyst's note on what the sales chart shows.",
+      "spec": {
+        "markdown": "## What the numbers show\n\nBackpacks bring in the most revenue this month even though Bottles sell in\nhigher volume: the Trailpack's higher price makes up for fewer units. Maps are\nthe smallest line but the steadiest seller day to day.\n"
+      }
+    },
+    {
+      "id_hint": "demo_view_document",
+      "kind": "document",
+      "title": "August content report",
+      "summary": "A short report on the Demo site's content and sales for August.",
+      "spec": {
+        "title": "Fernweh & Co.: August content report",
+        "markdown": "# August content report\n\n## Content\n\nThe catalog, product and about pages were reviewed this month. The Trailpack\n32L was renamed from \"Rucksack 32\" everywhere, including the sample sales\ndata, so the name is consistent end to end.\n\n## Sales\n\nBackpacks were the top revenue category in August ($1,780), ahead of Bottles\n($1,200) and Maps ($645), even though Bottles sold in higher volume. See the\nattached chart and table for the day-by-day breakdown.\n\n## Next\n\nAdd a one-line description per product on the catalog page, and a short note\non materials to explain the Trailpack's price.\n"
+      }
+    }
+  ],
+
+  "tasks": [
+    {
+      "title": "Write the catalog page copy",
+      "description": "Draft the headline and per-product blurbs for the Fernweh & Co. catalog page. demo: true",
+      "status": "todo"
+    },
+    {
+      "title": "Add a sales chart to the August report",
+      "description": "Turn data/sales.csv into a bar chart of revenue by category for the August report. demo: true",
+      "status": "in_progress"
+    },
+    {
+      "title": "Explain the Trailpack's price on the product page",
+      "description": "A short note on materials, so the price difference from the Summit Bottle makes sense. demo: true",
+      "status": "blocked",
+      "blocked_reason": "Waiting on the supplier spec sheet for the Trailpack's fabric. demo: true"
+    },
+    {
+      "title": "Rename Rucksack 32 to Trailpack 32L",
+      "description": "Update the product name everywhere it appears: the catalog page, the product page and the sample sales data. demo: true",
+      "status": "done",
+      "result": "Renamed across src/app.py, docs/notes.md and data/sales.csv. Confirmed no other file still says \"Rucksack 32\"."
+    },
+    {
+      "title": "Review the about page tone",
+      "description": "Check whether the one-line about page needs to say more about what makes the gear different. demo: true",
+      "status": "done",
+      "result": "Left as is for now: one sentence reads fine for a shop this size. Noted in docs/notes.md as an open item to revisit if the catalog grows."
+    },
+    {
+      "title": "Confirm the three product categories match the sales data",
+      "description": "Check that Backpacks, Bottles and Maps are the only categories used, in both the storefront code and data/sales.csv. demo: true",
+      "status": "done",
+      "result": "Confirmed: all twenty rows in data/sales.csv use exactly these three categories, matching src/app.py."
+    }
+  ],
+
+  "chats": [
+    {
+      "id": "demo_chat_1",
+      "title": "What's in the sample shop?",
+      "agent_id": "demo_writer",
+      "user_message": "What does the Fernweh & Co. sample shop actually sell?",
+      "agent_message": "It sells three things: the Trailpack 32L backpack, the Summit Bottle and the Ridge Map Pack. Here's the storefront's product list:\n\n```python\nPRODUCTS = [\n    {\"slug\": \"trailpack-32\", \"name\": \"Trailpack 32L\", \"price\": 89.00, \"category\": \"Backpacks\"},\n    {\"slug\": \"summit-bottle\", \"name\": \"Summit Bottle 1L\", \"price\": 24.00, \"category\": \"Bottles\"},\n    {\"slug\": \"ridge-map-pack\", \"name\": \"Ridge Map Pack\", \"price\": 15.00, \"category\": \"Maps\"},\n]\n```\n\nBackpacks bring in the most revenue this month even though Bottles sell in higher volume, since the Trailpack costs more per unit."
+    },
+    {
+      "id": "demo_chat_2",
+      "title": "August sales by category",
+      "agent_id": "demo_analyst",
+      "user_message": "How did August sales break down by category?",
+      "agent_message": "Backpacks led at $1,780, ahead of Bottles at $1,200 and Maps at $645. I put together a chart of it.",
+      "view_id_hint": "demo_view_chart"
+    }
+  ]
+}

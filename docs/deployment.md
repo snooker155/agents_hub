@@ -132,8 +132,8 @@ deployment` in a terminal) is that page:
   listed separately, each with the host it lives on.
 - **Logs.** Each member writes its own log to `service_logs/<member>.log`
   under the state root (rotating, 5 MB by 3), mirrored to the object store
-  when one is configured, and served as `GET
-  /api/deployment/members/<id>/logs` with a live tail over the stream on
+  when one is configured, and served as
+  `GET /api/deployment/members/<id>/logs` with a live tail over the stream on
   `logs:member:<id>`, the same way a node's log is.
 
 Stale rows older than a day are pruned by the maintenance sweep; a stale

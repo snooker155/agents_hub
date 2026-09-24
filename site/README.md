@@ -17,6 +17,54 @@ npm run build      # -> site/.vitepress/dist
 npm run preview    # serve the built output
 ```
 
+## The demo
+
+`/demo/` on the site is the real dashboard running over recorded data. It is
+`dashboard/frontend` built with `VITE_DEMO=1` (`npm run build:demo` there): a
+mock service worker ([MSW](https://mswjs.io)) answers every `/api` call from
+`dashboard/frontend/src/demo/fixtures/`, and replays recorded runs as event
+streams, so it needs no backend and works on GitHub Pages.
+
+```bash
+npm run demo       # build the demo and copy it into site/public/demo/
+```
+
+`npm run build` does this first (its `prebuild` runs `sync` then `demo`).
+When `dashboard/frontend/node_modules` is missing the demo step prints a
+message and skips, so a docs only build still works, just without `/demo/`.
+`DEMO_SKIP=1` skips it on purpose. `site/public/demo/` is generated and
+git-ignored.
+
+For GitHub Pages to publish the demo, the workflow has to install the
+frontend's dependencies before building the site, for example a step
+`npm ci` with `working-directory: dashboard/frontend` (and
+`dashboard/frontend/package-lock.json` added to the npm cache paths). Without
+that step the published site simply has no `/demo/`.
+
+## Recipes
+
+`site/recipes/*.md` are short task oriented walkthroughs. The sidebar under
+`/recipes/` is built from that folder when the config loads: a new file shows
+up on its own, titled by its first `# ` heading.
+
+## Screenshots
+
+The pictures on the landing page and in the recipes are taken from the demo,
+so they show the same recorded data a visitor can click through:
+
+```bash
+npx playwright install chromium   # once
+npm run screenshots               # all of them
+npm run screenshots -- chat flows # only these ids
+npm run screenshots -- --build    # rebuild the demo first
+```
+
+`scripts/screenshots.mjs` serves `dashboard/frontend/dist-demo` with
+`vite preview` on a free port and writes `public/screenshots/<id>.png` (the
+six landing page shots) and `public/screenshots/recipes/<id>.png` (one per
+recipe; the page each recipe is taken on is the `RECIPE_PAGES` table in the
+script). Without recorded fixtures it leaves the landing page shots alone.
+
 ## Why the copy
 
 `docs/` is a product asset, not a website: `tests/test_docs_corpus.py` asserts

@@ -10,6 +10,7 @@
 #   ./install.sh --no-frontend    # backend only, no npm install
 #   ./install.sh --cli-only       # just the terminal client (for AGENTS_HUB_URL)
 #   ./install.sh --with-rag       # add the RAG extras (pulls in torch)
+#   ./install.sh --with-demo      # seed the demo workspace on first start (docs/demo.md)
 #   ./install.sh --no-venv        # install into the environment already active
 #   ./install.sh --no-shell       # skip the shell integration
 #
@@ -21,6 +22,7 @@ VENV=".venv"
 EXTRAS="backend,agents"
 USE_VENV=1
 DO_SHELL=1
+WITH_DEMO=0
 # -1 until the flags are read: the dashboard is installed unless it was turned
 # off, or unless --cli-only means there is no service here to serve it.
 DO_FRONTEND=-1
@@ -34,6 +36,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --cli-only)    EXTRAS="" ;;
         --with-rag)    EXTRAS="${EXTRAS:+$EXTRAS,}rag" ;;
+        --with-demo)   WITH_DEMO=1 ;;
         # The dashboard is the default; --frontend stays accepted so the older
         # command line keeps working, and to force it alongside --cli-only.
         --frontend)    DO_FRONTEND=1 ;;
@@ -108,6 +111,17 @@ else
     say "Keeping the .env you already have"
 fi
 
+if [ "$WITH_DEMO" -eq 1 ]; then
+    say "Turning on the demo workspace (DEMO_WORKSPACE=1)"
+    if grep -q '^DEMO_WORKSPACE=' .env 2>/dev/null; then
+        # In place, portable between GNU and BSD sed: write to a temp file and
+        # move it over, rather than relying on sed -i's differing syntax.
+        sed 's/^DEMO_WORKSPACE=.*/DEMO_WORKSPACE=1/' .env > .env.tmp && mv .env.tmp .env
+    else
+        printf '\nDEMO_WORKSPACE=1\n' >> .env
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # 4. The dashboard
 # ---------------------------------------------------------------------------
@@ -156,5 +170,11 @@ if [ "$DO_SHELL" -eq 0 ] || [ "$USE_VENV" -eq 1 ]; then
     else
         echo "  Put that directory on PATH, or run: $AH shell-init --install"
     fi
+    echo
+fi
+
+if [ "$WITH_DEMO" -eq 1 ]; then
+    echo "  The demo workspace will be seeded the first time the service starts."
+    echo "  See docs/demo.md, or turn it off later from Settings."
     echo
 fi

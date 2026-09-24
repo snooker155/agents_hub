@@ -29,9 +29,9 @@ The write path is one tool, `git_publish`, plus the same action as a button on
 the project page (`POST /api/projects/{id}/git/publish`), so an agent and a
 person get the identical rules:
 
-- **Branch naming.** Given no `branch`, it names one `agent/<task-key-or-slug>-
-  <title-slug>`, so a run started from a tracked task lands on a branch that
-  reads back to it. Given `branch`, that name is reused as-is, and an existing
+- **Branch naming.** Given no `branch`, it names one
+  `agent/<task-key-or-slug>-<title-slug>`, so a run started from a tracked
+  task lands on a branch that reads back to it. Given `branch`, that name is reused as-is, and an existing
   local branch of that name is checked out rather than recreated, so a retried
   publish after a partial failure lands on the same branch instead of piling
   up `agent/foo`, `agent/foo-2`, `agent/foo-3` for one task.

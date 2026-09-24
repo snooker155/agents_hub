@@ -16,7 +16,16 @@ const apiProxy = {
   },
 }
 
+// The demo build (`npm run build:demo`): the real dashboard over recorded data,
+// served by the site under /agents_hub/demo/ (see site/scripts/build-demo.mjs).
+// Its own output folder, so it never overwrites the production bundle.
+const isDemo = process.env.VITE_DEMO === '1'
+const demoBuild = isDemo
+  ? { base: process.env.VITE_DEMO_BASE || '/agents_hub/demo/', build: { outDir: 'dist-demo' } }
+  : {}
+
 export default defineConfig({
+  ...demoBuild,
   plugins: [react()],
   server: { proxy: apiProxy },
   // `vite preview` serves the built bundle, which `ah up` uses as the local

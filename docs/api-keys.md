@@ -47,9 +47,9 @@ revoked or its owner goes away.
   `AGENTS_HUB_API_KEY` in the environment is what `common.auth.auth_headers()`
   attaches to every request the CLI's `HttpBackend` makes (see
   [cli](cli.md)). In direct mode (no `AGENTS_HUB_URL`) the CLI *is* the
-  service, running as the local operator, so `ah auth keys` needs `--user
-  <name>` there: an administrator operation against the local database,
-  not a personal one.
+  service, running as the local operator, so `ah auth keys` needs
+  `--user <name>` there: an administrator operation against the local
+  database, not a personal one.
 - **An A2A client, when the far side is another hub.** `agents/remote_agent.py`
   already reads whatever header a remote descriptor names
   (`auth_token_env`), so pointing that at `AGENTS_HUB_API_KEY` (with the key

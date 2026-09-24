@@ -30,6 +30,8 @@ in place rather than appended again.
 Flags: `--no-frontend` (the service without the dashboard's npm packages),
 `--cli-only` (client only, for use with `AGENTS_HUB_URL`, and no dashboard
 either), `--with-rag` (adds the RAG extras, which pull in torch),
+`--with-demo` (turns on `DEMO_WORKSPACE` in `.env`, so the demo workspace is
+seeded the first time the service starts, see [demo](demo.md)),
 `--no-venv`, `--no-shell`, `--venv PATH`, `--python PATH`.
 
 Then, in a new terminal:

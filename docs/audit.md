@@ -33,7 +33,7 @@ or `token` reaches, whether or not the request logger is on:
 | `workspace.settings` | `routes/workspaces.py` (`update_workspace_settings_overrides`) | workspace-scoped settings changed |
 | `workspace.budget` | `routes/costs.py` (`set_budget`) | a workspace's budget caps changed |
 
-[Single sign-on](sso.md), [groups](groups.md), [SCIM](scim.md), [API
+[Single sign-on](sso.md), [groups](identity.md), [SCIM](scim.md), [API
 keys](api-keys.md) and [secrets](secrets.md) record their own key points
 (`scim.user.*`, `key.create`, `secret.set`, ...) the same way; see each page
 for its own list. The convention is one dotted, lower-case action per kind of
@@ -149,6 +149,6 @@ fan-out included, and only logs it).
   workspace-scoped read depends on
 - [settings](settings.md): where `AUDIT_RETENTION_DAYS` and `AUDIT_REQUESTS`
   are set
-- [sso](sso.md), [groups](groups.md), [scim](scim.md), [api-keys](api-keys.md),
+- [sso](sso.md), [groups](identity.md), [scim](scim.md), [api-keys](api-keys.md),
   [secrets](secrets.md): the other corporate features that record their own
   key points into this same trail

@@ -144,8 +144,9 @@ matching preset, with no repository URL to type. Under the hood this calls
 scratch space the same way `prepare_example_repo.sh` makes one clone-able, so
 a preset import needs no network and no git repository of its own.
 
-**What each CLI needs.** Claude Code runs `claude -p <prompt> --output-format
-stream-json --verbose` in the run's mounted workspace, so the container needs
+**What each CLI needs.** Claude Code runs
+`claude -p <prompt> --output-format stream-json --verbose` in the run's
+mounted workspace, so the container needs
 `ANTHROPIC_API_KEY` (and optionally `CLAUDE_MODEL`, `ANTHROPIC_BASE_URL`).
 Codex runs `codex exec --json <prompt>` and needs `OPENAI_API_KEY` (and
 optionally `CODEX_MODEL`, `CODEX_ARGS` for a version-specific non-interactive

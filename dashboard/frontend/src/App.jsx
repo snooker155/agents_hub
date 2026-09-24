@@ -240,8 +240,11 @@ function AuthGate({ children }) {
 }
 
 function App() {
+  // The base is '/' in the app and '/agents_hub/demo/' in the recorded demo
+  // built for the site (vite.config.js, VITE_DEMO), so the router follows
+  // Vite's BASE_URL rather than assuming the root.
   return (
-    <Router>
+    <Router basename={import.meta.env.BASE_URL}>
       {/* Inside the router: the page chat's subject is the route, so it can
           only be resolved under one. */}
       <AuthProvider>

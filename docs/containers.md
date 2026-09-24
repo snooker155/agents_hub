@@ -86,8 +86,9 @@ container-mounted path, `AGENT_LOG_FILE`) for the inner command
 `_start_run_in_docker` builds: it tees stdout/stderr into that file itself,
 in append mode so the header the launcher wrote before starting the container
 survives. The run's log file therefore carries full output the same way a
-local subprocess run's does from its Popen pipe; `docker logs
-<container_name>` still works but is no longer the only place to see it.
+local subprocess run's does from its Popen pipe;
+`docker logs <container_name>` still works but is no longer the only place
+to see it.
 
 ## Images
 

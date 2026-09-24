@@ -40,8 +40,10 @@ import {
   HardDriveDownload,
   Webhook,
   ShieldCheck,
+  Compass,
 } from 'lucide-react';
 import OnboardingChecklist from '../components/docs/OnboardingChecklist';
+import { useWelcomeTour } from '../components/docs/WelcomeTour';
 import {
   SyntheticChat,
   WorkspaceModelExample,
@@ -186,6 +188,26 @@ function Walkthrough({ title, steps }) {
 
 // ---- section content -------------------------------------------------------
 
+// Next to the checklist rather than inside the FAQ answer that mentions it:
+// the answer says where the tour lives, this is the thing itself.
+function ReplayTour() {
+  const { t } = useI18n();
+  const tour = useWelcomeTour();
+  return (
+    <div className="my-4 flex flex-wrap items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+      <button
+        type="button"
+        onClick={() => tour.start()}
+        className="flex items-center gap-1.5 shrink-0 text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+      >
+        <Compass className="w-4 h-4" />
+        {t('docs.start.replayTour')}
+      </button>
+      <span className="text-sm text-gray-600">{t('docs.start.replayTourHint')}</span>
+    </div>
+  );
+}
+
 function GettingStarted() {
   const { t } = useI18n();
   return (
@@ -195,6 +217,7 @@ function GettingStarted() {
       <div className="my-4">
         <OnboardingChecklist />
       </div>
+      <ReplayTour />
 
       <Walkthrough
         title={t('docs.start.firstRun')}
