@@ -7,7 +7,8 @@ system section, the CLI and the tools all see the same state.
 Reading is open to whoever reaches the API (the global auth middleware
 applies). The three writes (sync, schedule, prune) change the copy or the
 schedule of a loop that spends money, so under ``AUTH_MODE=multi`` they need
-an administrator. Every route answers 404 when ``SYSTEM_WORKSPACE`` is off.
+an administrator. Every route but ``/version`` answers 404 when
+``SYSTEM_WORKSPACE`` is off.
 
 See docs/system-workspace.md.
 """
@@ -31,6 +32,16 @@ def _require_enabled() -> None:
 def _require_admin(request: Request) -> None:
     from common import identity
     identity.require_role(identity.request_principal(request), admin=True)
+
+
+@router.get("/version")
+async def system_version():
+    """Which release this backend is (common/version.py) and the newest schema
+    migration it knows, which is what decides whether an older release can
+    still open its database (docs/deployment.md "Rolling back")."""
+    from common import migrations, db
+    from common.version import info
+    return {**info(), "schema_latest": migrations.latest_version(db.dialect())}
 
 
 @router.get("")

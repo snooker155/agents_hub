@@ -74,6 +74,9 @@ class EvalSetIn(BaseModel):
     agent_id: Optional[str] = None
     cases: List[CaseIn] = []
     graders: List[GraderIn] = []
+    # A finished sweep on an agent target that leaves failed cases builds a
+    # prompt suggestion on its own (evals/prompt_suggest.py). Off by default.
+    suggest_on_failure: bool = False
 
 
 class ConfigIn(BaseModel):
@@ -189,6 +192,7 @@ async def create_eval(data: EvalSetIn):
             target=_target_of(data.target),
             cases=cases,
             graders=[GraderSpec(kind=g.kind, params=g.params, weight=g.weight) for g in data.graders],
+            suggest_on_failure=data.suggest_on_failure,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -354,6 +358,7 @@ async def update_eval(eval_set_id: str, data: EvalSetIn):
     if data.name.strip():
         evalset.name = data.name.strip()
     evalset.description = data.description
+    evalset.suggest_on_failure = data.suggest_on_failure
     try:
         if data.target is not None:
             evalset.set_target(_target_of(data.target))
@@ -409,6 +414,43 @@ async def delete_eval_case(eval_set_id: str, case_id: str):
     if not evalset:
         raise HTTPException(status_code=404, detail="Eval set not found")
     return evalset.to_dict()
+
+
+@router.get("/evals/for-run/{run_id}")
+async def eval_sets_for_run(run_id: str):
+    """What the "To eval case" dialog needs for one run: what kind of run it
+    is (agent, flow, team, loop or scenario — whichever store the id belongs
+    to), every eval set whose target fits it (so the dialog can offer them
+    plus "new set" without the user picking a target by hand), and a preview
+    of the case ``case_from_run`` would build, to seed the dialog's editable
+    fields."""
+    from evals.runner import _run_target_info, case_from_run
+
+    info = _run_target_info(run_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    from common.run_status import is_terminal
+    fitting = [
+        e.to_dict() for e in store.list_eval_sets(info["workspace"])
+        if e.target_kind == info["target_kind"]
+    ]
+    preview, preview_error = None, None
+    try:
+        case = case_from_run(run_id)
+        preview = {"input": case.input, "expected": case.expected, "metadata": case.metadata}
+    except ValueError as e:
+        preview_error = str(e)
+    return {
+        "run": {
+            "run_id": run_id, "target_kind": info["target_kind"], "target_id": info["target_id"],
+            "workspace": info["workspace"], "status": info["status"],
+            "failed": info["status"] in ("failed", "error"),
+            "finished": is_terminal(info["status"]),
+        },
+        "eval_sets": fitting,
+        "preview": preview,
+        "preview_error": preview_error,
+    }
 
 
 # ── Running ───────────────────────────────────────────────────────────────────
@@ -518,6 +560,56 @@ def poll_eval_run(eval_run_id: str):
     run = store.get_eval_run(eval_run_id)
     return {**run.to_dict(), "batch": _batch_progress(eval_run_id),
             "matrix": store.build_matrix(eval_run_id)}
+
+
+# ── Prompt suggestions ────────────────────────────────────────────────────────
+#
+# A revised instructions.md proposed from an eval run's failed cases
+# (evals/prompt_suggest.py). Suggesting is a model call (billable, recorded as
+# its own run); applying and dismissing are free.
+
+class ApplySuggestionIn(BaseModel):
+    # Also starts the same eval set again once the new instructions.md is
+    # written, so the before/after can be compared with the existing diff route.
+    rerun: bool = False
+
+
+@router.post("/eval-runs/{eval_run_id}/suggest-prompt")
+def suggest_prompt(eval_run_id: str):
+    """Build a prompt suggestion from this eval run's failed cases. A plain
+    ``def`` like ``start_eval_run``: it is one real model call, not free."""
+    from evals.prompt_suggest import SuggestionError, build_suggestion
+    try:
+        suggestion = build_suggestion(eval_run_id)
+    except SuggestionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return suggestion.to_dict()
+
+
+@router.get("/eval-runs/{eval_run_id}/suggestions")
+async def list_suggestions(eval_run_id: str):
+    return {"suggestions": [s.to_dict() for s in store.list_prompt_suggestions(eval_run_id)]}
+
+
+@router.post("/prompt-suggestions/{suggestion_id}/apply")
+def apply_suggestion_route(suggestion_id: str, data: Optional[ApplySuggestionIn] = None):
+    """Write the suggestion's instructions.md (through the definition editor's
+    own path, so it is snapshotted), and optionally re-run the eval set — a
+    plain ``def`` since a rerun is a real sweep, not free."""
+    from evals.prompt_suggest import SuggestionError, apply_suggestion
+    try:
+        return apply_suggestion(suggestion_id, rerun=bool(data and data.rerun))
+    except SuggestionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/prompt-suggestions/{suggestion_id}/dismiss")
+async def dismiss_suggestion_route(suggestion_id: str):
+    from evals.prompt_suggest import SuggestionError, dismiss_suggestion
+    try:
+        return dismiss_suggestion(suggestion_id).to_dict()
+    except SuggestionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/eval-graders")

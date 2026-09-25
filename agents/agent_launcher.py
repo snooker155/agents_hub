@@ -139,6 +139,13 @@ def prepare_run(
     from common.budget import check_budget
     check_budget(ws_name)
 
+    # A personal key's own money cap (common/api_keys.py
+    # budget_usd_per_month, docs/api-keys.md "Money quota"): a task run
+    # launched with a key that already spent its month refuses to start,
+    # the same as the workspace's own hard cap above.
+    from common.attribution import check_launch_budget
+    check_launch_budget()
+
     # Ensure a session exists for this task
     session_id = get_or_create_task_session(
         title=task.title,
@@ -309,6 +316,9 @@ def prepare_run(
         # Who asked for this run, so the process that spawns it (maybe a
         # worker with no request in flight) can resolve user-scoped secrets.
         "launched_by": _current_user_id(),
+        # The personal key it is charged to (common/attribution.py), handed to
+        # the child so the runs it creates count against the same key.
+        "key_id": _launching_key(),
         "ws_path": str(ws_path),
         "log_file": str(log_file),
         "cli_args": cli_args,
@@ -367,7 +377,8 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
     env = _build_env(ws_name, session_id, str(log_file), instance_id,
-                     agent_id=agent_id, user_id=str(spec.get("launched_by") or "") or None)
+                     agent_id=agent_id, user_id=str(spec.get("launched_by") or "") or None,
+                     key_id=str(spec.get("key_id") or "") or None)
     # What the caller put on the spec through child_env fills the gaps only:
     # the launcher's own values (credentials, relay token, run ids) always win.
     extra = spec.get("env")
@@ -523,9 +534,16 @@ def _start_run_in_docker(
         pass
 
 
+def _launching_key() -> Optional[str]:
+    from common.attribution import launching_key
+    return launching_key()
+
+
 def _current_user_id() -> str:
-    from common.identity import current_user_id
-    return current_user_id()
+    # The request's user, or in a launched run's own process the user that
+    # run was launched by (common/attribution.py).
+    from common.attribution import launching_user
+    return launching_user()
 
 
 def _launch_extras(task: Any, ws_name: Optional[str]) -> Tuple[Dict[str, str], Optional[Dict[str, Any]],
@@ -584,7 +602,7 @@ def _launch_extras(task: Any, ws_name: Optional[str]) -> Tuple[Dict[str, str], O
 
 def _build_env(ws_name: str, session_id: str, log_file: str,
                instance_id: Optional[str] = None, *, agent_id: Optional[str] = None,
-               user_id: Optional[str] = None) -> Dict[str, str]:
+               user_id: Optional[str] = None, key_id: Optional[str] = None) -> Dict[str, str]:
     # base env + run metadata only. No model override is injected: agent_run.py
     # resolves the model via create_agent's cascade (agent definition → workspace
     # override → workspace settings → global), so a single run honours the agent's
@@ -592,7 +610,7 @@ def _build_env(ws_name: str, session_id: str, log_file: str,
     # one model — that's the deliberate difference between the two launchers.
     from common.subprocess_env import base_subprocess_env, add_run_env
     from instances.registry import ENV_INSTANCE_ID
-    env = base_subprocess_env(ws_name, agent_id=agent_id, user_id=user_id)
+    env = base_subprocess_env(ws_name, agent_id=agent_id, user_id=user_id, key_id=key_id)
     add_run_env(env, session_id=session_id, log_file=log_file)
     if instance_id:
         env[ENV_INSTANCE_ID] = str(instance_id)

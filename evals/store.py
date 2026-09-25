@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from common import db
 from evals.models import (
-    Case, EvalResult, EvalRun, EvalSet, GraderSpec, RunConfig, utc_iso,
+    Case, EvalResult, EvalRun, EvalSet, GraderSpec, PromptSuggestion, RunConfig, utc_iso,
 )
 
 
@@ -20,7 +20,7 @@ def save_eval_set(evalset: EvalSet) -> EvalSet:
                 "eval_sets",
                 ("eval_set_id", "name", "description", "workspace", "agent_id",
                  "target_kind", "target_id",
-                 "cases", "graders", "created_at", "updated_at"),
+                 "cases", "graders", "created_at", "updated_at", "suggest_on_failure"),
                 ("eval_set_id",),
             ),
             (
@@ -29,7 +29,7 @@ def save_eval_set(evalset: EvalSet) -> EvalSet:
                 evalset.target_kind, evalset.target_id,
                 db.dumps([c.to_dict() for c in evalset.cases]),
                 db.dumps([g.to_dict() for g in evalset.graders]),
-                evalset.created_at, evalset.updated_at,
+                evalset.created_at, evalset.updated_at, int(evalset.suggest_on_failure),
             ),
         )
     return evalset
@@ -59,6 +59,7 @@ def _row_to_set(row) -> EvalSet:
         graders=[GraderSpec.from_dict(g) for g in (db.loads(row["graders"], []) or [])],
         created_at=row["created_at"] or "",
         updated_at=row["updated_at"] or "",
+        suggest_on_failure=bool(_cell(row, "suggest_on_failure") or False),
     )
 
 
@@ -243,9 +244,71 @@ def build_matrix(eval_run_id: str) -> Dict[str, Any]:
     return matrix
 
 
+# ── Prompt suggestions ───────────────────────────────────────────────────────
+
+def save_prompt_suggestion(s: PromptSuggestion) -> PromptSuggestion:
+    """Insert or replace a suggestion. Bumps ``updated_at``."""
+    s.updated_at = utc_iso()
+    with db.transaction() as conn:
+        conn.execute(
+            db.upsert_sql(
+                "prompt_suggestions",
+                ("suggestion_id", "eval_run_id", "eval_set_id", "agent_id", "workspace",
+                 "status", "old_instructions", "new_instructions", "rationale",
+                 "case_ids", "suggest_run_id", "applied_run_id", "cost_usd",
+                 "created_at", "updated_at", "decided_at"),
+                ("suggestion_id",),
+            ),
+            (
+                s.suggestion_id, s.eval_run_id, s.eval_set_id, s.agent_id, s.workspace,
+                s.status, s.old_instructions, s.new_instructions, s.rationale,
+                db.dumps(list(s.case_ids)), s.suggest_run_id, s.applied_run_id, s.cost_usd,
+                s.created_at, s.updated_at, s.decided_at,
+            ),
+        )
+    return s
+
+
+def _row_to_suggestion(row) -> PromptSuggestion:
+    return PromptSuggestion(
+        suggestion_id=row["suggestion_id"],
+        eval_run_id=row["eval_run_id"] or "",
+        eval_set_id=row["eval_set_id"] or "",
+        agent_id=row["agent_id"] or "",
+        workspace=row["workspace"],
+        status=row["status"] or "pending",
+        old_instructions=row["old_instructions"] or "",
+        new_instructions=row["new_instructions"] or "",
+        rationale=row["rationale"] or "",
+        case_ids=list(db.loads(row["case_ids"], []) or []),
+        suggest_run_id=row["suggest_run_id"],
+        applied_run_id=row["applied_run_id"],
+        cost_usd=float(row["cost_usd"] or 0.0),
+        created_at=row["created_at"] or "",
+        updated_at=row["updated_at"] or "",
+        decided_at=row["decided_at"],
+    )
+
+
+def get_prompt_suggestion(suggestion_id: str) -> Optional[PromptSuggestion]:
+    row = db.get_conn().execute(
+        "SELECT * FROM prompt_suggestions WHERE suggestion_id = ?", (suggestion_id,)
+    ).fetchone()
+    return _row_to_suggestion(row) if row else None
+
+
+def list_prompt_suggestions(eval_run_id: str) -> List[PromptSuggestion]:
+    rows = db.get_conn().execute(
+        "SELECT * FROM prompt_suggestions WHERE eval_run_id = ? ORDER BY created_at DESC",
+        (eval_run_id,),
+    ).fetchall()
+    return [_row_to_suggestion(r) for r in rows]
+
+
 __all__ = [
     "save_eval_set", "get_eval_set", "list_eval_sets", "delete_eval_set",
     "add_case", "remove_case",
     "save_eval_run", "get_eval_run", "list_eval_runs",
     "save_result", "get_result", "list_results", "build_matrix",
+    "save_prompt_suggestion", "get_prompt_suggestion", "list_prompt_suggestions",
 ]

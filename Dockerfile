@@ -71,6 +71,17 @@ RUN chown -R hub:hub /app
 
 USER hub
 
+# The release this image is (common/version.py): set by the release workflow
+# from the tag, so /api/system/version answers correctly even though a
+# compose deployment bind mounts a checkout over /app.
+ARG AGENTS_HUB_VERSION=""
+ARG AGENTS_HUB_GIT_SHA=""
+ENV AGENTS_HUB_VERSION=$AGENTS_HUB_VERSION \
+    AGENTS_HUB_GIT_SHA=$AGENTS_HUB_GIT_SHA
+LABEL org.opencontainers.image.title="agents-hub-backend" \
+      org.opencontainers.image.version=$AGENTS_HUB_VERSION \
+      org.opencontainers.image.revision=$AGENTS_HUB_GIT_SHA
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \

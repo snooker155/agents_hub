@@ -228,7 +228,7 @@
     {
       "id": "evals",
       "title": "Evals",
-      "summary": "Eval sets, graders and model sweeps: measure whether a prompt change helped instead of guessing. Online evals grade a sample of production runs by alert rule.",
+      "summary": "Eval sets, graders and model sweeps: measure whether a prompt change helped instead of guessing. Online evals grade a sample of production runs by alert rule. Any run becomes a case with one button, and a sweep's failed cases can propose a revised prompt to apply as a new agent version.",
       "surface": "Evals",
       "related": [
         "agents",
@@ -242,12 +242,14 @@
         "Targets",
         "Cases from tasks",
         "Cases with files",
+        "Cases from a run",
         "Graders, cheapest first",
         "Trajectory graders",
         "Cost",
         "Batch mode",
         "Repeats and variance",
         "Diff of two runs",
+        "Prompt suggestions from failed cases",
         "The injection audit",
         "Online evals",
         "Why bother"
@@ -408,13 +410,34 @@
         "skills",
         "flows",
         "imported-agents",
-        "system-agents"
+        "system-agents",
+        "registry"
       ],
       "headings": [
         "Publishing an agent, a flow or a skill",
         "Cloning one into your workspace",
         "When to reach for a published agent",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "registry",
+      "title": "Agent registry",
+      "summary": "Which agents, flows, skills and MCP servers the hub has across workspaces, who owns each and whether an administrator approved it. With AGENTS_HUB_REGISTRY_REQUIRE_REVIEW on, publishing to the marketplace waits in review until an admin approves, and an approved item whose definition changes goes back to review; with AGENTS_HUB_MCP_ALLOWLIST_ONLY on, a workspace can attach only MCP servers that match an approved entry of the hub-wide catalog, and attached servers that do not match load no tools. The Agent registry page, GET /api/registry and ah mcp catalog.",
+      "surface": "Marketplace",
+      "related": [
+        "marketplace",
+        "mcp",
+        "agents",
+        "audit",
+        "identity"
+      ],
+      "headings": [
+        "Agents: owner and review status",
+        "MCP: the hub-wide allowlist",
+        "The page",
+        "API",
+        "CLI"
       ]
     },
     {
@@ -428,7 +451,8 @@
         "tools-and-capabilities",
         "hooks",
         "agents",
-        "workspaces"
+        "workspaces",
+        "registry"
       ],
       "headings": [
         "In the dashboard",
@@ -613,7 +637,9 @@
         "troubleshooting",
         "web-logs",
         "workers",
-        "system-workspace"
+        "system-workspace",
+        "runbook",
+        "slo"
       ],
       "headings": [
         "The snapshot",
@@ -626,9 +652,54 @@
       ]
     },
     {
+      "id": "runbook",
+      "title": "Runbook: typical failures",
+      "summary": "Symptom, how to confirm it and the fix for the failures operators hit most: an invalid or rate limited provider key, a model not enabled, no docker daemon, no worker so runs stay pending, a locked SQLite or unreachable Postgres, migrations failing at start or a database written by a newer release, a disk full of run logs, a budget refusal, a stuck lease, an MCP handshake failure, SSE buffered by a proxy and a widget CORS refusal; plus ah support-bundle, the zip of version, doctor, health, migrations, masked config, recent errors, log tails and SLO status with every secret scrubbed.",
+      "surface": "Health",
+      "related": [
+        "troubleshooting",
+        "service-health",
+        "slo",
+        "deployment",
+        "backup"
+      ],
+      "headings": [
+        "Provider key invalid or rate limited",
+        "Model not enabled",
+        "Docker daemon missing",
+        "Worker not running: runs stay pending",
+        "Database locked or Postgres unreachable",
+        "Migrations failed at start",
+        "Disk full from run logs",
+        "Budget refusal",
+        "Stuck lease",
+        "MCP server failing handshake",
+        "SSE buffered by a proxy",
+        "Widget CORS refusal",
+        "Support bundle"
+      ]
+    },
+    {
+      "id": "slo",
+      "title": "SLO: run start time and error rate",
+      "summary": "Two service level objectives over a rolling hour: run start p95 (recorded to started, agent and entity runs) under AGENTS_HUB_SLO_START_P95_SECONDS (30 s) and the share of finished runs that failed under AGENTS_HUB_SLO_ERROR_RATE (5%, at least 20 runs). GET /api/support/slo and the Health page card show them; /metrics exports agents_hub_run_start_seconds and agents_hub_slo_breach; deploy/prometheus/alerts.yml and an optional Helm PrometheusRule alert on them; notification rules slo_start_latency and slo_error_rate fire once on a breach and once on recovery.",
+      "surface": "Health",
+      "related": [
+        "service-health",
+        "runbook",
+        "notifications",
+        "deployment"
+      ],
+      "headings": [
+        "The two objectives",
+        "Reading it",
+        "Alerts inside the hub"
+      ]
+    },
+    {
       "id": "sessions-and-runs",
       "title": "Sessions and runs",
-      "summary": "These two records are how everything in the product becomes observable.",
+      "summary": "These two records are how everything in the product becomes observable. Why a run failed: its status, error and log, and what a stale run means.",
       "surface": "Sessions",
       "related": [
         "costs",
@@ -805,7 +876,8 @@
         "models",
         "instances",
         "containers",
-        "cli"
+        "cli",
+        "runbook"
       ],
       "headings": [
         "Nothing runs",
@@ -1013,20 +1085,24 @@
     {
       "id": "deployment",
       "title": "Deploying for high availability",
-      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store. The Deployment page and ah deployment show the map: members with their heartbeat, load and leases, the queue, and runs, loops, nodes and containers by host, with each process's own log.",
+      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store. The Deployment page and ah deployment show the map: members with their heartbeat, load and leases, the queue, and runs, loops, nodes and containers by host, with each process's own log. Releases are one semver version across pyproject, the dashboard, the Helm chart, the images and a vX.Y.Z tag: scripts/release.py cuts them, the release workflow publishes images to GHCR, and a rollback over a release with migrations restores the pre-migrate archive a SQLite database takes by itself before it migrates.",
       "surface": "Installation",
       "related": [
         "scaling",
         "workers",
         "installation",
         "storage",
-        "service-health"
+        "service-health",
+        "backup"
       ],
       "headings": [
         "The compose ha profile",
         "The Helm chart",
         "The deployment map",
-        "The shared-files caveat"
+        "The shared-files caveat",
+        "Releases",
+        "Upgrading",
+        "Rolling back"
       ]
     },
     {

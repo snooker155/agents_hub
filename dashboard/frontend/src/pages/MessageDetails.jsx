@@ -2,10 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical } from 'lucide-react';
 
-import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun, getEvalSets, createEvalSet, addEvalCase } from '../api';
+import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
 import Citations from '../components/chat/Citations';
 import RunLoopPanel from '../components/run/RunLoopPanel';
+import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
 import MessageProcessFlow from '../components/MessageProcessFlow';
@@ -289,15 +290,11 @@ export default function MessageDetails() {
   const [replayResult, setReplayResult] = useState(null);
   const [replayError, setReplayError] = useState('');
 
-  // "Save as eval case" — seeding an eval dataset from real traffic is the
+  // "To eval case" — seeding an eval dataset from real traffic is the
   // cheapest way to build one, so the button lives next to Replay rather than
   // requiring a trip to the Evals page to type the input back in by hand.
-  const [caseOpen, setCaseOpen] = useState(false);
-  const [evalSets, setEvalSets] = useState([]);
-  const [caseTarget, setCaseTarget] = useState('');
-  const [newSetName, setNewSetName] = useState('');
-  const [caseSaving, setCaseSaving] = useState(false);
-  const [caseMessage, setCaseMessage] = useState('');
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
+  const [caseSavedMessage, setCaseSavedMessage] = useState('');
 
   const load = useCallback(async () => {
     if (!runId) return;
@@ -359,51 +356,6 @@ export default function MessageDetails() {
       setReplayError(err.response?.data?.detail || t('messageDetails.replayFailed'));
     } finally {
       setReplaying(false);
-    }
-  };
-
-  const openCasePanel = async () => {
-    const next = !caseOpen;
-    setCaseOpen(next);
-    setCaseMessage('');
-    if (next) {
-      try {
-        const { data } = await getEvalSets(message?.workspace);
-        setEvalSets(data.eval_sets || []);
-        setCaseTarget(data.eval_sets?.[0]?.eval_set_id || '');
-      } catch {
-        setEvalSets([]);
-      }
-    }
-  };
-
-  const handleSaveAsCase = async () => {
-    setCaseSaving(true);
-    setCaseMessage('');
-    try {
-      let targetId = caseTarget;
-      if (!targetId) {
-        if (!newSetName.trim()) {
-          setCaseMessage(t('messageDetails.pickEvalSet'));
-          return;
-        }
-        const { data } = await createEvalSet({
-          name: newSetName.trim(),
-          workspace: message?.workspace || null,
-          agent_id: message?.agent_id || null,
-          graders: [{ kind: 'substring', params: {}, weight: 1 }],
-        });
-        targetId = data.eval_set_id;
-      }
-      // The run's own output becomes `expected`, which makes the first eval a
-      // pure regression check: does this still do what it did.
-      await addEvalCase(targetId, { from_run_id: runId });
-      setCaseMessage(t('messageDetails.savedAsEvalCase'));
-      setNewSetName('');
-    } catch (err) {
-      setCaseMessage(err.response?.data?.detail || t('messageDetails.saveCaseFailed'));
-    } finally {
-      setCaseSaving(false);
     }
   };
 
@@ -497,12 +449,12 @@ export default function MessageDetails() {
           {message?.channel !== 'replay' && message?.channel !== 'eval'
             && (message?.status === 'completed' || message?.status === 'failed') && (
             <button
-              onClick={openCasePanel}
-              title={t('messageDetails.addThisRunToAn')}
+              onClick={() => setCaseDialogOpen(true)}
+              title={t('messageDetails.toEvalCaseHint')}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-50"
             >
               <FlaskConical className="w-4 h-4" />
-              {t('messageDetails.saveAsEvalCase')}
+              {t('messageDetails.toEvalCase')}
             </button>
           )}
           <button
@@ -523,47 +475,16 @@ export default function MessageDetails() {
       {/* Metadata card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">
 
-      {/* Save-as-eval-case panel */}
-      {caseOpen && (
-        <div className="mt-4 border border-indigo-100 bg-indigo-50/40 rounded-xl p-4 space-y-3">
-          <div className="text-sm font-semibold text-gray-700">{t('messageDetails.saveThisRunAsAn')}</div>
-          <p className="text-xs text-gray-500">
-            {t('messageDetails.saveCaseHint')}
-          </p>
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={caseTarget}
-              onChange={(e) => setCaseTarget(e.target.value)}
-              className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-64"
-            >
-              <option value="">{t('messageDetails.newEvalSet')}</option>
-              {evalSets.map((s2) => (
-                <option key={s2.eval_set_id} value={s2.eval_set_id}>{s2.name}</option>
-              ))}
-            </select>
-            {!caseTarget && (
-              <input
-                value={newSetName}
-                onChange={(e) => setNewSetName(e.target.value)}
-                placeholder={t('messageDetails.newEvalSetName')}
-                className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-56"
-              />
-            )}
-            <button
-              onClick={handleSaveAsCase}
-              disabled={caseSaving}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {caseSaving ? <Loader className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
-              Save case
-            </button>
-            {caseMessage && (
-              <span className={`text-xs ${caseMessage.startsWith('Saved') ? 'text-green-600' : 'text-red-600'}`}>
-                {caseMessage}
-              </span>
-            )}
-          </div>
-        </div>
+      {caseDialogOpen && (
+        <SaveAsEvalCaseDialog
+          runId={runId}
+          workspace={message?.workspace}
+          onClose={() => setCaseDialogOpen(false)}
+          onSaved={() => setCaseSavedMessage(t('messageDetails.savedAsEvalCase'))}
+        />
+      )}
+      {caseSavedMessage && (
+        <p className="text-xs text-green-600 mt-2">{caseSavedMessage}</p>
       )}
 
       {/* Replay / regression panel */}

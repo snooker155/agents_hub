@@ -154,3 +154,98 @@ def test_entity_run_reaching_a_terminal_status_evaluates_rules(ws, fired):
 
     entity_runs.update("team-x", {"error": "boom, again"})
     assert len(fired) == 1
+
+
+# ── SLO alerts (common/slo.py): ticked, not per-run-finished ────────────────
+#
+# evaluate_slo_alerts reads common.slo.evaluate() once and fans it out to
+# every workspace's slo_start_latency / slo_error_rate rules, so these tests
+# fake the objectives directly rather than fabricating hundreds of run rows
+# (that is common/slo.py's own test file's job, tests/test_slo.py).
+
+def _fake_slo(monkeypatch, *, start_status="ok", error_status="ok"):
+    payload = {
+        "status": "breach" if "breach" in (start_status, error_status) else "ok",
+        "objectives": {
+            "start_p95": {"status": start_status, "value_seconds": 45.0,
+                         "threshold_seconds": 30.0, "sample": 20, "window_seconds": 3600},
+            "error_rate": {"status": error_status, "value": 0.1,
+                          "threshold": 0.05, "sample": 20, "window_seconds": 3600},
+        },
+    }
+    monkeypatch.setattr("common.slo.evaluate", lambda *a, **k: payload)
+
+
+def test_slo_rule_fires_once_on_breach_and_not_again_while_it_holds(ws, fired, monkeypatch):
+    rule = notify_store.create_rule(ws, {"kind": "slo_start_latency", "channels": ["dashboard"]})
+    _fake_slo(monkeypatch, start_status="breach")
+
+    notify_rules.evaluate_slo_alerts(force=True)
+    assert len(fired) == 1
+    assert "breach" in fired[0]["title"].lower()
+    assert fired[0]["severity"] == "warning"
+
+    notify_rules.evaluate_slo_alerts(force=True)  # still breaching
+    assert len(fired) == 1  # no repeat
+
+    updated = notify_store.get_rule(ws, rule["id"])
+    assert updated["state"] == {"status": "breach"}
+
+
+def test_slo_rule_fires_again_on_recovery(ws, fired, monkeypatch):
+    notify_store.create_rule(ws, {"kind": "slo_error_rate", "channels": ["dashboard"]})
+    _fake_slo(monkeypatch, error_status="breach")
+    notify_rules.evaluate_slo_alerts(force=True)
+    assert len(fired) == 1
+
+    _fake_slo(monkeypatch, error_status="ok")
+    notify_rules.evaluate_slo_alerts(force=True)
+    assert len(fired) == 2
+    assert "recovered" in fired[1]["title"].lower()
+    assert fired[1]["severity"] == "info"
+
+    notify_rules.evaluate_slo_alerts(force=True)  # still ok
+    assert len(fired) == 2  # no repeat
+
+
+def test_slo_rule_ignores_no_data_and_keeps_last_state(ws, fired, monkeypatch):
+    rule = notify_store.create_rule(ws, {"kind": "slo_start_latency", "channels": ["dashboard"]})
+    _fake_slo(monkeypatch, start_status="breach")
+    notify_rules.evaluate_slo_alerts(force=True)
+    assert len(fired) == 1
+
+    _fake_slo(monkeypatch, start_status="no_data")
+    notify_rules.evaluate_slo_alerts(force=True)
+    assert len(fired) == 1  # no_data neither fires nor clears the breach state
+    assert notify_store.get_rule(ws, rule["id"])["state"] == {"status": "breach"}
+
+
+def test_slo_rule_disabled_never_fires(ws, fired, monkeypatch):
+    rule = notify_store.create_rule(ws, {"kind": "slo_start_latency", "channels": ["dashboard"]})
+    notify_store.update_rule(ws, rule["id"], {"enabled": False})
+    _fake_slo(monkeypatch, start_status="breach")
+    notify_rules.evaluate_slo_alerts(force=True)
+    assert fired == []
+
+
+def test_slo_evaluation_is_throttled_without_force(ws, fired, monkeypatch):
+    notify_store.create_rule(ws, {"kind": "slo_start_latency", "channels": ["dashboard"]})
+    _fake_slo(monkeypatch, start_status="breach")
+    calls = []
+    monkeypatch.setattr("common.slo.evaluate", lambda *a, **k: calls.append(1) or {
+        "status": "breach", "objectives": {
+            "start_p95": {"status": "breach", "value_seconds": 45.0, "threshold_seconds": 30.0,
+                         "sample": 20, "window_seconds": 3600},
+            "error_rate": {"status": "ok", "value": 0.0, "threshold": 0.05,
+                          "sample": 20, "window_seconds": 3600},
+        }})
+    notify_rules.evaluate_slo_alerts(force=True)
+    notify_rules.evaluate_slo_alerts()  # not forced, throttled: no second evaluate() call
+    assert len(calls) == 1
+    assert len(fired) == 1
+
+
+def test_slo_evaluation_error_never_raises(ws, monkeypatch):
+    notify_store.create_rule(ws, {"kind": "slo_start_latency", "channels": ["dashboard"]})
+    monkeypatch.setattr("common.slo.evaluate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    notify_rules.evaluate_slo_alerts(force=True)  # must not raise

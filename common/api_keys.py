@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import secrets
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -39,9 +40,47 @@ _KEY_BYTES = 32
 #: not turn every read into a write.
 TOUCH_INTERVAL = timedelta(seconds=60)
 
+#: Set for the duration of one request or relayed turn that presented a
+#: personal key, read by whatever creates a run so it can stamp ``key_id`` on
+#: the record (docs/costs.md "Attribution"). Mirrors
+#: ``common.identity``'s ``_current_user``: a contextvar rather than a
+#: parameter so the launchers deep under a request (agents.agent_launcher,
+#: runtime.entity_launch, managers.runs.store) need no signature change, and
+#: an asyncio task started from within the bound scope (widgets.relay.TurnRelay)
+#: inherits its own copy. None for every other credential (a session, the
+#: shared token, the service credential) and for anything with no request in
+#: flight (a background job, a worker with no caller).
+_current_key: ContextVar[Optional[str]] = ContextVar("agents_hub_current_key", default=None)
+
+
+class KeyBudgetExceededError(Exception):
+    """Raised when a personal key's money quota (``budget_usd_per_month``)
+    would be exceeded by the request or run launch it is about to pay for."""
+
+    def __init__(self, key_id: str, spend: float, limit: float):
+        self.key_id = key_id
+        self.spend = spend
+        self.limit = limit
+        super().__init__(
+            f"API key has reached its monthly budget (${spend:.2f} spent of ${limit:.2f})")
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def current_key_id() -> Optional[str]:
+    """The personal key bound to this context, or None."""
+    return _current_key.get()
+
+
+def set_current_key_id(key_id: Optional[str]):
+    """Bind the current key for this context; returns the reset token."""
+    return _current_key.set(key_id or None)
+
+
+def reset_current_key_id(token) -> None:
+    _current_key.reset(token)
 
 
 def _hash(key: str) -> str:
@@ -74,6 +113,8 @@ def _row_to_key(row) -> Dict[str, Any]:
         # Its own limits (migration 0017); None follows the hub-wide setting.
         "rate_limit_per_minute": _opt_int(row, "rate_limit_per_minute"),
         "tokens_per_day": _opt_int(row, "tokens_per_day"),
+        # Its own money cap (migration 0025); NULL or 0 means none.
+        "budget_usd_per_month": _opt_float(row, "budget_usd_per_month"),
     }
 
 
@@ -86,6 +127,15 @@ def _opt_int(row, column: str) -> Optional[int]:
     return None if value is None else int(value)
 
 
+def _opt_float(row, column: str) -> Optional[float]:
+    try:
+        value = row[column]
+    except (IndexError, KeyError):
+        # A database not yet migrated to 0025: no per-key budget.
+        return None
+    return None if value is None else float(value)
+
+
 def _limit(value: Optional[int], name: str) -> Optional[int]:
     if value is None:
         return None
@@ -95,14 +145,25 @@ def _limit(value: Optional[int], name: str) -> Optional[int]:
     return value
 
 
+def _money_limit(value: Optional[float], name: str = "budget_usd_per_month") -> Optional[float]:
+    if value is None:
+        return None
+    value = float(value)
+    if value < 0:
+        raise ValueError(f"{name} must be zero or positive")
+    return value
+
+
 def create_key(user_id: str, *, name: str = "", workspaces: Optional[List[str]] = None,
                expires_in_days: Optional[int] = None,
                rate_limit_per_minute: Optional[int] = None,
-               tokens_per_day: Optional[int] = None) -> Tuple[str, Dict[str, Any]]:
+               tokens_per_day: Optional[int] = None,
+               budget_usd_per_month: Optional[float] = None) -> Tuple[str, Dict[str, Any]]:
     """Cut a key. Returns ``(the key, its record)``: the key is never
     retrievable again. ``rate_limit_per_minute`` and ``tokens_per_day``
     override the hub-wide limits for this key (0 is unlimited, None follows
-    the setting; common/rate_limit.py)."""
+    the setting; common/rate_limit.py). ``budget_usd_per_month`` is the key's
+    own money cap (0 or None means none; common.rate_limit.check_key_budget)."""
     from common import identity
     if identity.get_user(user_id) is None:
         raise ValueError(f"no such user: {user_id}")
@@ -119,6 +180,7 @@ def create_key(user_id: str, *, name: str = "", workspaces: Optional[List[str]] 
         expires_at = (_now() + timedelta(days=days)).isoformat()
     per_minute = _limit(rate_limit_per_minute, "rate_limit_per_minute")
     per_day = _limit(tokens_per_day, "tokens_per_day")
+    budget = _money_limit(budget_usd_per_month)
     key = KEY_PREFIX + secrets.token_urlsafe(_KEY_BYTES)
     key_id = secrets.token_hex(8)
     now = _now().isoformat()
@@ -126,11 +188,56 @@ def create_key(user_id: str, *, name: str = "", workspaces: Optional[List[str]] 
         conn.execute(
             "INSERT INTO api_keys (key_id, key_hash, key_hint, user_id, name, workspaces, "
             "expires_at, created_at, last_used_at, revoked_at, rate_limit_per_minute, "
-            "tokens_per_day) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+            "tokens_per_day, budget_usd_per_month) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (key_id, _hash(key), key[-4:], str(user_id), (name or "").strip()[:120],
              json.dumps(scope) if scope is not None else None, expires_at, now,
-             per_minute, per_day))
+             per_minute, per_day, budget))
     return key, get_key(key_id)  # type: ignore[return-value]
+
+
+#: A field left out of :func:`update_key_limits` entirely. Distinct from
+#: ``None``, which clears the field back to "follow the hub-wide setting".
+_UNSET = object()
+
+
+def update_key_limits(key_id: str, *, user_id: Optional[str] = None,
+                      rate_limit_per_minute: Any = _UNSET,
+                      tokens_per_day: Any = _UNSET,
+                      budget_usd_per_month: Any = _UNSET) -> Optional[Dict[str, Any]]:
+    """Change a live key's own limits (its budget included). Only the fields
+    actually passed change; a field left out (:data:`_UNSET`) is untouched,
+    where an explicit ``None`` clears it back to the hub-wide setting.
+    ``user_id`` restricts the match to that owner, as :func:`revoke_key` does,
+    so a route can let people edit their own key without checking twice.
+    Returns the fresh record, or None when there is no such (live) key."""
+    sets: List[str] = []
+    args: List[Any] = []
+    if rate_limit_per_minute is not _UNSET:
+        sets.append("rate_limit_per_minute = ?")
+        args.append(_limit(rate_limit_per_minute, "rate_limit_per_minute"))
+    if tokens_per_day is not _UNSET:
+        sets.append("tokens_per_day = ?")
+        args.append(_limit(tokens_per_day, "tokens_per_day"))
+    if budget_usd_per_month is not _UNSET:
+        sets.append("budget_usd_per_month = ?")
+        args.append(_money_limit(budget_usd_per_month))
+
+    where = "key_id = ? AND revoked_at IS NULL"
+    args_full = args + [str(key_id)]
+    if user_id:
+        where += " AND user_id = ?"
+        args_full.append(str(user_id))
+
+    if not sets:
+        # Nothing to change, but still only for a key this owner check would
+        # have matched — an empty request must not become a way to read
+        # someone else's key by id.
+        row = db.get_conn().execute(f"SELECT key_id FROM api_keys WHERE {where}", args_full).fetchone()
+        return get_key(key_id) if row is not None else None
+
+    with db.transaction() as conn:
+        cursor = conn.execute(f"UPDATE api_keys SET {', '.join(sets)} WHERE {where}", args_full)
+    return get_key(key_id) if cursor.rowcount else None
 
 
 def get_key(key_id: str) -> Optional[Dict[str, Any]]:
@@ -215,7 +322,52 @@ def resolve(presented: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
     return user, _row_to_key(row)
 
 
+def _utc_month_start(now: Optional[datetime] = None) -> str:
+    when = now or _now()
+    return when.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+
+def key_month_spend_usd(key_id: str, *, now: Optional[datetime] = None) -> float:
+    """A key's spend so far in the current UTC month: its own ``/v1`` serving
+    cost plus the cost of every run charged to it, the same leaf runs the
+    report sums (routes/accounting.py). A run is charged to a key when it is
+    stamped with ``key_id`` at creation (common/attribution.py): one the
+    request launched, and every run created inside a launched process, which
+    inherits the key through its environment. So a flow's or a team's own
+    runs are counted one by one, and the entity run's ``total_cost`` (their
+    sum) is not added on top. What ``common.rate_limit.check_key_budget`` and
+    the launch check compare against ``budget_usd_per_month``.
+    """
+    month_start = _utc_month_start(now)
+    conn = db.get_conn()
+    serving_row = conn.execute(
+        "SELECT COALESCE(SUM(cost_usd), 0) AS c FROM serving_usage WHERE key_id = ? AND at >= ?",
+        (str(key_id), month_start)).fetchone()
+    total = float((serving_row["c"] if serving_row else 0) or 0)
+
+    from common.pricing import EVALUATION_CHANNELS, load_price_map, run_cost_usd
+    from managers.runs.store import _row_to_record
+    prices = load_price_map()
+    run_rows = conn.execute(
+        f"SELECT * FROM runs WHERE {db.json_text('extra', 'key_id')} = ? "
+        "AND COALESCE(started_at, created_at) >= ?",
+        (str(key_id), month_start)).fetchall()
+    for row in run_rows:
+        rec = _row_to_record(row)
+        if (rec.get("channel") or "") in EVALUATION_CHANNELS:
+            continue
+        reported = rec.get("reported_cost_usd")
+        if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+            total += float(reported)
+        else:
+            total += run_cost_usd(rec, prices)
+
+    return round(total, 6)
+
+
 __all__ = [
-    "KEY_PREFIX", "TOUCH_INTERVAL", "create_key", "get_key", "list_keys",
-    "looks_like_key", "resolve", "revoke_all", "revoke_key",
+    "KEY_PREFIX", "KeyBudgetExceededError", "TOUCH_INTERVAL", "create_key",
+    "current_key_id", "get_key", "key_month_spend_usd", "list_keys",
+    "looks_like_key", "reset_current_key_id", "resolve", "revoke_all",
+    "revoke_key", "set_current_key_id", "update_key_limits",
 ]

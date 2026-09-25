@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Repeat, Plus, Play, Square, Trash2, Loader, Save, AlertTriangle, X,
-  ChevronDown, ChevronRight, Target, Gauge, DollarSign, ExternalLink,
+  ChevronDown, ChevronRight, Target, Gauge, DollarSign, ExternalLink, FlaskConical,
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -11,6 +11,7 @@ import {
   getLoopChat, clearLoopChat, stopLoopChat, loopChatUrl,
 } from '../api';
 import EntityChat from '../components/EntityChat';
+import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import InPanelNote from '../components/pageChat/InPanelNote';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useWorkspace } from '../components/workspace';
@@ -231,6 +232,7 @@ export default function Loops() {
   const [saving, setSaving] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [message, setMessage] = useState('');
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -566,6 +568,15 @@ export default function Loops() {
                     >
                       <DollarSign className="w-3.5 h-3.5 mr-1" /> {t('loops.estimate')}
                     </button>
+                    {run?.loop_run_id && !live && (
+                      <button
+                        onClick={() => setCaseDialogOpen(true)}
+                        title={t('messageDetails.toEvalCaseHint')}
+                        className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
+                      >
+                        <FlaskConical className="w-3.5 h-3.5 mr-1" /> {t('messageDetails.toEvalCase')}
+                      </button>
+                    )}
                     {live ? (
                       <button
                         onClick={handleStop}
@@ -912,6 +923,13 @@ export default function Loops() {
 
       {showNew && (
         <NewLoopModal flows={flows} onClose={() => setShowNew(false)} onCreate={handleCreate} />
+      )}
+      {caseDialogOpen && run?.loop_run_id && (
+        <SaveAsEvalCaseDialog
+          runId={run.loop_run_id}
+          workspace={run.workspace || selectedWorkspace}
+          onClose={() => setCaseDialogOpen(false)}
+        />
       )}
     </PageContainer>
   );

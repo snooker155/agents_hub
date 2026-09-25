@@ -5,17 +5,20 @@
 
 # The backend and worker images are the same one this repository's
 # Dockerfile builds (target: backend); only the command and AGENTS_HUB_ROLE
-# differ between the two Deployments below.
+# differ between the two Deployments below. The release workflow
+# (.github/workflows/release.yml) publishes both to GHCR under the release
+# version; an empty tag means the chart's appVersion, so a chart and the
+# images it runs are always the same release (docs/deployment.md "Releases").
 image:
-  repository: agents-hub/backend
-  tag: latest
+  repository: ghcr.io/snooker155/agents-hub-backend
+  tag: ""
   pullPolicy: IfNotPresent
 
 frontend:
   # dashboard/frontend/Dockerfile, target: nginx.
   image:
-    repository: agents-hub/frontend
-    tag: latest
+    repository: ghcr.io/snooker155/agents-hub-frontend
+    tag: ""
     pullPolicy: IfNotPresent
   replicas: 1
   service:
@@ -118,3 +121,10 @@ ingress:
   host: agents-hub.example.com
   annotations: {}
   tls: []
+
+# Optional PrometheusRule CRD (deploy/prometheus/alerts.yml, docs/slo.md), for
+# a cluster that already runs the Prometheus Operator. Off by default: most
+# installs load alerts.yml straight into their own Prometheus instead.
+prometheusRule:
+  enabled: false
+  additionalLabels: {}

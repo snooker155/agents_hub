@@ -32,4 +32,22 @@ export default {
   cachedHint: 'Of the input tokens, the ones the provider served from its prompt cache. They are billed at the model\'s cached rate, not its input rate.',
   ofWhichCached: 'of which {{count}} served from cache',
   cost: 'Cost',
+
+  report: {
+    title: 'Report',
+    groupBy: {
+      key: 'By API key',
+      user: 'By user',
+      project: 'By project',
+      workspace: 'By workspace',
+      agent: 'By agent',
+      model: 'By model',
+    },
+    runs: 'Runs',
+    calls: 'Calls',
+    total: 'Total',
+    exportCsv: 'Export CSV',
+    exportFailed: 'Could not export the report.',
+    loadFailed: 'Could not load the report.',
+  },
 };

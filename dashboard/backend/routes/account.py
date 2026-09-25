@@ -51,6 +51,18 @@ class KeyCreate(BaseModel):
     # hub-wide setting, 0 is unlimited.
     rate_limit_per_minute: Optional[int] = None
     tokens_per_day: Optional[int] = None
+    # The key's own money cap (docs/api-keys.md "Money quota"): None or 0
+    # means none.
+    budget_usd_per_month: Optional[float] = None
+
+
+class KeyLimits(BaseModel):
+    """Editing a live key's own limits (``PUT /api/auth/keys/{id}``): every
+    field is optional, and only the ones actually sent change (see
+    ``common.api_keys.update_key_limits``'s ``_UNSET`` default)."""
+    rate_limit_per_minute: Optional[int] = None
+    tokens_per_day: Optional[int] = None
+    budget_usd_per_month: Optional[float] = None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -193,10 +205,21 @@ async def put_preferences(request: Request, payload: dict):
 
 # ── my API keys ──────────────────────────────────────────────────────────────
 
+def _with_spend(key: dict) -> dict:
+    """A key's record plus its current UTC month's spend
+    (docs/costs.md "Attribution"), shown beside its budget so a person can
+    tell how close they are to it without opening the accounting report."""
+    try:
+        spend = api_keys.key_month_spend_usd(key["id"])
+    except Exception:  # noqa: BLE001 - the key list must not fail because spend could not be priced
+        spend = None
+    return {**key, "spend_this_month_usd": spend}
+
+
 @router.get("/api/auth/keys")
 async def get_my_keys(request: Request) -> List[dict]:
     principal = _require_account(request)
-    return api_keys.list_keys(principal.id)
+    return [_with_spend(k) for k in api_keys.list_keys(principal.id)]
 
 
 @router.post("/api/auth/keys")
@@ -219,7 +242,8 @@ async def post_my_key(request: Request, payload: KeyCreate):
             principal.id, name=payload.name, workspaces=payload.workspaces,
             expires_in_days=payload.expires_in_days,
             rate_limit_per_minute=payload.rate_limit_per_minute,
-            tokens_per_day=payload.tokens_per_day)
+            tokens_per_day=payload.tokens_per_day,
+            budget_usd_per_month=payload.budget_usd_per_month)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     audit.record("key.create", principal=principal, object_type="api_key",
@@ -227,9 +251,28 @@ async def post_my_key(request: Request, payload: KeyCreate):
                  details={"name": record["name"], "workspaces": record["workspaces"],
                           "expires_at": record["expires_at"],
                           "rate_limit_per_minute": record["rate_limit_per_minute"],
-                          "tokens_per_day": record["tokens_per_day"]})
+                          "tokens_per_day": record["tokens_per_day"],
+                          "budget_usd_per_month": record["budget_usd_per_month"]})
     # The key is returned exactly once: the record never carries it again.
     return {**record, "key": key}
+
+
+@router.put("/api/auth/keys/{key_id}")
+async def put_my_key_limits(request: Request, key_id: str, payload: KeyLimits):
+    """Change a live key's own limits, its money cap included. Only the
+    fields actually sent change (docs/api-keys.md "Money quota"); an explicit
+    ``null`` clears one back to the hub-wide setting."""
+    principal = _require_account(request)
+    fields = payload.model_dump(exclude_unset=True)
+    try:
+        record = api_keys.update_key_limits(key_id, user_id=principal.id, **fields)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if record is None:
+        raise HTTPException(status_code=404, detail="No such key")
+    audit.record("key.limits", principal=principal, object_type="api_key",
+                 object_id=key_id, ip=identity.client_ip(request), details=fields)
+    return _with_spend(record)
 
 
 @router.delete("/api/auth/keys/{key_id}")
@@ -249,7 +292,7 @@ async def delete_my_key(request: Request, key_id: str):
 async def get_user_keys(request: Request, user_id: str) -> List[dict]:
     _require_multi()
     identity.require_role(_principal(request), admin=True)
-    return api_keys.list_keys(user_id)
+    return [_with_spend(k) for k in api_keys.list_keys(user_id)]
 
 
 @router.delete("/api/auth/users/{user_id}/keys/{key_id}")

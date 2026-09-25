@@ -36,6 +36,8 @@ export default {
       spend_daily_over: 'Расходы за день выше',
       spend_run_over: 'Стоимость прогона выше',
       online_eval: 'Оценка онлайн-проверки ниже',
+      slo_start_latency: 'Нарушение SLO: время старта',
+      slo_error_rate: 'Нарушение SLO: доля ошибок',
     },
     onlineEvalSummary: 'выборка {{rate}}, минимум {{min}}',
     sampleRate: 'Выборка, %',

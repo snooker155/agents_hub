@@ -59,6 +59,7 @@ import {
   Container,
   Rocket,
   ShieldCheck,
+  BadgeCheck,
   MessageSquareCode,
   FileStack,
 } from 'lucide-react';
@@ -379,6 +380,8 @@ const Layout = ({ children }) => {
         { name: t('nav.deployment'), path: '/deployment', icon: Waypoints },
         { name: t('nav.models'), path: '/models', icon: Brain },
         { name: t('nav.costs'), path: '/costs', icon: DollarSign },
+        // Who owns each agent and MCP server, and whether it is approved.
+        { name: t('nav.agentRegistry'), path: '/agent-registry', icon: BadgeCheck },
         { name: t('nav.docs'), path: '/docs', icon: BookOpen },
         { name: t('nav.settings'), path: '/settings', icon: Settings },
         // Accounts exist only under AUTH_MODE=multi, and only an administrator

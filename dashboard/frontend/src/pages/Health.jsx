@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, CheckCircle, Database, GitBranch, HardDrive, KeyRound,
-  Loader, Pause, Play, RefreshCw, Server, Stethoscope, Trash2, ChevronDown, ChevronRight,
+  Activity, AlertTriangle, CheckCircle, Database, Download, Gauge, GitBranch, HardDrive,
+  KeyRound, Loader, Pause, Play, RefreshCw, Server, Stethoscope, Trash2, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import {
   getHealth, getServiceChat, clearServiceChat, stopServiceChat, serviceChatUrl,
@@ -10,6 +10,8 @@ import {
 import {
   getDoctor, getSystem, syncSystem, setSystemSchedule, pruneSystemBranches, getSystemBranches,
 } from '../api/system';
+import { getSlo, getSupportBundle } from '../api/support';
+import { saveBlobAs } from '../api/files';
 import EntityChat from '../components/EntityChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -238,6 +240,99 @@ function DiagnosticsSection() {
   );
 }
 
+// The two SLO objectives (common/slo.py): run start time p95 and error rate,
+// each ok/breach/no_data with the number behind it. Reads GET /api/support/slo
+// on mount and on Refresh; the same numbers the hub's own alert rules
+// (notify/rules.py's slo_start_latency / slo_error_rate) act on, so this card
+// never disagrees with what fired.
+const SLO_TONES = {
+  ok: { dot: 'bg-green-500', text: 'text-green-700' },
+  breach: { dot: 'bg-red-500', text: 'text-red-700' },
+  no_data: { dot: 'bg-gray-300', text: 'text-gray-500' },
+};
+
+function SloStatusDot({ status }) {
+  const { t } = useI18n();
+  const tone = SLO_TONES[status] || SLO_TONES.no_data;
+  const key = status === 'breach' ? 'statusBreach' : status === 'ok' ? 'statusOk' : 'statusNoData';
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${tone.text}`}>
+      <span className={`w-2 h-2 rounded-full ${tone.dot}`} /> {t(`health.slo.${key}`)}
+    </span>
+  );
+}
+
+function SloObjectiveRow({ label, objective, format }) {
+  const { t } = useI18n();
+  if (!objective) return null;
+  return (
+    <div className="py-1.5 border-b border-gray-100 last:border-0">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-gray-700">{label}</span>
+        <SloStatusDot status={objective.status} />
+      </div>
+      <div className="text-xs text-gray-400 mt-0.5">
+        {format(objective)}
+        {objective.sample != null && ` · ${t('health.slo.sample', { count: objective.sample })}`}
+      </div>
+    </div>
+  );
+}
+
+function SloCard() {
+  const { t } = useI18n();
+  const toast = useToast();
+  const [slo, setSlo] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await getSlo();
+      setSlo(data);
+    } catch (e) {
+      toast.error(t('health.slo.unreachable'), errorDetail(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [t, toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const objectives = slo?.objectives || {};
+
+  return (
+    <Card icon={Gauge} title={t('health.slo.title')}>
+      <div className="flex items-center justify-between mb-1">
+        {slo ? <SloStatusDot status={slo.status} /> : <span className="text-xs text-gray-400">—</span>}
+        <button
+          type="button"
+          onClick={load}
+          disabled={loading}
+          className="inline-flex items-center px-2 py-1 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+        >
+          {loading ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          {t('health.refresh')}
+        </button>
+      </div>
+      <SloObjectiveRow
+        label={t('health.slo.startP95')}
+        objective={objectives.start_p95}
+        format={(o) => (o.value_seconds == null
+          ? t('health.slo.noValue')
+          : `${o.value_seconds.toFixed(1)}s / ${o.threshold_seconds}s`)}
+      />
+      <SloObjectiveRow
+        label={t('health.slo.errorRate')}
+        objective={objectives.error_rate}
+        format={(o) => (o.value == null
+          ? t('health.slo.noValue')
+          : `${(o.value * 100).toFixed(1)}% / ${(o.threshold * 100).toFixed(1)}%`)}
+      />
+    </Card>
+  );
+}
+
 // The system workspace: its clone, its scheduled loop and its recent
 // branches. Reads GET /api/system once on mount; a 404 means the feature is
 // off entirely, which is shown as one line rather than an error.
@@ -456,9 +551,11 @@ function SystemWorkspaceCard() {
 
 export default function Health() {
   const { t } = useI18n();
+  const toast = useToast();
   const [health, setHealth] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [bundling, setBundling] = useState(false);
   const chat = useChatColumn(true);
 
   const load = useCallback(async () => {
@@ -503,6 +600,23 @@ export default function Health() {
   }), [loadChat, clearChat, stopChat, onEvent, t]);
   usePageChat(chatDescriptor);
 
+  // Content-Disposition carries the bundle's own timestamped name
+  // (common.support_bundle.default_filename); a fallback covers a proxy that
+  // strips the header.
+  const handleDownloadBundle = async () => {
+    setBundling(true);
+    try {
+      const res = await getSupportBundle();
+      const disposition = res.headers?.['content-disposition'] || '';
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      saveBlobAs(res.data, match ? match[1] : 'agents-hub-support-bundle.zip');
+    } catch (e) {
+      toast.error(t('health.supportBundle.failed'), errorDetail(e));
+    } finally {
+      setBundling(false);
+    }
+  };
+
   const db = health?.database || {};
   const counts = db.counts || {};
   const services = health?.services || {};
@@ -527,6 +641,14 @@ export default function Health() {
         actions={<>
           <ChatToggle open={chat.open} onToggle={chat.toggle} label={t('health.agentChat')} />
           <button
+            onClick={handleDownloadBundle}
+            disabled={bundling}
+            className="inline-flex items-center px-3 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          >
+            {bundling ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1" />}
+            {t('health.supportBundle.download')}
+          </button>
+          <button
             onClick={load}
             className="inline-flex items-center px-3 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
           >
@@ -545,6 +667,7 @@ export default function Health() {
         <div className={chat.mainClass}>
       <div className={`grid grid-cols-1 gap-4 mb-4 ${chat.open ? '' : 'lg:grid-cols-2'}`}>
         <DiagnosticsSection />
+        <SloCard />
         <SystemWorkspaceCard />
       </div>
       {loading ? (

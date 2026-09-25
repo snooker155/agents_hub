@@ -39,6 +39,13 @@ vi.mock('../../api', () => ({
   getWorkspaces: (...a) => getWorkspaces(...a),
 }));
 
+// The key's own money quota (docs/api-keys.md "Money quota"): a separate
+// module from api/index.js, like the rest of the accounting report's client.
+const updateMyApiKeyLimits = vi.fn(() => ok({ id: 'k1', budget_usd_per_month: 50 }));
+vi.mock('../../api/accounting', () => ({
+  updateMyApiKeyLimits: (...a) => updateMyApiKeyLimits(...a),
+}));
+
 const logout = vi.fn(() => Promise.resolve());
 let authUser;
 
@@ -182,6 +189,39 @@ describe('Account', () => {
       name: 'bot', workspaces: null, expires_in_days: 30,
       rate_limit_per_minute: 10, tokens_per_day: 0,
     }));
+  });
+
+  it('sends the money quota when filled in', async () => {
+    createMyApiKey.mockImplementation(() => ok({
+      id: 'k4', name: 'billed', hint: 'qrst', workspaces: null,
+      created_at: '2026-01-03T00:00:00Z', last_used_at: null, expires_at: null,
+      budget_usd_per_month: 25, key: 'ahk_billed',
+    }));
+    show();
+    await waitFor(() => expect(screen.getByPlaceholderText(/laptop CLI/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText(/laptop CLI/i), { target: { value: 'billed' } });
+    fireEvent.change(screen.getByLabelText(/budget per month/i), { target: { value: '25' } });
+    fireEvent.click(screen.getByText(/create key/i));
+    await waitFor(() => expect(createMyApiKey).toHaveBeenCalledWith({
+      name: 'billed', workspaces: null, expires_in_days: 30, budget_usd_per_month: 25,
+    }));
+  });
+
+  it('shows a key\'s budget and this month\'s spend, and edits it inline', async () => {
+    getMyApiKeys.mockImplementation(() => ok([
+      { ...KEYS[0], budget_usd_per_month: 25, spend_this_month_usd: 3.2 },
+    ]));
+    show();
+    await waitFor(() => expect(screen.getByText('laptop')).toBeInTheDocument());
+    expect(screen.getByText(/\$25\.00\/mo/)).toBeInTheDocument();
+    expect(screen.getByText(/\$3\.20 spent/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/\$25\.00\/mo/));
+    const input = screen.getByDisplayValue('25');
+    fireEvent.change(input, { target: { value: '50' } });
+    fireEvent.click(input.closest('span').querySelector('button'));
+    await waitFor(() => expect(updateMyApiKeyLimits).toHaveBeenCalledWith(
+      'k1', { budget_usd_per_month: 50 }));
   });
 
   it('revokes a key by its row', async () => {

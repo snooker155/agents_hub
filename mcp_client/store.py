@@ -230,7 +230,13 @@ def get_server(workspace: Optional[str], server_id: str) -> Optional[Dict[str, A
 
 
 def enabled_servers(workspace: Optional[str]) -> List[Dict[str, Any]]:
-    return [s for s in list_servers(workspace) if s.get("enabled")]
+    """Enabled servers, minus any the hub-wide allowlist does not approve of
+    when ``AGENTS_HUB_MCP_ALLOWLIST_ONLY`` is on (mcp_client.catalog)."""
+    servers = [s for s in list_servers(workspace) if s.get("enabled")]
+    from mcp_client import catalog
+    if catalog.allowlist_only():
+        servers = [s for s in servers if catalog.matches(s)]
+    return servers
 
 
 # ── Writing ───────────────────────────────────────────────────────────────────

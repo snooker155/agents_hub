@@ -23,6 +23,7 @@ def base_subprocess_env(
     agent_id: Optional[str] = None,
     user_id: Optional[str] = None,
     flow_id: Optional[str] = None,
+    key_id: Optional[str] = None,
 ) -> Dict[str, str]:
     """Base environment every agent-running subprocess needs.
 
@@ -60,6 +61,10 @@ def base_subprocess_env(
     from common.identity import SERVICE_TOKEN_ENV, current_mode, service_token
     if current_mode() == "multi" and not settings.api_token:
         env[SERVICE_TOKEN_ENV] = service_token()
+    # Who the run is charged to, so the runs the child creates in turn are
+    # charged to the same user and personal key (common/attribution.py).
+    from common.attribution import child_env
+    env.update(child_env(user_id, key_id))
     # Last, so a declared secret wins over the same name inherited from the
     # host environment: an agent-scoped GITHUB_TOKEN is the whole point of
     # giving an agent its own identity.

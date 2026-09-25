@@ -468,7 +468,25 @@ def run_eval(
     run.summary = summarize(run.eval_run_id, configs)
     run.total_cost = round(spend, 6)
     run.finished_at = utc_iso()
-    return store.save_eval_run(run)
+    saved = store.save_eval_run(run)
+    if saved.status == "completed" and evalset.suggest_on_failure:
+        _maybe_auto_suggest(saved)
+    return saved
+
+
+def _maybe_auto_suggest(run: EvalRun) -> None:
+    """A finished sweep with failed cases on an agent target builds a prompt
+    suggestion on its own when the set's ``suggest_on_failure`` flag is on
+    (evals/prompt_suggest.py). Best-effort: a failure here never turns a
+    completed sweep into a failed one, and "nothing to suggest" (no agent
+    target, or nothing failed) is not logged as a problem."""
+    try:
+        from evals.prompt_suggest import SuggestionError, build_suggestion
+        build_suggestion(run.eval_run_id)
+    except SuggestionError:
+        pass
+    except Exception:  # noqa: BLE001 - see docstring
+        log.warning("eval: auto prompt suggestion failed for %s", run.eval_run_id, exc_info=True)
 
 
 def _population_std(values: List[float]) -> float:
@@ -629,41 +647,133 @@ def diff_runs(run_a_id: str, run_b_id: str) -> Dict[str, Any]:
     }
 
 
-def case_from_run(run_id: str, *, expected: Optional[str] = None,
-                  rubric: Optional[str] = None) -> Case:
-    """Seed a case from a recorded run — the cheapest way to build a dataset.
+#: A run in one of these statuses has nothing worth repeating: seeding a case
+#: from it defaults `expected` to empty (never "what it produced") and keeps
+#: the run's error in the case's metadata instead.
+FAILED_STATUSES = ("failed", "error")
 
-    Defaults ``expected`` to what the run actually produced, which makes the
-    first eval a pure regression check: "does this still do what it did".
+
+def _entity_case_io(kind: str, rec: Dict[str, Any]) -> Tuple[str, str]:
+    """Best-effort ``(input, output)`` for a finished entity run (flow, team,
+    loop, scenario; common/entity_runs.py), used to seed a case.
+
+    A team or loop run keeps its own ``goal`` and ``result``. A scenario has
+    neither: it renders like the matrix does (``targets.render_scenario``). A
+    flow keeps no goal of its own — its ``title`` is the closest it has to one
+    — and no output either, so the output is the last leaf run (node) that
+    produced one, the same rule ``targets.run_flow_target`` scores.
+    """
+    title = str(rec.get("title") or "")
+    if kind in ("team", "loop"):
+        return str(rec.get("goal") or title), str(rec.get("result") or "")
+    if kind == "scenario":
+        return title, targets.render_scenario(rec.get("scores") or {}, rec.get("final_state") or {})
+    if kind == "flow":
+        output = ""
+        try:
+            from managers.run_manager import get_runs_by_ids
+            leaves = targets.leaf_run_ids("flow", str(rec.get("run_id") or ""))
+            records = get_runs_by_ids(leaves) if leaves else {}
+            for rid in reversed(leaves):
+                out = str((records.get(rid) or {}).get("output") or "")
+                if out:
+                    output = out
+                    break
+        except Exception:  # noqa: BLE001 - best-effort: an empty output is still a usable case
+            log.debug("case_from_run: could not derive flow output for %s", rec.get("run_id"), exc_info=True)
+        return title, output
+    return title, ""
+
+
+def _run_target_info(run_id: str) -> Optional[Dict[str, Any]]:
+    """Where ``run_id`` came from: an agent run (``runs`` table) or an entity
+    run (flow/team/loop/scenario, ``common/entity_runs.py``), whichever store
+    holds it. None when neither does.
+
+    Returned as ``{"source", "record", "target_kind", "target_id", "workspace",
+    "status"}`` — the shape both :func:`case_from_run` and the ``for-run`` API
+    (which eval sets a run fits) read.
     """
     from managers import run_manager as rm
 
     original = rm.get_run_by_id(run_id)
-    if not original:
+    if original is not None:
+        return {
+            "source": "agent", "record": original,
+            "target_kind": "agent", "target_id": str(original.get("agent_id") or ""),
+            "workspace": original.get("workspace"), "status": str(original.get("status") or ""),
+        }
+    from common import entity_runs
+    rec = entity_runs.get(run_id)
+    if rec is None:
+        return None
+    kind = str(rec.get("kind") or "")
+    return {
+        "source": "entity", "record": rec,
+        "target_kind": kind, "target_id": str(rec.get("entity_id") or ""),
+        "workspace": rec.get("workspace"), "status": str(rec.get("status") or ""),
+    }
+
+
+def case_from_run(run_id: str, *, expected: Optional[str] = None,
+                  rubric: Optional[str] = None) -> Case:
+    """Seed a case from a recorded run — the cheapest way to build a dataset.
+
+    ``run_id`` may be an agent run or an entity run (flow, team, loop,
+    scenario), whichever the id belongs to; the case's eval set target then
+    matches what actually ran (see ``evals.targets``).
+
+    Defaults ``expected`` to what the run actually produced, which makes the
+    first eval a pure regression check: "does this still do what it did" —
+    except for a failed or errored run, which has nothing worth repeating:
+    ``expected`` then defaults to empty (an explicit ``expected`` still wins)
+    and the run's error is kept in the case's metadata, for the rubric field
+    to answer instead ("what should have happened").
+    """
+    info = _run_target_info(run_id)
+    if info is None:
         raise ValueError(f"Run not found: {run_id}")
 
-    proc = rm.get_run_process(run_id) or {}
-    input_ctx = proc.get("input_context") or {}
-    user_message = str(input_ctx.get("user_message") or original.get("input") or "").strip()
+    rec = info["record"]
+    metadata: Dict[str, Any] = {
+        "target_kind": info["target_kind"], "target_id": info["target_id"],
+        "seeded_at": utc_iso(),
+    }
+    if info["source"] == "agent":
+        from managers import run_manager as rm
+        proc = rm.get_run_process(run_id) or {}
+        input_ctx = proc.get("input_context") or {}
+        user_message = str(input_ctx.get("user_message") or rec.get("input") or "").strip()
+        produced = str((proc.get("response") or {}).get("text") or rec.get("output") or "")
+        metadata["agent_id"] = info["target_id"]
+        metadata["model"] = rec.get("model") or ""
+    else:
+        user_message, produced = _entity_case_io(info["target_kind"], rec)
+        user_message = user_message.strip()
+
     if not user_message:
         raise ValueError("Run has no recorded input to build a case from")
 
-    produced = str((proc.get("response") or {}).get("text") or original.get("output") or "")
+    failed = info["status"] in FAILED_STATUSES
+    if failed:
+        run_error = rec.get("error")
+        if run_error:
+            metadata["error"] = str(run_error)
+        case_expected = expected
+    else:
+        case_expected = expected if expected is not None else (produced or None)
+
     return Case(
         input=user_message,
-        expected=expected if expected is not None else (produced or None),
+        expected=case_expected,
         rubric=rubric,
         source_run_id=run_id,
-        metadata={
-            "agent_id": original.get("agent_id") or "",
-            "model": original.get("model") or "",
-            "seeded_at": utc_iso(),
-        },
+        metadata=metadata,
     )
 
 
 __all__ = [
     "run_eval", "run_case", "compose_input", "prepare_work_dir", "TARGET_RUNNERS",
     "Outcome", "summarize", "diff_runs", "project_cost",
-    "case_from_run", "EvalStopped",
+    "case_from_run", "FAILED_STATUSES", "EvalStopped",
 ]

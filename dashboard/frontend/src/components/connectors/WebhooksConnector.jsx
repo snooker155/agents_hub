@@ -18,20 +18,28 @@ import { GRADER_FIELDS, graderSpec } from '../agent/onlineEvals';
 // and when the workspace should raise one on its own (a failed run, spend
 // past a threshold) without an agent or a person asking for it.
 
-const RULE_KINDS = ['run_failed', 'spend_daily_over', 'spend_run_over', 'online_eval'];
+const RULE_KINDS = [
+  'run_failed', 'spend_daily_over', 'spend_run_over', 'online_eval',
+  'slo_start_latency', 'slo_error_rate',
+];
+// Kinds with no dollar threshold of their own: run_failed reacts to any
+// failure, online_eval has its own sample/score fields, and the two SLO
+// kinds watch a hub-wide objective (common/slo.py) rather than a per-run or
+// per-workspace number.
+const NO_THRESHOLD_KINDS = ['run_failed', 'online_eval', 'slo_start_latency', 'slo_error_rate'];
 // Graders the one-grader form here offers; the agent's Live quality card
 // (components/agent/LiveQualityCard.jsx) edits several at once.
 const GRADER_KINDS = Object.keys(GRADER_FIELDS);
 
 /** The threshold column: dollars for spend rules, sampling for online evals. */
 function ruleThreshold(rule, t) {
-  if (rule.kind === 'run_failed') return '—';
   if (rule.kind === 'online_eval') {
     return t('connectors.webhooks.onlineEvalSummary', {
       rate: `${Math.round(Number(rule.sample_rate ?? 0) * 100)}%`,
       min: Number(rule.min_score ?? 0).toFixed(2),
     });
   }
+  if (NO_THRESHOLD_KINDS.includes(rule.kind)) return '—';
   return `$${Number(rule.threshold_usd || 0).toFixed(2)}`;
 }
 const CHANNELS = ['dashboard', 'telegram', 'slack', 'webhook'];
@@ -267,7 +275,7 @@ function RuleForm({ workspace, onCreated }) {
     try {
       const payload = {
         kind,
-        threshold_usd: kind === 'run_failed' || kind === 'online_eval' ? 0 : parseFloat(threshold) || 0,
+        threshold_usd: NO_THRESHOLD_KINDS.includes(kind) ? 0 : parseFloat(threshold) || 0,
         agent_id: agentId.trim() || null,
         channels: channels.length ? channels : ['dashboard'],
         enabled: true,
@@ -325,7 +333,7 @@ function RuleForm({ workspace, onCreated }) {
           )}
         </>
       )}
-      {kind !== 'run_failed' && kind !== 'online_eval' && (
+      {!NO_THRESHOLD_KINDS.includes(kind) && (
         <div>
           <label className="text-xs font-medium text-gray-500 mb-1 block">{t('connectors.webhooks.threshold')}</label>
           <input

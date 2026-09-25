@@ -116,14 +116,20 @@ def dispatch(spec: Dict[str, Any], launch: Optional[Callable[[Dict[str, Any]], N
     the launcher named in :data:`LAUNCHERS` for the spec's kind.
     """
     from common.config import hub_role
-    from common.identity import current_user_id
+    from common.attribution import check_launch_budget, launching_key, launching_user
 
     kind = str(spec.get("kind") or "")
     if kind not in ENTRYPOINTS:
         raise ValueError(f"unknown entity launch kind {kind!r}")
     # Who asked for this run, so the process that spawns it (maybe a worker
     # with no request in flight) can resolve user-scoped secrets.
-    spec.setdefault("launched_by", current_user_id())
+    spec.setdefault("launched_by", launching_user())
+    # A personal key's own money cap (common/api_keys.py
+    # budget_usd_per_month): a flow/loop/team/scenario run launched with a
+    # key that already spent its month refuses to start, the same gate
+    # agents.agent_launcher.prepare_run applies to a task run.
+    check_launch_budget()
+    spec.setdefault("key_id", launching_key())
     spec.setdefault("execution_mode", "local")
     extra_env = _CHILD_ENV.get()
     if extra_env:
@@ -176,6 +182,7 @@ def build_env(spec: Dict[str, Any]) -> Dict[str, str]:
         agent_id=str(spec.get("agent_id") or "") or None,
         flow_id=str(spec.get("entity_id") or "") if kind == "flow" else None,
         user_id=str(spec.get("launched_by") or "") or None,
+        key_id=str(spec.get("key_id") or "") or None,
     )
     add_run_env(env, session_id=str(spec.get("session_id") or "") or None,
                 log_file=str(spec.get("log_file") or "") or None)

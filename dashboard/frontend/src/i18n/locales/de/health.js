@@ -84,4 +84,20 @@ export default {
     pruneDone_other: '{{count}} Branches gelöscht.',
     pruneFailed: 'Bereinigung fehlgeschlagen',
   },
+  slo: {
+    title: 'SLO',
+    startP95: 'Startzeit (p95)',
+    errorRate: 'Fehlerquote',
+    statusOk: 'Ok',
+    statusBreach: 'Verletzt',
+    statusNoData: 'Keine Daten',
+    noValue: 'noch nicht genug Daten',
+    sample_one: '{{count}} Stichprobe',
+    sample_other: '{{count}} Stichproben',
+    unreachable: 'SLO-Status hat nicht geantwortet.',
+  },
+  supportBundle: {
+    download: 'Support-Paket herunterladen',
+    failed: 'Support-Paket konnte nicht erstellt werden.',
+  },
 };

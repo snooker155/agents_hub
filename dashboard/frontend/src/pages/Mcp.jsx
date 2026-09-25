@@ -450,6 +450,15 @@ function ServerRow({ server, busy, onEdit, onTest, onDelete }) {
           </span>
         )}
 
+        {server.approved === false && (
+          <span
+            title={t('mcp.notApprovedHint')}
+            className="text-[10px] uppercase tracking-wider font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full"
+          >
+            {t('mcp.notApproved')}
+          </span>
+        )}
+
         <button
           onClick={onTest}
           disabled={busy}

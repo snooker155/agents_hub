@@ -36,6 +36,75 @@ tied to the task and to the work it graded, and added to that work's total when 
 a team, loop or scenario run. Every run in a scenario, a flow or a team keeps its own
 cost; the total of such a run is the sum of its runs, plus its gradings.
 
+## Attribution
+
+Every run record carries who it belongs to: `launched_by` (the acting user's
+id), `key_id` when the request that started it presented a personal
+[API key](api-keys.md), and `project_id` when the run's task belongs to a
+project. These are stamped once, at creation, by the two places every run
+record is actually written (`managers/runs/store.py` for an agent run,
+`common/entity_runs.py` for the top-level run of a flow, loop, team or
+scenario): the acting user comes off a contextvar the request guard binds for
+the whole request (`common.identity.current_user_id`), the key off a sibling
+one (`common.api_keys.current_key_id`), and the project off the run's task.
+An update to an existing run never overwrites who first launched it.
+
+A run created before this shipped carries neither field and reports as
+"(unknown)" in the report below, not as a blank row.
+
+A launched run's process has no request of its own, so the launcher hands the
+user and the key down through its environment (`common/attribution.py`). A
+node a flow or a team runs, a delegated subtask and a grading made inside that
+process are charged to the same user and key as the run that made them. The
+report and the key's monthly spend sum these leaf runs one by one; an entity
+run's own total is their sum and is never added on top.
+
+## Pricing on /v1
+
+A call to the hub's own [OpenAI-compatible endpoint](hub-as-provider.md)
+(`POST /v1/chat/completions`) is priced from the catalog the moment it is
+recorded: `serving_usage.cost_usd` is set once, at write time
+(`common.serving.record_usage`, `common.pricing.serving_cost_usd`), the same
+per-1M-token prices the Costs page and the accounting report use elsewhere.
+An unpriced model records the call at $0, the same fail-open rule the rest of
+pricing follows. `common.serving.usage()` (the Models page's serving usage
+card) sums it per model and overall.
+
+## Money quota per key
+
+A personal [API key](api-keys.md) can carry its own money cap,
+`budget_usd_per_month` (`None` or `0` means none), set when the key is cut
+and editable later from the Account page or `PUT /api/auth/keys/{id}`. Its
+spend for the current UTC month is its own `/v1` serving cost plus the cost
+of the runs it launched (`common.api_keys.key_month_spend_usd`), cached for
+30 seconds so a busy key does not turn every request into two table scans.
+
+Once a key's spend reaches its cap, further spend on it is refused with a 429
+(the OpenAI error shape on `/v1`, `key_budget_exceeded`): a plain `/v1` call,
+an agent answered through `/v1` and a task, flow, loop, team or scenario run
+launched with that key at `agents.agent_launcher.prepare_run` /
+`runtime.entity_launch.dispatch` before it starts. The cap resets with the
+UTC month, not on a rolling 30 days.
+
+## Report
+
+`GET /api/accounting/report?group_by=key|user|project|workspace|agent|model`
+(`routes/accounting.py`) combines runs and served `/v1` calls into one table:
+one row per group with its run count, call count, tokens in/out/cached and
+cost. Evaluation channels are excluded, the same rule the breakdowns above
+follow. A served call carries no workspace, project or agent (it answers with
+a model, not those), so it only ever contributes to the `key`, `user` and
+`model` groupings; grouping by workspace, project or agent counts runs alone.
+`format=csv` downloads the same rows as a file. A non-administrator in
+`multi` mode sees only their own rows, whichever grouping they asked for: the
+same rule the Models page's serving usage already applies.
+
+From a terminal: `ah costs report --by user [--since ISO] [--until ISO]
+[--workspace NAME] [--csv] [--out FILE]`.
+
+The Costs page's own **Report** section offers the same grouping, date range
+and CSV export.
+
 ## Budgets
 
 A budget belongs to a workspace: a **hard limit**, a **soft limit** and a

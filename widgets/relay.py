@@ -17,7 +17,10 @@ instead and hands its events over through a queue, so:
   whether or not anybody is still reading;
 * the acting user is bound on that task (``common.identity``), so the runs,
   sessions and instances the turn creates are stamped with the principal the
-  caller acts as (the widget's owner, the ``/v1`` key's owner).
+  caller acts as (the widget's owner, the ``/v1`` key's owner); when the
+  caller presented a personal API key, its id is bound the same way
+  (``common.api_keys``), so the run also carries ``key_id`` for the key's
+  money quota and the accounting report (docs/costs.md "Attribution").
 
 Used by the widget's message endpoint and by ``/v1``'s agent models.
 """
@@ -43,9 +46,11 @@ class TurnRelay:
     :meth:`stop` if the reader leaves before ``done``."""
 
     def __init__(self, request: Any, *, user_id: Optional[str] = None,
+                 key_id: Optional[str] = None,
                  on_event: Optional[EventHook] = None) -> None:
         self.request = request
         self.user_id = user_id
+        self.key_id = key_id
         self.on_event = on_event
         #: The run answering right now: the first ``meta``'s run, then the
         #: next agent's after a handoff.
@@ -129,8 +134,10 @@ class TurnRelay:
     async def _drive(self) -> None:
         from chat import pipelines
         from common import identity
+        from common import api_keys
 
         token = identity.set_current_user(self.user_id) if self.user_id else None
+        key_token = api_keys.set_current_key_id(self.key_id) if self.key_id else None
         try:
             async for event in pipelines.run_chat_pipeline(self.request):
                 # One done per turn: anything after it is not this turn's.
@@ -155,6 +162,8 @@ class TurnRelay:
                                   "run_id": self.run_id})
             if token is not None:
                 identity.reset_current_user(token)
+            if key_token is not None:
+                api_keys.reset_current_key_id(key_token)
             await self._queue.put(_END)
 
 

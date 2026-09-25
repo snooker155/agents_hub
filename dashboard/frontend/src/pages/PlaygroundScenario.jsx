@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Gamepad2, Play, RotateCcw, Square, Trash2, Loader, X,
-  AlertTriangle, DollarSign, RefreshCw, History,
+  AlertTriangle, DollarSign, RefreshCw, History, FlaskConical,
 } from 'lucide-react';
 import { getSimEnvironments, getAgents, getModelsCatalog } from '../api';
 import { useWorkspace } from '../components/workspace';
 import { usePageChat } from '../components/pageChat/pageChat';
+import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { RunHistory } from './playground/history';
 import { eventLines } from './playground/events';
 import { isLiveStatus } from './playground/status';
@@ -74,6 +75,7 @@ export default function PlaygroundScenario() {
   const [sideTab, setSideTab] = useState('params');  // 'params' | 'chat'
   const [eventsSeen, setEventsSeen] = useState(0);
   const [message, setMessage] = useState('');
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   // The build chat's send(), handed over by whichever EntityChat is mounted —
   // the sidebar tab or the floating panel. It is what lets a button on the page
   // ask the builder for something instead of making the user type it.
@@ -268,6 +270,15 @@ export default function PlaygroundScenario() {
               <RefreshCw className={`w-3.5 h-3.5 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
               {t('common.refresh')}
             </button>
+            {run?.sim_run_id && !live && (
+              <button
+                onClick={() => setCaseDialogOpen(true)}
+                title={t('messageDetails.toEvalCaseHint')}
+                className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
+              >
+                <FlaskConical className="w-3.5 h-3.5 mr-1" /> {t('messageDetails.toEvalCase')}
+              </button>
+            )}
             {live ? (
               <button
                 onClick={handleStop}
@@ -430,6 +441,13 @@ export default function PlaygroundScenario() {
           />
         )}
       </div>
+      {caseDialogOpen && run?.sim_run_id && (
+        <SaveAsEvalCaseDialog
+          runId={run.sim_run_id}
+          workspace={run.workspace || selectedWorkspace}
+          onClose={() => setCaseDialogOpen(false)}
+        />
+      )}
     </PageContainer>
   );
 }

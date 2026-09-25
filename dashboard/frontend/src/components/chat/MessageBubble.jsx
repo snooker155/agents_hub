@@ -2,6 +2,7 @@
  * One message, as the Chat view shows it, and the placeholder standing in for
  * the one still being written.
  */
+import { useState } from 'react';
 import { TokenPill } from '../ProcessGraph';
 import { fmtDurationMs } from '../processUtils';
 import { useI18n } from '../../i18n';
@@ -12,10 +13,12 @@ import Citations, { CitedText } from './Citations';
 import { MessageEntities, MessageFiles, ResponseButtons } from './messageParts';
 import { LiveThoughts } from './reasoning';
 import { steerCaption } from './steering';
-import { Bot, User } from 'lucide-react';
+import SaveAsEvalCaseDialog from '../evals/SaveAsEvalCaseDialog';
+import { Bot, FlaskConical, User } from 'lucide-react';
 
-function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifactsByPath }) {
+function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifactsByPath, workspace }) {
   const { t } = useI18n();
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   // A fact about the transcript (e.g. older turns folded into a summary), not
   // something either party said: a subtle centered line, not a chat bubble.
   if (msg.role === 'system') return <SystemNotice msg={msg} />;
@@ -123,7 +126,23 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
               {typeof msg.outbound_tokens === 'number' && <TokenPill label={t('chat.out')} value={msg.outbound_tokens} />}
               {typeof msg.duration_ms === 'number' && <TokenPill label={t('chat.duration')} value={fmtDurationMs(msg.duration_ms)} />}
             </div>
+            {!isStreaming && (
+              <button
+                onClick={() => setCaseDialogOpen(true)}
+                title={t('messageDetails.toEvalCaseHint')}
+                className="inline-flex items-center gap-1 text-[11px] text-indigo-500 hover:text-indigo-700"
+              >
+                <FlaskConical className="w-3 h-3" /> {t('messageDetails.toEvalCase')}
+              </button>
+            )}
           </div>
+        )}
+        {caseDialogOpen && (
+          <SaveAsEvalCaseDialog
+            runId={msg.run_id}
+            workspace={workspace}
+            onClose={() => setCaseDialogOpen(false)}
+          />
         )}
       </div>
     </div>

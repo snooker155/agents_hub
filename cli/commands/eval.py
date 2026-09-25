@@ -104,6 +104,20 @@ def eval_runs(
     console.print(f"[dim]{len(runs)} run(s)[/dim]")
 
 
+@eval_app.command("add-case")
+def eval_add_case(
+    eval_set_id: str = typer.Argument(..., help="Eval set ID to add the case to."),
+    from_run: str = typer.Option(..., "--from-run", help="Run id to seed the case from (an agent run or a flow/team/loop/scenario run)."),
+    expected: Optional[str] = typer.Option(None, "--expected", help="Reference answer. Defaults to what the run produced (empty for a failed run)."),
+    rubric: Optional[str] = typer.Option(None, "--rubric", help="Instruction for an LLM judge, e.g. what should have happened."),
+):
+    """Add a case seeded from a recorded run — "to eval case" from the CLI."""
+    body = {"from_run_id": from_run, "expected": expected, "rubric": rubric}
+    result = call(hub().request, "POST", f"/api/evals/{eval_set_id}/cases", json=body)
+    case = result.get("case", {})
+    console.print(f"[green]Added[/green] case [bold]{case.get('case_id', '')[:12]}[/bold] to {eval_set_id[:8]}")
+
+
 @eval_app.command("diff")
 def eval_diff(
     run_a: str = typer.Argument(..., help="Earlier eval run ID."),

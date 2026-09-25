@@ -66,6 +66,8 @@ export default {
   filtered: 'durch die Erlaubnisliste gefiltert',
 
   disabled: 'Deaktiviert',
+  notApproved: 'Nicht genehmigt',
+  notApprovedHint: 'Dieser Server stimmt mit keinem genehmigten Eintrag im MCP Katalog überein.',
   neverSeen: 'noch nie verbunden',
   lastSeen: 'zuletzt verbunden {{when}}',
   toolCount_one: '{{count}} Werkzeug',

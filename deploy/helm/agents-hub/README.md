@@ -8,24 +8,30 @@ those three itself — see "What this chart does not run" below.
 
 ## Install
 
+A tagged release publishes both images to GHCR
+(`ghcr.io/snooker155/agents-hub-backend` and `-frontend`, tagged with the
+version), and the chart's `appVersion` names that same version, so
+`helm install` with the default values runs the release the chart came from.
+Build your own only for a fork or an unreleased commit.
+
 ```bash
 # 1. Build and push the two images this chart deploys (or point image.repository
 #    / frontend.image.repository at images you already built and pushed):
-docker build -t your-registry/agents-hub-backend:1.0.0 --target backend .
-docker build -t your-registry/agents-hub-frontend:1.0.0 --target nginx dashboard/frontend
-docker push your-registry/agents-hub-backend:1.0.0
-docker push your-registry/agents-hub-frontend:1.0.0
+docker build -t your-registry/agents-hub-backend:0.2.0 --target backend .
+docker build -t your-registry/agents-hub-frontend:0.2.0 --target nginx dashboard/frontend
+docker push your-registry/agents-hub-backend:0.2.0
+docker push your-registry/agents-hub-frontend:0.2.0
 
 # 2. Install, pointing at your own Postgres, Redis and object store. Keep the
 #    values file with real secrets out of version control.
 cat > my-values.yaml <<'EOF'
 image:
   repository: your-registry/agents-hub-backend
-  tag: "1.0.0"
+  tag: "0.2.0"
 frontend:
   image:
     repository: your-registry/agents-hub-frontend
-    tag: "1.0.0"
+    tag: "0.2.0"
 secret:
   OPENAI_API_KEY: "sk-..."
   AGENTS_HUB_DATABASE_URL: "postgresql://agents_hub:password@postgres.example.internal:5432/agents_hub"

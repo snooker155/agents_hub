@@ -21,7 +21,7 @@ backend. It only *reads* the catalog; curation/discovery stays in
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from providers.catalog import load_catalog_raw
 
@@ -125,6 +125,17 @@ def _tokens_cost(prices: PriceMap, provider: str, model: str,
         + cached / 1_000_000 * cached_price
         + outbound / 1_000_000 * out_price
     )
+
+
+def serving_cost_usd(provider: str, model: str, prompt_tokens: int,
+                     completion_tokens: int, *, prices: Optional[PriceMap] = None) -> float:
+    """USD cost of one served completion (``common/serving.py``) at catalog
+    price. No cache split: ``serving_usage`` tracks a plain prompt/completion
+    pair, not a cached-token count. Unknown models cost 0.0, the same
+    fail-open rule :func:`run_cost_usd` follows."""
+    table = prices if prices is not None else load_price_map()
+    return round(_tokens_cost(table, str(provider or ""), str(model or ""),
+                              max(0, int(prompt_tokens or 0)), max(0, int(completion_tokens or 0)), 0), 6)
 
 
 def _fallback_calls(run: Dict[str, Any]) -> list:

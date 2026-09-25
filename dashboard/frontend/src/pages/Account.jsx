@@ -10,6 +10,7 @@ import {
   revokeOtherSessions,
 } from '../api';
 import { getMyPreferences, putMyPreferences } from '../api/palette';
+import { updateMyApiKeyLimits } from '../api/accounting';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { SectionCard, inputCls } from '../components/settingsUi';
 import { useAuth } from '../components/auth';
@@ -616,10 +617,17 @@ function ApiKeysSection({ t, isAdmin }) {
   // hub-wide setting and is left out of the request.
   const [perMinute, setPerMinute] = useState('');
   const [perDay, setPerDay] = useState('');
+  // The key's own money cap (docs/api-keys.md "Money quota"): blank follows
+  // the hub-wide setting (none) and is left out of the request.
+  const [budget, setBudget] = useState('');
   const [creating, setCreating] = useState(false);
   const [revokingId, setRevokingId] = useState('');
   const [justCreated, setJustCreated] = useState(null);
   const [copied, setCopied] = useState(false);
+  // Inline "edit the budget" state for one row of the table at a time.
+  const [editingBudgetId, setEditingBudgetId] = useState('');
+  const [editingBudgetValue, setEditingBudgetValue] = useState('');
+  const [savingBudgetId, setSavingBudgetId] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -667,6 +675,7 @@ function ApiKeysSection({ t, isAdmin }) {
       };
       if (perMinute !== '') payload.rate_limit_per_minute = Number(perMinute);
       if (perDay !== '') payload.tokens_per_day = Number(perDay);
+      if (budget !== '') payload.budget_usd_per_month = Number(budget);
       const { data } = await createMyApiKey(payload);
       setJustCreated(data);
       setCopied(false);
@@ -675,6 +684,7 @@ function ApiKeysSection({ t, isAdmin }) {
       setSelected([]);
       setPerMinute('');
       setPerDay('');
+      setBudget('');
       await load();
     } catch (err) {
       setError(err?.response?.data?.detail || t('account.apiKeys.createFailed'));
@@ -705,6 +715,26 @@ function ApiKeysSection({ t, isAdmin }) {
     } catch {
       // Clipboard access can be refused (no permission, no secure context):
       // the key is still selectable text in the box, so nothing is lost.
+    }
+  };
+
+  const startEditBudget = (key) => {
+    setEditingBudgetId(key.id);
+    setEditingBudgetValue(key.budget_usd_per_month != null ? String(key.budget_usd_per_month) : '');
+  };
+
+  const saveBudget = async (key) => {
+    setSavingBudgetId(key.id);
+    try {
+      await updateMyApiKeyLimits(key.id, {
+        budget_usd_per_month: editingBudgetValue === '' ? null : Number(editingBudgetValue),
+      });
+      setEditingBudgetId('');
+      await load();
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('account.apiKeys.budgetSaveFailed'));
+    } finally {
+      setSavingBudgetId('');
     }
   };
 
@@ -791,6 +821,14 @@ function ApiKeysSection({ t, isAdmin }) {
                 onChange={(e) => setPerDay(e.target.value)}
                 placeholder={t('account.apiKeys.limitPlaceholder')} className={inputCls + ' w-40'} />
             </div>
+            <div>
+              <label htmlFor="acct-key-budget" className="block text-xs font-medium text-gray-500 mb-1">
+                {t('account.apiKeys.budgetPerMonth')}
+              </label>
+              <input id="acct-key-budget" type="number" min="0" step="0.01" value={budget}
+                onChange={(e) => setBudget(e.target.value)}
+                placeholder={t('account.apiKeys.budgetPlaceholder')} className={inputCls + ' w-40'} />
+            </div>
           </div>
           <p className="text-xs text-gray-500 mt-1">{t('account.apiKeys.limitsHint')}</p>
         </div>
@@ -817,6 +855,7 @@ function ApiKeysSection({ t, isAdmin }) {
                 <th className="text-left px-2 py-1.5 font-semibold">{t('account.apiKeys.created')}</th>
                 <th className="text-left px-2 py-1.5 font-semibold">{t('account.apiKeys.lastUsed')}</th>
                 <th className="text-left px-2 py-1.5 font-semibold">{t('account.apiKeys.expires')}</th>
+                <th className="text-left px-2 py-1.5 font-semibold">{t('account.apiKeys.budgetPerMonth')}</th>
                 <th className="px-2 py-1.5" />
               </tr>
             </thead>
@@ -838,6 +877,32 @@ function ApiKeysSection({ t, isAdmin }) {
                   </td>
                   <td className="px-2 py-2 text-gray-600 whitespace-nowrap">
                     {key.expires_at ? formatDate(key.expires_at) : t('account.apiKeys.never')}
+                  </td>
+                  <td className="px-2 py-2 text-gray-600 whitespace-nowrap">
+                    {editingBudgetId === key.id ? (
+                      <span className="flex items-center gap-1">
+                        <input type="number" min="0" step="0.01" value={editingBudgetValue}
+                          onChange={(e) => setEditingBudgetValue(e.target.value)}
+                          placeholder={t('account.apiKeys.limitPlaceholder')}
+                          className={inputCls + ' w-24'} autoFocus />
+                        <button type="button" onClick={() => saveBudget(key)}
+                          disabled={savingBudgetId === key.id} className={btnGhost}>
+                          {savingBudgetId === key.id
+                            ? <Loader className="w-3.5 h-3.5 animate-spin" />
+                            : <Check className="w-3.5 h-3.5" />}
+                        </button>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => startEditBudget(key)}
+                        className="text-left hover:underline">
+                        {key.budget_usd_per_month
+                          ? t('account.apiKeys.budgetWithSpend', {
+                              limit: key.budget_usd_per_month.toFixed(2),
+                              spend: (key.spend_this_month_usd ?? 0).toFixed(2),
+                            })
+                          : t('account.apiKeys.limitPlaceholder')}
+                      </button>
+                    )}
                   </td>
                   <td className="px-2 py-2 text-right">
                     <button type="button" onClick={() => revoke(key)} disabled={revokingId === key.id}

@@ -94,6 +94,33 @@ The case then runs in the same kind of isolated folder, with the files copied
 in, and its input starts with a block naming them and the folder. A case with
 files and no snapshot gets the folder too.
 
+## Cases from a run
+
+The cheapest way to build a dataset is to point at a run that already
+happened. `evals.runner.case_from_run(run_id)` accepts any run id: an agent
+run, or an entity run (flow, team, loop, scenario; `common/entity_runs.py`).
+It works out which store the id belongs to and builds a case whose input is
+what the run was given and whose `expected` defaults to what the run
+produced: a pure regression check, "does this still do what it did". A
+failed or errored run has nothing right to repeat, so `expected` defaults to
+empty instead and the run's error is kept in the case's `metadata`; the
+rubric field is where "what should have happened" belongs for that case.
+
+`POST /api/evals/{id}/cases` with `from_run_id` is the API this powers, the
+same route whichever kind the run is. `GET /api/evals/for-run/{run_id}` tells
+a caller what fits before it asks: the run's target kind and id, whether it
+failed, every eval set in its workspace whose target matches, and a preview
+of the case that would be built (or why one cannot be, e.g. "no recorded
+input"), so a dialog can offer to create a set with the right target instead
+of asking the user to pick one.
+
+The shared frontend piece is `components/evals/SaveAsEvalCaseDialog.jsx`: a
+"To eval case" button opens it from a run's own page (Messages, a team's or a
+loop's run panel, the flow editor's run history, a playground scenario run,
+and the chat turn itself) or from a chat turn's actions, and it lets the
+input, expected and rubric be edited before saving. `ah eval add-case <set>
+--from-run <run_id> [--expected ..] [--rubric ..]` does the same from the CLI.
+
 ## Graders, cheapest first
 
 - **exact** / **substring** / **regex** — deterministic string checks.
@@ -277,6 +304,40 @@ The Eval Agent's `run_eval_tool` can do this in the same call: pass
 `compare_with_previous: true` and the response includes a `diff` against the
 set's most recent prior run, so "did that change help" does not need a second
 round trip.
+
+## Prompt suggestions from failed cases
+
+`evals/prompt_suggest.py` turns a finished sweep's failures into a proposed
+fix. `build_suggestion(eval_run_id)` requires a run swept on exactly one
+agent target with at least one failed case; it reads that agent's current
+`instructions.md`, and for each failed case its input, output, expected or
+rubric, and the graders' `detail` (their reasons), and asks a model for a revised `instructions.md`: the
+eval set's own judge model (an `llm_judge` or `rubric` grader that names one)
+when it has one, else the model a column of the sweep ran on (it just
+answered, so it is reachable), else the workspace default. It returns the new text
+plus a rationale tied to the case ids it read. The model call is recorded as
+a run of its own (agent `prompt_optimizer`, channel `eval`), the same
+reasoning as an outcome grading's run: one model call about a whole eval run
+is not part of any one cell's own cost. The suggestion itself is stored in
+`prompt_suggestions` (migration 0028), `pending` until decided.
+
+`POST /api/eval-runs/{id}/suggest-prompt` builds one (a real, billable model
+call, served from a worker thread like `start_eval_run`).
+`GET /api/eval-runs/{id}/suggestions` lists what exists for a run.
+`POST /api/prompt-suggestions/{id}/apply` writes the new instructions
+through the same path the definition editor uses (`PUT
+/api/agents/{id}/definition`), so `agents/versions.py` snapshots the old
+version and a rollback is always available; `{"rerun": true}` also starts the
+same eval set again so the before and after can be compared with the
+existing diff route. `.../dismiss` marks it decided without touching
+anything. An eval set's `suggest_on_failure` flag (default off, shown as a
+checkbox in the set's settings) makes a finished sweep with failures build a
+suggestion by itself, right after `run_eval` saves the run.
+
+The Evals page shows this as `components/evals/PromptSuggestionPanel.jsx`
+beside the score matrix: a "Suggest prompt fix" button when a run has
+failures and no suggestion yet, then a diff of the old and new instructions
+(`lib/lineDiff.js`), the rationale, and Apply / Dismiss.
 
 ## The injection audit
 

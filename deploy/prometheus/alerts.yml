@@ -1,0 +1,51 @@
+# Alert rules for a Prometheus that scrapes GET /metrics (common/metrics.py,
+# docs/slo.md). Load with `rule_files: ["alerts.yml"]` in prometheus.yml, or
+# via a PrometheusRule CRD if the operator manages this cluster — see
+# deploy/helm/agents-hub/templates/prometheusrule.yaml, which mirrors these
+# two rules for that path (kept off by default: prometheusRule.enabled).
+#
+# The hub also raises these same two conditions as its own notifications
+# (notify/rules.py's slo_start_latency / slo_error_rate alert rules,
+# evaluated from the plan scheduler tick) so an operator without Prometheus
+# still hears about a breach through the dashboard's own channels. This file
+# is for the operator who already runs Prometheus and wants the same signal
+# in Alertmanager.
+groups:
+  - name: agents-hub-slo
+    rules:
+      - alert: AgentsHubRunStartSLOBreach
+        # agents_hub_slo_breach is only published once a window holds enough
+        # data to judge (common/slo.py MIN_ERROR_SAMPLE and the p95 sample
+        # itself); `== 1` alone, with no `unless absent(...)`, correctly
+        # stays silent rather than false-alarming on a quiet deployment.
+        expr: agents_hub_slo_breach{objective="start_p95"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agents Hub: run start time p95 is over its SLO"
+          description: >-
+            agents_hub_run_start_seconds (p95) has been over
+            AGENTS_HUB_SLO_START_P95_SECONDS for at least 5 minutes. See
+            docs/runbook.md and docs/slo.md.
+
+      - alert: AgentsHubErrorRateSLOBreach
+        expr: agents_hub_slo_breach{objective="error_rate"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agents Hub: run error rate is over its SLO"
+          description: >-
+            The share of finished runs that failed has been over
+            AGENTS_HUB_SLO_ERROR_RATE for at least 5 minutes. See
+            docs/runbook.md and docs/slo.md.
+
+      - alert: AgentsHubDatabaseDown
+        expr: agents_hub_database_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Agents Hub: the database has not answered a trivial query in 2m"
+          description: "See docs/runbook.md, 'Database locked or Postgres unreachable'."

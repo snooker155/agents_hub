@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from cli.main import _active_project, _active_workspace, call, console, hub
+from cli.openapi import render_result
 
 agent_app = typer.Typer(help="Agent management commands.", no_args_is_help=True)
 
@@ -94,3 +95,77 @@ def agent_run(
         console.print(f"[dim]handed over to {h.get('to_agent_name') or h.get('to_agent_id')}: "
                       f"{h.get('reason') or ''}[/dim]")
     console.print(result.get("response", result))
+
+
+# ── Review status (dashboard/backend/routes/registry.py, docs/registry.md) ──
+#
+# Owner and admin, same review model flows and skills share (common/review.py).
+# Listing reads straight from GET /api/registry rather than a dedicated route:
+# that call is already the whole registry, and a second endpoint for "just the
+# agents, filtered" would be one more thing to keep in step with it.
+
+review_app = typer.Typer(help="An agent's owner and review status.", no_args_is_help=True)
+agent_app.add_typer(review_app, name="review")
+
+
+@review_app.command("list")
+def agent_review_list(
+    status: Optional[str] = typer.Option(
+        None, "--status", help="draft, in_review, approved or rejected."),
+    json_out: bool = typer.Option(False, "--json", help="Print JSON."),
+):
+    """List agents with their owner and review status."""
+    agents = (call(hub().request, "GET", "/api/registry") or {}).get("agents", [])
+    if status:
+        agents = [a for a in agents if a.get("review_status") == status]
+    if json_out:
+        render_result(console, agents, as_json=True)
+        return
+    table = Table(title="Agent review", box=box.ROUNDED)
+    table.add_column("ID", style="bold cyan")
+    table.add_column("Name")
+    table.add_column("Owner")
+    table.add_column("Status")
+    table.add_column("Shared")
+    for a in agents:
+        table.add_row(a.get("id", ""), a.get("name") or a.get("id", ""),
+                      a.get("owner_user") or "(unknown)", a.get("review_status", ""),
+                      "yes" if a.get("shared") else "no")
+    console.print(table)
+    console.print(f"[dim]{len(agents)} agent(s)[/dim]")
+
+
+@review_app.command("submit")
+def agent_review_submit(
+    agent_id: str = typer.Argument(..., help="Agent ID."),
+    note: Optional[str] = typer.Option(None, "--note"),
+):
+    """Ask for the agent to be reviewed and shared (owner or admin)."""
+    result = call(hub().request, "POST", f"/api/registry/agents/{agent_id}/submit",
+                 json={"note": note})
+    console.print(f"[green]Submitted[/green] [bold]{agent_id}[/bold] "
+                 f"(status: {result.get('review_status')})")
+
+
+@review_app.command("approve")
+def agent_review_approve(
+    agent_id: str = typer.Argument(..., help="Agent ID."),
+    note: Optional[str] = typer.Option(None, "--note"),
+):
+    """List the agent on the marketplace (admin)."""
+    result = call(hub().request, "POST", f"/api/registry/agents/{agent_id}/approve",
+                 json={"note": note})
+    console.print(f"[green]Approved[/green] [bold]{agent_id}[/bold] "
+                 f"(status: {result.get('review_status')})")
+
+
+@review_app.command("reject")
+def agent_review_reject(
+    agent_id: str = typer.Argument(..., help="Agent ID."),
+    note: Optional[str] = typer.Option(None, "--note"),
+):
+    """Turn the agent down; the owner may edit and resubmit (admin)."""
+    result = call(hub().request, "POST", f"/api/registry/agents/{agent_id}/reject",
+                 json={"note": note})
+    console.print(f"[red]Rejected[/red] [bold]{agent_id}[/bold] "
+                 f"(status: {result.get('review_status')})")

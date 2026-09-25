@@ -160,5 +160,103 @@ same state. Until it is set, both shapes still need the shared mount: the
 compose profile because SQLite-adjacent files are still there, the Helm
 chart because the PVC is still where they land.
 
+## Releases
+
+A release is a semver version (`X.Y.Z`, or `X.Y.Z-rc.1` for a prerelease)
+that names the same thing everywhere: `pyproject.toml`, the dashboard's
+`package.json`, the Helm chart's `version` and `appVersion`, the images and
+the git tag `vX.Y.Z`. While the major version is 0, a minor release may change
+the API or configuration and says so in `CHANGELOG.md` under **Changed**; a
+patch release never does. A release that adds schema migrations lists them
+under **Upgrade notes**, because that is what decides how it rolls back.
+
+Cutting one is two commands, and nothing leaves the machine until the push:
+
+```bash
+python scripts/release.py plan minor     # the new version and its notes, nothing written
+python scripts/release.py cut minor      # bump every file, move Unreleased into the
+                                         # new section, commit, tag vX.Y.Z
+git push origin dev && git push origin v0.2.0
+```
+
+`cut` refuses a dirty tree, an existing tag and a version that is not newer.
+When nobody wrote anything under **Unreleased** in `CHANGELOG.md`, it fills the
+section from the commit subjects since the previous tag, so edit the commit
+before pushing if the notes need words.
+
+Pushing the tag starts `.github/workflows/release.yml`: it checks that the tag
+matches the files and has a CHANGELOG section, runs the whole CI suite on the
+tagged commit, builds the backend, frontend, agents, models and browser images
+for amd64 and arm64, pushes them to GHCR as
+`ghcr.io/<owner>/agents-hub-<image>:X.Y.Z` (and `:X.Y` and `:latest` for a
+final release), and creates the GitHub release from the CHANGELOG section. A
+tag that fails the check or the tests publishes nothing.
+
+Which release is running: `ah version` (the client, and the service when
+`AGENTS_HUB_URL` points at one) or `GET /api/system/version`, which also names
+the newest schema migration the build knows. Images carry the version and
+commit as `AGENTS_HUB_VERSION` and `AGENTS_HUB_GIT_SHA`, and as OCI labels.
+
+## Upgrading
+
+1. Read the release's **Upgrade notes**.
+2. Take a backup with the build you are running now, before switching:
+   `ah db backup --to /backups` (docs/backup.md). A newer build migrates the
+   database the moment it opens it, backup included. On SQLite the
+   first process of the new build also archives the database by itself
+   before it migrates (below), but that copy holds the database only, not the
+   workspaces and logs beside it.
+3. Move to the release. Compose: `git fetch --tags && git checkout vX.Y.Z`,
+   then `docker compose up -d --build` (the backend bind mounts the checkout,
+   so the checkout is what runs). Helm: `helm upgrade` with the chart of that
+   release; its image tags default to the chart's `appVersion`.
+4. Migrations run when the first process opens the database. Check with
+   `ah version`, `ah doctor` and the Health page.
+
+## Rolling back
+
+An older build cannot open a database a newer one has migrated: its migration
+runner refuses a ledger that names versions it does not know, on purpose,
+since old code writing to a newer schema is how data goes quietly wrong. So a
+rollback over a release with migrations is a restore, and anything written
+after the upgrade is lost. A rollback over a release without migrations is
+only the checkout or the image tag.
+
+The copy to restore:
+
+- **SQLite.** Before a process applies new migrations, it writes
+  `.agents_hub/backups/pre-migrate_<time>_to_<version>.tar.gz`: the database
+  as the previous release left it, in the archive format `ah db restore`
+  reads, with that release's version in its manifest as `app_version`. The
+  newest five are kept. `AGENTS_HUB_BACKUP_BEFORE_MIGRATE=0` turns it off. A
+  failed copy is logged and the upgrade goes on.
+- **Postgres.** The backup from step 2 of the upgrade. Nothing is taken
+  automatically: copying a large Postgres database on startup would hold
+  every replica back.
+
+Then, with the previous release's build (checked out, or its image):
+
+```bash
+docker compose down                      # or scale the Deployments to 0
+git checkout v<previous>                 # or helm rollback / the previous image tag
+ah db verify .agents_hub/backups/pre-migrate_<time>_to_<version>.tar.gz
+mkdir -p .agents_hub/rolled-back && mv .agents_hub/agents_hub.db* .agents_hub/rolled-back/
+ah db restore --no-files .agents_hub/backups/pre-migrate_<time>_to_<version>.tar.gz
+docker compose up -d --build
+ah version                               # the previous release, and it opens the database
+```
+
+The migrated database has to be out of the way first: the previous build
+refuses to open it even to overwrite it, so `ah db restore --force` over it
+fails. On SQLite, move the file aside as above (keep it until the rollback is
+confirmed). On Postgres, restore into a new empty database and point
+`AGENTS_HUB_DATABASE_URL` at it, or drop and recreate the old one.
+
+Use `--no-files` with a pre-migrate archive (it holds no files); a full
+backup from step 2 restores the files too. `ah db restore` writes to the
+database the process is configured with, so run it with the same `.env` (or
+`AGENTS_HUB_DATABASE_URL`) as the service. This sequence was run end to end
+from 0.1.0 to the current build and back.
+
 Related: [scaling](scaling.md), [workers](workers.md),
-[installation](installation.md).
+[installation](installation.md), [backup](backup.md).

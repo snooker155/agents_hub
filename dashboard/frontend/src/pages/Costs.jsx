@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { DollarSign, Loader, Save, RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { DollarSign, Loader, Save, RefreshCw, AlertTriangle, ShieldCheck, Download } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { getCosts, getBudget, setBudget } from '../api';
+import { getAccountingReport, getAccountingReportCsv } from '../api/accounting';
+import { saveBlobAs } from '../api/files';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -48,6 +50,119 @@ function Breakdown({ title, rows }) {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+const REPORT_GROUP_BY = ['key', 'user', 'project', 'workspace', 'agent', 'model'];
+
+// The report section on the Costs page: spend by key, user, project,
+// workspace, agent or model (GET /api/accounting/report, docs/costs.md
+// "Report"). Its own date range, independent of the breakdowns above, since
+// a report is usually pulled for a specific period (last month's key spend,
+// say) rather than the page's default window.
+function ReportSection({ t, workspace }) {
+  const [groupBy, setGroupBy] = useState('user');
+  const [since, setSince] = useState('');
+  const [until, setUntil] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [exporting, setExporting] = useState(false);
+
+  const params = { group_by: groupBy, since: since || undefined, until: until || undefined,
+    workspace: workspace || undefined };
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    getAccountingReport(params)
+      .then(({ data }) => setData(data))
+      .catch((e) => setError(e?.response?.data?.detail || t('costs.report.loadFailed')))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupBy, since, until, workspace, t]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const { data: blob } = await getAccountingReportCsv(params);
+      saveBlobAs(blob, `accounting-report-${groupBy}.csv`);
+    } catch (e) {
+      setError(e?.response?.data?.detail || t('costs.report.exportFailed'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const rows = data?.rows || [];
+  const totals = data?.totals || { runs: 0, calls: 0, total_tokens: 0, cost: 0 };
+
+  return (
+    <div className={card}>
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+        <h3 className="text-sm font-semibold text-gray-700">{t('costs.report.title')}</h3>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className={inputCls}>
+            {REPORT_GROUP_BY.map((g) => (
+              <option key={g} value={g}>{t(`costs.report.groupBy.${g}`)}</option>
+            ))}
+          </select>
+          <label className="text-xs text-gray-500">{t('costs.from')}</label>
+          <DateInput value={since} onChange={setSince} className={inputCls} />
+          <label className="text-xs text-gray-500">{t('costs.to')}</label>
+          <DateInput value={until} onChange={setUntil} className={inputCls} />
+          <button onClick={exportCsv} disabled={exporting || loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-60">
+            {exporting ? <Loader className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            {t('costs.report.exportCsv')}
+          </button>
+        </div>
+      </div>
+      {error && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-3">{error}</p>
+      )}
+      {loading ? (
+        <p className="text-sm text-gray-500 flex items-center gap-2"><Loader className="w-4 h-4 animate-spin" /> {t('costs.loadingCosts')}</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-400">{t('costs.noRecordedSpend')}</p>
+      ) : (
+        <>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500 border-b border-gray-100">
+                <th className="py-1.5 font-medium">{t('costs.name')}</th>
+                <th className="py-1.5 font-medium text-right">{t('costs.report.runs')}</th>
+                <th className="py-1.5 font-medium text-right">{t('costs.report.calls')}</th>
+                <th className="py-1.5 font-medium text-right">{t('costs.tokens')}</th>
+                <th className="py-1.5 font-medium text-right">{t('costs.cost')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key} className="border-b border-gray-50 last:border-0">
+                  <td className="py-1.5 text-gray-800 truncate max-w-[16rem]" title={r.label}>{r.label}</td>
+                  <td className="py-1.5 text-right text-gray-600">{fmtInt(r.runs)}</td>
+                  <td className="py-1.5 text-right text-gray-600">{fmtInt(r.calls)}</td>
+                  <td className="py-1.5 text-right text-gray-600">{fmtInt(r.total_tokens)}</td>
+                  <td className="py-1.5 text-right font-medium text-gray-800">{fmtUsd(r.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-gray-200 font-medium text-gray-800">
+                <td className="py-1.5">{t('costs.report.total')}</td>
+                <td className="py-1.5 text-right">{fmtInt(totals.runs)}</td>
+                <td className="py-1.5 text-right">{fmtInt(totals.calls)}</td>
+                <td className="py-1.5 text-right">{fmtInt(totals.total_tokens)}</td>
+                <td className="py-1.5 text-right">{fmtUsd(totals.cost)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </>
       )}
     </div>
   );
@@ -230,6 +345,8 @@ export default function Costs() {
           <Breakdown title={t('costs.byProject')} rows={data?.by_project} />
         </div>
       )}
+
+      <ReportSection t={t} workspace={wsParam} />
     </PageContainer>
   );
 }

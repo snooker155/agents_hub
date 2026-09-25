@@ -36,6 +36,8 @@ export default {
       spend_daily_over: 'Tagesausgaben über',
       spend_run_over: 'Laufkosten über',
       online_eval: 'Online-Eval-Bewertung unter',
+      slo_start_latency: 'SLO-Verletzung: Startzeit',
+      slo_error_rate: 'SLO-Verletzung: Fehlerquote',
     },
     onlineEvalSummary: 'Stichprobe {{rate}}, Minimum {{min}}',
     sampleRate: 'Stichprobe, %',

@@ -110,6 +110,14 @@ class PlanScheduler:
                 await asyncio.to_thread(poll_pending)
             except Exception:
                 log.exception("eval batch poll failed")
+            # SLO alerts (common/slo.py, notify/rules.py): self-throttled inside
+            # evaluate_slo_alerts to a 60s cadence, so ticking it every cycle
+            # here is as cheap as the batch eval poll above.
+            try:
+                from notify.rules import evaluate_slo_alerts
+                await asyncio.to_thread(evaluate_slo_alerts)
+            except Exception:
+                log.exception("SLO alert tick failed")
             # Awaiting-input escalation: remind on / auto-answer long-parked tasks.
             # Self-guarded to a 5-min cadence so the fast job tick stays cheap.
             now = time.monotonic()

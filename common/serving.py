@@ -61,17 +61,23 @@ def record_usage(principal: Any, *, provider: str, model: str,
     prompt = max(0, int(prompt_tokens or 0))
     completion = max(0, int(completion_tokens or 0))
     try:
+        from common.pricing import serving_cost_usd
+        cost = serving_cost_usd(provider, model, prompt, completion)
+    except Exception:  # noqa: BLE001 - an unpriceable call still gets recorded, at $0
+        log.debug("serving: could not price %s/%s", provider, model, exc_info=True)
+        cost = 0.0
+    try:
         with db.transaction() as conn:
             cursor = conn.execute(
                 "INSERT INTO serving_usage (at, user_id, actor_kind, actor_name, key_id, "
                 "provider, model, prompt_tokens, completion_tokens, total_tokens, "
-                "duration_ms, stream, status, error, estimated) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "duration_ms, stream, status, error, estimated, cost_usd) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (_now(), actor["user_id"], actor["actor_kind"], actor["actor_name"],
                  actor["key_id"], str(provider), str(model), prompt, completion,
                  prompt + completion, max(0, int(duration_ms or 0)), 1 if stream else 0,
                  "error" if status == "error" else "ok",
-                 (str(error)[:2000] if error else None), 1 if estimated else 0),
+                 (str(error)[:2000] if error else None), 1 if estimated else 0, cost),
             )
             return getattr(cursor, "lastrowid", None) or None
     except Exception:  # noqa: BLE001 - accounting must not break the completion it describes
@@ -129,6 +135,7 @@ def usage(since: Optional[str] = None, until: Optional[str] = None,
         "COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, "
         "COALESCE(SUM(completion_tokens), 0) AS completion_tokens, "
         "COALESCE(SUM(total_tokens), 0) AS total_tokens, "
+        "COALESCE(SUM(cost_usd), 0) AS cost_usd, "
         f"{db.sum_if(_IS_ERROR)} AS errors, "
         "MAX(at) AS last_at "
         f"FROM serving_usage{clause} GROUP BY provider, model "
@@ -140,6 +147,7 @@ def usage(since: Optional[str] = None, until: Optional[str] = None,
         "prompt_tokens": int(r["prompt_tokens"] or 0),
         "completion_tokens": int(r["completion_tokens"] or 0),
         "total_tokens": int(r["total_tokens"] or 0),
+        "cost": round(float(r["cost_usd"] or 0.0), 4),
         "errors": int(r["errors"] or 0),
         "last_at": r["last_at"],
     } for r in grouped]
@@ -148,13 +156,14 @@ def usage(since: Optional[str] = None, until: Optional[str] = None,
         "prompt_tokens": sum(r["prompt_tokens"] for r in rows),
         "completion_tokens": sum(r["completion_tokens"] for r in rows),
         "total_tokens": sum(r["total_tokens"] for r in rows),
+        "cost": round(sum(r["cost"] for r in rows), 4),
     }
     limit = max(0, min(int(limit_recent or 0), 1000))
     recent: List[Dict[str, Any]] = []
     if limit:
         latest = conn.execute(
             "SELECT at, actor_name, actor_kind, provider, model, prompt_tokens, "
-            f"completion_tokens, duration_ms, stream, status FROM serving_usage{clause} "
+            f"completion_tokens, duration_ms, stream, status, cost_usd FROM serving_usage{clause} "
             "ORDER BY id DESC LIMIT ?", tuple(args) + (limit,)).fetchall()
         recent = [{
             "at": r["at"], "actor_name": r["actor_name"], "actor_kind": r["actor_kind"],
@@ -163,5 +172,6 @@ def usage(since: Optional[str] = None, until: Optional[str] = None,
             "completion_tokens": int(r["completion_tokens"] or 0),
             "duration_ms": int(r["duration_ms"] or 0),
             "stream": bool(r["stream"]), "status": r["status"],
+            "cost": round(float(r["cost_usd"] or 0.0), 4),
         } for r in latest]
     return {"rows": rows, "totals": totals, "recent": recent}

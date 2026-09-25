@@ -84,4 +84,20 @@ export default {
     pruneDone_other: 'Deleted {{count}} branches.',
     pruneFailed: 'Prune failed',
   },
+  slo: {
+    title: 'SLO',
+    startP95: 'Run start time (p95)',
+    errorRate: 'Error rate',
+    statusOk: 'Ok',
+    statusBreach: 'Breach',
+    statusNoData: 'No data',
+    noValue: 'not enough data yet',
+    sample_one: '{{count}} sample',
+    sample_other: '{{count}} samples',
+    unreachable: 'SLO status did not answer.',
+  },
+  supportBundle: {
+    download: 'Download support bundle',
+    failed: 'Could not build the support bundle.',
+  },
 };

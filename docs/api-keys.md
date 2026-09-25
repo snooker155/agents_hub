@@ -98,11 +98,12 @@ they have signed in.
   single sign-on has none to change here). Changing it signs every session
   out, this one included, and sends the browser back to the login screen.
 - **API keys.** Create one (a name, which workspaces or all of them, an
-  expiry), see it exactly once in a copyable box, and the list of the rest:
-  a `…1234` hint, scope, created, last used, revoke. An administrator sees
-  only their own keys here too; another account's keys are read or revoked
-  through the API or `ah auth keys ... --user <name>` in direct mode, not
-  from this page.
+  expiry, its own rate and money limits), see it exactly once in a copyable
+  box, and the list of the rest: a `…1234` hint, scope, created, last used,
+  its money quota and this month's spend against it (editable inline), and
+  revoke. An administrator sees only their own keys here too; another
+  account's keys are read or revoked through the API or
+  `ah auth keys ... --user <name>` in direct mode, not from this page.
 
 Settings → System → API access gets one line about this under `multi` mode: a
 pasted `ahk_…` key works as this browser's token exactly the way a shared
@@ -136,10 +137,34 @@ Two limits, both off by default, both answered with `429` and a
   figure is cached for 30 seconds, so a burst can overshoot the cap slightly.
 
 A key may carry its own values, set when it is created on the Account page
-(or `rate_limit_per_minute` and `tokens_per_day` in `POST /api/auth/keys`).
+(or `rate_limit_per_minute` and `tokens_per_day` in `POST /api/auth/keys`) and
+editable afterwards, together with its money quota below, through
+`PUT /api/auth/keys/{id}` or the same field on the Account page's key row.
 Empty follows the hub-wide setting, a number overrides it for that key, and 0
-means unlimited. They are stored on the key (migration 0017) and cannot be
-changed afterwards: cut a new key instead.
+means unlimited. They are stored on the key (migration 0017).
+
+## Money quota
+
+A key can also carry its own money cap, `budget_usd_per_month`
+(`None` or `0`, the default for every key, means none), stored alongside its
+other limits (migration 0025). Its spend for the current UTC month is its own
+`/v1` serving cost (priced from the catalog the moment each call is recorded,
+see [costs](costs.md#pricing-on-v1)) plus the cost of every run charged to
+it: the runs a request with the key launched, and every run created inside
+those, such as the nodes of a flow or a team's turns
+(`common.api_keys.key_month_spend_usd`, [costs](costs.md#attribution)).
+
+Once that figure reaches the cap, further spend on the key is refused with a
+`429` (`key_budget_exceeded` on `/v1`, in the same OpenAI error shape the
+other `/v1` limits use): a plain `/v1` call, an agent answered through
+`/v1`, and a run launched with the key before it even starts
+(`agents.agent_launcher.prepare_run`, `runtime.entity_launch.dispatch`). The
+cap resets when the UTC month rolls over, not on a rolling 30 days. Set it
+when cutting the key or edit it later on the Account page, which also shows
+what the key has spent so far this month beside its cap.
+
+See [costs](costs.md#money-quota-per-key) for how the spend figure is built
+and [the report](costs.md#report) for spend grouped by key across everyone.
 
 ## The login throttle
 
@@ -178,3 +203,5 @@ against.
 - [a2a](a2a.md): importing and calling remote agents, `auth_token_env`
 - [audit](audit.md): every key create/revoke and password change is a row
 - [settings](settings.md): where `AUTH_MODE` and the login throttle are set
+- [costs](costs.md): attribution on runs, pricing on `/v1`, the money quota
+  and the spend report by key, user, project, workspace, agent or model

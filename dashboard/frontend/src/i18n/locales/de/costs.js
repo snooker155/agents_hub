@@ -32,4 +32,22 @@ export default {
   cachedHint: 'Der Anteil der Eingabe-Tokens, den der Anbieter aus seinem Prompt-Cache geliefert hat. Sie werden zum Cache-Tarif des Modells abgerechnet, nicht zum Eingabetarif.',
   ofWhichCached: 'davon {{count}} aus dem Cache',
   cost: 'Kosten',
+
+  report: {
+    title: 'Bericht',
+    groupBy: {
+      key: 'Nach API-Schlüssel',
+      user: 'Nach Benutzer',
+      project: 'Nach Projekt',
+      workspace: 'Nach Workspace',
+      agent: 'Nach Agent',
+      model: 'Nach Modell',
+    },
+    runs: 'Ausführungen',
+    calls: 'Aufrufe',
+    total: 'Gesamt',
+    exportCsv: 'CSV exportieren',
+    exportFailed: 'Der Bericht konnte nicht exportiert werden.',
+    loadFailed: 'Der Bericht konnte nicht geladen werden.',
+  },
 };

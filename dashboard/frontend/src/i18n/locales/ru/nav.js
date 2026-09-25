@@ -15,6 +15,7 @@ export default {
   plan: 'План',
   deployments: 'Развёртывания',
   widgets: 'Виджеты',
+  agentRegistry: 'Реестр агентов',
   files: 'Файлы',
   sessions: 'Сессии',
   runGroups: 'Группы запусков',

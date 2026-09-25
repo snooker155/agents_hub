@@ -5,12 +5,13 @@ import {
   AlertTriangle, DollarSign, CheckCircle, XCircle, X, Save, History, GitCompare,
 } from 'lucide-react';
 import {
-  getEvalSets, createEvalSet, getEvalSet, deleteEvalSet, addEvalCase,
+  getEvalSets, createEvalSet, getEvalSet, updateEvalSet, deleteEvalSet, addEvalCase,
   deleteEvalCase, estimateEvalRun, runEvalSet, getEvalRuns, getEvalRun,
   getEvalRunDiff, getEvalGraders, getAgents, listFlows, getTeams, getLoops, getScenarios,
   getEvalChat, clearEvalChat, stopEvalChat, evalChatUrl,
 } from '../api';
 import BatchRunPanel from '../components/evals/BatchRunPanel';
+import PromptSuggestionPanel from '../components/evals/PromptSuggestionPanel';
 import FileIdsField from '../components/files/FileIdsField';
 import { useWorkspace } from '../components/workspace';
 import EntityChat from '../components/EntityChat';
@@ -308,6 +309,24 @@ export default function Evals() {
     loadSets();
   };
 
+  const handleToggleSuggestOnFailure = async () => {
+    if (!selected) return;
+    const next = !selected.suggest_on_failure;
+    setSelected((prev) => ({ ...prev, suggest_on_failure: next }));
+    try {
+      // Cases and graders are left out: the route only replaces them when it
+      // is sent some, and resending the set's own cases would rebuild each
+      // one fresh (evals routes._case_from_in), losing its case_id and its
+      // link back to the run it was seeded from.
+      await updateEvalSet(selected.eval_set_id, {
+        name: selected.name, description: selected.description,
+        target: selected.target, suggest_on_failure: next,
+      });
+    } catch {
+      setSelected((prev) => ({ ...prev, suggest_on_failure: !next }));
+    }
+  };
+
   const configLabels = (activeRun?.configs || []).map((c) => c.label);
   // Config label to its target, so the matrix can say what each column ran.
   const configTargets = Object.fromEntries(
@@ -415,6 +434,16 @@ export default function Evals() {
                       {selected.cases.length} cases ·{' '}
                       {selected.graders.map((g) => g.kind).join(', ') || 'no graders'}
                     </p>
+                    {selected.target_kind === 'agent' && (
+                      <label className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selected.suggest_on_failure)}
+                          onChange={handleToggleSuggestOnFailure}
+                        />
+                        {t('evals.suggestOnFailure')}
+                      </label>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -703,6 +732,12 @@ export default function Evals() {
                   {activeRun.mode === 'batch' && (
                     <BatchRunPanel run={activeRun} onChange={setActiveRun} />
                   )}
+
+                  <PromptSuggestionPanel
+                    evalRun={activeRun}
+                    evalSet={selected}
+                    onApplied={(newRun) => { setActiveRun(newRun); getEvalRuns(selected.eval_set_id).then(({ data }) => setRuns(data.eval_runs || [])); }}
+                  />
 
                   {diffResult && (
                     <div className="mb-5 rounded-lg border border-gray-200 p-3">

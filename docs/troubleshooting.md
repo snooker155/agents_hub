@@ -2,7 +2,9 @@
 
 Symptoms, in the order people hit them. For the liveness of the moving parts see
 [service-health](service-health.md); for a stack that never came up at all, the
-last section of [installation](installation.md).
+last section of [installation](installation.md); for a symptom-confirm-fix
+writeup of the dozen most common failures (plus how to build a support bundle
+to attach to a ticket), see the [runbook](runbook.md).
 
 ## Nothing runs
 

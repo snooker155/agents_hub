@@ -96,6 +96,7 @@ def reset() -> None:
     with _cache_lock:
         _tokens_cache.clear()
         _key_limits_cache.clear()
+        _key_budget_cache.clear()
 
 
 # ── limits ───────────────────────────────────────────────────────────────────
@@ -103,6 +104,11 @@ def reset() -> None:
 _cache_lock = threading.Lock()
 _tokens_cache: Dict[Tuple[Optional[str], Optional[str]], Tuple[float, int]] = {}
 _key_limits_cache: Dict[str, Tuple[float, Dict[str, Optional[int]]]] = {}
+#: A key's month-to-date spend, cached the same short while as its tokens
+#: figure: computing it walks the runs and serving_usage tables, too costly
+#: to do on every request of a busy key.
+_key_budget_cache: Dict[str, Tuple[float, float]] = {}
+KEY_BUDGET_CACHE_SECONDS = 30.0
 
 
 def _setting(name: str) -> int:
@@ -180,6 +186,19 @@ def seconds_until_utc_midnight(now: Optional[datetime] = None) -> int:
     return max(1, math.ceil((tomorrow - now).total_seconds()))
 
 
+def seconds_until_utc_month_end(now: Optional[datetime] = None) -> int:
+    """Seconds until the current UTC month rolls over, when a key's money
+    quota (``common.api_keys.key_month_spend_usd``) resets."""
+    now = now or datetime.now(timezone.utc)
+    if now.month == 12:
+        next_month = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0,
+                                 second=0, microsecond=0)
+    else:
+        next_month = now.replace(month=now.month + 1, day=1, hour=0, minute=0,
+                                 second=0, microsecond=0)
+    return max(1, math.ceil((next_month - now).total_seconds()))
+
+
 def check_tokens_per_day(principal: Any) -> Tuple[bool, int]:
     """Whether a ``/v1`` caller may still spend tokens today.
 
@@ -210,8 +229,39 @@ def check_tokens_per_day(principal: Any) -> Tuple[bool, int]:
     return True, 0
 
 
+def check_key_budget(principal: Any) -> Tuple[bool, int]:
+    """Whether a personal API key may still spend money this UTC month
+    (``api_keys.budget_usd_per_month``, docs/api-keys.md "Money quota").
+
+    A no-op for anything that is not a personal key (a session, the shared
+    token, the service credential) and for a key with no budget set (NULL or
+    0). ``retry_after`` is the seconds until the month rolls over.
+    """
+    key_id = _key_id(principal)
+    if not key_id:
+        return True, 0
+    from common import api_keys
+    record = api_keys.get_key(key_id) or {}
+    cap = record.get("budget_usd_per_month")
+    if not cap:
+        return True, 0
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _key_budget_cache.get(key_id)
+    if hit and now - hit[0] < KEY_BUDGET_CACHE_SECONDS:
+        spend = hit[1]
+    else:
+        spend = api_keys.key_month_spend_usd(key_id)
+        with _cache_lock:
+            _key_budget_cache[key_id] = (now, spend)
+    if spend >= float(cap):
+        return False, seconds_until_utc_month_end()
+    return True, 0
+
+
 __all__ = [
-    "SlidingWindow", "check_external", "check_request", "check_tokens_per_day",
-    "external_window", "key_limits", "principal_key", "request_window", "reset",
-    "seconds_until_utc_midnight",
+    "SlidingWindow", "check_external", "check_key_budget", "check_request",
+    "check_tokens_per_day", "external_window", "key_limits", "principal_key",
+    "request_window", "reset", "seconds_until_utc_midnight",
+    "seconds_until_utc_month_end",
 ]

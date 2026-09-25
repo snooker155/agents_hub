@@ -6,6 +6,7 @@ import { useI18n } from '../../i18n';
 import { errorDetail } from '../toast';
 
 function fmtInt(n) { return (n || 0).toLocaleString(); }
+function fmtUsd(n) { return `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 
 function curlExample(baseUrl) {
   const url = `${baseUrl || ''}/chat/completions`;
@@ -63,7 +64,7 @@ export default function ServingSection() {
   };
 
   const rows = usage?.rows || [];
-  const totals = usage?.totals || { requests: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  const totals = usage?.totals || { requests: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost: 0 };
   const recent = usage?.recent || [];
 
   return (
@@ -100,12 +101,13 @@ export default function ServingSection() {
               </p>
             )}
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-3">
               {[
                 { label: t('localModels.serving.requests'), value: fmtInt(totals.requests) },
                 { label: t('localModels.serving.promptTokens'), value: fmtInt(totals.prompt_tokens) },
                 { label: t('localModels.serving.completionTokens'), value: fmtInt(totals.completion_tokens) },
                 { label: t('localModels.serving.totalTokens'), value: fmtInt(totals.total_tokens) },
+                { label: t('costs.cost'), value: fmtUsd(totals.cost) },
               ].map((c) => (
                 <div key={c.label} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                   <p className="text-[11px] uppercase tracking-wide text-gray-400">{c.label}</p>
@@ -126,6 +128,7 @@ export default function ServingSection() {
                       <th className="px-2 py-1.5 font-medium text-right">{t('localModels.serving.requests')}</th>
                       <th className="px-2 py-1.5 font-medium text-right">{t('localModels.serving.promptTokens')}</th>
                       <th className="px-2 py-1.5 font-medium text-right">{t('localModels.serving.completionTokens')}</th>
+                      <th className="px-2 py-1.5 font-medium text-right">{t('costs.cost')}</th>
                       <th className="px-2 py-1.5 font-medium text-right">{t('localModels.serving.errors')}</th>
                     </tr>
                   </thead>
@@ -137,6 +140,7 @@ export default function ServingSection() {
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtInt(r.requests)}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtInt(r.prompt_tokens)}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtInt(r.completion_tokens)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtUsd(r.cost)}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{r.errors > 0 ? <span className="text-red-600">{fmtInt(r.errors)}</span> : fmtInt(r.errors)}</td>
                       </tr>
                     ))}

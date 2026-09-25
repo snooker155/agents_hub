@@ -88,4 +88,22 @@ export default {
     pruneDone_other: 'Удалено {{count}} ветки.',
     pruneFailed: 'Ошибка очистки',
   },
+  slo: {
+    title: 'SLO',
+    startP95: 'Время старта (p95)',
+    errorRate: 'Доля ошибок',
+    statusOk: 'В норме',
+    statusBreach: 'Нарушение',
+    statusNoData: 'Нет данных',
+    noValue: 'пока недостаточно данных',
+    sample_one: '{{count}} образец',
+    sample_few: '{{count}} образца',
+    sample_many: '{{count}} образцов',
+    sample_other: '{{count}} образца',
+    unreachable: 'Статус SLO не ответил.',
+  },
+  supportBundle: {
+    download: 'Скачать пакет поддержки',
+    failed: 'Не удалось собрать пакет поддержки.',
+  },
 };

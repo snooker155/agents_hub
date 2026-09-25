@@ -331,6 +331,16 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
     # definition with others, the change applies to all of them (expected).
     def_id = spec.def_id()
 
+    prev_instructions = prompt_assembly.read_instructions(def_id, definitions_dir=defs_dir)
+    prev_capabilities = prompt_assembly.read_capabilities(def_id, definitions_dir=defs_dir)
+    prev_usage = prompt_assembly.read_usage(def_id, definitions_dir=defs_dir)
+    next_instructions = data.instructions if data.instructions is not None else prev_instructions
+    next_capabilities = data.capabilities if data.capabilities is not None else prev_capabilities
+    next_usage = data.usage if data.usage is not None else prev_usage
+    content_changed = (next_instructions != prev_instructions
+                       or next_capabilities != prev_capabilities
+                       or next_usage != prev_usage)
+
     # Capture the state this edit is about to replace, the same way
     # registry.add_agent does for a structured-field edit — this route never
     # calls add_agent (it only touches the markdown files), so it has to
@@ -340,12 +350,9 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
     agent_versions.snapshot_if_changed(
         agent_id,
         next_definition={
-            "instructions": data.instructions if data.instructions is not None
-                else prompt_assembly.read_instructions(def_id, definitions_dir=defs_dir),
-            "capabilities": data.capabilities if data.capabilities is not None
-                else prompt_assembly.read_capabilities(def_id, definitions_dir=defs_dir),
-            "usage": data.usage if data.usage is not None
-                else prompt_assembly.read_usage(def_id, definitions_dir=defs_dir),
+            "instructions": next_instructions,
+            "capabilities": next_capabilities,
+            "usage": next_usage,
         },
         actor="dashboard", note="definition edit",
     )
@@ -367,6 +374,17 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
             prompt_assembly.write_usage(def_id, data.usage, definitions_dir=defs_dir)
         elif path.exists():
             path.unlink()
+
+    # A published, approved agent's definition changing is exactly the case
+    # the review gate exists for: whatever passed review before may not
+    # describe what the agent does now. Re-review is automatic, not an
+    # accusation — the note says why, not that anything is wrong.
+    if (content_changed and spec.shared and spec.review_status == "approved"
+            and registry.registry_review_required()):
+        try:
+            registry.set_review_status(agent_id, "in_review", note="definition changed")
+        except ValueError:
+            pass
 
     return await get_agent_definition(agent_id)
 
@@ -1207,7 +1225,7 @@ async def clear_default_chat_agent(agent_id: str, workspace: Optional[str] = Non
 
 
 @router.post("/create")
-async def create_custom_agent(data: AgentCreateCustom):
+async def create_custom_agent(data: AgentCreateCustom, request: Request):
     """Create a new agent: register structured fields and write instructions.md."""
     if registry.get_agent(data.id) is not None:
         raise HTTPException(status_code=400, detail=f"Agent '{data.id}' already exists")
@@ -1239,6 +1257,9 @@ async def create_custom_agent(data: AgentCreateCustom):
     if owner_workspace == "default":
         owner_workspace = None
 
+    from common import identity
+    owner_user = getattr(identity.request_principal(request), "id", None)
+
     spec = registry.AgentSpec(
         id=data.id,
         definition_id=definition_id,
@@ -1252,6 +1273,7 @@ async def create_custom_agent(data: AgentCreateCustom):
         owner_workspace=owner_workspace,
         handoffs=handoffs,
         handoff_history=handoff_history,
+        owner_user=owner_user,
     )
     try:
         registry.add_agent(spec)

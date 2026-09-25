@@ -491,6 +491,42 @@ def _latest_schema_version() -> int:
 SCHEMA_VERSION = 5
 
 
+def _snapshot_before_migrate(conn: Any) -> None:
+    """Archive a SQLite database that is about to take new migrations, so the
+    previous release can be restored (common/db_backup.pre_migrate_snapshot).
+
+    Only an existing database with versions still to apply: a fresh file has
+    nothing to go back to. A failed snapshot is logged and the upgrade goes
+    on, since refusing to start over a backup would turn a disk hiccup into an
+    outage; ``AGENTS_HUB_BACKUP_BEFORE_MIGRATE=0`` turns it off.
+    """
+    if isinstance(conn, PgConnection):
+        return
+    from common import db_backup, migrations
+    if not db_backup.pre_migrate_enabled():
+        return
+    try:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "meta" not in tables:
+            return
+        applied: set = set()
+        if migrations.LEDGER_TABLE in tables:
+            applied = {int(r[0]) for r in conn.execute(
+                f"SELECT version FROM {migrations.LEDGER_TABLE}").fetchall()}
+        pending = [mg.version for mg in migrations.select_for("sqlite")
+                   if mg.version not in applied]
+        if not pending:
+            return
+        meta = {r[0]: r[1] for r in conn.execute("SELECT key, value FROM meta").fetchall()}
+        archive = db_backup.pre_migrate_snapshot(
+            conn, pending=pending, schema_version=max(applied) if applied else meta.get("schema_version"),
+            app_version=meta.get("app_version") or "")
+        log.info("database archived before migration(s) %s: %s", pending, archive)
+    except Exception as exc:  # noqa: BLE001 - an upgrade must not fail over its safety copy
+        log.warning("could not archive the database before migrating: %s", exc)
+
+
 def _ensure_ready(conn: Any) -> None:
     """Make the schema current and run the one-time JSON migration, exactly
     once per process, all inside one write transaction (see module
@@ -505,6 +541,7 @@ def _ensure_ready(conn: Any) -> None:
         from common import db_migrate
 
         SCHEMA_VERSION = migrations.latest_version(dialect())
+        _snapshot_before_migrate(conn)
         _begin(conn)
         migrated: Optional[dict] = None
         flow_runs_migrated: Optional[int] = None
@@ -529,6 +566,12 @@ def _ensure_ready(conn: Any) -> None:
                 )
 
             applied = migrations.apply_pending(conn, dialect())
+
+            # The build that last opened this database, which is the one a
+            # rollback returns to (docs/deployment.md, common/version.py).
+            from common.version import app_version
+            conn.execute(upsert_sql("meta", ("key", "value"), ("key",)),
+                         ("app_version", app_version()))
 
             if stored_version != SCHEMA_VERSION:
                 conn.execute(

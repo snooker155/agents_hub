@@ -336,4 +336,74 @@ def verify(archive: Path) -> Dict[str, Any]:
     }
 
 
-__all__ = ["backup", "restore", "verify", "FILE_DIRS"]
+# ── The automatic snapshot before a schema migration ─────────────────────────
+#
+# A release that adds a migration cannot be rolled back by starting the older
+# build again: ``common.migrations.apply_pending`` refuses a database whose
+# ledger names versions the build does not know. What makes a rollback possible
+# is the database as it was just before the new build migrated it, so the
+# first process of a new build takes that copy itself, in the ordinary archive
+# shape ``ah db restore`` reads (docs/deployment.md "Rolling back").
+#
+# SQLite only: the copy is SQLite's online backup of the live file, which is
+# fast and needs no second connection through ``common.db`` (this runs while
+# ``common.db`` is still making the schema ready, so ``get_conn`` would recurse).
+# A Postgres deployment takes ``ah db backup`` before upgrading instead.
+
+PRE_MIGRATE_DIR_NAME = "backups"
+PRE_MIGRATE_KEEP = 5
+PRE_MIGRATE_ENV = "AGENTS_HUB_BACKUP_BEFORE_MIGRATE"
+
+
+def pre_migrate_enabled() -> bool:
+    import os
+    raw = (os.environ.get(PRE_MIGRATE_ENV) or "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def pre_migrate_dir() -> Path:
+    return AGENTS_HUB_ROOT / PRE_MIGRATE_DIR_NAME
+
+
+def pre_migrate_snapshot(conn: sqlite3.Connection, *, pending: List[int],
+                         schema_version: Any, app_version: str,
+                         target_dir: Optional[Path] = None) -> Path:
+    """Archive the live SQLite database behind ``conn`` before ``pending``
+    migrations run, and keep only the newest :data:`PRE_MIGRATE_KEEP` such
+    archives. ``app_version`` is the build that last opened the database (the
+    one to go back to), not the one about to migrate it."""
+    out_dir = Path(target_dir) if target_dir else pre_migrate_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _timestamp()
+    archive = out_dir / f"pre-migrate_{stamp}_to_{max(pending):04d}.tar.gz"
+    with tempfile.TemporaryDirectory(prefix="agents_hub_premigrate_") as tmp:
+        dumped = Path(tmp) / _DB_NAME
+        dest = sqlite3.connect(str(dumped))
+        try:
+            conn.backup(dest)
+        finally:
+            dest.close()
+        manifest = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "app_version": app_version or "unknown",
+            "reason": "pre-migrate",
+            "pending_migrations": sorted(pending),
+            "source": {"dialect": "sqlite", "location": str(db.DB_FILE)},
+            "schema_version": schema_version,
+            "counts": _sqlite_table_counts(dumped),
+            "files": [],
+        }
+        with tarfile.open(archive, "w:gz") as tar:
+            _add_manifest(tar, manifest)
+            tar.add(str(dumped), arcname=_DB_NAME)
+    old = sorted(out_dir.glob("pre-migrate_*.tar.gz"))
+    for stale in old[:-PRE_MIGRATE_KEEP]:
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+    return archive
+
+
+__all__ = ["backup", "restore", "verify", "FILE_DIRS", "pre_migrate_snapshot",
+           "pre_migrate_enabled", "pre_migrate_dir"]

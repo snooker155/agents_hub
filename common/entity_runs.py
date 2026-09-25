@@ -49,6 +49,7 @@ from typing import (
     Any, Callable, Dict, Generic, Iterable, List, Mapping, Optional, Tuple, TypeVar,
 )
 
+from common import attribution as _attribution
 from common import db
 from common import run_status
 from common.run_status import RunStatus
@@ -230,6 +231,8 @@ def upsert(record: Mapping[str, Any], *, kind: Optional[str] = None, merge: bool
         else:
             merged = rec
         merged.setdefault("created_at", utc_now_iso())
+        if existing is None:
+            _attribution.stamp(merged)
         _write(conn, merged)
     if notify:
         _notify_record(merged, notify_fn)

@@ -1,6 +1,9 @@
 # Service health and diagnostics
 
-Whether the moving parts are alive, and what to do when they are not.
+Whether the moving parts are alive, and what to do when they are not. For a
+symptom-confirm-fix writeup of the failures people actually hit, see the
+[runbook](runbook.md); for the two service level objectives judged over a
+rolling window, see [slo](slo.md).
 
 ## The snapshot
 
@@ -71,7 +74,10 @@ load balancer that needs to probe the service.
   `agents_hub_lease_age_seconds{role=}`, `agents_hub_lease_held{role=,owner=}`,
   `agents_hub_tokens_total{workspace=}`, `agents_hub_cost_usd_total{workspace=}`
   (omitted if the price catalog cannot be read), `agents_hub_database_up`,
-  and `agents_hub_info{role=,instance=}`.
+  `agents_hub_run_start_seconds` (a summary, the SLO window's p95 quantile),
+  `agents_hub_slo_breach{objective=}` (1 in breach, 0 ok, omitted while there
+  is not yet enough data; see [slo](slo.md)), and
+  `agents_hub_info{role=,instance=}`.
 
 ## Exporting runs as spans
 
@@ -203,6 +209,19 @@ The [system workspace](system-workspace.md) exists and its repository copy
 has been made. Skip when `SYSTEM_WORKSPACE=false`. Fix: restart to seed it,
 then sync the copy (`POST /api/system/sync`).
 
+## Support bundle
+
+`GET /api/support/bundle` (admin only), the Health page's **Download support
+bundle** button, or `ah support-bundle [--out PATH] [--since 24h]` from a
+terminal (works in direct mode, or against a remote backend when
+`AGENTS_HUB_URL` is set): one zip with `version.json`, `doctor.json`,
+`health.json`, `migrations.json`, `config.json` (secrets reduced to "is it
+set", never the value), `errors.json`, `slo.json` and a tail of each running
+process's own log. `common.support_bundle.scrub` runs over every file before
+it enters the zip, so nothing that looks like a key, a token or a
+credentialed URL survives regardless of which section it turned up in. See
+the [runbook](runbook.md#support-bundle) for the full field list.
+
 ## The Service Agent
 
 The [system agent](system-agents.md) that owns this. It reads health,
@@ -219,4 +238,4 @@ hold whatever the service handled, so giving it a way out would turn the
 service's own diagnostics into an exfiltration path. See
 [tools-and-capabilities](tools-and-capabilities.md).
 
-Related: [nodes](nodes.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md), [system-workspace](system-workspace.md).
+Related: [nodes](nodes.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md), [system-workspace](system-workspace.md), [runbook](runbook.md), [slo](slo.md).

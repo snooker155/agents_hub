@@ -1080,6 +1080,18 @@ export const getEvalRun = (runId) => api.get(`/eval-runs/${runId}`);
 export const getEvalRunDiff = (runAId, runBId) =>
   api.get(`/evals/runs/${runAId}/diff/${runBId}`);
 export const getEvalGraders = () => api.get('/eval-graders');
+// "To eval case" on any run: which eval sets fit it (same target kind), plus
+// what kind of run it is and whether it failed.
+export const getEvalSetsForRun = (runId) => api.get(`/evals/for-run/${runId}`);
+// Prompt suggestion from an eval run's failed cases (evals/prompt_suggest.py).
+// Suggesting is a real model call, billable; apply/dismiss are free, except
+// applying with rerun: true, which sweeps the set again.
+export const suggestPromptFix = (evalRunId) =>
+  api.post(`/eval-runs/${evalRunId}/suggest-prompt`, null, { timeout: 0 });
+export const getPromptSuggestions = (evalRunId) => api.get(`/eval-runs/${evalRunId}/suggestions`);
+export const applyPromptSuggestion = (id, data) =>
+  api.post(`/prompt-suggestions/${id}/apply`, data, { timeout: 0 });
+export const dismissPromptSuggestion = (id) => api.post(`/prompt-suggestions/${id}/dismiss`);
 
 // Playground API — multi-agent simulation (see playground/ and routes/playground.py)
 // The catalogue is workspace-aware because authored worlds are in it: a

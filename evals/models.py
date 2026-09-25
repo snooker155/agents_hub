@@ -233,6 +233,10 @@ class EvalSet:
     no configs), ``{"kind", "id"}`` or None. ``agent_id`` is its compatibility
     alias: set alone it means an agent target, and an agent target keeps it
     equal to the target id.
+
+    ``suggest_on_failure`` (default off): a finished sweep on an agent target
+    that leaves failed cases builds a prompt suggestion by itself
+    (evals/prompt_suggest.py), instead of waiting for "Suggest prompt fix".
     """
     eval_set_id: str = field(default_factory=lambda: new_id("evs"))
     name: str = ""
@@ -244,6 +248,7 @@ class EvalSet:
     created_at: str = field(default_factory=utc_iso)
     updated_at: str = field(default_factory=utc_iso)
     target: Optional[Dict[str, Any]] = None
+    suggest_on_failure: bool = False
 
     def __post_init__(self) -> None:
         self.set_target(self.target, self.agent_id)
@@ -301,6 +306,7 @@ class EvalSet:
             "case_count": len(self.cases),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "suggest_on_failure": self.suggest_on_failure,
         }
 
     @classmethod
@@ -314,6 +320,7 @@ class EvalSet:
             target=d.get("target") or None,
             cases=[Case.from_dict(c) for c in (d.get("cases") or [])],
             graders=[GraderSpec.from_dict(g) for g in (d.get("graders") or [])],
+            suggest_on_failure=bool(d.get("suggest_on_failure") or False),
             created_at=str(d.get("created_at") or utc_iso()),
             updated_at=str(d.get("updated_at") or utc_iso()),
         )
@@ -411,7 +418,83 @@ class EvalRun:
         }
 
 
+#: A suggestion's lifecycle: proposed, then applied to instructions.md or
+#: dismissed. Never moves back once decided.
+SUGGESTION_STATUSES = ("pending", "applied", "dismissed")
+
+
+@dataclass
+class PromptSuggestion:
+    """A revised instructions.md proposed from an eval run's failed cases
+    (evals/prompt_suggest.py).
+
+    ``old_instructions`` / ``new_instructions`` are the full file, before and
+    after, so Apply and the diff view never have to reconstruct either side.
+    ``case_ids`` are the failed cases the suggestion read; ``rationale`` is
+    the model's explanation, expected to cite them. ``suggest_run_id`` is the
+    model call that produced this, recorded as a run of its own; ``applied_run_id``
+    is the eval run started after Apply, when the user asked for one.
+    """
+    suggestion_id: str = field(default_factory=lambda: new_id("sugg"))
+    eval_run_id: str = ""
+    eval_set_id: str = ""
+    agent_id: str = ""
+    workspace: Optional[str] = None
+    status: str = "pending"
+    old_instructions: str = ""
+    new_instructions: str = ""
+    rationale: str = ""
+    case_ids: List[str] = field(default_factory=list)
+    suggest_run_id: Optional[str] = None
+    applied_run_id: Optional[str] = None
+    cost_usd: float = 0.0
+    created_at: str = field(default_factory=utc_iso)
+    updated_at: str = field(default_factory=utc_iso)
+    decided_at: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "suggestion_id": self.suggestion_id,
+            "eval_run_id": self.eval_run_id,
+            "eval_set_id": self.eval_set_id,
+            "agent_id": self.agent_id,
+            "workspace": self.workspace,
+            "status": self.status,
+            "old_instructions": self.old_instructions,
+            "new_instructions": self.new_instructions,
+            "rationale": self.rationale,
+            "case_ids": list(self.case_ids),
+            "suggest_run_id": self.suggest_run_id,
+            "applied_run_id": self.applied_run_id,
+            "cost_usd": self.cost_usd,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "decided_at": self.decided_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "PromptSuggestion":
+        return cls(
+            suggestion_id=str(d.get("suggestion_id") or new_id("sugg")),
+            eval_run_id=str(d.get("eval_run_id") or ""),
+            eval_set_id=str(d.get("eval_set_id") or ""),
+            agent_id=str(d.get("agent_id") or ""),
+            workspace=d.get("workspace"),
+            status=str(d.get("status") or "pending"),
+            old_instructions=str(d.get("old_instructions") or ""),
+            new_instructions=str(d.get("new_instructions") or ""),
+            rationale=str(d.get("rationale") or ""),
+            case_ids=[str(c) for c in (d.get("case_ids") or [])],
+            suggest_run_id=d.get("suggest_run_id"),
+            applied_run_id=d.get("applied_run_id"),
+            cost_usd=float(d.get("cost_usd") or 0.0),
+            created_at=str(d.get("created_at") or utc_iso()),
+            updated_at=str(d.get("updated_at") or utc_iso()),
+            decided_at=d.get("decided_at"),
+        )
+
+
 __all__ = [
     "EVAL_CHANNEL", "MAX_REPEATS", "TARGET_KINDS", "normalize_target", "Case", "GraderSpec", "RunConfig", "EvalSet",
-    "EvalResult", "EvalRun", "utc_iso", "new_id",
+    "EvalResult", "EvalRun", "SUGGESTION_STATUSES", "PromptSuggestion", "utc_iso", "new_id",
 ]

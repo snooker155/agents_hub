@@ -418,6 +418,7 @@ function FlowEditor() {
                 run={runApi.selectedRun}
                 messages={runApi.runMessages}
                 onClose={() => setSelectedRunGroup(null)}
+                workspace={docApi.chatWorkspace}
               />
             ) : (
               <FlowChat

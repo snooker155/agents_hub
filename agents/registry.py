@@ -28,12 +28,13 @@ writes.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import json
 import logging
+from common import review as review_mod
 from common import snapshot
 from common.docstore import DocStore
 from common.paths import AGENTS_FILE
@@ -225,6 +226,21 @@ class AgentSpec:
     # and the last readiness report (``readiness``). Written by
     # ``agents.importer``, consumed by ``agents.remote_agent.RemoteAgent``.
     remote: Dict[str, Any] = field(default_factory=dict)
+    # ── Registry: owner and review status (fourth cycle, stage 4) ───────────
+    # The user id that created this agent (set once, at creation; None for
+    # agents that predate the field, or created outside a request such as
+    # bootstrap). Purely informational — it does not gate anything here.
+    owner_user: Optional[str] = None
+    # draft: not published. in_review: shared, waiting on an admin. approved:
+    # listed on the marketplace when AGENTS_HUB_REGISTRY_REQUIRE_REVIEW is on.
+    # rejected: an admin turned it down; the owner may edit and resubmit.
+    # A record loaded with no stored value defaults to "approved" when shared
+    # (so an install upgrading into this feature keeps every agent it already
+    # listed) and "draft" otherwise. See _validate_agent_dict.
+    review_status: str = "draft"
+    review_note: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[str] = None
 
     def is_remote(self) -> bool:
         """Whether this record is an externally hosted (HTTP) agent.
@@ -387,6 +403,18 @@ class AgentSpec:
         # built-in agents keep a clean JSON shape.
         if self.remote:
             d["remote"] = dict(self.remote)
+        # Registry: written always (not only when non-default), because the
+        # default itself depends on `shared` at load time (see
+        # _validate_agent_dict) and must not be re-derived on every save.
+        if self.owner_user:
+            d["owner_user"] = self.owner_user
+        d["review_status"] = self.review_status
+        if self.review_note:
+            d["review_note"] = self.review_note
+        if self.reviewed_by:
+            d["reviewed_by"] = self.reviewed_by
+        if self.reviewed_at:
+            d["reviewed_at"] = self.reviewed_at
         return d
 
     def load_callable(self) -> Callable[..., Any]:
@@ -519,6 +547,12 @@ essential_fields = ("id", "name", "type", "entrypoint")
 #: Modes of a per-tool permission policy (``AgentSpec.tool_policy``, see
 #: tools/permission_policy.py).
 TOOL_POLICY_MODES = ("always_allow", "always_ask", "auto")
+
+#: Valid values of ``AgentSpec.review_status`` (docs/registry.md). The single
+#: source is ``common.review``, shared with flows and skills; re-exported here
+#: under its historical name since every call site in this module already
+#: uses it.
+REVIEW_STATUSES = review_mod.STATUSES
 
 #: History filters of a conversation handoff (``AgentSpec.handoff_history``,
 #: applied by chat/handoff.py), widest first. ``last_n`` takes a count:
@@ -692,6 +726,16 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     handoffs = [h for h in _id_list(ad.get("handoffs")) if h != own_id]
     handoff_history = normalize_handoff_history(ad.get("handoff_history"))
 
+    owner_user = ad.get("owner_user") or None
+    # common.review.default_status: a legacy record with no stored value
+    # loads as "approved" when already shared, "draft" otherwise, so an
+    # upgrade never drops something already on the marketplace out of the
+    # listing. Shared with flows and skills.
+    review_status = review_mod.default_status(ad.get("review_status"), shared)
+    review_note = ad.get("review_note") or None
+    reviewed_by = ad.get("reviewed_by") or None
+    reviewed_at = ad.get("reviewed_at") or None
+
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
 
@@ -751,6 +795,11 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         handoffs=handoffs,
         handoff_history=handoff_history,
         remote=remote,
+        owner_user=owner_user,
+        review_status=review_status,
+        review_note=review_note,
+        reviewed_by=reviewed_by,
+        reviewed_at=reviewed_at,
     )
 
 
@@ -836,6 +885,50 @@ def system_agent_ids() -> List[str]:
     return [spec.id for spec in specs if spec.system]
 
 
+def registry_review_required() -> bool:
+    """Whether publishing an agent must wait on an admin's approval.
+
+    Thin wrapper over ``common.review.required()``, kept under this name
+    since every call site (routes/marketplace.py, routes/agents.py,
+    routes/registry.py) already uses it. Flows and skills call the shared
+    function directly.
+    """
+    return review_mod.required()
+
+
+def set_review_status(
+    agent_id: str,
+    status: str,
+    *,
+    note: Optional[str] = None,
+    reviewed_by: Optional[str] = None,
+) -> AgentSpec:
+    """Record an admin's (or the system's) decision on a published agent.
+
+    Goes through :func:`add_agent` like any other edit, so it is still subject
+    to the capability guard and still snapshots version history — a review
+    decision never touches tools or the definition, so neither ever fires in
+    practice, but the record shows the same discipline as a manual edit
+    either way. Raises ``ValueError`` for an unknown agent or status.
+    """
+    if status not in REVIEW_STATUSES:
+        raise ValueError(f"'{status}' is not a valid review status")
+    spec = get_agent(agent_id)
+    if spec is None:
+        raise ValueError(f"Agent '{agent_id}' not found in registry")
+    from datetime import datetime, timezone
+    reviewed_at = datetime.now(timezone.utc).isoformat() if status in ("approved", "rejected") else spec.reviewed_at
+    new_spec = replace(
+        spec,
+        review_status=status,
+        review_note=note if note is not None else spec.review_note,
+        reviewed_by=reviewed_by if status in ("approved", "rejected") else spec.reviewed_by,
+        reviewed_at=reviewed_at,
+    )
+    add_agent(new_spec)
+    return new_spec
+
+
 def add_agent(
     spec: AgentSpec,
     *,
@@ -886,6 +979,19 @@ def add_agent(
     if user_edit and spec.system and not spec.user_modified:
         import dataclasses as _dc
         spec = _dc.replace(spec, user_modified=True)
+
+    # Registry review gate (common.review, shared with flows and skills).
+    # Publishing — going from not-shared to shared — is the moment an agent
+    # becomes somebody else's business; when the hub requires review it is
+    # held at in_review instead of appearing on the marketplace immediately.
+    # Any other save (a tool added, a description edited, an admin decision
+    # recorded through set_review_status) leaves review_status exactly as the
+    # caller set it, so this never fights an explicit approve/reject.
+    was_shared = bool(_prev.shared) if _prev is not None else False
+    gated = review_mod.gate_on_publish(was_shared, spec.shared, spec.review_status)
+    if gated is not None:
+        spec = replace(spec, review_status=gated, reviewed_by=None,
+                       reviewed_at=None, review_note=None)
 
     # Snapshot whatever is currently stored into version history before this
     # call replaces it, so history never has a gap. Only fires when the agent

@@ -1179,6 +1179,28 @@ end"""
 _DOCTOR_COLORS = {"ok": "green", "warn": "yellow", "fail": "red", "skip": "dim"}
 
 
+@app.command("version")
+def version_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Print the raw result as JSON."),
+):
+    """This client's release and commit, and the backend's when AGENTS_HUB_URL
+    points at one: after an upgrade the two should agree."""
+    from common.version import info
+    local = info()
+    service = None
+    if hub().kind == "http":
+        service = call(hub().version)
+    if as_json:
+        typer.echo(json.dumps({"client": local, "service": service}, indent=2))
+        return
+    console.print(f"client   {local['version']}  {local['git_describe'] or local['git_short']}")
+    if service:
+        console.print(f"service  {service.get('version')}  {service.get('git_describe') or service.get('git_short')}"
+                      f"  [dim]schema {service.get('schema_latest')}[/dim]")
+        if service.get("version") != local["version"]:
+            console.print("[yellow]client and service are different releases[/yellow]")
+
+
 @app.command("doctor")
 def doctor(
     as_json: bool = typer.Option(False, "--json", help="Print the raw result as JSON."),
@@ -1377,6 +1399,8 @@ from cli.commands.eval import eval_app  # noqa: E402
 from cli.commands.mcp import mcp_app  # noqa: E402
 from cli.commands.user import user_app  # noqa: E402
 from cli.commands.api import api_command  # noqa: E402
+from cli.commands.costs import costs_app  # noqa: E402
+from cli.commands.support import support_bundle  # noqa: E402
 
 app.add_typer(agent_app, name="agent")
 app.add_typer(task_app, name="task")
@@ -1389,6 +1413,8 @@ app.add_typer(team_app, name="team")
 app.add_typer(eval_app, name="eval")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(user_app, name="user")
+app.add_typer(costs_app, name="costs")
+app.command("support-bundle")(support_bundle)
 app.command("api")(api_command)
 
 # Every name `ah` already answers to without touching the OpenAPI schema: the

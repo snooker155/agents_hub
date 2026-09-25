@@ -133,3 +133,83 @@ def mcp_tools(
             table.add_row(str(t), "")
     console.print(table)
     console.print(f"[dim]{len(tools)} tool(s)[/dim]")
+
+
+# ── The hub-wide allowlist catalog (dashboard/backend/routes/registry.py) ────
+#
+# Separate from the commands above: those manage what one workspace attached,
+# these manage what the hub, as a whole, has vetted. See docs/registry.md.
+
+catalog_app = typer.Typer(help="The hub-wide MCP allowlist catalog.", no_args_is_help=True)
+mcp_app.add_typer(catalog_app, name="catalog")
+
+
+@catalog_app.command("list")
+def catalog_list(
+    status: Optional[str] = typer.Option(None, "--status", help="requested, approved or blocked."),
+    json_out: bool = typer.Option(False, "--json", help="Print JSON."),
+):
+    """List the catalog, optionally filtered by review status."""
+    params = {"status": status} if status else {}
+    entries = (call(hub().request, "GET", "/api/registry/mcp", params=params) or {}).get("entries", [])
+    if json_out:
+        render_result(console, entries, as_json=True)
+        return
+    table = Table(title="MCP catalog", box=box.ROUNDED)
+    table.add_column("ID", style="bold cyan")
+    table.add_column("Name")
+    table.add_column("Transport")
+    table.add_column("Status")
+    table.add_column("Owner")
+    for e in entries:
+        table.add_row(e.get("id", ""), e.get("name") or e.get("id", ""),
+                      e.get("transport", ""), e.get("status", ""), e.get("owner_user") or "")
+    console.print(table)
+    console.print(f"[dim]{len(entries)} entr{'y' if len(entries) == 1 else 'ies'}[/dim]")
+
+
+@catalog_app.command("request")
+def catalog_request(
+    catalog_id: str = typer.Argument(..., help="A short, unique id for this server."),
+    transport: str = typer.Option("stdio", "--transport", help="stdio, streamable_http, sse or websocket."),
+    command: Optional[str] = typer.Option(None, "--command", help="Command to run, for a stdio server."),
+    arg: List[str] = typer.Option([], "--arg", help="Repeatable: one argument to the stdio command."),
+    url: Optional[str] = typer.Option(None, "--url", help="Server URL, for a non-stdio server."),
+    name: Optional[str] = typer.Option(None, "--name", help="Defaults to the id."),
+    description: str = typer.Option("", "--desc", "-d"),
+):
+    """Ask for a server to be added to the hub-wide allowlist.
+
+    Filed as 'requested' unless the caller is an admin, in which case it may
+    land pre-approved; either way an admin sees it on the Agent registry page.
+    """
+    body = {
+        "id": catalog_id, "name": name or catalog_id, "description": description,
+        "transport": transport, "command": command or "", "args": list(arg), "url": url or "",
+    }
+    entry = call(hub().request, "POST", "/api/registry/mcp", json=body)
+    console.print(f"[green]Requested[/green] catalog entry [bold]{entry.get('id', catalog_id)}[/bold] "
+                 f"(status: {entry.get('status')})")
+
+
+@catalog_app.command("approve")
+def catalog_approve(
+    catalog_id: str = typer.Argument(..., help="Catalog entry id."),
+    note: Optional[str] = typer.Option(None, "--note"),
+):
+    """Admin: approve a catalog entry. A workspace server matching it is then
+    allowed under AGENTS_HUB_MCP_ALLOWLIST_ONLY."""
+    entry = call(hub().request, "POST", f"/api/registry/mcp/{catalog_id}/approve",
+                json={"note": note} if note else {})
+    console.print(f"[green]Approved[/green] [bold]{entry.get('id', catalog_id)}[/bold]")
+
+
+@catalog_app.command("block")
+def catalog_block(
+    catalog_id: str = typer.Argument(..., help="Catalog entry id."),
+    note: Optional[str] = typer.Option(None, "--note"),
+):
+    """Admin: block a catalog entry."""
+    entry = call(hub().request, "POST", f"/api/registry/mcp/{catalog_id}/block",
+                json={"note": note} if note else {})
+    console.print(f"[red]Blocked[/red] [bold]{entry.get('id', catalog_id)}[/bold]")

@@ -140,6 +140,7 @@ export default function ChatMessageList() {
                     agentName={msgAgentName}
                     artifactsByPath={artifacts}
                     onAction={sendMessage}
+                    workspace={selectedWorkspace}
                   />
                 </React.Fragment>
               );

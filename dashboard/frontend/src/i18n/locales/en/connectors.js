@@ -36,6 +36,8 @@ export default {
       spend_daily_over: 'Daily spend over',
       spend_run_over: 'Run cost over',
       online_eval: 'Online eval score under',
+      slo_start_latency: 'Run start time SLO breach',
+      slo_error_rate: 'Error rate SLO breach',
     },
     onlineEvalSummary: 'sample {{rate}}, min score {{min}}',
     sampleRate: 'Sample, %',

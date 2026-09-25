@@ -328,6 +328,14 @@ def tools_for(workspace: Optional[str], server_id: str) -> List[Any]:
     if record is None or not record.get("enabled"):
         return []
 
+    from mcp_client import catalog
+    if catalog.allowlist_only() and not catalog.matches(record):
+        # Already attached, but the hub-wide allowlist no longer (or never
+        # did) approve it: no tools, and the reason shows on the MCP page the
+        # same way a failed connection would.
+        store.record_status(workspace, server_id, error="not approved by the MCP catalog")
+        return []
+
     key = (str(workspace or ""), str(server_id))
     stamp = store.config_hash(record)
     now = time.monotonic()

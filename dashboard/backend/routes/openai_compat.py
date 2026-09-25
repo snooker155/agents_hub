@@ -638,7 +638,11 @@ async def _agent_completion(request: Request, body: Dict[str, Any], principal: A
     chat_request = ChatRequest(
         agent_id=spec.id, message=message, workspace=workspace,
         history=[ChatHistoryMessage(**h) for h in history], source="api")
-    relay = TurnRelay(chat_request, user_id=getattr(principal, "id", None)).start()
+    # The run this turn creates carries key_id when the caller presented a
+    # personal key, so it counts toward that key's money quota and shows up
+    # attributed to it in the accounting report (docs/costs.md "Attribution").
+    key_id = getattr(principal, "credential_id", None) if getattr(principal, "via", "") == "api_key" else None
+    relay = TurnRelay(chat_request, user_id=getattr(principal, "id", None), key_id=key_id).start()
     stream = bool(body.get("stream"))
     include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
     completion_id = f"chatcmpl-{secrets.token_hex(12)}"
@@ -833,6 +837,15 @@ async def chat_completions(request: Request):
         response = _error(429, "Daily token limit reached; it resets at 00:00 UTC",
                           type_="rate_limit_error", code="tokens_per_day_exceeded")
         response.headers["Retry-After"] = str(retry_after)
+        return response
+    # A personal key's own money cap (common/api_keys.py
+    # budget_usd_per_month, docs/api-keys.md "Money quota"): refused before
+    # the model is touched, the same shape as the token-per-day cap above.
+    within_budget, budget_retry_after = rate_limit.check_key_budget(principal)
+    if not within_budget:
+        response = _error(429, "This API key has reached its monthly budget",
+                          type_="rate_limit_error", code="key_budget_exceeded")
+        response.headers["Retry-After"] = str(budget_retry_after)
         return response
     try:
         body = await request.json()

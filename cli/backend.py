@@ -261,6 +261,10 @@ class DirectBackend:
 
     # ---- settings ----
 
+    def version(self) -> dict:
+        from dashboard.backend.routes.system import system_version
+        return _run_coroutine(system_version())
+
     def doctor(self) -> dict:
         """The doctor's checks (common/doctor.py), run in this process."""
         from common.doctor import run_doctor
@@ -548,6 +552,9 @@ class HttpBackend:
     # credentials); the key acts as its owner, so ``username`` here names
     # nobody but the caller and is accepted only for symmetry with
     # DirectBackend's signature — see cli/main.py, which warns when it is set.
+
+    def version(self):
+        return self._request("GET", "/api/system/version")
 
     def doctor(self):
         # Some checks probe the network with their own timeouts; allow for

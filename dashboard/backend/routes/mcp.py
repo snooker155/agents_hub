@@ -104,6 +104,7 @@ def _status(workspace: str, record: Dict[str, Any]) -> Dict[str, Any]:
     "not loaded yet" rather than as zero. A zero that actually means "we have
     not looked" is how an operator concludes a working server is broken.
     """
+    from mcp_client import catalog
     from mcp_client.client import cached_tool_names
 
     cached = cached_tool_names(workspace, record["id"])
@@ -111,7 +112,26 @@ def _status(workspace: str, record: Dict[str, Any]) -> Dict[str, Any]:
         **mcp_store.masked(record),
         "tool_count": len(cached) if cached is not None else None,
         "cached": cached is not None,
+        # Whether this server matches an approved catalog entry. Always
+        # computed (not only when the allowlist is enforced), so the page can
+        # show "not approved" as information even before an admin turns the
+        # toggle on.
+        "approved": catalog.matches(record),
     }
+
+
+def _enforce_allowlist(record: Dict[str, Any]) -> None:
+    """Refuse to store a server the hub-wide allowlist does not approve of,
+    when ``AGENTS_HUB_MCP_ALLOWLIST_ONLY`` is on."""
+    from mcp_client import catalog
+
+    if catalog.allowlist_only() and not catalog.matches(record):
+        raise HTTPException(
+            status_code=403,
+            detail="This MCP server does not match an approved catalog entry "
+                   "(same id and command+args or url). Ask an admin to approve "
+                   "it, or request it from the Agent registry page.",
+        )
 
 
 @router.get("/servers")
@@ -130,6 +150,7 @@ async def list_servers(workspace: Optional[str] = None):
 async def create_server(body: CreateServer, workspace: Optional[str] = None):
     """Attach a server. Its capability claim is part of attaching it."""
     ws = _workspace(workspace)
+    _enforce_allowlist(body.model_dump())
     try:
         record = mcp_store.create_server(ws, body.model_dump())
     except ValueError as exc:
@@ -151,8 +172,12 @@ async def update_server(server_id: str, body: UpdateServer, workspace: Optional[
     from mcp_client.client import refresh
 
     ws = _workspace(workspace)
-    _found_or_404(ws, server_id)
+    current = _found_or_404(ws, server_id)
     changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    # Checked against the prospective record (current + this edit), not the
+    # edit alone: a PATCH that only touches, say, the allowlist must not be
+    # judged as if command/url were blank.
+    _enforce_allowlist({**current, **changes})
     record = mcp_store.update_server(ws, server_id, changes)
     if record is None:
         raise HTTPException(status_code=404, detail="MCP server not found")

@@ -1,10 +1,13 @@
-import { MessageSquare, RotateCcw, SquareTerminal, Workflow } from 'lucide-react';
+import { useState } from 'react';
+import { FlaskConical, MessageSquare, RotateCcw, SquareTerminal, Workflow } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { RUN_STATUS_STYLES, fmtDateTime } from './runFormat';
+import SaveAsEvalCaseDialog from '../evals/SaveAsEvalCaseDialog';
 
-export function FlowRunMessages({ run, messages = [], onClose }) {
+export function FlowRunMessages({ run, messages = [], onClose, workspace }) {
   const { t } = useI18n();
   const isChat = run?.kind === 'chat';
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-slate-50">
       <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
@@ -19,6 +22,16 @@ export function FlowRunMessages({ run, messages = [], onClose }) {
             {isChat ? t('flowEditor.chat') : t('flowEditor.taskRun')} · {fmtDateTime(run?.started_at)} · {t('flowEditor.readOnlyHistory')}
           </div>
         </div>
+        {!isChat && run?.run_group && (
+          <button
+            type="button"
+            onClick={() => setCaseDialogOpen(true)}
+            title={t('messageDetails.toEvalCaseHint')}
+            className="rounded-lg px-2.5 py-1 text-xs font-semibold text-indigo-600 transition hover:bg-indigo-50 inline-flex items-center gap-1"
+          >
+            <FlaskConical className="h-3.5 w-3.5" /> {t('messageDetails.toEvalCase')}
+          </button>
+        )}
         <button
           type="button"
           onClick={onClose}
@@ -27,6 +40,13 @@ export function FlowRunMessages({ run, messages = [], onClose }) {
           {t('flowEditor.close')}
         </button>
       </div>
+      {caseDialogOpen && (
+        <SaveAsEvalCaseDialog
+          runId={run.run_group}
+          workspace={workspace}
+          onClose={() => setCaseDialogOpen(false)}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {messages.length === 0 ? (

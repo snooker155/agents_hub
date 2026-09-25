@@ -66,6 +66,8 @@ export default {
   filtered: 'отфильтрован списком разрешённых',
 
   disabled: 'Отключён',
+  notApproved: 'Не одобрен',
+  notApprovedHint: 'Этот сервер не соответствует ни одной одобренной записи в каталоге MCP.',
   neverSeen: 'подключения не было',
   lastSeen: 'последнее подключение {{when}}',
   toolCount_one: '{{count}} инструмент',

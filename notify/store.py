@@ -17,10 +17,11 @@ Two lists live here, under separate metadata keys.
     When a run or the workspace's spend should raise a notification on its
     own, without an agent or a person asking for it::
 
-        {"id", "kind": "run_failed"|"spend_daily_over"|"spend_run_over"|"online_eval",
+        {"id", "kind": "run_failed"|"spend_daily_over"|"spend_run_over"|"online_eval"
+               |"slo_start_latency"|"slo_error_rate",
          "threshold_usd", "agent_id" (optional filter),
          "channels": ["dashboard", "telegram", "slack", "webhook"], "enabled",
-         "last_fired_date"}
+         "last_fired_date", "state"}
 
     An ``online_eval`` rule also carries ``sample_rate`` (0..1), ``graders``
     (grader specs as an eval set stores them), ``min_score`` (0..1),
@@ -29,6 +30,16 @@ Two lists live here, under separate metadata keys.
     ``rubric`` for the graders that read them; see ``evals/online.py``, whose
     ``normalize_rule_fields`` validates every one of them on create and
     update.
+
+    ``slo_start_latency`` and ``slo_error_rate`` watch the hub-wide SLO
+    objectives (``common/slo.py``) rather than one run or one workspace's
+    spend; a rule of either kind just says "tell this workspace's channels
+    when that objective breaches or recovers". They carry no threshold of
+    their own (the SLO thresholds are hub-wide settings,
+    ``AGENTS_HUB_SLO_START_P95_SECONDS`` / ``AGENTS_HUB_SLO_ERROR_RATE``).
+    ``state`` is where ``notify/rules.py`` remembers the objective's status
+    as of the last tick (``{"status": "ok"|"breach"}``), so a breach fires
+    once and a recovery fires once instead of every scheduler tick.
 
 **Secrets.** A webhook's secret is stored as the operator typed it and never
 sent back in a GET: :func:`masked_endpoint` replaces it with its last four
@@ -59,7 +70,8 @@ RULES_KEY = "alert_rules"
 INBOUND_SECRET_KEY = "notify_inbound_secret"
 
 ENDPOINT_KINDS = ("webhook", "slack")
-RULE_KINDS = ("run_failed", "spend_daily_over", "spend_run_over", "online_eval")
+RULE_KINDS = ("run_failed", "spend_daily_over", "spend_run_over", "online_eval",
+              "slo_start_latency", "slo_error_rate")
 CHANNELS = ("dashboard", "telegram", "slack", "webhook")
 
 _MASK = "••••"
@@ -220,6 +232,7 @@ def create_rule(workspace: str, data: Dict[str, Any]) -> Dict[str, Any]:
         "channels": channels or ["dashboard"],
         "enabled": bool(data.get("enabled", True)),
         "last_fired_date": None,
+        "state": None,
         "created_at": _utc_now_iso(),
     }
     if kind == "online_eval":
@@ -240,7 +253,7 @@ def update_rule(workspace: str, rule_id: str, changes: Dict[str, Any]) -> Option
         merged = dict(item)
         if "kind" in changes and changes["kind"] in RULE_KINDS:
             merged["kind"] = changes["kind"]
-        for key in ("threshold_usd", "agent_id", "enabled", "last_fired_date"):
+        for key in ("threshold_usd", "agent_id", "enabled", "last_fired_date", "state"):
             if key in changes and changes[key] is not None:
                 merged[key] = changes[key]
         if "channels" in changes and changes["channels"] is not None:

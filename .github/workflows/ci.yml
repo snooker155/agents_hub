@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, dev]
   pull_request:
+  # The release workflow runs this whole suite before it builds any image.
+  workflow_call:
 
 jobs:
   python:
@@ -40,6 +42,11 @@ jobs:
 
       - name: Lint (ruff)
         run: ruff check .
+
+      - name: One version everywhere
+        # pyproject.toml, the frontend's package.json and the Helm chart name
+        # the same release (scripts/release.py, docs/deployment.md "Releases").
+        run: python scripts/release.py check
 
       - name: Run tests
         # AGENTS_HUB_ROOT is also set to a throwaway dir by tests/conftest.py; this

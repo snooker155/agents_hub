@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from common import attribution as _attribution
 from common import db
 from common import run_payloads as rp
 from common.db_migrate import RUN_COLUMNS
@@ -132,6 +133,8 @@ def _apply(run_id: str, updates: Dict[str, Any], *, insert_if_missing: bool
         base.pop("process", None)
         merged = {**base, **updates}
         merged["run_id"] = str(run_id)
+        if old is None:
+            _attribution.stamp(merged)
         tokens = _merge_tokens(row, proc if isinstance(proc, dict) else None)
         _write_record(conn, merged, tokens)
         if isinstance(proc, dict) and rp.has_heavy_data(proc):

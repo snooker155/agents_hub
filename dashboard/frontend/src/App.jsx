@@ -57,6 +57,7 @@ const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
 const Files = lazy(() => import('./pages/Files'));
 const Widgets = lazy(() => import('./pages/Widgets'));
+const AgentRegistry = lazy(() => import('./pages/AgentRegistry'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Models = lazy(() => import('./pages/Models'));
 const ModelDetail = lazy(() => import('./pages/ModelDetail'));
@@ -135,6 +136,7 @@ function AppRoutes() {
         <Route path="/deployments" element={guard(<Deployments />)} />
         <Route path="/files" element={guard(<Files />)} />
         <Route path="/widgets" element={guard(<Widgets />)} />
+        <Route path="/agent-registry" element={guard(<AgentRegistry />)} />
         <Route path="/agents" element={guard(<AgentManager />)} />
         <Route path="/agents/:id" element={guard(<AgentDetails />)} />
         <Route path="/marketplace" element={guard(<Marketplace />)} />

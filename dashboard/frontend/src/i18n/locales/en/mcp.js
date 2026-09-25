@@ -66,6 +66,8 @@ export default {
   filtered: 'filtered out by the allowlist',
 
   disabled: 'Disabled',
+  notApproved: 'Not approved',
+  notApprovedHint: 'This server does not match an approved entry in the MCP catalog.',
   neverSeen: 'never connected',
   lastSeen: 'last connected {{when}}',
   toolCount_one: '{{count}} tool',

@@ -232,6 +232,34 @@ def render() -> str:
           "Constant 1, labeled with this process's role and instance id.",
           "gauge", [({"role": role, "instance": instance}, 1)])
 
+    try:
+        from common.slo import evaluate as evaluate_slo
+        slo = evaluate_slo()
+        objectives = slo.get("objectives") or {}
+    except Exception:  # noqa: BLE001 - never raises, one collector failing must not break /metrics
+        log.debug("slo collector failed", exc_info=True)
+        objectives = {}
+    start_p95 = objectives.get("start_p95") or {}
+    if start_p95.get("value_seconds") is not None:
+        # Summary convention: one quantile line per sample this window holds
+        # (just the one, p95 — a full histogram is common/slo.py's job to
+        # grow if a second quantile earns its place).
+        _emit(lines, "agents_hub_run_start_seconds",
+              "Seconds between a run's record being created and it actually "
+              "starting (common/slo.py), the p95 over the SLO window.",
+              "summary", [({"quantile": "0.95"}, start_p95["value_seconds"])])
+        _emit(lines, "agents_hub_run_start_seconds_count",
+              "Samples behind the p95 above.", "gauge", [({}, start_p95.get("sample", 0))])
+    breach_samples = []
+    for objective_key, objective in objectives.items():
+        status = objective.get("status")
+        if status in ("ok", "breach"):
+            breach_samples.append(({"objective": objective_key}, 1 if status == "breach" else 0))
+    _emit(lines, "agents_hub_slo_breach",
+          "1 when an SLO objective is in breach right now, 0 when it holds; "
+          "the label omitted while there is not yet enough data to judge it.",
+          "gauge", breach_samples)
+
     return "\n".join(lines) + "\n"
 
 

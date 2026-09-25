@@ -323,10 +323,19 @@ async def _api_token_guard(request, call_next):
                     headers={"Retry-After": str(retry_after)})
 
     token = identity.set_current_user(principal.id if principal else None)
+    # A personal key's id, so a run this request launches (directly or
+    # through a relayed chat turn) carries key_id (common/api_keys.py,
+    # docs/costs.md "Attribution"), the same contextvar trick as the user id
+    # just above.
+    from common import api_keys as _api_keys
+    _key_id = (principal.credential_id if principal is not None
+              and getattr(principal, "via", "") == "api_key" else None)
+    key_token = _api_keys.set_current_key_id(_key_id)
     try:
         response = await call_next(request)
     finally:
         identity.reset_current_user(token)
+        _api_keys.reset_current_key_id(key_token)
 
     # The audit trail (common/audit.py): every write request by a person,
     # with its outcome, in token and multi mode. The key points (login, role
@@ -372,6 +381,18 @@ from workspace import InvalidWorkspaceName as _InvalidWorkspaceName
 async def _invalid_workspace_name(request, exc):
     from fastapi.responses import JSONResponse
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+# A run launched with a personal key that already spent its monthly budget
+# (common.api_keys.KeyBudgetExceededError, docs/api-keys.md "Money quota"):
+# refused with the same 429 shape as every other rate limit, not a 500.
+from common.api_keys import KeyBudgetExceededError as _KeyBudgetExceededError
+
+
+@app.exception_handler(_KeyBudgetExceededError)
+async def _key_budget_exceeded(request, exc):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 # ============================================================================
 # CORS Configuration
@@ -608,6 +629,15 @@ for _loop_router in (tool_policy_router, outcomes_router, steering_router, guard
 from routes import files as files_router, widget as widget_router
 app.include_router(files_router.router)
 app.include_router(widget_router.router)
+
+# Fourth-cycle stage 4: the spend report by key, user and project, the registry
+# of agents and MCP servers with owners and approval, and the support bundle
+# with the SLO status.
+from routes import (accounting as accounting_router, registry as registry_router,
+                    support as support_router)
+app.include_router(accounting_router.router)
+app.include_router(registry_router.router)
+app.include_router(support_router.router)
 
 # External domain: token-authenticated access for exposed nodes
 app.include_router(external.router)
