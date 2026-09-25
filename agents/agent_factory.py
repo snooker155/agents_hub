@@ -590,6 +590,10 @@ class AgentFactory:
         # added by create_agent() based on the agent's reasoning config, which
         # is the source of truth for the reasoning capabilities.
         available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
+        # The workspace file objects (tools/workspace_files.py): plain per-tool
+        # grants, like the web tools; the workspace comes from the run.
+        from tools.workspace_files import WORKSPACE_FILE_TOOLS
+        available.extend(WORKSPACE_FILE_TOOLS)
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly
@@ -760,7 +764,20 @@ class AgentFactory:
         # list_skills is omitted — the catalog is injected into the system prompt instead.
         if _spec and _spec.skills_enabled:
             tool_list = list(definition.get("tools") or [])
-            for _skill_tool in ("get_skill", "create_skill"):
+            _skill_tools = ["get_skill", "create_skill"]
+            # read_skill_file only for an agent with a skill that has files
+            # (one imported from a project's .claude/skills folder).
+            try:
+                from memory.procedural import ProcedureStore as _SkillStore
+                from common.workspace_context import normalize_workspace_name as _norm_ws
+                _skills_ws = _norm_ws(workspace)
+                if _skills_ws and any(
+                    p.resources for p in _SkillStore(_skills_ws).load() if p.agent_id == agent_id
+                ):
+                    _skill_tools.append("read_skill_file")
+            except Exception:  # noqa: BLE001 - a store hiccup only drops the optional file tool
+                log.debug("skills: could not check skill files for %s", agent_id, exc_info=True)
+            for _skill_tool in _skill_tools:
                 if _skill_tool not in tool_list:
                     tool_list.append(_skill_tool)
             definition["tools"] = tool_list
@@ -983,6 +1000,24 @@ class AgentFactory:
         # gated or guarded themselves (gate_tools skips _REASONING_TOOL_NAMES
         # regardless, but they are not even offered to it here).
         tools = [*tools, *reasoning_tools]
+
+        # Conversation handoff (tools/handoff.py), only for an agent with
+        # targets. Appended after the approval guard and the think gate on
+        # purpose, like the reasoning tools: giving the conversation to a
+        # listed colleague acts on nothing outside the chat, and parking it for
+        # approval or a `think` first would leave the user waiting on a
+        # routing decision the operator already made by listing the target.
+        if _spec is not None and _spec.handoffs:
+            from tools.handoff import HANDOFF_PROMPT, create_handoff_tools
+            from common.workspace_context import workspace_name_from_path as _ws_from_path
+            _handoff_tools = create_handoff_tools(_spec, _ws_from_path(workspace))
+            if _handoff_tools:
+                tools = [*tools, *_handoff_tools]
+                config["system_prompt"] = (
+                    config.get("system_prompt", "")
+                    + "\n\n---\n\n"
+                    + HANDOFF_PROMPT
+                )
 
         # Capability guard, defence in depth. The record was already checked at
         # save time, but everything above this point may have *appended* tools

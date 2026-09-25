@@ -14,6 +14,8 @@ export default {
   tasks: 'Задачи',
   plan: 'План',
   deployments: 'Развёртывания',
+  widgets: 'Виджеты',
+  files: 'Файлы',
   sessions: 'Сессии',
   runGroups: 'Группы запусков',
   messages: 'Запуски',

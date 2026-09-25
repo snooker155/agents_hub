@@ -10,6 +10,7 @@ import {
   setDefaultEnvironment,
   getEnvironmentUsage,
   buildEnvironmentImage,
+  getSandboxProviders,
 } from '../api';
 import {
   Container,
@@ -37,6 +38,7 @@ import { useI18n } from '../i18n';
 
 const NETWORK_TYPES = ['unrestricted', 'none', 'limited'];
 const MODES = ['inherit', 'local', 'docker'];
+const SANDBOX_PROVIDERS = ['inherit', 'docker', 'local', 'e2b', 'modal'];
 
 function linesToList(text) {
   return (text || '')
@@ -113,6 +115,8 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
   const [networkType, setNetworkType] = useState(env?.network?.type || 'unrestricted');
   const [allowedHostsText, setAllowedHostsText] = useState(listToLines(env?.network?.allowed_hosts));
   const [allowPkgMgrs, setAllowPkgMgrs] = useState(env?.network?.allow_package_managers ?? true);
+  const [sandboxProvider, setSandboxProvider] = useState(env?.sandbox_provider || 'inherit');
+  const [providerAvailability, setProviderAvailability] = useState({});
   const [memory, setMemory] = useState(env?.limits?.memory || '');
   const [cpus, setCpus] = useState(env?.limits?.cpus || '');
   const [pidsLimit, setPidsLimit] = useState(env?.limits?.pids_limit ?? '');
@@ -120,6 +124,14 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
   const [isDefault, setIsDefault] = useState(env?.is_default || false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    getSandboxProviders().then((res) => {
+      if (!cancelled) setProviderAvailability(res.data || {});
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const handleSave = async () => {
     if (!name.trim()) { setError(t('environments.errors.nameRequired')); return; }
@@ -144,6 +156,7 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
       },
       env: linesToEnvMap(envText),
       is_default: isDefault,
+      sandbox_provider: sandboxProvider,
     };
     try {
       if (isEdit) await updateEnvironment(env.id, payload);
@@ -265,6 +278,32 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
             />
             {t('environments.network.allowPackageManagers')}
           </label>
+          <p className="text-[11px] text-gray-400 mt-2">{t('environments.network.enforcementHint')}</p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('environments.sandbox.label')}</label>
+          <select
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            value={sandboxProvider}
+            onChange={(e) => setSandboxProvider(e.target.value)}
+          >
+            {SANDBOX_PROVIDERS.map((p) => {
+              const avail = providerAvailability[p];
+              const hint = p === 'inherit' || !avail
+                ? ''
+                : avail.available
+                  ? ` · ${t('environments.sandbox.available')}`
+                  : ` · ${t('environments.sandbox.unavailable')}`;
+              return (
+                <option key={p} value={p}>{t(`environments.sandbox.${p}`)}{hint}</option>
+              );
+            })}
+          </select>
+          {sandboxProvider !== 'inherit' && providerAvailability[sandboxProvider] && !providerAvailability[sandboxProvider].available && (
+            <p className="text-[11px] text-amber-600 mt-1">{providerAvailability[sandboxProvider].reason}</p>
+          )}
+          <p className="text-[11px] text-gray-400 mt-1">{t('environments.sandbox.hint')}</p>
         </div>
 
         <div>

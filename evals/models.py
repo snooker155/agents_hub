@@ -72,6 +72,10 @@ class Case:
     "files": [{"path", "text"}]}``. A case that carries one runs in an
     isolated directory holding those files, with the description and context
     prepended to its input as a "Task" block (``evals.runner.compose_input``).
+
+    ``file_ids`` are workspace files (``files/service.py``) the case runs
+    with: copied into the case's isolated directory and named in its input,
+    so a dataset can say "answer from this contract" without pasting it.
     """
     case_id: str = field(default_factory=lambda: new_id("case"))
     input: str = ""
@@ -80,6 +84,7 @@ class Case:
     source_run_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     artifact: Optional[Dict[str, Any]] = None
+    file_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -90,6 +95,7 @@ class Case:
             "source_run_id": self.source_run_id,
             "metadata": dict(self.metadata),
             "artifact": dict(self.artifact) if self.artifact else None,
+            "file_ids": list(self.file_ids or []),
         }
 
     @classmethod
@@ -102,6 +108,7 @@ class Case:
             source_run_id=d.get("source_run_id"),
             metadata=dict(d.get("metadata") or {}),
             artifact=dict(d["artifact"]) if isinstance(d.get("artifact"), dict) else None,
+            file_ids=[str(f) for f in (d.get("file_ids") or []) if str(f or "").strip()],
         )
 
 
@@ -374,7 +381,9 @@ class EvalRun:
     eval_run_id: str = field(default_factory=lambda: new_id("evrun"))
     eval_set_id: str = ""
     workspace: Optional[str] = None
-    status: str = "running"          # running | completed | failed | stopped
+    # running | completed | failed | stopped, and batch_pending while a batch
+    # run waits on its provider batches (evals/batch.py).
+    status: str = "running"
     configs: List[RunConfig] = field(default_factory=list)
     started_at: str = field(default_factory=utc_iso)
     finished_at: Optional[str] = None
@@ -382,10 +391,14 @@ class EvalRun:
     # config label -> {score, passed, total, cost, ...}
     summary: Dict[str, Any] = field(default_factory=dict)
     total_cost: float = 0.0
+    # "live" runs every cell now; "batch" sends agent cells and judge calls
+    # through the provider batch APIs at half the price (evals/batch.py).
+    mode: str = "live"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "eval_run_id": self.eval_run_id,
+            "mode": self.mode or "live",
             "eval_set_id": self.eval_set_id,
             "workspace": self.workspace,
             "status": self.status,

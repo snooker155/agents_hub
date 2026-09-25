@@ -10,6 +10,8 @@ import {
   getEvalRunDiff, getEvalGraders, getAgents, listFlows, getTeams, getLoops, getScenarios,
   getEvalChat, clearEvalChat, stopEvalChat, evalChatUrl,
 } from '../api';
+import BatchRunPanel from '../components/evals/BatchRunPanel';
+import FileIdsField from '../components/files/FileIdsField';
 import { useWorkspace } from '../components/workspace';
 import EntityChat from '../components/EntityChat';
 import { usePageChat } from '../components/pageChat/pageChat';
@@ -157,6 +159,9 @@ export default function Evals() {
   // Run configuration: which agent/model columns the sweep compares.
   const [configs, setConfigs] = useState([]);
   const [costCeiling, setCostCeiling] = useState('');
+  // "batch" sends agent cells and judge calls through the provider batch APIs
+  // at half price; results arrive within 24 hours (evals/batch.py).
+  const [mode, setMode] = useState('live');
   const chat = useChatColumn(false);
 
   const loadSets = useCallback(async () => {
@@ -267,7 +272,7 @@ export default function Evals() {
   const handleEstimate = async () => {
     if (!selected) return;
     try {
-      const { data } = await estimateEvalRun(selected.eval_set_id, { configs });
+      const { data } = await estimateEvalRun(selected.eval_set_id, { configs, mode });
       setEstimate(data);
     } catch (e) {
       setMessage(e.response?.data?.detail || t('evals.estimateFailed'));
@@ -284,6 +289,7 @@ export default function Evals() {
         configs,
         workspace: currentWorkspace,
         cost_ceiling: costCeiling ? parseFloat(costCeiling) : null,
+        mode,
       });
       setActiveRun(data);
       const { data: hist } = await getEvalRuns(selected.eval_set_id);
@@ -519,6 +525,15 @@ export default function Evals() {
                       {t('evals.stopsTheWholeSweepNot')}
                     </span>
                   </div>
+                  <label className="flex items-center gap-2 mt-2 text-xs text-gray-600" title={t('evals.batch.modeHint')}>
+                    <input
+                      type="checkbox"
+                      checked={mode === 'batch'}
+                      onChange={(e) => { setMode(e.target.checked ? 'batch' : 'live'); setEstimate(null); }}
+                    />
+                    {t('evals.batch.mode')}
+                    <span className="text-gray-400">{t('evals.batch.modeHint')}</span>
+                  </label>
                 </div>
 
                 {estimate && (
@@ -572,6 +587,11 @@ export default function Evals() {
                                 {t('evals.taskSnapshot')}
                               </span>
                             )}
+                            {(c.file_ids || []).length > 0 && (
+                              <span className="ml-1.5 shrink-0 inline-flex items-center px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] font-semibold">
+                                {t('files.evalCase.badge', { count: c.file_ids.length })}
+                              </span>
+                            )}
                           </button>
                           <button
                             onClick={async () => {
@@ -607,6 +627,10 @@ export default function Evals() {
                                 seeded from run {c.source_run_id.slice(0, 12)}
                               </a>
                             )}
+                            {(c.file_ids || []).length > 0 && (
+                              <FileIdsField workspace={selected.workspace || currentWorkspace || ''}
+                                value={c.file_ids} onChange={() => {}} disabled />
+                            )}
                             {c.artifact && (
                               <div className="text-gray-600">
                                 {t('evals.snapshotSummary', {
@@ -635,6 +659,7 @@ export default function Evals() {
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                         activeRun.status === 'completed' ? 'bg-green-100 text-green-700'
                         : activeRun.status === 'stopped' ? 'bg-amber-100 text-amber-700'
+                        : activeRun.status === 'batch_pending' ? 'bg-blue-100 text-blue-700'
                         : 'bg-red-100 text-red-700'
                       }`}>
                         {activeRun.status}
@@ -674,6 +699,10 @@ export default function Evals() {
                       )}
                     </div>
                   </div>
+
+                  {activeRun.mode === 'batch' && (
+                    <BatchRunPanel run={activeRun} onChange={setActiveRun} />
+                  )}
 
                   {diffResult && (
                     <div className="mb-5 rounded-lg border border-gray-200 p-3">
@@ -853,6 +882,7 @@ export default function Evals() {
       {showCase && selected && (
         <AddCaseModal
           evalSetId={selected.eval_set_id}
+          workspace={selected.workspace || currentWorkspace}
           onClose={() => setShowCase(false)}
           onAdded={() => { setShowCase(false); selectSet(selected.eval_set_id); loadSets(); }}
         />
@@ -953,8 +983,11 @@ function CreateSetModal({ catalogs, graderCatalog, workspace, onClose, onCreated
 }
 
 
-function AddCaseModal({ evalSetId, onClose, onAdded }) {
+function AddCaseModal({ evalSetId, workspace, onClose, onAdded }) {
   const { t } = useI18n();
+  // Workspace files the case runs with (docs/files.md): copied into its
+  // working directory and named in its input.
+  const [fileIds, setFileIds] = useState([]);
   const [input, setInput] = useState('');
   const [expected, setExpected] = useState('');
   const [rubric, setRubric] = useState('');
@@ -970,6 +1003,7 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
         input, expected: expected || null, rubric: rubric || null,
         from_run_id: fromRunId || null,
         from_task_id: fromTaskId.trim() || null,
+        file_ids: fileIds,
       });
       onAdded();
     } catch (e) {
@@ -1001,6 +1035,9 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
       <Field label={t('evals.rubric')} hint={t('evals.instructionForAnLlmJudge')}>
         <textarea value={rubric} onChange={(e) => setRubric(e.target.value)} rows={2}
                   className="w-full text-sm border border-gray-300 rounded-md px-3 py-2" />
+      </Field>
+      <Field label={t('files.evalCase.label')} hint={t('files.evalCase.hint')}>
+        <FileIdsField workspace={workspace || ''} value={fileIds} onChange={setFileIds} uploadSource="eval" />
       </Field>
       <ModalActions onClose={onClose} onSubmit={submit} saving={saving} label={t('evals.add')} />
     </Modal>

@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { createTask, getProjects } from '../api';
 import { useI18n } from '../i18n';
 import DateInput from './DateInput';
+import FileIdsField from './files/FileIdsField';
 
 // Selectable initial statuses (mirrors the task board, minus the system-only
 // "pending"/waiting-approval state which can't be set manually).
@@ -29,6 +30,7 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
     status: defaultStatus || 'todo',
     project_id: defaultProjectId || '',
     due_at: '',
+    file_ids: [],
   });
   const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState([]);
@@ -51,6 +53,7 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
         project_id: form.project_id || null,
         workspace_name: selectedWorkspace || null,
         due_at: form.due_at || null,
+        file_ids: form.file_ids.length ? form.file_ids : null,
       });
       onCreated?.(resp.data);
       onClose();
@@ -122,6 +125,15 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+          </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('files.field.label')}</label>
+            <FileIdsField
+              workspace={selectedWorkspace || ''}
+              value={form.file_ids}
+              onChange={(ids) => setForm({ ...form, file_ids: ids })}
+              uploadSource="task"
+            />
           </div>
           <div className="mb-6 flex items-center">
             <input

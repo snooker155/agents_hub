@@ -203,6 +203,15 @@ unbounded work by decomposing its own output.
 between agents: a reviewer reads the developer's result rather than re-reading
 the conversation.
 
+## Files
+
+A task can carry workspace files, `file_ids` (see [workspace files](files.md)).
+Each run copies them into its working directory under `task_files/` and lists
+them in the prompt; a subtask, including one made by `delegate_task_tool`,
+inherits them unless it is given its own. The task page has a Files card and
+the create form a picker; `PATCH /api/tasks/{id}` with `file_ids` replaces
+the list, and a file from another workspace is refused.
+
 ## Outcome
 
 An optional rubric that defines done, with maximum attempts, an optional grader model and an optional pass threshold. After every completed agent run, an independent model grades the result against the rubric and decides whether to retry or pass. See [outcomes](outcomes.md).

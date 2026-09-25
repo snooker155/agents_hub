@@ -25,6 +25,8 @@ class TaskCreate(BaseModel):
     # Outcome rubric: {"rubric", "max_iterations", "grader", "threshold"}
     # (tasks/outcome.py). None = no outcome check.
     outcome: Optional[Dict[str, Any]] = None
+    # Workspace files (files/service.py) the task works from, by id.
+    file_ids: Optional[List[str]] = None
 
 
 class TaskWorkspaceUpdate(BaseModel):
@@ -47,6 +49,8 @@ class TaskUpdate(BaseModel):
     agent_version: Optional[int] = None
     # Outcome rubric (see TaskCreate); null clears it.
     outcome: Optional[Dict[str, Any]] = None
+    # Replace the task's workspace files (ids); [] or null clears them.
+    file_ids: Optional[List[str]] = None
 
 
 class AgentCreateCustom(BaseModel):
@@ -63,6 +67,10 @@ class AgentCreateCustom(BaseModel):
     # When set, reuse an existing definition folder instead of authoring a new
     # one. system_prompt is then ignored and write_instructions is skipped.
     definition_id: Optional[str] = None
+    # Agents this one may hand the conversation to, and the history filter the
+    # receiver sees by default (chat/handoff.py; see AgentHandoffsUpdate).
+    handoffs: List[str] = []
+    handoff_history: str = "full"
 
 
 class AgentCloneToWorkspace(BaseModel):
@@ -129,7 +137,9 @@ class SkillCreate(BaseModel):
     workspace: str
     name: str
     description: str
-    steps: List[str]
+    # Steps, Markdown instructions (``body``), or both; at least one is required.
+    steps: List[str] = []
+    body: str = ""
     tags: List[str] = []
     # Empty means a catalog entry: it lives in the workspace but is not attached
     # to any agent, so nothing injects it until it is installed onto one.
@@ -140,7 +150,29 @@ class SkillUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     steps: Optional[List[str]] = None
+    body: Optional[str] = None
     tags: Optional[List[str]] = None
+    # Why this edit was made; kept on the version it creates.
+    note: Optional[str] = None
+
+
+class SkillPin(BaseModel):
+    # The version an attached skill serves to its agent; None follows the latest.
+    version: Optional[int] = None
+
+
+class SkillSync(BaseModel):
+    # Scan this workspace's .claude/skills folders (workspace folder, project
+    # repositories, project folders); only one project's when project_id is set.
+    workspace: str
+    project_id: Optional[str] = None
+
+
+class SkillImportMarkdown(BaseModel):
+    # A SKILL.md pasted or uploaded as text: frontmatter (name, description) + body.
+    workspace: str
+    content: str
+    agent_id: str = ""
 
 
 class SkillSharingUpdate(BaseModel):
@@ -161,6 +193,15 @@ class AgentToolsUpdate(BaseModel):
 class AgentDelegatesUpdate(BaseModel):
     # Empty list = no restriction (delegate to any agent in the workspace).
     delegates: List[str] = []
+
+
+class AgentHandoffsUpdate(BaseModel):
+    # Agents this agent may hand the conversation to (chat/handoff.py). Empty
+    # list = no handoff tool. None leaves the list as it is.
+    handoffs: Optional[List[str]] = None
+    # Default history filter: "full", "summary", "last_n:<N>" or "none".
+    # None leaves it as it is.
+    handoff_history: Optional[str] = None
 
 
 class AgentReasoningUpdate(BaseModel):
@@ -467,6 +508,8 @@ class AgentDetail(AgentListItem):
     clarify_gate: Optional[bool] = None
     allow_self_delegation: Optional[bool] = None
     delegates: Optional[List[str]] = None
+    handoffs: Optional[List[str]] = None
+    handoff_history: Optional[str] = None
     episodic_write_enabled: Optional[bool] = None
 
 

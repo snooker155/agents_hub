@@ -1,15 +1,16 @@
 /**
  * The events shared by every send mode once the team- and flow-specific ones
  * are out of the way: delegation nesting, run metadata, reasoning, artifacts,
- * the graph mirror, tool calls, streamed tokens, the final `done`, and the
- * compaction notice. Handles agent mode's single bubble and flow mode's
+ * the graph mirror, tool calls, streamed tokens, a handoff to another agent,
+ * the final `done`, and the compaction notice. Handles agent mode's single bubble and flow mode's
  * per-node bubble alike (via `targetMsgId`); team mode has no such target, so
  * every branch below quietly no-ops for it.
  */
 import { appendIntoDelegation, appendUnderDelegation, mapDelegation, resolveDelegationTool } from '../delegationTimeline';
 import { stripUiBlock } from '../markdown';
 import { reduceGraphRun } from '../../graphRun';
-import { appendLiveThought, buildCompactionNotice, mergeMessageFile } from '../turnState';
+import { appendLiveThought, buildCompactionNotice, genId, mergeMessageFile } from '../turnState';
+import { applyHandoff } from '../handoff';
 import { applyUndelivered, markSteerDelivered } from '../steering';
 
 // Which bubble a per-turn event belongs in: the single assistant bubble in
@@ -389,6 +390,21 @@ function handleAgentEvent(event, ctx) {
         ),
       }));
     }
+  } else if (event.type === 'handoff') {
+    // The agent gave the conversation to another one (chat/handoff.py): its
+    // bubble closes with its own reply, the receiving agent's bubble opens
+    // below it, and every later event of the turn streams there (read
+    // through ctx.assistantId, which the next call picks up). Only a
+    // single-agent turn hands off.
+    if (isMultiAgent) return;
+    const nextId = genId();
+    setConversations((prev) => applyHandoff(prev, convId, assistantId, nextId, event));
+    ctx.assistantId = nextId;
+    if (Array.isArray(state.handoffs)) state.handoffs.push(event);
+    if (event.next_run_id) {
+      state.runId = event.next_run_id;
+      setActiveRunId(event.next_run_id);
+    }
   } else if (event.type === 'done') {
     state.finalPayload = event;
     const resolvedRunId = state.runId || event.run_id || null;
@@ -417,6 +433,8 @@ function handleAgentEvent(event, ctx) {
                     // Service entities this turn touched, rendered as links
                     // under the reply (see EntityLinks).
                     entities: event.entities || m.entities || null,
+                    // The sources the reply cites as [n] (Citations.jsx).
+                    citations: event.citations || m.citations || null,
                     thinking_live: '',
                     error: !event.ok,
                     run_id: resolvedRunId,

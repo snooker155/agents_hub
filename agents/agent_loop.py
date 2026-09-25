@@ -13,7 +13,10 @@ steps and nowhere else:
 * an agent with a hundred tools should see a short list and a way to look the
   rest up (tool search, ``agents/loop_ext/tool_search.py``);
 * the model call itself may need a fallback model behind it, or strict tool
-  schemas (``agents/loop_ext/fallback.py``, ``agents/loop_ext/structured.py``).
+  schemas (``agents/loop_ext/fallback.py``, ``agents/loop_ext/structured.py``);
+* a tool that has done what the turn was for (a conversation handoff,
+  tools/handoff.py) has to end the turn without another model call
+  (:func:`end_turn`, and ``return_direct`` honoured through tool wrappers).
 
 So the chain is rebuilt here with the same four stages and a hook between each.
 Every hook is an optional method on a :class:`LoopExtension`; an extension
@@ -87,6 +90,10 @@ class LoopState:
     #: policy's classifier, a guardrail judge, a schema repair): one entry per
     #: call with its tokens, priced at its own model (common/aux_usage.py).
     aux_calls: List[Dict[str, Any]] = field(default_factory=list)
+    #: A tool that finished what the turn was for ended it (:func:`end_turn`):
+    #: ``{"tool", "output", "prefer_model_text"}``. The next pass of the loop
+    #: answers with it instead of calling the model; None while the loop goes on.
+    ended_by: Optional[Dict[str, Any]] = None
     #: Free-form per-extension working state, never serialised.
     scratch: Dict[str, Any] = field(default_factory=dict)
 
@@ -115,6 +122,8 @@ class LoopState:
             out["tool_decisions"] = [dict(d) for d in self.tool_decisions]
         if self.aux_calls:
             out["aux_calls"] = [dict(a) for a in self.aux_calls]
+        if self.ended_by:
+            out["ended_by_tool"] = str(self.ended_by.get("tool") or "")
         return out
 
 
@@ -163,6 +172,93 @@ def pop_cancelled_summary(run_id: str) -> Dict[str, Any]:
     with _CANCELLED_LOCK:
         state = _CANCELLED.pop(str(run_id or ""), None)
     return state.summary() if state is not None else {}
+
+
+def end_turn(output: str, *, tool: str = "", prefer_model_text: bool = False) -> bool:
+    """Called by a tool that has done what the turn was for: end the turn now.
+
+    LangChain's ``return_direct`` is a fixed property of a tool, so a tool
+    that sometimes succeeds and sometimes refuses (and wants the model to try
+    again) cannot use it. This is the per-call form: the loop's next pass
+    answers with *output* without calling the model again. With
+    ``prefer_model_text`` the answer is what the model said to the user
+    alongside the call when it said anything, and *output* only otherwise.
+
+    Returns False when no loop is running in this context (the tool was
+    called outside an agent run), True once the turn is set to end. The first
+    call wins; a second tool ending the same turn changes nothing.
+    """
+    state = current_state()
+    if state is None:
+        return False
+    if state.ended_by is None:
+        state.ended_by = {"tool": str(tool or ""), "output": str(output or ""),
+                          "prefer_model_text": bool(prefer_model_text)}
+    return True
+
+
+def _text_of(content: Any) -> str:
+    """The plain text of a message's content (a string or a block list)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            str(b.get("text") or "") if isinstance(b, dict) else str(b)
+            for b in content
+            if not isinstance(b, dict) or b.get("type") in (None, "text", "output_text")
+        )
+    return ""
+
+
+def _model_text_of_last_step(steps: Sequence[Any]) -> str:
+    """What the model wrote to the user in the message that made the last
+    tool calls, from the action's ``message_log``; empty when it wrote none."""
+    if not steps:
+        return ""
+    action = steps[-1][0] if isinstance(steps[-1], (tuple, list)) else None
+    for message in reversed(list(getattr(action, "message_log", None) or [])):
+        text = _text_of(getattr(message, "content", "")).strip()
+        if text:
+            return text
+    return ""
+
+
+def _is_return_direct(tool: Any) -> bool:
+    """Whether a tool, or the tool a wrapper holds (``.inner``: the approval
+    guard and the think gate wrap tools without copying the flag), is
+    ``return_direct``."""
+    for _ in range(4):
+        if tool is None:
+            return False
+        if getattr(tool, "return_direct", False):
+            return True
+        tool = getattr(tool, "inner", None)
+    return False
+
+
+def _finish_output(state: LoopState, steps: Sequence[Any], by_name: Dict[str, Any]) -> Optional[str]:
+    """The text the turn ends with, when a tool ended it; None otherwise.
+
+    Two ways a tool ends a turn: :func:`end_turn` from inside the call, and a
+    ``return_direct`` tool. The executor honours ``return_direct`` by itself
+    only when it was the single call of its step and the tool object carries
+    the flag; a parallel call or a wrapped tool reaches the next pass of the
+    loop instead, and ends the turn here.
+    """
+    ended = state.ended_by
+    if ended is not None:
+        output = str(ended.get("output") or "")
+        if ended.get("prefer_model_text"):
+            return _model_text_of_last_step(steps) or output
+        return output
+    for step in reversed(list(steps or [])):
+        try:
+            action, observation = step
+        except (TypeError, ValueError):
+            continue
+        if _is_return_direct(by_name.get(getattr(action, "tool", ""))):
+            return str(observation)
+    return None
 
 
 def new_state(agent: Any = None, **kwargs: Any) -> LoopState:
@@ -302,6 +398,7 @@ def build_agent_runnable(llm: Any, tools: List[Any], prompt: Any,
 
     exts = list(extensions or [])
     all_tools = list(tools)
+    by_name = {getattr(t, "name", ""): t for t in all_tools}
 
     def _bind(model: Any, state: LoopState, selected: List[Any]) -> Runnable:
         kwargs: Dict[str, Any] = {}
@@ -329,8 +426,16 @@ def build_agent_runnable(llm: Any, tools: List[Any], prompt: Any,
 
     def _route(inputs: Dict[str, Any]) -> Runnable:
         state = current_state() or LoopState()
-        state.model_calls += 1
         steps = inputs.get("intermediate_steps") or []
+        # A tool ended the turn (end_turn, or a return_direct tool the
+        # executor did not stop on by itself): answer with its text instead of
+        # calling the model. The parser reads a message without tool calls as
+        # the run's final answer.
+        finished = _finish_output(state, steps, by_name)
+        if finished is not None:
+            from langchain_core.messages import AIMessage
+            return RunnableLambda(lambda _x, _text=finished: AIMessage(content=_text))
+        state.model_calls += 1
         scratchpad = _format_steps(steps)
         payload = dict(inputs)
         for ext in exts:
@@ -365,6 +470,7 @@ __all__ = [
     "LoopState",
     "build_agent_runnable",
     "current_state",
+    "end_turn",
     "load_extensions",
     "keep_cancelled",
     "new_state",

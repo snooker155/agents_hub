@@ -94,6 +94,14 @@ def _file_path(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
     return f"/workspaces/{quote(workspace)}?tab=files&file={quote(entity_id)}"
 
 
+def _workspace_file_label(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
+    """A workspace file (files/service.py) is linked by id; a deleted one
+    has no page left, so it drops out of the list."""
+    from files.service import get_file
+    record = get_file(entity_id)
+    return record["name"] if record else None
+
+
 KindSpec = Dict[str, Any]
 
 KINDS: Dict[str, KindSpec] = {
@@ -139,6 +147,14 @@ KINDS: Dict[str, KindSpec] = {
         "noun": "File",
         "path": _file_path,
         "label": lambda eid, meta: eid,
+    },
+    # A workspace file object (docs/files.md), unlike "file" above, which is
+    # a path in the workspace folder.
+    "workspace_file": {
+        "icon": "🗂️",
+        "noun": "Workspace file",
+        "path": lambda eid, meta: f"/files?file={quote(eid)}",
+        "label": _workspace_file_label,
     },
 }
 

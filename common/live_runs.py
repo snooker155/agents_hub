@@ -274,6 +274,18 @@ def _apply(turn: Dict[str, Any], event: Dict[str, Any]) -> None:
         body = str(event.get("content") or "")
         if body:
             turn["text"] = _clip(f"{turn['text']}\n\n**{who}**\n{body}" if turn["text"] else f"**{who}**\n{body}")
+    elif kind == "handoff":
+        # The conversation changed hands mid-turn (chat/handoff.py): what
+        # follows is the receiving agent's answer, so a viewer who arrives now
+        # catches up on that agent's text, not the handing agent's.
+        turn["agent_id"] = str(event.get("to_agent_id") or turn.get("agent_id") or "")
+        turn["text"] = ""
+        turn["thinking_live"] = ""
+        turn["handoffs"] = (list(turn.get("handoffs") or []) + [{
+            k: event.get(k) for k in ("from_agent_id", "from_agent_name", "to_agent_id",
+                                      "to_agent_name", "reason", "history_filter",
+                                      "run_id", "next_run_id", "from_response")
+        }])[-8:]
     elif kind == "error":
         turn["status"] = "failed"
         turn["error"] = str(event.get("error") or event.get("message") or "")

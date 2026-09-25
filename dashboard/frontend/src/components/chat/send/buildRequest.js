@@ -82,8 +82,11 @@ function buildStreamRequestBody({
     history: historyPayload,
     attachments: (pendingAttachments || []).map((a) => ({
       filename: a.filename,
-      content: a.content,
+      // A workspace file travels as its id; the server loads its text
+      // (chat/attachments.py), so the content is not sent again.
+      content: a.file_id ? '' : a.content,
       store_to_workspace: Boolean(a.store_to_workspace && selectedWorkspace),
+      ...(a.file_id ? { file_id: a.file_id } : {}),
     })),
     // Pointers only — the server renders each entity into the prompt at
     // request time (chat/references.py), so nothing stale is sent.

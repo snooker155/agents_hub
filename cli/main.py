@@ -939,11 +939,22 @@ def chat(
             # well go through.
             continue
 
+        # A handoff (docs/handoffs.md): each handing agent's reply, a line
+        # naming who took over, then the answer. The session follows the
+        # conversation to the agent that answered.
+        history.append({"role": "user", "content": user_input})
+        for h in result.get("handoffs") or []:
+            said = str(h.get("from_response") or "")
+            console.print(f"\n[bold cyan]{h.get('from_agent_id')}[/bold cyan] > {said}")
+            console.print(f"[dim]handed over to {h.get('to_agent_name') or h.get('to_agent_id')}: "
+                          f"{h.get('reason') or ''}[/dim]")
+            history.append({"role": "assistant", "content": said})
+        agent_id = result.get("agent_id") or agent_id
+
         response = result.get("response", "")
         console.print(f"\n[bold cyan]{agent_id}[/bold cyan] > {response}")
 
         # Accumulate history for multi-turn context
-        history.append({"role": "user", "content": user_input})
         history.append({"role": "assistant", "content": response})
 
 

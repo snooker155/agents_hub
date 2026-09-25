@@ -484,6 +484,37 @@ class Settings(BaseSettings):
     # Upper bound on the per-call timeout an agent may ask for, in seconds.
     code_runner_max_timeout: int = Field(
         default=300, validation_alias=AliasChoices("CODE_RUNNER_MAX_TIMEOUT", "code_runner_max_timeout"))
+    # Which sandbox/registry.py provider a run gets when its environment does
+    # not name one explicitly (sandbox_provider "inherit" or no environment
+    # at all): "docker" (default), "local", "e2b" or "modal".
+    code_runner_provider: str = Field(
+        default="docker", validation_alias=AliasChoices("CODE_RUNNER_PROVIDER", "code_runner_provider"))
+
+    # ── Remote sandboxes (sandbox/e2b.py, sandbox/modal.py) ────────────────────
+    # e2b.dev. Optional dependency (requirements-sandbox.txt); the provider
+    # reports itself unavailable without a key, same as a missing docker.
+    e2b_api_key: str = Field(
+        default="", validation_alias=AliasChoices("E2B_API_KEY", "e2b_api_key"))
+    # Sandbox template name; e2b's own default template when empty.
+    e2b_template: str = Field(
+        default="", validation_alias=AliasChoices("E2B_TEMPLATE", "e2b_template"))
+    # modal.com. Optional dependency (requirements-sandbox.txt).
+    modal_token_id: str = Field(
+        default="", validation_alias=AliasChoices("MODAL_TOKEN_ID", "modal_token_id"))
+    modal_token_secret: str = Field(
+        default="", validation_alias=AliasChoices("MODAL_TOKEN_SECRET", "modal_token_secret"))
+    # A registry image name; modal.Image.debian_slim() (modal's own base) when empty.
+    modal_image: str = Field(
+        default="", validation_alias=AliasChoices("MODAL_IMAGE", "modal_image"))
+
+    # ── Egress gateway (managers/container_manager.py, environments/egress.py) ─
+    # The image the enforced-network-policy gateway container runs: a tiny
+    # TCP relay onto the egress proxy, so a container fenced to the internal,
+    # no-route-out network (managers.container_manager.EGRESS_NETWORK_NAME)
+    # can still reach it. Any image with `socat` on its PATH works.
+    egress_gateway_image: str = Field(
+        default="alpine/socat:latest",
+        validation_alias=AliasChoices("AGENTS_HUB_EGRESS_GATEWAY_IMAGE", "egress_gateway_image"))
 
     # ── Retention ─────────────────────────────────────────────────────────────
     # Daily maintenance deletes terminal run records (and their payloads/logs)

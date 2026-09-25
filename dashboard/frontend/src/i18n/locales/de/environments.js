@@ -50,6 +50,18 @@ export default {
     none: 'Kein Netzwerk',
     limited: 'Eingeschränkt',
     allowPackageManagers: 'Paketmanager (pip, npm) innerhalb der Beschränkung erlauben',
+    enforcementHint: 'Ist der Egress-Proxy aktiv (AGENTS_HUB_EGRESS_PROXY=1), wird ein Docker-Lauf mit eingeschränktem oder ohne Netzwerk in ein Netz ohne Route nach außen eingesperrt, sodass ein Prozess, der den Proxy ignoriert, nirgendwohin kommt. Ohne Proxy halten nur die eigenen Werkzeuge des Hubs und, bei wohlverhaltenen Clients, der Proxy die Grenze ein. Siehe docs/sandboxes.md.',
+  },
+  sandbox: {
+    label: 'Sandbox-Anbieter',
+    hint: 'Wo run_code und das Code-Panel im Chat einen Ausschnitt für diese Umgebung ausführen. „Übernehmen" verwendet CODE_RUNNER_PROVIDER und fällt auf den lokalen Prozess zurück, wenn Docker nicht verfügbar und dies erlaubt ist.',
+    inherit: 'Übernehmen',
+    docker: 'Docker',
+    local: 'Lokaler Prozess (ohne Isolation)',
+    e2b: 'E2B (extern)',
+    modal: 'Modal (extern)',
+    available: 'verfügbar',
+    unavailable: 'nicht verfügbar',
   },
   limits: {
     label: 'Ressourcenlimits',

@@ -21,6 +21,11 @@ from pydantic import BaseModel, Field, field_validator
 
 Mode = Literal["inherit", "local", "docker"]
 NetworkType = Literal["unrestricted", "none", "limited"]
+#: sandbox/registry.py provider names, plus "inherit" (the run's own default:
+#: CODE_RUNNER_PROVIDER, then the historical local fallback — see
+#: sandbox.registry.resolve). Only the tool run_code and the code view read
+#: this; a task or node's own execution (``mode``, above) is unaffected.
+SandboxProviderType = Literal["inherit", "docker", "local", "e2b", "modal"]
 
 #: Package registries a ``limited`` network may reach when
 #: ``allow_package_managers`` is on: pip's index and file host, npm's registry
@@ -238,6 +243,9 @@ class Environment(BaseModel):
     network: NetworkPolicy = Field(default_factory=NetworkPolicy)
     limits: Limits = Field(default_factory=Limits)
     env: Dict[str, str] = Field(default_factory=dict)
+    #: run_code / the code view's sandbox (sandbox/registry.py); "inherit"
+    #: leaves the choice to CODE_RUNNER_PROVIDER (see sandbox.registry.resolve).
+    sandbox_provider: SandboxProviderType = "inherit"
     is_default: bool = False
     archived_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
@@ -283,7 +291,7 @@ class Environment(BaseModel):
 
 
 __all__ = [
-    "Environment", "NetworkPolicy", "Limits", "Mode", "NetworkType",
+    "Environment", "NetworkPolicy", "Limits", "Mode", "NetworkType", "SandboxProviderType",
     "PACKAGE_MANAGER_HOSTS", "normalize_host", "validate_packages",
     "validate_image", "validate_env", "validate_name", "now_iso",
 ]

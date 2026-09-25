@@ -115,6 +115,12 @@ call returns after the launch; `get_agent_status_tool` and `get_task_result` on
 the subtask id read the outcome later, and the subtask shows under its parent
 on the task page with the model the run used.
 
+A handoff is the other kind of hand-over: instead of asking another agent for a
+result, the agent gives the conversation to it, and that agent answers the user
+from then on. The targets (`handoffs`) and the history the receiver sees by
+default (`handoff_history`) are set on the agent's Tools tab. See
+[handoffs](handoffs.md).
+
 ## Gotchas
 
 - Editing a system agent marks it as yours and stops it tracking shipped

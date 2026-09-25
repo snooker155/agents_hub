@@ -409,6 +409,16 @@ def cors_options(env_value: Optional[str]) -> dict:
 
 app.add_middleware(CORSMiddleware, **cors_options(os.getenv("ALLOW_ORIGINS", "")))
 
+# The chat widget's edge (widgets/edge.py, docs/widget.md): serves /widget.js
+# and answers CORS for /api/widgets/public/* per widget, from that widget's
+# allowed origins and without credentials. Registered after CORSMiddleware so
+# it is the outermost layer: it answers a widget preflight before the global
+# CORS setup would refuse an origin it does not know, and replaces that
+# setup's headers on the way out, so ALLOW_ORIGINS stays exactly as narrow
+# as it is for the dashboard.
+from widgets.edge import WidgetEdgeMiddleware
+app.add_middleware(WidgetEdgeMiddleware)
+
 # ============================================================================
 # Root Endpoint
 # ============================================================================
@@ -592,6 +602,12 @@ from routes import (
 for _loop_router in (tool_policy_router, outcomes_router, steering_router, guardrails_router,
                      agent_loop_settings_router, memory_versions_router):
     app.include_router(_loop_router.router)
+
+# Fourth-cycle stage 3: files a workspace keeps by id (chat, memory, tasks and
+# evals reuse them), and the chat widget an outside site embeds with one tag.
+from routes import files as files_router, widget as widget_router
+app.include_router(files_router.router)
+app.include_router(widget_router.router)
 
 # External domain: token-authenticated access for exposed nodes
 app.include_router(external.router)

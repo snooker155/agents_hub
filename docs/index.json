@@ -51,7 +51,9 @@
         "Prompt caching",
         "Attachments and references",
         "Slash commands",
+        "Code panel",
         "Delegation from chat",
+        "Handoffs",
         "Costs and approvals",
         "Telegram"
       ]
@@ -213,6 +215,7 @@
       "headings": [
         "Scope and defaults",
         "Mode, image and packages",
+        "Sandbox provider",
         "Limits",
         "Network",
         "Plain variables",
@@ -238,9 +241,11 @@
         "The pieces",
         "Targets",
         "Cases from tasks",
+        "Cases with files",
         "Graders, cheapest first",
         "Trajectory graders",
         "Cost",
+        "Batch mode",
         "Repeats and variance",
         "Diff of two runs",
         "The injection audit",
@@ -454,9 +459,6 @@
         "Episodes",
         "Getting knowledge in",
         "RAG",
-        "Chunking",
-        "Search: keyword and vector, fused",
-        "Deletion and reindexing",
         "Version history",
         "Gotchas"
       ]
@@ -620,16 +622,6 @@
         "Exporting runs as spans",
         "The usual diagnoses",
         "Doctor",
-        "Check: migrations",
-        "Check: provider",
-        "Check: stale runs",
-        "Check: run queue",
-        "Check: outbox",
-        "Check: disk",
-        "Check: browser",
-        "Check: docker",
-        "Check: frontend build",
-        "Check: system workspace",
         "The Service Agent"
       ]
     },
@@ -676,17 +668,23 @@
     {
       "id": "skills",
       "title": "Skills",
-      "summary": "A skill is a reusable procedure an agent can follow: written once, surfaced when it is relevant to the task at hand.",
+      "summary": "Reusable procedures agents follow: steps or Markdown instructions, attached per agent, versioned with history, restore and pinning, installed copies that know when their original moved on, skills synced from a project's .claude/skills folders, SKILL.md import and export.",
       "surface": "Skills Catalog",
       "related": [
         "agents",
         "marketplace",
-        "memory"
+        "memory",
+        "projects"
       ],
       "headings": [
         "The part that trips everyone up",
         "How they surface",
-        "Writing one"
+        "Writing one",
+        "Versions",
+        "Installed copies and their original",
+        "Skills from a repository",
+        "SKILL.md in and out",
+        "API"
       ]
     },
     {
@@ -725,11 +723,11 @@
       ],
       "headings": [
         "Status",
-        "Transition table",
         "Budget pause",
         "Priority and deadlines",
         "Subtasks and decomposition",
         "Results",
+        "Files",
         "Outcome",
         "Agent version",
         "Gotchas"
@@ -788,6 +786,7 @@
         "The capability model",
         "Why capabilities and not tool names",
         "Consequences you will actually hit",
+        "Delegation counts as holding the capability",
         "The browser tools",
         "run_code",
         "Group aliases",
@@ -1276,7 +1275,9 @@
         "Model names",
         "Authentication",
         "Streaming and tools",
+        "Agents as models",
         "Token accounting",
+        "Tokens per day",
         "Audit",
         "Routes",
         "Gotchas"
@@ -1427,6 +1428,90 @@
         "When checks run",
         "Findings and audit",
         "Managing guardrails"
+      ]
+    },
+    {
+      "id": "widget",
+      "title": "Chat widget",
+      "summary": "A chat bubble for your own website: one script tag talking to one agent of a workspace, with conversations kept on the hub, streamed replies and attachments, guarded by a publishable key, an origin allowlist, signed visitor tokens and per-widget limits.",
+      "surface": "Widgets",
+      "related": [
+        "hub-as-provider",
+        "chat",
+        "api-keys",
+        "audit"
+      ],
+      "headings": [
+        "The snippet",
+        "What a widget is",
+        "Security model",
+        "What the visitor sees, and what they do not",
+        "Threads, for the owner",
+        "The live preview",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "handoffs",
+      "title": "Handoffs",
+      "summary": "Give a chat conversation to another agent: targets, history filters (full, summary, last_n, none), limits, events, and handoff versus delegation.",
+      "surface": "Agents",
+      "related": [
+        "chat",
+        "agents",
+        "agent-loop",
+        "telegram",
+        "widget"
+      ],
+      "headings": [
+        "Handoff or delegation",
+        "Setting it up",
+        "History filters",
+        "Limits",
+        "What happens in a turn",
+        "Events",
+        "Surfaces"
+      ]
+    },
+    {
+      "id": "sandboxes",
+      "title": "Sandboxes",
+      "summary": "Where run_code and the Chat code panel run snippets: docker, local, e2b or modal, chosen per environment or by CODE_RUNNER_PROVIDER, with each provider's network policy and the enforced docker network that has no route out except the egress proxy.",
+      "surface": "Environments",
+      "related": [
+        "environments",
+        "containers",
+        "tools-and-capabilities",
+        "service-health"
+      ],
+      "headings": [
+        "Choosing a provider",
+        "The providers",
+        "Network policy per provider",
+        "Setup",
+        "The `run_code` tool and the code view",
+        "Doctor"
+      ]
+    },
+    {
+      "id": "files",
+      "title": "Workspace files",
+      "summary": "Files uploaded once and referenced by id in chat, memory, tasks and evals, plus numbered RAG citations in answers.",
+      "surface": "Files",
+      "related": [
+        "chat",
+        "memory",
+        "tasks",
+        "evals"
+      ],
+      "headings": [
+        "The object",
+        "Limits",
+        "Text for a model",
+        "Where it is used",
+        "Citations",
+        "API"
       ]
     }
   ]

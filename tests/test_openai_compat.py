@@ -123,7 +123,8 @@ def _events(text: str):
 def test_models_lists_enabled_models_only(single, served, client):
     body = client.get("/v1/models").json()
     assert body["object"] == "list"
-    ids = [m["id"] for m in body["data"]]
+    # Agents are listed too (agent:<id>, test_openai_compat_agents.py).
+    ids = [m["id"] for m in body["data"] if m["owned_by"] != "agents-hub"]
     assert set(ids) == {"openai/gpt-4o", "openai/shared-id", "anthropic/claude-x",
                         "anthropic/shared-id"}
     gpt = next(m for m in body["data"] if m["id"] == "openai/gpt-4o")

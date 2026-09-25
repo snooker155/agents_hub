@@ -35,6 +35,16 @@ time instead of on a run's first use, and answers `{ok, image, error}`. This
 has nothing to do with a `local`-mode environment, which runs no container at
 all.
 
+## Sandbox provider
+
+`sandbox_provider` picks which [sandbox](sandboxes.md) `run_code` and the
+Chat code panel use for a run in this environment: `inherit` (the default:
+`CODE_RUNNER_PROVIDER`, `docker` unless set otherwise, falling back to
+`local` when docker is unavailable and `CODE_RUNNER_FALLBACK=local`),
+`docker`, `local`, `e2b` or `modal`. This is separate from `mode` above,
+which is where the *agent itself* runs; `sandbox_provider` is only where a
+snippet the agent hands to `run_code` runs.
+
 ## Limits
 
 `memory`, `cpus` and `pids_limit` on a docker-mode environment become the
@@ -53,11 +63,10 @@ Three types:
 - **none**: the same fence with an empty host list, so nothing but the
   infrastructure hosts below stay reachable.
 
-This is not Docker's `--network none`. A container still joins the normal
-agents-hub bridge network whatever the type, because cutting a run off from
-the network entirely would also cut it off from its own model provider, and
-an LLM agent with no model to call cannot do anything. Instead, two things
-enforce the fence:
+This is not Docker's `--network none`: cutting a docker-mode run off from the
+network entirely would also cut it off from its own model provider, and an
+LLM agent with no model to call cannot do anything. Three things enforce the
+fence, from softest to hardest:
 
 - The hub's own `tools/web.py` (fetch and search results) and `tools/browser.py`
   (navigation) read `AGENTS_HUB_NETWORK` and `AGENTS_HUB_ALLOWED_HOSTS` from
@@ -66,12 +75,23 @@ enforce the fence:
 - The egress proxy, when enabled, holds every client that honours the
   `HTTP_PROXY`/`HTTPS_PROXY` variables (`requests`, `httpx`, `curl`, `pip`,
   `npm`, `git`) to the same allowlist.
+- **When the egress proxy is enabled and the run is a docker-mode container**
+  (a task run, or a `run_code`/code-view snippet through the `docker` sandbox
+  provider), `managers/container_manager.py` fences the container itself: it
+  joins an internal, no-route-out network (`agents-hub-egress`) instead of
+  the ordinary `agents-hub` bridge, and reaches the egress proxy only through
+  a small gateway container attached to both networks. A process that opens
+  its own socket and ignores the proxy variables entirely now has nowhere to
+  go: the internal network has no default route out, unlike the ordinary
+  bridge. See [containers](containers.md) and [sandboxes](sandboxes.md) for
+  how the gateway is set up, and the doctor's `sandbox` check for whether it
+  is active.
 
-**What this does not do.** A process that opens sockets directly and ignores
-the proxy variables is not stopped by the proxy, whatever the network type.
-The hub's web and browser tools are the part of the fence that holds
-regardless; the proxy is the part that additionally holds well-behaved
-command-line and library clients.
+**What this does not do without the egress proxy.** With the proxy off, a
+docker-mode container stays on the ordinary `agents-hub` bridge (today's
+behaviour, unchanged) and a process that opens sockets directly and ignores
+the proxy variables is not stopped by anything at the network level; only the
+hub's own web and browser tools hold regardless of the proxy.
 
 ### The egress proxy
 
@@ -149,4 +169,4 @@ and recent runs tied to it, each linking back to its own page.
   worker mode) that launched the run, since the URL a run is handed names
   `127.0.0.1` or `host.docker.internal`, not a shared address.
 
-Related: [containers](containers.md), [nodes](nodes.md), [deployments](deployments.md), [scheduling](scheduling.md), [service-health](service-health.md).
+Related: [sandboxes](sandboxes.md), [containers](containers.md), [nodes](nodes.md), [deployments](deployments.md), [scheduling](scheduling.md), [service-health](service-health.md).

@@ -59,6 +59,8 @@ import {
   Container,
   Rocket,
   ShieldCheck,
+  MessageSquareCode,
+  FileStack,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -305,6 +307,10 @@ const Layout = ({ children }) => {
         { name: t('nav.tasks'), path: '/tasks', icon: CheckSquare },
         { name: t('nav.plan'), path: '/plan', icon: CalendarClock },
         { name: t('nav.deployments'), path: '/deployments', icon: Rocket },
+        // An agent embedded on another site through one script tag.
+        { name: t('nav.widgets'), path: '/widgets', icon: MessageSquareCode },
+        // Files the workspace keeps by id: chat, memory, tasks and evals reuse them.
+        { name: t('nav.files'), path: '/files', icon: FileStack },
         { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle },
         { name: t('nav.runGroups'), path: '/run-groups', icon: Layers },
         { name: t('nav.messages'), path: '/messages', icon: ScrollText },

@@ -47,8 +47,18 @@ def _run_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
         return 0.0
 
 
+def _batch_factor(provider: str, mode: str) -> float:
+    """What a call costs relative to live in this mode: half for a provider
+    with a batch API in a batch run (evals/batch.py), full otherwise."""
+    if mode != "batch":
+        return 1.0
+    from providers.batch_api import BATCH_PROVIDERS, PRICE_FACTOR
+    return PRICE_FACTOR if (provider or "").lower() in BATCH_PROVIDERS else 1.0
+
+
 def project_cost(evalset: EvalSet, configs: List[RunConfig],
-                 avg_inbound: int = 1500, avg_outbound: int = 500) -> Dict[str, Any]:
+                 avg_inbound: int = 1500, avg_outbound: int = 500,
+                 mode: str = "live") -> Dict[str, Any]:
     """Estimate what a sweep will cost, before spending anything.
 
     A rough per-call token estimate is enough: the number that matters to a user
@@ -57,6 +67,11 @@ def project_cost(evalset: EvalSet, configs: List[RunConfig],
 
     A config's ``repeats`` multiplies its own cell count directly: three
     repeats of every case is three times the calls, not a rounding footnote.
+
+    ``mode="batch"`` prices agent cells and judge calls on OpenAI and
+    Anthropic at the batch rate (half). Cells that turn out to need a tool,
+    or targets that are not agents, run live at full price, so a batch
+    estimate is a floor, not a quote.
     """
     judge_specs = [g for g in evalset.graders if g.kind in COSTED_GRADERS]
 
@@ -68,6 +83,8 @@ def project_cost(evalset: EvalSet, configs: List[RunConfig],
         cells += cfg_cells
         provider, model = _resolve_model(cfg)
         unit = _run_cost(provider, model, avg_inbound, avg_outbound)
+        if cfg.target_kind == "agent":
+            unit *= _batch_factor(provider, mode)
         per_config.append({
             "label": cfg.resolved_label(),
             "model": model,
@@ -87,7 +104,8 @@ def project_cost(evalset: EvalSet, configs: List[RunConfig],
         j_model = str(spec.params.get("model") or "")
         if not j_model and configs:
             j_provider, j_model = _resolve_model(configs[0])
-        judge_cost += cells * _run_cost(j_provider, j_model, 1200, 120)
+        judge_cost += (cells * _run_cost(j_provider, j_model, 1200, 120)
+                       * _batch_factor(j_provider, mode))
     judge_cost = round(judge_cost, 4)
 
     return {
@@ -99,6 +117,7 @@ def project_cost(evalset: EvalSet, configs: List[RunConfig],
         "estimated_grader_cost": judge_cost,
         "estimated_total_cost": round(agent_cost + judge_cost, 4),
         "uses_llm_judge": bool(judge_specs),
+        "mode": mode,
         # `note` stays English for API consumers; `note_key` lets the UI
         # render the same sentence in the user's language.
         "note_key": "estimateNote",
@@ -141,16 +160,40 @@ def _resolve_model(cfg: RunConfig) -> tuple:
     return provider, model
 
 
+def _case_files_block(case: Case, work_dir: Optional[str]) -> str:
+    """The lines naming a case's workspace files: where they were copied
+    (``prepare_work_dir``) or, without a directory, their ids."""
+    if not case.file_ids:
+        return ""
+    from files import service as files_service
+    records = files_service.get_files(case.file_ids)
+    if not records:
+        return ""
+    lines = ["Attached files:"]
+    for record in records:
+        copy = files_service.locate_copy(record, work_dir) if work_dir else None
+        where = f"{copy.name}: " if copy is not None else ""
+        lines.append(f"- {where}{files_service.describe(record)}")
+    if work_dir:
+        lines.append(f"They are in your working directory: {work_dir}")
+    return "\n".join(lines)
+
+
 def compose_input(case: Case, work_dir: Optional[str] = None) -> str:
     """The message a target receives for ``case``.
 
-    A case without an artifact sends its input unchanged. A case with one gets
-    a "Task" block first: the snapshot's title, description and context, the
-    documents it carried, and where its files were written.
+    A case without an artifact or files sends its input unchanged. A case
+    with an artifact gets a "Task" block first: the snapshot's title,
+    description and context, the documents it carried, and where its files
+    were written. A case with workspace files (``file_ids``) gets a block
+    naming them and the directory they were copied into.
     """
     art = case.artifact or {}
+    files_block = _case_files_block(case, work_dir)
     if not art:
-        return case.input
+        if not files_block:
+            return case.input
+        return f"{files_block}\n\n{case.input}" if case.input else files_block
     lines = ["Task"]
     if art.get("title"):
         lines.append(f"Title: {art['title']}")
@@ -164,6 +207,8 @@ def compose_input(case: Case, work_dir: Optional[str] = None) -> str:
             lines += ["", f"Document: {doc.get('name') or 'document'}", str(doc["text"])]
     if work_dir and art.get("files"):
         lines += ["", f"Working files: {work_dir}"]
+    if files_block:
+        lines += ["", files_block]
     block = "\n".join(lines).strip()
     return f"{block}\n\n{case.input}" if case.input else block
 
@@ -252,13 +297,23 @@ TARGET_RUNNERS: Dict[str, Callable[..., Outcome]] = {
 
 def prepare_work_dir(case: Case, eval_run_id: str, workspace: Optional[str],
                      attempt: int = 1) -> Optional[str]:
-    """The isolated directory a case with an artifact runs in, with the
-    artifact's files written; None for a case without one."""
-    if not case.artifact:
+    """The isolated directory a case with an artifact or workspace files runs
+    in, with the artifact's files written and the workspace files copied in;
+    None for a case with neither."""
+    if not case.artifact and not case.file_ids:
         return None
     from evals.snapshot import isolation_dir, materialize_artifact
     directory = isolation_dir(workspace, eval_run_id, case.case_id, attempt)
-    return str(materialize_artifact(case.artifact, directory))
+    if case.artifact:
+        directory = materialize_artifact(case.artifact, directory)
+    if case.file_ids:
+        from files import service as files_service
+        # Only files of the run's own workspace, whatever the stored case says
+        # (the routes refuse others; this holds for a case written elsewhere).
+        own = [r["file_id"] for r in files_service.get_files(case.file_ids)
+               if r.get("workspace") == (workspace or "default")]
+        files_service.materialize(own, directory)
+    return str(directory)
 
 
 def run_case(case: Case, cfg: RunConfig, evalset: EvalSet,
@@ -324,12 +379,18 @@ def run_eval(
     workspace: Optional[str] = None,
     cost_ceiling: Optional[float] = None,
     on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    mode: str = "live",
 ) -> EvalRun:
     """Run every case against every config, grade, aggregate, persist.
 
     ``cost_ceiling`` (USD) stops the sweep when accumulated spend crosses it.
     The workspace budget is re-checked per cell as well, so a sweep cannot walk
     past a hard cap one run at a time.
+
+    ``mode="batch"`` hands the sweep to evals/batch.py: agent cells and judge
+    calls go through the provider batch APIs at half price and the run is
+    ``batch_pending`` until the provider finishes. The ceiling is then checked
+    against the projection up front, since a submitted batch cannot stop half way.
     """
     evalset = store.get_eval_set(eval_set_id)
     if not evalset:
@@ -342,6 +403,13 @@ def run_eval(
         if baseline is None:
             raise ValueError("No configs given and the eval set has no default target")
         configs = [baseline]
+
+    if mode not in ("live", "batch"):
+        raise ValueError(f"unknown eval mode {mode!r} (live or batch)")
+    if mode == "batch":
+        from evals.batch import start_batch_run
+        return start_batch_run(evalset, configs, ws, cost_ceiling=cost_ceiling,
+                               on_progress=on_progress)
 
     run = EvalRun(eval_set_id=eval_set_id, workspace=ws, configs=configs)
     store.save_eval_run(run)

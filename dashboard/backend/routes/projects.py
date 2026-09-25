@@ -1375,9 +1375,11 @@ async def import_from_repo(payload: ProjectImportFromRepo):
     if payload.import_issues:
         issues = await asyncio.to_thread(git_service.run_issue_sync, project)
 
+    skills = await asyncio.to_thread(git_service.sync_project_skills, project)
+
     d = _project_to_dict(project)
     d["folder"] = folder
-    return {"project": d, "cloned": True, "issues": issues}
+    return {"project": d, "cloned": True, "issues": issues, "skills": skills}
 
 
 @router.post("/{project_id}/connect-repo")
@@ -1433,9 +1435,12 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
     if payload.import_issues:
         issues = await asyncio.to_thread(git_service.run_issue_sync, project)
 
+    skills = (await asyncio.to_thread(git_service.sync_project_skills, project)
+              if cloned else None)
+
     d = _project_to_dict(project)
     d["folder"] = folder
-    return {"project": d, "cloned": cloned, "issues": issues}
+    return {"project": d, "cloned": cloned, "issues": issues, "skills": skills}
 
 
 @router.post("/{project_id}/sync-issues")

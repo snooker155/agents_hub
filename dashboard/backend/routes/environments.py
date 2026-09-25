@@ -52,6 +52,7 @@ class EnvironmentCreate(BaseModel):
     limits: Optional[LimitsIn] = None
     env: Dict[str, str] = {}
     is_default: bool = False
+    sandbox_provider: str = "inherit"
 
 
 class EnvironmentUpdate(BaseModel):
@@ -65,6 +66,7 @@ class EnvironmentUpdate(BaseModel):
     limits: Optional[LimitsIn] = None
     env: Optional[Dict[str, str]] = None
     is_default: Optional[bool] = None
+    sandbox_provider: Optional[str] = None
 
 
 def _principal(request: Request):
@@ -124,6 +126,15 @@ async def resolve_environment(request: Request, workspace: Optional[str] = None,
     except service.EnvironmentServiceError as exc:
         _raise(exc)
     return service.to_dict(env) if env is not None else None
+
+
+@router.get("/sandbox/providers")
+async def sandbox_providers():
+    """Every sandbox/registry.py provider, whether it can run something right
+    now and why not: the Environments page's provider picker and its
+    availability hints."""
+    from sandbox import registry
+    return registry.available()
 
 
 @router.post("")

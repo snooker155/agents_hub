@@ -38,11 +38,14 @@ EVENT_NAME = "audit"
 
 #: Paths the request logger skips: the relays a run's own subprocess makes
 #: (dozens per second, all as the service principal), the live stream, and
-#: the self-authenticating ingest. These describe machinery, not people.
+#: the self-authenticating ingest. These describe machinery, not people. The
+#: chat widget's visitor routes are anonymous traffic from other sites: one
+#: row per message would bury the log; their turns are runs on the Messages
+#: page, and the widget's own changes are audited as ``widget.*``.
 SKIP_PREFIXES = (
     "/api/run-state", "/api/stream", "/api/ingest", "/api/sessions/",
     "/api/instances/", "/api/chat/message", "/api/page-chat", "/api/views/",
-    "/api/audit",
+    "/api/audit", "/api/widgets/public/",
 )
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

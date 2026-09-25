@@ -179,6 +179,18 @@ A docker daemon answers. Fail when agents are set to run in docker; warn when
 `run_code` needs it (no `CODE_RUNNER_FALLBACK=local`); skip otherwise. Fix:
 start Docker, or check that this process can reach its socket.
 
+### Check: sandbox
+
+Every sandbox provider ([docs/sandboxes.md](sandboxes.md): docker, local,
+e2b, modal), whether it can run something right now, and why not (daemon
+down, SDK missing, key missing). Fail when the resolved default provider
+cannot run at all; warn when it can but the egress proxy is off, so a
+`limited`/`none` environment network policy is enforced only by the hub's
+own tool checks rather than by the container network itself; ok when both
+hold. Fix: start Docker (or set `CODE_RUNNER_FALLBACK=local`), install the
+`e2b`/`modal` package and set its key, or set `AGENTS_HUB_EGRESS_PROXY=1` for
+the enforced network policy.
+
 ### Check: frontend build
 
 `dashboard/frontend/dist/index.html` is newer than every file under

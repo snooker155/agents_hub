@@ -21,9 +21,27 @@ class Procedure(BaseModel):
     name: str
     # "When to use this" — matched against task instructions to surface relevant skills
     description: str
-    steps: List[str]
+    # Ordered steps, and/or free Markdown instructions (``body``, what a
+    # SKILL.md holds under its frontmatter). A skill needs at least one of them.
+    steps: List[str] = Field(default_factory=list)
+    body: str = ""
     tags: List[str] = Field(default_factory=list)
-    source: Literal["user", "agent"] = "user"
+    # "repo": imported from a project's .claude/skills folder (memory/skill_import.py);
+    # ``repo`` then says where, and a sync keeps it in step with the folder.
+    source: Literal["user", "agent", "repo"] = "user"
+    # Files next to a repo skill's SKILL.md, relative to its folder; the agent
+    # reads them with ``read_skill_file``. Empty for a hand-written skill.
+    resources: List[str] = Field(default_factory=list)
+    # SKILL.md ``allowed-tools``: informational, shown on the Skills page.
+    allowed_tools: List[str] = Field(default_factory=list)
+    # {"dir", "project_id", "root", "sha256", "synced_at", "missing"} for a repo skill.
+    repo: Optional[dict] = None
+    # Current version number in memory/skill_versions.py (0 before the first save
+    # that recorded history, i.e. a skill written by an older build).
+    version: int = 0
+    # On a skill attached to an agent: serve this version of it instead of the
+    # current one, so the agent keeps the text it was tested with.
+    pinned_version: Optional[int] = None
     # The agent this skill is attached to. Empty means it is a catalog entry in
     # its workspace — visible in the Skills page and installable onto an agent,
     # but not injected into anyone's prompt until it is.
@@ -33,8 +51,10 @@ class Procedure(BaseModel):
     # default (a skill belongs to the workspace that authored it), on once the
     # author publishes it, at which point any workspace may install a copy.
     shared: bool = False
-    # Set on an installed copy, pointing at the published skill it came from.
+    # Set on an installed copy, pointing at the published skill it came from,
+    # and the version of that skill the copy holds (for "update available").
     origin_skill_id: Optional[str] = None
+    origin_version: Optional[int] = None
     # None for user-authored; tracked for agent-discovered procedures over time
     success_rate: Optional[float] = None
     use_count: int = 0
@@ -174,13 +194,29 @@ class ProcedureStore:
             return None
         return p if p.workspace == self.workspace else None
 
-    def add(self, procedure: Procedure, timeout: float = 10.0) -> Procedure:
+    def add(self, procedure: Procedure, timeout: float = 10.0, *,
+            version_op: Optional[str] = None, version_note: str = "") -> Procedure:
+        """Store a new skill and record its first version. The version is
+        stamped on ``procedure`` itself, so the caller sees the number."""
+        from memory import skill_versions
+
         if procedure.workspace != self.workspace:
             procedure = procedure.model_copy(update={"workspace": self.workspace})
-        self.docs.put(str(procedure.id), _model_to_dict(procedure))
+        with self.docs.transaction():
+            number = skill_versions.record_if_changed(procedure, op=version_op, note=version_note)
+            if number:
+                procedure.version = number
+            self.docs.put(str(procedure.id), _model_to_dict(procedure))
         return procedure
 
-    def update(self, procedure: Procedure, timeout: float = 10.0) -> bool:
+    def update(self, procedure: Procedure, timeout: float = 10.0, *,
+               version_op: Optional[str] = None, version_note: str = "") -> bool:
+        """Write a skill back. A change to its content (skill_versions.CONTENT_FIELDS)
+        becomes a new version; a bookkeeping change (use count, pin, sharing)
+        does not. A skill saved before history existed gets its stored content
+        recorded first, so the edit that follows is undoable."""
+        from memory import skill_versions
+
         pid = str(procedure.id)
         if procedure.workspace != self.workspace:
             procedure = procedure.model_copy(update={"workspace": self.workspace})
@@ -188,16 +224,32 @@ class ProcedureStore:
             existing = self.docs.get(pid)
             if not isinstance(existing, dict) or existing.get("workspace") != self.workspace:
                 return False
+            if skill_versions.latest(pid) is None:
+                try:
+                    before = Procedure(**existing)
+                except Exception:  # noqa: BLE001 - an unreadable old record just has no baseline
+                    before = None
+                if before is not None:
+                    skill_versions.record_if_changed(
+                        before, op=skill_versions.OP_CREATE, note="content before history")
+            number = skill_versions.record_if_changed(procedure, op=version_op, note=version_note)
+            if number:
+                procedure.version = number
             self.docs.put(pid, _model_to_dict(procedure))
             return True
 
     def delete(self, procedure_id: UUID | str, timeout: float = 10.0) -> bool:
+        from memory import skill_versions
+
         pid = str(procedure_id)
         with self.docs.transaction():
             existing = self.docs.get(pid)
             if not isinstance(existing, dict) or existing.get("workspace") != self.workspace:
                 return False
-            return self.docs.delete(pid)
+            deleted = self.docs.delete(pid)
+            if deleted:
+                skill_versions.delete_history(pid)
+            return deleted
 
 
 def all_procedures() -> List[Procedure]:
@@ -258,12 +310,17 @@ def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> 
         procedures = [p for p in store.load() if p.agent_id == agent_id]
         if not procedures:
             return system_prompt
+        from memory.skill_versions import effective_content
+
         lines = ["\n\n## Available Skills\n",
                  "The following skills are available to you. "
                  "When the task matches a skill, its full steps will be provided automatically. "
                  "Use `get_skill` with the skill's name to fetch its steps.\n"]
         for p in procedures:
-            lines.append(f"- **{p.name}**: {p.description}")
+            # A pinned skill is listed as its pinned version says, so the line
+            # the agent matches on is the one it was tested with.
+            content = effective_content(p)
+            lines.append(f"- **{p.name}**: {content['description']}")
         return system_prompt + "\n".join(lines) + "\n"
     except Exception:
         return system_prompt
@@ -274,7 +331,7 @@ def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> 
 def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
     """Create skill tools scoped to a specific agent+workspace pair.
 
-    Returns three StructuredTool instances with agent_id and workspace baked in,
+    Returns four StructuredTool instances with agent_id and workspace baked in,
     so agents cannot read or write skills belonging to other agents or workspaces.
     """
 
@@ -368,14 +425,28 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
             p.touch()
             store.update(p)
 
-            return json.dumps({
+            # The pinned version's text when the agent is pinned to one.
+            from memory.skill_versions import effective_content
+            content = effective_content(p)
+            result = {
                 "ok": True,
                 "name": p.name,
-                "description": p.description,
-                "steps": p.steps,
-                "tags": p.tags,
+                "description": content["description"],
+                "steps": content["steps"],
+                "tags": content["tags"],
                 "source": p.source,
-            })
+                "version": content["version"],
+            }
+            if content["body"]:
+                result["instructions"] = content["body"]
+            if content["resources"]:
+                result["files"] = content["resources"]
+                result["files_note"] = (
+                    "Read one of these files with read_skill_file(name, path) "
+                    "when the instructions refer to it.")
+            if content["pinned"]:
+                result["pinned"] = True
+            return json.dumps(result)
         except Exception as e:
             return json.dumps({"ok": False, "error": f"get_skill failed: {e}"})
 
@@ -394,11 +465,20 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
     class CreateSkillInput(BaseModel):
         name: str = Field(..., description="Short name for this skill")
         description: str = Field(..., description="When to use this skill — matched against future task instructions")
-        steps: List[str] = Field(..., description="Ordered list of steps that make up this skill")
+        steps: List[str] = Field(default_factory=list, description="Ordered list of steps that make up this skill")
+        instructions: Optional[str] = Field(
+            None, description="Free-form Markdown instructions, instead of or besides steps")
         tags: Optional[str] = Field(None, description="Comma-separated tags, e.g. 'debugging,python,api'")
 
-    def _create_skill(name: str, description: str, steps: List[str], tags: Optional[str] = None) -> str:
+    def _create_skill(name: str, description: str, steps: Optional[List[str]] = None,
+                      instructions: Optional[str] = None, tags: Optional[str] = None) -> str:
         try:
+            steps = [s for s in (steps or []) if str(s).strip()]
+            if not steps and not (instructions or "").strip():
+                return json.dumps({
+                    "ok": False,
+                    "error": "A skill needs steps or instructions.",
+                })
             store = ProcedureStore(workspace)
             target = name.strip().lower()
             for p in store.load():
@@ -412,13 +492,14 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
                 name=name,
                 description=description,
                 steps=steps,
+                body=(instructions or "").strip(),
                 tags=tag_list,
                 source="agent",
                 agent_id=agent_id,
                 workspace=workspace,
             )
             store.add(procedure)
-            return json.dumps({"ok": True, "name": name})
+            return json.dumps({"ok": True, "name": name, "version": procedure.version})
         except Exception as e:
             return json.dumps({"ok": False, "error": f"create_skill failed: {e}"})
 
@@ -433,4 +514,48 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
         args_schema=CreateSkillInput,
     )
 
-    return [list_skills_tool, get_skill_tool, create_skill_tool]
+    # read_skill_file ──────────────────────────────────────────────────────────
+
+    class ReadSkillFileInput(BaseModel):
+        name: Optional[str] = Field(None, description="Name of the skill the file belongs to")
+        path: Optional[str] = Field(
+            None, description="Path of the file as get_skill lists it under 'files'")
+
+    def _read_skill_file(name: Optional[str] = None, path: Optional[str] = None) -> str:
+        try:
+            if not name or not path:
+                return json.dumps({"ok": False,
+                                   "error": "read_skill_file needs both 'name' and 'path'."})
+            target = name.strip().lower()
+            matches = [p for p in ProcedureStore(workspace).load()
+                       if p.agent_id == agent_id and p.name.strip().lower() == target]
+            if not matches:
+                return json.dumps({"ok": False, "error": f"Skill not found: {name!r}"})
+            from memory.skill_import import read_resource
+            from memory.skill_versions import effective_content
+            skill = matches[0]
+            # A pinned skill lists the files of its pinned version; the text
+            # itself is whatever the folder holds now.
+            listed = effective_content(skill)["resources"]
+            if str(path).strip().lstrip("/") not in set(listed):
+                return json.dumps({"ok": False,
+                                   "error": f"{path!r} is not a file of skill {skill.name!r}",
+                                   "files": listed})
+            return json.dumps({"ok": True, "name": skill.name, "path": path,
+                               "content": read_resource(skill, path)})
+        except (FileNotFoundError, PermissionError) as e:
+            return json.dumps({"ok": False, "error": str(e)})
+        except Exception as e:  # noqa: BLE001 - a tool answers with the error instead of aborting the run
+            return json.dumps({"ok": False, "error": f"read_skill_file failed: {e}"})
+
+    read_skill_file_tool = StructuredTool.from_function(
+        name="read_skill_file",
+        description=(
+            "Read one file that belongs to a skill (a script, template or reference note "
+            "kept next to its instructions). get_skill lists a skill's files."
+        ),
+        func=_read_skill_file,
+        args_schema=ReadSkillFileInput,
+    )
+
+    return [list_skills_tool, get_skill_tool, create_skill_tool, read_skill_file_tool]

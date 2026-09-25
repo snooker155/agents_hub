@@ -209,6 +209,15 @@ class AgentSpec:
     # In-loop compaction of old tool results (agents/loop_ext/compaction.py):
     # None = the workspace/global default, True = on, False = off.
     compaction: Optional[bool] = None
+    # ── Conversation handoff (chat/handoff.py, tools/handoff.py) ────────────
+    # Agent ids this agent may hand the conversation to in a chat. Empty means
+    # no handoff tool at all; unlike ``delegates`` an empty list is not "any
+    # agent", because a handoff gives the user away rather than asking for help.
+    handoffs: List[str] = field(default_factory=list)
+    # What of the conversation the receiving agent sees by default: "full",
+    # "summary", "last_n:<N>" or "none" (normalize_handoff_history). A single
+    # handoff may only narrow it.
+    handoff_history: str = "full"
     # External-agent descriptor — empty for built-in agents. When ``type`` is
     # "remote" this holds everything needed to reach the agent over HTTP
     # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
@@ -369,6 +378,11 @@ class AgentSpec:
             d["tool_search"] = self.tool_search
         if self.compaction is not None:
             d["compaction"] = self.compaction
+        # Handoff: only written when set, like the loop policies above.
+        if self.handoffs:
+            d["handoffs"] = list(self.handoffs)
+        if self.handoff_history and self.handoff_history != "full":
+            d["handoff_history"] = self.handoff_history
         # Only write the external-agent descriptor when the record has one, so
         # built-in agents keep a clean JSON shape.
         if self.remote:
@@ -506,6 +520,46 @@ essential_fields = ("id", "name", "type", "entrypoint")
 #: tools/permission_policy.py).
 TOOL_POLICY_MODES = ("always_allow", "always_ask", "auto")
 
+#: History filters of a conversation handoff (``AgentSpec.handoff_history``,
+#: applied by chat/handoff.py), widest first. ``last_n`` takes a count:
+#: ``last_n:<N>`` with N between 1 and HANDOFF_LAST_N_MAX.
+HANDOFF_HISTORY_KINDS = ("full", "summary", "last_n", "none")
+HANDOFF_LAST_N_MAX = 200
+
+
+def parse_handoff_history(raw: Any) -> Optional[tuple]:
+    """``(kind, n)`` for a handoff history filter, or None when it is not one.
+
+    ``n`` is the message count for ``last_n`` and 0 for the other kinds. The
+    parser lives here rather than in chat/handoff.py so the registry can
+    validate a record without importing the chat package (which imports the
+    agent factory, which imports this module).
+    """
+    text = str(raw or "").strip().lower()
+    if text in ("full", "summary", "none"):
+        return text, 0
+    if text.startswith("last_n:"):
+        try:
+            n = int(text.split(":", 1)[1].strip())
+        except ValueError:
+            return None
+        if 1 <= n <= HANDOFF_LAST_N_MAX:
+            return "last_n", n
+    return None
+
+
+def normalize_handoff_history(raw: Any, default: str = "full") -> str:
+    """The canonical spelling of a handoff history filter (``last_n:6``), or
+    *default* when *raw* is empty or not a filter. Loading is lenient on
+    purpose, like the other registry fields: a stored typo falls back to the
+    default instead of taking the whole registry down; the API validates
+    strictly before anything is stored."""
+    parsed = parse_handoff_history(raw)
+    if parsed is None:
+        return default
+    kind, n = parsed
+    return f"last_n:{n}" if kind == "last_n" else kind
+
 
 def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     # basic required fields
@@ -632,6 +686,11 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     tool_search = bool(_raw_ts) if _raw_ts is not None else None
     _raw_cp = ad.get("compaction")
     compaction = bool(_raw_cp) if _raw_cp is not None else None
+    # An agent never hands the conversation to itself: the handoff would end
+    # its turn only to start the same agent again.
+    own_id = str(ad.get("id") or "").strip()
+    handoffs = [h for h in _id_list(ad.get("handoffs")) if h != own_id]
+    handoff_history = normalize_handoff_history(ad.get("handoff_history"))
 
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
@@ -689,6 +748,8 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         guardrails=guardrails,
         tool_search=tool_search,
         compaction=compaction,
+        handoffs=handoffs,
+        handoff_history=handoff_history,
         remote=remote,
     )
 

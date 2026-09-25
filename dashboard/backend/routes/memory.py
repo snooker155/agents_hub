@@ -537,6 +537,8 @@ async def list_rag_files(memory_id: UUID, workspace: str, request: Request):
             "indexed_at": entry.get("indexed_at") if entry else None,
             "chunks": live["chunks"] if live else (entry.get("chunks", 0) if entry else 0),
             "content_hash": live["content_hash"] if live else (entry.get("content_hash") if entry else None),
+            # Set when the file was added from the workspace files (below).
+            "workspace_file_id": entry.get("workspace_file_id") if entry else None,
         })
     return {"files": result}
 
@@ -561,6 +563,63 @@ async def upload_knowledge_file(
     dest.write_bytes(content)
 
     return {"filename": file.filename, "workspace": workspace, "status": "pending"}
+
+
+class FromWorkspaceFile(BaseModel):
+    file_id: str
+
+
+@router.post("/{memory_id}/files/from-workspace")
+async def add_workspace_file(memory_id: UUID, data: FromWorkspaceFile, request: Request):
+    """Add a workspace file (files/service.py) to this pool: copy it into the
+    workspace's knowledge folder and index it the way an uploaded file is
+    indexed. The pool's entry remembers ``workspace_file_id``, so a citation
+    of one of its passages links back to the workspace file."""
+    from files import service as files
+
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory pool not found")
+    _require_pool_visible(request, mem)
+    record = files.get_file(data.file_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Workspace file not found")
+    access.require_visible(identity.request_principal(request), record["workspace"])
+    if mem.workspace and mem.workspace != record["workspace"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This pool belongs to workspace '{mem.workspace}'; the file belongs to "
+                   f"'{record['workspace']}'.")
+
+    kdir = workspace_knowledge_dir(record["workspace"])
+    existed = {p.name for p in kdir.iterdir()} if kdir.exists() else set()
+    copies = files.materialize([record["file_id"]], kdir)
+    if not copies:
+        raise HTTPException(status_code=410, detail="The content of this file is no longer available")
+    path = copies[0]
+    ok, err, chunk_count, meta = ingest_file(path, str(memory_id))
+    if not ok:
+        # A copy made only for this call goes again when it cannot be indexed
+        # (an image, an archive): the knowledge folder should not collect
+        # files no pool can use.
+        if path.name not in existed:
+            path.unlink(missing_ok=True)
+        raise HTTPException(status_code=415 if "Unsupported" in (err or "") else 500, detail=err)
+
+    now = datetime.now(timezone.utc).isoformat()
+    fields = {"status": "indexed", "indexed_at": now, "chunks": chunk_count,
+              "content_hash": meta.get("content_hash", ""), "workspace": record["workspace"],
+              "workspace_file_id": record["file_id"]}
+    existing = _rag_file_entry(mem, path.name)
+    if existing:
+        existing.update(fields)
+    else:
+        mem.rag_files.append({"filename": path.name, **fields})
+    _persist_mem(store, mem)
+    return {"filename": path.name, "workspace": record["workspace"], "status": "indexed",
+            "chunks": chunk_count, "skipped": meta.get("skipped", False),
+            "workspace_file_id": record["file_id"]}
 
 
 @router.post("/{memory_id}/files/{filename}/index")

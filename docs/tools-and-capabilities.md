@@ -164,14 +164,23 @@ the approval gate on, it needs a yes every time.
 ## run_code
 
 `run_code(language, code, timeout, stdin, mount_workspace)` runs a Python,
-Node or Bash snippet in a throwaway container and returns its exit code,
-duration, stdout and stderr, truncated like `run_shell`'s.
+Node or Bash snippet in a throwaway sandbox and returns its exit code,
+duration, which [sandbox provider](sandboxes.md) ran it, stdout and stderr,
+truncated like `run_shell`'s. The provider is resolved by
+`sandbox/registry.py`: the run's environment (`sandbox_provider`) first, else
+`CODE_RUNNER_PROVIDER` (default `docker`); see [sandboxes](sandboxes.md) for
+docker, local, e2b and modal.
 
-The container has no network, a read-only filesystem apart from a small
-`/tmp`, no capabilities, runs as `nobody`, and is limited in memory, CPU and
-process count. It receives no environment from the hub. The workspace is not
-mounted unless the agent asks: `mount_workspace=True` mounts it read-only at
-`/work`, so the code can analyse files but not change them.
+The default (docker) container has no network, a read-only filesystem apart
+from a small `/tmp`, no capabilities, runs as `nobody`, and is limited in
+memory, CPU and process count. It receives no environment from the hub. A
+run whose environment sets network `limited` relaxes that to the
+environment's own allowed hosts instead of a blanket refusal; everything
+else (no environment, or `unrestricted`/`none`) keeps the historical
+no-network sandbox. The workspace is not mounted unless the agent asks:
+`mount_workspace=True` mounts it read-only at `/work` (docker and local
+only; the remote providers, e2b and modal, have no local filesystem to
+mount from and refuse the request instead of silently ignoring it).
 
 ### Why prefer it over run_shell
 
@@ -195,13 +204,26 @@ what it finds. Its default timeout is 60 seconds, capped by
   in a temporary directory with the provider keys scrubbed from its
   environment and the same timeout. That has no network or filesystem
   isolation at all, so it is an opt-in for development machines.
+- `CODE_RUNNER_PROVIDER` (default `docker`): the sandbox provider a run gets
+  when its environment does not name one. `E2B_API_KEY`/`E2B_TEMPLATE` and
+  `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`/`MODAL_IMAGE` configure the e2b and
+  modal providers; see [sandboxes](sandboxes.md).
 
-Capabilities: in its container `run_code` only reads private data (the
-optional workspace mount), since nothing can come in or go out without a
-network. With `CODE_RUNNER_FALLBACK=local` it is classified like `run_shell`,
-the whole trifecta, because the snippet then has the network and the host's
-filesystem. It is not idempotent, and with the approval gate on it needs a
-yes every time, like `run_shell`.
+Capabilities: in the default (docker, network none) sandbox `run_code` only
+reads private data (the optional workspace mount), since nothing can come in
+or go out without a network. With `CODE_RUNNER_FALLBACK=local` it is
+classified like `run_shell`, the whole trifecta, because the snippet then has
+the network and the host's filesystem. It is not idempotent, and with the
+approval gate on it needs a yes every time, like `run_shell`.
+
+In a run whose environment has a `limited` network the snippet reaches that
+environment's hosts, whatever the provider (docker through the enforced
+fence, e2b and modal through their own allowlists). It then gets no
+workspace mount (`mount_workspace` is refused), and the guard classifies it
+at build time, when the run's environment is known, as ingesting untrusted
+text and able to send data out, like the web tools: an agent that also reads
+private files is the whole trifecta and is refused. Any other network
+setting, `unrestricted` included, still gives the snippet no network.
 
 The Chat code panel's Run button (see [chat](chat.md#code-panel) and
 [views](views.md#code)) goes through the same sandbox: `POST

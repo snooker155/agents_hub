@@ -46,6 +46,7 @@ import { SlotData } from '../components/SlotValue';
 import { useI18n, LANGUAGES } from '../i18n';
 import { useConversationStore } from '../components/chatStore';
 import { useLiveChatTurn } from '../components/chatLiveTurn';
+import { liveHandoffBubbles } from '../components/chat/handoff';
 // The bubbles, the cards, the pickers and the panels this page is made of.
 import { genId } from '../components/chat/turnState';
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT, MAX_REFERENCE_COUNT } from '../components/chat/limits';
@@ -282,9 +283,14 @@ export default function Chat() {
     if ((liveTurn.user || '').trim()) {
       bubbles.push({ id: 'live-user', role: 'user', content: liveTurn.user });
     }
+    // A turn that changed hands: each handing agent's reply, then the agent
+    // answering now, under the divider its handoff draws.
+    const handoffs = liveTurn.handoffs || [];
+    bubbles.push(...liveHandoffBubbles(handoffs));
     bubbles.push({
       id: 'live-agent',
       role: 'agent',
+      ...(handoffs.length ? { handoff: handoffs[handoffs.length - 1] } : {}),
       agent_id: liveTurn.agentId || selectedAgent,
       content: liveTurn.text,
       reasoning: liveTurn.thinking,
@@ -519,7 +525,7 @@ export default function Chat() {
 
   const {
     resizeTextarea, onPickFiles, removeAttachment, toggleAttachmentStore,
-    addReferences, removeReference,
+    addReferences, removeReference, addWorkspaceFiles,
   } = useChatComposerInput({
     attachMenuOpen, contextKinds, pendingAttachments, selectedWorkspace,
     setAttachmentError, setContextKinds, setPendingAttachments, setPendingReferences,
@@ -625,7 +631,8 @@ export default function Chat() {
     selectCommand, selectedAgent, selectedFlow, selectedProject, selectedTeam,
     selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
     setCurrentConvId, setGraphRun, setInput, setLoading, setPendingAttachments,
-    setPendingReferences, setProcessInsights, setSessionId, t, targetMode, textareaRef,
+    setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, t, targetMode,
+    textareaRef,
   });
   const jumpToArtifact = useCallback((path) => {
     setTimeout(() => {
@@ -718,7 +725,7 @@ export default function Chat() {
   // ---------------------------------------------------------------------------
   // Published once for the five panes below; see `chat/context.js`.
   const page = {
-    activeRunId, addReferences, agentModel, agentName, agentProvider, agentTopology, agents,
+    activeRunId, addReferences, addWorkspaceFiles, agentModel, agentName, agentProvider, agentTopology, agents,
     artifacts, attachMenuOpen, attachmentError, codeOpen, commandMenuIndex, commandMenuOpen,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage, conversationRunIds,
     conversations, currentConv, currentConvId, currentTelegramBinding, deleteConversation,

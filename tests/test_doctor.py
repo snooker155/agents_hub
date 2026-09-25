@@ -209,6 +209,39 @@ def test_docker(monkeypatch):
     assert doctor.check_docker(_snap())[0] == "warn"
 
 
+def test_sandbox_check(monkeypatch):
+    from sandbox import docker as docker_mod
+    from environments import egress
+
+    monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
+    monkeypatch.setattr(egress, "enabled", lambda: True)
+    status, summary, detail = doctor.check_sandbox(_snap())
+    assert status == "ok" and "docker" in summary
+    assert detail["default_provider"] == "docker"
+    assert detail["providers"]["docker"]["available"] is True
+    assert detail["egress_proxy"] is True
+
+    monkeypatch.setattr(egress, "enabled", lambda: False)
+    status, summary, _ = doctor.check_sandbox(_snap())
+    assert status == "warn" and "egress proxy is off" in summary
+
+    monkeypatch.setattr(docker_mod, "docker_available", lambda: False)
+    status, summary, detail = doctor.check_sandbox(_snap())
+    assert status == "fail"
+    assert detail["providers"]["docker"]["available"] is False
+
+
+def test_sandbox_check_lists_every_provider_even_when_all_unavailable(monkeypatch):
+    from sandbox import docker as docker_mod
+    monkeypatch.setattr(docker_mod, "docker_available", lambda: False)
+    status, _summary, detail = doctor.check_sandbox(_snap())
+    assert status == "fail"
+    assert set(detail["providers"]) == {"docker", "local", "e2b", "modal"}
+    # local is always "available" in the loose sense sandbox/local.py uses,
+    # since it is a plain subprocess with nothing to be unavailable about.
+    assert detail["providers"]["local"]["available"] is True
+
+
 def test_frontend_build(tmp_path, monkeypatch):
     import common.paths as paths
     monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path)

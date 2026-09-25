@@ -93,6 +93,15 @@ of extracting facts from them.
 
 ## RAG
 
+A file already stored in the workspace files is added to a pool with "Add
+from workspace files" on the files tab (`POST
+/api/shared-memory/{pool}/files/from-workspace`): it is copied into the
+knowledge folder and indexed in one step, and the pool remembers the file id
+so a citation of one of its passages links back to it. `search_memory` and
+`recall` number the passages and notes they return for `[n]` citations, and
+search the indexed passages even with no vector store configured (BM25 over
+the chunk store). See [workspace files](files.md).
+
 A workspace knowledge file is indexed per pool under `{pool_id}::{filename}`.
 Indexing writes to two places that stay in step: the chunk store
 (`rag_chunks`, the source of truth for the chunk text, its headings and its

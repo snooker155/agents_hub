@@ -471,19 +471,16 @@ and 10 fully satisfies it. Reply with JSON only, no prose:
 {{"score": <0-10>, "reasoning": "<one or two sentences>"}}"""
 
 
-def grade_llm_judge(output: str, case, params: Dict[str, Any]) -> GradeResult:
-    """Score against an explicit rubric using a model.
-
-    Necessary for open-ended answers and unreliable by nature, so: the rubric is
-    always explicit (a judge with no rubric grades its own preferences), the
-    judged text is fenced as data, and the reasoning is kept in ``extra`` so the
-    number is never shown alone.
-    """
+def judge_request(output: str, case, params: Dict[str, Any]):
+    """The first half of ``llm_judge``: the messages the judge model is sent and
+    the ``(provider, model)`` it is asked of, or a finished ``GradeResult`` when
+    there is nothing to ask (no rubric). Split out so a batch eval run
+    (evals/batch.py) can send every cell's judge call in one provider batch and
+    finish each with :func:`judge_result`."""
     rubric = str(params.get("rubric") or case.rubric or "").strip()
     if not rubric:
         return GradeResult("llm_judge", 0.0, False, "no rubric configured for this case")
 
-    threshold = float(params.get("threshold", 0.7))
     reference_block = ""
     if case.expected:
         reference_block = (
@@ -496,22 +493,14 @@ def grade_llm_judge(output: str, case, params: Dict[str, Any]) -> GradeResult:
         reference_block=reference_block,
         output=(output or "")[:8000],
     )
+    ref = {"provider": str(params.get("provider") or "").strip(),
+           "model": str(params.get("model") or "").strip()}
+    return [("human", prompt)], ref
 
-    try:
-        from agents.agent_utils import build_chat_model
-        llm = build_chat_model(
-            provider=params.get("provider") or None,
-            model=params.get("model") or None,
-            temperature=0.0,
-        )
-        raw = llm.invoke(prompt)
-        text = getattr(raw, "content", raw)
-        if isinstance(text, list):  # some providers return content blocks
-            text = "".join(str(b.get("text", "")) if isinstance(b, dict) else str(b) for b in text)
-    except Exception as e:
-        log.warning("llm_judge failed: %s", e)
-        return GradeResult("llm_judge", 0.0, False, f"judge call failed: {type(e).__name__}: {e}")
 
+def judge_result(text: str, params: Dict[str, Any]) -> GradeResult:
+    """The second half of ``llm_judge``: the judge's reply read as a grade."""
+    threshold = float(params.get("threshold", 0.7))
     parsed = _extract_json(str(text))
     if not isinstance(parsed, dict) or "score" not in parsed:
         return GradeResult(
@@ -531,6 +520,40 @@ def grade_llm_judge(output: str, case, params: Dict[str, Any]) -> GradeResult:
         f"judge scored {raw_score:g}/10 — {reasoning}"[:500],
         {"raw_score": raw_score, "reasoning": reasoning, "threshold": threshold},
     )
+
+
+def _reply_text(reply: Any) -> str:
+    text = getattr(reply, "content", reply)
+    if isinstance(text, list):  # some providers return content blocks
+        text = "".join(str(b.get("text", "")) if isinstance(b, dict) else str(b) for b in text)
+    return str(text or "")
+
+
+def grade_llm_judge(output: str, case, params: Dict[str, Any]) -> GradeResult:
+    """Score against an explicit rubric using a model.
+
+    Necessary for open-ended answers and unreliable by nature, so: the rubric is
+    always explicit (a judge with no rubric grades its own preferences), the
+    judged text is fenced as data, and the reasoning is kept in ``extra`` so the
+    number is never shown alone.
+    """
+    request = judge_request(output, case, params)
+    if isinstance(request, GradeResult):
+        return request
+    messages, ref = request
+    try:
+        from agents.agent_utils import build_chat_model
+        llm = build_chat_model(
+            provider=ref["provider"] or None,
+            model=ref["model"] or None,
+            temperature=0.0,
+        )
+        # One human message, sent as the plain prompt string it always was.
+        text = _reply_text(llm.invoke(messages[0][1]))
+    except Exception as e:
+        log.warning("llm_judge failed: %s", e)
+        return GradeResult("llm_judge", 0.0, False, f"judge call failed: {type(e).__name__}: {e}")
+    return judge_result(text, params)
 
 
 # ── Rubric grader (per criterion) ─────────────────────────────────────────────
@@ -732,20 +755,12 @@ def _match_criteria(expected: List[Dict[str, str]], got: List[Any]) -> List[Dict
     return out
 
 
-def grade_rubric(output: str, case, params: Dict[str, Any],
-                 payload: Optional[Dict[str, Any]] = None) -> GradeResult:
-    """Score every criterion of a markdown rubric with an independent model.
-
-    ``params``: ``rubric`` (falls back to the case's rubric), ``criteria``
-    (``[{name, description}]``; parsed from the rubric when absent),
-    ``grader`` (``"provider/model"`` or ``{provider, model}``) or
-    ``provider``/``model``, ``threshold`` (0..1, optional), ``context`` (the
-    request the work answers; falls back to the case input). ``payload`` is
-    the run's structured payload when the run is known; its tool calls are
-    summarised for the grader. ``extra`` keeps the per-criterion results, the
-    raw reply, the grader model, tokens and cost; a failed or unparseable
-    grading is a fail with ``extra["error"]`` set.
-    """
+def rubric_request(output: str, case, params: Dict[str, Any],
+                   payload: Optional[Dict[str, Any]] = None):
+    """The first half of ``rubric``: ``(messages, ref, state)`` for the grader
+    call, or a finished ``GradeResult`` when there is no rubric. ``state``
+    carries what :func:`rubric_result` needs to read the reply (the criteria,
+    the threshold). Split out for batch eval runs, like :func:`judge_request`."""
     rubric = str(params.get("rubric") or getattr(case, "rubric", None) or "").strip()
     if not rubric:
         return GradeResult("rubric", 0.0, False, "no rubric configured",
@@ -779,55 +794,50 @@ def grade_rubric(output: str, case, params: Dict[str, Any],
         output=_clip_middle((output or "").strip(), _RUBRIC_OUTPUT_LIMIT) or "(the attempt produced no output)",
         trail_block=trail_block,
     )
+    state = {"criteria": criteria, "threshold": threshold}
+    return [("system", _RUBRIC_SYSTEM), ("human", prompt)], ref, state
 
-    extra: Dict[str, Any] = {
-        "criteria": [], "feedback": "", "raw": "", "threshold": threshold,
+
+def _rubric_extra(ref: Dict[str, str], state: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "criteria": [], "feedback": "", "raw": "", "threshold": state["threshold"],
         "grader": dict(ref), "tokens": {"input": 0, "output": 0}, "cost_usd": 0.0,
     }
 
-    def _failed(error: str, detail: str) -> GradeResult:
-        extra["error"] = error
-        extra["feedback"] = detail
-        extra["criteria"] = [
-            {"name": c["name"], "passed": False, "score": 0.0, "feedback": ""} for c in criteria
-        ]
-        return GradeResult("rubric", 0.0, False, detail, extra)
 
-    try:
-        from agents.agent_utils import build_chat_model
-        llm = build_chat_model(
-            provider=ref["provider"] or None, model=ref["model"] or None, temperature=0.0,
-        )
-        reply = llm.invoke([("system", _RUBRIC_SYSTEM), ("human", prompt)])
-    except Exception as e:  # noqa: BLE001 - any provider failure becomes a failed grading, never a pass
-        log.warning("rubric grader call failed: %s", e)
-        return _failed(f"{type(e).__name__}: {e}",
-                       f"The grader failed: the model call did not complete ({type(e).__name__}).")
+def rubric_failed(ref: Dict[str, str], state: Dict[str, Any], error: str, detail: str,
+                  extra: Optional[Dict[str, Any]] = None) -> GradeResult:
+    """A grading that could not complete: a fail, never a pass."""
+    extra = extra if extra is not None else _rubric_extra(ref, state)
+    extra["error"] = error
+    extra["feedback"] = detail
+    extra["criteria"] = [
+        {"name": c["name"], "passed": False, "score": 0.0, "feedback": ""} for c in state["criteria"]
+    ]
+    return GradeResult("rubric", 0.0, False, detail, extra)
 
-    if not ref["model"]:
-        ref["model"] = str(getattr(llm, "model_name", None) or getattr(llm, "model", None) or "")
-        extra["grader"] = dict(ref)
-    text = getattr(reply, "content", reply)
-    if isinstance(text, list):  # some providers return content blocks
-        text = "".join(str(b.get("text", "")) if isinstance(b, dict) else str(b) for b in text)
-    text = str(text or "")
+
+def rubric_result(text: str, ref: Dict[str, str], state: Dict[str, Any], *,
+                  inbound: int = 0, outbound: int = 0,
+                  price_factor: float = 1.0) -> GradeResult:
+    """The second half of ``rubric``: the grader's reply read as per-criterion
+    results. ``price_factor`` is 0.5 for a reply that came back from a batch."""
+    extra = _rubric_extra(ref, state)
     extra["raw"] = text[:4000]
-    usage = getattr(reply, "usage_metadata", None) or {}
-    inbound = int((usage.get("input_tokens") if isinstance(usage, dict) else 0) or 0)
-    outbound = int((usage.get("output_tokens") if isinstance(usage, dict) else 0) or 0)
     extra["tokens"] = {"input": inbound, "output": outbound}
-    extra["cost_usd"] = model_call_cost(ref["provider"], ref["model"], inbound, outbound)
+    extra["cost_usd"] = round(
+        model_call_cost(ref["provider"], ref["model"], inbound, outbound) * price_factor, 6)
 
     parsed = _extract_json(text)
     if isinstance(parsed, list):
         parsed = {"criteria": parsed}
     if not isinstance(parsed, dict) or not isinstance(parsed.get("criteria"), list) \
             or not any(isinstance(c, dict) for c in parsed["criteria"]):
-        return _failed("the grader did not return per-criterion JSON",
-                       "The grader failed: its reply could not be read as a grade.")
+        return rubric_failed(ref, state, "the grader did not return per-criterion JSON",
+                             "The grader failed: its reply could not be read as a grade.", extra)
 
-    graded = _match_criteria(criteria, parsed["criteria"])
-    passed, score = rubric_pass(graded, threshold)
+    graded = _match_criteria(state["criteria"], parsed["criteria"])
+    passed, score = rubric_pass(graded, state["threshold"])
     feedback = str(parsed.get("feedback") or "").strip()
     extra["criteria"] = graded
     extra["feedback"] = feedback
@@ -836,6 +846,44 @@ def grade_rubric(output: str, case, params: Dict[str, Any],
         "every criterion met" if not unmet else f"unmet: {', '.join(unmet)}"
     )
     return GradeResult("rubric", score, passed, detail[:500], extra)
+
+
+def grade_rubric(output: str, case, params: Dict[str, Any],
+                 payload: Optional[Dict[str, Any]] = None) -> GradeResult:
+    """Score every criterion of a markdown rubric with an independent model.
+
+    ``params``: ``rubric`` (falls back to the case's rubric), ``criteria``
+    (``[{name, description}]``; parsed from the rubric when absent),
+    ``grader`` (``"provider/model"`` or ``{provider, model}``) or
+    ``provider``/``model``, ``threshold`` (0..1, optional), ``context`` (the
+    request the work answers; falls back to the case input). ``payload`` is
+    the run's structured payload when the run is known; its tool calls are
+    summarised for the grader. ``extra`` keeps the per-criterion results, the
+    raw reply, the grader model, tokens and cost; a failed or unparseable
+    grading is a fail with ``extra["error"]`` set.
+    """
+    request = rubric_request(output, case, params, payload)
+    if isinstance(request, GradeResult):
+        return request
+    messages, ref, state = request
+
+    try:
+        from agents.agent_utils import build_chat_model
+        llm = build_chat_model(
+            provider=ref["provider"] or None, model=ref["model"] or None, temperature=0.0,
+        )
+        reply = llm.invoke(messages)
+    except Exception as e:  # noqa: BLE001 - any provider failure becomes a failed grading, never a pass
+        log.warning("rubric grader call failed: %s", e)
+        return rubric_failed(ref, state, f"{type(e).__name__}: {e}",
+                             f"The grader failed: the model call did not complete ({type(e).__name__}).")
+
+    if not ref["model"]:
+        ref["model"] = str(getattr(llm, "model_name", None) or getattr(llm, "model", None) or "")
+    usage = getattr(reply, "usage_metadata", None) or {}
+    inbound = int((usage.get("input_tokens") if isinstance(usage, dict) else 0) or 0)
+    outbound = int((usage.get("output_tokens") if isinstance(usage, dict) else 0) or 0)
+    return rubric_result(_reply_text(reply), ref, state, inbound=inbound, outbound=outbound)
 
 
 GRADERS: Dict[str, Callable[..., GradeResult]] = {
@@ -930,7 +978,8 @@ def grade(output: str, case, spec, *, run_id: Optional[str] = None) -> GradeResu
         return GradeResult(spec.kind, 0.0, False, f"grader crashed: {type(e).__name__}: {e}")
 
 
-def grade_all(output: str, case, specs, *, run_id: Optional[str] = None) -> tuple:
+def grade_all(output: str, case, specs, *, run_id: Optional[str] = None,
+              precomputed: Optional[Dict[str, GradeResult]] = None) -> tuple:
     """Run every grader and combine into one weighted score.
 
     Returns ``(per_grader_dict, combined_score, passed)``. ``passed`` requires
@@ -940,12 +989,18 @@ def grade_all(output: str, case, specs, *, run_id: Optional[str] = None) -> tupl
     ``run_id`` is forwarded to ``grade`` for any trajectory grader in ``specs``;
     output-based graders ignore it, so existing callers that omit it keep
     working unchanged.
+
+    ``precomputed`` maps a grader kind to a result already obtained elsewhere
+    (a judge reply that came back in a provider batch, evals/batch.py); those
+    kinds are not graded again.
     """
     specs = list(specs or [])
     if not specs:
         return {}, 0.0, False
 
-    results = [grade(output, case, s, run_id=run_id) for s in specs]
+    precomputed = precomputed or {}
+    results = [precomputed[s.kind] if s.kind in precomputed else grade(output, case, s, run_id=run_id)
+               for s in specs]
     weights = [max(0.0, float(getattr(s, "weight", 1.0) or 0.0)) for s in specs]
     total_weight = sum(weights) or float(len(results))
     if sum(weights) == 0:
@@ -959,5 +1014,6 @@ def grade_all(output: str, case, specs, *, run_id: Optional[str] = None) -> tupl
 __all__ = [
     "GradeResult", "GRADERS", "COSTED_GRADERS", "TRAJECTORY_GRADERS",
     "PAYLOAD_GRADERS", "grade", "grade_all", "grade_rubric", "rubric_pass",
-    "split_model_ref", "tool_trail_summary", "model_call_cost",
+    "split_model_ref", "tool_trail_summary", "model_call_cost", "judge_request",
+    "judge_result", "rubric_request", "rubric_result", "rubric_failed",
 ]

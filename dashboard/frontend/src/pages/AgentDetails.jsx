@@ -37,6 +37,7 @@ import ModelTab from '../components/agent/ModelTab';
 import DockerTab from '../components/agent/DockerTab';
 import SkillsTab from '../components/agent/SkillsTab';
 import ToolPolicyCard from '../components/agent/ToolPolicyCard';
+import HandoffsCard from '../components/agent/HandoffsCard';
 import LoopSettingsCard from '../components/agent/LoopSettingsCard';
 import AgentGuardrailsCard from '../components/agent/AgentGuardrailsCard';
 import LiveQualityCard from '../components/agent/LiveQualityCard';
@@ -794,6 +795,9 @@ const AgentDetails = () => {
         <>
           <ToolsTab />
           <ToolPolicyCard agentId={id} agent={agent} onSaved={fetchData} />
+          {/* An imported (remote) agent runs its own loop elsewhere: it has no
+              handoff tool to give, though it can still receive a handoff. */}
+          {agent?.type !== 'remote' && <HandoffsCard agentId={id} agent={agent} onSaved={fetchData} />}
         </>
       )}
       {activeTab === 'nodes' && <NodesTab />}

@@ -755,6 +755,10 @@ export const resolveEnvironment = (workspace, environmentId) =>
     ...(workspace ? { workspace } : {}),
     ...(environmentId ? { environment_id: environmentId } : {}),
   } });
+// sandbox/registry.py's providers (docker, local, e2b, modal): whether each
+// one can run something right now, and why not — the environment form's
+// provider picker.
+export const getSandboxProviders = () => api.get('/environments/sandbox/providers');
 
 // Legacy Factory API
 export const getFactoryGraph = () => api.get('/factory/graph');

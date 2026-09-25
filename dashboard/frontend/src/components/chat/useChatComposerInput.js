@@ -1,6 +1,8 @@
 import { genId } from './turnState';
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT, MAX_REFERENCE_COUNT } from './limits';
 import { getContextKinds } from '../../api';
+import { uploadWorkspaceFileObject } from '../../api/files';
+import { translate } from '../../i18n';
 import { useCallback, useEffect } from 'react';
 
 /**
@@ -65,11 +67,53 @@ export function useChatComposerInput(deps) {
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   }, [setPendingAttachments]);
 
-  const toggleAttachmentStore = useCallback((id, checked) => {
+  // "Store in workspace" saves the file into the workspace files right away
+  // (docs/files.md), so the composer can show it saved and the turn sends it
+  // by id. The flag stays on the attachment: the server also keeps its copy
+  // in the workspace folder's chat_uploads, where the prompt points agents.
+  const toggleAttachmentStore = useCallback(async (id, checked) => {
+    const att = pendingAttachments.find((a) => a.id === id);
     setPendingAttachments((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, store_to_workspace: checked } : a)),
+      prev.map((a) => (a.id === id ? { ...a, store_to_workspace: checked, saving: checked && !a.file_id } : a)),
     );
-  }, [setPendingAttachments]);
+    if (!checked || !att || att.file_id || !selectedWorkspace) return;
+    try {
+      const blob = new Blob([att.content || ''], { type: 'text/plain' });
+      const { data } = await uploadWorkspaceFileObject(selectedWorkspace, blob, {
+        source: 'chat', filename: att.filename,
+      });
+      setPendingAttachments((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, file_id: data.file_id, saving: false } : a)),
+      );
+    } catch {
+      setPendingAttachments((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, store_to_workspace: false, saving: false } : a)),
+      );
+      const lang = (typeof document !== 'undefined' && document.documentElement.lang) || 'en';
+      setAttachmentError(translate(lang, 'files.chat.saveFailed', { name: att.filename }));
+    }
+  }, [pendingAttachments, selectedWorkspace, setAttachmentError, setPendingAttachments]);
+
+  // Files already stored in the workspace, attached by id: the server loads
+  // them, so nothing but the id travels with the turn.
+  const addWorkspaceFiles = useCallback((records) => {
+    setAttachmentError('');
+    setPendingAttachments((prev) => {
+      const next = [...prev];
+      for (const rec of records || []) {
+        if (next.some((a) => a.file_id === rec.file_id)) continue;
+        if (next.length >= MAX_ATTACHMENT_COUNT) {
+          setAttachmentError(`Only ${MAX_ATTACHMENT_COUNT} attachments are allowed per message.`);
+          break;
+        }
+        next.push({
+          id: genId(), filename: rec.name, content: '', size: rec.size,
+          file_id: rec.file_id, from_workspace: true, store_to_workspace: false,
+        });
+      }
+      return next;
+    });
+  }, [setAttachmentError, setPendingAttachments]);
 
   // ---- context references (hub entities attached to the next message) ----
   // The kind catalog is fetched once, lazily: it only matters when the user
@@ -114,7 +158,7 @@ export function useChatComposerInput(deps) {
 
   return {
     resizeTextarea, onPickFiles, removeAttachment, toggleAttachmentStore,
-    addReferences, removeReference,
+    addReferences, removeReference, addWorkspaceFiles,
   };
 }
 

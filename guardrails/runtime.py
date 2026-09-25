@@ -187,6 +187,16 @@ def _run(agent: Any, state: Any, stage: str, text: str) -> Optional[Dict[str, An
     return trip
 
 
+def has_guardrails(agent: Any, state: Any) -> bool:
+    """Whether any guardrail checks this agent's runs. A batch eval run
+    (evals/batch.py) runs such a cell live, where the checks apply exactly as
+    they do in production. An error answers yes: unknown means guarded."""
+    try:
+        return bool(_applicable(agent, state))
+    except Exception:  # noqa: BLE001 - see docstring: an unreadable store counts as guarded
+        return True
+
+
 def check_input(agent: Any, state: Any, text: str) -> Optional[Dict[str, Any]]:
     return _run(agent, state, "input", text)
 
@@ -206,4 +216,4 @@ def prune_events(retention_days: Optional[int] = None) -> int:
     return store.prune_events(days)
 
 
-__all__ = ["check_input", "check_output", "prune_events"]
+__all__ = ["check_input", "check_output", "has_guardrails", "prune_events"]

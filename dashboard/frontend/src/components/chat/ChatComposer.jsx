@@ -1,6 +1,8 @@
 import ContextEntityPicker from '../ContextEntityPicker';
 import ContextMeter from '../ContextMeter';
-import { Clock, Paperclip, Send, Send as SendIcon, StopCircle, Terminal, Upload, X, Zap } from 'lucide-react';
+import WorkspaceFilePicker from '../files/WorkspaceFilePicker';
+import { CheckCircle, Clock, FolderOpen, Loader, Paperclip, Send, Send as SendIcon, StopCircle, Terminal, Upload, X, Zap } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
 import { useChatSteering } from './useChatSteering';
@@ -77,8 +79,11 @@ function SteerBar({ steering, t }) {
  */
 export default function ChatComposer() {
   const page = useChatPage();
+  // The "from workspace files" dialog (docs/files.md): files already stored
+  // in the workspace, attached to the turn by id.
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
   const {
-    addReferences, attachMenuOpen, attachmentError, commandMenuIndex, commandMenuOpen,
+    addReferences, addWorkspaceFiles, attachMenuOpen, attachmentError, commandMenuIndex, commandMenuOpen,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage,
     currentTelegramBinding, fileInputRef, handleKeyDown, hasTarget, input, loading,
     onPickFiles, pendingAttachments, pendingReferences, pickerKind, removeAttachment,
@@ -150,15 +155,30 @@ export default function ChatComposer() {
                       <div className="text-[11px] text-gray-500">{t('chat.bytes', { count: att.size })}</div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <label className={`flex items-center gap-1.5 text-xs ${selectedWorkspace ? 'text-gray-600' : 'text-gray-400'}`}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(att.store_to_workspace)}
-                          onChange={(e) => toggleAttachmentStore(att.id, e.target.checked)}
-                          disabled={!selectedWorkspace || loading}
-                        />
-                        {t('chat.storeInWorkspace')}
-                      </label>
+                      {att.file_id ? (
+                        <Link
+                          to={`/files?file=${encodeURIComponent(att.file_id)}`}
+                          className="flex items-center gap-1 text-xs text-emerald-700 hover:underline"
+                          data-testid="attachment-saved"
+                        >
+                          {att.from_workspace ? <FolderOpen className="w-3.5 h-3.5" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                          {att.from_workspace ? t('files.chat.workspaceFile') : t('files.chat.saved')}
+                        </Link>
+                      ) : att.saving ? (
+                        <span className="flex items-center gap-1 text-xs text-gray-500">
+                          <Loader className="w-3.5 h-3.5 animate-spin" /> {t('files.chat.saving')}
+                        </span>
+                      ) : (
+                        <label className={`flex items-center gap-1.5 text-xs ${selectedWorkspace ? 'text-gray-600' : 'text-gray-400'}`}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(att.store_to_workspace)}
+                            onChange={(e) => toggleAttachmentStore(att.id, e.target.checked)}
+                            disabled={!selectedWorkspace || loading}
+                          />
+                          {t('chat.storeInWorkspace')}
+                        </label>
+                      )}
                       <button
                         type="button"
                         onClick={() => removeAttachment(att.id)}
@@ -244,6 +264,14 @@ export default function ChatComposer() {
                       >
                         <Upload className="w-4 h-4 text-gray-400" />
                         {t('chat.attachFiles')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setAttachMenuOpen(false); setFilePickerOpen(true); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <FolderOpen className="w-4 h-4 text-gray-400" />
+                        {t('files.chat.fromWorkspace')}
                       </button>
                       {contextKinds.length > 0 && (
                         <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-gray-400 border-t border-gray-100 mt-1">
@@ -340,6 +368,15 @@ export default function ChatComposer() {
               <p className="text-xs text-red-600 mt-2">{attachmentError}</p>
             )}
 
+            {filePickerOpen && (
+              <WorkspaceFilePicker
+                workspace={selectedWorkspace}
+                excludeIds={pendingAttachments.map((a) => a.file_id).filter(Boolean)}
+                uploadSource="chat"
+                onPick={(records) => { setFilePickerOpen(false); addWorkspaceFiles(records); }}
+                onClose={() => setFilePickerOpen(false)}
+              />
+            )}
             {pickerKind && (
               <ContextEntityPicker
                 initialKind={pickerKind}

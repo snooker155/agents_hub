@@ -97,17 +97,43 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> None:
     response = str(event.get("response") or "")
     if not run_id or not response.strip() or not event.get("ok"):
         return
+    user_message = str(getattr(request, "message", "") or "")
+    # A turn that changed hands (chat/handoff.py) is one bubble per agent: each
+    # handing agent's reply, then the answer, which carries the handoff that
+    # brought it (the chat draws the divider from it). The user's message goes
+    # in front of the first bubble only.
+    handoffs = [h for h in (event.get("handoffs") or []) if isinstance(h, dict)]
     try:
+        for i, h in enumerate(handoffs):
+            chat_store.append_turn(
+                conversation_id,
+                run_id=str(h.get("run_id") or ""),
+                user_message=user_message if i == 0 else "",
+                agent_message=str(h.get("from_response") or ""),
+                agent_id=h.get("from_agent_id"),
+                usage=h.get("usage"),
+                duration_ms=h.get("duration_ms"),
+                extra={"handoff": handoffs[i - 1]} if i > 0 else None,
+            )
+        # The reply's sources and links travel with the bubble, so a chat
+        # reloaded from the server still shows them.
+        extra = {k: event[k] for k in ("citations", "entities") if event.get(k)}
+        if handoffs:
+            extra["handoff"] = handoffs[-1]
         chat_store.append_turn(
             conversation_id,
             run_id=run_id,
-            user_message=str(getattr(request, "message", "") or ""),
+            user_message="" if handoffs else user_message,
             agent_message=response,
-            agent_id=getattr(request, "agent_id", None),
+            agent_id=event.get("agent_id") or getattr(request, "agent_id", None),
             usage=event.get("usage"),
             duration_ms=event.get("duration_ms"),
+            extra=extra or None,
         )
-    except Exception:
+        # The conversation continues with the agent that answered.
+        if handoffs and event.get("agent_id"):
+            chat_store.set_agent(conversation_id, str(event["agent_id"]))
+    except Exception:  # noqa: BLE001 - the safety net must never fail the turn it records
         pass
 
 

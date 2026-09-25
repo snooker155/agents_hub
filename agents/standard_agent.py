@@ -228,8 +228,12 @@ class StandardAgent(AgentBase):
 
         Returns ``(text, error)``: the (possibly repaired) answer, and an error
         string when it still does not match after the allowed retries. Agents
-        without a schema pass through unchanged.
+        without a schema pass through unchanged, and so does a turn a tool
+        ended (agents.agent_loop.end_turn): its text is the tool's result, a
+        handoff message for instance, which no answer schema describes.
         """
+        if getattr(state, "ended_by", None):
+            return text, None
         try:
             from agents.loop_ext import structured as _structured
             return _structured.finalize_output(self, state, text)

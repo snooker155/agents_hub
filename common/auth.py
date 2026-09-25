@@ -164,6 +164,13 @@ PUBLIC_AUTH_ROUTES = frozenset({
 #: reasoning as ``SELF_AUTHENTICATING_PREFIXES`` above.
 EXTERNAL_PREFIXES = ("/api/external",)
 
+#: The chat widget's visitor side (docs/widget.md): a visitor of the site that
+#: embeds a widget has no hub credential at all. These routes check their own
+#: guard instead (the widget's publishable key, the Origin against its
+#: allowlist, a signed visitor token, per-visitor and per-address limits; see
+#: widgets/service.py), so the hub's principal lookup must not run for them.
+WIDGET_PUBLIC_PREFIXES = ("/api/widgets/public",)
+
 #: Sub-paths of a workspace that only its owner (or an admin) may touch at all.
 #: These configure how the workspace behaves rather than what is in it, so read
 #: access is restricted too: an env block is a list of secret *names*, and a
@@ -267,7 +274,7 @@ def is_open_path(method: str, path: str) -> bool:
 
     CORS preflight, everything outside ``/api`` except the model server under
     ``/v1``, the self-authenticating ingest routes, the token-in-path external
-    routes, and the three public auth routes. Kept separate from
+    routes, the chat widget's visitor routes, and the three public auth routes. Kept separate from
     :func:`authorize` so the middleware can skip the (database-touching)
     principal lookup entirely for these.
     """
@@ -281,6 +288,8 @@ def is_open_path(method: str, path: str) -> bool:
     if _is_self_authenticating(path):
         return True
     if _has_prefix(path, EXTERNAL_PREFIXES):
+        return True
+    if _has_prefix(path, WIDGET_PUBLIC_PREFIXES):
         return True
     return (method, path.rstrip("/") or path) in PUBLIC_AUTH_ROUTES
 

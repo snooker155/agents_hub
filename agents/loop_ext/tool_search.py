@@ -23,6 +23,9 @@ Core tools, always visible:
   (``delegate_task_tool``, ``run_agent_tool``, ``list_agents_tool``,
   ``list_models_tool``) and the two task tools a delegating agent needs
   without thinking about it (``create_task``, ``get_task_result``);
+- ``handoff_to_agent`` (tools/handoff.py), for the same reason as the
+  delegation tools: hidden behind a search while ``run_agent_tool`` is in
+  view, the model delegates when the user asked to be handed over;
 - any tool the agent's own system prompt names (up to
   ``PROMPT_CORE_LIMIT``): instructions that say "use read_file" should not
   send the model searching for read_file;
@@ -62,6 +65,7 @@ CORE_TOOLS = frozenset({
     "list_models_tool",
     "create_task",
     "get_task_result",
+    "handoff_to_agent",
 })
 
 DEFAULT_THRESHOLD = 30

@@ -86,6 +86,16 @@ than what it would have cost with no cache at all.
 Files can be attached, and workspace entities referenced, so the agent works
 from the actual thing rather than your description of it.
 
+A file already stored in the workspace is attached by its id ("From
+workspace files" in the attach menu): the server loads it, and it must belong
+to the chat's workspace. Ticking "store in workspace" on an upload saves it
+as a workspace file at once, so later turns, tasks and memory pools can reuse
+it. See [workspace files](files.md).
+
+When the agent answers from a memory pool's documents, the reply lists its
+sources and each `[n]` in the text links to one; the `done` event carries
+them as `citations`. See [workspace files](files.md#citations).
+
 ## Slash commands
 
 `/help`, `/clear`, `/new` and `/config` are handled in the page itself. An agent
@@ -107,6 +117,15 @@ project" writes it into a project's own folder.
 `run_agent_tool` is taskless delegation and only works here, not inside a
 tracked task. The child runs to completion and its output comes back in the tool
 result, so the agent you are talking to can act on it and reply to you.
+
+## Handoffs
+
+An agent can also give the conversation away: with `handoff_to_agent` the agent
+it names answers you directly in the same turn and keeps the conversation
+afterwards. A divider in the transcript says who took over and why, and the top
+bar switches to the new agent. What of the conversation the new agent sees is
+set per agent (the whole conversation, a summary, the last messages, or only
+your latest message). See [handoffs](handoffs.md).
 
 ## Costs and approvals
 

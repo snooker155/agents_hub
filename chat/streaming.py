@@ -42,6 +42,9 @@ class StreamDriveResult:
     # agents/agent_loop.py): injected steering messages, the answering model,
     # compactions. Stored on the run record as ``loop``; empty on a plain turn.
     loop: dict = field(default_factory=dict)
+    # Sources the answer may cite as [n] (common/citation_sink.py): passages a
+    # retrieval tool showed the model during the turn. Empty when none did.
+    citations: list = field(default_factory=list)
 
 
 def _without_steering(user_message: str, history: list, full_prompt: str) -> tuple:
@@ -75,6 +78,7 @@ async def drive_streaming_run(
     result: StreamDriveResult,
     enrich: Callable[[dict], dict] | None = None,
     entity_sink=None,
+    citation_sink=None,
 ):
     """Drive one streaming agent run: forward queued events and resolve the result.
 
@@ -171,6 +175,21 @@ async def drive_streaming_run(
             result.entities = entity_payloads(entity_sink.records())
         except Exception:
             result.entities = []
+    if citation_sink is not None:
+        result.citations = citation_sink.payloads()
+    # Both lists are kept at the top of the run record, where the run page
+    # reads them back: the structured payload table (common/run_payloads.py,
+    # ``run_payloads``) stores a fixed set of columns, and a list carried
+    # only inside ``process`` would be dropped on the way in.
+    links = {k: v for k, v in (("entities", result.entities), ("citations", result.citations)) if v}
+    if links:
+        try:
+            from managers.run_manager import update_run
+            update_run(run_id, links)
+        except Exception:  # noqa: BLE001 - the reply still carries them; only the run page would miss them
+            import logging
+            logging.getLogger(__name__).debug("could not store the links of run %s", run_id,
+                                              exc_info=True)
 
     usage = {
         "inbound_tokens": callback.prompt_tokens,
@@ -231,6 +250,7 @@ async def drive_streaming_run(
         "llm_raw_responses": callback.llm_invoke_responses,
         "artifacts": callback.artifact_history,
         "entities": result.entities,
+        "citations": result.citations,
         "token_usage": usage,
         "duration_ms": duration_ms,
     }

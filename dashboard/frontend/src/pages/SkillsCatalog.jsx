@@ -18,6 +18,13 @@ import {
   ChevronDown,
   ChevronRight,
   ListOrdered,
+  History,
+  FileUp,
+  FileDown,
+  FolderGit2,
+  AlertTriangle,
+  ArrowUpCircle,
+  Pin,
 } from 'lucide-react';
 import {
   getSkills,
@@ -29,10 +36,13 @@ import {
   installSkill,
   deleteSkill,
 } from '../api';
+import { exportSkillMarkdown, syncSkills, updateSkillFromOrigin } from '../api/skillVersions';
+import SkillHistoryModal from '../components/skills/SkillHistoryModal';
+import SkillImportModal from '../components/skills/SkillImportModal';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
-const EMPTY_DRAFT = { name: '', description: '', steps: '', tags: '', agent_id: '' };
+const EMPTY_DRAFT = { name: '', description: '', steps: '', body: '', tags: '', agent_id: '' };
 
 /**
  * Skills catalog.
@@ -61,6 +71,9 @@ const SkillsCatalog = () => {
   const [editor, setEditor] = useState(null);   // { draft, id | null }
   const [installFor, setInstallFor] = useState(null); // skill being attached/installed
   const [installAgent, setInstallAgent] = useState('');
+  const [historyFor, setHistoryFor] = useState(null); // skill whose versions are open
+  const [importOpen, setImportOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const notify = (text) => {
     setMessage(text);
@@ -113,6 +126,7 @@ const SkillsCatalog = () => {
       name: skill.name,
       description: skill.description,
       steps: (skill.steps || []).join('\n'),
+      body: skill.body || '',
       tags: (skill.tags || []).join(', '),
       agent_id: skill.agent_id || '',
     },
@@ -122,12 +136,13 @@ const SkillsCatalog = () => {
     const { id, draft } = editor;
     const steps = draft.steps.split('\n').map((s) => s.trim()).filter(Boolean);
     const tags = draft.tags.split(',').map((t) => t.trim()).filter(Boolean);
+    const body = (draft.body || '').trim();
     if (!draft.name.trim()) return alert(t('skillsCatalog.needsName'));
-    if (steps.length === 0) return alert(t('skillsCatalog.needsStep'));
+    if (steps.length === 0 && !body) return alert(t('skillsCatalog.needsStepOrBody'));
     setBusyId(id || 'new');
     try {
       if (id) {
-        await updateSkill(id, { name: draft.name, description: draft.description, steps, tags });
+        await updateSkill(id, { name: draft.name, description: draft.description, steps, body, tags });
         notify(`Skill "${draft.name}" updated.`);
       } else {
         const resp = await createSkill({
@@ -135,6 +150,7 @@ const SkillsCatalog = () => {
           name: draft.name,
           description: draft.description,
           steps,
+          body,
           tags,
           agent_id: draft.agent_id || '',
         });
@@ -215,6 +231,55 @@ const SkillsCatalog = () => {
     }
   };
 
+  const syncFromRepos = async () => {
+    setSyncing(true);
+    try {
+      const { data } = await syncSkills(workspace);
+      const count = (key) => (data[key] || []).length;
+      notify(t('skillsCatalog.sync.done', {
+        added: count('added'), updated: count('updated'), missing: count('missing'),
+        followed: count('followed'),
+      }) + (count('errors') ? ` ${t('skillsCatalog.sync.errors', {
+        count: count('errors'), dirs: data.errors.map((e) => `${e.dir}: ${e.error}`).join('; '),
+      })}` : ''));
+      await fetchData();
+    } catch (error) {
+      alert(`${t('common.error')}: ` + (error.response?.data?.detail || error.message));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const exportSkill = async (skill) => {
+    try {
+      const { data } = await exportSkillMarkdown(skill.id);
+      const url = URL.createObjectURL(new Blob([data], { type: 'text/markdown' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'SKILL.md';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(`${t('common.error')}: ` + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  const takeOriginUpdate = async (skill) => {
+    if (!window.confirm(t('skillsCatalog.origin.confirm', {
+      name: skill.name, from: skill.origin_version, to: skill.origin_latest_version,
+    }))) return;
+    setBusyId(skill.id);
+    try {
+      await updateSkillFromOrigin(skill.id);
+      notify(t('skillsCatalog.origin.done', { name: skill.name, version: skill.origin_latest_version }));
+      await fetchData();
+    } catch (error) {
+      alert(`${t('common.error')}: ` + (error.response?.data?.detail || error.message));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const toggleExpanded = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
   // ── Card ───────────────────────────────────────────────────────────────────
@@ -227,12 +292,29 @@ const SkillsCatalog = () => {
       >
         {expanded[skill.id] ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         <ListOrdered className="w-3 h-3" />
-        {steps.length} step{steps.length === 1 ? '' : 's'}
+        {steps.length > 0
+          ? t('skillsCatalog.stepCount', { count: steps.length })
+          : t('skillsCatalog.instructions')}
+        {steps.length > 0 && skill.body ? ` + ${t('skillsCatalog.instructions')}` : ''}
       </button>
       {expanded[skill.id] && (
-        <ol className="mt-2 pl-4 list-decimal space-y-1 text-xs text-gray-600 bg-gray-50 rounded p-2 border border-gray-100">
-          {steps.map((step, i) => <li key={i}>{step}</li>)}
-        </ol>
+        <div className="mt-2 space-y-2">
+          {steps.length > 0 && (
+            <ol className="pl-4 list-decimal space-y-1 text-xs text-gray-600 bg-gray-50 rounded p-2 border border-gray-100">
+              {steps.map((step, i) => <li key={i}>{step}</li>)}
+            </ol>
+          )}
+          {skill.body && (
+            <pre className="text-xs text-gray-600 bg-gray-50 rounded p-2 border border-gray-100 whitespace-pre-wrap max-h-60 overflow-auto font-sans">
+              {skill.body}
+            </pre>
+          )}
+          {(skill.resources || []).length > 0 && (
+            <div className="text-[11px] text-gray-500">
+              {t('skillsCatalog.files')}: {skill.resources.join(', ')}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -283,6 +365,23 @@ const SkillsCatalog = () => {
             />
           </div>
           <button
+            onClick={syncFromRepos}
+            disabled={syncing}
+            title={t('skillsCatalog.sync.title')}
+            className="inline-flex items-center px-3 py-2 text-xs font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            {syncing
+              ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              : <FolderGit2 className="w-3.5 h-3.5 mr-1.5" />}
+            {t('skillsCatalog.sync.button')}
+          </button>
+          <button
+            onClick={() => setImportOpen(true)}
+            className="inline-flex items-center px-3 py-2 text-xs font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <FileUp className="w-3.5 h-3.5 mr-1.5" /> {t('skillsCatalog.import.button')}
+          </button>
+          <button
             onClick={openCreate}
             className="inline-flex items-center px-3 py-2 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
           >
@@ -328,7 +427,10 @@ const SkillsCatalog = () => {
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-gray-900 truncate" title={skill.name}>{skill.name}</div>
                       <div className="text-[11px] text-gray-400">
-                        {skill.source === 'agent' ? t('skillsCatalog.learnedByAgent') : t('skillsCatalog.writtenByUser')}
+                        {skill.source === 'agent' ? t('skillsCatalog.learnedByAgent')
+                          : skill.source === 'repo' ? t('skillsCatalog.fromRepository')
+                            : t('skillsCatalog.writtenByUser')}
+                        {skill.version ? ` · v${skill.version}` : ''}
                         {skill.use_count > 0 && ` · ${t('skillsCatalog.usedCount', { count: skill.use_count })}`}
                       </div>
                     </div>
@@ -362,6 +464,31 @@ const SkillsCatalog = () => {
                       <Download className="w-3 h-3" /> {t('skillsCatalog.installedCopy')}
                     </span>
                   )}
+                  {skill.repo?.dir && (
+                    <span className="inline-flex items-center gap-1 text-gray-400 truncate max-w-full" title={skill.repo.dir}>
+                      <FolderGit2 className="w-3 h-3 shrink-0" /> {skill.repo.dir}
+                    </span>
+                  )}
+                  {skill.repo?.missing && (
+                    <span className="inline-flex items-center gap-1 text-amber-600" title={t('skillsCatalog.missingTitle')}>
+                      <AlertTriangle className="w-3 h-3" /> {t('skillsCatalog.missing')}
+                    </span>
+                  )}
+                  {skill.pinned_version && (
+                    <span className="inline-flex items-center gap-1 text-amber-700" title={t('skillsCatalog.pinnedTitle')}>
+                      <Pin className="w-3 h-3" /> {t('skillsCatalog.pinnedTo', { version: skill.pinned_version })}
+                    </span>
+                  )}
+                  {skill.update_available && (
+                    <button
+                      onClick={() => takeOriginUpdate(skill)}
+                      disabled={busyId === skill.id}
+                      className="inline-flex items-center gap-1 text-indigo-600 hover:underline disabled:opacity-50"
+                    >
+                      <ArrowUpCircle className="w-3 h-3" />
+                      {t('skillsCatalog.origin.available', { version: skill.origin_latest_version })}
+                    </button>
+                  )}
                 </div>
 
                 <div className="mt-auto grid grid-cols-2 gap-2">
@@ -387,7 +514,9 @@ const SkillsCatalog = () => {
                   </button>
                   <button
                     onClick={() => openEdit(skill)}
-                    className="inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors"
+                    disabled={skill.source === 'repo' && !skill.agent_id}
+                    title={skill.source === 'repo' && !skill.agent_id ? t('skillsCatalog.editInRepo') : undefined}
+                    className="inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold border border-gray-200 text-gray-600 rounded hover:bg-gray-50 disabled:opacity-50 transition-colors"
                   >
                     <Pencil className="w-3.5 h-3.5 mr-1" /> {t('skillsCatalog.edit')}
                   </button>
@@ -397,6 +526,19 @@ const SkillsCatalog = () => {
                     className="inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold border border-red-200 text-red-600 rounded hover:bg-red-50 disabled:opacity-50 transition-colors"
                   >
                     <Trash2 className="w-3.5 h-3.5 mr-1" /> {skill.agent_id ? 'Detach' : 'Delete'}
+                  </button>
+                  <button
+                    onClick={() => setHistoryFor(skill)}
+                    className="inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors"
+                  >
+                    <History className="w-3.5 h-3.5 mr-1" /> {t('skillsCatalog.historyButton')}
+                  </button>
+                  <button
+                    onClick={() => exportSkill(skill)}
+                    title={t('skillsCatalog.exportTitle')}
+                    className="inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors"
+                  >
+                    <FileDown className="w-3.5 h-3.5 mr-1" /> {t('skillsCatalog.exportButton')}
                   </button>
                 </div>
               </div>
@@ -520,6 +662,17 @@ const SkillsCatalog = () => {
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
               </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">{t('skillsCatalog.instructionsLabel')}</label>
+                <textarea
+                  value={editor.draft.body}
+                  onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, body: e.target.value } })}
+                  rows={6}
+                  placeholder={t('skillsCatalog.instructionsPlaceholder')}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">{t('skillsCatalog.stepsOrInstructions')}</p>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">{t('skillsCatalog.tagsCommaSeparated')}</label>
@@ -619,6 +772,22 @@ const SkillsCatalog = () => {
             </div>
           </div>
         </div>
+      )}
+      {historyFor && (
+        <SkillHistoryModal
+          skill={historyFor}
+          onClose={() => setHistoryFor(null)}
+          onChanged={() => fetchData()}
+        />
+      )}
+
+      {importOpen && (
+        <SkillImportModal
+          workspace={workspace}
+          targets={targets}
+          onClose={() => setImportOpen(false)}
+          onImported={() => fetchData()}
+        />
       )}
     </PageContainer>
   );

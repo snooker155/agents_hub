@@ -32,7 +32,8 @@ export function useChatSend(deps) {
     selectCommand, selectedAgent, selectedFlow, selectedProject, selectedTeam,
     selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
     setCurrentConvId, setGraphRun, setInput, setLoading, setPendingAttachments,
-    setPendingReferences, setProcessInsights, setSessionId, t, targetMode, textareaRef,
+    setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, t, targetMode,
+    textareaRef,
   } = deps;
 
   // ---- send message ----
@@ -96,6 +97,9 @@ export function useChatSend(deps) {
     const effectiveWorkspace = convRecord?.workspace || selectedWorkspace;
     const historyPayload = buildHistoryPayload(convRecord?.messages);
     const convTitle = resolveConversationTitle({ text, attachmentLine, convRecord, t });
+    // The turn's handoffs (the agent gave the conversation to another one, see
+    // send/handleAgentResponse), read once the turn is over however it ended.
+    const handoffs = [];
 
     try {
       // In agent mode we create one assistant bubble up front and stream into it.
@@ -113,7 +117,9 @@ export function useChatSend(deps) {
 
       // Mutated from inside the event handlers; read after the stream resolves.
       // nodeMsgIds maps node_id -> message bubble id, for flow mode.
-      const state = { runId: null, finalPayload: null, currentNodeId: null, nodeMsgIds: {} };
+      // handoffs collects the turn's `handoff` events (the agent gave the
+      // conversation to another one, see send/handleAgentResponse).
+      const state = { runId: null, finalPayload: null, currentNodeId: null, nodeMsgIds: {}, handoffs };
       const ctx = {
         convId, setConversations, setActiveRunId, setSessionId, setGraphRun,
         setProcessInsights, mergeArtifact, processOpen, isMultiAgent, isFlowMode,
@@ -140,8 +146,10 @@ export function useChatSend(deps) {
             prev.map((c) =>
               c.id !== convId ? c : {
                 ...c,
+                // ctx.assistantId: after a handoff the open bubble is the
+                // receiving agent's, not the one created above.
                 messages: c.messages.map((m) =>
-                  m.id === assistantId && !m.content
+                  m.id === ctx.assistantId && !m.content
                     ? { ...m, ...noStreamPatch(t) }
                     : m
                 ),
@@ -163,6 +171,11 @@ export function useChatSend(deps) {
     } finally {
       setLoading(false);
       abortCtrlRef.current = null;
+      // The conversation now belongs to the agent that answered: the top bar
+      // shows it and the next turn goes to it (the conversation record was
+      // pointed at it when the handoff arrived).
+      const lastHandoff = handoffs[handoffs.length - 1];
+      if (lastHandoff?.to_agent_id && setSelectedAgent) setSelectedAgent(lastHandoff.to_agent_id);
       // The turn is over however it ended (done, abort, network error): drop any
       // half-written thought so no bubble is left with a stale live ticker.
       setConversations((prev) =>
@@ -174,7 +187,7 @@ export function useChatSend(deps) {
         ),
       );
     }
-  }, [input, pendingAttachments, pendingReferences, targetMode, loading, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, conversations, setConversations, clientId, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, abortCtrlRef, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setLoading, setPendingAttachments, setPendingReferences, setProcessInsights, setSessionId, textareaRef]);
+  }, [input, pendingAttachments, pendingReferences, targetMode, loading, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, conversations, setConversations, clientId, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, abortCtrlRef, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setLoading, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, textareaRef]);
 
   // Build view: clicking a file chip in the transcript scrolls the always-open
   // Artifacts panel to that file's diff.

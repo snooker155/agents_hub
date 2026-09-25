@@ -148,6 +148,7 @@ async def create_task(task: TaskCreate):
     # route (routes/outcomes.py), so a task never stores a rubric the grader
     # cannot use.
     outcome = _normalized_outcome(task.outcome)
+    file_ids = _validated_file_ids(task.file_ids, ws_name)
 
     # Set project_id before creation so the Jira-style key uses the project prefix
     try:
@@ -167,6 +168,7 @@ async def create_task(task: TaskCreate):
             # agent is assigned, on the /assign and PATCH routes.
             agent_version=task.agent_version,
             outcome=outcome,
+            file_ids=file_ids,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -180,6 +182,29 @@ async def create_task(task: TaskCreate):
         t = tasks_service.get_task(t.id) or t
 
     return task_to_dict(t)
+
+
+def _validated_file_ids(raw, workspace):
+    """Workspace file ids for a task, de-duplicated in order; 400 when one is
+    unknown, deleted, or belongs to another workspace than the task's."""
+    if not raw:
+        return []
+    from files import service as files_service
+    out: List[str] = []
+    for fid in raw:
+        fid = str(fid or "").strip()
+        if not fid or fid in out:
+            continue
+        record = files_service.get_file(fid)
+        if record is None:
+            raise HTTPException(status_code=400, detail=f"Workspace file '{fid}' not found")
+        if record["workspace"] != (workspace or ""):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workspace file '{fid}' belongs to workspace '{record['workspace']}', "
+                       f"not to this task's workspace")
+        out.append(fid)
+    return out
 
 
 def _normalized_outcome(raw):
@@ -233,6 +258,8 @@ async def update_task(task_id: UUID, update: TaskUpdate):
             raise HTTPException(status_code=400, detail=str(e))
     if "outcome" in fields:
         fields["outcome"] = _normalized_outcome(fields["outcome"])
+    if "file_ids" in fields:
+        fields["file_ids"] = _validated_file_ids(fields["file_ids"], t.workspace)
 
     # If task is being moved back to an unassigned state, clear the assignment
     # and delete any pre-start run record (awaiting_approval or node-queued assigned).

@@ -86,6 +86,14 @@ binary files, the workspace settings file, the connections store, API keys,
 and any external state such as issues, remote repositories or services. A
 task with no workspace copies no files at all.
 
+## Cases with files
+
+A case can also carry workspace files, `file_ids` (see [workspace
+files](files.md)): stored once in the workspace, picked in the case editor.
+The case then runs in the same kind of isolated folder, with the files copied
+in, and its input starts with a block naming them and the folder. A case with
+files and no snapshot gets the folder too.
+
 ## Graders, cheapest first
 
 - **exact** / **substring** / **regex** — deterministic string checks.
@@ -177,6 +185,46 @@ not just one run.
 Eval runs are tagged as an evaluation channel, which keeps measurement spend out
 of production cost and budget aggregation while leaving every cell inspectable
 in the normal run views.
+
+## Batch mode
+
+**Batch mode** in the run form sends the sweep through the provider batch
+APIs (OpenAI Batch, Anthropic Message Batches): half the price, results
+within 24 hours, most batches within the hour. The run shows `batch_pending`
+and a table of its provider batches until they finish; the scheduler checks
+them every minute (`AGENTS_HUB_EVAL_BATCH_POLL_SECONDS`, default 60), and
+**Check now** does it on the spot.
+
+It happens in two phases. An agent cell goes out as the agent's first model
+call, with the same system prompt, tools and parameters its live run would
+send. A final answer is recorded as the cell's run at the batch price (the run
+record carries `price_factor: 0.5`, so Costs shows what was billed). Then the
+`llm_judge` and `rubric` calls of those cells go out as a second batch when
+the judge model has a batch API; the other graders score right away.
+
+Some cells run live instead, at once, with the reason on the cell's
+trajectory:
+
+| Case | Reason |
+| --- | --- |
+| The batched answer asked for a tool | One answer is not a whole tool loop, so the cell reruns live from the start |
+| Flow, team, loop or scenario target | A container is many calls, not one |
+| Google, Ollama, LM Studio, another OpenAI-compatible server | No batch API |
+| The agent uses tool search or a structured output schema, or a guardrail checks it | These change the call or the answer, and only apply exactly live |
+| The provider refused the batch, or a request failed or expired | The cell still gets a result |
+
+The cost ceiling is checked against the projection before anything is sent,
+because a submitted batch cannot stop half way; the estimate in batch mode
+prices batchable calls at half and is a floor, since live fallbacks cost full
+price. **Cancel** cancels the open batches: answers the provider already
+produced are still collected, the rest of the cells are recorded as stopped.
+
+The API takes `"mode": "batch"` on `POST /api/evals/{id}/run` and
+`/estimate`; `GET /api/eval-runs/{id}` returns `batch` (each provider batch's
+phase, status and counts) for a batch run; `POST /api/eval-runs/{id}/poll`
+and `/cancel` are the two actions. The provider key is never stored with the
+batch: it is resolved again from the agent or the judge model when the batch
+is polled.
 
 ## Repeats and variance
 

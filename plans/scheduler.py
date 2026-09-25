@@ -102,6 +102,14 @@ class PlanScheduler:
                 await asyncio.to_thread(run_maintenance)
             except Exception:
                 log.exception("maintenance tick failed")
+            # Batch eval runs (evals/batch.py): check the open provider batches,
+            # self-throttled to AGENTS_HUB_EVAL_BATCH_POLL_SECONDS; an ended
+            # batch is processed in its own thread, so this never waits on it.
+            try:
+                from evals.batch import poll_pending
+                await asyncio.to_thread(poll_pending)
+            except Exception:
+                log.exception("eval batch poll failed")
             # Awaiting-input escalation: remind on / auto-answer long-parked tasks.
             # Self-guarded to a 5-min cadence so the fast job tick stays cheap.
             now = time.monotonic()

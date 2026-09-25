@@ -9,6 +9,7 @@ import { ChevronDown, ChevronUp, EyeOff, History, RotateCcw, X } from 'lucide-re
 import { listMemoryVersions, redactMemoryVersion, restoreMemoryVersion } from '../../api/memoryVersions';
 import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
+import { lineDiff } from '../../lib/lineDiff';
 
 const OP_BADGE = {
   create: 'bg-emerald-100 text-emerald-700',
@@ -29,39 +30,6 @@ function toText(value) {
   } catch {
     return String(value);
   }
-}
-
-// A minimal LCS line diff: readable for the short JSON blobs a block, a note
-// or a slot holds, without pulling in a diff library for one panel.
-function lineDiff(beforeText, afterText) {
-  const before = (beforeText || '').split('\n');
-  const after = (afterText || '').split('\n');
-  const n = before.length;
-  const m = after.length;
-  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = before[i] === after[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
-  const rows = [];
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    if (before[i] === after[j]) {
-      rows.push({ type: 'same', text: before[i] });
-      i += 1; j += 1;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      rows.push({ type: 'removed', text: before[i] });
-      i += 1;
-    } else {
-      rows.push({ type: 'added', text: after[j] });
-      j += 1;
-    }
-  }
-  while (i < n) { rows.push({ type: 'removed', text: before[i] }); i += 1; }
-  while (j < m) { rows.push({ type: 'added', text: after[j] }); j += 1; }
-  return rows;
 }
 
 function fmtAt(iso) {

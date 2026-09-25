@@ -26,8 +26,8 @@ agents/callbacks/streaming.py:S110 1
 agents/capability_guard.py:BLE001 4
 agents/checkpoint.py:BLE001 6
 agents/checkpoint.py:S110 2
-agents/hooks.py:BLE001 4
-agents/hooks.py:S110 2
+agents/hooks.py:BLE001 3
+agents/hooks.py:S110 1
 agents/importer/checks.py:BLE001 1
 agents/importer/service.py:BLE001 1
 agents/importer/service.py:S110 1
@@ -38,7 +38,7 @@ agents/remote_agent.py:S110 2
 agents/standard_agent.py:BLE001 4
 agents/versions.py:BLE001 1
 chat/attachments.py:BLE001 2
-chat/broadcast.py:BLE001 3
+chat/broadcast.py:BLE001 2
 chat/broadcast.py:S110 3
 chat/compaction.py:BLE001 6
 chat/compaction.py:S110 2
@@ -199,7 +199,7 @@ memory/rag_query.py:S110 3
 memory/ranking.py:BLE001 5
 memory/ranking.py:S110 1
 memory/store.py:BLE001 2
-memory/tool.py:BLE001 28
+memory/tool.py:BLE001 27
 memory/tool.py:S110 5
 plans/escalation.py:BLE001 4
 plans/escalation.py:S110 2
@@ -288,8 +288,6 @@ tools/patch.py:S110 2
 tools/project_graph.py:BLE001 3
 tools/project_management.py:BLE001 1
 tools/project_management.py:S110 1
-tools/run_code.py:BLE001 7
-tools/run_code.py:S110 1
 tools/schedule_management.py:BLE001 7
 tools/service_ops.py:BLE001 21
 tools/shell.py:BLE001 8

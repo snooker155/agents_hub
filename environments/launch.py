@@ -17,6 +17,12 @@ or ``{}`` when no environment applies. Everything in it is plain strings and
 JSON, because a prepared launch travels through the run queue to a worker that
 may be on another host.
 
+``sandbox_provider`` (docs/sandboxes.md) is deliberately not part of this
+shape: it only governs where a ``run_code`` call or a Chat code-panel snippet
+runs, not the agent process itself, and ``tools/run_code.py`` reads it
+straight from ``AGENTS_HUB_ENVIRONMENT_ID`` (already set below) through
+``environments.service.get_environment`` rather than through a launch field.
+
 ``env``:
   - the environment's own variables;
   - ``AGENTS_HUB_ENVIRONMENT_ID`` / ``AGENTS_HUB_ENVIRONMENT_NAME``;

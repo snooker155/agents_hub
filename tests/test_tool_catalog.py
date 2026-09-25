@@ -93,6 +93,7 @@ def _tool_objects_by_id() -> dict:
         append_journal_tool,
     )
     from memory.knowledge_extract import create_extraction_tools
+    from tools.workspace_files import WORKSPACE_FILE_TOOLS
 
     tools = [
         calculator, run_shell, ask_user, think,
@@ -120,6 +121,7 @@ def _tool_objects_by_id() -> dict:
         read_structured_memory_tool, write_structured_memory_tool,
         append_journal_tool,
         *create_extraction_tools("__test__"),
+        *WORKSPACE_FILE_TOOLS,
     ]
     return {getattr(t, "name", getattr(t, "__name__", "")): t for t in tools}
 

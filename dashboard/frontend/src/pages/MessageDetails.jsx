@@ -4,6 +4,7 @@ import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileTex
 
 import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun, getEvalSets, createEvalSet, addEvalCase } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
+import Citations from '../components/chat/Citations';
 import RunLoopPanel from '../components/run/RunLoopPanel';
 import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
@@ -635,6 +636,36 @@ export default function MessageDetails() {
             </button>
           </div>
         )}
+        {/* A chat turn that changed hands (chat/handoff.py): where this run
+            sent the conversation, and where a receiving run got it from. */}
+        {message?.handoff?.next_run_id && (
+          <div>
+            <span className="text-gray-500">{t('handoffs.runHandedOffTo')}</span>{' '}
+            <button
+              onClick={() => navigate(`/messages/${message.handoff.next_run_id}`)}
+              className="text-xs text-indigo-600 hover:underline"
+            >
+              {message.handoff.to_agent_name || message.handoff.to_agent_id}
+            </button>
+            {message.handoff.reason && (
+              <span className="text-xs text-gray-500 ml-1">({message.handoff.reason})</span>
+            )}
+          </div>
+        )}
+        {message?.handoff_from?.run_id && (
+          <div>
+            <span className="text-gray-500">{t('handoffs.runReceivedFrom')}</span>{' '}
+            <button
+              onClick={() => navigate(`/messages/${message.handoff_from.run_id}`)}
+              className="text-xs text-indigo-600 hover:underline"
+            >
+              {message.handoff_from.from_agent_name || message.handoff_from.from_agent_id}
+            </button>
+            {message.handoff_from.reason && (
+              <span className="text-xs text-gray-500 ml-1">({message.handoff_from.reason})</span>
+            )}
+          </div>
+        )}
         {message?.flow_run_id && (
           <div>
             <span className="text-gray-500">{t('messageDetails.flowRun')}</span>{' '}
@@ -743,6 +774,12 @@ export default function MessageDetails() {
                 <span className="text-gray-400">{t(`chat.entityAction.${e.action}`, { defaultValue: e.action })}</span>
               </Link>
             ))}
+          </div>
+        )}
+        {/* The sources the answer cited as [n] (common/citation_sink.py). */}
+        {!!(insights?.citations || []).length && (
+          <div className="md:col-span-2">
+            <Citations citations={insights.citations} anchor={`run-${runId}`} />
           </div>
         )}
       </div>

@@ -50,6 +50,18 @@ export default {
     none: 'No network',
     limited: 'Limited',
     allowPackageManagers: 'Allow package managers (pip, npm) through the limit',
+    enforcementHint: 'With the egress proxy on (AGENTS_HUB_EGRESS_PROXY=1), a limited or no-network docker run is fenced onto a network with no route out, so a process that ignores the proxy has nowhere to go. Without it, only the hub’s own tools and, for well-behaved clients, the proxy hold the limit. See docs/sandboxes.md.',
+  },
+  sandbox: {
+    label: 'Sandbox provider',
+    hint: 'Where run_code and the Chat code panel run a snippet for this environment. Inherit uses CODE_RUNNER_PROVIDER, falling back to local when docker is unavailable and configured to allow it.',
+    inherit: 'Inherit',
+    docker: 'Docker',
+    local: 'Local process (no isolation)',
+    e2b: 'E2B (remote)',
+    modal: 'Modal (remote)',
+    available: 'available',
+    unavailable: 'unavailable',
   },
   limits: {
     label: 'Resource limits',

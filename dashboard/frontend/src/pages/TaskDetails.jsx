@@ -25,6 +25,7 @@ import ProcessGraph, { TokenPill } from '../components/ProcessGraph';
 import LiveRunStream from '../components/LiveRunStream';
 import TaskAgentVersionPin from '../components/task/TaskAgentVersionPin';
 import TaskOutcomeCard from '../components/task/TaskOutcomeCard';
+import TaskFilesCard from '../components/files/TaskFilesCard';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import InlineEdit from '../components/InlineEdit';
@@ -1452,6 +1453,7 @@ const TaskDetails = () => {
           data for beyond its own compact header. */}
       <TaskAgentVersionPin task={task} onChanged={fetchData} />
       <TaskOutcomeCard task={task} onChanged={fetchData} />
+      <TaskFilesCard task={task} onChanged={fetchData} />
 
       {/* Live agent output for this task's session. Renders nothing until the
           session channel produces events, so a task with nothing running keeps

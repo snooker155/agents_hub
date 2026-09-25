@@ -94,6 +94,13 @@ def _spec_parts(spec: Any) -> Dict[str, Any]:
             "guardrails": sorted(getattr(spec, "guardrails", None) or []),
             "tool_search": getattr(spec, "tool_search", None),
             "compaction": getattr(spec, "compaction", None),
+            # Conversation handoff (chat/handoff.py): whom this agent may give
+            # the conversation to, and how much of it the receiver sees. The
+            # default filter is left out like an unset policy, for the same
+            # reason: an agent that never hands off keeps the hash it had.
+            "handoffs": sorted(getattr(spec, "handoffs", None) or []),
+            "handoff_history": (getattr(spec, "handoff_history", None)
+                                if getattr(spec, "handoff_history", "full") != "full" else None),
         }.items() if v not in (None, {}, [])},
     }
 

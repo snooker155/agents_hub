@@ -32,7 +32,7 @@ from managers.run_manager import (
     open_run as register_run,
     update_run as _update_run,
 )
-from common import artifact_sink, entity_sink as entity_sink_mod
+from common import artifact_sink, citation_sink as citation_sink_mod, entity_sink as entity_sink_mod
 
 from chat.models import ChatRequest
 from chat.runs import utc_iso
@@ -222,9 +222,14 @@ def build_chat_driver(
         # files this node's tools touched are linked from that node's reply.
         node_entities = entity_sink_mod.EntitySink()
         _node_entity_token = entity_sink_mod.set_sink(node_entities)
+        # And a per-node citation sink: the passages this node's memory search
+        # showed its model, numbered for that node's own [n] references.
+        node_citations = citation_sink_mod.CitationSink()
+        _node_citation_token = citation_sink_mod.set_sink(node_citations)
         task = asyncio.create_task(_run_node_agent())
         artifact_sink.reset_recorder(_node_artifact_token)
         entity_sink_mod.reset_sink(_node_entity_token)
+        citation_sink_mod.reset_sink(_node_citation_token)
 
         drive = StreamDriveResult()
         try:
@@ -232,6 +237,7 @@ def build_chat_driver(
                 task=task, queue=queue, callback=callback, run_id=run_id,
                 full_prompt=prompt, started_ts=node_started_ts, result=drive,
                 entity_sink=node_entities,
+                citation_sink=node_citations,
             ):
                 yield event
         except asyncio.CancelledError:
@@ -262,6 +268,9 @@ def build_chat_driver(
         # Links to the service entities this node touched; the pipeline attaches
         # them to the node's done event so its bubble can show them.
         meta["entities"] = drive.entities
+        # The sources the node's reply cites as [n] (common/citation_sink.py);
+        # already on the node's run record as ``process.citations``.
+        meta["citations"] = drive.citations
         summary_line = (
             f"[message_summary] id={node_msg_id} "
             f"inbound_tokens={callback.prompt_tokens} "

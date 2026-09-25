@@ -2,15 +2,18 @@
  * Tab: RAG Pipeline — vector DB status, file upload and indexing per pool.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  Database, Trash2, Upload, Files, RefreshCw, CheckCircle, AlertCircle, Zap,
+  Database, Trash2, Upload, Files, RefreshCw, CheckCircle, AlertCircle, Zap, FolderOpen,
 } from 'lucide-react';
 import {
   uploadMemoryFile, deleteMemoryFile, indexMemoryFile, deindexMemoryFile,
   listMemoryFiles, getRagConfig,
 } from '../../api';
+import { addMemoryFileFromWorkspace } from '../../api/files';
 import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
+import WorkspaceFilePicker from '../files/WorkspaceFilePicker';
 import { StatusBadge } from './StatusBadge';
 import { fmt } from './helpers';
 
@@ -68,6 +71,7 @@ function RagPipelineTab({ memories, workspaceFilter }) {
   const [dragging, setDragging] = useState(false);
   const [ragCfg, setRagCfg] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -103,6 +107,26 @@ function RagPipelineTab({ memories, workspaceFilter }) {
     } catch (e) {
       toast.error(t('memoryManager.errors.uploadFile'), errorDetail(e));
     } finally { setUploading(false); }
+  };
+
+  // Workspace files (docs/files.md) added by id: copied into the knowledge
+  // folder and indexed in one step, remembered so citations link back.
+  const handleAddFromWorkspace = async (records) => {
+    setFilePickerOpen(false);
+    if (!poolId) return;
+    setUploading(true);
+    let added = 0;
+    for (const rec of records) {
+      try {
+        await addMemoryFileFromWorkspace(poolId, rec.file_id);
+        added += 1;
+      } catch (e) {
+        toast.error(t('files.memory.addFailed', { name: rec.name }), errorDetail(e));
+      }
+    }
+    setUploading(false);
+    if (added) toast.success(t('files.memory.added', { count: added }));
+    await loadFiles(poolId, workspaceFilter);
   };
 
   const handleDrop = async (e) => {
@@ -153,6 +177,15 @@ function RagPipelineTab({ memories, workspaceFilter }) {
 
   return (
     <div className="space-y-5">
+      {filePickerOpen && (
+        <WorkspaceFilePicker
+          workspace={workspaceFilter}
+          excludeIds={files.map((f) => f.workspace_file_id).filter(Boolean)}
+          uploadSource="memory"
+          onPick={handleAddFromWorkspace}
+          onClose={() => setFilePickerOpen(false)}
+        />
+      )}
       {/* Vector DB status */}
       <VectorDbStatusCard ragCfg={ragCfg} />
 
@@ -174,6 +207,12 @@ function RagPipelineTab({ memories, workspaceFilter }) {
             <button onClick={handleIndexAll}
               className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium">
               <Zap className="w-4 h-4" /> Index All Pending ({pendingCount})
+            </button>
+          )}
+          {workspaceFilter && poolId && (
+            <button onClick={() => setFilePickerOpen(true)} disabled={uploading}
+              className="flex items-center gap-2 border border-gray-200 text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm">
+              <FolderOpen className="w-4 h-4" /> {t('files.memory.addFromWorkspace')}
             </button>
           )}
           <button onClick={() => loadFiles(poolId, workspaceFilter)} disabled={loading}
@@ -255,6 +294,12 @@ function RagPipelineTab({ memories, workspaceFilter }) {
                     <tr key={f.filename} className={`hover:bg-gray-50 ${isBusy ? 'bg-indigo-50/40' : ''}`}>
                       <td className="px-5 py-3">
                         <p className="font-medium text-gray-800">{f.filename}</p>
+                        {f.workspace_file_id && (
+                          <Link to={`/files?file=${encodeURIComponent(f.workspace_file_id)}`}
+                            className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:underline">
+                            <FolderOpen className="w-3 h-3" /> {t('files.memory.linked')}
+                          </Link>
+                        )}
                       </td>
                       <td className="px-5 py-3">
                         {isBusy

@@ -54,6 +54,9 @@ class CaseIn(BaseModel):
     # A snapshot given directly, in the same shape snapshot_task returns.
     artifact: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = {}
+    # Workspace files (files/service.py) the case runs with: copied into its
+    # isolated directory and named in its input (evals.runner.prepare_work_dir).
+    file_ids: List[str] = []
 
 
 class TargetIn(BaseModel):
@@ -93,6 +96,9 @@ class RunEvalIn(BaseModel):
     workspace: Optional[str] = None
     # Stops the sweep once accumulated spend crosses this (USD).
     cost_ceiling: Optional[float] = None
+    # "live" runs every cell now; "batch" sends agent cells and judge calls
+    # through the provider batch APIs at half price (evals/batch.py).
+    mode: str = "live"
 
 
 def _artifact_from_in(c: CaseIn) -> Optional[Dict[str, Any]]:
@@ -102,21 +108,43 @@ def _artifact_from_in(c: CaseIn) -> Optional[Dict[str, Any]]:
     return dict(c.artifact) if c.artifact else None
 
 
-def _case_from_in(c: CaseIn) -> Case:
+def _case_file_ids(raw: List[str], workspace: Optional[str]) -> List[str]:
+    """A case's workspace files, de-duplicated in order. ValueError (a 400 at
+    the callers) for an id that is unknown, deleted, or of another workspace
+    than the set's: a case must never copy another workspace's file into its
+    run."""
+    from files import service as files_service
+    out: List[str] = []
+    for fid in raw or []:
+        fid = str(fid or "").strip()
+        if not fid or fid in out:
+            continue
+        record = files_service.get_file(fid)
+        if record is None:
+            raise ValueError(f"Workspace file '{fid}' not found")
+        if record["workspace"] != (workspace or "default"):
+            raise ValueError(f"Workspace file '{fid}' belongs to another workspace than this eval set")
+        out.append(fid)
+    return out
+
+
+def _case_from_in(c: CaseIn, workspace: Optional[str] = None) -> Case:
     artifact = _artifact_from_in(c)
+    file_ids = _case_file_ids(c.file_ids, workspace)
     if c.from_run_id:
         case = case_from_run(c.from_run_id, expected=c.expected, rubric=c.rubric)
         if c.input.strip():
             case.input = c.input
         case.metadata.update(c.metadata or {})
         case.artifact = artifact
+        case.file_ids = file_ids
         return case
     metadata = dict(c.metadata or {})
     if c.from_task_id:
         metadata.setdefault("task_id", c.from_task_id)
     return Case(
         input=c.input, expected=c.expected, rubric=c.rubric,
-        metadata=metadata, artifact=artifact,
+        metadata=metadata, artifact=artifact, file_ids=file_ids,
     )
 
 
@@ -149,7 +177,7 @@ async def create_eval(data: EvalSetIn):
     if not data.name.strip():
         raise HTTPException(status_code=400, detail="name is required")
     try:
-        cases = [_case_from_in(c) for c in data.cases]
+        cases = [_case_from_in(c, data.workspace) for c in data.cases]
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     try:
@@ -341,7 +369,7 @@ async def update_eval(eval_set_id: str, data: EvalSetIn):
     # them edits the set's metadata rather than silently emptying the dataset.
     if data.cases:
         try:
-            evalset.cases = [_case_from_in(c) for c in data.cases]
+            evalset.cases = [_case_from_in(c, evalset.workspace) for c in data.cases]
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     return store.save_eval_set(evalset).to_dict()
@@ -362,8 +390,11 @@ async def add_eval_case(eval_set_id: str, data: CaseIn):
     case" button, the cheapest way to seed a dataset from real traffic. With
     ``from_task_id`` the case carries a snapshot of that task (see
     evals/snapshot.py for what is copied and what never is)."""
+    existing = store.get_eval_set(eval_set_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Eval set not found")
     try:
-        case = _case_from_in(data)
+        case = _case_from_in(data, existing.workspace)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     evalset = store.add_case(eval_set_id, case)
@@ -397,7 +428,7 @@ async def estimate_eval(eval_set_id: str, data: RunEvalIn):
         configs = [baseline] if baseline else []
     if not configs:
         raise HTTPException(status_code=400, detail="No configs and no default target on the set")
-    return project_cost(evalset, configs)
+    return project_cost(evalset, configs, mode=data.mode)
 
 
 @router.post("/evals/{eval_set_id}/run")
@@ -409,12 +440,17 @@ def start_eval_run(eval_set_id: str, data: Optional[RunEvalIn] = None):
             _configs_from_in(data.configs),
             workspace=data.workspace,
             cost_ceiling=data.cost_ceiling,
+            mode=data.mode,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Eval run failed: {e}")
-    return {**run.to_dict(), "matrix": store.build_matrix(run.eval_run_id)}
+    out = {**run.to_dict(), "matrix": store.build_matrix(run.eval_run_id)}
+    if run.mode == "batch":
+        from evals.batch import progress
+        out["batch"] = progress(run.eval_run_id)
+    return out
 
 
 @router.get("/evals/{eval_set_id}/runs")
@@ -449,7 +485,39 @@ async def get_eval_run_details(eval_run_id: str):
         "cases": [c.to_dict() for c in (evalset.cases if evalset else [])],
         "eval_set_name": evalset.name if evalset else "",
         "matrix": store.build_matrix(eval_run_id),
+        **({"batch": _batch_progress(eval_run_id)} if run.mode == "batch" else {}),
     }
+
+
+def _batch_progress(eval_run_id: str) -> Dict[str, Any]:
+    from evals.batch import progress
+    return progress(eval_run_id)
+
+
+@router.post("/eval-runs/{eval_run_id}/cancel")
+def cancel_eval_run(eval_run_id: str):
+    """Cancel a batch run's open provider batches. Answers the provider already
+    produced are still collected; the rest of the cells are recorded as stopped."""
+    from evals.batch import cancel_run
+    try:
+        run = cancel_run(eval_run_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**run.to_dict(), "batch": _batch_progress(eval_run_id)}
+
+
+@router.post("/eval-runs/{eval_run_id}/poll")
+def poll_eval_run(eval_run_id: str):
+    """Check this run's provider batches now instead of at the next scheduler
+    tick, and process any that ended."""
+    from evals.batch import poll_pending
+    run = store.get_eval_run(eval_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    poll_pending(force=True, background=False)
+    run = store.get_eval_run(eval_run_id)
+    return {**run.to_dict(), "batch": _batch_progress(eval_run_id),
+            "matrix": store.build_matrix(eval_run_id)}
 
 
 @router.get("/eval-graders")

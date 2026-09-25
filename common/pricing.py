@@ -183,4 +183,16 @@ def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
                               c_in, c_out, c_cached)
         inbound, outbound = max(0, inbound - c_in), max(0, outbound - c_out)
         cached = max(0, cached - c_cached)
-    return _tokens_cost(prices, provider, model, inbound, outbound, cached) + extra + _aux_cost(run, prices)
+    own = (_tokens_cost(prices, provider, model, inbound, outbound, cached) + extra) * _price_factor(run)
+    return own + _aux_cost(run, prices)
+
+
+def _price_factor(run: Dict[str, Any]) -> float:
+    """The share of the catalog price a run's own calls bill at: 0.5 for a
+    call that went through a provider batch API (an eval cell of a batch run,
+    evals/batch.py), 1 otherwise."""
+    try:
+        factor = float(run.get("price_factor") or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return factor if 0.0 < factor <= 1.0 else 1.0

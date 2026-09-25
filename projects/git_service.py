@@ -25,6 +25,23 @@ from projects.errors import ServiceError
 from tools.git_publish import run_git_publish
 
 
+def sync_project_skills(project) -> Optional[Dict[str, Any]]:
+    """Pick up the skills a freshly cloned or pulled repository keeps in its
+    ``.claude/skills`` folder (memory/skill_import.py). Best effort: a skill
+    that fails to parse is listed in the report, and a sync that fails as a
+    whole never fails the clone or pull it follows."""
+    try:
+        from memory.skill_import import sync_workspace
+        report = sync_workspace(project.workspace, project_id=project.id)
+    except Exception:  # noqa: BLE001 - the git operation already succeeded; skills are extra
+        import logging
+        logging.getLogger(__name__).warning(
+            "skill sync after git failed for project %s", project.id, exc_info=True)
+        return None
+    return {k: len(report.get(k) or []) for k in
+            ("added", "updated", "unchanged", "missing", "followed", "errors")}
+
+
 def repo_provider(project) -> Optional[str]:
     """Provider name for git auth injection, when the project's repo type
     is one a provider is registered for."""
@@ -91,7 +108,8 @@ def clone_repo(project, ws_folder: Path) -> Dict[str, Any]:
         status = 504 if "timed out" in str(e) else 500
         raise ServiceError(status, str(e))
 
-    return {"cloned": True, "path": str(clone_dir), "output": output}
+    return {"cloned": True, "path": str(clone_dir), "output": output,
+            "skills": sync_project_skills(project)}
 
 
 def git_status(project, ws_folder: Path) -> Dict[str, Any]:
@@ -136,7 +154,7 @@ def git_pull(project, ws_folder: Path) -> Dict[str, Any]:
         status = 504 if "timed out" in str(e) else 500
         raise ServiceError(status, str(e))
 
-    return {"output": output, "returncode": 0}
+    return {"output": output, "returncode": 0, "skills": sync_project_skills(project)}
 
 
 def publish(

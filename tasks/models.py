@@ -400,6 +400,12 @@ class Task(BaseModel):
     # "grader": {"provider", "model"}, "cost_usd", "graded_at"}.
     outcome_evaluations: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Workspace files (files/service.py) the task works from, by id. Copied
+    # into the run's working directory (``task_files/``) when a run starts and
+    # named in its prompt (tasks.context.build_task_instruction); a subtask
+    # inherits them like it inherits the money cap.
+    file_ids: List[str] = Field(default_factory=list, description="Workspace file ids attached to the task")
+
     @field_validator("priority", mode="before")
     @classmethod
     def _coerce_priority(cls, v):

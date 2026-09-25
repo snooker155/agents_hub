@@ -88,15 +88,22 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # ── execution: the whole trifecta in one tool ────────────────────────────
     "run_shell": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE, CAN_EXFILTRATE}),
     # run_code's real grant depends on configuration and is answered by
-    # ``run_code_grants`` below: reads_private only in a no-network container,
-    # the whole trifecta when CODE_RUNNER_FALLBACK=local. This entry is the
-    # worst case, which is what a static reading of the table should see.
+    # ``run_code_grants`` below: reads_private only in a no-network sandbox,
+    # ingests_untrusted and can_exfiltrate in a run with a limited network
+    # (no workspace mount then), the whole trifecta when
+    # CODE_RUNNER_FALLBACK=local. This entry is the worst case, which is what
+    # a static reading of the table should see.
     "run_code": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE, CAN_EXFILTRATE}),
 
     # ── filesystem reads ─────────────────────────────────────────────────────
     "read_file": frozenset({READS_PRIVATE}),
     "list_files": frozenset({READS_PRIVATE}),
     "search_text": frozenset({READS_PRIVATE}),
+    # The workspace file objects (tools/workspace_files.py): listing names
+    # them and reading returns their text, the same class of operator data
+    # as a file in the working directory.
+    "list_workspace_files": frozenset({READS_PRIVATE}),
+    "read_workspace_file": frozenset({READS_PRIVATE}),
 
     # ── memory reads ─────────────────────────────────────────────────────────
     "read_memory": frozenset({READS_PRIVATE}),
@@ -257,8 +264,16 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # memory writers — write into pools, never out of the system
     "write_structured_memory", "append_journal", "remember", "record_episode",
     "memory_block_append", "memory_block_replace",
-    # skills
-    "get_skill", "create_skill",
+    # skills. read_skill_file reads only the files listed in one attached
+    # skill's own folder (.claude/skills/<name>/), material the workspace
+    # published as part of that skill, the same way get_skill returns its
+    # SKILL.md body; it cannot reach any other workspace file.
+    "get_skill", "create_skill", "read_skill_file",
+    # conversation handoff (tools/handoff.py): ends the turn and names the
+    # next agent, which then runs on its own tool set (checked at its own
+    # build). Nothing comes back to the caller, so unlike run_agent_tool it
+    # opens no path for the caller to read through another agent.
+    "handoff_to_agent",
 
     # ── filesystem writes ────────────────────────────────────────────────────
     # write_file, create_file and apply_unified_diff all return only the
@@ -267,6 +282,9 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # existing file content back into the caller's context, so unlike
     # read_file/list_files/search_text they grant nothing.
     "write_file", "delete_file", "apply_unified_diff", "create_file",
+    # save_workspace_file stores text the agent already holds as a workspace
+    # file and returns only the new record (id, name, size), like write_file.
+    "save_workspace_file",
 
     # ── memory writes / derivations ──────────────────────────────────────────
     # write_memory persists into a pool, like write_structured_memory above.
@@ -531,20 +549,32 @@ def mcp_grants(tool_id: str) -> Optional[FrozenSet[str]]:
 
 # ── Configuration-dependent grants ────────────────────────────────────────────
 #
-# run_code (tools/run_code.py) runs a snippet in a container with no network
-# and at most a read-only workspace mount: it can read private files but has
-# no way in for untrusted text and no way out. With CODE_RUNNER_FALLBACK=local
-# the same snippet runs as a host subprocess with the network and the host's
-# filesystem, which is run_shell's whole trifecta. The claim follows the
-# setting, looked up lazily the way ``mcp_grants`` reads a server's
-# configuration, and fails closed: if the setting cannot be read, the worst
-# case applies.
+# run_code (tools/run_code.py) runs a snippet in a sandbox (sandbox/) with no
+# network and at most a read-only workspace mount: it can read private files
+# but has no way in for untrusted text and no way out. With
+# CODE_RUNNER_FALLBACK=local the same snippet runs as a host subprocess with
+# the network and the host's filesystem, which is run_shell's whole trifecta.
+# In a run whose environment has a ``limited`` network (AGENTS_HUB_NETWORK,
+# set by environments/launch.py in the run's own process), the snippet can
+# reach that environment's hosts: text from them comes in, anything can go
+# out to them. run_code then refuses the workspace mount, so it grants
+# ingests_untrusted and can_exfiltrate but not reads_private; the tool set's
+# own check catches an agent that also reads private files, exactly as it does
+# for the web tools. That is decided at build time, when the run's environment
+# is known (agents.capability_guard, build time); at save time no environment
+# is set and the sandboxed claim applies. The claim is looked up lazily the way
+# ``mcp_grants`` reads a server's configuration, and fails closed: if the
+# setting cannot be read, the worst case applies.
 
 _RUN_CODE_SANDBOXED: FrozenSet[str] = frozenset({READS_PRIVATE})
+_RUN_CODE_NETWORKED: FrozenSet[str] = frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE})
 
 
 def run_code_grants() -> FrozenSet[str]:
-    """What ``run_code`` grants under the current configuration."""
+    """What ``run_code`` grants under the current configuration and, inside
+    a run, under that run's environment network."""
+    import os
+
     try:
         from common.config import settings
         fallback = str(getattr(settings, "code_runner_fallback", "") or "").strip().lower()
@@ -552,6 +582,8 @@ def run_code_grants() -> FrozenSet[str]:
         return CAPABILITY_GRANTS["run_code"]
     if fallback == "local":
         return CAPABILITY_GRANTS["run_code"]
+    if os.environ.get("AGENTS_HUB_NETWORK", "").strip().lower() == "limited":
+        return _RUN_CODE_NETWORKED
     return _RUN_CODE_SANDBOXED
 
 

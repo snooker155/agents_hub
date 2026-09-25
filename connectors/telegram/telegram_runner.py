@@ -648,6 +648,16 @@ def _format_flow_reply(responses: list[dict[str, Any]]) -> str:
     )
 
 
+def _format_handoff(event: dict[str, Any]) -> str:
+    """The handing agent's reply and where the conversation went, as one
+    Telegram message sent before the receiving agent's answer."""
+    reply = str(event.get("from_response") or "").strip()
+    name = event.get("to_agent_name") or event.get("to_agent_id") or "another agent"
+    reason = str(event.get("reason") or "").strip()
+    marker = f"(handed over to {name}" + (f": {reason})" if reason else ")")
+    return f"{reply}\n\n{marker}" if reply and reply != reason else marker
+
+
 async def _run_agent_for_telegram(
     api: TelegramAPI, chat_id: int, binding: dict[str, Any],
     text: str, attachments: list[dict[str, Any]],
@@ -710,7 +720,21 @@ async def _run_agent_for_telegram(
         async for event in pipeline:
             if event.get("type") == "node_done":
                 final_entities.extend(event.get("entities") or [])
+            if event.get("type") == "handoff":
+                # The agent gave the conversation to another one (chat/handoff.py):
+                # its own reply goes out now, the receiving agent's answer
+                # follows as the turn's reply below.
+                await _send_text(api, chat_id, _format_handoff(event))
+                await api.send_chat_action(chat_id, "typing")
+                continue
             if event.get("type") == "done":
+                if event.get("handoff") and event.get("agent_id") and not is_flow:
+                    # The chat stays with the agent that answered.
+                    telegram_store.upsert_binding(
+                        chat_id=chat_id, agent_id=str(event["agent_id"]),
+                        workspace=workspace, conversation_id=conv_id,
+                    )
+                    notify_change("telegram", chat_id=chat_id)
                 final_entities.extend(event.get("entities") or [])
                 final_ok = bool(event.get("ok"))
                 final_error = event.get("error")

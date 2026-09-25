@@ -96,6 +96,8 @@ function handleFlowEvent(event, ctx) {
                   // across LLM turns.
                   content: (event.response || '').trim() || (event.response_obj ? '' : stripUiBlock(m.content)) || '',
                   entities: event.entities || m.entities || null,
+                  // The node's cited sources, once node_done carries them.
+                  citations: event.citations || m.citations || null,
                   thinking_live: '',
                   error: !event.ok,
                   run_id: event.run_id || m.run_id,

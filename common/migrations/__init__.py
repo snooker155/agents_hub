@@ -4,7 +4,7 @@ Numbered schema migrations, applied in order under one transaction.
 A migration is a file in this directory named ``NNNN_<name>.sql`` or
 ``NNNN_<name>.py``; ``NNNN`` is its version. The ledger table
 ``schema_migrations`` records which versions a database has, and
-``apply_pending`` runs every version above the ledger's maximum, oldest first.
+``apply_pending`` runs every version the ledger does not name, oldest first.
 It is called by ``common.db._ensure_ready`` inside the same transaction as the
 legacy JSON import, so a migration either lands whole or not at all (both
 SQLite and Postgres run DDL transactionally).
@@ -209,8 +209,16 @@ def apply_one(conn: Any, dialect: str, mg: Migration) -> None:
 
 
 def apply_pending(conn: Any, dialect: str) -> List[int]:
-    """Apply every migration above the ledger's maximum, in order, on the
+    """Apply every migration the ledger does not name, oldest first, on the
     caller's already-open transaction. Returns the versions applied.
+
+    Every missing version, not only those above the ledger's maximum: two
+    branches (or two people, or a running development server picking up files
+    as they are written) can land migrations out of numeric order, and a
+    database that took ``0024`` before ``0021`` existed would otherwise skip
+    ``0021`` for good. Migrations are written to be idempotent
+    (``CREATE ... IF NOT EXISTS``, :func:`add_column_if_missing`), so a late
+    one applies cleanly on top of newer ones.
 
     Raises ``RuntimeError`` when the database is ahead of this build: its
     ledger names a version this checkout does not have.
@@ -226,10 +234,10 @@ def apply_pending(conn: Any, dialect: str) -> List[int]:
             "It was written by a newer version of the app: upgrade before opening "
             "it, or point AGENTS_HUB_ROOT / AGENTS_HUB_DATABASE_URL elsewhere."
         )
-    current = max(applied) if applied else 0
+    already = set(applied)
     done: List[int] = []
     for mg in available:
-        if mg.version <= current:
+        if mg.version in already:
             continue
         apply_one(conn, dialect, mg)
         done.append(mg.version)

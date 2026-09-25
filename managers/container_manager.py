@@ -239,6 +239,131 @@ def get_or_create_network() -> str:
     return NETWORK_NAME
 
 
+EGRESS_NETWORK_NAME = "agents-hub-egress"
+EGRESS_GATEWAY_NAME = "agents-hub-egress-gateway"
+
+
+def ensure_egress_network() -> str:
+    """The internal, no-route-out network a fenced container joins instead of
+    the ordinary ``agents-hub`` bridge: ``--internal`` means the daemon gives
+    it no default route, so a container on it alone can reach nothing but
+    another container on the same network — the egress gateway. Created on
+    demand, idempotent. See docs/sandboxes.md, "Enforced network policy"."""
+    result = _run(["docker", "network", "ls", "--filter", f"name=^{EGRESS_NETWORK_NAME}$",
+                   "--format", "{{.Name}}"])
+    if EGRESS_NETWORK_NAME not in (result.stdout or "").splitlines():
+        _run(["docker", "network", "create", "--internal", "--driver", "bridge", EGRESS_NETWORK_NAME])
+    return EGRESS_NETWORK_NAME
+
+
+def ensure_egress_gateway() -> Optional[str]:
+    """Start the egress gateway container, if it is not already running: a
+    tiny relay (``socat``, or ``AGENTS_HUB_EGRESS_GATEWAY_IMAGE``) attached to
+    both the ordinary bridge (its route out, to the egress proxy on this
+    host) and :func:`ensure_egress_network` (so a fenced container can reach
+    it, and only it). Returns the gateway's container name — what a fenced
+    container's ``HTTP_PROXY``/``HTTPS_PROXY`` should point at, since the
+    internal network's embedded DNS resolves container names — or ``None``
+    when the egress proxy itself is off or the gateway could not be started
+    (docker unavailable, image missing); a caller gets that as "the enforced
+    fence is unavailable", never as permission to run unfenced instead.
+    """
+    try:
+        from environments import egress
+    except Exception:  # noqa: BLE001 - environments always importable in practice; defensive
+        return None
+    if not egress.enabled():
+        return None
+    if container_running(EGRESS_GATEWAY_NAME):
+        return EGRESS_GATEWAY_NAME
+    proxy_host = egress.public_host("docker")
+    proxy_port = egress.port()
+    bridge = get_or_create_network()
+    ensure_egress_network()
+    # A stopped-but-not-removed container from a previous, failed attempt
+    # would otherwise make `docker run --name` fail forever.
+    _run(["docker", "rm", "-f", EGRESS_GATEWAY_NAME], timeout=15)
+    from common.config import live_setting
+    image = live_setting("AGENTS_HUB_EGRESS_GATEWAY_IMAGE", "alpine/socat:latest")
+    cmd = [
+        "docker", "run", "--detach", "--rm",
+        "--name", EGRESS_GATEWAY_NAME,
+        "--label", LABEL_MANAGED,
+        "--label", "agents-hub.container-type=egress-gateway",
+        "--network", bridge,
+        "--add-host", "host.docker.internal:host-gateway",
+        # --entrypoint overrides whatever the image itself declares (the
+        # default alpine/socat image's own ENTRYPOINT is already ["socat"],
+        # which running "sh -c ..." as its command would fight rather than
+        # use); this way any image with a `socat` binary on PATH works,
+        # matching AGENTS_HUB_EGRESS_GATEWAY_IMAGE's own promise.
+        "--entrypoint", "socat",
+        image,
+        f"TCP-LISTEN:{proxy_port},fork,reuseaddr",
+        f"TCP:{proxy_host}:{proxy_port}",
+    ]
+    result = _run(cmd, timeout=30)
+    if result.returncode != 0:
+        logger.warning("could not start the egress gateway: %s", (result.stderr or "").strip())
+        return None
+    connect = _run(["docker", "network", "connect", EGRESS_NETWORK_NAME, EGRESS_GATEWAY_NAME], timeout=15)
+    if connect.returncode != 0 and "already exists in network" not in (connect.stderr or ""):
+        logger.warning("could not attach the egress gateway to %s: %s",
+                       EGRESS_NETWORK_NAME, (connect.stderr or "").strip())
+        _run(["docker", "rm", "-f", EGRESS_GATEWAY_NAME], timeout=15)
+        return None
+    return EGRESS_GATEWAY_NAME
+
+
+def _rewrite_proxy_url(url: str, gateway_name: str) -> str:
+    """The proxy URL environments/launch.py hands a run points at
+    host.docker.internal (or 127.0.0.1): unreachable once the container is
+    fenced to the internal network alone. Keep the token, swap the host for
+    the gateway's container name."""
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(url)
+    netloc = f"{gateway_name}:{parts.port or 80}"
+    if parts.username:
+        netloc = f"{parts.username}@{netloc}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+_PROXY_ENV_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+
+
+def enforce_network_policy(
+    network: str, env: Optional[Dict[str, str]], extra_env: Optional[Dict[str, str]]
+) -> "tuple[str, Optional[Dict[str, str]], Optional[Dict[str, str]]]":
+    """Fence a container onto the no-route-out egress network when its launch
+    carries a ``none``/``limited`` environment network policy
+    (``AGENTS_HUB_NETWORK``, environments/launch.py) and the egress proxy is
+    enabled; otherwise return the inputs unchanged — today's behaviour, the
+    ordinary ``agents-hub`` bridge, policed only by the proxy and the hub
+    tools' own checks, kept when the proxy is off (see the ``sandbox``
+    doctor check, common/doctor.py, for whether enforcement is active).
+
+    ``AGENTS_HUB_NETWORK`` may arrive in either dict: a run container's own
+    (unfiltered) ``env``, or a node container's ``extra_env`` (its ``env`` is
+    allowlist-filtered before this point and would not carry it). Wherever
+    the proxy variables are set, they are rewritten to point at the gateway
+    instead of the host, since the fenced network has no route to either.
+    """
+    combined = {**(env or {}), **(extra_env or {})}
+    if combined.get("AGENTS_HUB_NETWORK") not in ("none", "limited"):
+        return network, env, extra_env
+    gateway = ensure_egress_gateway()
+    if not gateway:
+        return network, env, extra_env
+    new_env = dict(env) if env else env
+    new_extra = dict(extra_env) if extra_env else extra_env
+    for key in _PROXY_ENV_KEYS:
+        if new_env is not None and key in new_env:
+            new_env[key] = _rewrite_proxy_url(new_env[key], gateway)
+        if new_extra is not None and key in new_extra:
+            new_extra[key] = _rewrite_proxy_url(new_extra[key], gateway)
+    return EGRESS_NETWORK_NAME, new_env, new_extra
+
+
 def _attach_self_to_network() -> None:
     """Put our own container on the agents-hub network, if we are one.
 
@@ -579,8 +704,13 @@ def build_run_command(
       --memory / --cpus / --pids-limit — a single run cannot exhaust the host.
       ``network`` is the network name to join; "none" gives the container no
         network at all and drops the host.docker.internal mapping with it
-        (no caller passes it today: an environment's network policy is
-        enforced by the egress proxy and the hub tools, not here).
+        (no caller passes it today). A "limited"/"none" environment network
+        policy is enforced one level up, by ``start_container`` calling
+        :func:`enforce_network_policy` before this function ever runs: it
+        substitutes the internal, no-route-out network
+        (:data:`EGRESS_NETWORK_NAME`) for whatever ``network`` this function
+        was given, when the egress proxy is enabled — this function itself
+        stays a pure command builder and does not know the difference.
       snapshot_dir, when given, is the registry snapshot the launcher wrote
         for this run (common/snapshot.py: agents.json, custom_providers.json,
         models.json), re-mounted read-only *inside* the state dir mount and
@@ -763,6 +893,8 @@ def start_container(
     extra = extra_args or live_setting("AGENT_DOCKER_EXTRA_ARGS")
 
     if hardened:
+        run_env = {**(env or {}), **(extra_env or {})} if extra_env else env
+        network, run_env, _ = enforce_network_policy(network, run_env, None)
         docker_cmd = build_run_command(
             container_name=container_name,
             agent_id=agent_id,
@@ -772,7 +904,7 @@ def start_container(
             state_dir=state_dir,
             tasks_dir=tasks_dir,
             workspace=workspace,
-            env={**(env or {}), **(extra_env or {})} if extra_env else env,
+            env=run_env,
             extra_args=extra,
             memory=memory,
             cpus=cpus,
@@ -780,6 +912,7 @@ def start_container(
             snapshot_dir=snapshot_dir,
         )
     else:
+        network, env, extra_env = enforce_network_policy(network, env, extra_env)
         docker_cmd = [
             "docker", "run",
             "--detach",

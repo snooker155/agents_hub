@@ -261,6 +261,16 @@ def _filesystem_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="filesystem", requires_workspace=True) for t in tools]
 
 
+def _workspace_files_specs() -> List[ToolSpec]:
+    # The workspace file objects (files/service.py), not the working
+    # directory: listed with the filesystem tools because that is where an
+    # operator looks for "read a file", but they act on the run's workspace
+    # catalogue by id. requires_workspace: the workspace comes from the run.
+    from tools.workspace_files import WORKSPACE_FILE_TOOLS
+    return [spec_from_tool(t, category="filesystem", requires_workspace=True)
+            for t in WORKSPACE_FILE_TOOLS]
+
+
 def _memory_specs() -> List[ToolSpec]:
     from memory.tool import (
         read_memory_tool, write_memory_tool, search_memory_tool,
@@ -499,6 +509,7 @@ def _geometry_specs() -> List[ToolSpec]:
 # the old hand-written catalog.
 _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _filesystem_specs,
+    _workspace_files_specs,
     _memory_specs,
     _coordination_specs,
     _task_management_specs,

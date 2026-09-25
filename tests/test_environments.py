@@ -66,10 +66,17 @@ def test_model_normalizes_hosts_and_defaults():
     ("env", {"1BAD": "x"}),
     ("name", "   "),
     ("mode", "kubernetes"),
+    ("sandbox_provider", "aws-lambda"),
 ])
 def test_model_refuses_unsafe_values(field, value):
     with pytest.raises(Exception):
         Environment(**{"name": "x", field: value})
+
+
+def test_model_sandbox_provider_defaults_and_choices():
+    assert Environment(name="x").sandbox_provider == "inherit"
+    for choice in ("inherit", "docker", "local", "e2b", "modal"):
+        assert Environment(name="x", sandbox_provider=choice).sandbox_provider == choice
 
 
 def test_model_refuses_bad_limits_and_hosts():
@@ -161,6 +168,14 @@ def test_update_merges_nested_fields():
     assert updated.network.type == "limited"
     assert updated.network.allowed_hosts == ["a.com"]
     assert updated.network.allow_package_managers is True
+
+
+def test_sandbox_provider_is_editable_and_round_trips():
+    env = service.create_environment({"name": "x", "sandbox_provider": "e2b"})
+    assert env.sandbox_provider == "e2b"
+    updated = service.update_environment(env.id, {"sandbox_provider": "modal"})
+    assert updated.sandbox_provider == "modal"
+    assert service.to_dict(updated)["sandbox_provider"] == "modal"
 
 
 def test_delete_refused_while_in_use(monkeypatch):
@@ -626,6 +641,10 @@ def test_routes_crud(client):
     assert env["network"] == {"type": "limited", "allowed_hosts": ["example.com"],
                               "allow_package_managers": False}
     assert env["limits"] == {"memory": "1g", "cpus": None, "pids_limit": None}
+    assert env["sandbox_provider"] == "inherit"
+
+    r = client.patch(f"/api/environments/{env['id']}", json={"sandbox_provider": "local"})
+    assert r.status_code == 200 and r.json()["sandbox_provider"] == "local"
 
     assert client.post("/api/environments", json={"name": "sandbox", "workspace": "w"}).status_code == 409
     assert client.post("/api/environments", json={"name": "x", "mode": "vm"}).status_code == 400
@@ -656,6 +675,17 @@ def test_routes_crud(client):
 
     assert client.delete(f"/api/environments/{env['id']}").json() == {"deleted": True}
     assert client.get(f"/api/environments/{env['id']}").status_code == 404
+
+
+def test_sandbox_providers_route(client, monkeypatch):
+    from sandbox import docker as docker_mod
+    monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
+    r = client.get("/api/environments/sandbox/providers")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"docker", "local", "e2b", "modal"}
+    assert body["docker"]["available"] is True
+    assert body["e2b"]["available"] is False and body["e2b"]["reason"]
 
 
 def test_routes_audit_writes(client):

@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n';
 import { trimBubbleText } from '../../lib/chatText';
 import ViewCard from '../../views/ViewCard';
 import { ChatTrail, SystemNotice } from './BuildMessage';
-import { renderContent } from './markdown';
+import Citations, { CitedText } from './Citations';
 import { MessageEntities, MessageFiles, ResponseButtons } from './messageParts';
 import { LiveThoughts } from './reasoning';
 import { steerCaption } from './steering';
@@ -69,7 +69,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
           </span>
         ) : isUser
           ? <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
-          : <div>{renderContent(msg.content)}</div>
+          : <div><CitedText content={msg.content} citations={msg.citations} anchor={msg.id} /></div>
         }
         {/* A message sent while the turn worked: where it is (waiting for the
             next step, delivered at step N, queued for the next turn). */}
@@ -90,6 +90,8 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
         {!isUser && <MessageFiles files={msg.files} artifactsByPath={artifactsByPath} />}
         {/* Links to the tasks / views / flows / files this turn touched. */}
         {!isUser && !showTypingDots && <MessageEntities entities={msg.entities} />}
+        {/* The sources the reply cites as [n] (a memory search's passages). */}
+        {!isUser && !showTypingDots && <Citations citations={msg.citations} anchor={msg.id} />}
         {/* Structured response UI (buttons / Telegram keyboard) under the text. */}
         {!isUser && !showTypingDots && (
           <ResponseButtons response={msg.response_obj} onAction={onAction} disabled={isStreaming} />

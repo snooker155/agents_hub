@@ -19,6 +19,14 @@ const deleteEnvironment = vi.fn(() => ok({}));
 const setDefaultEnvironment = vi.fn(() => ok({}));
 const getEnvironmentUsage = vi.fn(() => ok({ nodes: [], jobs: [], runs: [] }));
 const buildEnvironmentImage = vi.fn(() => ok({ ok: true, image: 'agents-hub-env:abc123' }));
+// sandbox/registry.py's providers, fetched by the environment form to show
+// availability hints next to the sandbox provider picker.
+const getSandboxProviders = vi.fn(() => ok({
+  docker: { available: true, reason: '' },
+  local: { available: true, reason: '' },
+  e2b: { available: false, reason: 'E2B_API_KEY is not set' },
+  modal: { available: false, reason: 'MODAL_TOKEN_ID / MODAL_TOKEN_SECRET are not set' },
+}));
 
 vi.mock('../../api', () => ({
   getEnvironments: (...args) => getEnvironments(...args),
@@ -29,6 +37,7 @@ vi.mock('../../api', () => ({
   setDefaultEnvironment: (...args) => setDefaultEnvironment(...args),
   getEnvironmentUsage: (...args) => getEnvironmentUsage(...args),
   buildEnvironmentImage: (...args) => buildEnvironmentImage(...args),
+  getSandboxProviders: (...args) => getSandboxProviders(...args),
 }));
 
 vi.mock('../../components/workspace', () => ({
@@ -67,6 +76,7 @@ beforeEach(() => {
   deleteEnvironment.mockClear();
   setDefaultEnvironment.mockClear();
   buildEnvironmentImage.mockClear();
+  getSandboxProviders.mockClear();
   getEnvironments.mockImplementation(() => ok([]));
 });
 
@@ -125,5 +135,16 @@ describe('Environments — creating one', () => {
     expect(payload.name).toBe('my-env');
     expect(payload.workspace).toBeNull();
     expect(payload.mode).toBe('inherit');
+    expect(payload.sandbox_provider).toBe('inherit');
+  });
+
+  it('shows availability hints next to the sandbox provider picker', async () => {
+    show();
+    await waitFor(() => expect(screen.getByText(/no environments yet/i)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /new environment/i }));
+    await waitFor(() => expect(getSandboxProviders).toHaveBeenCalled());
+    // Both e2b and modal are unavailable in the mocked response (no key).
+    await waitFor(() => expect(screen.getAllByText(/unavailable/i).length).toBeGreaterThanOrEqual(2));
   });
 });

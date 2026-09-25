@@ -4,7 +4,8 @@ Chat execution pipelines.
 Two async generators that drive a chat message to completion and yield SSE-style
 event dicts:
 
-- :func:`run_chat_pipeline` — a single YAML agent.
+- :func:`run_chat_pipeline` — a single YAML agent, followed in the same turn by
+  the agent it hands the conversation to, if it does (chat/handoff.py).
 - :func:`run_chat_flow_pipeline` — a multi-agent flow, driven through the shared
   ``flow.engine`` and translated back into the per-node SSE event shapes the
   frontend expects.
@@ -13,7 +14,10 @@ Both are consumed by the ``/api/chat/stream`` SSE endpoint and directly by the
 Telegram adapter, so they form the single execution path for chat.
 """
 import asyncio
+import logging
 import time
+from dataclasses import dataclass, field
+from typing import Optional
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -28,7 +32,7 @@ from managers.run_manager import update_run
 from chat.errors import error_code
 from chat.models import ChatRequest
 from common.session_service import get_or_create_chat_session
-from common import artifact_sink, entity_sink as entity_sink_mod, stream_sink
+from common import artifact_sink, citation_sink as citation_sink_mod, entity_sink as entity_sink_mod, stream_sink
 
 from .compaction import compact_for_turn, compaction_event
 from .context import (
@@ -51,8 +55,11 @@ from .runs import (
     load_flow_definition,
     create_chat_run,
 )
+from . import handoff as handoff_mod
 from .broadcast import broadcast_turn
 from .streaming import StreamDriveResult, drive_streaming_run
+
+log = logging.getLogger(__name__)
 
 
 def _run_id_kwargs(agent, run_id: str) -> dict:
@@ -92,53 +99,71 @@ def _settle_turn(run_ids: list) -> dict:
     return {k: v for k, v in settled.items() if v}
 
 
-async def _run_chat_pipeline(request: ChatRequest):
+@dataclass
+class _AgentStep:
+    """One agent's run inside a chat turn.
+
+    A turn is usually one step. When the agent hands the conversation over
+    (tools/handoff.py), the agent it names runs as the next step of the same
+    turn, with its own run record, and so on up to the turn's handoff limit.
     """
-    Drive the full chat run lifecycle and yield events as dicts.
+    #: The turn's request with ``agent_id`` set to this step's agent.
+    request: ChatRequest
+    #: The human message this run sends: the user's message with its context
+    #: blocks, behind a handoff note for a receiving run.
+    prompt: str
+    #: The conversation before this turn, as chat messages, before compaction.
+    history: list
+    workspace_abs: Optional[str]
+    ws_name: Optional[str]
+    #: What ``create_chat_run`` returned: (run_id, msg_id, log_file, log_lines, session_id).
+    run: tuple
+    #: Agents that held the turn so far, this one last.
+    chain: list = field(default_factory=list)
+    #: The handoff that started this step, None for the first agent.
+    received: Optional[handoff_mod.HandoffIntent] = None
 
-    Validates the request, materializes attachments, builds the prompt,
-    records a run, executes the agent with streaming callbacks, and emits
-    the same events that the SSE endpoint forwards to the browser. The
-    Telegram adapter consumes the dict stream directly to assemble its
-    own reply, so both surfaces share one execution path.
 
-    Yielded event shapes:
-    - {"type": "meta", "run_id", "session_id"}
-    - callback events: token / thinking / tool_start / tool_end / tool_error / usage / error
-    - {"type": "compaction", "folded", "summary_chars", ...} when the conversation
-      was folded into a summary before the turn ran
-    - {"type": "steer_delivered", "msg_id", "after_step", "run_id"} when a message the
-      user sent while the turn worked reached the model (agents/loop_ext/steering.py)
-    - {"type": "done", "ok", "response", "error", "run_id", "session_id", "usage", "tool_calls",
-      "duration_ms", "entities", "undelivered"}; ``undelivered`` lists the steering
-      messages the turn ended without taking, which the client sends as its next turn
+@dataclass
+class _StepOutcome:
+    """What one step left for the turn: the ``done`` event it would end the
+    turn with, and the handoff it recorded when it handed the conversation on."""
+    done: dict = field(default_factory=dict)
+    intent: Optional[handoff_mod.HandoffIntent] = None
+    response: str = ""
+    usage: dict = field(default_factory=dict)
+    tool_calls: int = 0
+    duration_ms: int = 0
+
+
+def _with_view_note(request: ChatRequest, prompt: str) -> str:
+    """Visualization Studio binding: expose the active view to the mutation
+    tools and put a compact scene-context note in front of the prompt, so the
+    agent knows what it edits. Set before the agent task is created so it
+    propagates into the run context."""
+    if not request.view_id:
+        return prompt
+    from common.agent_context import current_view_id
+    from views.studio import scene_context_note
+    current_view_id.set(request.view_id)
+    note = scene_context_note(request.view_id)
+    return f"{note}\n\n---\n\n{prompt}" if note else prompt
+
+
+async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
+    """Run one agent of a chat turn and yield its events, except the last.
+
+    Builds the agent, compacts its history, executes it with streaming
+    callbacks and closes its run record: the same lifecycle every chat turn had
+    before a turn could hold more than one agent. The ``done`` event this run
+    would end the turn with goes on *outcome* instead of the stream, because
+    only the turn knows whether this run was its last one; a handoff the agent
+    recorded goes there too.
     """
-    validate_chat_request(request)
-    materialize_attachments(request)
-    resolve_references(request)
-    full_prompt, workspace_abs = build_chat_context(request)
-    # Prior turns travel as messages, not as text in front of this one. Built
-    # uncapped: the flat HISTORY_CHAR_BUDGET cut used to run here, before the
-    # agent (and therefore its model) was even known, and by the time
-    # compact_for_turn saw the history it had already been truncated, so a
-    # large-window model's conversation was thrown away rather than folded
-    # into a summary. compact_for_turn below now does that bounding itself,
-    # against the running agent's real budget, so the fold gets a chance.
-    history_messages = build_history_messages(request.history, budget_chars=float("inf"))
-    run_id, msg_id, log_file, log_lines, session_id = create_chat_run(request)
-
-    apply_workspace_ctx(request, workspace_abs)
-
-    # Visualization Studio binding: expose the active view to the mutation tools
-    # and prepend a compact scene-context note so the agent knows what it edits.
-    # Set before the agent task is created so it propagates into the run context.
-    if request.view_id:
-        from common.agent_context import current_view_id
-        from views.studio import scene_context_note
-        current_view_id.set(request.view_id)
-        note = scene_context_note(request.view_id)
-        if note:
-            full_prompt = f"{note}\n\n---\n\n{full_prompt}"
+    request = step.request
+    full_prompt = step.prompt
+    workspace_abs = step.workspace_abs
+    run_id, msg_id, log_file, log_lines, session_id = step.run
 
     # Service entities this run's tools create, change or read — tasks, views,
     # flows, scheduled jobs, files. The reply carries a link to each (see
@@ -146,6 +171,13 @@ async def _run_chat_pipeline(request: ChatRequest):
     # looking at it, so re-linking it every turn is noise.
     entities_touched = entity_sink_mod.EntitySink(
         ignore=[("view", request.view_id)] if request.view_id else None)
+    # Where the handoff tool learns about the turn (who held it, how many
+    # handoffs it made) and records the agent's decision (chat/handoff.py).
+    handoff_sink = handoff_mod.HandoffSink(
+        agent_id=request.agent_id or "", chain=list(step.chain),
+        depth=len(step.chain) - 1, max_depth=handoff_mod.max_depth(),
+        workspace=step.ws_name,
+    )
 
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -167,20 +199,30 @@ async def _run_chat_pipeline(request: ChatRequest):
         # Persist the model/provider actually used for this run so the message
         # record reflects what ran, not the current default at view time.
         update_run(run_id, {"provider": agent.provider or "", "model": agent.model or ""})
+        # A summary handed on with the conversation is written by this agent's
+        # own model (chat.handoff.summarize_for_handoff).
+        handoff_sink.summarizer = agent
+        history = handoff_mod.history_for(agent, step.history, step.received)
+        # A receiving run with a narrowed history must not get the whole
+        # conversation back through the session's stored summary.
+        compaction_session = (session_id if step.received is None
+                              or handoff_mod.uses_session_summary(step.received.history_filter)
+                              else None)
 
         async def _compact(force: bool):
             # Summarising is an LLM call of its own; keep it off the event loop
             # the way the agent build already is.
             compaction = await asyncio.to_thread(
                 compact_for_turn,
-                agent=agent, history=history_messages,
-                system_prompt=getattr(agent, "system_prompt", "") or "", session_id=session_id,
-                force=force,
+                agent=agent, history=history,
+                system_prompt=getattr(agent, "system_prompt", "") or "",
+                session_id=compaction_session, force=force,
             )
             if compaction.folded:
                 # The UI has nothing for this event yet; it is emitted now so the
                 # turn that folded a conversation is visible when it does.
                 callback.emit_external(compaction_event(compaction))
+            handoff_sink.set_conversation(compaction)
             return compaction
 
         compaction = await _compact(False)
@@ -213,12 +255,19 @@ async def _run_chat_pipeline(request: ChatRequest):
     # Same context hand-off for the entity sink: the tools record into it from
     # the agent's worker thread, and the drive loop reads it after the run.
     _entity_token = entity_sink_mod.set_sink(entities_touched)
+    # Passages a retrieval tool shows the model, numbered for [n] citations.
+    citations = citation_sink_mod.CitationSink()
+    _citation_token = citation_sink_mod.set_sink(citations)
+    _handoff_token = handoff_mod.set_sink(handoff_sink)
     task = asyncio.create_task(_run_agent_async())
     artifact_sink.reset_recorder(_artifact_token)
     stream_sink.reset_emitter(_stream_token)
     entity_sink_mod.reset_sink(_entity_token)
+    citation_sink_mod.reset_sink(_citation_token)
+    handoff_mod.reset_sink(_handoff_token)
 
-    yield {"type": "meta", "run_id": run_id, "session_id": session_id}
+    yield {"type": "meta", "run_id": run_id, "session_id": session_id,
+           "agent_id": request.agent_id}
 
     drive = StreamDriveResult()
     try:
@@ -226,6 +275,7 @@ async def _run_chat_pipeline(request: ChatRequest):
             task=task, queue=queue, callback=callback, run_id=run_id,
             full_prompt=full_prompt, started_ts=message_started, result=drive,
             entity_sink=entities_touched,
+            citation_sink=citations,
         ):
             yield event
 
@@ -242,6 +292,9 @@ async def _run_chat_pipeline(request: ChatRequest):
         final_response = drive.response
         final_ok = drive.ok
         final_error = drive.error
+        outcome.usage = usage
+        outcome.tool_calls = callback.tool_calls
+        outcome.duration_ms = duration_ms
 
         if drive.stopped:
             _write_log(log_file, log_lines + ["(stopped by user)", "", f"Finished: {finished}", "Status  : stopped"])
@@ -260,13 +313,14 @@ async def _run_chat_pipeline(request: ChatRequest):
                 "error": "stopped by user",
                 "run_id": run_id,
                 "session_id": session_id,
+                "agent_id": request.agent_id,
                 "usage": usage,
                 "tool_calls": callback.tool_calls,
                 "duration_ms": duration_ms,
             }
             if undelivered:
                 done_event["undelivered"] = undelivered
-            yield done_event
+            outcome.done = done_event
             return
 
         summary_line = (
@@ -281,6 +335,13 @@ async def _run_chat_pipeline(request: ChatRequest):
         if final_ok:
             _append_log(log_lines, final_response, log_file)
             _append_log(log_lines, summary_line, log_file)
+            intent = handoff_sink.intent
+            if intent is not None:
+                # The run is complete: its answer is what it told the user
+                # before giving the conversation away. The turn goes on with
+                # the agent it named (see _run_chat_pipeline).
+                _append_log(log_lines, f"[handoff] to={intent.to_agent_id} "
+                                       f"history={intent.history_filter} reason={intent.reason}", log_file)
             _write_log(log_file, log_lines + ["", f"Finished: {finished}", "Status  : completed"])
             auto_journal(request.agent_id, get_pool_id(request.agent_id, request.workspace), request.message, final_response, run_id)
             # Resolve the structured response to its transport payload. An inline
@@ -309,6 +370,7 @@ async def _run_chat_pipeline(request: ChatRequest):
                 "response": final_response,
                 "run_id": run_id,
                 "session_id": session_id,
+                "agent_id": request.agent_id,
                 "usage": usage,
                 "tool_calls": callback.tool_calls,
                 "duration_ms": duration_ms,
@@ -323,9 +385,14 @@ async def _run_chat_pipeline(request: ChatRequest):
             # the text via ``common.entity_links.append_entity_links``.
             if drive.entities:
                 done_event["entities"] = drive.entities
+            # Sources the reply cites as [n]; the chat renders them under it.
+            if drive.citations:
+                done_event["citations"] = drive.citations
             if undelivered:
                 done_event["undelivered"] = undelivered
-            yield done_event
+            outcome.done = done_event
+            outcome.intent = intent
+            outcome.response = final_response
         else:
             err = final_error or "unknown error"
             _append_log(log_lines, f"(error: {err})", log_file)
@@ -346,6 +413,7 @@ async def _run_chat_pipeline(request: ChatRequest):
                 "error": err,
                 "run_id": run_id,
                 "session_id": session_id,
+                "agent_id": request.agent_id,
                 "usage": usage,
                 "tool_calls": callback.tool_calls,
                 "duration_ms": duration_ms,
@@ -359,7 +427,7 @@ async def _run_chat_pipeline(request: ChatRequest):
                 done_event["error_code"] = code
             if undelivered:
                 done_event["undelivered"] = undelivered
-            yield done_event
+            outcome.done = done_event
     except asyncio.CancelledError:
         callback.cancelled = True
         finished = utc_iso()
@@ -370,7 +438,175 @@ async def _run_chat_pipeline(request: ChatRequest):
         finished = utc_iso()
         _write_log(log_file, log_lines + [f"(stream error: {e})", "", f"Finished: {finished}", "Status  : failed"])
         update_run(run_id, {"status": "failed", "finished_at": finished, "exit_code": 1, "error": str(e)})
-        yield {"type": "done", "ok": False, "response": f"Error: {e}", "error": str(e), "run_id": run_id}
+        outcome.done = {"type": "done", "ok": False, "response": f"Error: {e}", "error": str(e),
+                        "run_id": run_id, "agent_id": request.agent_id}
+
+
+def _open_receiving_step(step: _AgentStep, intent: handoff_mod.HandoffIntent,
+                         replies: list) -> _AgentStep:
+    """The next step of a turn whose agent handed the conversation over.
+
+    Same user message, attachments, references, workspace and conversation;
+    the receiving agent's own run record (``parent_run_id`` is the handing
+    run), the handoff note in front of the message, and the history as the
+    handoff's filter shapes it (applied once the agent is built).
+    """
+    receiving, prompt, run = handoff_mod.open_receiving_run(
+        step.request, intent, handing_run_id=step.run[0])
+    note = handoff_mod.handoff_note(intent, replies=replies)
+    return _AgentStep(
+        request=receiving,
+        prompt=handoff_mod.receiving_prompt(note, _with_view_note(receiving, prompt)),
+        history=step.history,
+        workspace_abs=step.workspace_abs,
+        ws_name=step.ws_name,
+        run=run,
+        chain=[*step.chain, intent.to_agent_id],
+        received=intent,
+    )
+
+
+def _close_unstarted(step: _AgentStep, *, status: str, error: str) -> dict:
+    """Close a receiving run that never started (a stop, a budget cap) and
+    return the ``done`` event that ends the turn on it."""
+    run_id, _msg_id, log_file, log_lines, session_id = step.run
+    finished = utc_iso()
+    _write_log(log_file, log_lines + [f"({error})", "", f"Finished: {finished}", f"Status  : {status}"])
+    update_run(run_id, {"status": status, "finished_at": finished, "exit_code": 1, "error": error})
+    return {
+        "type": "done", "ok": False,
+        "response": "Stopped by user" if status == "stopped" else f"Error: {error}",
+        "error": error, "run_id": run_id, "session_id": session_id,
+        "agent_id": step.request.agent_id,
+    }
+
+
+async def _run_chat_pipeline(request: ChatRequest):
+    """
+    Drive the full chat run lifecycle and yield events as dicts.
+
+    Validates the request, materializes attachments, builds the prompt,
+    records a run, executes the agent with streaming callbacks, and emits
+    the same events that the SSE endpoint forwards to the browser. The
+    Telegram adapter consumes the dict stream directly to assemble its
+    own reply, so both surfaces share one execution path.
+
+    A turn may hold several agents: when the agent hands the conversation over
+    (tools/handoff.py), the agent it names answers in the same turn, as a run
+    of its own, and may hand over again up to the turn's limit
+    (``AGENTS_HUB_HANDOFF_MAX_DEPTH``), never back to an agent that already held
+    it. The stream stays one turn: one final ``done``.
+
+    Yielded event shapes:
+    - {"type": "meta", "run_id", "session_id", "agent_id"} at the start of every run
+    - callback events: token / thinking / tool_start / tool_end / tool_error / usage / error
+    - {"type": "compaction", "folded", "summary_chars", ...} when the conversation
+      was folded into a summary before the turn ran
+    - {"type": "steer_delivered", "msg_id", "after_step", "run_id"} when a message the
+      user sent while the turn worked reached the model (agents/loop_ext/steering.py)
+    - {"type": "handoff", "from_agent_id", "from_agent_name", "to_agent_id",
+      "to_agent_name", "reason", "history_filter", "run_id", "next_run_id",
+      "from_response", "usage", "tool_calls", "duration_ms"} between the handing
+      run and the receiving run's ``meta``
+    - {"type": "done", "ok", "response", "error", "run_id", "session_id", "agent_id",
+      "usage", "tool_calls", "duration_ms", "entities", "undelivered"} once, at the end;
+      ``agent_id`` is the agent that answered, and after a handoff ``handoff`` is
+      the last handoff event's fields and ``handoffs`` all of them. ``undelivered``
+      lists the steering messages the turn ended without taking, which the client
+      sends as its next turn
+    """
+    validate_chat_request(request)
+    materialize_attachments(request)
+    resolve_references(request)
+    full_prompt, workspace_abs = build_chat_context(request)
+    # Prior turns travel as messages, not as text in front of this one. Built
+    # uncapped: the flat HISTORY_CHAR_BUDGET cut used to run here, before the
+    # agent (and therefore its model) was even known, and by the time
+    # compact_for_turn saw the history it had already been truncated, so a
+    # large-window model's conversation was thrown away rather than folded
+    # into a summary. compact_for_turn below now does that bounding itself,
+    # against the running agent's real budget, so the fold gets a chance.
+    history_messages = build_history_messages(request.history, budget_chars=float("inf"))
+    first_run = create_chat_run(request)
+
+    ws_name = apply_workspace_ctx(request, workspace_abs)
+    full_prompt = _with_view_note(request, full_prompt)
+
+    step = _AgentStep(
+        request=request, prompt=full_prompt, history=history_messages,
+        workspace_abs=workspace_abs, ws_name=ws_name, run=first_run,
+        chain=[request.agent_id],
+    )
+    handoffs: list = []
+    replies: list = []
+    undelivered: list = []
+    # A receiving run opened but not started yet: a disconnect in that gap
+    # must still close it.
+    unstarted: Optional[_AgentStep] = None
+    try:
+        while True:
+            outcome = _StepOutcome()
+            async for event in _run_agent_step(step, outcome):
+                yield event
+            undelivered.extend(outcome.done.pop("undelivered", None) or [])
+
+            intent = outcome.intent
+            refused = handoff_mod.refusal_by_turn(step.chain, intent) if intent is not None else None
+            if refused:
+                log.warning("chat turn: handoff from %s not carried out: %s", step.request.agent_id, refused)
+            if intent is None or refused:
+                done = outcome.done
+                if undelivered:
+                    done["undelivered"] = undelivered
+                if handoffs:
+                    done["handoff"] = handoff_mod.done_fields(handoffs[-1])
+                    done["handoffs"] = [handoff_mod.done_fields(h) for h in handoffs]
+                yield done
+                return
+
+            # The conversation changes hands. The receiving run is opened first
+            # so the handoff event can name it, then the turn goes on with it.
+            handing_run_id = step.run[0]
+            replies.append({"agent_name": intent.from_agent_name, "text": outcome.response})
+            next_step = _open_receiving_step(step, intent, replies)
+            unstarted = next_step
+            next_run_id = next_step.run[0]
+            update_run(handing_run_id, {"handoff": handoff_mod.handing_record(intent, next_run_id)})
+            event = handoff_mod.handoff_event(
+                intent, run_id=handing_run_id, next_run_id=next_run_id,
+                from_response=outcome.response, session_id=step.run[4],
+                usage=outcome.usage, tool_calls=outcome.tool_calls,
+                duration_ms=outcome.duration_ms,
+            )
+            handoffs.append(event)
+            yield event
+
+            # Each run of the turn spends on its own: the workspace's hard cap
+            # is checked before the receiving agent starts, as for any run.
+            from common.budget import BudgetExceededError, check_budget
+            closing = None
+            try:
+                check_budget(ws_name)
+            except BudgetExceededError as e:
+                closing = _close_unstarted(next_step, status="failed", error=str(e))
+            if closing is None:
+                from managers.run_manager import get_run_by_id
+                if (get_run_by_id(next_run_id) or {}).get("status") in ("stop", "stopped"):
+                    closing = _close_unstarted(next_step, status="stopped", error="stopped by user")
+            if closing is not None:
+                unstarted = None
+                if undelivered:
+                    closing["undelivered"] = undelivered
+                closing["handoff"] = handoff_mod.done_fields(handoffs[-1])
+                closing["handoffs"] = [handoff_mod.done_fields(h) for h in handoffs]
+                yield closing
+                return
+            unstarted = None
+            step = next_step
+    except asyncio.CancelledError:
+        if unstarted is not None:
+            _close_unstarted(unstarted, status="stopped", error="cancelled")
+        raise
 
 
 async def _run_chat_flow_pipeline(request: ChatRequest):
@@ -533,6 +769,7 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
                     "duration_ms": ev.get("duration_ms", 0),
                     # Links to the service entities this node touched.
                     "entities": meta.get("entities") or [],
+                    "citations": meta.get("citations") or [],
                     # Shared-state snapshot after this node's writes, for the
                     # editor's live Runtime State block.
                     "state": ev.get("state"),

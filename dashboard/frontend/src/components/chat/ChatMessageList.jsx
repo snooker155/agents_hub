@@ -1,5 +1,6 @@
 import { BuildMessage } from './BuildMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
+import HandoffDivider from './HandoffDivider';
 import { Bot, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
 import React from 'react';
 import { useChatPage } from './context';
@@ -85,6 +86,15 @@ export default function ChatMessageList() {
               const msgAgentName = msg.role !== 'user'
                 ? (msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
                 : undefined;
+              // A reply that took the conversation over by handoff opens with
+              // the line saying who took over and why (chat/handoff.py).
+              const handoffDivider = msg.role === 'agent' && msg.handoff ? (
+                <HandoffDivider
+                  key="handoff"
+                  handoff={msg.handoff}
+                  agentName={agents.find((a) => a.id === msg.handoff.to_agent_id)?.name}
+                />
+              ) : null;
               // The mirrored turn is labelled: it is being written somewhere
               // else, so an answer appearing on its own is explained rather
               // than surprising.
@@ -108,6 +118,7 @@ export default function ChatMessageList() {
                 return (
                   <React.Fragment key={msg.id}>
                     {liveLabel}
+                    {handoffDivider}
                     <BuildMessage
                       msg={buildMsg}
                       agentName={msgAgentName}
@@ -119,6 +130,7 @@ export default function ChatMessageList() {
               return (
                 <React.Fragment key={msg.id}>
                   {liveLabel}
+                  {handoffDivider}
                   <MessageBubble
                     msg={msg}
                     isStreaming={

@@ -9,7 +9,7 @@ import json
 import re
 import dataclasses
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 from pydantic import BaseModel
@@ -21,7 +21,7 @@ from agents import prompt_assembly
 from agents import versions as agent_versions
 from tools.registry import get_all_tools
 from agents.capability_guard import CapabilityViolation
-from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate, AgentListItem, AgentDetail, AgentPage
+from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentHandoffsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate, AgentListItem, AgentDetail, AgentPage
 from workspace import system_agent_ids, get_workspace_metadata, update_workspace_metadata, create_workspace_folder
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
@@ -737,35 +737,11 @@ async def update_agent_skills_config(agent_id: str, data: AgentSkillsConfigUpdat
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        definition_id=spec.definition_id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        skills_enabled=data.skills_enabled,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        response_format=spec.response_format,
-        clarify_gate=spec.clarify_gate,
-        allow_self_delegation=spec.allow_self_delegation,
-    )
+    # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
+    # every field added to AgentSpec after it was written (delegates, handoffs,
+    # the loop policies, secrets, ...), the bug routes/agents.py's tools route
+    # already fixed the same way.
+    new_spec = dataclasses.replace(spec, skills_enabled=data.skills_enabled)
     registry.add_agent(new_spec)
     return new_spec.to_dict()
 
@@ -888,25 +864,12 @@ async def update_agent_self_delegation(agent_id: str, data: AgentSelfDelegationU
 async def list_agent_skills(agent_id: str, workspace: str):
     """List all skills for this agent in the given workspace."""
     from memory.procedural import ProcedureStore
+    # The skills page's shape (version, pin, origin state, repo location),
+    # so both pages read one record.
+    from routes.skills import _to_dict as skill_to_dict
     store = ProcedureStore(workspace)
     procedures = [p for p in store.load() if p.agent_id == agent_id]
-    return [
-        {
-            "id": str(p.id),
-            "name": p.name,
-            "description": p.description,
-            "steps": p.steps,
-            "tags": p.tags,
-            "source": p.source,
-            "shared": bool(p.shared),
-            "origin_skill_id": p.origin_skill_id,
-            "success_rate": p.success_rate,
-            "use_count": p.use_count,
-            "created_at": p.created_at.isoformat(),
-            "updated_at": p.updated_at.isoformat(),
-        }
-        for p in procedures
-    ]
+    return [skill_to_dict(p) for p in procedures]
 
 
 @router.post("/{agent_id}/skills")
@@ -1006,6 +969,79 @@ async def update_agent_delegates(agent_id: str, data: AgentDelegatesUpdate):
     return new_spec.to_dict()
 
 
+def _validated_handoffs(agent_id: str, ids: List[str]) -> List[str]:
+    """Handoff targets, stripped and de-duplicated; 400 for the agent itself
+    or an id the registry does not know. Whether a target is usable in a
+    workspace is checked when the handoff happens, since one agent record
+    serves every workspace it is visible in."""
+    cleaned: List[str] = []
+    for raw in ids or []:
+        hid = str(raw or "").strip()
+        if not hid or hid in cleaned:
+            continue
+        if hid == agent_id:
+            raise HTTPException(status_code=400, detail="An agent cannot hand the conversation to itself")
+        if registry.get_agent(hid) is None:
+            raise HTTPException(status_code=400, detail=f"Agent '{hid}' does not exist")
+        cleaned.append(hid)
+    return cleaned
+
+
+def _validated_handoff_history(value: Any) -> str:
+    """The canonical history filter, or 400 naming the allowed values."""
+    if registry.parse_handoff_history(value) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"handoff_history must be full, summary, none or last_n:<N> "
+                    f"(N from 1 to {registry.HANDOFF_LAST_N_MAX}), not '{value}'"),
+        )
+    return registry.normalize_handoff_history(value)
+
+
+def _handoffs_dict(spec: Any) -> Dict[str, Any]:
+    return {"handoffs": list(spec.handoffs or []), "handoff_history": spec.handoff_history or "full"}
+
+
+@router.get("/{agent_id}/handoffs")
+async def get_agent_handoffs(agent_id: str):
+    """The agents this one may hand the conversation to, and the history the
+    receiver sees by default (docs/handoffs.md)."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _handoffs_dict(spec)
+
+
+@router.post("/{agent_id}/handoffs")
+async def update_agent_handoffs(agent_id: str, data: AgentHandoffsUpdate, request: Request):
+    """Set the handoff targets and/or the default history filter. A field left
+    out (null) keeps its value; an empty list removes the handoff tool."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    changes: Dict[str, Any] = {}
+    if data.handoffs is not None:
+        changes["handoffs"] = _validated_handoffs(agent_id, data.handoffs)
+    if data.handoff_history is not None:
+        changes["handoff_history"] = _validated_handoff_history(data.handoff_history)
+    new_spec = dataclasses.replace(spec, **changes) if changes else spec
+    try:
+        registry.add_agent(new_spec)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        from common import audit, identity
+        audit.record("agent.handoffs", principal=identity.request_principal(request),
+                     object_type="agent", object_id=agent_id,
+                     workspace=getattr(new_spec, "owner_workspace", None),
+                     ip=identity.client_ip(request), details=changes)
+    except Exception:  # noqa: BLE001 - an audit failure must not undo the save
+        import logging
+        logging.getLogger(__name__).warning(
+            "could not record the handoffs audit entry for %s", agent_id, exc_info=True)
+    return _handoffs_dict(new_spec)
+
+
 @router.get("/{agent_id}/reasoning")
 async def get_agent_reasoning(agent_id: str):
     spec = registry.get_agent(agent_id)
@@ -1033,41 +1069,11 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
     if data.plan_format is not None:
         current["plan_format"] = data.plan_format
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        definition_id=spec.definition_id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        http_expose=spec.http_expose,
-        http_port=spec.http_port,
-        http_host_port=spec.http_host_port,
-        node_type=spec.node_type,
-        is_default_chat_agent=spec.is_default_chat_agent,
-        skills_enabled=spec.skills_enabled,
-        reasoning=current,
-        response_format=spec.response_format,
-        clarify_gate=spec.clarify_gate,
-        allow_self_delegation=spec.allow_self_delegation,
-    )
+    # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
+    # every field added to AgentSpec after it was written (delegates, handoffs,
+    # the loop policies, secrets, ...), the bug routes/agents.py's tools route
+    # already fixed the same way.
+    new_spec = dataclasses.replace(spec, reasoning=current)
     registry.add_agent(new_spec)
     from reasoning import resolve_reasoning
     return resolve_reasoning(current, spec.tools)
@@ -1135,33 +1141,18 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
     elif data.max_tokens is not None:
         new_max_tokens = data.max_tokens
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        definition_id=spec.definition_id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
+    # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
+    # every field added to AgentSpec after it was written (delegates, handoffs,
+    # the loop policies, secrets, ...), the bug routes/agents.py's tools route
+    # already fixed the same way.
+    new_spec = dataclasses.replace(
+        spec,
         provider=new_provider,
         model=new_model,
         base_url=new_base_url,
         temperature=new_temperature,
         max_tokens=new_max_tokens,
         api_key=new_api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        response_format=spec.response_format,
-        clarify_gate=spec.clarify_gate,
-        allow_self_delegation=spec.allow_self_delegation,
     )
     registry.add_agent(new_spec)
     return {
@@ -1220,6 +1211,9 @@ async def create_custom_agent(data: AgentCreateCustom):
     """Create a new agent: register structured fields and write instructions.md."""
     if registry.get_agent(data.id) is not None:
         raise HTTPException(status_code=400, detail=f"Agent '{data.id}' already exists")
+    # Checked before anything is written, so a bad target leaves no folder behind.
+    handoffs = _validated_handoffs(data.id, data.handoffs)
+    handoff_history = _validated_handoff_history(data.handoff_history or "full")
 
     factory = get_factory()
 
@@ -1256,6 +1250,8 @@ async def create_custom_agent(data: AgentCreateCustom):
         tools=data.tools,
         capacity=data.capacity,
         owner_workspace=owner_workspace,
+        handoffs=handoffs,
+        handoff_history=handoff_history,
     )
     try:
         registry.add_agent(spec)
@@ -1358,41 +1354,11 @@ async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        definition_id=spec.definition_id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=data.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        http_expose=spec.http_expose,
-        http_port=spec.http_port,
-        http_host_port=spec.http_host_port,
-        node_type=spec.node_type,
-        is_default_chat_agent=spec.is_default_chat_agent,
-        skills_enabled=spec.skills_enabled,
-        reasoning=spec.reasoning,
-        response_format=spec.response_format,
-        clarify_gate=spec.clarify_gate,
-        allow_self_delegation=spec.allow_self_delegation,
-    )
+    # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
+    # every field added to AgentSpec after it was written (delegates, handoffs,
+    # the loop policies, secrets, ...), the bug routes/agents.py's tools route
+    # already fixed the same way.
+    new_spec = dataclasses.replace(spec, shared=data.shared)
     registry.add_agent(new_spec)
     return new_spec.to_dict()
 

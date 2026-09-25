@@ -393,8 +393,13 @@ async def get_message_insights(run_id: str, request: Request):
         "message_runs": message_runs,
         "artifacts": artifacts,
         # Links to the service entities this run touched (tasks, views, files, …),
-        # resolved when the run finished — see common/entity_links.py.
-        "entities": list(rr_process.get("entities") or []),
+        # resolved when the run finished — see common/entity_links.py. Kept on
+        # the run record itself (chat/streaming.py): the payload table has a
+        # fixed set of columns and does not store them.
+        "entities": list(run.get("entities") or rr_process.get("entities") or []),
+        # The sources the answer cites as [n] (common/citation_sink.py), kept
+        # on the record the same way.
+        "citations": list(run.get("citations") or rr_process.get("citations") or []),
         "aggregated_logs": log_text,
         "llm_invoke_responses": llm_invoke_responses,
         "input_contexts": input_contexts,

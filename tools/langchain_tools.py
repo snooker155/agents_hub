@@ -1439,35 +1439,25 @@ def modify_agent_tool(
             stripped = value.strip()
             return stripped or None
 
-        new_spec = AgentSpec(
-            id=spec.id,
+        # dataclasses.replace keeps every field this tool does not edit
+        # (handoffs, the loop policies, secrets, approval lists, ...); a
+        # field-by-field rebuild silently dropped whatever AgentSpec gained
+        # after it was written.
+        import dataclasses as _dc
+        new_spec = _dc.replace(
+            spec,
             name=name.strip() if name is not None and name.strip() else spec.name,
-            type=spec.type,
-            entrypoint=spec.entrypoint,
             description=description if description is not None else spec.description,
             domain=domain.strip() if domain is not None and domain.strip() else spec.domain,
-            default_params=dict(spec.default_params or {}),
             tools=list(tools) if tools is not None else list(spec.tools or []),
-            commands=list(spec.commands or []),
             capacity=int(capacity) if capacity is not None else spec.capacity,
             memory_type=memory_type if memory_type is not None else spec.memory_type,
             memory_data=memory_data if memory_data is not None else spec.memory_data,
-            default_workspace_only=spec.default_workspace_only,
-            owner_workspace=spec.owner_workspace,
-            shared=spec.shared,
             provider=_blank_to_none(provider) if provider is not None else spec.provider,
             model=_blank_to_none(model) if model is not None else spec.model,
             base_url=_blank_to_none(base_url) if base_url is not None else spec.base_url,
             temperature=temperature if temperature is not None else spec.temperature,
             max_tokens=int(max_tokens) if max_tokens is not None else spec.max_tokens,
-            api_key=spec.api_key,
-            verbose=spec.verbose,
-            streaming=spec.streaming,
-            http_expose=spec.http_expose,
-            http_port=spec.http_port,
-            http_host_port=spec.http_host_port,
-            node_type=spec.node_type,
-            is_default_chat_agent=spec.is_default_chat_agent,
             skills_enabled=bool(skills_enabled) if skills_enabled is not None else spec.skills_enabled,
             episodic_write_enabled=bool(episodic_write_enabled) if episodic_write_enabled is not None else spec.episodic_write_enabled,
             reasoning=dict(reasoning) if reasoning is not None else dict(spec.reasoning or {}),

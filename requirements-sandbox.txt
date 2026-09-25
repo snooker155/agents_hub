@@ -1,0 +1,4 @@
+# Remote sandbox providers for run_code and the Chat code panel (sandbox/,
+# docs/sandboxes.md). Optional: docker and local need nothing from here.
+e2b>=2.0,<3
+modal>=1.0,<2

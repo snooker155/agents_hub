@@ -325,13 +325,83 @@ class SearchMemoryInput(BaseModel):
     top_k: int = Field(default=5, description="Maximum number of chunks to return")
 
 
+# ---------------------------------------------------------------------------
+# Citations: numbering the passages a search hands the model
+# ---------------------------------------------------------------------------
+#
+# ``search_memory`` and ``recall`` record every document passage (layer
+# ``rag``) and every note they return on the run's citation sink
+# (common/citation_sink.py) and put the number it hands back on the result as
+# ``cite``; the tool output then tells the model to cite what it uses as [n].
+# The chat renders the sources under the reply, each linked to its workspace
+# file or its pool. Blocks, slots and episodes are not numbered: blocks are
+# already in the agent's prompt as core memory, and a slot or an episode is
+# structured data or a log entry rather than a source a reader can open.
+# Outside a chat turn or a task run no sink is installed and nothing changes.
+
+CITE_INSTRUCTION = (
+    "Results with a `cite` number are sources. When your answer uses one, put its number "
+    "in square brackets right after the statement it supports, like [1]. Cite only the "
+    "numbers given here, never invent one."
+)
+
+
+def _rag_payload(hit: dict) -> dict:
+    return {
+        "source": "rag",
+        "text": hit.get("text", ""),
+        "file_id": hit.get("file_id", ""),
+        "filename": hit.get("filename") or str(hit.get("file_id", "")).rpartition("::")[2],
+        "chunk_idx": hit.get("chunk_idx", 0),
+        "heading_path": hit.get("heading_path") or [],
+        "vector_score": hit.get("score"),
+    }
+
+
+def _cite_results(pool_id: str, mem, results: list[dict]) -> bool:
+    """Number every citable result on the current run's citation sink and
+    set ``cite`` on it. True when at least one result got a number."""
+    from common.citation_sink import record_citation
+
+    workspace_files = {
+        str(f.get("filename")): str(f.get("workspace_file_id") or "")
+        for f in (getattr(mem, "rag_files", None) or []) if isinstance(f, dict)
+    }
+    cited = False
+    for r in results:
+        layer = r.get("layer")
+        if layer == "rag":
+            filename = str(r.get("filename") or "")
+            n = record_citation(
+                pool_id=str(pool_id), file_id=str(r.get("file_id") or ""), filename=filename,
+                chunk_idx=r.get("chunk_idx", 0), heading_path=r.get("heading_path") or [],
+                text=r.get("text", ""), score=r.get("score"),
+                workspace_file_id=workspace_files.get(filename, ""), layer="rag",
+            )
+        elif layer == "note":
+            title = str(r.get("title") or "")
+            n = record_citation(
+                pool_id=str(pool_id), file_id=f"note:{title}", filename=title, chunk_idx=0,
+                text=r.get("content", ""), score=r.get("score"), layer="note",
+            )
+        else:
+            continue
+        if n is not None:
+            r["cite"] = n
+            cited = True
+    return cited
+
+
 def _search_memory_impl(query: str, memory_id: str, top_k: int = 5) -> str:
     """Rank a pool's own text and its indexed chunks for `query`.
 
-    The vector store answers when it is configured; its hits are fused with the
-    BM25 ranking over blocks, slots, notes and episodes rather than replacing
-    it, so a pool with no vector store still gets ranked answers instead of an
-    error, and a pool with one does not lose what it holds in plain data.
+    The pool's indexed passages are always searched: ``search_rag`` answers
+    from BM25 over the chunk store alone when no vector store is configured,
+    and fuses vector similarity in when one is. Those passages are fused with
+    the BM25 ranking over blocks, slots, notes and episodes rather than
+    replacing it, so a pool with no vector store still gets ranked answers
+    from its documents, and a pool with one does not lose what it holds in
+    plain data.
     """
     try:
         from memory.ranking import Candidate, pool_candidates, rank_candidates
@@ -343,24 +413,18 @@ def _search_memory_impl(query: str, memory_id: str, top_k: int = 5) -> str:
             return json.dumps({"ok": False, "error": f"Memory pool not found: {memory_id}"})
 
         candidates = pool_candidates(mem, pool_id=str(memory_id))
+        # The passage retriever's own order, fused with the BM25 ranking below.
         vector_keys: list[str] = []
         rag_on = is_rag_configured()
-        if rag_on:
-            for hit in search_rag(query, str(memory_id), top_k=max(top_k, 5)):
-                key = f"{memory_id}:rag:{hit.get('file_id', '')}:{hit.get('chunk_idx', 0)}"
-                candidates.append(Candidate(
-                    key=key,
-                    layer="rag",
-                    text=hit.get("text", ""),
-                    payload={
-                        "source": "rag",
-                        "text": hit.get("text", ""),
-                        "file_id": hit.get("file_id", ""),
-                        "chunk_idx": hit.get("chunk_idx", 0),
-                        "vector_score": hit.get("score"),
-                    },
-                ))
-                vector_keys.append(key)
+        for hit in search_rag(query, str(memory_id), top_k=max(top_k, 5)):
+            key = f"{memory_id}:rag:{hit.get('file_id', '')}:{hit.get('chunk_idx', 0)}"
+            candidates.append(Candidate(
+                key=key,
+                layer="rag",
+                text=hit.get("text", ""),
+                payload=_rag_payload(hit),
+            ))
+            vector_keys.append(key)
 
         ranked = rank_candidates(query, candidates, vector_keys=vector_keys)
         results = [
@@ -374,12 +438,15 @@ def _search_memory_impl(query: str, memory_id: str, top_k: int = 5) -> str:
                 "note": "Nothing in this pool matched the query.",
                 "vector_search": rag_on,
             })
-        return json.dumps({
+        body = {
             "ok": True,
             "results": results,
             "count": len(results),
             "vector_search": rag_on,
-        }, default=str)
+        }
+        if _cite_results(str(memory_id), mem, results):
+            body["citations"] = CITE_INSTRUCTION
+        return json.dumps(body, default=str)
     except Exception as e:
         return json.dumps({"ok": False, "error": f"search_memory failed: {e}"})
 
@@ -394,8 +461,10 @@ search_memory_tool = StructuredTool.from_function(
     description=(
         "Ranked search over a shared memory pool. "
         "Scores the pool's own blocks, slots, notes and episodes with BM25 and fuses that with "
-        "vector similarity over the indexed documents when a vector store is configured. "
-        "Each result carries the `layer` it came from and its `score`. "
+        "the passages of its indexed documents (keyword search, plus vector similarity when a "
+        "vector store is configured). "
+        "Each result carries the `layer` it came from and its `score`; a document passage or a "
+        "note may carry a `cite` number to quote as [n] in the answer. "
         "Use when you need contextually related content without knowing the exact file or key. "
         "For reading a specific file, note, or key-value pair by name, use read_memory instead."
     ),
@@ -834,6 +903,7 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
             searched = {"block": 0, "structured": 0, "note": 0, "episode": 0}
 
             results: list[dict] = []
+            cited = False            # some result got a citation number
             found_pools: list = []   # (pid, mem) for pool ids that resolved
             missing: list[str] = []
             graph_hits = 0
@@ -856,27 +926,21 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                     src = "structured" if cand.layer == "slot" else cand.layer
                     searched[src] = searched.get(src, 0) + 1
 
-                # Vector hits join the same ranking: the store's own order is
-                # the second ranked list fused with BM25.
+                # Indexed passages join the same ranking: the passage
+                # retriever's own order (BM25 over the chunk store, fused with
+                # vector similarity when a vector store is configured) is the
+                # second ranked list fused with BM25 over the pool's items.
                 vector_keys: list[str] = []
-                if rag_on:
-                    try:
-                        from memory.rag_query import search_rag
-                        for hit in search_rag(query, str(pid), top_k=5):
-                            key = f"{pid}:rag:{hit.get('file_id', '')}:{hit.get('chunk_idx', 0)}"
-                            payload = {
-                                "source": "rag",
-                                "text": hit.get("text", ""),
-                                "file_id": hit.get("file_id", ""),
-                                "chunk_idx": hit.get("chunk_idx", 0),
-                                "vector_score": hit.get("score"),
-                            }
-                            candidates.append(Candidate(
-                                key=key, layer="rag", text=hit.get("text", ""), payload=payload,
-                            ))
-                            vector_keys.append(key)
-                    except Exception:
-                        pass
+                try:
+                    from memory.rag_query import search_rag
+                    for hit in search_rag(query, str(pid), top_k=5):
+                        key = f"{pid}:rag:{hit.get('file_id', '')}:{hit.get('chunk_idx', 0)}"
+                        candidates.append(Candidate(
+                            key=key, layer="rag", text=hit.get("text", ""), payload=_rag_payload(hit),
+                        ))
+                        vector_keys.append(key)
+                except Exception:  # noqa: BLE001 - the passage search is one layer; the others still answer
+                    pass
 
                 ranked = rank_candidates(query, candidates, vector_keys=vector_keys)
                 pool_results: list[dict] = []
@@ -889,6 +953,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                 # Decorate slot/note results with graph hints so the agent knows
                 # when to follow relations with `traverse`.
                 _annotate_with_graph_hints(pid, pool_results)
+                if _cite_results(str(pid), mem, pool_results):
+                    cited = True
 
                 # Graph search — keyword match over node type/name/properties.
                 # Skip nodes already surfaced above to avoid duplicating an entity.
@@ -919,10 +985,9 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                 {"layer": "episodes", "searched": searched.get("episode", 0), "hits": counts["episode"]},
                 {"layer": "graph", "hits": graph_hits},
             ]
-            if rag_on:
-                trace.append({"layer": "rag", "hits": counts["rag"]})
-            else:
-                trace.append({"layer": "rag", "hits": 0, "skipped": "RAG not configured"})
+            # Indexed passages are always searched (BM25 over the chunk store);
+            # ``vector`` says whether vector similarity took part.
+            trace.append({"layer": "rag", "hits": counts["rag"], "vector": rag_on})
 
             base = {"ok": True, "pool": ", ".join(m.name for _, m in found_pools), "query": query, "trace": trace}
             if missing:
@@ -964,6 +1029,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                     "available": available,
                 })
 
+            if cited:
+                base["citations"] = CITE_INSTRUCTION
             return json.dumps({**base, "found": True, "results": results}, default=str)
 
         except Exception as e:
@@ -976,6 +1043,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
             "Ranks core memory blocks, structured slots, notes and episodes together (BM25, fused "
             "with vector similarity when a vector store is configured), then adds knowledge-graph "
             "matches; every result carries the `layer` it came from and a `score`. "
+            "Passages of the pool's indexed documents are ranked alongside, and a passage or a "
+            "note may carry a `cite` number to quote as [n] in the answer. "
             "The core memory blocks are already in your system prompt, so a block in the results "
             "is a confirmation, not news. "
             "Use this whenever you need to retrieve stored context before answering. "

@@ -92,6 +92,12 @@ def build_conversation_history(conversation_id: str, *, max_turns: int = 20):
         ctx = (get_run_process(r.get("run_id")) or {}).get("llm_input_context") or {}
         user_msg = str(ctx.get("user_message") or "").strip()
         response = str(ctx.get("response") or "").strip()
+        # A run that took the conversation over by handoff answered the same
+        # user message as the run before it; its own prompt is that message
+        # behind a handoff note (chat/handoff.py), which is not something the
+        # user said. Only its answer belongs in the transcript.
+        if r.get("handoff_from"):
+            user_msg = ""
         if user_msg:
             history.append(ChatHistoryMessage(role="user", content=user_msg))
         if response:
@@ -135,8 +141,13 @@ def load_flow_definition(flow_id: str) -> dict:
     return flow
 
 
-def create_chat_run(request: ChatRequest):
-    """Create a new run record for each chat message exchange."""
+def create_chat_run(request: ChatRequest, **run_extra):
+    """Create a new run record for each chat message exchange.
+
+    ``run_extra`` is merged into the record; a run that took over a
+    conversation by handoff passes ``parent_run_id`` (the handing run) and
+    ``handoff_from`` (chat/handoff.py) this way.
+    """
     conv_id = request.conversation_id or str(uuid4())
     run_id = new_unique_run_id()
     run_title = request.message[:60] + ("…" if len(request.message) > 60 else "")
@@ -250,6 +261,7 @@ def create_chat_run(request: ChatRequest):
         title=run_title,
         log_file=str(log_file),
         instance_id=instance_id,
+        **run_extra,
     )
 
     return run_id, msg_id, log_file, log_lines, session_id

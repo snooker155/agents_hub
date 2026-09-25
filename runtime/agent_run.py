@@ -324,13 +324,14 @@ def main():
     instruction = args.action or args.desc or ""
 
     # If task_id is provided, enrich the instruction with task context
-    # (parent task, sequence siblings, previous run output). Also mark this run
+    # (parent task, sequence siblings, previous run output, the task's
+    # workspace files, which are copied into ``ws`` here). Also mark this run
     # as a tracked-task run so taskless delegation (run_agent_tool) is refused
     # — task orchestration must go through the assign/start flow.
     if args.task_id:
         from common.agent_context import current_task_id
         current_task_id.set(str(args.task_id))
-        instruction = build_task_instruction(args.task_id, instruction)
+        instruction = build_task_instruction(args.task_id, instruction, work_dir=ws)
 
     # A resume replays the checkpointed tool trail as the conversation before
     # this turn and asks the model to carry on; the instruction it was started
@@ -414,9 +415,26 @@ def main():
                 "agent_id": agent_id, "continuation": True,
             })
 
+    # The passages a memory search showed the model during this run, numbered
+    # for its [n] citations (common/citation_sink.py). Installed on this
+    # thread's context before the agent runs, so the tools (and the worker
+    # threads they run on, which copy the context) record into it; stored on
+    # the run record as ``citations``, the same field a chat run uses.
+    from common import citation_sink as _citation_sink
+    _citations = _citation_sink.CitationSink()
+    _citation_token = _citation_sink.set_sink(_citations)
+
     def _emit_summary_and_finalize(result, invocation) -> None:
         callback = invocation.stats
         duration_ms = invocation.duration_ms
+        cited = _citations.payloads()
+        if cited:
+            # On the run record itself, where the run page reads them (the
+            # payload table would drop a key it has no column for).
+            try:
+                _state.update_run(run_id, {"citations": cited})
+            except Exception:  # noqa: BLE001 - best-effort like every other write here
+                log.debug("could not store the citations of run %s", run_id)
         log.info(
             f"[message_summary] "
             f"inbound_tokens={callback.prompt_tokens} "
@@ -442,6 +460,7 @@ def main():
                 "tool_calls": callback.tool_calls,
                 "duration_ms": duration_ms,
                 "continuation": True,
+                **({"citations": cited} if cited else {}),
             })
 
     def _on_build_error(error_msg: str):
@@ -492,6 +511,7 @@ def main():
         )
     finally:
         _heartbeat.stop()
+        _citation_sink.reset_sink(_citation_token)
         # Best-effort: a replica or worker on another host can then serve this
         # run's finished log even though it never ran the process itself
         # (common/blobs.py, docs/storage.md). Never raises, so it cannot turn a

@@ -571,6 +571,7 @@ html.dark {
 :where(html.dark) .bg-blue-50,
 :where(html.dark) .hover\:bg-blue-50:hover { background-color: rgba(var(--hue-blue-rgb), 0.14); }
 :where(html.dark) .bg-blue-50\/40 { background-color: rgba(59, 130, 246, 0.056); }
+:where(html.dark) .bg-blue-50\/50 { background-color: rgba(59, 130, 246, 0.070); }
 :where(html.dark) .bg-cyan-100,
 :where(html.dark) .hover\:bg-cyan-100:hover { background-color: rgba(var(--hue-cyan-rgb), 0.22); }
 :where(html.dark) .bg-cyan-200 { background-color: rgba(var(--hue-cyan-rgb), 0.30); }

@@ -240,7 +240,9 @@ def main() -> None:
     parts = [flow_desc] + ([run_desc] if run_desc and run_desc != flow_desc else [])
     shared_context = "\n\n".join(p for p in parts if p)
     if task_id:
-        shared_context = build_task_instruction(task_id, shared_context)
+        # --workspace is the flow's working directory: the task's workspace
+        # files are copied into it (task_files/) and named in the context.
+        shared_context = build_task_instruction(task_id, shared_context, work_dir=args.workspace)
 
     _task = _ts.get_task(task_id) if task_id else None
     task_title = (getattr(_task, "title", "") or "").strip()

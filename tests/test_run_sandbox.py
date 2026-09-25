@@ -64,6 +64,14 @@ class _FakeProc:
     pid = 4242
 
 
+class _Done:
+    """A fake ``subprocess.CompletedProcess`` for ``cm._run``, matching
+    tests/test_environments.py's own helper of the same name."""
+
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
 @pytest.fixture
 def fake_popen(monkeypatch):
     """Stand in for subprocess.Popen in local-mode tests: records the call,
@@ -211,6 +219,209 @@ def test_run_command_http_transport_mounts_state_dir_read_only(no_host_translati
     assert "/host/.agents_hub/run_snapshots/r1:/app/.agents_hub/run_snapshots/r1:ro" in joined
     # The relay env var itself still reaches the container.
     assert "-e AGENT_RUN_STATE_TRANSPORT=http" in joined
+
+
+# ── the enforced egress network policy ──────────────────────────────────────
+#
+# managers.container_manager.enforce_network_policy fences a container onto
+# the internal, no-route-out network when its launch carries a
+# limited/none environment network policy and the egress proxy is on. Mocked
+# subprocess throughout: no real docker daemon needed.
+
+def test_ensure_egress_network_creates_it_once(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, timeout=300, capture=True):
+        calls.append(cmd)
+        if cmd[:3] == ["docker", "network", "ls"]:
+            return _Done(stdout="" if len(calls) == 1 else f"{cm.EGRESS_NETWORK_NAME}\n")
+        return _Done()
+
+    monkeypatch.setattr(cm, "_run", fake_run)
+    assert cm.ensure_egress_network() == cm.EGRESS_NETWORK_NAME
+    creates = [c for c in calls if c[:3] == ["docker", "network", "create"]]
+    assert creates and "--internal" in creates[0]
+
+
+def test_ensure_egress_gateway_is_none_when_the_proxy_is_off(monkeypatch):
+    from environments import egress
+    monkeypatch.setattr(egress, "enabled", lambda: False)
+    monkeypatch.setattr(cm, "_run", lambda *a, **k: pytest.fail("must not touch docker"))
+    assert cm.ensure_egress_gateway() is None
+
+
+def test_ensure_egress_gateway_reuses_a_running_container(monkeypatch):
+    from environments import egress
+    monkeypatch.setattr(egress, "enabled", lambda: True)
+    monkeypatch.setattr(cm, "container_running", lambda name: name == cm.EGRESS_GATEWAY_NAME)
+    monkeypatch.setattr(cm, "_run", lambda *a, **k: pytest.fail("must not start a new one"))
+    assert cm.ensure_egress_gateway() == cm.EGRESS_GATEWAY_NAME
+
+
+def test_ensure_egress_gateway_starts_and_connects_it(monkeypatch):
+    from environments import egress
+    monkeypatch.setattr(egress, "enabled", lambda: True)
+    monkeypatch.setattr(egress, "public_host", lambda mode: "host.docker.internal")
+    monkeypatch.setattr(egress, "port", lambda: 8099)
+    monkeypatch.setattr(cm, "container_running", lambda name: False)
+    monkeypatch.setattr(cm, "get_or_create_network", lambda: "agents-hub")
+    calls = []
+
+    def fake_run(cmd, timeout=300, capture=True):
+        calls.append(cmd)
+        if cmd[:3] == ["docker", "network", "ls"]:
+            return _Done(stdout=f"{cm.EGRESS_NETWORK_NAME}\n")
+        return _Done(stdout="cid\n")
+
+    monkeypatch.setattr(cm, "_run", fake_run)
+    assert cm.ensure_egress_gateway() == cm.EGRESS_GATEWAY_NAME
+    run_cmd = next(c for c in calls if c[:2] == ["docker", "run"])
+    joined = " ".join(run_cmd)
+    assert f"--name {cm.EGRESS_GATEWAY_NAME}" in joined
+    assert "--network agents-hub" in joined
+    assert "--entrypoint socat" in joined
+    assert "TCP-LISTEN:8099,fork,reuseaddr TCP:host.docker.internal:8099" in joined
+    connect_cmd = next(c for c in calls if c[:3] == ["docker", "network", "connect"])
+    assert connect_cmd == ["docker", "network", "connect", cm.EGRESS_NETWORK_NAME, cm.EGRESS_GATEWAY_NAME]
+
+
+def test_ensure_egress_gateway_returns_none_when_docker_run_fails(monkeypatch):
+    from environments import egress
+    monkeypatch.setattr(egress, "enabled", lambda: True)
+    monkeypatch.setattr(cm, "container_running", lambda name: False)
+    monkeypatch.setattr(cm, "get_or_create_network", lambda: "agents-hub")
+
+    def fake_run(cmd, timeout=300, capture=True):
+        if cmd[:2] == ["docker", "run"]:
+            return _Done(returncode=1, stderr="no such image")
+        return _Done(stdout="")
+
+    monkeypatch.setattr(cm, "_run", fake_run)
+    assert cm.ensure_egress_gateway() is None
+
+
+def test_rewrite_proxy_url_keeps_token_and_port():
+    url = cm._rewrite_proxy_url("http://tok-abc@host.docker.internal:8099", "agents-hub-egress-gateway")
+    assert url == "http://tok-abc@agents-hub-egress-gateway:8099"
+
+
+def test_enforce_network_policy_is_a_noop_without_the_marker():
+    network, env, extra = cm.enforce_network_policy("agents-hub", {"FOO": "bar"}, None)
+    assert (network, env, extra) == ("agents-hub", {"FOO": "bar"}, None)
+
+
+def test_enforce_network_policy_is_a_noop_when_the_gateway_is_unavailable(monkeypatch):
+    monkeypatch.setattr(cm, "ensure_egress_gateway", lambda: None)
+    env = {"AGENTS_HUB_NETWORK": "none", "HTTP_PROXY": "http://tok@host.docker.internal:8099"}
+    network, out_env, extra = cm.enforce_network_policy("agents-hub", env, None)
+    assert network == "agents-hub" and out_env == env and extra is None
+
+
+def test_enforce_network_policy_fences_and_rewrites_the_proxy_in_env(monkeypatch):
+    monkeypatch.setattr(cm, "ensure_egress_gateway", lambda: "agents-hub-egress-gateway")
+    env = {
+        "AGENTS_HUB_NETWORK": "limited",
+        "HTTP_PROXY": "http://tok@host.docker.internal:8099",
+        "HTTPS_PROXY": "http://tok@host.docker.internal:8099",
+        "OTHER": "kept",
+    }
+    network, out_env, extra = cm.enforce_network_policy("agents-hub", env, None)
+    assert network == cm.EGRESS_NETWORK_NAME
+    assert out_env["HTTP_PROXY"] == "http://tok@agents-hub-egress-gateway:8099"
+    assert out_env["HTTPS_PROXY"] == "http://tok@agents-hub-egress-gateway:8099"
+    assert out_env["OTHER"] == "kept"
+    assert extra is None
+    # The input dict itself is untouched — a fresh dict comes back.
+    assert env["HTTP_PROXY"] == "http://tok@host.docker.internal:8099"
+
+
+def test_enforce_network_policy_reads_the_marker_from_extra_env_for_node_containers(monkeypatch):
+    """A node container's own env is allowlist-filtered before this point and
+    would not carry AGENTS_HUB_NETWORK; it arrives through extra_env instead
+    (see container_manager.start_container's non-hardened branch)."""
+    monkeypatch.setattr(cm, "ensure_egress_gateway", lambda: "agents-hub-egress-gateway")
+    extra_env = {"AGENTS_HUB_NETWORK": "none", "HTTP_PROXY": "http://tok@host.docker.internal:8099"}
+    network, out_env, out_extra = cm.enforce_network_policy("agents-hub", {"KEPT": "1"}, extra_env)
+    assert network == cm.EGRESS_NETWORK_NAME
+    assert out_env == {"KEPT": "1"}
+    assert out_extra["HTTP_PROXY"] == "http://tok@agents-hub-egress-gateway:8099"
+
+
+def test_start_container_hardened_joins_the_egress_network_when_fenced(monkeypatch, no_host_translation):
+    """End-to-end through start_container(hardened=True): a run container
+    whose env already carries AGENTS_HUB_NETWORK=limited (as
+    environments/launch.py sets it) is fenced onto the internal network with
+    its proxy variables rewritten, instead of the ordinary agents-hub bridge."""
+    monkeypatch.setattr(cm, "get_or_create_network", lambda: "agents-hub")
+    monkeypatch.setattr(cm, "ensure_egress_gateway", lambda: "agents-hub-egress-gateway")
+    monkeypatch.setattr("common.snapshot.write_snapshots", lambda key: "/tmp/snap", raising=False)
+    captured = {}
+
+    def fake_run(cmd, timeout=30, capture=True):
+        captured["cmd"] = cmd
+        return _Done(stdout="cid\n")
+
+    monkeypatch.setattr(cm, "_run", fake_run)
+    result = cm.start_container(
+        container_name="agents-hub-run-x", agent_id="swe_agent", cmd=["python", "-m", "runtime.agent_run"],
+        env={
+            "AGENTS_HUB_NETWORK": "limited",
+            "AGENTS_HUB_ALLOWED_HOSTS": "pypi.org",
+            "HTTP_PROXY": "http://tok@host.docker.internal:8099",
+            "HTTPS_PROXY": "http://tok@host.docker.internal:8099",
+        },
+        hardened=True,
+    )
+    assert result["success"]
+    joined = " ".join(captured["cmd"])
+    assert f"--network {cm.EGRESS_NETWORK_NAME}" in joined
+    assert "HTTP_PROXY=http://tok@agents-hub-egress-gateway:8099" in joined
+
+
+def test_start_container_node_joins_the_egress_network_when_fenced(monkeypatch, no_host_translation):
+    """The non-hardened (node) path: the marker arrives through extra_env."""
+    monkeypatch.setattr(cm, "get_or_create_network", lambda: "agents-hub")
+    monkeypatch.setattr(cm, "ensure_egress_gateway", lambda: "agents-hub-egress-gateway")
+    captured = {}
+
+    def fake_run(cmd, timeout=30, capture=True):
+        captured["cmd"] = cmd
+        return _Done(stdout="cid\n")
+
+    monkeypatch.setattr(cm, "_run", fake_run)
+    result = cm.start_container(
+        container_name="agents-hub-node-x", agent_id="swe_agent", cmd=["python", "-m", "runtime.node_run"],
+        env={}, extra_env={
+            "AGENTS_HUB_NETWORK": "none",
+            "HTTP_PROXY": "http://tok@host.docker.internal:8099",
+        },
+    )
+    assert result["success"]
+    joined = " ".join(captured["cmd"])
+    assert f"--network {cm.EGRESS_NETWORK_NAME}" in joined
+    assert "HTTP_PROXY=http://tok@agents-hub-egress-gateway:8099" in joined
+
+
+def test_start_container_keeps_todays_behaviour_when_the_proxy_is_off(monkeypatch, no_host_translation):
+    """The egress proxy off (the default): a limited/none environment still
+    lands the container on the ordinary bridge, unchanged."""
+    from environments import egress
+    monkeypatch.setattr(egress, "enabled", lambda: False)
+    monkeypatch.setattr(cm, "get_or_create_network", lambda: "agents-hub")
+    monkeypatch.setattr("common.snapshot.write_snapshots", lambda key: "/tmp/snap", raising=False)
+    captured = {}
+
+    def fake_run(cmd, timeout=30, capture=True):
+        captured["cmd"] = cmd
+        return _Done(stdout="cid\n")
+
+    monkeypatch.setattr(cm, "_run", fake_run)
+    cm.start_container(
+        container_name="agents-hub-run-x", agent_id="swe_agent", cmd=["python"],
+        env={"AGENTS_HUB_NETWORK": "none"}, hardened=True,
+    )
+    assert "--network agents-hub" in " ".join(captured["cmd"])
+    assert cm.EGRESS_NETWORK_NAME not in " ".join(captured["cmd"])
 
 
 # ── agents.agent_launcher.start_run: mode resolution + Docker wiring ────────

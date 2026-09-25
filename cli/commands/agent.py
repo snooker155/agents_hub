@@ -87,4 +87,10 @@ def agent_run(
     console.print(f"[bold]Running agent:[/bold] {agent_id}")
     console.rule()
     result = call(hub().send_message, body)
+    # The agent may hand the conversation over (docs/handoffs.md): show each
+    # handing reply and who took over before the answer.
+    for h in (result.get("handoffs") or []) if isinstance(result, dict) else []:
+        console.print(str(h.get("from_response") or ""))
+        console.print(f"[dim]handed over to {h.get('to_agent_name') or h.get('to_agent_id')}: "
+                      f"{h.get('reason') or ''}[/dim]")
     console.print(result.get("response", result))

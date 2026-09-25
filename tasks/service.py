@@ -102,6 +102,7 @@ def create_task(
     environment_id: Optional[str] = None,
     agent_version: Optional[int] = None,
     outcome: Optional[Dict[str, Any]] = None,
+    file_ids: Optional[Sequence[str]] = None,
     store: TaskStore = default_store,
 ) -> Task:
     """Create a new task and persist it in the store.
@@ -114,7 +115,9 @@ def create_task(
     is nothing yet to validate the version against — the route layer
     (dashboard/backend/routes/tasks.py) validates it once an agent is
     assigned. ``outcome`` is the grading rubric (tasks/outcome.py), passed
-    through unvalidated the same way.
+    through unvalidated the same way. ``file_ids`` are workspace files
+    (files/service.py) the task works from; the route layer checks they
+    belong to the task's workspace.
     """
     dep_ids = [d if isinstance(d, UUID) else UUID(str(d)) for d in (depends or [])]
     if dep_ids:
@@ -146,6 +149,7 @@ def create_task(
         environment_id=environment_id,
         agent_version=agent_version,
         outcome=outcome,
+        file_ids=file_ids,
     )
     append_task_activity_log(task.id, "created", "Task created")
     if task.status == TaskStatus.blocked and (task.blocked_reason or "").startswith(DEPENDENCY_BLOCK_PREFIX):
@@ -944,13 +948,15 @@ def add_subtask(
     budget_usd: Optional[float] = None,
     environment_id: Optional[str] = None,
     agent_version: Optional[int] = None,
+    file_ids: Optional[Sequence[str]] = None,
     store: TaskStore = default_store,
 ) -> Task:
     """Create a subtask under the given parent, by default with created_by=orchestrator.
 
     The subtask inherits workspace, project, project_id, and, unless given
-    here, the parent's money cap (``budget_usd``) and environment, so a piece
-    of work an agent hands down runs under the same limits as the task it came
+    here, the parent's money cap (``budget_usd``), environment and workspace
+    files (``file_ids``), so a piece of work an agent hands down runs under
+    the same limits, and from the same documents, as the task it came
     from. `depends` lets a decomposition express execution order between
     subtasks; a subtask with unfinished dependencies is created blocked and
     released automatically when they complete.
@@ -971,6 +977,8 @@ def add_subtask(
         budget_usd = parent.budget_usd
     if environment_id is None and parent is not None:
         environment_id = parent.environment_id
+    if file_ids is None and parent is not None:
+        file_ids = list(getattr(parent, "file_ids", None) or [])
 
     # A subtask created under an already-blocked parent inherits the block, so a
     # decomposition run cannot spawn immediately-runnable work under a blocked task.
@@ -1005,6 +1013,7 @@ def add_subtask(
         budget_usd=budget_usd,
         environment_id=environment_id,
         agent_version=agent_version,
+        file_ids=file_ids,
     )
 
 

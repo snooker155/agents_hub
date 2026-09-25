@@ -197,7 +197,8 @@ def save_chat(chat: Dict[str, Any]) -> Dict[str, Any]:
 def append_turn(chat_id: str, *, run_id: str, user_message: str,
                 agent_message: str, agent_id: Optional[str] = None,
                 usage: Optional[Dict[str, Any]] = None,
-                duration_ms: Optional[int] = None) -> bool:
+                duration_ms: Optional[int] = None,
+                extra: Optional[Dict[str, Any]] = None) -> bool:
     """Add one completed exchange to a stored chat. Returns whether it was added.
 
     This is the safety net under the browser, not the normal path: the page that
@@ -211,6 +212,10 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
     thread, an instance delivery) should not appear in the sidebar. A run whose
     id is already on a message is skipped, so whichever writer got there first
     holds the turn and the other does not duplicate it.
+
+    ``extra`` is merged into the agent bubble: a reply that took the
+    conversation over by handoff carries its ``handoff`` there, which is what
+    the chat draws the "handed over" divider from (chat/handoff.py).
     """
     if not chat_id or not run_id:
         return False
@@ -234,11 +239,37 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
             "outbound_tokens": (usage or {}).get("outbound_tokens"),
             "total_tokens": (usage or {}).get("total_tokens"),
             "duration_ms": duration_ms,
+            **(extra or {}),
         })
         doc = _fit({**chat, "messages": messages + turn, "updated_at": _now()})
         conn.execute(
             "UPDATE chats SET message_count = ?, updated_at = ?, doc = ? WHERE chat_id = ?",
             (len(_messages(doc)), doc["updated_at"], db.dumps(doc), str(chat_id)),
+        )
+    return True
+
+
+def set_agent(chat_id: str, agent_id: str) -> bool:
+    """Point a stored chat at another agent. Returns whether it changed.
+
+    A conversation handed over to another agent (chat/handoff.py) continues
+    with that agent: the next turn the page sends goes to it. The page that
+    ran the turn saves this itself; this is the same safety net as
+    :func:`append_turn` for a page that is gone. Only the target moves, in one
+    transaction, so a transcript the page wrote meanwhile is kept.
+    """
+    if not chat_id or not agent_id:
+        return False
+    with db.transaction() as conn:
+        row = conn.execute("SELECT doc FROM chats WHERE chat_id = ?",
+                           (str(chat_id),)).fetchone()
+        chat = _row_to_chat(row) if row else None
+        if chat is None or chat.get("agent_id") == agent_id:
+            return False
+        doc = {**chat, "agent_id": agent_id, "updated_at": _now()}
+        conn.execute(
+            "UPDATE chats SET agent_id = ?, updated_at = ?, doc = ? WHERE chat_id = ?",
+            (agent_id, doc["updated_at"], db.dumps(doc), str(chat_id)),
         )
     return True
 

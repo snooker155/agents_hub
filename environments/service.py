@@ -134,7 +134,7 @@ def _validation_message(exc: Exception) -> str:
 
 
 _EDITABLE = ("name", "description", "workspace", "mode", "image", "packages", "network",
-             "limits", "env", "is_default")
+             "limits", "env", "is_default", "sandbox_provider")
 
 
 def create_environment(data: Dict[str, Any]) -> Environment:

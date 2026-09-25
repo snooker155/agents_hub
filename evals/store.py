@@ -123,14 +123,14 @@ def save_eval_run(run: EvalRun) -> EvalRun:
             db.upsert_sql(
                 "eval_runs",
                 ("eval_run_id", "eval_set_id", "workspace", "status", "configs",
-                 "summary", "total_cost", "error", "started_at", "finished_at"),
+                 "summary", "total_cost", "error", "started_at", "finished_at", "mode"),
                 ("eval_run_id",),
             ),
             (
                 run.eval_run_id, run.eval_set_id, run.workspace, run.status,
                 db.dumps([c.to_dict() for c in run.configs]),
                 db.dumps(run.summary), run.total_cost, run.error,
-                run.started_at, run.finished_at,
+                run.started_at, run.finished_at, run.mode or "live",
             ),
         )
     return run
@@ -148,6 +148,7 @@ def _row_to_run(row) -> EvalRun:
         error=row["error"],
         started_at=row["started_at"] or "",
         finished_at=row["finished_at"],
+        mode=_cell(row, "mode") or "live",
     )
 
 
@@ -220,6 +221,13 @@ def _row_to_result(row) -> EvalResult:
     )
 
 
+def get_result(result_id: str) -> Optional[EvalResult]:
+    row = db.get_conn().execute(
+        "SELECT * FROM eval_results WHERE result_id = ?", (result_id,)
+    ).fetchone()
+    return _row_to_result(row) if row else None
+
+
 def list_results(eval_run_id: str) -> List[EvalResult]:
     rows = db.get_conn().execute(
         "SELECT * FROM eval_results WHERE eval_run_id = ?", (eval_run_id,)
@@ -239,5 +247,5 @@ __all__ = [
     "save_eval_set", "get_eval_set", "list_eval_sets", "delete_eval_set",
     "add_case", "remove_case",
     "save_eval_run", "get_eval_run", "list_eval_runs",
-    "save_result", "list_results", "build_matrix",
+    "save_result", "get_result", "list_results", "build_matrix",
 ]

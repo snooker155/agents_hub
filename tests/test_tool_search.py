@@ -121,6 +121,19 @@ def test_core_tools_stay_visible_and_the_rest_are_deferred():
     assert "create_schedule" in ext.deferred and "read_file" not in ext.deferred
 
 
+def test_the_handoff_tool_stays_visible_next_to_delegation():
+    """Hidden behind the search while run_agent_tool was in view, the model
+    delegated when the user asked to be handed over (found live)."""
+    agent = _agent(_tools(extra=25) + [
+        _make_tool("run_agent_tool", "Delegate a request to another agent.", None),
+        _make_tool("handoff_to_agent", "Hand this conversation over to another agent.", None),
+    ])
+    ext = tool_search.extension_for(agent)
+    shown = _names(ext.select_tools(LoopState(), list(agent._tools)))
+    assert "handoff_to_agent" in shown and "run_agent_tool" in shown
+    assert "handoff_to_agent" not in ext.deferred
+
+
 def test_a_rebuild_does_not_add_a_second_search_tool():
     agent = _agent(_tools(extra=25))
     tool_search.extension_for(agent)

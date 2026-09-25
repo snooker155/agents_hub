@@ -32,6 +32,7 @@ reply = client.chat.completions.create(
   `stop`, `stream` and `stream_options.include_usage`, `tools` and
   `tool_choice`, `response_format`, `n` (only 1), `user` (accepted and
   ignored).
+- Agents, as `agent:<agent_id>` models (see [Agents as models](#agents-as-models)).
 - Nothing else: embeddings, images, audio and the Responses API answer 404
   in the OpenAI error shape.
 
@@ -101,6 +102,68 @@ becomes a system instruction asking for one JSON object (with the schema),
 because not every provider has a JSON mode but every one reads a system
 message. Validate the answer on the client.
 
+## Agents as models
+
+Every agent the caller may run is a model too: `agent:<agent_id>`.
+
+```python
+reply = client.chat.completions.create(
+    model="agent:support-bot",
+    messages=[{"role": "user", "content": "Where is order 42?"}],
+    extra_headers={"X-Agents-Hub-Workspace": "shop"},
+)
+```
+
+`GET /v1/models` lists them after the catalog's models, as `{"id":
+"agent:<id>", "object": "model", "owned_by": "agents-hub", "created": 0,
+"agent_id", "name", "description"}`. Which ones: the agents usable (by the
+chat's own rule: system agents everywhere, an unshared agent only in its owner
+workspace, a workspace's `allowed_agents` list) in the workspace the
+`X-Agents-Hub-Workspace` header names, or, without the header, in any
+workspace the caller can see. A personal key scoped to some workspaces sees
+only theirs; a header naming a workspace outside the scope is a `403` with
+`type: "permission_error"`.
+
+A completion with an agent model runs the agent through the web chat's own
+pipeline (`chat.pipelines.run_chat_pipeline`), so its tools, memory,
+guardrails, budget and model settings apply exactly as in the chat, and the
+turn is a run on the Messages page with `message_origin="api"`. The
+workspace is, in order: the `X-Agents-Hub-Workspace` header, the key's one
+workspace when it is scoped to exactly one, the agent's owner workspace,
+`default`. Refused before anything runs: a workspace outside the key's scope
+or one the caller is not an editor of in `multi` mode (`403`,
+`workspace_not_allowed`), a workspace that does not exist (`404`,
+`workspace_not_found`), an agent not available there (`404`,
+`model_not_found`).
+
+Messages map onto the chat turn: `system` and `developer` messages are the
+caller's instructions and are put in front of the last user message (the
+agent keeps its own system prompt); earlier `user` and `assistant` messages
+are the conversation history; the last message must be the user's.
+`response_format` becomes an instruction as for models. An agent runs its
+own tools on the hub, so client `tools` (or `functions`), a `tool` message
+and an assistant message with `tool_calls` are a `400`. `temperature`,
+`max_tokens` and `stop` are ignored: the agent's own settings apply.
+
+The answer carries an extra `agents_hub` object, `{"agent_id", "workspace",
+"run_id"}`, so a client can link to the run. Streaming sends the agent's
+tokens as content deltas, which include what it says between tool calls; a
+handoff to another agent puts a blank line between the two replies; an
+agent that streamed nothing sends its final answer as one delta. The final
+chunk has `finish_reason: "stop"`, the `agents_hub` object and, with
+`stream_options.include_usage`, the usage. A failed turn is a `502` (a
+chunk with `finish_reason: "error"` when streaming). A client that
+disconnects mid-stream stops the run, as the chat's stop button does. The
+timeout is the chat's: the larger of `CHAT_REQUEST_TIMEOUT` and
+`LLM_REQUEST_TIMEOUT` plus a minute.
+
+Accounting is the same as for a model call: one `serving_usage` row, filed
+under the provider and model the run actually used (so the per-model totals
+and the tokens-per-day cap include agent calls), and one `model.serve` audit
+row with `object_type: "agent"`, `object_id: "agent:<id>"`, the workspace,
+and the run id in its details. The run's own cost is on the run, as for any
+chat turn.
+
 ## Token accounting
 
 Every completion writes one row to `serving_usage` (migration 0016): when,
@@ -156,11 +219,11 @@ both swallow their own errors.
 | Route | Answer |
 |---|---|
 | `GET /v1` | `{"object": "api", "endpoints": [...]}` |
-| `GET /v1/models` | `{"object": "list", "data": [model, ...]}` |
-| `GET /v1/models/{id}` | one model; the id may be full, bare or `default` |
+| `GET /v1/models` | `{"object": "list", "data": [model, ..., agent, ...]}` |
+| `GET /v1/models/{id}` | one model; the id may be full, bare, `default` or `agent:<id>` |
 | `POST /v1/chat/completions` | a `chat.completion`, or a stream of chunks |
 | any other `/v1/...` | 404, code `unknown_url` |
-| `GET /api/models/serving/info` | `{"base_url": "<origin>/v1", "models": n, "auth": "api_key" \| "token" \| "none"}` |
+| `GET /api/models/serving/info` | `{"base_url": "<origin>/v1", "models": n, "agents": n, "auth": "api_key" \| "token" \| "none"}` |
 | `GET /api/models/serving/usage?since=&until=&limit=` | `{"rows", "totals", "recent"}` |
 
 `base_url` honours `X-Forwarded-Host` and `X-Forwarded-Proto`, so behind a

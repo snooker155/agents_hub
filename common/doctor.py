@@ -358,6 +358,41 @@ def check_docker(snap: Dict[str, Any]) -> Result:
     return ("skip", "Docker is not available, and nothing configured here requires it.", detail)
 
 
+# ── sandbox providers ────────────────────────────────────────────────────────
+
+def check_sandbox(snap: Dict[str, Any]) -> Result:
+    """Every sandbox/registry.py provider's availability, and whether the
+    enforced docker network policy (managers.container_manager, a ``limited``
+    or ``none`` environment fenced onto a no-route-out network instead of the
+    ordinary bridge) is actually active. ``fail`` when the resolved default
+    provider (sandbox.registry.resolve with no environment) cannot run;
+    ``warn`` when it can but the network enforcement is off; ``ok``
+    otherwise."""
+    from sandbox import registry
+
+    providers = registry.available()
+    try:
+        default_name = registry.resolve(None)
+    except Exception as exc:  # noqa: BLE001 - reported as the check's result
+        return ("fail", f"No default sandbox provider could be resolved: {exc}", {"providers": providers})
+
+    from environments import egress
+    proxy_on = egress.enabled()
+    detail = {"providers": providers, "default_provider": default_name, "egress_proxy": proxy_on}
+
+    default_ok = bool(providers.get(default_name, {}).get("available"))
+    if not default_ok:
+        reason = providers.get(default_name, {}).get("reason") or "unavailable"
+        return ("fail", f"The default sandbox provider ({default_name}) cannot run: {reason}", detail)
+    if not proxy_on:
+        return ("warn", (
+            f"The default sandbox provider ({default_name}) is available, but the egress proxy is "
+            "off (AGENTS_HUB_EGRESS_PROXY=1), so a limited/none network policy is enforced only by "
+            "the hub's own tool checks, not by the container network itself."), detail)
+    return ("ok", f"The default sandbox provider ({default_name}) is available; the enforced docker "
+                  "network policy is active.", detail)
+
+
 # ── frontend build ───────────────────────────────────────────────────────────
 
 def _newest_mtime(root: Path) -> Tuple[float, Optional[str]]:
@@ -430,6 +465,7 @@ CHECKS: List[Tuple[str, str, Callable[[Dict[str, Any]], Result]]] = [
     ("browser", "Browser service", check_browser),
     ("models_runtime", "Model runtime", check_models_runtime),
     ("docker", "Docker", check_docker),
+    ("sandbox", "Sandbox providers", check_sandbox),
     ("frontend_build", "Frontend build", check_frontend_build),
     ("system_workspace", "System workspace", check_system_workspace),
 ]

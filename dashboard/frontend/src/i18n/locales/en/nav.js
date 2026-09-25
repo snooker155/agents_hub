@@ -14,6 +14,8 @@ export default {
   tasks: 'Tasks',
   plan: 'Plan',
   deployments: 'Deployments',
+  widgets: 'Widgets',
+  files: 'Files',
   sessions: 'Sessions',
   runGroups: 'Run Groups',
   messages: 'Runs',

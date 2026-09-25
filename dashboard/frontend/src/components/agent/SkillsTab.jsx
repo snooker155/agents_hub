@@ -1,13 +1,36 @@
-import { BookOpen, CheckCircle, ChevronUp, Loader, Plus, Save, Tag, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import {
+  ArrowUpCircle, BookOpen, CheckCircle, ChevronUp, FolderGit2, History, Loader, Pin, Plus, Save, Tag,
+  Trash2,
+} from 'lucide-react';
 import { useAgentPage } from './context';
+import SkillHistoryModal from '../skills/SkillHistoryModal';
+import { updateSkillFromOrigin } from '../../api/skillVersions';
+import { errorDetail } from '../toast';
 
 /** The skills this agent has been taught. */
 export default function SkillsTab() {
   const {
-    handleDeleteSkill, handleSaveSkill, handleToggleSkillsEnabled, selectedWorkspace,
+    fetchSkills, handleDeleteSkill, handleSaveSkill, handleToggleSkillsEnabled, selectedWorkspace,
     setShowAddSkill, setSkillForm, showAddSkill, skillDeleteBusy, skillForm, skillSaving,
-    skills, skillsConfigSaving, skillsEnabled, skillsLoading, skillsMessage, t,
+    skills, skillsConfigSaving, skillsEnabled, skillsLoading, skillsMessage, t, toast,
   } = useAgentPage();
+  // The skill whose version history (and pin) is open.
+  const [historyFor, setHistoryFor] = useState(null);
+  const [originBusy, setOriginBusy] = useState(null);
+
+  const takeOriginUpdate = async (skill) => {
+    setOriginBusy(skill.id);
+    try {
+      await updateSkillFromOrigin(skill.id);
+      toast?.success(t('skillsCatalog.origin.done', { name: skill.name, version: skill.origin_latest_version }));
+      await fetchSkills(selectedWorkspace);
+    } catch (e) {
+      toast?.error(t('skillsCatalog.history.actionFailed'), errorDetail(e));
+    } finally {
+      setOriginBusy(null);
+    }
+  };
   return (
         <div className="space-y-5">
 
@@ -151,9 +174,39 @@ export default function SkillsTab() {
                             {skill.use_count > 0 && (
                               <span className="text-[10px] text-gray-400">{t('agentDetails.usedCount', { count: skill.use_count })}</span>
                             )}
+                            {skill.version && (
+                              <span className="text-[10px] text-gray-400">v{skill.version}</span>
+                            )}
+                            {skill.pinned_version && (
+                              <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-700" title={t('skillsCatalog.pinnedTitle')}>
+                                <Pin className="w-3 h-3" /> {t('skillsCatalog.pinnedTo', { version: skill.pinned_version })}
+                              </span>
+                            )}
+                            {skill.repo?.dir && (
+                              <span className="inline-flex items-center gap-0.5 text-[10px] text-gray-400" title={skill.repo.dir}>
+                                <FolderGit2 className="w-3 h-3" /> {skill.repo.dir}
+                              </span>
+                            )}
+                            {skill.update_available && (
+                              <button
+                                onClick={() => takeOriginUpdate(skill)}
+                                disabled={originBusy === skill.id}
+                                className="inline-flex items-center gap-0.5 text-[10px] text-indigo-600 hover:underline disabled:opacity-50"
+                              >
+                                <ArrowUpCircle className="w-3 h-3" />
+                                {t('skillsCatalog.origin.available', { version: skill.origin_latest_version })}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setHistoryFor(skill)}
+                              className="inline-flex items-center gap-0.5 text-[10px] text-gray-500 hover:text-indigo-600"
+                              title={t('skillsCatalog.history.followsLatest')}
+                            >
+                              <History className="w-3 h-3" /> {t('skillsCatalog.historyButton')}
+                            </button>
                           </div>
                           <p className="text-xs text-gray-500 italic mb-2">{skill.description}</p>
-                          {skill.tags.length > 0 && (
+                          {(skill.tags || []).length > 0 && (
                             <div className="flex items-center gap-1 flex-wrap mb-2">
                               <Tag className="w-3 h-3 text-gray-300" />
                               {skill.tags.map(tag => (
@@ -162,10 +215,13 @@ export default function SkillsTab() {
                             </div>
                           )}
                           <ol className="space-y-0.5 pl-4">
-                            {skill.steps.map((step, i) => (
+                            {(skill.steps || []).map((step, i) => (
                               <li key={i} className="text-xs text-gray-600 list-decimal">{step}</li>
                             ))}
                           </ol>
+                          {skill.body && (
+                            <pre className="text-xs text-gray-600 whitespace-pre-wrap font-sans max-h-40 overflow-auto mt-1">{skill.body}</pre>
+                          )}
                         </div>
                         <button
                           onClick={() => handleDeleteSkill(skill.id)}
@@ -184,6 +240,13 @@ export default function SkillsTab() {
                 </div>
               )}
             </div>
+          )}
+          {historyFor && (
+            <SkillHistoryModal
+              skill={historyFor}
+              onClose={() => setHistoryFor(null)}
+              onChanged={() => fetchSkills(selectedWorkspace)}
+            />
           )}
         </div>
   );

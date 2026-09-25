@@ -286,6 +286,7 @@ class TaskStore:
         environment_id: Optional[str] = None,
         agent_version: Optional[int] = None,
         outcome: Optional[dict] = None,
+        file_ids: Optional[Sequence[str]] = None,
         timeout: float = 10.0,
     ) -> Task:
         # Key computation and insert happen in the same transaction so two
@@ -321,6 +322,7 @@ class TaskStore:
                 environment_id=environment_id,
                 agent_version=agent_version,
                 outcome=outcome,
+                file_ids=list(file_ids or []),
             )
             _write_task_row(conn, task)
         return task
