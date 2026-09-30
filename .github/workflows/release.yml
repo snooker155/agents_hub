@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
       - name: Tag matches the versioned files and the CHANGELOG
         run: python scripts/release.py check --tag "${GITHUB_REF_NAME}"
       - id: v
@@ -108,7 +108,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
       - name: Notes from the CHANGELOG
         run: python scripts/release.py notes "${{ needs.check.outputs.version }}" > notes.md
       - name: Create the release

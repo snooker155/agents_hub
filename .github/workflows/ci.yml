@@ -8,18 +8,17 @@ on:
   workflow_call:
 
 jobs:
+  # One Python version: 3.11, the one every backend image runs
+  # (python:3.11-slim) and the floor pyproject.toml declares.
   python:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -29,7 +28,7 @@ jobs:
           # agent deps carry the store/runtime libraries the tests import; the
           # CLI's own deps because tests/test_cli_*.py import typer's CliRunner
           # and go through cli.main, which reaches for rich and requests too).
-          # It is universal, so it installs the same on 3.11 and 3.12.
+          # It is universal, so it installs the same on any supported version.
           pip install -r requirements.lock
           pip install pytest ruff
 
@@ -55,9 +54,8 @@ jobs:
           AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_ci
         run: python -m pytest tests/ -q
 
-  # The same suite against Postgres (common/db.py's second backend). One
-  # Python version is enough here: the dialect is what differs, not the
-  # interpreter. Tests marked sqlite_only are skipped (tests/conftest.py).
+  # The same suite against Postgres (common/db.py's second backend). Tests
+  # marked sqlite_only are skipped (tests/conftest.py).
   python-postgres:
     runs-on: ubuntu-latest
     services:
@@ -77,10 +75,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -103,10 +101,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -173,10 +171,10 @@ jobs:
             -v "$GITHUB_WORKSPACE/deploy/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro" \
             quay.io/keycloak/keycloak:26.0 start-dev --import-realm
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -279,7 +277,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Build dist/ah
         run: scripts/build_cli_binary.sh --venv .venv-cli-binary
