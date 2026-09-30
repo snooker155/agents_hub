@@ -7,5 +7,5 @@ description: >-
   and an S3 compatible object store. See docs/deployment.md in the main
   repository and this chart's README.md.
 type: application
-version: 0.3.0
-appVersion: "0.3.0"
+version: 0.4.0
+appVersion: "0.4.0"
