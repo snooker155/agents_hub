@@ -180,3 +180,52 @@ def test_four_processes_opening_a_stale_db_at_once_never_duplicate_a_column(tmp_
     results = [q.get(timeout=5) for _ in range(4)]
     failures = [r for r in results if r[0] != "OK"]
     assert not failures, f"expected all 4 processes to succeed, got: {results}"
+
+
+# ── a startup for another database never marks this one ready ────────────────
+
+@pytest.mark.sqlite_only
+def test_a_startup_still_running_for_the_previous_database_does_not_skip_this_one(tmp_path, reopen_db):
+    """A thread a previous test left behind can be inside the startup
+    sequence for that test's database when the next test points the process
+    at a fresh one. It used to finish by setting the process-wide ready flag,
+    and the next ``get_conn()`` then skipped the migrations of the new, empty
+    file: ``no such table`` in whatever test came next."""
+    from common import migrations
+
+    reopen_db(tmp_path / "old.db")
+    inside, release = threading.Event(), threading.Event()
+    real_apply = migrations.apply_pending
+
+    def slow_apply(conn, dialect):
+        applied = real_apply(conn, dialect)
+        inside.set()
+        release.wait(10)
+        return applied
+
+    migrations.apply_pending = slow_apply
+    try:
+        straggler = threading.Thread(target=db.get_conn, daemon=True)
+        straggler.start()
+        assert inside.wait(10)
+        # The next test: a fresh database, reset flags, while the straggler
+        # still holds the startup lock for the old one.
+        reopen_db(tmp_path / "new.db")
+        migrations.apply_pending = real_apply
+        found = []
+
+        def next_test():
+            conn = db.get_conn()
+            found.append(conn.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'documents'").fetchone())
+
+        main = threading.Thread(target=next_test, daemon=True)
+        main.start()
+        release.set()
+        straggler.join(10)
+        main.join(10)
+    finally:
+        migrations.apply_pending = real_apply
+        release.set()
+
+    assert found and found[0] is not None

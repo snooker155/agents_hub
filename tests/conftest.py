@@ -168,6 +168,13 @@ def fresh_db(tmp_path, monkeypatch):
                 thread.stop()
     except Exception:  # noqa: BLE001 - a teardown guard, never a failure of its own
         pass
+    # The same for the outbox drainer (notify/outbound.py): once a test starts
+    # it, it polls the database for the rest of the session.
+    # Only a live one: shutdown() joins the queue, which nothing would drain.
+    outbound = _sys.modules.get("notify.outbound")
+    worker = getattr(outbound, "_worker", None) if outbound is not None else None
+    if worker is not None and worker.is_alive():
+        outbound.shutdown()  # never raises
 
     db._schema_ready = False
     db._local = threading.local()

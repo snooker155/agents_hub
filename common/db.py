@@ -63,7 +63,8 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from typing import Any, Iterable, Iterator, List, Optional, Sequence
+from pathlib import Path
+from typing import Any, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from common.paths import AGENTS_HUB_ROOT, DB_FILE
 
@@ -84,6 +85,11 @@ _local = threading.local()
 # and an RLock keeps a same-thread re-entry from ever dead-locking.
 _schema_lock = threading.RLock()
 _schema_ready = False
+# The database the flag above was set for (see _database_key). A startup that
+# finishes for a database the process has since moved away from (a thread a
+# test left behind, still migrating the previous test's file) must not mark
+# the new one ready.
+_ready_key: Optional[str] = None
 
 # Resolved once per process on first use; None until then. Tests that switch
 # databases reset it through reset_connections().
@@ -438,9 +444,9 @@ def _get_pool() -> Any:
 
 # ── Connections ──────────────────────────────────────────────────────────────
 
-def _connect_sqlite() -> sqlite3.Connection:
+def _connect_sqlite(path: Optional[Path] = None) -> sqlite3.Connection:
     AGENTS_HUB_ROOT.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_FILE), timeout=_BUSY_TIMEOUT_MS / 1000.0)
+    conn = sqlite3.connect(str(path or DB_FILE), timeout=_BUSY_TIMEOUT_MS / 1000.0)
     conn.row_factory = sqlite3.Row
     # Autocommit mode; transactions are explicit via transaction().
     conn.isolation_level = None
@@ -450,10 +456,22 @@ def _connect_sqlite() -> sqlite3.Connection:
     return conn
 
 
+def _database_key() -> str:
+    """Which database this process is pointed at right now."""
+    return database_url() if dialect() == "postgres" else str(DB_FILE)
+
+
 def _connect() -> Any:
+    return _connect_keyed()[0]
+
+
+def _connect_keyed() -> Tuple[Any, str]:
+    """A new connection and the key of the database it is open on, both from
+    one read of the target, so a switch in between cannot pair them wrong."""
     if dialect() == "postgres":
-        return PgConnection(_get_pool())
-    return _connect_sqlite()
+        return PgConnection(_get_pool()), database_url()
+    path = DB_FILE
+    return _connect_sqlite(path), str(path)
 
 
 def _begin(conn: Any) -> None:
@@ -527,15 +545,16 @@ def _snapshot_before_migrate(conn: Any) -> None:
         log.warning("could not archive the database before migrating: %s", exc)
 
 
-def _ensure_ready(conn: Any) -> None:
+def _ensure_ready(conn: Any, key: Optional[str] = None) -> None:
     """Make the schema current and run the one-time JSON migration, exactly
-    once per process, all inside one write transaction (see module
-    docstring)."""
-    global _schema_ready, SCHEMA_VERSION, _generation
-    if _schema_ready:
+    once per process and database, all inside one write transaction (see
+    module docstring). ``key`` is the database ``conn`` was opened on."""
+    global _schema_ready, _ready_key, SCHEMA_VERSION, _generation
+    key = key or _database_key()
+    if _schema_ready and _ready_key == key:
         return
     with _schema_lock:
-        if _schema_ready:
+        if _schema_ready and _ready_key == key:
             return
         from common import migrations
         from common import db_migrate
@@ -611,6 +630,7 @@ def _ensure_ready(conn: Any) -> None:
                 log.info("migrated %s flow run(s) into the database", flow_runs_migrated)
 
         _schema_ready = True
+        _ready_key = key
         _generation += 1
 
 
@@ -620,11 +640,14 @@ def get_conn() -> Any:
     A ``sqlite3.Connection`` or a :class:`PgConnection`; both take
     ``execute(sql, params)`` with ``?`` placeholders and return rows that
     answer to column names."""
-    conn = getattr(_local, "conn", None)
+    # One read of the thread-local holder: a test swapping ``_local`` between
+    # two reads would pair the old database's connection with the new key.
+    local = _local
+    conn = getattr(local, "conn", None)
     if conn is None:
-        conn = _connect()
-        _local.conn = conn
-    _ensure_ready(conn)
+        conn, local.key = _connect_keyed()
+        local.conn = conn
+    _ensure_ready(conn, getattr(local, "key", None))
     return conn
 
 
