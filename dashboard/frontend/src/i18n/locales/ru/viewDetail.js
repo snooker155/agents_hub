@@ -13,6 +13,7 @@ export default {
   controls: 'Управление',
   viewId: 'ID представления',
   kind: 'Вид',
+  summary: 'Описание',
   workspace: 'Пространство',
   created: 'Создано',
   updated: 'Обновлено',

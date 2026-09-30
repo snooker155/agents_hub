@@ -1,12 +1,15 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Boxes, Camera, Info, Link2, Maximize2, Minimize2, RefreshCw,
   Trash2, AlertCircle,
 } from 'lucide-react';
 import {
-  getView, applyViewOps, setViewState, deleteView, saveViewSnapshot, viewAssetUrl,
+  getView, applyViewOps, setViewState, deleteView, saveViewSnapshot, viewAssetUrl, getProjects,
 } from '../api';
+import CodeWorkbench from '../components/code/CodeWorkbench';
+import useViewChatDescriptor from '../views/useViewChatDescriptor';
+import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useChannel } from '../components/stream';
 import { applyOp } from '../views/opsClient';
 import ViewRenderer, { FILL_KINDS } from '../views/ViewRenderer';
@@ -97,6 +100,38 @@ export default function ViewDetail() {
   const [toast, setToast] = useState('');
   const viewportRef = useRef(null);
 
+  // The view's own chat (the Visualizer, the thread the Studio shows too) in
+  // the floating panel. A code view's Discuss and Edit put their text into
+  // its composer: straight away when the panel is open, or as soon as the
+  // chat mounts after the panel is opened for them.
+  const composerRef = useRef(null);
+  const pendingPrefillRef = useRef(null);
+  const registerChatComposer = useCallback((fn) => {
+    composerRef.current = fn;
+    if (fn && pendingPrefillRef.current) { fn(pendingPrefillRef.current); pendingPrefillRef.current = null; }
+  }, []);
+  usePageChat(useViewChatDescriptor(viewId, null, registerChatComposer));
+  const { setOpen: setChatOpen } = usePageChatPanel();
+  const prefillChat = useCallback((text) => {
+    if (composerRef.current) composerRef.current(text);
+    else pendingPrefillRef.current = text;
+    setChatOpen(true);
+  }, [setChatOpen]);
+  const codeChat = useMemo(() => ({ setInput: prefillChat }), [prefillChat]);
+
+  // Save to project needs the workspace's projects; only a code view saves.
+  const [projects, setProjects] = useState([]);
+  const isCode = view?.kind === 'code';
+  const viewWorkspace = view?.workspace;
+  useEffect(() => {
+    if (!isCode) return undefined;
+    let cancelled = false;
+    getProjects(viewWorkspace || undefined)
+      .then((r) => { if (!cancelled) setProjects(r.data || []); })
+      .catch(() => { if (!cancelled) setProjects([]); });
+    return () => { cancelled = true; };
+  }, [isCode, viewWorkspace]);
+
   const flash = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(''), 1600);
@@ -173,6 +208,10 @@ export default function ViewDetail() {
   // Whether this kind's renderer fills the block it is given or flows as
   // content — the same split ViewRenderer uses to decide its own wrapper.
   const fills = FILL_KINDS.has(view?.kind);
+  // A code view is the block itself: no gutter, no card, the editor-like block
+  // as tall as the page (index.css, .view-page-body). It flows like content
+  // inside the renderer, so it is not a FILL_KIND, only drawn like one here.
+  const flush = fills || view?.kind === 'code';
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -214,7 +253,7 @@ export default function ViewDetail() {
             card. Content kinds (a document, a table, LaTeX) keep their
             padding: text run to the edge of a card is unreadable. */}
         <div ref={viewportRef}
-             className={`flex-1 min-w-0 overflow-auto bg-gray-50 dark:bg-gray-950 ${fills ? '' : 'p-4'}`}>
+             className={`flex-1 min-w-0 overflow-auto bg-gray-50 dark:bg-gray-950 ${flush ? '' : 'p-4'}`}>
           {loading && <div className="h-full grid place-items-center text-gray-400">{t('viewDetail.loadingView')}</div>}
           {error && !loading && (
             <div className="h-full grid place-items-center">
@@ -225,14 +264,30 @@ export default function ViewDetail() {
               </div>
             </div>
           )}
-          {view && !loading && (
+          {view && !loading && isCode && (
+            // A code view is worked on, not only read: the same workbench the
+            // chat's Code panel has (editor, run, versions, save), as tall as
+            // the page, with the recorded runs of this view.
+            <div className="h-full flex flex-col overflow-hidden bg-white dark:bg-gray-900">
+              <CodeWorkbench
+                envelope={view}
+                workspace={view.workspace}
+                projects={projects}
+                onVersionSaved={(data) => { if (data?.view_id) setView(data); }}
+                chat={codeChat}
+                runHistory
+                className="flex-1 min-h-0"
+              />
+            </div>
+          )}
+          {view && !loading && !isCode && (
             // Flex column + `grow` (flex: 1 1 auto): the renderer stretches to the
             // whole viewport when its content is shorter — so html/scene/graph
             // views fill the page instead of sitting at their min-height — but
             // never shrinks below its content, so a long table or document grows
             // the card and scrolls instead of being cut off.
-            <div className={`min-h-full flex flex-col border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 ${
-              fills ? 'overflow-hidden' : 'rounded-xl border p-4'}`}>
+            <div className={`view-page-body min-h-full flex flex-col border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 ${
+              flush ? 'overflow-hidden' : 'rounded-xl border p-4'}`}>
               <ViewRenderer view={view} onOp={onOp} onSelect={onSelect} onState={onState} className="grow" />
             </div>
           )}
@@ -250,6 +305,9 @@ export default function ViewDetail() {
               <div className="text-xs font-semibold text-gray-500 mb-2">{t('viewDetail.details')}</div>
               <Row label={t('viewDetail.viewId')}><code className="font-mono">{view.view_id}</code></Row>
               <Row label={t('viewDetail.kind')}>{view.kind}</Row>
+              {view.summary && view.summary.trim().toLowerCase() !== String(view.title || '').trim().toLowerCase() && (
+                <Row label={t('viewDetail.summary')}>{view.summary}</Row>
+              )}
               <Row label={t('viewDetail.workspace')}>{view.workspace}</Row>
               <Row label={t('viewDetail.created')}>{formatTime(view.created_at)}</Row>
               <Row label={t('viewDetail.updated')}>{formatTime(view.updated_at)}</Row>

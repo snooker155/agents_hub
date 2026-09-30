@@ -3,6 +3,11 @@ export default {
   versionLive: 'Версия агента: текущая (v{{version}})',
   versionPinned: 'Версия агента: закреплена на v{{version}}',
   versionRan: 'Версия агента: выполнена v{{version}}',
+  versionShort: {
+    live: 'текущая',
+    pinned: 'закреплена',
+    older: 'сейчас действует v{{current}}',
+  },
   rollback: 'Откатить',
   rollbackConfirm: 'Откатить агента до версии {{version}}? Она станет его новым текущим определением.',
   rollbackFailed: 'Не удалось откатить агента',

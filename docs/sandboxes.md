@@ -31,7 +31,8 @@ why one could not.
 A throwaway container per snippet: `docker run --rm --read-only --cap-drop
 ALL --security-opt no-new-privileges --user 65534:65534` with memory/CPU/pid
 limits, the snippet mounted read-only, and (with `mount_workspace`) the run's
-workspace mounted read-only at `/work`. Requires a reachable docker daemon
+workspace mounted read-only at `/work`, with `$WORK=/work` so a snippet reads
+its files the same way under `local`. Requires a reachable docker daemon
 (`docker_available()`, cached 60s).
 
 **Network**: see [Network policy](#network-policy-per-provider) below. This

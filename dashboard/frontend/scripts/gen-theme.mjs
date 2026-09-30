@@ -419,6 +419,16 @@ const EXTRAS = `
   color: var(--text-primary);
   border-color: var(--border-default);
 }
+/* A control drawn inside a styled wrapper (an icon plus an input in one
+ * bordered box, a composer's textarea) declares bg-transparent so the wrapper
+ * is the surface. Painting it above would show a second box inside the first,
+ * so it keeps its transparency and only takes the text colour. */
+:where(html.dark) input.bg-transparent,
+:where(html.dark) select.bg-transparent,
+:where(html.dark) textarea.bg-transparent {
+  background-color: transparent;
+  border-color: transparent;
+}
 :where(html.dark) input::placeholder,
 :where(html.dark) textarea::placeholder { color: var(--text-faint); }
 :where(html.dark) option { background-color: var(--surface-raised); color: var(--text-primary); }

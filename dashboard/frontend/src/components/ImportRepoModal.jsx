@@ -3,6 +3,7 @@ import { GitBranch, Github, Gitlab, Loader, Lock, RefreshCw, Search, X } from 'l
 import { Link } from 'react-router-dom';
 import { getGitConfig, listGitRepos, importProjectFromRepo, connectProjectRepo } from '../api';
 import { useI18n } from '../i18n';
+import PageLoader from './PageLoader';
 
 const inputCls = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none";
 
@@ -121,9 +122,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
           {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
 
           {gitConfig === null ? (
-            <div className="flex items-center justify-center py-8">
-              <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
-            </div>
+            <PageLoader size="sm" />
           ) : availableProviders.length === 0 ? (
             <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-4 py-3 text-sm">
               No git connector is configured yet. Add a GitHub or GitLab personal access token in{' '}

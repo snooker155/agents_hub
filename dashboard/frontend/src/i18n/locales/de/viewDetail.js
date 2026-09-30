@@ -13,6 +13,7 @@ export default {
   controls: 'Steuerung',
   viewId: 'Ansichts-ID',
   kind: 'Art',
+  summary: 'Beschreibung',
   workspace: 'Workspace',
   created: 'Erstellt',
   updated: 'Aktualisiert',

@@ -42,6 +42,7 @@ import SkillImportModal from '../components/skills/SkillImportModal';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const EMPTY_DRAFT = { name: '', description: '', steps: '', body: '', tags: '', agent_id: '' };
 
 /**
@@ -397,10 +398,7 @@ const SkillsCatalog = () => {
       )}
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
-          <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mb-4" />
-          <p className="text-gray-500 font-medium">{t('skillsCatalog.loadingSkills')}</p>
-        </div>
+        <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('skillsCatalog.loadingSkills')} /></div>
       ) : tab === 'workspace' ? (
         visibleMine.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">

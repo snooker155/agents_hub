@@ -16,63 +16,19 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BookOpen, FileText, StickyNote } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { renderContent } from './markdown';
+import ChatMarkdown from './ChatMarkdown';
 import { CITATION_FOCUS_EVENT, citationDomId, citationHref, focusCitation } from './citationLinks';
 
-const MARKER_RE = /\[(\d+(?:\s*,\s*\d+)*)\]/g;
-
-function splitMarkers(text, known, anchor, keyPrefix, t) {
-  const out = [];
-  let last = 0;
-  let idx = 0;
-  text.replace(MARKER_RE, (match, nums, offset) => {
-    const numbers = nums.split(',').map((s) => Number(s.trim()));
-    if (!numbers.every((n) => known.has(n))) return match;
-    if (offset > last) out.push(text.slice(last, offset));
-    numbers.forEach((n, i) => {
-      out.push(
-        <button
-          key={`${keyPrefix}-c${idx}-${i}`}
-          type="button"
-          onClick={() => focusCitation(anchor, n)}
-          className="mx-0.5 inline-flex items-center rounded px-1 text-[11px] font-semibold leading-4 align-baseline bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-          title={t('files.citations.source', { n })}
-          data-testid="citation-marker"
-        >
-          {n}
-        </button>,
-      );
-    });
-    idx += 1;
-    last = offset + match.length;
-    return match;
-  });
-  if (!out.length) return text;
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
-
-// Walks the elements renderContent produced and replaces [n] in text nodes.
-// Code blocks and inline code are left as they are: a [1] in code is code.
-function linkMarkers(node, known, anchor, t, keyPrefix = 'm') {
-  if (typeof node === 'string') return splitMarkers(node, known, anchor, keyPrefix, t);
-  if (Array.isArray(node)) return node.map((child, i) => linkMarkers(child, known, anchor, t, `${keyPrefix}.${i}`));
-  if (React.isValidElement(node)) {
-    if (node.type === 'pre' || node.type === 'code') return node;
-    const children = node.props?.children;
-    if (children === undefined || children === null) return node;
-    return React.cloneElement(node, undefined, linkMarkers(children, known, anchor, t, `${keyPrefix}.k`));
-  }
-  return node;
-}
-
 /** The reply text as the chat renders it, with its [n] markers linked. */
-export function CitedText({ content, citations, anchor }) {
-  const { t } = useI18n();
-  const rendered = renderContent(content);
-  if (!citations || !citations.length) return rendered;
-  const known = new Set(citations.map((c) => Number(c.n)));
-  return linkMarkers(rendered, known, anchor, t);
+export function CitedText({ content, citations, anchor, streaming = false }) {
+  return (
+    <ChatMarkdown
+      content={content}
+      streaming={streaming}
+      citations={citations}
+      onCite={(n) => focusCitation(anchor, n)}
+    />
+  );
 }
 
 function sourceLabel(c) {

@@ -2,7 +2,7 @@ import ContextEntityPicker from '../ContextEntityPicker';
 import ContextMeter from '../ContextMeter';
 import WorkspaceFilePicker from '../files/WorkspaceFilePicker';
 import { CheckCircle, Clock, FolderOpen, Loader, Paperclip, Send, Send as SendIcon, StopCircle, Terminal, Upload, X, Zap } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
 import { useChatSteering } from './useChatSteering';
@@ -92,7 +92,29 @@ export default function ChatComposer() {
     setInput, setPickerKind, t, telegramError, telegramReplyAllowed,
     telegramSending, textareaRef, toggleAttachmentStore,
   } = page;
+
+  // The box follows the text however it got there: typed, a slash command's
+  // template, or Discuss, Edit and a run report from the Code panel.
+  useEffect(() => { resizeTextarea(); }, [input, resizeTextarea]);
   const steering = useChatSteering(page);
+  // The composer is laid over the foot of the conversation rather than under
+  // it, so the messages scroll behind the box. The frame around both (the
+  // column in Chat.jsx) learns the composer's height and the message list
+  // keeps that much room under its last message.
+  const frameRef = useRef(null);
+  useLayoutEffect(() => {
+    const el = frameRef.current;
+    const frame = el?.parentElement;
+    if (!el || !frame || typeof window === 'undefined') return undefined;
+    const measure = () => frame.style.setProperty('--chat-composer-height', `${el.getBoundingClientRect().height}px`);
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(el);
+    return () => {
+      observer?.disconnect();
+      frame.style.removeProperty('--chat-composer-height');
+    };
+  }, []);
   // Enter while a turn runs goes to the turn (in the chosen mode) instead of
   // starting a new one, which the page's own handler would refuse.
   const onKeyDown = (e) => {
@@ -105,9 +127,9 @@ export default function ChatComposer() {
   };
   return (
     <>
-        {/* Input area */}
-        <div className="flex-shrink-0 border-t border-gray-200 px-4 py-4">
-          <div className="max-w-3xl mx-auto">
+        {/* Input area: over the foot of the conversation, no rule above it */}
+        <div ref={frameRef} className="absolute inset-x-0 bottom-0 z-10 px-4 pb-4 pt-2 pointer-events-none">
+          <div className="max-w-3xl mx-auto pointer-events-auto">
             <input
               ref={fileInputRef}
               type="file"
@@ -232,9 +254,9 @@ export default function ChatComposer() {
             <SteerBar steering={steering} t={t} />
 
             <div
-              className="flex items-center gap-3 border border-gray-300 rounded-2xl px-4 py-3
+              className="flex items-center gap-3 border border-gray-300 rounded-2xl px-4 py-3 bg-white
                 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
-                shadow-sm transition-all"
+                shadow-lg transition-all"
             >
               {/* Attach: a file from the computer, or a record the hub already
                   holds (task / view / project / scenario / loop / …). An entity

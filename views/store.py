@@ -867,6 +867,79 @@ def add_code_version(view_id: str, body: str, *, author: str, note: str = "") ->
     return get_view(view_id)
 
 
+def replace_code_body(view_id: str, body: str, *, author: str = "user") -> Optional[Dict[str, Any]]:
+    """Overwrite the current version's body in place; return the updated envelope.
+
+    The plain "Save" beside "Save version": the latest entry of the history
+    keeps its number and gets the new text (and who wrote it, and when it was
+    last changed), and ``spec.body`` follows. A view with no history yet gets
+    a version 1. Returns ``None`` for an unknown view id.
+    """
+    row = _row(view_id)
+    if not row:
+        return None
+    workspace = row.get("workspace")
+    versions = _read_json_list(_code_versions_file(view_id, workspace))
+    if versions:
+        versions[-1] = {**versions[-1], "body": body, "author": author, "updated_at": utc_iso()}
+    else:
+        versions.append({"version": 1, "body": body, "author": author, "note": "", "created_at": utc_iso()})
+    _write_json_list(_code_versions_file(view_id, workspace), versions)
+
+    view_file = _view_dir(workspace, view_id) / "view.json"
+    try:
+        doc = json.loads(view_file.read_text(encoding="utf-8"))
+    except Exception:
+        doc = {}
+    spec = doc.setdefault("spec", {})
+    spec["body"] = body
+    spec["version"] = int(versions[-1].get("version") or 1)
+    view_file.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_view_file(view_file)
+
+    with db.transaction() as conn:
+        conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
+                     (utc_iso(), _dir_size(_view_dir(workspace, view_id)), view_id))
+    return get_view(view_id)
+
+
+# ── snippet versions without a view ──────────────────────────────────────────
+# The Chat code panel's "From replies" blocks: a fenced block of a reply can be
+# edited, versioned and diffed like a code view's body without ever becoming
+# a view. The history lives beside the workspace's views under a key the
+# panel chooses (conversation + message + block index), as the same JSON list
+# a view's code_versions.json holds, mirrored the same way.
+
+def _snippet_versions_file(key: str, workspace: Optional[str]) -> Path:
+    import hashlib
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:24]
+    return workspace_views_dir(workspace) / "_snippets" / digest / "code_versions.json"
+
+
+def list_snippet_versions(key: str, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Every recorded version of a keyed snippet, oldest first; empty when none."""
+    return _read_json_list(_snippet_versions_file(key, workspace))
+
+
+def add_snippet_version(key: str, body: str, *, workspace: Optional[str] = None, author: str = "user",
+                        note: str = "", base: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Record a new version of a keyed snippet; return the whole history.
+
+    ``base`` is the text the snippet started from (the reply's own block):
+    recorded as version 1 by the agent before the first user version, so the
+    history opens with what was answered and a diff against it works.
+    """
+    versions = _read_json_list(_snippet_versions_file(key, workspace))
+    if not versions and base is not None and base != body:
+        versions.append({"version": 1, "body": base, "author": "agent", "note": "from the reply",
+                         "created_at": utc_iso()})
+    next_version = max((int(v.get("version", 0)) for v in versions), default=0) + 1
+    versions.append({"version": next_version, "body": body, "author": author,
+                     "note": note or "", "created_at": utc_iso()})
+    _write_json_list(_snippet_versions_file(key, workspace), versions)
+    return versions
+
+
 def list_code_runs(view_id: str) -> List[Dict[str, Any]]:
     """The recorded run results for a code view, oldest first (capped at
     MAX_CODE_RUNS). Empty for an unknown view id or one never run."""
@@ -1004,6 +1077,9 @@ __all__ = [
     "MAX_INLINE_SPEC_BYTES",
     "MAX_OPS_PER_VIEW",
     "list_code_versions",
+    "replace_code_body",
+    "list_snippet_versions",
+    "add_snippet_version",
     "add_code_version",
     "list_code_runs",
     "add_code_run",

@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { autoGrowTextarea } from '../lib/autoGrow';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, Play, Square, Trash2, Loader, Save, AlertTriangle, X, Crown,
-  Wand2, MessageSquare, DollarSign, Eye, ExternalLink, Radio, Plus, DoorOpen,
+  Wand2, MessageSquare, MessageSquarePlus, DollarSign, Eye, ExternalLink, Radio, Plus, DoorOpen,
   History, Settings as SettingsIcon, UsersRound, RotateCcw, FlaskConical,
 } from 'lucide-react';
 import {
@@ -14,6 +15,7 @@ import EntityChat from '../components/EntityChat';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
+import ComposerDock from '../components/ComposerDock';
 import { useWorkspace } from '../components/workspace';
 import { useChannel, useLiveRefetch, useStream } from '../components/stream';
 import {
@@ -253,6 +255,9 @@ export default function TeamDetails() {
   const [message, setMessage] = useState('');
   const [caseDialogOpen, setCaseDialogOpen] = useState(false);
   const boardEndRef = useRef(null);
+  const goalRef = useRef(null);
+  // Up to ten lines, then it scrolls (lib/autoGrow.js).
+  useEffect(() => { autoGrowTextarea(goalRef.current); }, [goal]);
 
   // The build chat, drawn either in the column beside the roster or in the
   // floating panel — one descriptor, so it is the same conversation either way.
@@ -272,20 +277,26 @@ export default function TeamDetails() {
     })();
   }, [selectedWorkspace]);
 
+  // Loading a run and writing it into the address are kept apart: the
+  // setter from useSearchParams changes identity with every address change,
+  // and a loader that closed over it would restart the page's first load
+  // (below) each time a run was opened — the whole page reloading and
+  // flashing on every click in the history.
   const loadRun = useCallback(async (teamRunId) => {
     try {
       const { data } = await getTeamRun(teamRunId);
       setRun(data);
       setMessages(data.messages || []);
-      setParams((prev) => {
-        const next = Object.fromEntries(prev.entries());
-        next.run = teamRunId;
-        return next;
-      }, { replace: true });
     } catch {
       setMessage(t('teamDetails.loadRunFailed'));
     }
-  }, [t, setParams]);
+  }, [t]);
+
+  /** Open one run on the Work tab and put it in the address. */
+  const openRun = (teamRunId) => {
+    setParams({ run: teamRunId }, { replace: true });
+    loadRun(teamRunId);
+  };
 
   const loadRuns = useCallback(async () => {
     try {
@@ -311,8 +322,10 @@ export default function TeamDetails() {
         setMessage(t('teamDetails.loadTeamFailed'));
       }
     })();
+    // Once per team: the loaders are stable, and the run in the address is
+    // read here only to choose where to start.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamId, loadRuns, loadRun, t]);
+  }, [teamId]);
 
   // The board arrives live; polling is the fallback so a dropped stream slows
   // the page down rather than freezing it.
@@ -400,6 +413,18 @@ export default function TeamDetails() {
     }
   };
 
+  // A fresh entry for the history: the board empties, the request box clears
+  // and the address drops the run it was showing. The next Run starts it.
+  const handleNewRun = () => {
+    setRun(null);
+    setMessages([]);
+    setGoal('');
+    setEstimate(null);
+    setMessage('');
+    setParams({}, { replace: true });
+    setTimeout(() => goalRef.current?.focus(), 0);
+  };
+
   const handleStop = async () => {
     if (!run?.team_run_id) return;
     setStopping(true);
@@ -468,7 +493,7 @@ export default function TeamDetails() {
   const entryId = draft.entry_agent_id || draft.members[0]?.agent_id;
 
   return (
-    <PageContainer>
+    <PageContainer fill>
       <PageHeader
         icon={UsersRound}
         title={team.name}
@@ -485,6 +510,44 @@ export default function TeamDetails() {
           {team.members.length} members · up to {team.max_rounds} rounds
         </>}
         actions={<>
+          {/* The run on the Work tab, at a glance: its status, how far it got,
+              what it cost, and the task it belongs to. */}
+          {run && (
+            <div className="flex items-center gap-2 flex-wrap text-xs text-gray-600 mr-2" data-testid="team-run-status">
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLES[run.status] || 'bg-gray-100 text-gray-600'}`}>
+                {run.status}
+              </span>
+              {live && <Radio className="w-3.5 h-3.5 text-blue-500 animate-pulse" />}
+              <span>{t('teamDetails.roundsDone', { count: run.rounds_done || 0 })}</span>
+              <span>${(run.total_cost || 0).toFixed(4)}</span>
+              {/* The reason only when it says more than the status does: a run
+                  that "completed" because it completed is one word, not two. */}
+              {run.stop_reason && run.stop_reason.replace(/_/g, ' ') !== String(run.status).replace(/_/g, ' ') && (
+                <span className="text-gray-500 italic">{run.stop_reason.replace(/_/g, ' ')}</span>
+              )}
+              {run.host && <span className="text-gray-400">{t('teamDetails.onHost', { host: run.host })}</span>}
+              {live && heartbeatAge(run.heartbeat_at) && (
+                <span className="text-gray-400">{t('teamDetails.lastBeat', { age: heartbeatAge(run.heartbeat_at) })}</span>
+              )}
+              {run.resume_attempts > 0 && (
+                <span className="text-gray-400">{t('teamDetails.resumedTimes', { n: run.resume_attempts })}</span>
+              )}
+              {run.task_id && (
+                <Link to={`/tasks/${run.task_id}`} className="text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1">
+                  <ExternalLink className="w-3 h-3" /> {t('teamDetails.task')}
+                </Link>
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleNewRun}
+            disabled={live}
+            title={t('teamDetails.newChatHint')}
+            className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg border text-gray-600 bg-white border-gray-300 hover:text-indigo-700 hover:border-indigo-300 disabled:opacity-50"
+          >
+            <MessageSquarePlus className="w-4 h-4 mr-1.5" /> {t('teamDetails.newChat')}
+          </button>
           <ChatToggle open={chat.open} onToggle={chat.toggle}
                       label={t('teamDetails.buildChat')} />
           <button
@@ -507,38 +570,16 @@ export default function TeamDetails() {
                 <FlaskConical className="w-3.5 h-3.5 mr-1" /> {t('messageDetails.toEvalCase')}
               </button>
             )}
-            {live ? (
+            {!live && run?.has_checkpoint && ['stopped', 'failed'].includes(run?.status) && (
               <button
-                onClick={handleStop} disabled={stopping}
-                className="inline-flex items-center px-3 py-2 text-xs font-semibold text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60"
+                onClick={handleResume} disabled={resuming}
+                title="Continue this run from where it left off"
+                className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-60"
               >
-                {stopping ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
-                          : <Square className="w-3.5 h-3.5 mr-1" />}
-                Stop
+                {resuming ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
+                          : <RotateCcw className="w-3.5 h-3.5 mr-1" />}
+                {t('teamDetails.resume')}
               </button>
-            ) : (
-              <>
-                {run?.has_checkpoint && ['stopped', 'failed'].includes(run?.status) && (
-                  <button
-                    onClick={handleResume} disabled={resuming}
-                    title="Continue this run from where it left off"
-                    className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-60"
-                  >
-                    {resuming ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
-                              : <RotateCcw className="w-3.5 h-3.5 mr-1" />}
-                    {t('teamDetails.resume')}
-                  </button>
-                )}
-                <button
-                  onClick={handleStart}
-                  disabled={starting || !team.members.length}
-                  className="inline-flex items-center px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {starting ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
-                            : <Play className="w-3.5 h-3.5 mr-1" />}
-                  Run
-                </button>
-              </>
             )}
         </>}
       />
@@ -552,37 +593,9 @@ export default function TeamDetails() {
         </div>
       )}
 
-      {/* Transport — the request handed to the team */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-        <div>
-          <label className="block text-xs font-semibold text-gray-600 mb-1">
-            {t('teamDetails.theRequestToHandThe')}
-          </label>
-          <textarea
-            value={goal} onChange={(e) => setGoal(e.target.value)} rows={2}
-            disabled={live}
-            placeholder={t('teamDetails.whatTheTeamShouldDeliver')}
-            className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 disabled:bg-gray-50"
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            {t('teamDetails.requestHint')}
-          </p>
-        </div>
-
-        {estimate && (
-          <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-800">
-            <span className="font-bold">{t('teamDetails.upToLlmCalls', { count: estimate.llm_calls_upper_bound })}</span>
-            {' — '}{t('teamDetails.membersRounds', { members: estimate.members, rounds: estimate.max_rounds })}{' '}
-            <span className="text-indigo-600">
-              {t(`teamDetails.${estimate.note_key}`, { defaultValue: estimate.note })}
-            </span>
-          </div>
-        )}
-      </div>
-
       {/* Tabs stay above the row: inside the scrolling column they would slide
           out of reach as soon as the content was longer than the screen. */}
-      <div className="mt-4 border-b border-gray-200 flex gap-1 shrink-0">
+      <div className="border-b border-gray-200 flex gap-1 shrink-0">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id} onClick={() => setTab(id)}
@@ -601,12 +614,16 @@ export default function TeamDetails() {
       </div>
 
       {/* The page and the chat that edits the same team. */}
-      <div className={chat.gridClass}>
-        <div className={chat.mainClass}>
-      <div className="mt-4 space-y-4">
+      {/* The page and the chat that edits the same team. The row takes what
+          is left of the screen: the header, the tabs and the roster stay put,
+          and each tab scrolls its own body. */}
+      <div className={`flex-1 min-h-0 mt-4 ${chat.open
+        ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)] lg:grid-rows-[minmax(0,1fr)] gap-6'
+        : 'flex flex-col'}`}>
+        <div className="min-w-0 min-h-0 flex-1 flex flex-col">
         {tab === 'work' && (
           <>
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm shrink-0">
               <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-2">
                 {t('teamDetails.whoIsOnThisTeam')}
               </h3>
@@ -631,49 +648,20 @@ export default function TeamDetails() {
               </div>
             </div>
 
+            {/* Only the board and the answer scroll, with the request box
+                over their foot. */}
+            <div className="flex-1 min-h-0 overflow-y-auto mt-4 space-y-4">
             {!run ? (
               <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-sm text-gray-500">
                 {t('teamDetails.noRunsYetGiveThe')}
               </div>
             ) : (
               <>
-                <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex items-center gap-3 flex-wrap">
-                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLES[run.status] || 'bg-gray-100 text-gray-600'}`}>
-                    {run.status}
-                  </span>
-                  {live && <Radio className="w-3.5 h-3.5 text-blue-500 animate-pulse" />}
-                  <span className="text-sm text-gray-600">
-                    {run.rounds_done} round{run.rounds_done === 1 ? '' : 's'}
-                  </span>
-                  <span className="text-sm text-gray-600">${(run.total_cost || 0).toFixed(4)}</span>
-                  {run.stop_reason && (
-                    <span className="text-sm text-gray-500 italic">— {run.stop_reason.replace(/_/g, ' ')}</span>
-                  )}
-                  {run.host && (
-                    <span className="text-xs text-gray-400">on {run.host}</span>
-                  )}
-                  {live && heartbeatAge(run.heartbeat_at) && (
-                    <span className="text-xs text-gray-400">
-                      last beat {heartbeatAge(run.heartbeat_at)} ago
-                    </span>
-                  )}
-                  {run.resume_attempts > 0 && (
-                    <span className="text-xs text-gray-400">
-                      {t('teamDetails.resumedTimes', { n: run.resume_attempts })}
-                    </span>
-                  )}
-                  {run.task_id && (
-                    <Link to={`/tasks/${run.task_id}`} className="text-xs text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1">
-                      <ExternalLink className="w-3 h-3" /> {t('teamDetails.task')}
-                    </Link>
-                  )}
-                </div>
-
                 <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
                   <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-3 flex items-center gap-1.5">
                     <MessageSquare className="w-3.5 h-3.5" /> {t('teamDetails.theBoard')}
                   </h3>
-                  <div className="space-y-2 max-h-[640px] overflow-auto pr-1">
+                  <div className="space-y-2">
                     {messages.map((m) => <BoardMessage key={m.seq} msg={m} />)}
                     {live && (
                       <div className="flex items-center gap-2 text-sm text-gray-500 px-3 py-2">
@@ -689,17 +677,83 @@ export default function TeamDetails() {
                     <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-2">
                       The team's answer
                     </h3>
-                    <pre className="text-sm text-gray-800 whitespace-pre-wrap max-h-96 overflow-auto">
+                    <pre className="text-sm text-gray-800 whitespace-pre-wrap">
                       {run.result}
                     </pre>
                   </div>
                 )}
               </>
             )}
+        {/* Transport — the request handed to the team. The page's floor: always
+            at the bottom of the screen, the board scrolling behind it (see
+            components/ComposerDock.jsx), with Run and Stop beside it the way a
+            chat keeps Send beside the message. */}
+        <ComposerDock>
+          <div className="bg-white rounded-2xl border-2 border-gray-300 px-3 pb-3 pt-4 shadow-2xl ring-1 ring-black/5">
+            {estimate && (
+              <div className="mb-2 rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-800">
+                <span className="font-bold">{t('teamDetails.upToLlmCalls', { count: estimate.llm_calls_upper_bound })}</span>
+                {' — '}{t('teamDetails.membersRounds', { members: estimate.members, rounds: estimate.max_rounds })}{' '}
+                <span className="text-indigo-600">
+                  {t(`teamDetails.${estimate.note_key}`, { defaultValue: estimate.note })}
+                </span>
+              </div>
+            )}
+            {/* The box is styled as the Chat page's: the border and the ring
+                belong to the box around the text, not the text itself. The
+                button beside it is exactly one line of the box tall. */}
+            <div className="flex items-end gap-2">
+              <div
+                className={`flex-1 min-w-0 flex items-center border rounded-xl px-3 transition-all
+                  focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100
+                  ${live ? 'border-gray-200 bg-gray-50' : 'border-gray-400 bg-white'}`}
+              >
+                <textarea
+                  ref={goalRef}
+                  value={goal}
+                  onChange={(e) => setGoal(e.target.value)}
+                  rows={1}
+                  disabled={live}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !live) { e.preventDefault(); handleStart(); }
+                  }}
+                  placeholder={t('teamDetails.whatTheTeamShouldDeliver')}
+                  aria-label={t('teamDetails.theRequestToHandThe')}
+                  className="flex-1 min-w-0 text-sm leading-6 py-2 resize-none bg-transparent text-gray-800 placeholder-gray-400 focus:outline-none disabled:text-gray-400"
+                />
+              </div>
+              {live ? (
+                <button
+                  onClick={handleStop} disabled={stopping}
+                  className="inline-flex items-center h-[2.625rem] px-4 text-sm font-semibold text-white bg-amber-600 rounded-xl hover:bg-amber-700 disabled:opacity-60"
+                >
+                  {stopping ? <Loader className="w-4 h-4 mr-1.5 animate-spin" />
+                            : <Square className="w-4 h-4 mr-1.5" />}
+                  {t('common.stop')}
+                </button>
+              ) : (
+                <button
+                  onClick={handleStart}
+                  disabled={starting || !team.members.length}
+                  className="inline-flex items-center h-[2.625rem] px-4 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {starting ? <Loader className="w-4 h-4 mr-1.5 animate-spin" />
+                            : <Play className="w-4 h-4 mr-1.5" />}
+                  {t('common.run')}
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {t('teamDetails.requestHint')}
+            </p>
+          </div>
+        </ComposerDock>
+            </div>
           </>
         )}
 
         {tab === 'history' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             {runs.length === 0 ? (
               <p className="p-10 text-center text-sm text-gray-500">
@@ -724,7 +778,7 @@ export default function TeamDetails() {
                       className={`hover:bg-gray-50 cursor-pointer ${
                         run?.team_run_id === r.team_run_id ? 'bg-indigo-50/60' : ''
                       }`}
-                      onClick={() => { loadRun(r.team_run_id); setTab('work'); }}
+                      onClick={() => openRun(r.team_run_id)}
                     >
                       <td className="px-4 py-2 whitespace-nowrap text-gray-600">
                         {new Date(r.started_at).toLocaleString()}
@@ -760,9 +814,11 @@ export default function TeamDetails() {
               </table>
             )}
           </div>
+          </div>
         )}
 
         {tab === 'settings' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -903,9 +959,9 @@ export default function TeamDetails() {
                   name another above.
                 </p>
               )}
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
                 {draft.members.length === 0 && (
-                  <p className="text-sm text-gray-500 italic">
+                  <p className="text-sm text-gray-500 italic col-span-full">
                     {t('teamDetails.noMembersYetATeam')}
                   </p>
                 )}
@@ -1006,8 +1062,8 @@ export default function TeamDetails() {
               </div>
             )}
           </div>
+          </div>
         )}
-      </div>
         </div>
 
         {chat.open && teamChat && (

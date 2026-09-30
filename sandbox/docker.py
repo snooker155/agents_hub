@@ -200,7 +200,9 @@ def build_docker_command(
             cmd += ["-e", f"{key}={value}"]
     cmd += ["-v", f"{code_dir}:/code:ro"]
     if workspace_dir:
-        cmd += ["-v", f"{workspace_dir}:/work:ro"]
+        # $WORK names the mount, the same variable sandbox/local.py sets, so a
+        # snippet finds its files under either provider without a fallback.
+        cmd += ["-v", f"{workspace_dir}:/work:ro", "-e", "WORK=/work"]
     if interactive:
         cmd.append("-i")
     cmd += ["-w", "/code", image, interpreter, f"/code/{file_name}"]

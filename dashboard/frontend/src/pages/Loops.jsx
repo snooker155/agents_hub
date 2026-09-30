@@ -244,13 +244,33 @@ export default function Loops() {
     })();
   }, [selectedWorkspace]);
 
+  // What the form was last synced to, so "has the user edited this?" is a
+  // comparison against that version rather than against whatever the chat just
+  // wrote.
+  const selectedRef = useRef(null);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+  // The open loop goes with the catalogue: after a workspace switch (or a
+  // deletion elsewhere) a loop that is no longer listed is closed, form, run
+  // and address included, rather than left open over the new list.
+  const closeMissing = (listed) => {
+    const current = selectedRef.current;
+    if (!current || listed.some((l) => l.loop_id === current.loop_id)) return;
+    setSelected(null); setDraft(null); setRun(null); setIterations([]); setRuns([]);
+    setGoal(''); setEstimate(null); setMessage(''); setMode('watch');
+    setParams({}, { replace: true });
+  };
+
   const loadLoops = useCallback(async () => {
     try {
       const { data } = await getLoops(selectedWorkspace);
       setLoops(data.loops || []);
+      closeMissing(data.loops || []);
     } catch {
       setLoops([]);
+      closeMissing([]);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkspace]);
 
   useEffect(() => { loadLoops(); }, [loadLoops]);
@@ -266,12 +286,6 @@ export default function Loops() {
       setMessage(t('loops.loadRunFailed'));
     }
   };
-
-  // What the form was last synced to, so "has the user edited this?" is a
-  // comparison against that version rather than against whatever the chat just
-  // wrote.
-  const selectedRef = useRef(null);
-  useEffect(() => { selectedRef.current = selected; }, [selected]);
 
   const selectLoop = async (id, preferredRunId) => {
     setMessage(''); setEstimate(null); setRun(null); setIterations([]);
@@ -366,7 +380,7 @@ export default function Loops() {
       const { data } = await updateLoop(draft.loop_id, draft);
       setSelected(data); setDraft(data);
       await loadLoops();
-      setMessage('Saved.');
+      setMessage(t('common.saved'));
     } catch (e) {
       setMessage(e.response?.data?.detail || t('loops.saveFailed'));
     } finally {
@@ -818,7 +832,7 @@ export default function Loops() {
                       className="inline-flex items-center px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                     >
                       {saving ? <Loader className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
-                      Save
+                      {t('common.save')}
                     </button>
                   </div>
                 </div>

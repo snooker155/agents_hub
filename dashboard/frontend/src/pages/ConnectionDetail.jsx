@@ -348,7 +348,7 @@ export default function ConnectionDetail() {
         <Stat label={t('connections.statLastSeen')} value={fmtWhen(data.last_seen)} small />
       </div>
 
-      <div className="flex items-center gap-1 mb-4 border-b border-gray-200">
+      <div className="flex items-center gap-1 border-b border-gray-200">
         {TABS.map((name) => (
           <button
             key={name}

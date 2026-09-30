@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useStream } from '../components/stream';
 import ViewCard from '../views/ViewCard';
-import { getAgents, getWorkspace, getProjects, getAgentDefinition, stopMessage, sendTelegramMessage, listFlows, getTeams } from '../api';
+import { addPersonalMemoryNote, getAgents, getWorkspace, getProjects, getAgentDefinition, stopMessage, sendTelegramMessage, listFlows, getTeams } from '../api';
 import ContextMeter from '../components/ContextMeter';
 import {
   PlusCircle,
@@ -57,6 +57,7 @@ import { AgentDropdown, FlowDropdown, TeamDropdown } from '../components/chat/ta
 import { ArtifactsPanel, ProcessPanelContent } from '../components/chat/panels';
 import { BuildMessage } from '../components/chat/BuildMessage';
 import { ChatPageContext } from '../components/chat/context';
+import { ChatMathActionsContext } from '../components/chat/chatMarkdownContext';
 import ChatSidebar from '../components/chat/ChatSidebar';
 import ChatTopBar from '../components/chat/ChatTopBar';
 import ChatMessageList from '../components/chat/ChatMessageList';
@@ -65,6 +66,9 @@ import ChatSidePanel from '../components/chat/ChatSidePanel';
 import useChatTelegram from '../components/chat/useChatTelegram';
 import useChatSessionStream from '../components/chat/useChatSessionStream';
 import useChatProcess from '../components/chat/useChatProcess';
+import { useConversationCode } from '../components/chat/useConversationCode';
+import { conversationViews } from '../components/chat/turnViews';
+import { replyCodeBlocks } from '../components/chat/replyCode';
 import useChatComposerInput from '../components/chat/useChatComposerInput';
 import useChatSend from '../components/chat/useChatSend';
 
@@ -83,6 +87,8 @@ const PROCESS_OPEN_KEY = 'agent_hub_chat_process_open';
 const CODE_OPEN_KEY = 'agent_hub_chat_code_open';
 // 'chat' vs 'build' view mode, persisted across navigation for the same reason.
 const VIEW_MODE_KEY = 'agent_hub_chat_view_mode';
+// Whether the artifacts panel (files and views the turns produced) is open.
+const ARTIFACTS_OPEN_KEY = 'agent_hub_chat_build_panel_open';
 
 // ---------------------------------------------------------------------------
 // Slash commands
@@ -110,6 +116,8 @@ export default function Chat() {
   const { clientId } = useStream();
   const [agents, setAgents] = useState([]);
   const [workspaceAllowedAgentIds, setWorkspaceAllowedAgentIds] = useState(null);
+  // Whether the workspace has personal memory (memory/personal.py) at all.
+  const [personalMemoryOn, setPersonalMemoryOn] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState('');
   // Flow chat support: when targetMode === 'flow', messages run through the selected flow
   // (each user turn is processed by every node in the DAG in topological order).
@@ -155,15 +163,22 @@ export default function Chat() {
   const [processOpen, setProcessOpen] = useState(() => {
     try { return localStorage.getItem(PROCESS_OPEN_KEY) === '1'; } catch { return false; }
   });
-  // The Code panel and the Process panel are two tabs of the same side-panel
-  // slot in chat view (see ChatSidePanel): opening one closes the other.
+  // Artifacts or Code is the column beside the transcript (one at a time, see
+  // ChatSidePanel); Process, in chat view only, is a column of its own.
   const [codeOpen, setCodeOpen] = useState(() => {
     try { return localStorage.getItem(CODE_OPEN_KEY) === '1'; } catch { return false; }
   });
+  // The snippet the Code panel should show next: set by "Open in Code panel"
+  // on a code block in a reply, `{ view, nonce }` so opening the same one
+  // twice still selects it.
+  const [codeFocus, setCodeFocus] = useState(null);
   // 'chat' = clean message bubbles (default). 'build' = full inline transcript
-  // (messages + thinking + plan + tool calls) with an Artifacts (diffs) column.
+  // (messages + thinking + plan + tool calls).
   const [viewMode, setViewMode] = useState(() => {
     try { return localStorage.getItem(VIEW_MODE_KEY) === 'build' ? 'build' : 'chat'; } catch { return 'chat'; }
+  });
+  const [artifactsOpen, setArtifactsOpen] = useState(() => {
+    try { return localStorage.getItem(ARTIFACTS_OPEN_KEY) === '1'; } catch { return false; }
   });
   // Latest cumulative diff per file path for the current conversation.
   // Shape: { [path]: { op, path, diff, additions, deletions, binary, truncated, run_id } }
@@ -199,6 +214,10 @@ export default function Chat() {
     try { localStorage.setItem(VIEW_MODE_KEY, viewMode); } catch { /* storage unavailable */ }
   }, [viewMode]);
 
+  useEffect(() => {
+    try { localStorage.setItem(ARTIFACTS_OPEN_KEY, artifactsOpen ? '1' : '0'); } catch { /* storage unavailable */ }
+  }, [artifactsOpen]);
+
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [commandMenuIndex, setCommandMenuIndex] = useState(0);
 
@@ -207,8 +226,6 @@ export default function Chat() {
 
   const abortCtrlRef = useRef(null);
   const continuationMsgIdRef = useRef(null);   // active continuation bubble on the session channel
-  const messagesEndRef = useRef(null);
-  const prevConvIdRef = useRef(undefined);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const loadedRunIdsRef = useRef(new Set());   // tracks which run_ids have been fetched
@@ -308,12 +325,11 @@ export default function Chat() {
     () => (liveMessages.length ? [...messages, ...liveMessages] : messages),
     [messages, liveMessages],
   );
-  // Build-view timelines for reloaded messages. The live `msg.timeline` (tool
-  // calls + thoughts) is not stored with the chat (TRANSIENT_MSG_FIELDS in
-  // components/chatStore.js), so a conversation reopened from the store has none. Reconstruct it per run_id from
-  // the server-fetched process insights — same reasoning+tools merge the Process
-  // graph uses — so the Build view shows tools and thoughts again, not just the
-  // final text. Keyed by run_id; consumed only in build view.
+  // Build-view timelines for messages stored before the trail was kept with
+  // the chat (components/chatStore.js stores it now, clipped). Reconstructed
+  // per run_id from the server-fetched process insights, the same reasoning
+  // and tools merge the Process graph uses, so the Build view shows tools and
+  // thoughts for those too, not just the final text. Consumed only in build view.
   const runTimelineByRunId = useMemo(() => {
     const map = {};
     for (const mr of (processInsights.message_runs || [])) {
@@ -358,6 +374,9 @@ export default function Chat() {
   // The highlight belongs to the run being watched, not to the page: switching
   // agent or conversation leaves a lit node that nothing is running in.
   useEffect(() => { setGraphRun(EMPTY_GRAPH_RUN); }, [selectedAgent, currentConvId]);
+  // A snippet opened from a reply belongs to that conversation: the Code panel
+  // of the next one must not pick it up again when it refetches its list.
+  useEffect(() => { setCodeFocus(null); }, [currentConvId]);
   // provider/model are top-level fields on AgentSpec
   const agentProvider = _agentObj.provider || 'inherit';
   const agentModel = _agentObj.model || '';
@@ -487,13 +506,6 @@ export default function Chat() {
     }
   }, [loading]);
 
-  // ---- auto-scroll ----
-  useEffect(() => {
-    const isSwitching = prevConvIdRef.current !== currentConvId;
-    prevConvIdRef.current = currentConvId;
-    messagesEndRef.current?.scrollIntoView({ behavior: isSwitching ? 'instant' : 'smooth' });
-  }, [messages, loading, currentConvId]);
-
   // Select latest run when switching conversations
   useEffect(() => {
     if (!currentConv) {
@@ -517,11 +529,33 @@ export default function Chat() {
     setActiveRunId, setConversations,
   });
 
+  // The runs' data feeds both the Process panel and the artifacts (file diffs
+  // arrive with a run's insights), so either panel being open asks for it.
+  const runDataWanted = processOpen || artifactsOpen;
   const { loadProcessData } = useChatProcess({
     activeRunId, continuationMsgIdRef, conversationRunIds, currentConvId, loadedRunIdsRef,
-    loading, processInsights, processInsightsRef, processOpen, setArtifacts,
+    loading, processInsights, processInsightsRef, processOpen: runDataWanted, setArtifacts,
     setProcessError, setProcessInsights, setProcessLoading, setSessionId, t, viewMode,
   });
+
+  const { codeRows, codeListLoading, codeListError } = useConversationCode({
+    conversationRunIds, currentConvId, codeFocus, t,
+  });
+  // What the two panel buttons count: files and views the turns produced
+  // (code views belong to the Code panel, so they are counted there only).
+  const artifactViews = useMemo(() => {
+    const codeIds = new Set(codeRows.map((r) => r.view_id));
+    return conversationViews(messages).filter((v) => v.view_kind !== 'code' && !codeIds.has(v.view_id));
+  }, [messages, codeRows]);
+  const artifactCount = Object.keys(artifacts).length + artifactViews.length;
+  // The fenced blocks of the replies count as code too, until one is saved as
+  // a view (then it is a row). Saved ids are kept for this page visit only.
+  const replyBlocks = useMemo(() => replyCodeBlocks(messages), [messages]);
+  const [savedReplyIds, setSavedReplyIds] = useState(() => new Set());
+  const markReplySaved = useCallback((id) => {
+    setSavedReplyIds((prev) => { const next = new Set(prev); next.add(id); return next; });
+  }, []);
+  const codeCount = codeRows.length + replyBlocks.filter((b) => !savedReplyIds.has(b.id)).length;
 
   const {
     resizeTextarea, onPickFiles, removeAttachment, toggleAttachmentStore,
@@ -601,7 +635,6 @@ export default function Chat() {
       const lines = [
         `**${t('chat.config.agent')}:** ${agentObj.name || selectedAgent} (\`${agentObj.id || selectedAgent}\`)`,
         `**${t('chat.config.description')}:** ${agentObj.description || '—'}`,
-        `**${t('chat.config.domain')}:** ${agentObj.domain || '—'}`,
         ``,
         `**${t('chat.config.provider')}:** ${provider}`,
         `**${t('chat.config.model')}:** ${model}`,
@@ -627,7 +660,7 @@ export default function Chat() {
 
   const { sendMessage } = useChatSend({
     abortCtrlRef, clientId, conversations, currentConvId, input, loadProcessData, loading,
-    mergeArtifact, messages, navigate, pendingAttachments, pendingReferences, processOpen,
+    mergeArtifact, messages, navigate, pendingAttachments, pendingReferences, processOpen: runDataWanted,
     selectCommand, selectedAgent, selectedFlow, selectedProject, selectedTeam,
     selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
     setCurrentConvId, setGraphRun, setInput, setLoading, setPendingAttachments,
@@ -720,18 +753,51 @@ export default function Chat() {
     }
   };
 
+  // A code block in a reply, shown in the Code panel under "From replies".
+  // Nothing is stored by opening it: it becomes a code view (versions, runs,
+  // a place in a project) only when the person saves it as one there.
+  const openInCodePanel = useCallback(async ({ code, runId }) => {
+    const block = replyBlocks.find((b) => b.body === code && (!runId || !b.run_id || b.run_id === runId))
+      || replyBlocks.find((b) => b.body === code);
+    setCodeFocus({ replyId: block?.id || null, nonce: Date.now() });
+    setArtifactsOpen(false);
+    setCodeOpen(true);
+  }, [replyBlocks]);
+
+  // Personal memory is read from the workspace the formula is saved to: the
+  // conversation's, which can differ from the one picked in the header.
+  const mathWorkspace = currentConv?.workspace || selectedWorkspace || 'default';
+  useEffect(() => {
+    let alive = true;
+    getWorkspace(mathWorkspace)
+      .then((r) => { if (alive) setPersonalMemoryOn(r.data?.metadata?.personal_memory?.enabled !== false); })
+      .catch(() => { if (alive) setPersonalMemoryOn(false); });
+    return () => { alive = false; };
+  }, [mathWorkspace]);
+
+  // A display formula in a reply, kept in the user's personal memory for this
+  // conversation's workspace (memory/personal.py on the backend). Not offered
+  // where the workspace has personal memory off.
+  const mathActions = useMemo(() => (personalMemoryOn ? {
+    save: (tex, title) => addPersonalMemoryNote({
+      title, content: `$$\n${tex}\n$$`, workspace: mathWorkspace,
+    }),
+  } : null), [personalMemoryOn, mathWorkspace]);
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
   // Published once for the five panes below; see `chat/context.js`.
   const page = {
     activeRunId, addReferences, addWorkspaceFiles, agentModel, agentName, agentProvider, agentTopology, agents,
-    artifacts, attachMenuOpen, attachmentError, codeOpen, commandMenuIndex, commandMenuOpen,
+    artifactCount, artifactViews, artifacts, artifactsOpen, setArtifactsOpen, attachMenuOpen, attachmentError,
+    codeCount, codeFocus, codeListError, codeListLoading, codeOpen, codeRows, commandMenuIndex, commandMenuOpen,
+    markReplySaved, replyBlocks, savedReplyIds, setCodeFocus,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage, conversationRunIds,
     conversations, currentConv, currentConvId, currentTelegramBinding, deleteConversation,
     fileInputRef, flows, graphRun, handleKeyDown, hasTarget, input, jumpToArtifact, liveMessages,
-    liveTurn, loadProcessData, loading, messages, messagesEndRef, navigate, newConversation,
-    onPickFiles, pendingAttachments, pendingReferences, pickerKind, processError, processInsights,
+    liveTurn, loadProcessData, loading, messages, navigate, newConversation,
+    onPickFiles, openInCodePanel, pendingAttachments, pendingReferences, pickerKind, processError, processInsights,
     processLoading, processOpen, projects, removeAttachment, removeReference, renderedMessages,
     resizeTextarea, runTimelineByRunId, selectCommand, selectableAgents, selectedAgent,
     selectedFlow, selectedProject, selectedTeam, selectedWorkspace, sendAsBot, sendMessage,
@@ -744,15 +810,21 @@ export default function Chat() {
 
   return (
     <ChatPageContext.Provider value={page}>
+    <ChatMathActionsContext.Provider value={mathActions}>
     <div className="h-full flex overflow-hidden">
       <ChatSidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <ChatTopBar />
-        <ChatMessageList />
-        <ChatComposer />
+        {/* The composer floats over the foot of the conversation, which
+            scrolls behind it (see ChatComposer). */}
+        <div className="relative flex-1 min-h-0 flex flex-col">
+          <ChatMessageList />
+          <ChatComposer />
+        </div>
       </div>
       <ChatSidePanel />
     </div>
+    </ChatMathActionsContext.Provider>
     </ChatPageContext.Provider>
   );
 }

@@ -12,6 +12,7 @@ import { preview } from '../components/processUtils';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 function fmtDurationMs(ms) {
   const n = Number(ms || 0);
   if (!n) return '0ms';
@@ -370,6 +371,7 @@ function MessageNode({ msg, idx, total, expanded, loading, insightsData, onToggl
                           borderColor="border-amber-200"
                           bgColor="bg-amber-50"
                           hint={toolInline(tc.tool, tc.input)}
+                          tool={tc}
                         >
                           {tc.input && <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all"><span className="text-gray-500">{t('sessionDetails.in2')}</span> {tc.input}</div>}
                           {tc.output && <div className="text-[11px] text-emerald-700 whitespace-pre-wrap break-all"><span className="text-emerald-600">{t('sessionDetails.out2')}</span> {tc.output}</div>}
@@ -959,7 +961,7 @@ export default function SessionDetails() {
   };
 
   if (loading) {
-    return <div className="flex justify-center py-20"><Loader className="w-6 h-6 animate-spin text-indigo-500" /></div>;
+    return <PageLoader />;
   }
 
   if (error) {

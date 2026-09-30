@@ -4,6 +4,29 @@ import HandoffDivider from './HandoffDivider';
 import { Bot, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
 import React from 'react';
 import { useChatPage } from './context';
+import { useChatScroll } from './useChatScroll';
+
+// A prompt that can stay on screen for its reply: the user's own message, not
+// one sent while the turn worked (that one steers the reply, it does not start it).
+const isTurnPrompt = (msg) => msg.role === 'user' && !msg.steer;
+
+// The transcript as turns: each prompt with the replies that follow it, so
+// the prompt can stay on screen for them (useChatScroll). Whatever comes
+// before the first prompt is a turn of its own, with nothing held.
+function groupTurns(messages) {
+  const turns = [];
+  messages.forEach((msg, idx) => {
+    if (isTurnPrompt(msg) || !turns.length) {
+      turns.push({
+        key: isTurnPrompt(msg) ? `turn-${msg.id}` : 'lead',
+        promptId: isTurnPrompt(msg) ? msg.id : null,
+        items: [],
+      });
+    }
+    turns[turns.length - 1].items.push({ msg, idx });
+  });
+  return turns;
+}
 
 /**
  * The transcript itself, in whichever of the two views is selected, plus the
@@ -11,11 +34,79 @@ import { useChatPage } from './context';
  */
 export default function ChatMessageList() {
   const {
-    agentName, agents, artifacts, currentTelegramBinding, flows, jumpToArtifact,
-    liveMessages, liveTurn, loading, messages, messagesEndRef, renderedMessages,
+    agentName, agents, artifacts, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
+    liveMessages, liveTurn, loading, messages, renderedMessages,
     runTimelineByRunId, selectedFlow, selectedTeam, selectedWorkspace, sendMessage, t,
     targetMode, teams, telegramReplyAllowed, viewMode,
   } = useChatPage();
+  const lastUserId = [...renderedMessages].reverse().find((m) => m.role === 'user')?.id ?? null;
+  const { scrollerRef, contentRef, onScroll, onPromptClick } = useChatScroll({
+    convId: currentConvId, lastUserId, messages: renderedMessages, stuckHint: t('chat.pinnedPromptHint'),
+  });
+  const renderMessage = (msg, idx) => {
+    const msgAgentName = msg.role !== 'user'
+      ? (msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
+      : undefined;
+    // A reply that took the conversation over by handoff opens with
+    // the line saying who took over and why (chat/handoff.py).
+    const handoffDivider = msg.role === 'agent' && msg.handoff ? (
+      <HandoffDivider
+        key="handoff"
+        handoff={msg.handoff}
+        agentName={agents.find((a) => a.id === msg.handoff.to_agent_id)?.name}
+      />
+    ) : null;
+    // The mirrored turn is labelled: it is being written somewhere
+    // else, so an answer appearing on its own is explained rather
+    // than surprising.
+    const liveLabel = msg.id === liveMessages[0]?.id ? (
+      <div key="live-label" className="flex items-center gap-1.5 mb-2 text-[11px] font-medium text-indigo-500">
+        <Radio className="w-3 h-3 animate-pulse" />
+        {liveTurn?.source && liveTurn.source !== 'chat'
+          ? t('chat.liveFromSource', { source: liveTurn.source })
+          : t('chat.liveElsewhere')}
+      </div>
+    ) : null;
+    if (viewMode === 'build') {
+      // Reloaded messages lost their live timeline; fall back to the
+      // server-reconstructed one (tools + thoughts) keyed by run_id.
+      const reconstructed = (!msg.timeline || !msg.timeline.length) && msg.run_id
+        ? runTimelineByRunId[String(msg.run_id)]
+        : null;
+      const buildMsg = reconstructed && reconstructed.length
+        ? { ...msg, timeline: reconstructed }
+        : msg;
+      return (
+        <React.Fragment key={msg.id}>
+          {liveLabel}
+          {handoffDivider}
+          <BuildMessage
+            msg={buildMsg}
+            isStreaming={loading && idx === renderedMessages.length - 1 && msg.role === 'agent'}
+            agentName={msgAgentName}
+            onJumpArtifact={jumpToArtifact}
+          />
+        </React.Fragment>
+      );
+    }
+    return (
+      <React.Fragment key={msg.id}>
+        {liveLabel}
+        {handoffDivider}
+        <MessageBubble
+          msg={msg}
+          isStreaming={
+            (loading && idx === renderedMessages.length - 1 && msg.role === 'agent')
+            || (msg.id === 'live-agent' && liveTurn?.status === 'running')
+          }
+          agentName={msgAgentName}
+          artifactsByPath={artifacts}
+          onAction={sendMessage}
+        />
+      </React.Fragment>
+    );
+  };
+  const turns = groupTurns(renderedMessages);
   return (
     <>
         {/* Fixed Telegram debug-mirror banner — sits above the scrolling messages area */}
@@ -37,8 +128,13 @@ export default function ChatMessageList() {
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-full mx-auto px-6 py-8">
+        <div className="relative flex-1 min-h-0 flex flex-col">
+        {/* The composer is over the foot of this scroller (ChatComposer sets
+            the variable to its height), so the last message can still be
+            scrolled clear of it. */}
+        <div ref={scrollerRef} onScroll={onScroll} className="flex-1 overflow-y-auto"
+             style={{ paddingBottom: 'var(--chat-composer-height, 0px)' }}>
+          <div ref={contentRef} className="max-w-full mx-auto px-6 py-8">
             {messages.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center">
                 {targetMode === 'team' ? (
@@ -82,76 +178,36 @@ export default function ChatMessageList() {
               </div>
             )}
 
-            {renderedMessages.map((msg, idx) => {
-              const msgAgentName = msg.role !== 'user'
-                ? (msg.agent_label || agents.find((a) => a.id === msg.agent_id)?.name || msg.agent_id || agentName)
-                : undefined;
-              // A reply that took the conversation over by handoff opens with
-              // the line saying who took over and why (chat/handoff.py).
-              const handoffDivider = msg.role === 'agent' && msg.handoff ? (
-                <HandoffDivider
-                  key="handoff"
-                  handoff={msg.handoff}
-                  agentName={agents.find((a) => a.id === msg.handoff.to_agent_id)?.name}
-                />
-              ) : null;
-              // The mirrored turn is labelled: it is being written somewhere
-              // else, so an answer appearing on its own is explained rather
-              // than surprising.
-              const liveLabel = msg.id === liveMessages[0]?.id ? (
-                <div key="live-label" className="flex items-center gap-1.5 mb-2 text-[11px] font-medium text-indigo-500">
-                  <Radio className="w-3 h-3 animate-pulse" />
-                  {liveTurn?.source && liveTurn.source !== 'chat'
-                    ? t('chat.liveFromSource', { source: liveTurn.source })
-                    : t('chat.liveElsewhere')}
-                </div>
-              ) : null;
-              if (viewMode === 'build') {
-                // Reloaded messages lost their live timeline; fall back to the
-                // server-reconstructed one (tools + thoughts) keyed by run_id.
-                const reconstructed = (!msg.timeline || !msg.timeline.length) && msg.run_id
-                  ? runTimelineByRunId[String(msg.run_id)]
-                  : null;
-                const buildMsg = reconstructed && reconstructed.length
-                  ? { ...msg, timeline: reconstructed }
-                  : msg;
-                return (
-                  <React.Fragment key={msg.id}>
-                    {liveLabel}
-                    {handoffDivider}
-                    <BuildMessage
-                      msg={buildMsg}
-                      agentName={msgAgentName}
-                      onJumpArtifact={jumpToArtifact}
-                    />
-                  </React.Fragment>
-                );
-              }
-              return (
-                <React.Fragment key={msg.id}>
-                  {liveLabel}
-                  {handoffDivider}
-                  <MessageBubble
-                    msg={msg}
-                    isStreaming={
-                      (loading && idx === renderedMessages.length - 1 && msg.role === 'agent')
-                      || (msg.id === 'live-agent' && liveTurn?.status === 'running')
-                    }
-                    agentName={msgAgentName}
-                    artifactsByPath={artifacts}
-                    onAction={sendMessage}
-                    workspace={selectedWorkspace}
-                  />
-                </React.Fragment>
-              );
-            })}
+            {turns.map((turn) => (
+              <div key={turn.key} data-turn={turn.promptId ?? undefined} className="relative">
+                {turn.items.map(({ msg, idx }) => {
+                  const rendered = renderMessage(msg, idx);
+                  if (!isTurnPrompt(msg)) return rendered;
+                  return (
+                    <React.Fragment key={msg.id}>
+                      {/* The prompt, held at the top while its turn scrolls by
+                          (useChatScroll); the spacer takes up what folding a
+                          long held prompt frees, so the replies stay put. */}
+                      <div
+                        data-turn-prompt={msg.id}
+                        className="chat-turn-prompt sticky top-0 z-10 pointer-events-none"
+                        onClick={onPromptClick}
+                      >
+                        {rendered}
+                      </div>
+                      <div data-turn-spacer aria-hidden="true" />
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            ))}
 
             {loading && (messages.length === 0 || messages[messages.length - 1].role !== 'agent') && (
               <TypingIndicator agentName={agentName} />
             )}
 
-            <div ref={messagesEndRef} />
           </div>
+        </div>
         </div>
     </>
   );

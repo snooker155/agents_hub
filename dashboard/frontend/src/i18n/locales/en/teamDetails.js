@@ -1,4 +1,10 @@
 export default {
+  newChat: 'New chat',
+  newChatHint: 'Start a fresh request: the board empties and the run goes to the history',
+  roundsDone_one: '{{count}} round',
+  roundsDone_other: '{{count}} rounds',
+  onHost: 'on {{host}}',
+  lastBeat: 'last beat {{age}} ago',
   allTeams: 'All teams',
   loadingTheTeam: 'Loading the team…',
   loadRunFailed: 'Failed to load that run',

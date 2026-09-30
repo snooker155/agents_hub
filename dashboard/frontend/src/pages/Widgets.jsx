@@ -20,6 +20,7 @@ import WidgetEmbed from '../components/widgets/WidgetEmbed';
 import WidgetPreview from '../components/widgets/WidgetPreview';
 import WidgetConversations from '../components/widgets/WidgetConversations';
 import { ACCENT_SWATCHES, FALLBACK_OPTIONS } from '../components/widgets/widgetUtils';
+import PageLoader from '../components/PageLoader';
 
 const TABS = ['embed', 'preview', 'conversations', 'settings'];
 
@@ -140,9 +141,7 @@ export default function Widgets() {
       />
 
       {loading ? (
-        <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-          <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-        </div>
+        <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
       ) : widgets.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 text-center py-16 px-6">
           <MessageSquareCode className="w-10 h-10 text-gray-300 mx-auto mb-3" />

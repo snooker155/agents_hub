@@ -3,6 +3,11 @@ export default {
   versionLive: 'Agentenversion: aktuell (v{{version}})',
   versionPinned: 'Agentenversion: festgelegt auf v{{version}}',
   versionRan: 'Agentenversion: ausgeführt v{{version}}',
+  versionShort: {
+    live: 'aktuell',
+    pinned: 'festgelegt',
+    older: 'aktuell ist v{{current}}',
+  },
   rollback: 'Zurücksetzen',
   rollbackConfirm: 'Den Agenten auf Version {{version}} zurücksetzen? Sie wird seine neue aktuelle Definition.',
   rollbackFailed: 'Der Agent konnte nicht zurückgesetzt werden',

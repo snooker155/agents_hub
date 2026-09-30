@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { autoGrowTextarea } from '../../lib/autoGrow';
 import ReactFlow, {
   Background,
   Controls,
@@ -581,12 +582,10 @@ function ProjectGraph({ projectId }) {
 
   // Auto-grow the chat input (same behaviour as the main Chat page).
   const textareaRef = useRef(null);
-  const resizeTextarea = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
-  }, []);
+  // Up to ten lines, then it scrolls (lib/autoGrow.js); follows the text
+  // so a box emptied after a send shrinks back too.
+  const resizeTextarea = useCallback(() => autoGrowTextarea(textareaRef.current), []);
+  useEffect(() => { resizeTextarea(); }, [input, resizeTextarea]);
 
   const TABS = [
     { key: 'process', label: t('flowProjectGraph.tabs.process'), icon: GitBranch },

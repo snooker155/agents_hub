@@ -11,6 +11,7 @@ import ModelCard from '../components/modelStructure/ModelCard';
 import StatTiles from '../components/modelStructure/StatTiles';
 import DtypeLegend from '../components/modelStructure/DtypeLegend';
 import { buildGraph } from '../components/modelStructure/graph';
+import PageLoader from '../components/PageLoader';
 
 // three.js is heavy and only needed once someone opens the 3D view.
 const Structure3D = lazy(() => import('../components/modelStructure/Structure3D'));
@@ -155,9 +156,7 @@ export default function ModelDetail() {
               <div className="h-[560px] overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
                 <Suspense
                   fallback={(
-                    <div className="flex h-full items-center justify-center text-sm text-gray-500">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    </div>
+                    <div className="h-full text-sm text-gray-500"><PageLoader /></div>
                   )}
                 >
                   <Renderer graph={graph} selectedId={selectedId} onSelect={setPickedId} />

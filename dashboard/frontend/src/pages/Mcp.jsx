@@ -17,7 +17,7 @@ import {
   updateMcpServer,
 } from '../api';
 import { PageContainer, PageHeader } from '../components/PageLayout';
-import { CAPABILITY_LABELS, CAPABILITY_ORDER } from '../lib/capabilities';
+import { capabilityLabel, CAPABILITY_ORDER } from '../lib/capabilities';
 import { useI18n } from '../i18n';
 import { useWorkspace } from '../components/workspace';
 
@@ -157,7 +157,7 @@ function CapabilityPicker({ value, onChange }) {
             checked={!!value[cap]}
             onChange={(e) => onChange({ ...value, [cap]: e.target.checked })}
           />
-          {CAPABILITY_LABELS[cap]}
+          {capabilityLabel(cap, t)}
         </label>
       ))}
       <p className="text-[11px] text-gray-500 mt-2">{t('mcp.capabilitiesHint')}</p>
@@ -439,7 +439,7 @@ function ServerRow({ server, busy, onEdit, onTest, onDelete }) {
               key={cap}
               className="text-[10px] uppercase tracking-wider font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full"
             >
-              {CAPABILITY_LABELS[cap]}
+              {capabilityLabel(cap, t)}
             </span>
           ))}
         </span>

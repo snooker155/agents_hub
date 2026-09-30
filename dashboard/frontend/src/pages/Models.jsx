@@ -249,7 +249,7 @@ function CatalogTab() {
           <div className="bg-indigo-50/40 border border-indigo-200 rounded-xl px-4 py-3">
             <div className="flex items-center flex-wrap gap-3">
               <span className="text-sm font-semibold text-gray-800">
-                Model for workspace <span className="text-indigo-600">{selectedWorkspace || '—'}</span>
+                {t('models.modelForWorkspace')} <span className="text-indigo-600">{selectedWorkspace || '—'}</span>
               </span>
               <select
                 value={wsForm.provider}
@@ -285,7 +285,7 @@ function CatalogTab() {
                 }`}
               >
                 {wsSaving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Apply
+                {t('models.apply')}
               </button>
             </div>
             <p className="text-xs text-gray-500 mt-2">
@@ -359,7 +359,7 @@ function CatalogTab() {
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-medium transition-colors"
                 >
                   {discovering[provider] ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                  Discover
+                  {t('models.discover')}
                 </button>
               </div>
             </div>
@@ -578,7 +578,7 @@ function UsageTab() {
           onClick={load}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-sm font-medium"
         >
-          {loading ? <Loader className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Refresh
+          {loading ? <Loader className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {t('models.refresh')}
         </button>
       </div>
 
@@ -665,9 +665,9 @@ export default function Models() {
   const { t } = useI18n();
   const [tab, setTab] = useState('catalog');
   const TABS = [
-    { id: 'catalog', label: 'Catalog', icon: Cpu },
+    { id: 'catalog', label: t('models.tabs.catalog'), icon: Cpu },
     { id: 'local', label: t('localModels.tab'), icon: HardDrive },
-    { id: 'usage', label: 'Usage', icon: BarChart3 },
+    { id: 'usage', label: t('models.tabs.usage'), icon: BarChart3 },
   ];
   return (
     <PageContainer>
@@ -676,7 +676,7 @@ export default function Models() {
         title={t('models.models')}
         description={t('models.theCatalogOfProvidersAnd')}
       />
-      <div className="flex items-center gap-1 border-b border-gray-200 mb-4">
+      <div className="flex items-center gap-1 border-b border-gray-200">
         {TABS.map((tabDef) => {
           const Icon = tabDef.icon;
           const active = tab === tabDef.id;

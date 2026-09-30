@@ -29,6 +29,46 @@ turns that section into the next release.
 - The process graph draws each step of a run as a card that opens its full
   content in a dialog, with a tool call's arguments and result parsed into a
   foldable tree, and follows a delegated run live.
+- Chat side panels. The top bar's right side is Process (chat view only),
+  Chat or Build, then Artifacts and Code, one of which is the column beside
+  the transcript (opening one closes the other), with how many the
+  conversation produced on their buttons. The Artifacts column's header switches between Files (the default:
+  each file as it is now, deleted files left out) and Diff (what the runs
+  changed, deletions included); a view is drawn whole in either. The Process is a column of its own, to the right of the
+  open panel. Code snippets are listed by the page (`useConversationCode`) so
+  the count is there before the panel opens.
+
+### Changed
+
+- The Code panel lists the replies' fenced code blocks under "From replies",
+  read off the transcript and stored nowhere; "Open in Code panel" on a block
+  now selects it there instead of creating a view, and "Save as view" is the
+  one action that makes a code view of it. The Code button counts the blocks
+  not yet saved.
+- A code view's card draws one header line over the code: language and
+  version on the left, Download and Copy on the right, like every other code
+  block; the row that repeated the view's name is gone.
+- A view card whose kind fills a frame (html, a 3D scene, a chart, a graph)
+  gives the frame the whole body of the card, so a row stretched by a taller
+  neighbour leaves no blank strip under the scene.
+- The chat's Artifacts column reads at 13px for diffs and file content and
+  14px for its lists, one step up from before.
+- A page's own chat column (memory pools, agent definition, evals) has a
+  hide button in its header; the page's header button brings it back.
+- The chat composer grows with its text up to ten lines, then scrolls, and
+  follows text put there by Discuss, Edit or a run report from the Code panel.
+- The Views page sets how many cards a row holds, remembered per browser.
+- The agent's Docker tab says why the images could not be read when Docker
+  is missing or not answering, instead of calling every image "not built".
+- A snippet run in the docker sandbox finds the workspace at `$WORK`, as it
+  does under the local provider.
+- The Models page: the Catalog and Usage tabs, the Apply, Discover and
+  Refresh buttons and the "Model for workspace" label are translated, and the
+  Ollama card's hint links straight to Settings, Local models and names the
+  "Ollama server address" field.
+- The dark theme leaves a control with `bg-transparent` transparent, so a
+  search box drawn as an icon plus an input in one border, and a composer's
+  textarea, no longer show a second box inside the first.
 
 ## [0.3.0] - 2026-09-30
 

@@ -8,12 +8,18 @@ Views API — serve rendered views, their assets, and per-user view state.
 - ``DELETE /api/views/{view_id}``    remove a view
 - ``GET  /api/views/{view_id}/assets/{path}``  serve a contained view asset
 - ``GET|POST|DELETE /api/views/{view_id}/chat`` the Studio build chat (Visualizer)
+- ``POST /api/views/code``                  a code view from a block in a chat reply
 - ``GET  /api/views/{view_id}/code/versions``   a code view's recorded edit history
 - ``POST /api/views/{view_id}/code/versions``   record a user edit; returns the view
 - ``GET  /api/views/{view_id}/code/diff``       unified diff between two versions
 - ``POST /api/views/{view_id}/code/run``        run the snippet in the run_code sandbox
 - ``GET  /api/views/{view_id}/code/runs``       a code view's recorded run history
+- ``PUT /api/views/{view_id}/code/body``        overwrite the current version in place
 - ``POST /api/views/{view_id}/code/save``       write the snippet into a project
+- ``POST /api/views/code/save``                 write a reply's block into a project as a file
+- ``POST /api/views/code/run``                  run a snippet's text, no view
+- ``GET|POST /api/views/code/snippet/versions`` a reply block's versions, keyed, no view
+- ``GET /api/views/code/snippet/diff``          diff two of them
 
 Asset serving is path-contained (guards ``..``/absolute like ``/file-raw``) and
 sends a strict CSP so future ``html`` views run origin-isolated; for Phase 1
@@ -30,8 +36,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import base64
+import hashlib
 
 from views.store import (
+    create_view,
     get_view,
     list_views,
     delete_view,
@@ -51,12 +59,17 @@ from views.store import (
     list_code_runs,
     add_code_run,
     add_code_save,
+    replace_code_body,
+    list_snippet_versions,
+    add_snippet_version,
 )
 from views.serve import is_allowed_upstream
 from views.ops import OpError
-from views.models import SUPPORTED_KINDS
+from views.models import SUPPORTED_KINDS, ViewValidationError
 from views.studio import create_studio_view, scene_context_note
-from views.code import diff_versions as _diff_code_versions, runner_language, resolve_project_save_path
+from views.code import (
+    diff_versions as _diff_code_versions, diff_version_list, runner_language, resolve_project_save_path,
+)
 from tools import run_code as run_code_tool
 
 from chat.entity_chat import EntityChatSpec
@@ -133,6 +146,27 @@ class SnapshotRequest(BaseModel):
     data_url: str = ""   # "data:image/png;base64,...."
 
 
+# The names a fence's info string tends to use, folded onto the ones the run
+# route and the panel know (views.code.runner_language accepts both, but one
+# spelling keeps the stored language and the file extension in step).
+_FENCE_ALIASES = {"py": "python", "js": "javascript", "sh": "bash", "shell": "bash",
+                  "zsh": "bash", "ts": "typescript", "yml": "yaml", "md": "markdown"}
+_FENCE_EXTENSIONS = {
+    "python": ".py", "javascript": ".js", "node": ".js", "jsx": ".jsx", "typescript": ".ts",
+    "tsx": ".tsx", "bash": ".sh", "json": ".json", "sql": ".sql", "html": ".html",
+    "css": ".css", "yaml": ".yaml", "markdown": ".md", "go": ".go", "rust": ".rs",
+    "java": ".java", "c": ".c", "cpp": ".cpp", "ruby": ".rb", "php": ".php",
+}
+
+
+class CodeFromReply(BaseModel):
+    body: str
+    language: str = ""
+    filename: str = ""
+    run_id: Optional[str] = None
+    workspace: Optional[str] = None
+
+
 class CodeVersionCreate(BaseModel):
     body: str
     note: str = ""
@@ -147,6 +181,25 @@ class CodeSaveRequest(BaseModel):
     project_id: str
     path: str
     overwrite: bool = False
+
+
+class CodeBodySaveRequest(CodeSaveRequest):
+    body: str
+
+
+class SnippetRunRequest(BaseModel):
+    language: str
+    body: str
+    mount_workspace: bool = False
+    workspace: Optional[str] = None
+
+
+class SnippetVersionCreate(BaseModel):
+    key: str
+    body: str
+    note: str = ""
+    workspace: Optional[str] = None
+    base: Optional[str] = None
 
 
 @router.get("")
@@ -176,6 +229,146 @@ async def create_studio_session(payload: StudioSessionCreate):
     if payload.kind not in SUPPORTED_KINDS:
         raise HTTPException(status_code=400, detail=f"Unsupported view kind '{payload.kind}'")
     return create_studio_view(payload.kind, payload.title, workspace=payload.workspace)
+
+
+@router.post("/code")
+async def create_code_from_reply(payload: CodeFromReply):
+    """Turn a fenced block of a chat reply into a code view.
+
+    The Code panel lists the code views owned by the conversation's runs, and
+    only an agent calling ``create_view`` used to put one there, so a block
+    that arrived as plain markdown could not be run, versioned or saved. The
+    view is owned by the reply's run so the panel finds it, and asking again
+    for the same body under the same run returns the view made the first time
+    instead of a copy.
+    """
+    body = payload.body or ""
+    if not body.strip():
+        raise HTTPException(status_code=400, detail="body must not be empty")
+    language = (payload.language or "").strip().lower() or "text"
+    language = _FENCE_ALIASES.get(language, language)
+    if payload.run_id:
+        for row in list_views(run_id=payload.run_id):
+            if row.get("kind") != "code":
+                continue
+            existing = get_view(row["view_id"]) or {}
+            if (existing.get("spec") or {}).get("body") == body:
+                return existing
+    # Unnamed blocks all defaulting to main.py would be folded by the panel
+    # (it groups by filename) into one file with unrelated "versions".
+    filename = (payload.filename or "").strip() or (
+        f"snippet-{hashlib.sha1(body.encode('utf-8')).hexdigest()[:6]}"
+        f"{_FENCE_EXTENSIONS.get(language, '.txt')}"
+    )
+    spec = {"language": language, "body": body, "filename": filename}
+    owner = {"kind": "run", "id": payload.run_id} if payload.run_id else None
+    try:
+        env = create_view("code", filename, spec,
+                          workspace=payload.workspace or None, owner=owner)
+    except ViewValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return get_view(env.view_id) or env.model_dump()
+
+
+@router.post("/code/save")
+async def save_code_body(payload: CodeBodySaveRequest):
+    """Write a snippet's text into a project's own folder, no view involved.
+
+    The Code panel's "Save to project" on a fenced block of a reply: the block
+    is just a file's worth of code, so it lands in the project as that file
+    without first becoming a code view. Same path rules and overwrite guard
+    as ``/{view_id}/code/save``.
+    """
+    if not (payload.body or "").strip():
+        raise HTTPException(status_code=400, detail="body must not be empty")
+    try:
+        target = resolve_project_save_path(payload.project_id, payload.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if target.exists() and not payload.overwrite:
+        raise HTTPException(status_code=409, detail=(
+            f"{payload.path} already exists in this project; pass overwrite to replace it"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(payload.body, encoding="utf-8")
+    return {"ok": True, "path": payload.path}
+
+
+def _workspace_mount_path(workspace: Optional[str]) -> Optional[str]:
+    """The host folder ``mount_workspace`` mounts, or a 400 when there is none."""
+    if not workspace:
+        raise HTTPException(status_code=400, detail="mount_workspace: no workspace to mount")
+    from workspace import get_workspace_folder
+    ws_dir = get_workspace_folder(workspace)
+    if ws_dir is None:
+        raise HTTPException(status_code=400, detail="mount_workspace: workspace folder not found")
+    return str(ws_dir)
+
+
+def _run_result_payload(result: dict, run_lang: str) -> dict:
+    return {
+        "ok": result.get("ok", False),
+        "exit_code": result.get("exit_code"),
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
+        "duration_ms": result.get("duration_ms", 0),
+        "language": result.get("language", run_lang),
+        "sandbox": result.get("sandbox", "unavailable"),
+        "error": result.get("error", ""),
+    }
+
+
+@router.post("/code/run")
+async def run_code_body(payload: SnippetRunRequest):
+    """Run a snippet's text in the run_code sandbox, no view involved.
+
+    The Code panel's Run on a fenced block of a reply. Same sandbox, language
+    rule and workspace mount as ``/{view_id}/code/run``; nothing is recorded,
+    the result just comes back.
+    """
+    run_lang = runner_language(payload.language)
+    if run_lang is None:
+        raise HTTPException(status_code=400, detail=(
+            f"language {payload.language!r} is not runnable here (only python, "
+            "node/javascript and bash can be executed)"))
+    if not (payload.body or "").strip():
+        raise HTTPException(status_code=400, detail="body must not be empty")
+    workspace_path = _workspace_mount_path(payload.workspace) if payload.mount_workspace else None
+    result = run_code_tool.run_snippet(
+        run_lang, payload.body, mount_workspace=payload.mount_workspace, workspace=workspace_path,
+    )
+    return _run_result_payload(result, run_lang)
+
+
+@router.get("/code/snippet/versions")
+async def get_snippet_versions(key: str, workspace: Optional[str] = None):
+    """Every recorded version of a keyed snippet (a reply's block), oldest first."""
+    return {"key": key, "versions": list_snippet_versions(key, workspace)}
+
+
+@router.post("/code/snippet/versions")
+async def post_snippet_version(payload: SnippetVersionCreate):
+    """Record an edit of a keyed snippet as its next version; returns the history.
+
+    ``base`` is the reply's own text: recorded as version 1 the first time,
+    so the history opens with what was answered.
+    """
+    if not (payload.key or "").strip():
+        raise HTTPException(status_code=400, detail="key must not be empty")
+    if not (payload.body or "").strip():
+        raise HTTPException(status_code=400, detail="body must not be empty")
+    versions = add_snippet_version(payload.key, payload.body, workspace=payload.workspace,
+                                   author="user", note=payload.note, base=payload.base)
+    return {"key": payload.key, "versions": versions}
+
+
+@router.get("/code/snippet/diff")
+async def get_snippet_diff(key: str, a: int, b: int, workspace: Optional[str] = None):
+    """Unified diff between two recorded versions of a keyed snippet."""
+    try:
+        diff = diff_version_list(list_snippet_versions(key, workspace), a, b, what=f"snippet {key}")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"diff": diff}
 
 
 @router.get("/{view_id}")
@@ -370,6 +563,20 @@ async def get_code_versions(view_id: str):
     return {"versions": list_code_versions(view_id)}
 
 
+@router.put("/{view_id}/code/body")
+async def save_code_body_in_place(view_id: str, payload: CodeVersionCreate):
+    """Overwrite the current version's body in place (the panel's plain Save);
+    return the updated view envelope. "Save version" is the POST below."""
+    _require_code_view(view_id)
+    body = payload.body or ""
+    if not body.strip():
+        raise HTTPException(status_code=400, detail="body must not be empty")
+    updated = replace_code_body(view_id, body, author="user")
+    if updated is None:
+        raise HTTPException(status_code=404, detail="View not found")
+    return updated
+
+
 @router.post("/{view_id}/code/versions")
 async def create_code_version(view_id: str, payload: CodeVersionCreate):
     """Record a user edit as a new version; return the updated view envelope."""
@@ -419,16 +626,7 @@ async def run_code_view(view_id: str, payload: CodeRunRequest):
             if updated is not None:
                 spec = updated.get("spec") or spec
 
-    workspace_path = None
-    if payload.mount_workspace:
-        ws_name = view.get("workspace")
-        if not ws_name:
-            raise HTTPException(status_code=400, detail="mount_workspace: this view has no workspace")
-        from workspace import get_workspace_folder
-        ws_dir = get_workspace_folder(ws_name)
-        if ws_dir is None:
-            raise HTTPException(status_code=400, detail="mount_workspace: workspace folder not found")
-        workspace_path = str(ws_dir)
+    workspace_path = _workspace_mount_path(view.get("workspace")) if payload.mount_workspace else None
 
     result = run_code_tool.run_snippet(
         run_lang, body, mount_workspace=payload.mount_workspace, workspace=workspace_path,
@@ -440,16 +638,7 @@ async def run_code_view(view_id: str, payload: CodeRunRequest):
         "stderr": result.get("stderr", ""),
         "duration_ms": result.get("duration_ms", 0),
     })
-    return {
-        "ok": result.get("ok", False),
-        "exit_code": result.get("exit_code"),
-        "stdout": result.get("stdout", ""),
-        "stderr": result.get("stderr", ""),
-        "duration_ms": result.get("duration_ms", 0),
-        "language": result.get("language", run_lang),
-        "sandbox": result.get("sandbox", "unavailable"),
-        "error": result.get("error", ""),
-    }
+    return _run_result_payload(result, run_lang)
 
 
 @router.get("/{view_id}/code/runs")

@@ -10,52 +10,18 @@ import {
   getWorkspaces,
 } from '../api';
 import {
-  Square,
-  RefreshCw,
-  X,
-  CheckCircle,
-  XCircle,
-  Clock,
-  AlertCircle,
-  Loader,
-  Trash2,
-  Workflow,
-  Globe,
-  Send,
-  Terminal,
-  Server,
-  MessageSquare,
-  ScrollText,
-  Gamepad2,
+  Square, RefreshCw, X, Clock, AlertCircle, Loader, Trash2, Workflow, Globe, Send, Terminal, Server, MessageSquare, ScrollText, Gamepad2,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import RunStatusBadge from '../components/RunStatusBadge';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
 import { isExternalRun } from '../components/runOrigin';
 import { useI18n, statusLabel } from '../i18n';
 import DateInput from '../components/DateInput';
+import PageLoader from '../components/PageLoader';
 // ---- helpers ----------------------------------------------------------------
 
-const STATUS_STYLES = {
-  running:   { bg: 'bg-blue-100',   text: 'text-blue-700',   icon: Loader },
-  completed: { bg: 'bg-green-100',  text: 'text-green-700',  icon: CheckCircle },
-  failed:    { bg: 'bg-red-100',    text: 'text-red-700',    icon: XCircle },
-  error:     { bg: 'bg-red-100',    text: 'text-red-700',    icon: XCircle },
-  stopped:   { bg: 'bg-gray-100',   text: 'text-gray-600',   icon: Square },
-  stop:      { bg: 'bg-orange-100', text: 'text-orange-700', icon: Square },
-};
-
-function StatusBadge({ status }) {
-  const { t } = useI18n();
-  const s = STATUS_STYLES[status] || { bg: 'bg-gray-100', text: 'text-gray-500', icon: AlertCircle };
-  const Icon = s.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
-      <Icon className={`w-3 h-3 ${status === 'running' ? 'animate-spin' : ''}`} />
-      {statusLabel(status, t)}
-    </span>
-  );
-}
 
 // Origin channel of a run (set at creation, see run_manager.run_log_path).
 const CHANNEL_META = {
@@ -160,6 +126,7 @@ export default function Messages() {
   // The backend filters and pages in SQL and answers {items, total, ...}; the
   // page asks for one window at a time and grows it on demand, so a workspace
   // with a hundred thousand runs costs the same first paint as an empty one.
+  const [refreshing, setRefreshing] = useState(false);
   const fetchMessages = useCallback(async (nextOffset = 0, append = false) => {
     try {
       const params = { limit: PAGE_SIZE, offset: nextOffset };
@@ -325,10 +292,11 @@ export default function Messages() {
             {t('messages.deleteSelected')}
           </button>
           <button
-            onClick={fetchMessages}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+            onClick={() => { setRefreshing(true); fetchMessages(0, false).finally(() => setRefreshing(false)); }}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-60"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             {t('messages.refresh')}
           </button>
         </>}
@@ -453,9 +421,7 @@ export default function Messages() {
       {/* Messages list */}
       <div className="space-y-4">
         {loading ? (
-          <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-            <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-          </div>
+          <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
         ) : messages.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
             <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
@@ -527,7 +493,7 @@ export default function Messages() {
 
                   <div className="md:self-center md:flex md:justify-center">
                     <div className="md:hidden text-[11px] uppercase tracking-wide text-gray-400 mb-1">{t('messages.status')}</div>
-                    <StatusBadge status={msg.status} />
+                    <RunStatusBadge status={msg.status} />
                   </div>
 
                   <div className="text-sm text-gray-700 md:self-center md:text-center">

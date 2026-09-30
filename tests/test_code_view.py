@@ -357,3 +357,121 @@ def test_route_save_unknown_project(client):
     r = client.post(f"/api/views/{env.view_id}/code/save",
                     json={"project_id": "proj_missing", "path": "a.py"})
     assert r.status_code == 400
+
+
+# ── a code view from a block in a chat reply ─────────────────────────────────
+
+def test_route_code_from_reply_is_owned_by_the_run(client):
+    r = client.post("/api/views/code", json={"body": "print(1)\n", "language": "py", "run_id": "run_a"})
+    assert r.status_code == 200
+    view = r.json()
+    assert view["kind"] == "code"
+    assert view["spec"]["language"] == "python"
+    assert view["spec"]["filename"].startswith("snippet-") and view["spec"]["filename"].endswith(".py")
+    rows = client.get("/api/views", params={"run_id": "run_a"}).json()["views"]
+    assert [row["view_id"] for row in rows] == [view["view_id"]]
+
+
+def test_route_code_from_reply_reuses_the_same_body(client):
+    first = client.post("/api/views/code", json={"body": "x = 1", "language": "python", "run_id": "run_b"}).json()
+    again = client.post("/api/views/code", json={"body": "x = 1", "language": "python", "run_id": "run_b"}).json()
+    other = client.post("/api/views/code", json={"body": "x = 2", "language": "python", "run_id": "run_b"}).json()
+    assert again["view_id"] == first["view_id"]
+    assert other["view_id"] != first["view_id"]
+    assert other["spec"]["filename"] != first["spec"]["filename"]
+
+
+def test_route_code_from_reply_without_language_or_run(client):
+    r = client.post("/api/views/code", json={"body": "SELECT 1"})
+    assert r.status_code == 200
+    assert r.json()["spec"]["language"] == "text"
+    assert r.json()["spec"]["filename"].endswith(".txt")
+
+
+def test_route_code_from_reply_rejects_an_empty_body(client):
+    assert client.post("/api/views/code", json={"body": "   "}).status_code == 400
+
+
+def test_route_save_body_writes_the_file_without_a_view(client, project):
+    r = client.post("/api/views/code/save",
+                    json={"project_id": project.id, "path": "src/from_reply.py", "body": "print(7)"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "path": "src/from_reply.py"}
+    assert resolve_project_save_path(project.id, "src/from_reply.py").read_text() == "print(7)"
+
+    r2 = client.post("/api/views/code/save",
+                     json={"project_id": project.id, "path": "src/from_reply.py", "body": "print(8)"})
+    assert r2.status_code == 409
+    r3 = client.post("/api/views/code/save",
+                     json={"project_id": project.id, "path": "src/from_reply.py", "body": "print(8)", "overwrite": True})
+    assert r3.status_code == 200
+    assert resolve_project_save_path(project.id, "src/from_reply.py").read_text() == "print(8)"
+
+    assert client.post("/api/views/code/save",
+                       json={"project_id": project.id, "path": "x.py", "body": "  "}).status_code == 400
+    assert client.post("/api/views/code/save",
+                       json={"project_id": project.id, "path": "../x.py", "body": "1"}).status_code == 400
+
+
+def test_route_run_body_without_a_view(client, monkeypatch):
+    from tools import run_code as run_code_tool
+    calls = []
+
+    def fake_run_snippet(language, code, *, timeout=60, stdin=None, mount_workspace=False, workspace=None):
+        calls.append((language, code, mount_workspace, workspace))
+        return {"ok": True, "exit_code": 0, "duration_ms": 3, "stdout": "2\n", "stderr": "",
+                "runtime": "docker (fake)", "language": language, "sandbox": "docker", "error": ""}
+
+    monkeypatch.setattr(run_code_tool, "run_snippet", fake_run_snippet)
+    r = client.post("/api/views/code/run", json={"language": "javascript", "body": "console.log(2)"})
+    assert r.status_code == 200
+    assert r.json()["stdout"] == "2\n"
+    assert calls == [("node", "console.log(2)", False, None)]
+
+    assert client.post("/api/views/code/run", json={"language": "rust", "body": "fn main(){}"}).status_code == 400
+    assert client.post("/api/views/code/run", json={"language": "python", "body": " "}).status_code == 400
+    # A mount with nothing to mount is refused, not silently run without it.
+    assert client.post("/api/views/code/run",
+                       json={"language": "python", "body": "1", "mount_workspace": True}).status_code == 400
+
+
+def test_route_snippet_versions_and_diff_without_a_view(client):
+    key = "c1:reply:a1:0"
+    assert client.get("/api/views/code/snippet/versions", params={"key": key}).json()["versions"] == []
+
+    r = client.post("/api/views/code/snippet/versions",
+                    json={"key": key, "body": "print(2)", "note": "fixed", "base": "print(1)"})
+    assert r.status_code == 200
+    versions = r.json()["versions"]
+    assert [(v["version"], v["body"], v["author"]) for v in versions] == [
+        (1, "print(1)", "agent"), (2, "print(2)", "user")]
+    assert versions[1]["note"] == "fixed"
+
+    r = client.post("/api/views/code/snippet/versions", json={"key": key, "body": "print(3)", "base": "print(1)"})
+    assert [v["version"] for v in r.json()["versions"]] == [1, 2, 3]
+    assert client.get("/api/views/code/snippet/versions", params={"key": key}).json()["versions"][-1]["body"] == "print(3)"
+
+    d = client.get("/api/views/code/snippet/diff", params={"key": key, "a": 1, "b": 3})
+    assert d.status_code == 200
+    assert "-print(1)" in d.json()["diff"] and "+print(3)" in d.json()["diff"]
+    assert client.get("/api/views/code/snippet/diff", params={"key": key, "a": 1, "b": 9}).status_code == 404
+
+    # Another key is another history; a first save with no base starts at 1.
+    r = client.post("/api/views/code/snippet/versions", json={"key": "other", "body": "x"})
+    assert [v["version"] for v in r.json()["versions"]] == [1]
+    assert client.post("/api/views/code/snippet/versions", json={"key": "", "body": "x"}).status_code == 400
+
+
+def test_route_save_body_in_place_keeps_the_version_number(client):
+    env = create_view("code", "Fib", {"language": "python", "body": "print(1)"}, summary="s")
+    r = client.post(f"/api/views/{env.view_id}/code/versions", json={"body": "print(2)", "note": "second"})
+    assert r.json()["spec"]["version"] == 2
+
+    r = client.put(f"/api/views/{env.view_id}/code/body", json={"body": "print(3)"})
+    assert r.status_code == 200
+    assert r.json()["spec"] == {**r.json()["spec"], "body": "print(3)", "version": 2}
+
+    versions = client.get(f"/api/views/{env.view_id}/code/versions").json()["versions"]
+    assert [(v["version"], v["body"]) for v in versions] == [(1, "print(1)"), (2, "print(3)")]
+    assert versions[1]["note"] == "second" and versions[1]["author"] == "user"
+    assert client.put(f"/api/views/{env.view_id}/code/body", json={"body": " "}).status_code == 400

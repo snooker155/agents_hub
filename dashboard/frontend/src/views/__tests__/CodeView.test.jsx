@@ -24,18 +24,27 @@ const show = (v) => render(
 );
 
 describe('CodeView', () => {
-  it('renders the filename, version and body', () => {
+  it('renders one header line with language, version, Download and Copy over the body', () => {
     show(view);
-    expect(screen.getByText('hello.py')).toBeInTheDocument();
-    expect(screen.getAllByText('python').length).toBeGreaterThan(0);
-    expect(screen.getByText('v3')).toBeInTheDocument();
+    // The card's header names the view; the block does not repeat the filename.
+    expect(screen.queryByText('hello.py')).not.toBeInTheDocument();
+    const header = document.querySelector('.hl-code-block__header');
+    expect(header).toHaveTextContent('python');
+    expect(header.querySelector('[data-testid="code-view-version"]')).toHaveTextContent('v3');
+    const actions = header.querySelectorAll('.hl-code-block__action');
+    expect([...actions].map((a) => a.textContent)).toEqual(['Download', 'Copy']);
     expect(screen.getByText(/print\("hello"\)/)).toBeInTheDocument();
     expect(screen.getByText('A tiny script.')).toBeInTheDocument();
     expect(screen.getByText('requests')).toBeInTheDocument();
   });
 
-  it('falls back to a generic label when the filename is missing', () => {
-    show({ ...view, spec: { ...view.spec, filename: '' } });
-    expect(screen.getByText('Untitled snippet')).toBeInTheDocument();
+  it('shows no version chip when the spec has none', () => {
+    show({ ...view, spec: { ...view.spec, version: undefined } });
+    expect(document.querySelector('[data-testid="code-view-version"]')).toBeNull();
+  });
+
+  it('numbers the lines, a trailing newline not counted as one', () => {
+    render(<I18nProvider><CodeView view={{ kind: 'code', spec: { language: 'python', body: 'a = 1\nb = 2\n' } }} /></I18nProvider>);
+    expect(screen.getByTestId('code-line-numbers').textContent).toBe('1\n2');
   });
 });

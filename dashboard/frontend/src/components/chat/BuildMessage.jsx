@@ -1,45 +1,21 @@
 /**
  * The Build view's message: the full trail of a turn, not just what it said.
  */
+import { useContext, useMemo } from 'react';
 import { useI18n } from '../../i18n';
 import { trimBubbleText } from '../../lib/chatText';
 import { renderContent } from './markdown';
 import { ExtractionToolCard, RecallToolCard } from './memoryCards';
 import { EXTRACTION_TOOLS } from './memoryTools';
+import { MessageViews } from './messageParts';
+import { messageViews } from './turnViews';
 import { ARTIFACT_OP_META } from './panels';
 import { GraphNodeStep, ReasoningStep } from './reasoning';
 import { DelegationCard, TimelineToolCard } from './timeline';
+import { foldDelegationTools, withFinalText } from './trail';
+import { ChatPageContext } from './context';
+import { ChatCodeActionsContext } from './chatMarkdownContext';
 import { Bot, FileText, User } from 'lucide-react';
-
-// The chat bubble's process trail: thoughts, the rich memory cards (recall /
-// extraction) and delegated sub-agent runs. `timeline` is the chronological
-// feed the Build view and the Process graph use, so walking it keeps every card
-// in execution order instead of grouping all thoughts above all tools. Other
-// tool calls stay Build-view only. `timeline` is transient (stripped before
-// persisting), so a reloaded conversation falls back to the thoughts alone,
-// which do persist on `reasoning`.
-function ChatTrail({ msg }) {
-  const timeline = msg.timeline || [];
-  const entries = timeline.length
-    ? timeline.filter((e) => (
-        e.type === 'reasoning'
-        || e.type === 'delegation'
-        || (e.type === 'tool' && (EXTRACTION_TOOLS.includes(e.tool) || e.tool === 'recall'))
-      ))
-    : (msg.reasoning || []).map((s) => ({ type: 'reasoning', ...s }));
-  if (!entries.length) return null;
-  return (
-    <div className="space-y-2 mb-2">
-      {entries.map((e, i) => {
-        if (e.type === 'reasoning') return <ReasoningStep key={i} step={e} />;
-        if (e.type === 'delegation') return <DelegationCard key={e.run_id || i} entry={e} />;
-        return e.tool === 'recall'
-          ? <RecallToolCard key={i} entry={e} />
-          : <ExtractionToolCard key={i} entry={e} />;
-      })}
-    </div>
-  );
-}
 
 function TimelineArtifactChip({ entry, onJump }) {
   const meta = ARTIFACT_OP_META[entry.op] || ARTIFACT_OP_META.modify;
@@ -75,17 +51,23 @@ function SystemNotice({ msg }) {
   );
 }
 
-function BuildMessage({ msg, agentName, onJumpArtifact }) {
+function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false }) {
   const { t } = useI18n();
+  const openInCodePanel = useContext(ChatPageContext)?.openInCodePanel;
+  const codeActions = useMemo(() => (
+    openInCodePanel && msg.run_id
+      ? { open: (code, language) => openInCodePanel({ code, language, runId: msg.run_id }) }
+      : null
+  ), [openInCodePanel, msg.run_id]);
   if (msg.role === 'system') return <SystemNotice msg={msg} />;
   const isUser = msg.role === 'user';
   if (isUser) {
     return (
-      <div className="flex gap-3 mb-5 mx-2 flex-row-reverse">
+      <div className="flex gap-3 mb-6 mx-2 flex-row-reverse">
         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white">
           <User className="w-4 h-4" />
         </div>
-        <div className="max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-base whitespace-pre-wrap">
+        <div data-prompt-bubble className="chat-prompt-bubble max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-base leading-relaxed whitespace-pre-wrap">
           {trimBubbleText(msg.content)}
         </div>
       </div>
@@ -94,9 +76,17 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
 
   // Agent message: render the chronological timeline. Fall back to plain content
   // for older messages that pre-date timeline capture (e.g. reloaded history).
-  const timeline = msg.timeline && msg.timeline.length ? msg.timeline : null;
+  // Once the turn is over its last text is the reply it settled on.
+  const raw = msg.timeline && msg.timeline.length ? msg.timeline : null;
+  const timeline = raw ? foldDelegationTools(isStreaming ? raw : withFinalText(raw, msg.content)) : null;
+  const views = isStreaming ? [] : messageViews(msg);
+  // Only the text still being written needs its unfinished markup closed.
+  const lastTextIdx = timeline ? timeline.map((e) => e.type).lastIndexOf('text') : -1;
   return (
-    <div className="flex gap-3 mb-5 mx-2">
+    <ChatCodeActionsContext.Provider value={codeActions}>
+    {/* Same row spacing and bubble type as MessageBubble: switching views
+        must not move the answers, only add the steps between them. */}
+    <div className="flex gap-3 mb-6 mx-2">
       <div className="flex flex-col items-center gap-1 flex-shrink-0">
         <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-white">
           <Bot className="w-4 h-4" />
@@ -105,14 +95,16 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
           <span className="text-[9px] text-gray-400 font-medium text-center leading-tight max-w-[56px] break-words">{agentName}</span>
         )}
       </div>
-      <div className={`flex-1 min-w-0 space-y-2 ${msg.error ? 'text-red-700' : ''}`}>
+      {/* As wide as a Chat view bubble at most: switching views keeps the
+          transcript's shape, the steps just appear between the answers. */}
+      <div className={`max-w-[72%] min-w-0 space-y-2 ${msg.error ? 'text-red-700' : ''}`}>
         {timeline ? (
           timeline.map((entry, i) => {
             if (entry.type === 'text') {
               if (!entry.text || !entry.text.trim()) return null;
               return (
-                <div key={i} className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-base text-gray-800 leading-relaxed">
-                  {renderContent(entry.text)}
+                <div key={i} className="w-fit max-w-full bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-base text-gray-800 leading-relaxed">
+                  {renderContent(entry.text, { streaming: isStreaming && i === lastTextIdx })}
                 </div>
               );
             }
@@ -123,7 +115,7 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
               return <GraphNodeStep key={i} entry={entry} />;
             }
             if (entry.type === 'delegation') {
-              return <DelegationCard key={i} entry={entry} />;
+              return <DelegationCard key={entry.run_id || i} entry={entry} />;
             }
             if (entry.type === 'tool') {
               if (EXTRACTION_TOOLS.includes(entry.tool)) {
@@ -140,13 +132,15 @@ function BuildMessage({ msg, agentName, onJumpArtifact }) {
             return null;
           })
         ) : (
-          <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-base text-gray-800 leading-relaxed">
-            {msg.content ? renderContent(msg.content) : <span className="text-gray-400 text-xs italic">{t('chat.noOutput')}</span>}
+          <div className="w-fit max-w-full bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm text-base text-gray-800 leading-relaxed">
+            {msg.content ? renderContent(msg.content, { streaming: isStreaming }) : <span className="text-gray-400 text-xs italic">{t('chat.noOutput')}</span>}
           </div>
         )}
+        <MessageViews views={views} />
       </div>
     </div>
+    </ChatCodeActionsContext.Provider>
   );
 }
 
-export { ChatTrail, TimelineArtifactChip, BuildMessage, SystemNotice };
+export { TimelineArtifactChip, BuildMessage, SystemNotice };

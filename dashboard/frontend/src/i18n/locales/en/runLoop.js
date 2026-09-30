@@ -3,6 +3,11 @@ export default {
   versionLive: 'Agent version: live (v{{version}})',
   versionPinned: 'Agent version: pinned to v{{version}}',
   versionRan: 'Agent version: ran v{{version}}',
+  versionShort: {
+    live: 'current',
+    pinned: 'pinned',
+    older: 'live is v{{current}}',
+  },
   rollback: 'Roll back',
   rollbackConfirm: 'Roll the agent back to version {{version}}? This becomes its new live definition.',
   rollbackFailed: 'Could not roll back the agent',

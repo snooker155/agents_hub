@@ -99,7 +99,9 @@ export default function OllamaSection({ refreshKey, onJobStarted }) {
           <div className="text-sm space-y-1.5">
             <p className="flex items-center gap-1.5 text-red-700"><AlertCircle className="w-4 h-4 shrink-0" /> {state?.error || t('localModels.ollama.unreachable')}</p>
             <p className="text-xs text-gray-500">
-              {t('localModels.ollama.startHint')} <Link to="/settings" className="text-indigo-600 hover:underline">{t('localModels.ollama.settingsLink')}</Link>.
+              {t('localModels.ollama.startHint')}{' '}
+              <Link to="/settings/local" className="text-indigo-600 hover:underline">{t('localModels.ollama.settingsLink')}</Link>
+              {' '}{t('localModels.ollama.settingsField', { field: t('settings.ollamaServerAddress') })}
             </p>
           </div>
         ) : (

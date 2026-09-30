@@ -47,6 +47,7 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
+import PageLoader from '../components/PageLoader';
 // ---- helpers ----------------------------------------------------------------
 
 const STATUS_STYLES = {
@@ -535,7 +536,7 @@ export default function Plan() {
   const unread = notifications.filter(n => !n.read).length;
 
   return (
-    <PageContainer className="space-y-6">
+    <PageContainer>
       <PageHeader
         icon={CalendarClock}
         title={t('plan.plan')}
@@ -612,9 +613,7 @@ export default function Plan() {
       </div>
 
       {loading ? (
-        <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-          <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-        </div>
+        <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
       ) : tab === 'jobs' ? (
         visibleJobs.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">

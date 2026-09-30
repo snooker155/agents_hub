@@ -1,9 +1,14 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Images, RefreshCw, Trash2, Box, Search, Boxes } from 'lucide-react';
 import { listViews, deleteView } from '../api';
 import { useWorkspace } from '../components/workspace';
 import ViewCard from '../views/ViewCard';
+
+const PER_ROW_KEY = 'agents_hub_views_per_row';
+const PER_ROW_OPTIONS = [1, 2, 3, 4, 5, 6];
+// The narrowest a card may get before a row holds fewer of them.
+const MIN_CARD_PX = 280;
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -13,25 +18,6 @@ import { useToast, errorDetail } from '../components/toast';
 
 // Kinds that open in the Studio (built via the op protocol / live runtimes).
 const STUDIO_KINDS = new Set(['graph', 'scene3d', 'simulation', 'math', 'process', 'chart', 'table', 'html', 'diagram', 'latex', 'slides', 'document']);
-
-// Where each owner kind's own page lives (App.jsx routes), mirroring
-// ViewDetail.jsx's OWNER_ROUTE. `row.owner_entity_id` is the flow/loop/team/
-// scenario id the list route resolves alongside owner_kind/owner_id
-// (dashboard/backend/routes/views.py): each entity page takes the entity's
-// own id in its path and the run in its ?run= parameter.
-const OWNER_ROUTE = {
-  run: (row) => `/messages/${row.owner_id}`,
-  team: (row) => (row.owner_entity_id ? `/teams/${row.owner_entity_id}?run=${row.owner_id}` : null),
-  flow: (row) => (row.owner_entity_id ? `/flows/${row.owner_entity_id}?run=${row.owner_id}` : null),
-  scenario: (row) => (row.owner_entity_id ? `/playground/${row.owner_entity_id}?run=${row.owner_id}` : null),
-  loop: (row) => (row.owner_entity_id ? `/loops?loop=${row.owner_entity_id}&run=${row.owner_id}` : '/loops'),
-};
-
-function ownerChip(row) {
-  if (!row.owner_kind || !row.owner_id) return null;
-  const short = row.owner_id.length > 12 ? `${row.owner_id.slice(0, 10)}…` : row.owner_id;
-  return { to: OWNER_ROUTE[row.owner_kind]?.(row) || null, label: `${row.owner_kind} · ${short}` };
-}
 
 export default function Views() {
   const { t } = useI18n();
@@ -66,6 +52,20 @@ export default function Views() {
     }
   };
 
+  // How many cards a row holds: a wish, not a rule. A card never goes under
+  // MIN_CARD_PX, so a narrow window shows fewer per row than asked and a wide
+  // one never more; "auto" is the breakpoint grid.
+  const [perRow, setPerRow] = useState(() => {
+    try { return localStorage.getItem(PER_ROW_KEY) || 'auto'; } catch { return 'auto'; }
+  });
+  const choosePerRow = (value) => {
+    setPerRow(value);
+    try { localStorage.setItem(PER_ROW_KEY, value); } catch { /* per-viewer convenience only */ }
+  };
+  const gridStyle = perRow === 'auto' ? undefined : {
+    gridTemplateColumns: `repeat(auto-fill, minmax(max(${MIN_CARD_PX}px, calc((100% - ${Number(perRow) - 1} * 1rem) / ${perRow})), 1fr))`,
+  };
+
   const kinds = useMemo(() => ['all', ...Array.from(new Set(rows.map((r) => r.kind))).sort()], [rows]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -92,6 +92,12 @@ export default function Views() {
             className="py-1.5 px-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
             {kinds.map((k) => <option key={k} value={k}>{k === 'all' ? t('views.allKinds') : k}</option>)}
           </select>
+          <select value={perRow} onChange={(e) => choosePerRow(e.target.value)} title={t('views.perRowHint', { px: MIN_CARD_PX })}
+            aria-label={t('views.perRow')} data-testid="views-per-row"
+            className="py-1.5 px-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+            <option value="auto">{t('views.perRowAuto')}</option>
+            {PER_ROW_OPTIONS.map((n) => <option key={n} value={String(n)}>{t('views.perRowN', { n })}</option>)}
+          </select>
           <button onClick={() => navigate('/studio')}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
             <Boxes className="w-4 h-4" /> {t('views.studio')}
@@ -114,13 +120,19 @@ export default function Views() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+      {/* Stretched rows: every card in a row is as tall as the tallest. Who
+          made a view is on its page, not under every card. */}
+      <div
+        className={`grid gap-4 items-stretch ${perRow === 'auto' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' : ''}`}
+        style={gridStyle}
+        data-testid="views-grid"
+      >
         {filtered.map((row) => {
-          const owner = ownerChip(row);
           return (
-            <div key={row.view_id}>
+            <div key={row.view_id} className="flex flex-col min-h-0">
               <ViewCard
                 compact
+                className="flex-1 min-h-0 flex flex-col"
                 viewRef={{ view_id: row.view_id, view_kind: row.kind, title: row.title, summary: row.summary }}
                 actions={(
                   <>
@@ -137,17 +149,6 @@ export default function Views() {
                   </>
                 )}
               />
-              {owner && (
-                <div className="mt-1 px-1">
-                  {owner.to ? (
-                    <Link to={owner.to} className="text-[11px] text-gray-400 hover:text-indigo-600 hover:underline">
-                      {owner.label}
-                    </Link>
-                  ) : (
-                    <span className="text-[11px] text-gray-400">{owner.label}</span>
-                  )}
-                </div>
-              )}
             </div>
           );
         })}

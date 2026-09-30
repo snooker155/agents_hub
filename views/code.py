@@ -46,6 +46,24 @@ def is_runnable(language: str) -> bool:
     return runner_language(language) is not None
 
 
+def diff_version_list(versions_list: list, a: int, b: int, what: str = "snippet") -> str:
+    """A unified diff between two entries of a recorded version list (the shape
+    views.store keeps for a code view and for a keyed snippet). Raises
+    :class:`ValueError` when either version is not recorded."""
+    versions = {int(v["version"]): v for v in versions_list}
+    if int(a) not in versions:
+        raise ValueError(f"no version {a} recorded for {what}")
+    if int(b) not in versions:
+        raise ValueError(f"no version {b} recorded for {what}")
+    va, vb = versions[int(a)], versions[int(b)]
+    lines = difflib.unified_diff(
+        (va.get("body") or "").splitlines(keepends=True),
+        (vb.get("body") or "").splitlines(keepends=True),
+        fromfile=f"v{a}", tofile=f"v{b}",
+    )
+    return "".join(lines)
+
+
 def diff_versions(view_id: str, a: int, b: int) -> str:
     """A unified diff between two recorded versions of a code view's body.
 
@@ -55,18 +73,7 @@ def diff_versions(view_id: str, a: int, b: int) -> str:
     """
     from views.store import list_code_versions
 
-    versions = {int(v["version"]): v for v in list_code_versions(view_id)}
-    if int(a) not in versions:
-        raise ValueError(f"no version {a} recorded for view {view_id}")
-    if int(b) not in versions:
-        raise ValueError(f"no version {b} recorded for view {view_id}")
-    va, vb = versions[int(a)], versions[int(b)]
-    lines = difflib.unified_diff(
-        (va.get("body") or "").splitlines(keepends=True),
-        (vb.get("body") or "").splitlines(keepends=True),
-        fromfile=f"v{a}", tofile=f"v{b}",
-    )
-    return "".join(lines)
+    return diff_version_list(list_code_versions(view_id), a, b, what=f"view {view_id}")
 
 
 def resolve_project_save_path(project_id: str, rel_path: str) -> Path:

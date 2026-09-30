@@ -7,6 +7,7 @@ import { useAgentPage } from './context';
 import SkillHistoryModal from '../skills/SkillHistoryModal';
 import { updateSkillFromOrigin } from '../../api/skillVersions';
 import { errorDetail } from '../toast';
+import PageLoader from '../PageLoader';
 
 /** The skills this agent has been taught. */
 export default function SkillsTab() {
@@ -151,9 +152,7 @@ export default function SkillsTab() {
 
               {/* Skills table */}
               {skillsLoading ? (
-                <div className="flex justify-center py-10">
-                  <Loader className="w-5 h-5 animate-spin text-purple-400" />
-                </div>
+                <PageLoader size="sm" />
               ) : skills.length === 0 ? (
                 <div className="py-12 text-center">
                   <BookOpen className="w-8 h-8 text-gray-200 mx-auto mb-3" />

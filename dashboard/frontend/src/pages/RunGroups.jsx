@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n, statusLabel } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -210,9 +211,7 @@ export default function RunGroups() {
 
       <div className="space-y-4">
         {loading ? (
-          <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-            <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-          </div>
+          <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
         ) : groups.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
             <Layers className="w-10 h-10 text-gray-300 mx-auto mb-3" />

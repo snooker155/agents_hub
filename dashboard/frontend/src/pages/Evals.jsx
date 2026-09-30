@@ -899,7 +899,7 @@ export default function Evals() {
 
         {chat.open && (
           <ChatColumn>
-            <EntityChat {...evalChat} {...FILL_COLUMN} />
+            <EntityChat {...evalChat} {...FILL_COLUMN} onHide={() => chat.setOpen(false)} />
           </ChatColumn>
         )}
       </div>

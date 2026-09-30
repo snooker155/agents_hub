@@ -17,6 +17,7 @@ import { StageBadge, KindBadge, ActionBadge } from '../components/guardrails/bad
 import GuardrailModal from '../components/guardrails/GuardrailModal';
 import GuardrailTestBox from '../components/guardrails/GuardrailTestBox';
 import GuardrailEventsTable from '../components/guardrails/GuardrailEventsTable';
+import PageLoader from '../components/PageLoader';
 
 export default function Guardrails() {
   const { t } = useI18n();
@@ -83,9 +84,7 @@ export default function Guardrails() {
       />
 
       {loading ? (
-        <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-          <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-        </div>
+        <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
       ) : guardrails.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
           <ShieldCheck className="w-10 h-10 text-gray-300 mx-auto mb-3" />

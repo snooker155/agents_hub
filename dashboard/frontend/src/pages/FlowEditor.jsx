@@ -20,6 +20,7 @@ import { reconstructRunMessages } from '../components/flowEditor/runFormat';
 import { FlowLog } from '../components/flowEditor/FlowLog';
 import { useFlowDocument } from '../components/flowEditor/useFlowDocument';
 import { newChatNonce, useFlowRuns } from '../components/flowEditor/useFlowRuns';
+import PageLoader from '../components/PageLoader';
 
 // FlowEditor is the shell: it owns the page's state and wires it into the
 // document hook (the flow, its nodes/edges, saving), the runs hook (execution,
@@ -114,9 +115,7 @@ function FlowEditor() {
 
   if (loading || !flow) {
     return (
-      <div className="h-full flex items-center justify-center bg-white">
-        <Loader2 className="h-6 w-6 animate-spin text-cyan-600" />
-      </div>
+      <div className="h-full bg-white"><PageLoader /></div>
     );
   }
 

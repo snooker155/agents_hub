@@ -6,6 +6,7 @@ import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMes
 import LiveRunStream from '../components/LiveRunStream';
 import Citations from '../components/chat/Citations';
 import RunLoopPanel from '../components/run/RunLoopPanel';
+import AgentVersion from '../components/run/AgentVersion';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
@@ -14,6 +15,12 @@ import MessageProcessFlow from '../components/MessageProcessFlow';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
+// One label and one value style for every field of the metadata card, so an
+// id, a date and a name read at the same size.
+const META_LABEL = 'text-gray-500';
+const META_VALUE = 'text-[15px] font-medium text-gray-900 break-words';
+
 function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString();
@@ -360,7 +367,7 @@ export default function MessageDetails() {
   };
 
   if (loading) {
-    return <div className="flex justify-center py-20"><Loader className="w-6 h-6 animate-spin text-indigo-500" /></div>;
+    return <PageLoader />;
   }
 
   if (error) {
@@ -467,10 +474,9 @@ export default function MessageDetails() {
         </>}
       />
 
-      {/* What the agent loop did beyond its tool trail: the agent version
-          it ran (with a rollback), the model that answered, compactions,
+      {/* What the agent loop did beyond its tool trail: the model that answered, compactions,
           steering messages, guardrail checks (components/run/RunLoopPanel). */}
-      <RunLoopPanel run={message} onChanged={load} />
+      <RunLoopPanel run={message} onChanged={load} showVersion={false} />
 
       {/* Metadata card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">
@@ -540,18 +546,23 @@ export default function MessageDetails() {
       )}
 
       {/* Metadata */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-        <div><span className="text-gray-500">{t('messageDetails.runId')}</span> <span className="text-xs">{message?.run_id}</span></div>
-        <div><span className="text-gray-500">{t('messageDetails.title')}</span> <span className="font-medium text-gray-800">{message?.task_title || message?.title || '—'}</span></div>
-        <div><span className="text-gray-500">{t('messageDetails.agent')}</span> <span className="text-xs">{message?.agent_id || '—'}</span></div>
-        <div><span className="text-gray-500">{t('messageDetails.model')}</span> <span className="text-xs">{message?.model || insights?.model || '—'}</span></div>
-        <div className="flex items-center gap-2"><span className="text-gray-500">{t('messageDetails.status')}</span> <StatusBadge status={message?.status || 'pending'} /></div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5 text-sm">
+        <div><span className={META_LABEL}>{t('messageDetails.runId')}</span> <span className={META_VALUE}>{message?.run_id}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.title')}</span> <span className={META_VALUE}>{message?.task_title || message?.title || '—'}</span></div>
+        {/* The agent version sits with the agent it belongs to. */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={META_LABEL}>{t('messageDetails.agent')}</span>
+          <span className={META_VALUE}>{message?.agent_id || '—'}</span>
+          <AgentVersion run={message} onChanged={load} compact />
+        </div>
+        <div><span className={META_LABEL}>{t('messageDetails.model')}</span> <span className={META_VALUE}>{message?.model || insights?.model || '—'}</span></div>
+        <div className="flex items-center gap-2"><span className={META_LABEL}>{t('messageDetails.status')}</span> <StatusBadge status={message?.status || 'pending'} /></div>
         {message?.session_id && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.session')}</span>{' '}
+            <span className={META_LABEL}>{t('messageDetails.session')}</span>{' '}
             <button
               onClick={() => navigate(`/sessions/${message.session_id}`)}
-              className="text-xs text-indigo-600 hover:underline"
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
             >
               {message.session_id}
             </button>
@@ -561,38 +572,38 @@ export default function MessageDetails() {
             sent the conversation, and where a receiving run got it from. */}
         {message?.handoff?.next_run_id && (
           <div>
-            <span className="text-gray-500">{t('handoffs.runHandedOffTo')}</span>{' '}
+            <span className={META_LABEL}>{t('handoffs.runHandedOffTo')}</span>{' '}
             <button
               onClick={() => navigate(`/messages/${message.handoff.next_run_id}`)}
-              className="text-xs text-indigo-600 hover:underline"
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
             >
               {message.handoff.to_agent_name || message.handoff.to_agent_id}
             </button>
             {message.handoff.reason && (
-              <span className="text-xs text-gray-500 ml-1">({message.handoff.reason})</span>
+              <span className="text-sm text-gray-500 ml-1">({message.handoff.reason})</span>
             )}
           </div>
         )}
         {message?.handoff_from?.run_id && (
           <div>
-            <span className="text-gray-500">{t('handoffs.runReceivedFrom')}</span>{' '}
+            <span className={META_LABEL}>{t('handoffs.runReceivedFrom')}</span>{' '}
             <button
               onClick={() => navigate(`/messages/${message.handoff_from.run_id}`)}
-              className="text-xs text-indigo-600 hover:underline"
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
             >
               {message.handoff_from.from_agent_name || message.handoff_from.from_agent_id}
             </button>
             {message.handoff_from.reason && (
-              <span className="text-xs text-gray-500 ml-1">({message.handoff_from.reason})</span>
+              <span className="text-sm text-gray-500 ml-1">({message.handoff_from.reason})</span>
             )}
           </div>
         )}
         {message?.flow_run_id && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.flowRun')}</span>{' '}
+            <span className={META_LABEL}>{t('messageDetails.flowRun')}</span>{' '}
             <button
               onClick={() => navigate(`/messages/${message.flow_run_id}`)}
-              className="text-xs text-indigo-600 hover:underline"
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
             >
               {message.flow_run_id}
             </button>
@@ -600,10 +611,10 @@ export default function MessageDetails() {
         )}
         {message?.flow_id && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.flow')}</span>{' '}
+            <span className={META_LABEL}>{t('messageDetails.flow')}</span>{' '}
             <button
               onClick={() => navigate(`/flows/${message.flow_id}`)}
-              className="text-xs text-violet-600 hover:underline"
+              className={`${META_VALUE} !text-violet-600 hover:underline`}
             >
               {message.flow_id}
             </button>
@@ -611,10 +622,10 @@ export default function MessageDetails() {
         )}
         {message?.flow_node_label && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.flowNode')}</span>{' '}
-            <span className="text-xs text-gray-700">{message.flow_node_label}</span>
+            <span className={META_LABEL}>{t('messageDetails.flowNode')}</span>{' '}
+            <span className={META_VALUE}>{message.flow_node_label}</span>
             {message?.flow_node_id && (
-              <span className="text-xs text-gray-400 ml-1">({message.flow_node_id})</span>
+              <span className="text-sm text-gray-400 ml-1">({message.flow_node_id})</span>
             )}
           </div>
         )}
@@ -622,19 +633,19 @@ export default function MessageDetails() {
             these a sim run reads as an unattached agent call. */}
         {message?.sim_run_id && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.simulation')}</span>{' '}
+            <span className={META_LABEL}>{t('messageDetails.simulation')}</span>{' '}
             {message?.scenario_id ? (
               <button
                 onClick={() => navigate(`/playground/${message.scenario_id}`)}
-                className="text-xs text-fuchsia-600 hover:underline"
+                className={`${META_VALUE} !text-fuchsia-600 hover:underline`}
               >
                 {message.sim_role || message.sim_run_id}
               </button>
             ) : (
-              <span className="text-xs text-gray-700">{message.sim_role || message.sim_run_id}</span>
+              <span className={META_VALUE}>{message.sim_role || message.sim_run_id}</span>
             )}
             {message?.tick != null && (
-              <span className="text-xs text-gray-400 ml-1">
+              <span className="text-sm text-gray-400 ml-1">
                 {t('messageDetails.simTick', { tick: message.tick })}
               </span>
             )}
@@ -650,15 +661,15 @@ export default function MessageDetails() {
         )}
         {message?.session_type === 'chat' && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.conversationId')}</span>{' '}
-            <span className="text-xs">{message?.task_id || insights?.session_task_id || '—'}</span>
+            <span className={META_LABEL}>{t('messageDetails.conversationId')}</span>{' '}
+            <span className={META_VALUE}>{message?.task_id || insights?.session_task_id || '—'}</span>
           </div>
         )}
-        <div><span className="text-gray-500">{t('messageDetails.workspace')}</span> {message?.workspace || '—'}</div>
-        <div><span className="text-gray-500">{t('messageDetails.started')}</span> {fmtDate(message?.started_at)}</div>
-        <div><span className="text-gray-500">{t('messageDetails.finished')}</span> {fmtDate(message?.finished_at)}</div>
-        <div><span className="text-gray-500">{t('messageDetails.duration')}</span> {duration(message?.started_at, message?.finished_at)}</div>
-        <div><span className="text-gray-500">{t('messageDetails.error')}</span> {message?.error || '—'}</div>
+        <div><span className={META_LABEL}>{t('messageDetails.workspace')}</span> <span className={META_VALUE}>{message?.workspace || '—'}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.started')}</span> <span className={META_VALUE}>{fmtDate(message?.started_at)}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.finished')}</span> <span className={META_VALUE}>{fmtDate(message?.finished_at)}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.duration')}</span> <span className={META_VALUE}>{duration(message?.started_at, message?.finished_at)}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.error')}</span> <span className={META_VALUE}>{message?.error || '—'}</span></div>
         <div className="flex flex-wrap gap-2 pt-1 md:col-span-2">
           <TokenPill label={t('messageDetails.in')} value={insights?.token_usage?.inbound_tokens || 0} />
           <TokenPill label={t('messageDetails.out')} value={insights?.token_usage?.outbound_tokens || 0} />
@@ -795,7 +806,7 @@ export default function MessageDetails() {
            scrollHeight, so the last card can be scrolled fully into view. With
            no padding it ended exactly on the clip edge and its bottom border
            was unreachable — which read as the block being cut off. */
-        <div className="flex-1 min-h-0 overflow-y-auto pt-4 pb-6">
+        <div className="flex-1 min-h-0 overflow-y-auto pb-6">
           <InputContextView struct={inputContextStruct} text={inputContextText} output={messageOutput} />
         </div>
       )}

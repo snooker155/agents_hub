@@ -114,16 +114,42 @@ them as `citations`. See [workspace files](files.md#citations).
 `/help`, `/clear`, `/new` and `/config` are handled in the page itself. An agent
 may also define its own commands, which appear in the same picker.
 
+## Panels beside the conversation
+
+The right of the top bar holds three switches. In the chat view a **Process**
+button comes first: the run's graph, tools and token use. **Chat** or
+**Build** picks the view: the messages only, or the whole transcript with
+thinking, plan and tool calls inline; the build view already shows the run,
+so it has no Process button. **Artifacts** and **Code** open the column
+beside the transcript, one at a time (opening one closes the other), and show
+how many the conversation has produced: files the runs changed and views they
+made in Artifacts, code snippets in Code. The Artifacts column lists the files and views on
+the left and shows the selected one on the right. Its header switch picks
+**Files** (the default: each file as it is now, read from the workspace
+folder, so a deleted file is not listed) or **Diff** (what the runs changed,
+deletions included); a view is drawn whole in either. The Process is a column of its own, to the right
+of the open panel. Each panel remembers whether it was open.
+
 ## Code panel
 
 When an agent hands back a runnable or editable snippet (a `code` view, see
 [views](views.md#code)), it opens in its own panel instead of sitting in a code
 fence: an editor, plus Copy, Download, Run, Save to project, Discuss and Edit.
 The panel lists every code snippet from the session, so you can switch between
-several without losing your place. Editing and running both record a new
-version, and you can diff any two versions to see exactly what changed.
-"Discuss" hands the snippet back to the agent to keep working on; "Save to
-project" writes it into a project's own folder.
+several without losing your place. Under them, "From replies" lists the fenced
+code blocks of the conversation's replies, named after the file the reply
+gave, else the first class or function in the code, else the prompt they
+answer. Opening one there (or "Open in Code panel" on the block itself) shows
+it in the editor with the same actions a code view has: it runs as it is,
+"Save version" keeps its own history (the reply's text is version 1) with a
+diff between any two versions, and "Save to project" writes it into a
+project's folder as a file. None of that makes a view. "Save as view" does,
+on request: the block becomes a code view of the conversation, listed with
+its views and with its own run history, and leaves "From replies". The Code
+button's count includes the blocks. Editing and running a view both record a
+new version. "Discuss" hands the snippet back to the agent with its text;
+"Edit" only starts a request about it, so use it while the snippet is still
+fresh in the conversation.
 
 ## Delegation from chat
 

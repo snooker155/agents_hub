@@ -24,6 +24,7 @@ import { EpisodesPanel } from './EpisodesPanel';
 import { GraphPanel } from './GraphPanel';
 import { useColumnHeight } from '../ChatColumn';
 import { MemoryHistoryPanel } from './MemoryHistoryPanel';
+import ChatMarkdown from '../chat/ChatMarkdown';
 
 function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const { t } = useI18n();
@@ -658,7 +659,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                         </div>
                         <button onClick={() => startEditNote(viewingNote)} className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50"><Edit3 className="w-3.5 h-3.5" /> {t('memoryManager.edit')}</button>
                       </div>
-                      <div className="bg-white border border-gray-200 rounded-lg p-4 text-sm whitespace-pre-wrap overflow-x-auto shadow-inner min-h-[300px]">{viewingNote.content}</div>
+                      <div className="bg-white border border-gray-200 rounded-lg p-4 text-sm overflow-x-auto shadow-inner min-h-[300px]"><ChatMarkdown content={viewingNote.content} /></div>
                     </div>
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8 text-center">

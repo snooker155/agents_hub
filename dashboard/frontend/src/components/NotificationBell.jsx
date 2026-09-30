@@ -11,6 +11,7 @@ import { useStreamEvent } from './stream';
 import { Bell, MailOpen, Loader } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from './toast';
+import PageLoader from './PageLoader';
 
 function timeAgo(iso, t) {
   if (!iso) return '';
@@ -135,7 +136,7 @@ export default function NotificationBell() {
 
           <div className="max-h-96 overflow-y-auto divide-y divide-gray-50">
             {loading ? (
-              <div className="flex justify-center py-8"><Loader className="w-5 h-5 animate-spin text-indigo-500" /></div>
+              <PageLoader size="sm" />
             ) : items.length === 0 ? (
               <div className="text-center py-8">
                 <Bell className="w-8 h-8 text-gray-200 mx-auto mb-2" />

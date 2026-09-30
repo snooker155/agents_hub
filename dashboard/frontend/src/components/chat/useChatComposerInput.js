@@ -4,6 +4,10 @@ import { getContextKinds } from '../../api';
 import { uploadWorkspaceFileObject } from '../../api/files';
 import { translate } from '../../i18n';
 import { useCallback, useEffect } from 'react';
+import { CHAT_MAX_LINES, autoGrowTextarea } from '../../lib/autoGrow';
+
+/** The composer's tallest: this many lines of text, then it scrolls. */
+export const COMPOSER_MAX_LINES = CHAT_MAX_LINES;
 
 /**
  * The composer's two attachment paths: files from the computer, which the
@@ -18,12 +22,8 @@ export function useChatComposerInput(deps) {
   } = deps;
 
   // ---- textarea auto-resize ----
-  const resizeTextarea = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 180) + 'px';
-  }, [textareaRef]);
+  // Grows with the text up to ten lines, then scrolls inside (lib/autoGrow.js).
+  const resizeTextarea = useCallback(() => autoGrowTextarea(textareaRef.current), [textareaRef]);
 
   const onPickFiles = useCallback(async (e) => {
     const picked = Array.from(e.target.files || []);

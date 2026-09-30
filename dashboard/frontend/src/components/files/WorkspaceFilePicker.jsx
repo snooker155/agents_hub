@@ -9,6 +9,7 @@ import { Check, FileText, Loader, Search, Upload, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { formatBytes, listWorkspaceFiles, uploadWorkspaceFileObject } from '../../api/files';
 import { errorDetail } from '../toast';
+import PageLoader from '../PageLoader';
 
 export default function WorkspaceFilePicker({
   workspace, onPick, onClose, multiple = true, excludeIds = [], allowUpload = true, uploadSource,
@@ -127,7 +128,7 @@ export default function WorkspaceFilePicker({
             {error && <p className="px-5 pt-2 text-xs text-red-600">{error}</p>}
             <div className="flex-1 overflow-y-auto px-2 py-3 min-h-[8rem]">
               {loading && files.length === 0 ? (
-                <div className="flex justify-center py-8"><Loader className="w-5 h-5 animate-spin text-indigo-500" /></div>
+                <PageLoader size="sm" />
               ) : files.length === 0 ? (
                 <p className="text-sm text-gray-500 text-center py-8">{t('files.picker.empty')}</p>
               ) : (

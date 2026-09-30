@@ -41,7 +41,7 @@ export default function Connectors() {
         description={t('connectors.description')}
       />
 
-      <div className="flex flex-wrap gap-1 mb-5 border-b border-gray-200">
+      <div className="flex flex-wrap gap-1 border-b border-gray-200">
         {TABS.map(({ id, icon: Icon }) => (
           <button
             key={id}

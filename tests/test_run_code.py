@@ -339,3 +339,15 @@ def test_run_code_is_in_the_execution_category():
     spec = get_tool_by_id("run_code")
     assert spec is not None and spec.category == "execution"
     assert {p["name"] for p in spec.parameters} >= {"language", "code", "timeout", "stdin", "mount_workspace"}
+
+
+def test_docker_mount_sets_work_env(tmp_path):
+    from sandbox.docker import build_docker_command
+    cmd = build_docker_command(language="python", code_dir=str(tmp_path), image="python:3.12-slim",
+                               name="t", memory="512m", cpus="1", pids_limit=128, workspace_dir="/host/ws")
+    i = cmd.index("/host/ws:/work:ro")
+    assert cmd[i - 1] == "-v"
+    assert cmd[i + 1:i + 3] == ["-e", "WORK=/work"]
+    without = build_docker_command(language="python", code_dir=str(tmp_path), image="python:3.12-slim",
+                                   name="t", memory="512m", cpus="1", pids_limit=128)
+    assert "WORK=/work" not in without

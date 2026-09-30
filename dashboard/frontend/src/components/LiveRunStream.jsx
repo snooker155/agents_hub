@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Radio, ChevronDown, ChevronRight, Brain, Wrench, AlertCircle, Globe, MessageSquarePlus, Send } from 'lucide-react';
 import { useChannel } from './stream';
+import { autoGrowTextarea } from '../lib/autoGrow';
 import { useI18n } from '../i18n';
 import { getRunBrowserSession, setBrowserControl } from '../api/browser';
 import { listRunSteering, steerRun } from '../api/steering';
@@ -329,6 +330,9 @@ function RunSteer({ runId, done }) {
   const { t } = useI18n();
   const { messages, refresh } = useRunSteering(runId, done);
   const [text, setText] = useState('');
+  const steerRef = useRef(null);
+  // Up to ten lines, then it scrolls (lib/autoGrow.js).
+  useEffect(() => { autoGrowTextarea(steerRef.current); }, [text]);
   const [mode, setMode] = useState('inject');
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState('');
@@ -412,6 +416,7 @@ function RunSteer({ runId, done }) {
           </div>
           <div className="flex items-end gap-2">
             <textarea
+              ref={steerRef}
               rows={1}
               value={text}
               onChange={(e) => setText(e.target.value)}

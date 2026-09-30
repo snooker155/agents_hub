@@ -8,6 +8,7 @@ import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import { useWorkspace } from '../workspace';
 import { GRADER_FIELDS, graderSpec } from '../agent/onlineEvals';
+import PageLoader from '../PageLoader';
 
 // ── Webhooks tab: outbound endpoints + alert rules ───────────────────────────
 //
@@ -187,9 +188,7 @@ function EndpointsSection({ workspace }) {
       <p className="text-sm text-gray-600">{t('connectors.webhooks.endpointsHint')}</p>
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
       {loading ? (
-        <div className="flex items-center justify-center py-6">
-          <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
-        </div>
+        <PageLoader size="sm" />
       ) : endpoints.length === 0 ? (
         <div className="text-sm text-gray-500 py-2">{t('connectors.webhooks.noEndpoints')}</div>
       ) : (
@@ -425,9 +424,7 @@ function RulesSection({ workspace }) {
       <p className="text-sm text-gray-600">{t('connectors.webhooks.rulesHint')}</p>
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
       {loading ? (
-        <div className="flex items-center justify-center py-6">
-          <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
-        </div>
+        <PageLoader size="sm" />
       ) : rules.length === 0 ? (
         <div className="text-sm text-gray-500 py-2">{t('connectors.webhooks.noRules')}</div>
       ) : (

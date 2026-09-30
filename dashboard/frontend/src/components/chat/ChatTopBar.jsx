@@ -1,215 +1,231 @@
-import { AgentDropdown, FlowDropdown, TeamDropdown } from './targetPickers';
-import { AlertCircle, Bot, Code2, FileText, FolderGit2, MessageSquare, Terminal, UsersRound, Workflow, X } from 'lucide-react';
+import { AgentDropdown, FlowDropdown, ProjectDropdown, TeamDropdown } from './targetPickers';
+import { Activity, AlertCircle, AlertTriangle, Bot, Code2, FileText, MessageSquare, Terminal, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
+import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { getChatRoute } from '../../api';
+import { useLiveRefetch } from '../stream';
 
 /**
- * What this conversation is pointed at, and how it is shown: the agent, flow or
- * team picker, the project, and the Chat/Build toggle.
+ * What this conversation is pointed at, and how it is shown.
+ *
+ * Left to right: the mode (agent, flow or team) and the picker for it, the
+ * project, and the agent's model when it has one of its own. On the right,
+ * drawn the same way as the mode: in the chat view the Process panel, then
+ * the view (Chat, the messages only; Build, the whole transcript), then the
+ * panel beside the conversation (Artifacts or Code, one at a time, each with
+ * how many the conversation has produced; pressed is open).
+ *
+ * Every control is one height, so the bar reads as one row.
  */
+
+/** One segmented switch: a row of buttons in a shared border. */
+function Segmented({ children }) {
+  return (
+    <div className="inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+      {children}
+    </div>
+  );
+}
+
+const TONES = {
+  indigo: 'bg-indigo-50 text-indigo-700',
+  emerald: 'bg-emerald-50 text-emerald-700',
+  amber: 'bg-amber-50 text-amber-700',
+};
+
+/** How many of a thing the conversation holds, on its panel button. */
+function Count({ n, active }) {
+  return (
+    <span
+      data-testid="panel-count"
+      className={`min-w-[1.25rem] px-1 rounded-full text-[10px] leading-4 tabular-nums text-center ${
+        active ? 'bg-white/70 text-indigo-700' : 'bg-gray-100 text-gray-500'
+      }`}
+    >
+      {n}
+    </span>
+  );
+}
+
+function Segment({ active, onClick, icon: Icon, label, title, tone = 'indigo', first = false, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={title}
+      className={`h-[30px] flex items-center gap-1.5 px-2.5 text-xs font-medium transition-colors ${
+        first ? '' : 'border-l border-gray-200'
+      } ${active ? TONES[tone] : 'text-gray-500 hover:bg-gray-50'}`}
+    >
+      <Icon className="w-3.5 h-3.5" />
+      {label}
+      {children}
+    </button>
+  );
+}
+
 export default function ChatTopBar() {
   const {
-    agentModel, agentProvider, agentTopology, codeOpen, currentConv, currentConvId, flows,
-    graphRun, messages, processOpen, projects, selectableAgents, selectedAgent, selectedFlow,
-    selectedProject, selectedTeam, selectedWorkspace, setCodeOpen, setConversations,
-    setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject, setSelectedTeam,
-    setTargetMode, setViewMode, t, targetMode, teams, viewMode,
+    agentModel, agentProvider, agentTopology, artifactCount, artifactsOpen, codeCount, codeOpen, currentConv,
+    currentConvId, flows, graphRun, messages, processOpen, projects, selectableAgents, selectedAgent,
+    selectedFlow, selectedProject, selectedTeam, selectedWorkspace, setArtifactsOpen, setCodeOpen,
+    setConversations, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
+    setSelectedTeam, setTargetMode, setViewMode, t, targetMode, teams, viewMode,
   } = useChatPage();
-  // The Code and Process panels are two tabs of the one side-panel slot in
-  // chat view (ChatSidePanel): opening either closes the other.
-  const toggleProcessPanel = () => {
-    setProcessOpen((v) => !v);
-    setCodeOpen(false);
+  const isBuild = viewMode === 'build';
+  // Artifacts and Code share the one slot: opening one closes the other.
+  const toggleArtifacts = () => { setArtifactsOpen((v) => !v); setCodeOpen(false); };
+  const toggleCode = () => { setCodeOpen((v) => !v); setArtifactsOpen(false); };
+
+  // The service a turn would go to, when chat runs on replicas: a paused one
+  // is a chat that will not answer, said here before the message is typed.
+  const routeAgent = targetMode === 'agent' ? selectedAgent : '';
+  const [route, setRoute] = useState(null);
+  const probeRoute = useCallback(() => {
+    getChatRoute({ workspace: selectedWorkspace || undefined, agent_id: routeAgent || undefined })
+      .then((r) => setRoute(r.data || null))
+      .catch(() => setRoute(null));
+  }, [selectedWorkspace, routeAgent]);
+  useEffect(() => { probeRoute(); }, [probeRoute]);
+  useLiveRefetch(probeRoute, { type: 'services.changed' });
+  const routeDown = route && route.available === false && route.service;
+
+  const pickTarget = (field, id, extra = {}) => {
+    if (!currentConvId) return;
+    setConversations((prev) =>
+      prev.map((c) => (c.id === currentConvId ? { ...c, [field]: id, ...extra } : c)),
+    );
   };
-  const toggleCodePanel = () => {
-    setCodeOpen((v) => !v);
-    setProcessOpen(false);
-  };
+
   return (
-    <>
+    <div className="flex-shrink-0 bg-white border-b border-gray-200 px-5 h-[60px] flex items-center gap-3">
+      {/* Mode: who answers */}
+      <Segmented>
+        <Segment first active={targetMode === 'agent'} onClick={() => setTargetMode('agent')}
+                 icon={Bot} label={t('chat.agent')} title={t('chat.chatWithASingleAgent')} />
+        <Segment active={targetMode === 'flow'} onClick={() => setTargetMode('flow')} tone="emerald"
+                 icon={Workflow} label={t('chat.flow')} title={t('chat.chatWithAFlowEach')} />
+        <Segment active={targetMode === 'team'} onClick={() => setTargetMode('team')} tone="amber"
+                 icon={UsersRound} label={t('chat.team')} title={t('chat.handTheMessageToA')} />
+      </Segmented>
 
-        {/* Top bar */}
-        <div className="flex-shrink-0 bg-white border-b border-gray-200 px-5 h-[60px] flex items-center gap-4">
-          {/* Target-mode toggle: agent vs flow */}
-          <div className="inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
-            <button
-              onClick={() => setTargetMode('agent')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                targetMode === 'agent' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
-              }`}
-              title={t('chat.chatWithASingleAgent')}
-            >
-              <Bot className="w-3.5 h-3.5" />
-              {t('chat.agent')}
-            </button>
-            <button
-              onClick={() => setTargetMode('flow')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
-                targetMode === 'flow' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-500 hover:bg-gray-50'
-              }`}
-              title={t('chat.chatWithAFlowEach')}
-            >
-              <Workflow className="w-3.5 h-3.5" />
-              {t('chat.flow')}
-            </button>
-            <button
-              onClick={() => setTargetMode('team')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
-                targetMode === 'team' ? 'bg-amber-50 text-amber-700' : 'text-gray-500 hover:bg-gray-50'
-              }`}
-              title={t('chat.handTheMessageToA')}
-            >
-              <UsersRound className="w-3.5 h-3.5" />
-              {t('chat.team')}
-            </button>
-          </div>
+      {targetMode === 'agent' ? (
+        <AgentDropdown agents={selectableAgents} value={selectedAgent} onChange={(id) => {
+          setSelectedAgent(id);
+          pickTarget('agent_id', id);
+        }} />
+      ) : targetMode === 'flow' ? (
+        <FlowDropdown flows={flows} value={selectedFlow} onChange={(id) => {
+          setSelectedFlow(id);
+          pickTarget('flow_id', id, { target_mode: 'flow' });
+        }} />
+      ) : (
+        <TeamDropdown teams={teams} value={selectedTeam} onChange={(id) => {
+          setSelectedTeam(id);
+          pickTarget('team_id', id, { target_mode: 'team' });
+        }} />
+      )}
 
-          {targetMode === 'agent' ? (
-            <AgentDropdown agents={selectableAgents} value={selectedAgent} onChange={(id) => {
-              setSelectedAgent(id);
-              // update current conv's agent
-              if (currentConvId) {
-                setConversations((prev) =>
-                  prev.map((c) => c.id === currentConvId ? { ...c, agent_id: id } : c),
-                );
-              }
-            }} />
-          ) : targetMode === 'flow' ? (
-            <FlowDropdown flows={flows} value={selectedFlow} onChange={(id) => {
-              setSelectedFlow(id);
-              if (currentConvId) {
-                setConversations((prev) =>
-                  prev.map((c) => c.id === currentConvId ? { ...c, flow_id: id, target_mode: 'flow' } : c),
-                );
-              }
-            }} />
-          ) : (
-            <TeamDropdown teams={teams} value={selectedTeam} onChange={(id) => {
-              setSelectedTeam(id);
-              if (currentConvId) {
-                setConversations((prev) =>
-                  prev.map((c) => c.id === currentConvId ? { ...c, team_id: id, target_mode: 'team' } : c),
-                );
-              }
-            }} />
-          )}
+      {routeDown && (
+        <Link
+          to={`/services/${routeDown.service_id}`}
+          data-testid="chat-service-down"
+          className="h-8 flex items-center gap-1.5 px-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs font-medium hover:bg-amber-100"
+          title={t('chat.serviceDownHint')}
+        >
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          {t('chat.serviceDown', { name: routeDown.name })}
+        </Link>
+      )}
 
-          {/* The active chat's workspace is redundant when a specific workspace is
-              selected in the header — only surface it in the default (all) view. */}
-          {(!selectedWorkspace || selectedWorkspace === 'default') && (currentConv?.workspace || selectedWorkspace) && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.ws')}</span>
-              <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
-                {currentConv?.workspace || selectedWorkspace}
-              </span>
+      {projects.length > 0 && (
+        <ProjectDropdown projects={projects} value={selectedProject} onChange={setSelectedProject} />
+      )}
+
+      {/* The active chat's workspace is redundant when a specific workspace is
+          selected in the header — only surface it in the default (all) view. */}
+      {(!selectedWorkspace || selectedWorkspace === 'default') && (currentConv?.workspace || selectedWorkspace) && (
+        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+          <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.ws')}</span>
+          <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
+            {currentConv?.workspace || selectedWorkspace}
+          </span>
+        </div>
+      )}
+
+      {/* The model, only when the agent names one of its own: an inherited
+          setting says nothing about this agent in particular. */}
+      {targetMode === 'agent' && selectedAgent && agentModel && (
+        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+          <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.model')}</span>
+          <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
+            {agentProvider && agentProvider !== 'inherit' ? `${agentProvider} · ${agentModel}` : agentModel}
+          </span>
+        </div>
+      )}
+
+      {selectedWorkspace && selectableAgents.length === 0 && (
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 h-8 text-xs font-medium">
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          {t('chat.noAuthorizedAgentsInThis')}
+        </div>
+      )}
+
+      {/* View: the messages, or the whole transcript */}
+      <div className="ml-auto flex items-center gap-3">
+        {/* What the person wrote, not every bubble: a turn's tool calls and
+            steering notes are part of one message's answer. */}
+        {(() => {
+          const sent = messages.filter((m) => m.role === 'user' && !m.steer).length;
+          return sent > 0 ? (
+            <div className="text-xs text-gray-400 tabular-nums">
+              {t('chat.messageCount', { count: sent })}
             </div>
-          )}
-
-          {projects.length > 0 && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <FolderGit2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-              <select
-                value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value)}
-                className="text-xs border border-gray-200 rounded px-2 py-0.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-emerald-400 max-w-[140px]"
-              >
-                <option value="">{t('chat.noProject')}</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {selectedAgent && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.model')}</span>
-              {agentProvider === 'inherit' ? (
-                <span className="font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded italic">{t('chat.global')}</span>
-              ) : (
-                <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
-                  {agentProvider}{agentModel ? ` · ${agentModel}` : ''}
+          ) : null;
+        })()}
+        {/* The process, in the chat view only: the build view already shows
+            the run inline. */}
+        {!isBuild && (
+          <Segmented>
+            <Segment first active={processOpen} onClick={() => setProcessOpen((v) => !v)} icon={Activity}
+                     label={t('chat.panels.process')}
+                     title={processOpen ? t('chat.hideProcess') : t('chat.showProcess')}>
+              {/* The panel is closed by default, so an agent whose graph is
+                  being walked right now would otherwise be drawing itself where
+                  nobody is looking. The node's name on the button is both the
+                  notice and the invitation. */}
+              {!processOpen && agentTopology?.nodes?.length > 0 && (
+                <span className="inline-flex items-center gap-1 text-indigo-600">
+                  <Workflow className="w-3.5 h-3.5" />
+                  {graphRun.active && <span className="max-w-[90px] truncate">{graphRun.active}</span>}
                 </span>
               )}
-            </div>
-          )}
+            </Segment>
+          </Segmented>
+        )}
+        <Segmented>
+          <Segment first active={viewMode === 'chat'} onClick={() => setViewMode('chat')}
+                   icon={MessageSquare} label={t('chat.chat')} title={t('chat.cleanChatMessagesOnly')} />
+          <Segment active={isBuild} onClick={() => setViewMode('build')}
+                   icon={Terminal} label={t('chat.build')} title={t('chat.buildFullTranscriptToolsThinking')} />
+        </Segmented>
 
-          {selectedWorkspace && selectableAgents.length === 0 && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-1.5 text-xs font-medium">
-              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-              {t('chat.noAuthorizedAgentsInThis')}
-            </div>
-          )}
+        {/* The panel beside the conversation, one of two, with how many each holds; pressed is open. */}
+        <Segmented>
+          <Segment first active={artifactsOpen} onClick={toggleArtifacts} icon={FileText}
+                   label={t('chat.panels.artifacts')}
+                   title={artifactsOpen ? t('chat.hideArtifacts') : t('chat.showArtifacts')}>
+            <Count n={artifactCount || 0} active={artifactsOpen} />
+          </Segment>
+          <Segment active={codeOpen} onClick={toggleCode} icon={Code2}
+                   label={t('chat.panels.code')} title={t('chat.code.toggle')}>
+            <Count n={codeCount || 0} active={codeOpen} />
+          </Segment>
+        </Segmented>
 
-
-          {/* View-mode toggle: clean Chat vs full Build transcript + artifacts */}
-          <div className="ml-auto inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden">
-            <button
-              onClick={() => setViewMode('chat')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                viewMode === 'chat' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
-              }`}
-              title={t('chat.cleanChatMessagesOnly')}
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              {t('chat.chat')}
-            </button>
-            <button
-              onClick={() => setViewMode('build')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
-                viewMode === 'build' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'
-              }`}
-              title={t('chat.buildFullTranscriptToolsThinking')}
-            >
-              <Terminal className="w-3.5 h-3.5" />
-              {t('chat.build')}
-            </button>
-          </div>
-
-          {viewMode !== 'build' && (
-            <button
-              onClick={toggleCodePanel}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-lg ${
-                codeOpen ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              {codeOpen ? <X className="w-3.5 h-3.5" /> : <Code2 className="w-3.5 h-3.5" />}
-              {t('chat.code.toggle')}
-            </button>
-          )}
-
-          {viewMode !== 'build' && (
-            <button
-              onClick={toggleProcessPanel}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
-            >
-              {processOpen ? (
-                <>
-                  <X className="w-3.5 h-3.5" />
-                  {t('chat.hideProcess')}
-                </>
-              ) : (
-                <>
-                  <FileText className="w-3.5 h-3.5" />
-                  {t('chat.showProcess')}
-                  {/* The panel is closed by default, so an agent whose graph is
-                      being walked right now would otherwise be drawing itself
-                      where nobody is looking. The node's name on the button is
-                      both the notice and the invitation. */}
-                  {agentTopology?.nodes?.length > 0 && (
-                    <span className="inline-flex items-center gap-1 text-indigo-600">
-                      <Workflow className="w-3.5 h-3.5" />
-                      {graphRun.active && <span className="max-w-[90px] truncate">{graphRun.active}</span>}
-                    </span>
-                  )}
-                </>
-              )}
-            </button>
-          )}
-
-          <div className="text-xs text-gray-400">
-            {messages.length > 0 && `${messages.length} message${messages.length !== 1 ? 's' : ''}`}
-          </div>
-        </div>
-    </>
+      </div>
+    </div>
   );
 }

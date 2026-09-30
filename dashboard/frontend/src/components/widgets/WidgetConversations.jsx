@@ -11,6 +11,7 @@ import { deleteWidgetThread, getWidgetThread, getWidgetThreads } from '../../api
 import { useFormatters, useI18n } from '../../i18n';
 import { errorDetail, useToast } from '../toast';
 import { shortVisitor } from './widgetUtils';
+import PageLoader from '../PageLoader';
 
 function Badge({ children, tone = 'gray' }) {
   const tones = {
@@ -119,7 +120,7 @@ export default function WidgetConversations({ widget }) {
   };
 
   if (loading) {
-    return <div className="flex justify-center py-12"><Loader className="w-5 h-5 animate-spin text-indigo-500" /></div>;
+    return <PageLoader size="sm" />;
   }
   if (!threads.length) {
     return (
@@ -158,7 +159,7 @@ export default function WidgetConversations({ widget }) {
       </ul>
       <div className="min-w-0">
         {reading ? (
-          <div className="flex justify-center py-12"><Loader className="w-5 h-5 animate-spin text-indigo-500" /></div>
+          <PageLoader size="sm" />
         ) : transcript ? (
           <Transcript data={transcript} t={t} formatDate={formatDate} />
         ) : (

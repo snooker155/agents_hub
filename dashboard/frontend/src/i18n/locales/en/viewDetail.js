@@ -13,6 +13,7 @@ export default {
   controls: 'Controls',
   viewId: 'View ID',
   kind: 'Kind',
+  summary: 'Description',
   workspace: 'Workspace',
   created: 'Created',
   updated: 'Updated',
