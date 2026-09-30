@@ -13,6 +13,8 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-30
+
 ### Added
 
 - Slide decks with layouts, themes and PowerPoint export (docs/views.md,
