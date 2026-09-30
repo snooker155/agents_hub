@@ -37,6 +37,16 @@ def _catalog(monkeypatch):
     monkeypatch.setattr("providers.catalog.load_catalog_raw", lambda: CATALOG)
 
 
+@pytest.fixture(autouse=True)
+def _direct_transport(monkeypatch):
+    """The tool launches through the run's state transport, which defaults to
+    the HTTP relay when the database is Postgres (tests/test_state_transport.py).
+    There is no backend behind these tests, so pin the direct transport; the
+    container tests below override it with in_container, which always picks
+    HTTP and stubs the backend."""
+    monkeypatch.setattr("common.config.run_state_transport", lambda: "db")
+
+
 @pytest.fixture
 def registry(monkeypatch):
     specs = {
@@ -343,11 +353,16 @@ def in_container(monkeypatch):
     monkeypatch.delenv("DASHBOARD_PORT", raising=False)
 
 
-def test_on_a_host_the_launch_stays_in_process(registry, parent, monkeypatch):
+def test_on_a_host_the_launch_follows_the_runs_own_transport(registry, parent, monkeypatch):
+    """A host subprocess delegates the way it keeps its own records: in
+    process under the direct transport, over HTTP under the http one."""
     from common import hostnet
+    from common.state_transport import DirectStateTransport, HttpStateTransport
     monkeypatch.setattr(hostnet, "in_container", lambda: False)
-    from common.state_transport import DirectStateTransport
+    monkeypatch.setattr("common.config.run_state_transport", lambda: "db")
     assert isinstance(delegation._transport(), DirectStateTransport)
+    monkeypatch.setattr("common.config.run_state_transport", lambda: "http")
+    assert isinstance(delegation._transport(), HttpStateTransport)
 
 
 def test_inside_a_container_the_backend_launches(registry, parent, monkeypatch, in_container):
