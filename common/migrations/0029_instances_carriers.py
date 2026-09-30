@@ -120,8 +120,10 @@ def _state_for(node_status: str, previous: Optional[str]) -> str:
     return "stopped"
 
 
-def _move_connections(conn: Any, node_id: str, instance_id: str) -> None:
-    if not _documents_exist(conn):
+def _move_connections(conn: Any, dialect: str, node_id: str, instance_id: str) -> None:
+    # A lookup, not a failing SELECT: on Postgres a failed statement aborts
+    # the startup transaction this runs in.
+    if not table_exists(conn, dialect, "documents"):
         return
     row = conn.execute(
         "SELECT doc, created_at, updated_at FROM documents WHERE store = ? AND key = ?",
@@ -141,14 +143,6 @@ def _move_connections(conn: Any, node_id: str, instance_id: str) -> None:
              row["created_at"], row["updated_at"]),
         )
     conn.execute("DELETE FROM documents WHERE store = ? AND key = ?", ("node_connections", node_id))
-
-
-def _documents_exist(conn: Any) -> bool:
-    try:
-        conn.execute("SELECT 1 FROM documents LIMIT 1").fetchone()
-        return True
-    except Exception:  # noqa: BLE001 - no documents table: nothing to move
-        return False
 
 
 def _move_node(conn: Any, dialect: str, node: Dict[str, Any]) -> None:
@@ -219,7 +213,7 @@ def _move_node(conn: Any, dialect: str, node: Dict[str, Any]) -> None:
         "UPDATE runs SET instance_id = ? WHERE node_id = ? AND instance_id IS NULL",
         (instance_id, node_id),
     )
-    _move_connections(conn, node_id, instance_id)
+    _move_connections(conn, dialect, node_id, instance_id)
 
 
 def upgrade(conn: Any, dialect: str) -> None:

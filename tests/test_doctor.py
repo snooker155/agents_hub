@@ -209,10 +209,20 @@ def test_docker(monkeypatch):
     assert doctor.check_docker(_snap())[0] == "warn"
 
 
+def _no_local_fallback(monkeypatch):
+    """The provider resolves to docker whatever the developer's .env says:
+    CODE_RUNNER_FALLBACK=local there would turn an unavailable docker into
+    an available ``local`` default."""
+    import common.config as cfg
+    monkeypatch.setattr(cfg.settings, "code_runner_provider", "docker", raising=False)
+    monkeypatch.setattr(cfg.settings, "code_runner_fallback", "none", raising=False)
+
+
 def test_sandbox_check(monkeypatch):
     from sandbox import docker as docker_mod
     from environments import egress
 
+    _no_local_fallback(monkeypatch)
     monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
     monkeypatch.setattr(egress, "enabled", lambda: True)
     status, summary, detail = doctor.check_sandbox(_snap())
@@ -233,6 +243,7 @@ def test_sandbox_check(monkeypatch):
 
 def test_sandbox_check_lists_every_provider_even_when_all_unavailable(monkeypatch):
     from sandbox import docker as docker_mod
+    _no_local_fallback(monkeypatch)
     monkeypatch.setattr(docker_mod, "docker_available", lambda: False)
     status, _summary, detail = doctor.check_sandbox(_snap())
     assert status == "fail"

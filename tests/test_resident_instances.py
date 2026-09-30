@@ -512,6 +512,8 @@ def test_migration_moves_nodes_into_instances():
     from common import db
     from importlib import import_module
 
+    from common.migrations import table_exists
+
     mig = import_module("common.migrations.0029_instances_carriers")
     conn = db.get_conn()
     conn.execute("CREATE TABLE nodes (node_id TEXT PRIMARY KEY, doc TEXT NOT NULL)")
@@ -534,7 +536,7 @@ def test_migration_moves_nodes_into_instances():
         ("node_connections", "node-a", json.dumps([{"id": "x", "response_status": 202}]), "t", "t"))
     conn.commit()
 
-    mig.upgrade(conn, "sqlite")
+    mig.upgrade(conn, db.dialect())
     conn.commit()
 
     a = store.get(known["instance_id"])
@@ -548,7 +550,7 @@ def test_migration_moves_nodes_into_instances():
     assert rm.get_run_by_id(run_id)["instance_id"] == b["instance_id"]
     assert carrier.get_connections(a["instance_id"]) == [{"id": "x", "response_status": 202}]
     assert len(carrier.carriers(b["instance_id"])) == 1
-    assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'nodes'").fetchone() is None
+    assert not table_exists(conn, db.dialect(), "nodes")
 
 
 # ── Wake-up ──────────────────────────────────────────────────────────────────

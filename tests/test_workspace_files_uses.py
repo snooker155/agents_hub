@@ -203,6 +203,9 @@ def test_a_task_run_materializes_its_files_and_keeps_its_citations(monkeypatch, 
     monkeypatch.setenv("AGENT_LOG_FILE", str(tmp_path / "agent.log"))
     monkeypatch.setenv("AGENT_RUN_ID", "placeholder")
     monkeypatch.setenv("AGENT_WORKSPACE", "runws")
+    # In-process entrypoint: the direct transport on either database (on
+    # Postgres the default is the HTTP relay, which needs a backend).
+    monkeypatch.setenv("AGENT_RUN_STATE_TRANSPORT", "db")
     monkeypatch.delenv("AGENT_SESSION_ID", raising=False)
     monkeypatch.setattr(sys, "argv", ["agent_run.py", "planner", "plan it", "--workspace", "runws",
                                       "--run-id", "run-files", "--task-id", str(task.id)])

@@ -72,14 +72,15 @@ def record_usage(principal: Any, *, provider: str, model: str,
                 "INSERT INTO serving_usage (at, user_id, actor_kind, actor_name, key_id, "
                 "provider, model, prompt_tokens, completion_tokens, total_tokens, "
                 "duration_ms, stream, status, error, estimated, cost_usd) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
                 (_now(), actor["user_id"], actor["actor_kind"], actor["actor_name"],
                  actor["key_id"], str(provider), str(model), prompt, completion,
                  prompt + completion, max(0, int(duration_ms or 0)), 1 if stream else 0,
                  "error" if status == "error" else "ok",
                  (str(error)[:2000] if error else None), 1 if estimated else 0, cost),
             )
-            return getattr(cursor, "lastrowid", None) or None
+            row = cursor.fetchone()
+            return (row[0] if row else None) or None
     except Exception:  # noqa: BLE001 - accounting must not break the completion it describes
         log.warning("serving: could not record usage for %s/%s", provider, model, exc_info=True)
         return None
