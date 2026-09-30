@@ -51,6 +51,28 @@ Apart from the blocks, only **names and stats** are injected into the prompt.
 Values are fetched at runtime through tools, so a large pool does not crowd out
 the conversation.
 
+## Personal memory
+
+What the agents learn about the person they work with: one private pool per
+user and workspace, shared by every agent in that workspace that has it
+switched on (`memory/personal.py`). It is set per workspace, in two places:
+
+- **The workspace switch.** Workspace settings, "Personal memory". Off hides
+  and refuses the chat's "save formula" and locks the agents' switches.
+- **The agent switch.** The Memory tab of the agent page. The workspace's
+  main agent starts on, every other agent off, and a new main agent is
+  switched on when it takes over.
+
+An agent with a pool of its own uses both: its own pool stays the primary
+one, `recall` searches both, writes go to its own pool, and `remember` and
+`forget` take `personal=true` to write about the user into the personal
+pool. The build override is `personal_pool`; a pinned `memory_pool` (the
+Memory page, a deployment's task pools) still replaces both. The agent card,
+the agent's overview and the Memory page's agent list show the two pools
+together, and the overview's memory card says which case applies: on and
+remembering the user, on but replaced by the agent's own pool, off, or off
+for the whole workspace. Personal pools are visible to their owner only.
+
 ## Ranking
 
 `recall` and `search_memory` rank instead of returning whatever the scan hit

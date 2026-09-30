@@ -68,6 +68,13 @@
   border-color: var(--vp-c-brand-1);
 }
 
+/* Screenshots exist in a light and a dark set, and the image rule in
+   config.mjs emits both for every /screenshots/ picture. The theme picks
+   one; the other is not in the layout at all. */
+.shot-dark { display: none; }
+.dark .shot-light { display: none; }
+.dark .shot-dark { display: inline; }
+
 /* The ASCII trees in the corpus are load-bearing: never let them wrap. */
 .vp-doc div[class*='language-'] pre {
   overflow-x: auto;

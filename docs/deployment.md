@@ -9,10 +9,36 @@ land on the same shape — an `api` backend, `worker` processes, one shared
 database — because that shape is what [workers](workers.md) already defines;
 nothing here changes it, it just wires it up.
 
-Nothing on this page is needed for the default deployment: one `backend`
-replica, `ah up` or `docker compose up`, SQLite on disk. Read this only once
-you are actually running more than one backend, or backends and workers on
-different hosts.
+Nothing past the next section is needed for the default deployment: one
+`backend` replica, `ah up` or `docker compose up`, SQLite on disk. Read the
+rest only once you are actually running more than one backend, or backends
+and workers on different hosts.
+
+## The shapes
+
+Every way of running the service, smallest first. They are the same code
+and the same records; what changes is how many processes carry it and what
+they share.
+
+| Shape | Start it | Made of | For |
+| --- | --- | --- | --- |
+| **Single user, published images** | `deploy/quickstart/docker-compose.yml` ([installation](installation.md), Path A) | `ghcr.io/snooker155/agents-hub-backend` and `-frontend`, a named volume, agents as subprocesses | One person on one machine, nothing to clone or build |
+| **Compose from a checkout** | `docker compose up --build` (Path B) | The same two images built from source, the checkout bind mounted, the Docker socket for per-agent containers | One machine, with containers for agents, the browser service and the sandbox |
+| **Local install** | `./install.sh`, then `ah up` (Paths C and D) | A virtualenv and the Vite dev server | Working on the code |
+| **Compose with profiles** | `--profile postgres`, `--profile scale`, `--profile browser` | Postgres instead of SQLite ([scaling](scaling.md)), Redis for more than one `backend` replica, headless Chromium | One machine that has outgrown SQLite or one replica |
+| **Compose `ha` profile** | `docker compose --profile ha up --build` (below) | Postgres, Redis, MinIO, two `api` replicas, two `worker` replicas, one bind mount | A team on one machine, or a few machines sharing a mount |
+| **Helm chart** | `helm install agents-hub deploy/helm/agents-hub` (below) | `api`, `worker` and `frontend` Deployments against managed Postgres, Redis and S3 | A cluster |
+
+Two more services fit any shape from the second on: the [local models
+runtime](local-models.md) (`ghcr.io/snooker155/agents-hub-models`, or the
+`models` service in the compose file) and the [browser](browser.md)
+(`agents-hub-browser`). A [project deployment](project-deployments.md) is
+something else: a project's own app run from inside the hub.
+
+Every shape has one backend image and one frontend image; the release
+workflow publishes them for amd64 and arm64 in two flavours
+("Releases" below), and the Helm chart and the quickstart compose file
+pull them by tag. Only the checkout-based shapes build.
 
 ## The compose `ha` profile
 

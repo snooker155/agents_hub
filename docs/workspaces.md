@@ -31,6 +31,17 @@ assignment lives in the workspace's metadata rather than on the agent. That is
 what lets a single Main Agent serve several unrelated efforts without bleeding
 context between them.
 
+## The Settings tab
+
+The workspace page has a Settings tab drawn by the same sections as the
+Settings page, holding what is configured per workspace: agent execution,
+the tool policy, **web access** (the workspace's own allow and deny domain
+lists, `/api/workspaces/{name}/web-policy`, which replace the global ones
+for its runs), **personal memory** (the switch that lets the agents keep a
+private pool about the user, [memory](memory.md)), task assignment,
+secrets and the palette. Anything not set here falls through to the global
+[settings](settings.md).
+
 ## The default workspace
 
 `default` always exists and cannot be deleted. Agents marked

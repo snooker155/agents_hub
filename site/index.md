@@ -59,7 +59,7 @@ features:
 
 <div class="shot">
 
-[![The Agents page, a grid of agent cards with their tools, nodes, sessions and tasks](/screenshots/agents.png)](/screenshots/agents.png)
+[![The Agents page, a grid of agent cards with their tools, instances, services and sessions](/screenshots/agents.png)](/screenshots/agents.png)
 
 **Agents.** Every agent is a folder of layered markdown. Tools are granted by
 name, and each card shows what its agent holds and what it is currently running.
@@ -68,10 +68,11 @@ name, and each card shows what its agent holds and what it is currently running.
 
 <div class="shot">
 
-[![The Chat page, with the agent, flow and team switcher, the workspace and the model in use](/screenshots/chat.png)](/screenshots/chat.png)
+[![The Chat page, a recorded conversation with the demo analyst, the agent, flow and team switcher, and the Process, Artifacts and Code panels](/screenshots/chat.png)](/screenshots/chat.png)
 
 **Chat.** Talk to any agent, flow or team. The header carries the workspace, the
-project and the model the next message will actually use.
+project and the model the next message will use, and the panels beside the
+transcript hold the turn's trail, the files it produced and its code.
 
 </div>
 
@@ -95,19 +96,21 @@ state the nodes read and write, the left one runs it against a task.
 
 <div class="shot">
 
-[![A team page, with the roster of three agents and the shared message board they work](/screenshots/teams.png)](/screenshots/teams.png)
+[![The Views gallery, with a document, a markdown note, a table and a chart the demo agents built](/screenshots/views.png)](/screenshots/views.png)
 
-**Teams.** A roster over one shared board. Every member posts to it, so the
-board is both the work and the record of how it went.
+**Views.** What an agent answers with when text is not enough: charts, tables,
+documents, slides, graphs and 3D scenes, in a gallery, and edited further in
+Studio.
 
 </div>
 
 <div class="shot">
 
-[![A Playground scenario running, with agent thoughts, speak_to calls and the world state](/screenshots/playground.png)](/screenshots/playground.png)
+[![A Playground scenario, a two trader market, with its description, the environment's parameters and the world state](/screenshots/playground.png)](/screenshots/playground.png)
 
-**Playground.** Agents acting in a simulated world, tick by tick, with the
-thought behind each move, the action it took and the state that changed.
+**Playground.** Agents acting in a simulated world, tick by tick: an
+environment with parameters, characters, and a chronicle of every move, the
+thought behind it and the state that changed.
 
 </div>
 
@@ -158,20 +161,32 @@ dashboard running in your browser over recorded data, with no backend and nothin
 
 ## Install and run
 
+**With Docker, for one person.** Nothing to clone or build: the published
+images, two files in an empty folder, one command.
+
+```bash
+mkdir agents-hub && cd agents-hub
+curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
+docker compose up -d
+```
+
+Open `http://localhost:8080`, put a provider key in Settings, pick an agent in
+Chat and send something. `docker compose pull && docker compose up -d`
+upgrades; the state stays on a volume.
+
+**From source, for working on it.** A virtualenv, the `ah` command and the
+dashboard with hot reload:
+
 ```bash
 git clone https://github.com/snooker155/agents_hub.git
 cd agents_hub
 ./install.sh                    # venv, service, dashboard, the `ah` command, the shell hook
+ah up                           # API on :8000, dashboard on :5173 (in a new terminal)
 ```
 
-Put a provider key in the `.env` the installer created, then, in a new terminal:
-
-```bash
-ah up                           # API on :8000, dashboard on :5173
-```
-
-Open `http://localhost:5173`, pick an agent in Chat and send something. Or let an
-agent work on a repository you already have:
+Put a provider key in the `.env` the installer created, open
+`http://localhost:5173`, or let an agent work on a repository you already have:
 
 ```bash
 cd ~/code/myapp
@@ -179,10 +194,11 @@ ah workspace init               # registers this directory in place, nothing is 
 ah agent run swe_agent "fix the failing test"
 ```
 
-Docker instead of a local install: `docker compose up --build`, which publishes
-the dashboard on `:8080`. The long form of
-all three, including what to check when it will not start, is in
-[Installing and running the service](/guide/installation).
+`docker compose up --build` from the checkout is the third way, with
+containers for agents. Every path, what to check when it will not start, and
+the larger shapes (Postgres, several backends and workers, a Helm chart) are
+in [Installing and running the service](/guide/installation) and
+[Deploying](/guide/deployment).
 
 ## How the objects nest
 

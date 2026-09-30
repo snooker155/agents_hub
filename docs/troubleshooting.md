@@ -78,7 +78,22 @@ choice is made only on the [models](models.md) page.
 `AGENT_EXECUTION_MODE=docker` in `.env`; the `agents-hub/base` image built; and
 `/var/run/docker.sock` still mounted into the backend service in
 `docker-compose.yml`. Without the socket the backend has no daemon to talk to.
-See [containers](containers.md).
+See [containers](containers.md). The single-user quickstart
+(`deploy/quickstart/`, [installation](installation.md) Path A) mounts no
+socket on purpose: agents there run as subprocesses of the backend.
+
+**The quickstart backend restarts with `unable to open database file`.** The
+volume was not handed to the backend's user: `docker compose up -d` runs the
+`init` step again, and `docker compose logs init` says why it failed.
+
+**The quickstart backend fails reading `.env`.** Docker created a folder of
+that name because the file was missing at the first start. `docker compose
+down`, `rmdir .env`, save `env.example` as `.env`, start again.
+
+**Nothing embeds, RAG is off.** The image without the `-rag` suffix has no
+embedding stack. Pin `AGENTS_HUB_TAG=X.Y.Z-rag` (quickstart) or build with
+`WITH_RAG=true` (compose from a checkout), see [deployment](deployment.md),
+"Releases".
 
 ## The CLI
 
