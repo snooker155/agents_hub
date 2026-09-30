@@ -43,10 +43,21 @@ ah up                           # or run commands directly: ah agent list
 **Run tests:**
 
 ```bash
-python -m pytest tests/ -q      # backend + CLI tests
+pip install pytest pytest-xdist
+python -m pytest tests/ -q -n auto   # backend + CLI tests, one worker per core (about 2 minutes)
+python -m pytest tests/ -q           # the same in one process (about 8 minutes); this is what the Postgres job runs
 cd dashboard/frontend
-npx vitest run                  # frontend tests
+npx vitest run                       # frontend tests
 ```
+
+The suite is large (5600 tests) and safe to run in parallel: every test gets
+its own SQLite file and `tmp_path` from `tests/conftest.py`. The long tail is
+the tests that start real processes (git in a throwaway repository, MCP
+servers, a worker, `python -X importtime`); `--durations=20` shows them. If
+pytest is slow to even start, check which plugins your interpreter autoloads
+(`opik`, `langsmith` and friends from an unrelated environment add seconds to
+every run): `-p no:opik`, or `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, or a `.venv`
+of this project alone.
 
 **Run linters:**
 
@@ -298,7 +309,7 @@ Rules:
 - Subject line: imperative mood, capitalised first word, no period, under 70 characters
 - Body: explain why, not what. What is in the diff
 - One focused change per commit. Split large work across multiple commits
-- Test your changes: `pytest tests/ -q` and `cd dashboard/frontend && npx vitest run` both pass
+- Test your changes: `pytest tests/ -q -n auto` and `cd dashboard/frontend && npx vitest run` both pass
 - No force push to main. If a PR needs a rebase, the author does it on their branch
 
 Run `git gc` occasionally because the repository is large (currently `.git` is about 40MB).
