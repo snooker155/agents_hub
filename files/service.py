@@ -23,6 +23,17 @@ Two limits, both read live from ``.env`` like the other operator settings
 (``common.config.live_setting``): ``AGENTS_HUB_FILES_MAX_FILE_MB`` per file and
 ``AGENTS_HUB_FILES_MAX_WORKSPACE_MB`` for everything one workspace holds.
 
+A file an agent writes into the workspace folder with its filesystem tools
+(``write_file``, ``create_file``, ``apply_unified_diff``) is a workspace file
+too, without a copy: :func:`register_path` gives the file at
+``workspaces/<workspace>/<path>`` a record whose ``storage_key`` is that path,
+so the Files page lists what agents produce next to what people upload, and
+the same id keeps pointing at the file after the agent rewrites it (the
+record is updated in place). :func:`index_workspace` walks a whole workspace
+folder the same way, for files written before the registry existed or by a
+process that bypasses the tools (Claude Code, a shell), and tombstones the
+records of files that are gone.
+
 Deleting a file keeps its row as a tombstone (``deleted_at`` set) and removes
 the content, locally and in the object store. An old chat turn, a citation or
 an audit row can still say which file it was; nothing can read it any more.
@@ -39,20 +50,37 @@ import hashlib
 import json
 import logging
 import mimetypes
+import os
 import re
 import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from common import blobs, db
+from common.config import DEFAULT_IGNORE
 from common.paths import AGENTS_HUB_ROOT
 
 log = logging.getLogger(__name__)
 
 #: Top folder under the state root that holds every workspace's file content.
 FILES_DIR = "files"
+
+#: Top folder under the state root that holds the workspace folders, the
+#: agents' working directories (``common.paths.WORKSPACES_ROOT``). A record
+#: whose ``storage_key`` starts with it is the file in the folder itself.
+WORKSPACES_DIR = "workspaces"
+
+#: Folders of a workspace the registry never indexes: version control, caches
+#: and virtual environments (``DEFAULT_IGNORE``) plus build output. Hidden
+#: folders and files (a leading dot) are skipped too: the hub keeps its own
+#: bookkeeping there (``.logs``, ``.views``, ``.patch_backups``, ``.plans``).
+INDEX_SKIP_DIRS = frozenset(DEFAULT_IGNORE) | {"venv", "env", "dist", "build", "target"}
+
+#: Top folders of a workspace whose files come from somewhere other than an
+#: agent's tool call, and the source they are registered with.
+FOLDER_SOURCES = {"knowledge": "memory", "chat_uploads": "chat", "task_files": "task"}
 
 #: ``file_`` plus 16 hex characters, the same length as the other hub ids.
 FILE_ID_RE = re.compile(r"^file_[0-9a-f]{16}$")
@@ -398,13 +426,213 @@ def delete_file(file_id: str) -> bool:
                      (_now(), str(file_id)))
     key = str(row["storage_key"])
     blobs.delete(key)
-    try:
-        folder = (AGENTS_HUB_ROOT / key).parent
-        if folder.is_dir() and not any(folder.iterdir()):
-            folder.rmdir()
-    except OSError:
-        log.debug("files: could not remove the empty folder of %s", file_id, exc_info=True)
+    if key.startswith(f"{FILES_DIR}/"):
+        # A copied file has a folder of its own; a folder-backed file sits in
+        # the agent's working tree, whose empty folders are the agent's.
+        try:
+            folder = (AGENTS_HUB_ROOT / key).parent
+            if folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
+        except OSError:
+            log.debug("files: could not remove the empty folder of %s", file_id, exc_info=True)
     return True
+
+
+# ── files in the workspace folder ────────────────────────────────────────────
+
+def workspace_rel_path(rel_path: str) -> str:
+    """``rel_path`` as a clean workspace-relative posix path (no leading
+    slash, no ``.`` or ``..`` parts), or a refusal."""
+    raw = str(rel_path or "").replace("\\", "/").strip()
+    if not raw or raw.startswith("/") or (len(raw) > 1 and raw[1] == ":"):
+        raise FileError("a workspace path is relative to the workspace folder")
+    parts = [p for p in raw.split("/") if p not in ("", ".")]
+    if not parts or ".." in parts:
+        raise FileError("a workspace path stays inside the workspace folder")
+    return "/".join(parts)
+
+
+def is_indexable(rel_path: str) -> bool:
+    """Whether a workspace path is one the registry follows: nothing hidden,
+    nothing under a skipped folder (see ``INDEX_SKIP_DIRS``)."""
+    try:
+        parts = workspace_rel_path(rel_path).split("/")
+    except FileError:
+        return False
+    return not any(p.startswith(".") or p in INDEX_SKIP_DIRS for p in parts)
+
+
+def _path_key(ws: str, rel: str) -> str:
+    return f"{WORKSPACES_DIR}/{ws}/{rel}"
+
+
+def _fetch_by_key(ws: str, key: str) -> Optional[Any]:
+    return db.get_conn().execute(
+        "SELECT * FROM workspace_files WHERE workspace = ? AND storage_key = ? AND deleted_at IS NULL "
+        "ORDER BY created_at LIMIT 1",
+        (ws, key),
+    ).fetchone()
+
+
+def file_at_path(workspace: str, rel_path: str) -> Optional[Dict[str, Any]]:
+    """The live record of the workspace file at ``rel_path``, if registered."""
+    ws = _workspace_name(workspace)
+    row = _fetch_by_key(ws, _path_key(ws, workspace_rel_path(rel_path)))
+    return _row_to_record(row) if row else None
+
+
+def _register_path(ws: str, rel: str, *, source: str, created_by: Optional[str],
+                   meta: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], str]:
+    """:func:`register_path` plus what happened: ``added``, ``updated`` or
+    ``unchanged``."""
+    key = _path_key(ws, rel)
+    path = AGENTS_HUB_ROOT / key
+    if path.is_symlink() or not path.is_file():
+        raise FileError(f"'{rel}' is not a regular file of workspace '{ws}'")
+    stat = path.stat()
+    size = int(stat.st_size)
+    per_file = max_file_bytes()
+    if size > per_file:
+        raise FileTooLarge(
+            f"'{rel}' is {size} bytes; the limit is {per_file} bytes per file ({MAX_FILE_MB_ENV})")
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    sha = digest.hexdigest()
+    shown = display_name(rel.rsplit("/", 1)[-1])
+    mime = guess_mime(shown)
+    written_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+
+    row = _fetch_by_key(ws, key)
+    if row is not None:
+        record = _row_to_record(row)
+        merged = {**record["meta"], **(meta or {}), "path": rel}
+        if (record["sha256"] == sha and record["size"] == size and record["name"] == shown
+                and record["mime_type"] == mime and merged == record["meta"]):
+            return record, "unchanged"
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE workspace_files SET name = ?, mime_type = ?, size = ?, sha256 = ?, meta = ? "
+                "WHERE file_id = ?",
+                (shown, mime, size, sha, json.dumps(merged, ensure_ascii=False, default=str),
+                 record["file_id"]),
+            )
+        blobs.mirror(key)
+        return get_file(record["file_id"]) or record, "updated"
+
+    quota = max_workspace_bytes()
+    used = workspace_usage(ws)
+    if used + size > quota:
+        raise WorkspaceQuotaExceeded(
+            f"workspace '{ws}' holds {used} bytes of files; adding {size} would pass its "
+            f"limit of {quota} bytes ({MAX_WORKSPACE_MB_ENV})")
+    file_id = new_file_id()
+    values = (
+        file_id, ws, shown, mime, size, sha, key, str(source or "agent"),
+        (str(created_by) if created_by else None), written_at, None,
+        json.dumps({**(meta or {}), "path": rel}, ensure_ascii=False, default=str),
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            f"INSERT INTO workspace_files ({', '.join(_COLUMNS)}) "
+            f"VALUES ({', '.join('?' * len(_COLUMNS))})",
+            values,
+        )
+    blobs.mirror(key)
+    return get_file(file_id) or _row_to_record(dict(zip(_COLUMNS, values))), "added"
+
+
+def register_path(workspace: str, rel_path: str, *, source: str = "agent",
+                  created_by: Optional[str] = None,
+                  meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Make the file at ``<workspace folder>/rel_path`` a workspace file
+    without copying it: the record's content is the file in the folder.
+
+    Registering the path again after the file changed updates the record in
+    place (name, type, size, hash; ``meta`` merged in, ``meta.path`` always
+    the workspace-relative path), so the id a chat turn or a task already
+    holds keeps pointing at the file. ``created_at`` is when the file was
+    last written. Raises :class:`FileError` when the path leaves the
+    workspace or is not a regular file, and the two limit errors like
+    :func:`create_file`.
+    """
+    ws = _workspace_name(workspace)
+    rel = workspace_rel_path(rel_path)
+    record, _status = _register_path(ws, rel, source=source, created_by=created_by, meta=meta)
+    return record
+
+
+def unregister_path(workspace: str, rel_path: str) -> bool:
+    """Tombstone the record of a workspace file deleted from the folder. The
+    content is gone already, so only the row changes. False when the path
+    had no live record."""
+    ws = _workspace_name(workspace)
+    key = _path_key(ws, workspace_rel_path(rel_path))
+    row = _fetch_by_key(ws, key)
+    if row is None:
+        return False
+    with db.transaction() as conn:
+        conn.execute("UPDATE workspace_files SET deleted_at = ? WHERE file_id = ? AND deleted_at IS NULL",
+                     (_now(), str(row["file_id"])))
+    blobs.delete(key)
+    return True
+
+
+def _folder_source(rel: str) -> str:
+    return FOLDER_SOURCES.get(rel.split("/", 1)[0], "agent")
+
+
+def index_workspace(workspace: str, *, created_by: Optional[str] = None) -> Dict[str, Any]:
+    """Register every file of the workspace folder and tombstone the records
+    of folder files that are gone.
+
+    Walks ``workspaces/<workspace>`` skipping hidden entries and
+    ``INDEX_SKIP_DIRS``; a file under ``knowledge/`` gets source ``memory``,
+    under ``chat_uploads/`` ``chat``, under ``task_files/`` ``task``, anything
+    else ``agent`` (``FOLDER_SOURCES``). A file past the per-file limit or
+    the workspace quota is listed under ``skipped`` with the reason. Returns
+    ``{workspace, added, updated, unchanged, removed, skipped: [{path, reason}]}``.
+    """
+    ws = _workspace_name(workspace)
+    root = AGENTS_HUB_ROOT / WORKSPACES_DIR / ws
+    if not root.is_dir():
+        raise FileError(f"workspace '{ws}' has no folder")
+    summary: Dict[str, Any] = {"workspace": ws, "added": 0, "updated": 0, "unchanged": 0,
+                               "removed": 0, "skipped": []}
+    seen: set = set()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in INDEX_SKIP_DIRS)
+        for name in sorted(filenames):
+            if name.startswith(".") or name in INDEX_SKIP_DIRS:
+                continue
+            path = Path(dirpath) / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            try:
+                _record, status = _register_path(ws, rel, source=_folder_source(rel),
+                                                 created_by=created_by, meta=None)
+            except FileError as exc:
+                summary["skipped"].append({"path": rel, "reason": str(exc)})
+                continue
+            seen.add(_path_key(ws, rel))
+            summary[status] += 1
+    prefix = f"{WORKSPACES_DIR}/{ws}/"
+    rows = db.get_conn().execute(
+        "SELECT file_id, storage_key FROM workspace_files WHERE workspace = ? AND deleted_at IS NULL",
+        (ws,),
+    ).fetchall()
+    gone = [str(r["file_id"]) for r in rows
+            if str(r["storage_key"]).startswith(prefix) and str(r["storage_key"]) not in seen]
+    if gone:
+        now = _now()
+        with db.transaction() as conn:
+            for fid in gone:
+                conn.execute("UPDATE workspace_files SET deleted_at = ? WHERE file_id = ? AND deleted_at IS NULL",
+                             (now, fid))
+        summary["removed"] = len(gone)
+    return summary
 
 
 # ── uses that only a chat turn knows about ──────────────────────────────────
@@ -639,4 +867,6 @@ __all__ = [
     "find_duplicate", "workspace_usage", "limits", "max_file_bytes", "max_workspace_bytes",
     "record_use", "list_uses", "display_name", "disk_name", "guess_mime", "is_text", "is_pdf",
     "new_file_id", "FILE_ID_RE", "SOURCES",
+    "register_path", "unregister_path", "index_workspace", "file_at_path", "is_indexable",
+    "workspace_rel_path", "WORKSPACES_DIR", "INDEX_SKIP_DIRS", "FOLDER_SOURCES",
 ]

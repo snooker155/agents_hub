@@ -41,6 +41,7 @@ vi.mock('../../api/files', () => ({
   deleteWorkspaceFileObject: (...a) => deleteWorkspaceFileObject(...a),
   saveBlobAs: vi.fn(),
   formatBytes: (n) => `${n} B`,
+  indexWorkspaceFiles: vi.fn(() => ok({ workspace: 'acme', added: 0, updated: 0, unchanged: 0, removed: 0, skipped: [] })),
 }));
 
 vi.mock('../../components/workspace', () => ({
@@ -55,7 +56,15 @@ const show = (path = '/files') => render(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  try { localStorage.removeItem('files.view'); } catch { /* storage unavailable */ }
 });
+
+const IN_FOLDER = [
+  { ...REC, file_id: 'file_1111111111111111', name: 'plan.md', source: 'agent', size: 10,
+    meta: { path: 'proj/docs/plan.md' } },
+  { ...REC, file_id: 'file_2222222222222222', name: 'main.py', source: 'agent', size: 20,
+    meta: { path: 'proj/main.py' } },
+];
 
 describe('Files page', () => {
   it('lists the workspace files with their source and size', async () => {
@@ -113,5 +122,81 @@ describe('Files page', () => {
     fireEvent.click(screen.getByRole('button', { name: /Delete/ }));
     expect(deleteWorkspaceFileObject).not.toHaveBeenCalled();
     confirm.mockRestore();
+  });
+
+  it('shows folder-backed files as a tree with folders collapsed until opened', async () => {
+    listWorkspaceFiles.mockImplementationOnce(() => ok({ workspace: 'acme', files: [REC, ...IN_FOLDER],
+      usage_bytes: 2078, limits: {} }));
+    show();
+    await waitFor(() => expect(screen.getByText('handbook.md')).toBeInTheDocument());
+    expect(screen.getByTestId('files-tree')).toBeInTheDocument();
+    expect(screen.getByText('proj')).toBeInTheDocument();
+    expect(screen.getByText('2 files · 30 B')).toBeInTheDocument();
+    expect(screen.queryByText('main.py')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('proj'));
+    expect(screen.getByText('main.py')).toBeInTheDocument();
+    expect(screen.getByText('docs')).toBeInTheDocument();
+    expect(screen.queryByText('plan.md')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('docs'));
+    expect(screen.getByText('plan.md')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Collapse all'));
+    expect(screen.queryByText('main.py')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Expand all'));
+    expect(screen.getByText('plan.md')).toBeInTheDocument();
+  });
+
+  it('switches to the flat list and remembers the choice', async () => {
+    listWorkspaceFiles.mockImplementation(() => ok({ workspace: 'acme', files: IN_FOLDER, usage_bytes: 30, limits: {} }));
+    show();
+    await waitFor(() => expect(screen.getByText('proj')).toBeInTheDocument());
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByText('main.py')).toBeInTheDocument();
+    expect(screen.getByText('proj/docs/plan.md')).toBeInTheDocument();
+    expect(localStorage.getItem('files.view')).toBe('list');
+  });
+
+  it('opens the panel from a list row and the rendered file from the preview button', async () => {
+    localStorage.setItem('files.view', 'list');
+    show();
+    await waitFor(() => expect(screen.getByText('handbook.md')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('list-row'));
+    await waitFor(() => expect(screen.getByTestId('file-panel')).toBeInTheDocument());
+    expect(getWorkspaceFileRecord).toHaveBeenCalledWith(REC.file_id);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Preview' })[0]);
+    const modal = await screen.findByTestId('file-preview-modal');
+    await waitFor(() => expect(modal).toHaveTextContent('30 days a year'));
+    // Markdown is rendered, not shown as source.
+    expect(modal.querySelector('h1')).toHaveTextContent('Leave');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('file-preview-modal')).not.toBeInTheDocument());
+  });
+
+  it('opens the rendered file from a tree row without opening the panel', async () => {
+    show();
+    await waitFor(() => expect(screen.getByText('handbook.md')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await waitFor(() => expect(screen.getByTestId('file-preview-modal')).toHaveTextContent('30 days a year'));
+    expect(screen.queryByTestId('file-panel')).not.toBeInTheDocument();
+  });
+
+  it('shows a code file as a code block with its language and a copy button', async () => {
+    const PY = { ...REC, file_id: 'file_3333333333333333', name: 'main.py', mime_type: 'text/x-python', meta: { path: 'proj/main.py' } };
+    listWorkspaceFiles.mockImplementation(() => ok({ workspace: 'acme', files: [PY], usage_bytes: 20, limits: {} }));
+    getWorkspaceFileRecord.mockImplementation(() => ok(PY));
+    getWorkspaceFileText.mockImplementation(() => ok({ file_id: PY.file_id, name: PY.name, mime_type: PY.mime_type,
+      kind: 'text', text: 'print(1)', truncated: false }));
+    show();
+    await waitFor(() => expect(screen.getByText('proj')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('proj'));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    const modal = await screen.findByTestId('file-preview-modal');
+    await waitFor(() => expect(modal.querySelector('[data-testid="code-block"]')).toHaveTextContent('print(1)'));
+    expect(modal.querySelector('.hl-code-block__lang')).toHaveTextContent('python');
+    expect(modal.querySelector('.hl-code-block__action')).toBeInTheDocument();
   });
 });

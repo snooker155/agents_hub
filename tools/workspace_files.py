@@ -40,6 +40,32 @@ def _workspace() -> Optional[str]:
     return resolve_active_workspace()
 
 
+def agent_provenance() -> Dict[str, str]:
+    """Who is producing a file right now: ``agent_id``, ``run_id`` and
+    ``session_id`` of the running agent, each present only when known. Read
+    from the run's context variables first, then from the environment a
+    subprocess run is given. Never raises: provenance is a label, and a file
+    is saved without it."""
+    agent_id = None
+    run_id = None
+    session_id = None
+    try:
+        from common.agent_context import current_agent_id, current_session_id
+        agent_id = current_agent_id.get()
+        session_id = current_session_id.get()
+    except Exception:  # noqa: BLE001 - provenance is a label; the file is saved without it
+        agent_id = None
+    agent_id = agent_id or os.environ.get("AGENT_ID") or None
+    try:
+        from common.stream_sink import current_run_id
+        run_id = current_run_id()
+    except Exception:  # noqa: BLE001 - provenance is a label; the file is saved without it
+        run_id = None
+    run_id = run_id or os.environ.get("AGENT_RUN_ID") or None
+    return {k: str(v) for k, v in (("agent_id", agent_id), ("run_id", run_id),
+                                   ("session_id", session_id)) if v}
+
+
 def _brief(record: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "file_id": record["file_id"], "name": record["name"], "mime_type": record["mime_type"],
@@ -127,27 +153,10 @@ def save_workspace_file(name: str, content: str) -> str:
     if not workspace:
         return json_err("No workspace is active for this run.", code="no_workspace")
     from files import service
-    agent_id = None
-    run_id = None
-    session_id = None
-    try:
-        from common.agent_context import current_agent_id, current_session_id
-        agent_id = current_agent_id.get()
-        session_id = current_session_id.get()
-    except Exception:  # noqa: BLE001 - provenance is a label; the file is saved without it
-        agent_id = None
-    agent_id = agent_id or os.environ.get("AGENT_ID") or None
-    try:
-        from common.stream_sink import current_run_id
-        run_id = current_run_id()
-    except Exception:  # noqa: BLE001 - provenance is a label; the file is saved without it
-        run_id = None
-    run_id = run_id or os.environ.get("AGENT_RUN_ID") or None
-    meta = {k: v for k, v in (("agent_id", agent_id), ("run_id", run_id),
-                              ("session_id", session_id)) if v}
+    meta = agent_provenance()
     try:
         record = service.create_file(workspace, name, (content or "").encode("utf-8"),
-                                     source="agent", created_by=agent_id, meta=meta)
+                                     source="agent", created_by=meta.get("agent_id"), meta=meta)
     except service.FileError as exc:
         return json_err(str(exc), code="refused")
     from common.entity_sink import record_entity
@@ -159,4 +168,4 @@ def save_workspace_file(name: str, content: str) -> str:
 WORKSPACE_FILE_TOOLS = [list_workspace_files, read_workspace_file, save_workspace_file]
 
 __all__ = ["list_workspace_files", "read_workspace_file", "save_workspace_file",
-           "WORKSPACE_FILE_TOOLS"]
+           "agent_provenance", "WORKSPACE_FILE_TOOLS"]

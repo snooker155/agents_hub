@@ -8,9 +8,11 @@ run finds in its working directory. This is the Files API shape of the
 Anthropic and OpenAI platforms, with the file belonging to a workspace
 rather than to an account.
 
-The Files page (`/files`) lists the files of the selected workspace. Open a
-file there with `/files?file=<id>`: that is where a chat attachment, a
-citation or a "where used" link lands.
+The Files page (`/files`) lists the files of the selected workspace, as a
+tree by their paths in the workspace folder (folders closed until opened; a
+search opens every folder with a match) or as a flat table; the choice is
+remembered per browser. Open a file there with `/files?file=<id>`: that is
+where a chat attachment, a citation or a "where used" link lands.
 
 ## The object
 
@@ -40,6 +42,34 @@ Deleting a file removes its content, locally and in the object store, and
 keeps the row as a tombstone (`deleted_at`), so an old chat turn, a citation
 or an audit row can still name what it was. A deleted file cannot be read,
 attached or added again; uploading the same bytes creates a new file.
+
+## Files in the workspace folder
+
+The workspace folder (`workspaces/<workspace>/` under the state root) is the
+agents' working directory, and what they write there with `write_file`,
+`create_file` and `apply_unified_diff` is a workspace file too, without a
+copy: the tool registers the path (`files.service.register_path`) and the
+record's content is the file in the folder. Its source is `agent`, `meta`
+carries the workspace-relative `path` and the agent, run and session that
+wrote it, and `created_at` is when the file was last written. Rewriting the
+file updates the same record (size, hash, type), so an id a chat turn or a
+task already holds keeps pointing at the file; `delete_file` tombstones it.
+Deleting such a file on the Files page deletes it from the folder.
+
+Hidden entries (a leading dot, where the hub keeps `.logs`, `.views`,
+`.patch_backups`) and version control, cache, virtual environment and build
+folders (`INDEX_SKIP_DIRS`) are never registered.
+
+Files written before the registry followed the tools, or by a process outside
+them (Claude Code, Codex, a shell in a sandbox), are picked up by an index of
+the folder: **Sync from folder** on the Files page, `POST /api/files/index`
+or `ah files index [workspace|--all]`. The index registers every file the
+same way (a file under `knowledge/` gets source `memory`, under
+`chat_uploads/` `chat`, under `task_files/` `task`, the rest `agent`), leaves
+an unchanged file alone, updates a changed one in place and tombstones the
+records of folder files that are gone. A file past the per-file limit or the
+workspace quota is reported as skipped. The index needs the `editor` role in
+the workspace and leaves an audit row (`file.index`).
 
 ## Limits
 
@@ -100,6 +130,9 @@ named only.
   `agent`; the chat reply links it). The workspace is always the run's own.
   The readers grant `reads_private` like `read_file`; the writer grants
   nothing, like `write_file`. See [tools and capabilities](tools-and-capabilities.md).
+  The filesystem tools (`write_file`, `create_file`, `apply_unified_diff`,
+  `delete_file`) register what they write in the workspace folder as
+  workspace files, see "Files in the workspace folder" above.
 
 "Where used" (`GET /api/files/{id}/usage`) reads the pools, tasks and eval
 cases back from their own records, and the chat conversations from the
@@ -135,6 +168,7 @@ carry their citations too.
 | --- | --- |
 | `GET /api/files?workspace=&q=&source=&limit=` | the workspace's files, newest first, with `usage_bytes` and `limits` |
 | `POST /api/files?workspace=` | upload, multipart `file` (and optional `source`); `deduplicated: true` when the bytes were already stored |
+| `POST /api/files/index?workspace=` | register the files of the workspace folder and drop the records of gone ones; `{added, updated, unchanged, removed, skipped}` |
 | `GET /api/files/{id}` | the record |
 | `GET /api/files/{id}/text?max_chars=` | the text as agents see it (`kind`: text, pdf or binary) |
 | `GET /api/files/{id}/content` | the bytes, as a download |

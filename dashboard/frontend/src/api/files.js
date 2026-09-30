@@ -21,6 +21,12 @@ export const uploadWorkspaceFileObject = (workspace, file, { source, filename } 
   });
 };
 
+// Register the files of the workspace folder (what agents wrote before the
+// registry followed their tools, or what a shell wrote) and mark the records
+// of gone files deleted. { workspace, added, updated, unchanged, removed, skipped: [{path, reason}] }
+export const indexWorkspaceFiles = (workspace) =>
+  api.post('/files/index', null, { params: { workspace }, timeout: 300000 });
+
 export const getWorkspaceFileRecord = (fileId) => api.get(`/files/${encodeURIComponent(fileId)}`);
 
 // { file_id, name, mime_type, kind: 'text' | 'pdf' | 'binary', text, truncated }

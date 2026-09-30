@@ -10,8 +10,13 @@ Access follows the workspace the file belongs to, the same two checks every
 workspace-scoped route makes: reading needs the workspace to be visible to
 the caller (``common.access``), writing (upload, delete) needs the ``editor``
 role there (``identity.require_role``). A file id from another workspace is
-refused the same way a task id from one would be. Upload and delete leave an
-audit row (``file.upload``, ``file.delete``).
+refused the same way a task id from one would be. Upload, delete and a folder
+index leave an audit row (``file.upload``, ``file.delete``, ``file.index``).
+
+``POST /api/files/index`` registers every file of the workspace folder (what
+agents wrote with their filesystem tools before the registry followed them,
+or what a process outside the tools wrote) and tombstones the records of
+folder files that are gone; see ``files.service.index_workspace``.
 
 Content is served as a download (``Content-Disposition: attachment``) with
 ``X-Content-Type-Options: nosniff`` and a sandboxing CSP, and a type a browser
@@ -142,6 +147,29 @@ async def upload_file(
         _raise(exc)
     _audit(request, "file.upload", record, {"source": record["source"]})
     return {**record, "deduplicated": False}
+
+
+@router.post("/index")
+async def index_workspace_folder(request: Request, workspace: str = Query(...)):
+    """Register the files of the workspace folder as workspace files (source
+    by folder: ``knowledge/`` memory, ``chat_uploads/`` chat, ``task_files/``
+    task, the rest agent) and tombstone the records of folder files that no
+    longer exist. Returns ``{workspace, added, updated, unchanged, removed,
+    skipped: [{path, reason}]}``."""
+    ws = _workspace_or_400(workspace)
+    principal = _principal(request)
+    access.require_visible(principal, ws)
+    identity.require_role(principal, workspace=ws, role=WS_EDITOR)
+    created_by = getattr(principal, "id", None) or identity.current_user_id()
+    try:
+        summary = service.index_workspace(ws, created_by=created_by)
+    except service.FileError as exc:
+        _raise(exc)
+    audit.record("file.index", principal=principal, object_type="workspace", object_id=ws,
+                 workspace=ws, ip=identity.client_ip(request),
+                 details={k: summary[k] for k in ("added", "updated", "unchanged", "removed")}
+                 | {"skipped": len(summary["skipped"])})
+    return summary
 
 
 @router.get("/{file_id}")

@@ -13,6 +13,27 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Files agents write into the workspace folder are workspace files. The
+  filesystem tools (`write_file`, `create_file`, `apply_unified_diff`) register
+  the path they wrote (`files.service.register_path`): the record's content is
+  the file in the folder, its source is `agent`, `meta.path` is the path and
+  rewriting the file updates the same record. `delete_file` tombstones it.
+  "Sync from folder" on the Files page, `POST /api/files/index` and `ah files
+  index [workspace|--all]` register the rest of a folder (files from before
+  the registry, or written by Claude Code or a shell) with a source by folder
+  (`knowledge/` memory, `chat_uploads/` chat, `task_files/` task) and drop the
+  records of files that are gone. Hidden entries and version control, cache
+  and build folders are skipped. Audit row `file.index`.
+- The Files page shows the files as a tree by their workspace paths, folders
+  closed until opened, with a switch to the flat table that is remembered per
+  browser. A row opens the file's panel; the preview button opens the file
+  rendered (markdown, image, PDF, HTML, text) in a dialog; a code file is shown
+  as the chat shows code, with the language over it, Copy and highlighting.
+  The list and the panel take the height left on the screen and scroll on
+  their own, the panel a third of the width.
+
 ## [0.4.0] - 2026-09-30
 
 ### Added

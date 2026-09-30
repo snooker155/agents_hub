@@ -1403,6 +1403,7 @@ from cli.commands.mcp import mcp_app  # noqa: E402
 from cli.commands.user import user_app  # noqa: E402
 from cli.commands.api import api_command  # noqa: E402
 from cli.commands.costs import costs_app  # noqa: E402
+from cli.commands.files import files_app  # noqa: E402
 from cli.commands.support import support_bundle  # noqa: E402
 
 app.add_typer(agent_app, name="agent")
@@ -1418,6 +1419,7 @@ app.add_typer(eval_app, name="eval")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(user_app, name="user")
 app.add_typer(costs_app, name="costs")
+app.add_typer(files_app, name="files")
 app.command("support-bundle")(support_bundle)
 app.command("api")(api_command)
 
@@ -1427,7 +1429,7 @@ app.command("api")(api_command)
 # below: not a permission list, just a fast "have we already got this one".
 _KNOWN_TOP_LEVEL = {
     "agent", "task", "workspace", "project", "instance", "flow", "loop", "team",
-    "eval", "mcp", "user", "api", "server", "auth", "db", "secrets", "costs",
+    "eval", "mcp", "user", "api", "server", "auth", "db", "secrets", "files", "costs",
     "worker", "deployment", "up", "chat", "config", "shell-init", "shell-export",
 }
 

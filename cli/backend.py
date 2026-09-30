@@ -185,6 +185,13 @@ class DirectBackend:
             })
         return items
 
+    def index_workspace_files(self, name: str) -> dict:
+        from files import service as files_service
+        try:
+            return files_service.index_workspace(name)
+        except files_service.FileError as e:
+            raise BackendError(str(e))
+
     # The three workspace writes announce themselves the way their routes do.
     # The notification cannot live in the storage layer instead: almost every
     # request calls create_workspace_folder just to ensure the directory, so
@@ -585,6 +592,9 @@ class HttpBackend:
 
     def create_workspace(self, name):
         return self._request("POST", "/api/workspaces", json={"name": name})
+
+    def index_workspace_files(self, name):
+        return self._request("POST", "/api/files/index", params={"workspace": name}, timeout=300)
 
     def attach_workspace(self, path, name=None):
         body = {"path": path}
