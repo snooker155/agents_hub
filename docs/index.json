@@ -190,6 +190,9 @@
       "surface": "Deployments",
       "related": [
         "costs",
+        "environments",
+        "project-deployments",
+        "scheduling",
         "tasks"
       ],
       "headings": [
@@ -601,6 +604,7 @@
       "surface": "Projects",
       "related": [
         "agents",
+        "project-deployments",
         "tasks",
         "workspaces"
       ],
@@ -608,6 +612,31 @@
         "What a project adds over a bare workspace",
         "The usual sequence",
         "Preview",
+        "Deploy",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "project-deployments",
+      "title": "Project deployments",
+      "summary": "A project's frontend and backend run from inside the hub: deployed, watched, restarted, shown in the dashboard, shared through /apps/<slug>/ and opened by the agent's own browser.",
+      "surface": "Projects",
+      "related": [
+        "projects",
+        "containers",
+        "browser",
+        "environments",
+        "deployments",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "What a deployment is",
+        "Detecting the services",
+        "Deploying and watching",
+        "Seeing the app",
+        "The agent's tools",
+        "API",
+        "Settings",
         "Gotchas"
       ]
     },

@@ -18,6 +18,15 @@ Two checks, in the order ``tools.web.validate_url`` runs them:
    to must be public (no loopback, RFC1918, link-local, metadata, multicast,
    reserved or unspecified addresses).
 
+One exemption, and only one: the hub's own application pages. A project
+deployment (docs/project-deployments.md) is served by the hub itself under
+``/apps/<slug>/`` and ``/preview/<ticket>/``, on an origin that is by
+construction loopback or private from where this service sits. The hub hands
+those origins over as ``internal_origins`` (common/hub_urls.py), and a URL on
+one of them whose path starts with one of ``internal_paths`` is allowed
+without the DNS check; every other path on the same origin (the hub's API,
+its dashboard) stays blocked. The deny list still applies to it.
+
 The resolver is the hub's own ``common/ssrf.py``. The image build copies that
 file in as ``hub_ssrf.py`` (see the Dockerfile), so the service runs the
 identical code rather than a re-typed copy that could drift. When this module
@@ -58,20 +67,35 @@ def _clean(items: Optional[Iterable[Any]]) -> Tuple[str, ...]:
     return tuple(str(i).strip().lower() for i in (items or ()) if str(i).strip())
 
 
+def _origin(url: str) -> str:
+    parts = urlparse((url or "").strip())
+    if not parts.scheme or not parts.hostname:
+        return ""
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme.lower()}://{parts.hostname.lower()}{port}"
+
+
 @dataclass(frozen=True)
 class Policy:
     """The domain policy one browser session enforces."""
     deny_domains: Tuple[str, ...] = field(default_factory=tuple)
     allow_domains: Tuple[str, ...] = field(default_factory=tuple)
     allowlist_enabled: bool = False
+    #: The hub's own origins and the app paths on them (see the module docstring).
+    internal_origins: Tuple[str, ...] = field(default_factory=tuple)
+    internal_paths: Tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_dict(cls, data: Optional[Mapping[str, Any]]) -> "Policy":
         data = data or {}
+        origins = tuple(o for o in (_origin(str(x)) for x in (data.get("internal_origins") or ())) if o)
+        paths = tuple(str(p) for p in (data.get("internal_paths") or ()) if str(p).startswith("/"))
         return cls(
             deny_domains=_clean(data.get("deny_domains")),
             allow_domains=_clean(data.get("allow_domains")),
             allowlist_enabled=bool(data.get("allowlist_enabled")),
+            internal_origins=origins,
+            internal_paths=paths,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -79,7 +103,19 @@ class Policy:
             "deny_domains": list(self.deny_domains),
             "allow_domains": list(self.allow_domains),
             "allowlist_enabled": self.allowlist_enabled,
+            "internal_origins": list(self.internal_origins),
+            "internal_paths": list(self.internal_paths),
         }
+
+    def is_internal(self, url: str) -> bool:
+        """One of the hub's own app pages: allowed without the DNS check."""
+        if not self.internal_origins or not self.internal_paths:
+            return False
+        origin = _origin(url)
+        if not origin or origin not in self.internal_origins:
+            return False
+        path = urlparse(url.strip()).path or "/"
+        return any(path.startswith(p) for p in self.internal_paths)
 
 
 def check_domain(url: str, policy: Policy) -> Tuple[bool, str]:
@@ -109,6 +145,12 @@ def check_url(url: str, policy: Policy, *, resolve: bool = True) -> Tuple[bool, 
         return False, "malformed URL"
     if parsed.scheme not in NETWORK_SCHEMES:
         return False, f"scheme {parsed.scheme!r} is not allowed"
+    host = (parsed.hostname or "").lower()
+    for pattern in policy.deny_domains:
+        if host_matches(host, pattern):
+            return False, f"host {host!r} is on the deny list"
+    if policy.is_internal(url):
+        return True, ""
     ok, reason = check_domain(url, policy)
     if not ok:
         return False, reason

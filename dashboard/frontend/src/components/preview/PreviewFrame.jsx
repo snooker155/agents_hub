@@ -25,7 +25,8 @@ import { useI18n } from '../../i18n';
 // (POST /api/preview/tickets/renew) and swap the src, so the page reloads
 // at most about once per ticket lifetime.
 //
-// `target` is {kind: 'container', name} or {kind: 'project', project_id}.
+// `target` is {kind: 'container', name}, {kind: 'project', project_id} or
+// {kind: 'deployment', deployment_id, service?} (docs/project-deployments.md).
 export const RENEW_EVERY_MS = 4 * 60 * 1000;
 const RENEW_MARGIN_MS = 60 * 1000;
 
@@ -66,7 +67,7 @@ export default function PreviewFrame({ target, height = 480 }) {
     }
   }, [target, t]);
 
-  const targetKey = `${target?.kind || ''}:${target?.name || target?.project_id || ''}`;
+  const targetKey = `${target?.kind || ''}:${target?.name || target?.project_id || target?.deployment_id || ''}:${target?.service || ''}`;
 
   useEffect(() => {
     reMintedRef.current = false;

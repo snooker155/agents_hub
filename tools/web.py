@@ -171,6 +171,28 @@ def validate_url(url: str) -> Tuple[bool, str]:
         return False, "malformed URL"
     if parsed.scheme not in ("http", "https"):
         return False, _BLOCKED_SCHEMES_MSG
+    # The hub's own application pages (a project deployment under /apps/ or a
+    # preview under /preview/, common/hub_urls.py) are served from an address
+    # the private-network block would refuse and the environment fence would
+    # not list; they are the hub itself, so they pass both. The deny list is
+    # still honoured, and nothing else on the hub's origin is exempt.
+    try:
+        from common.hub_urls import is_internal_url
+        internal = is_internal_url(url)
+    except Exception:  # noqa: BLE001 - never lets a broken lookup widen or break the check
+        internal = False
+    if internal:
+        host = (parsed.hostname or "").lower()
+        ws = _workspace_web_settings()
+        try:
+            from common.config import settings
+            deny = tuple(ws.get("web_deny_domains") or ()) or _live_list("WEB_DENY_DOMAINS", settings.web_deny_domains)
+        except Exception:  # noqa: BLE001 - settings unavailable: no deny list to apply
+            deny = ()
+        for pattern in deny:
+            if _host_matches(host, str(pattern)):
+                return False, f"host {host!r} is on the deny list"
+        return True, ""
     ok, reason = check_domain_policy(url)
     if not ok:
         return False, reason

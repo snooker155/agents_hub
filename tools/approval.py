@@ -70,6 +70,10 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     # Sends workspace content outside the system: a push, plus a PR/MR opened
     # from it. Not reversible from in here once GitHub/GitLab has it.
     "git_publish",
+    # Runs the project's own install and start commands (on the hub's host in
+    # local mode), and stops what is running (tools/project_deploy.py).
+    "deploy_project",
+    "stop_project_deployment",
     # Acts on a live website: a click can submit a form, buy, post or delete,
     # and typed text leaves the system. Opening and reading pages stay free.
     "browser_act",

@@ -453,6 +453,13 @@ def _git_publish_specs() -> List[ToolSpec]:
     return [spec_from_tool(t, category="project_management") for t in GIT_PUBLISH_TOOLS]
 
 
+def _project_deploy_specs() -> List[ToolSpec]:
+    # A project's deployment is a project action like its repo actions, so
+    # these sit under project_management next to git_publish.
+    from tools.project_deploy import PROJECT_DEPLOY_TOOLS
+    return [spec_from_tool(t, category="project_management") for t in PROJECT_DEPLOY_TOOLS]
+
+
 def _visualization_specs() -> List[ToolSpec]:
     from tools.views import create_view_tools, VIEW_MUTATION_TOOLS
     from tools.graph_builder import GRAPH_BUILDER_TOOLS
@@ -527,6 +534,7 @@ _CATALOG_BUILDERS: List[Callable[[], List[ToolSpec]]] = [
     _project_management_specs,
     _entity_run_specs,
     _git_publish_specs,
+    _project_deploy_specs,
     _visualization_specs,
     _web_specs,
     _browser_specs,

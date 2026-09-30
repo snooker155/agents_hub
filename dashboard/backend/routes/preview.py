@@ -57,9 +57,11 @@ _projects = ProjectStore(path=PROJECTS_FILE)
 # ── minting ──────────────────────────────────────────────────────────────────
 
 class PreviewTicketRequest(BaseModel):
-    kind: Literal["container", "project"]
+    kind: Literal["container", "project", "deployment"]
     name: Optional[str] = None
     project_id: Optional[str] = None
+    deployment_id: Optional[str] = None
+    service: Optional[str] = None
 
 
 def _container_target(name: str) -> Optional[Tuple[str, Optional[str]]]:
@@ -109,11 +111,28 @@ def _project_target(project_id: str) -> Optional[Tuple[str, Optional[str]]]:
     return url, project.workspace
 
 
+def _deployment_target(target_id: str) -> Optional[Tuple[str, Optional[str]]]:
+    """``(service_url, workspace)`` for a running service of a project
+    deployment (deployments/service.py). ``target_id`` is the deployment id,
+    optionally ``<id>/<service>``; without a service the primary one."""
+    from deployments import service as deployments, store as dstore
+    dep_id, _, service_name = target_id.partition("/")
+    dep = dstore.get(dep_id)
+    if dep is None:
+        return None
+    url = deployments.target_url(dep, service_name or None)
+    if not url:
+        return None
+    return url, dep.workspace
+
+
 def _resolve_target(kind: str, target_id: str) -> Optional[Tuple[str, Optional[str]]]:
     if kind == "container":
         return _container_target(target_id)
     if kind == "project":
         return _project_target(target_id)
+    if kind == "deployment":
+        return _deployment_target(target_id)
     return None
 
 
@@ -141,6 +160,17 @@ async def create_preview_ticket(payload: PreviewTicketRequest, request: Request)
                 status_code=404,
                 detail=f"container '{name}' is not running or exposes no http_url")
         target_id = name
+    elif payload.kind == "deployment":
+        dep_id = (payload.deployment_id or "").strip()
+        if not dep_id:
+            raise HTTPException(status_code=400,
+                               detail="deployment_id is required for a deployment preview")
+        target_id = f"{dep_id}/{payload.service.strip()}" if payload.service else dep_id
+        resolved = _deployment_target(target_id)
+        if resolved is None:
+            raise HTTPException(
+                status_code=404,
+                detail="the deployment is not running or has no such service")
     else:
         project_id = (payload.project_id or "").strip()
         if not project_id:
@@ -169,9 +199,11 @@ def _minted(kind: str, target_id: str, principal) -> dict:
 
 class PreviewRenewRequest(BaseModel):
     ticket: Optional[str] = None
-    kind: Optional[Literal["container", "project"]] = None
+    kind: Optional[Literal["container", "project", "deployment"]] = None
     name: Optional[str] = None
     project_id: Optional[str] = None
+    deployment_id: Optional[str] = None
+    service: Optional[str] = None
 
 
 @router.post("/tickets/renew")
@@ -195,7 +227,14 @@ async def renew_preview_ticket(payload: PreviewRenewRequest, request: Request):
         kind, target_id = current["kind"], current["id"]
     elif payload.kind:
         kind = payload.kind
-        target_id = ((payload.name if kind == "container" else payload.project_id) or "").strip()
+        if kind == "container":
+            target_id = (payload.name or "").strip()
+        elif kind == "deployment":
+            target_id = (payload.deployment_id or "").strip()
+            if target_id and payload.service:
+                target_id = f"{target_id}/{payload.service.strip()}"
+        else:
+            target_id = (payload.project_id or "").strip()
         if not target_id:
             raise HTTPException(status_code=400, detail="name or project_id is required")
     else:
@@ -280,61 +319,122 @@ def _upstream_url(base: str, path: str, query: str) -> str:
     return url
 
 
-def _rewrite_location(location: str, *, requested_url: str, base: str, ticket: str) -> str:
-    """Keep a same-origin redirect under ``/preview/<ticket>/``; a Location
-    naming another origin is passed through unchanged, and the browser simply
-    leaves the frame (the sandbox has no allow-same-origin either way)."""
+def _rewrite_location(location: str, *, requested_url: str, base: str, ticket: str = "",
+                      prefix: Optional[str] = None) -> str:
+    """Keep a same-origin redirect under the proxy prefix (``/preview/<ticket>/``,
+    or ``/apps/<slug>/`` for a published deployment); a Location naming
+    another origin is passed through unchanged, and the browser simply leaves
+    the frame (the sandbox has no allow-same-origin either way)."""
+    prefix = prefix if prefix is not None else f"/preview/{ticket}/"
     absolute = urljoin(requested_url, location)
     loc = urlsplit(absolute)
     origin = urlsplit(base)
     if (loc.scheme, loc.hostname, loc.port) != (origin.scheme, origin.hostname, origin.port):
         return location
     rest = loc.path.lstrip("/")
-    out = f"/preview/{ticket}/{rest}"
+    out = f"{prefix}{rest}"
     if loc.query:
         out = f"{out}?{loc.query}"
     return out
 
 
-def _response_headers(upstream_headers, *, ticket: str, base: str,
-                      requested_url: str) -> Dict[str, str]:
+def _response_headers(upstream_headers, *, ticket: str = "", base: str,
+                      requested_url: str, prefix: Optional[str] = None) -> Dict[str, str]:
+    prefix = prefix if prefix is not None else f"/preview/{ticket}/"
     out: Dict[str, str] = {}
     for key, value in upstream_headers.items():
         lower = key.lower()
         if lower in _HOP_BY_HOP_HEADERS or lower in _UPSTREAM_DROP_HEADERS:
             continue
         if lower == "location":
-            value = _rewrite_location(value, requested_url=requested_url, base=base, ticket=ticket)
+            value = _rewrite_location(value, requested_url=requested_url, base=base, prefix=prefix)
         out[key] = value
     out.update(_ADDED_RESPONSE_HEADERS)
     return out
 
 
-def _rewrite_html(html: bytes, ticket: str) -> bytes:
-    """Inject ``<base href="/preview/<ticket>/">`` when the document has none,
-    and rewrite ``href="/``, ``src="/`` and ``action="/`` to the ticket
-    prefix so absolute-path URLs still resolve under the proxy. A plain regex,
-    not a parser, and never applied inside a ``<script>`` block: known
-    limitation, an absolute-path URL built at runtime by inline or external
-    JavaScript is not caught (see docs/containers.md, "Preview through the
-    hub").
+def _rewrite_html_prefix(html: bytes, prefix: str) -> bytes:
+    """Inject ``<base href="<prefix>">`` when the document has none, and
+    rewrite ``href="/``, ``src="/`` and ``action="/`` to the prefix so
+    absolute-path URLs still resolve under the proxy. A plain regex, not a
+    parser, and never applied inside a ``<script>`` block: known limitation,
+    an absolute-path URL built at runtime by inline or external JavaScript is
+    not caught (see docs/containers.md, "Preview through the hub"; a deployed
+    app can read ``AGENTS_HUB_PUBLIC_PATH`` and build its URLs under it).
     """
-    prefix = f'="/preview/{ticket}/'.encode("ascii")
+    attr_prefix = f'="{prefix}'.encode("ascii")
     parts = _SCRIPT_RE.split(html)
     rewritten = []
     for i, part in enumerate(parts):
         if i % 2 == 1:
             rewritten.append(part)  # a captured <script>...</script> block: untouched
         else:
-            rewritten.append(_ATTR_RE.sub(lambda m: m.group(1) + prefix, part))
+            rewritten.append(_ATTR_RE.sub(lambda m: m.group(1) + attr_prefix, part))
     out = b"".join(rewritten)
     if not _BASE_RE.search(out):
-        base_tag = f'<base href="/preview/{ticket}/">'.encode("ascii")
+        base_tag = f'<base href="{prefix}">'.encode("ascii")
         if _HEAD_RE.search(out):
             out = _HEAD_RE.sub(lambda m: m.group(0) + base_tag, out, count=1)
         else:
             out = base_tag + out
     return out
+
+
+def _rewrite_html(html: bytes, ticket: str) -> bytes:
+    return _rewrite_html_prefix(html, f"/preview/{ticket}/")
+
+
+async def proxy_to(raw_base: str, path: str, request: Request, *, prefix: str,
+                   extra_headers: Optional[Dict[str, str]] = None) -> Response:
+    """Forward ``request`` to ``raw_base``/``path`` and re-serve the answer
+    under ``prefix``: the one proxy both ``/preview/<ticket>/`` and
+    ``/apps/<slug>/`` (routes/project_deployments.py) are made of."""
+    try:
+        base, _host, pinned_ip = _validate_and_resolve(raw_base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    upstream_url = _upstream_url(base, path, request.url.query)
+    body = await request.body()
+    fwd_headers = _forward_request_headers(request.headers)
+
+    client = _client_factory(pinned_ip)
+    try:
+        upstream_request = client.build_request(
+            request.method, upstream_url, headers=fwd_headers, content=body or None,
+        )
+        resp = await client.send(upstream_request, stream=True)
+    except httpx.ConnectError:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Cannot reach the previewed target")
+    except httpx.TimeoutException:
+        await client.aclose()
+        raise HTTPException(status_code=504, detail="The previewed target timed out")
+
+    content_type = resp.headers.get("content-type", "")
+    is_html = content_type.split(";")[0].strip().lower() == "text/html"
+    headers = _response_headers(resp.headers, base=base, requested_url=upstream_url, prefix=prefix)
+    if extra_headers:
+        headers.update(extra_headers)
+
+    if is_html:
+        content = await resp.aread()
+        await resp.aclose()
+        await client.aclose()
+        content = _rewrite_html_prefix(content, prefix)
+        return Response(content=content, status_code=resp.status_code, headers=headers,
+                        media_type="text/html")
+
+    async def _stream():
+        try:
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(_stream(), status_code=resp.status_code, headers=headers,
+                             media_type=content_type or None)
 
 
 @public_router.api_route("/{ticket}", methods=["GET", "HEAD"])
@@ -362,56 +462,14 @@ async def preview_proxy(ticket: str, path: str, request: Request):
         return HTMLResponse(_EXPIRED_HTML, status_code=403)
     raw_base, _workspace = resolved
 
-    try:
-        base, _host, pinned_ip = _validate_and_resolve(raw_base)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    upstream_url = _upstream_url(base, path, request.url.query)
-    body = await request.body()
-    fwd_headers = _forward_request_headers(request.headers)
-
-    client = _client_factory(pinned_ip)
-    try:
-        upstream_request = client.build_request(
-            request.method, upstream_url, headers=fwd_headers, content=body or None,
-        )
-        resp = await client.send(upstream_request, stream=True)
-    except httpx.ConnectError:
-        await client.aclose()
-        raise HTTPException(status_code=502, detail="Cannot reach the previewed target")
-    except httpx.TimeoutException:
-        await client.aclose()
-        raise HTTPException(status_code=504, detail="The previewed target timed out")
-
-    content_type = resp.headers.get("content-type", "")
-    is_html = content_type.split(";")[0].strip().lower() == "text/html"
-    headers = _response_headers(resp.headers, ticket=ticket, base=base, requested_url=upstream_url)
     # Past half its life, the ticket this request came in on is due for a
     # successor: hand one back for a client that can read response headers
     # (the dashboard's iframe cannot, it renews through /tickets/renew).
+    extra: Dict[str, str] = {}
     fresh = preview_tickets.renew(ticket)
     if fresh:
-        headers["X-Preview-Ticket"] = fresh
-
-    if is_html:
-        content = await resp.aread()
-        await resp.aclose()
-        await client.aclose()
-        content = _rewrite_html(content, ticket)
-        return Response(content=content, status_code=resp.status_code, headers=headers,
-                        media_type="text/html")
-
-    async def _stream():
-        try:
-            async for chunk in resp.aiter_bytes():
-                yield chunk
-        finally:
-            await resp.aclose()
-            await client.aclose()
-
-    return StreamingResponse(_stream(), status_code=resp.status_code, headers=headers,
-                             media_type=content_type or None)
+        extra["X-Preview-Ticket"] = fresh
+    return await proxy_to(raw_base, path, request, prefix=f"/preview/{ticket}/", extra_headers=extra)
 
 
-__all__ = ["router", "public_router"]
+__all__ = ["router", "public_router", "proxy_to"]

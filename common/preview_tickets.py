@@ -71,7 +71,7 @@ DEFAULT_TTL_SECONDS = 600
 #: opening the stream it is for.
 AUTH_TTL_SECONDS = 60
 
-_PREVIEW_KINDS = ("container", "project")
+_PREVIEW_KINDS = ("container", "project", "deployment")
 _AUTH_KIND = "auth"
 
 _SECRET_FILE = AGENTS_HUB_ROOT / "preview_secret"
@@ -194,8 +194,8 @@ def mint(target: Dict[str, Any], *, principal_id: str,
          ttl_seconds: int = DEFAULT_TTL_SECONDS) -> str:
     """Mint a signed, short-lived ticket for one preview target.
 
-    ``target`` is ``{"kind": "container" | "project", "id": <name or project
-    id>}``. The proxy resolves that id to an actual URL again on every
+    ``target`` is ``{"kind": "container" | "project" | "deployment", "id":
+    <name, project id, or deployment id[/service]>}``. The proxy resolves that id to an actual URL again on every
     request; nothing about the current URL is baked into the ticket.
     """
     ttl = max(1, int(ttl_seconds))

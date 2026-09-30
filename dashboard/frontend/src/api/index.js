@@ -933,6 +933,26 @@ export const publishProjectBranch = (id, data) => api.post(`/projects/${id}/git/
 export const getProjectSwaggerSpec = (id, baseUrl) => api.get(`/projects/${id}/swagger-spec`, { params: baseUrl ? { base_url: baseUrl } : {} });
 export const getProjectSpecFromCode = (id) => api.get(`/projects/${id}/spec-from-code`);
 export const proxyProjectApiRequest = (id, data) => api.post(`/projects/${id}/api-request`, data);
+// Project deployments (docs/project-deployments.md): run the project's
+// frontend and backend from inside the hub, watch them, share the link.
+export const getProjectDeployment = (id, refresh = true) =>
+  api.get(`/projects/${id}/deployment`, { params: { refresh } });
+export const updateProjectDeployment = (id, data) => api.put(`/projects/${id}/deployment`, data);
+export const detectProjectDeployment = (id) => api.post(`/projects/${id}/deployment/detect`);
+export const deployProject = (id, build = true) =>
+  api.post(`/projects/${id}/deployment/deploy`, null, { params: { build } });
+export const restartProjectDeployment = (id) => api.post(`/projects/${id}/deployment/restart`);
+export const stopProjectDeployment = (id) => api.post(`/projects/${id}/deployment/stop`);
+export const removeProjectDeployment = (id) => api.delete(`/projects/${id}/deployment`);
+export const getProjectDeploymentLogs = (id, service, tail = 200) =>
+  api.get(`/projects/${id}/deployment/logs`, { params: { ...(service ? { service } : {}), tail } });
+export const getProjectDeploymentEvents = (id, limit = 100) =>
+  api.get(`/projects/${id}/deployment/events`, { params: { limit } });
+export const setProjectDeploymentVisibility = (id, visibility) =>
+  api.put(`/projects/${id}/deployment/visibility`, { visibility });
+export const resetProjectDeploymentLink = (id) => api.post(`/projects/${id}/deployment/link/reset`);
+export const listDeployedApps = (workspace) =>
+  api.get('/deployments/apps', { params: workspace ? { workspace } : {} });
 // Rich views (charts, tables, diagrams, …) produced by agents.
 export const listViews = (params = {}) => api.get('/views', { params });
 export const getView = (viewId) => api.get(`/views/${viewId}`);

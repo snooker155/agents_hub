@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 
 NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "run_shell", "run_code", "browser_act", "git_publish", "git_commit", "git_push",
+    "deploy_project", "stop_project_deployment",
     "write_file", "delete_file", "apply_unified_diff", "create_file", "move_file",
     "create_task", "add_subtask", "update_task", "set_task_dependencies",
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow",
@@ -222,6 +223,16 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # Reading issues/PRs with the same token (connectors/git/providers.py)
     # grants nothing: this is the one direction that moves bytes outward.
     "git_publish": frozenset({CAN_EXFILTRATE}),
+
+    # ── project deployments (tools/project_deploy.py) ────────────────────────
+    # Every answer carries the deployment's share key (in browser_url) and the
+    # services' commands and variables, operator-authored private content.
+    # The logs are whatever the deployed app printed, which includes the
+    # request lines of strangers who opened its share link.
+    "deploy_project": frozenset({READS_PRIVATE}),
+    "project_deployment_status": frozenset({READS_PRIVATE}),
+    "stop_project_deployment": frozenset({READS_PRIVATE}),
+    "project_deployment_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
 
     # ── agent and job reads ──────────────────────────────────────────────────
     # get_agent_tool returns instructions.md, capabilities.md and usage.md in
@@ -894,6 +905,8 @@ SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
     "git_publish", "git_push", "run_shell",
     # Arbitrary code with the host's network unless container isolated.
     "run_code",
+    # Runs a project's own install and start commands (tools/project_deploy.py).
+    "deploy_project",
     # Every tool in the grant table that can send data outside.
     "fetch_url", "browser_open", "browser_read", "browser_act", "browser_screenshot",
     "notify_user", "schedule_notification", "view_serve", "schedule_management",

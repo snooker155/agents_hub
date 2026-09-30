@@ -1,4 +1,5 @@
 export default {
+  openSettings: 'In den Einstellungen einrichten',
   title: 'Browser',
   description: 'Ein echter Browser auf dem Browser-Dienst des Hubs. Sehen Sie, auf welcher Seite ein Agent ist, übernehmen Sie die Steuerung oder surfen Sie selbst unter der Domain-Richtlinie eines Arbeitsbereichs und übergeben Sie die Seite an einen Agenten.',
   notConfigured: 'Der Browser-Dienst ist nicht eingerichtet, daher gibt es hier noch nichts zu sehen. Setzen Sie AGENTS_HUB_BROWSER_URL und AGENTS_HUB_BROWSER_TOKEN und starten Sie den Browser-Container.',

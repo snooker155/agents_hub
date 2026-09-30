@@ -17,6 +17,7 @@ import {
   ProvidersSection, LocalServersSection, ExecutionSection, RagSection, ObservabilitySection, LoggingSection, WebSearchSection,
 } from '../components/settings/WorkspaceSettingsSections';
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
+import BrowserServiceSection from '../components/settings/BrowserServiceSection';
 import PageLoader from '../components/PageLoader';
 const api = axios.create({ baseURL: 'http://localhost:8000' });
 
@@ -49,6 +50,7 @@ const GROUPS = [
     items: [
       { id: 'execution',     key: 'execution',     icon: Wrench,     workspaceScoped: true },
       { id: 'webSearch',     key: 'webSearch',     icon: Globe },
+      { id: 'browser',       key: 'browser',       icon: MonitorSmartphone },
       { id: 'rag',           key: 'rag',           icon: Database,   workspaceScoped: true },
       { id: 'observability', key: 'observability', icon: Activity,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
@@ -591,6 +593,7 @@ export default function Settings() {
             {active.id === 'apiAccess' && <ApiAccessTab />}
             {active.id === 'execution' && <ExecutionSection s={ws} showGlobal />}
             {active.id === 'webSearch' && <WebSearchSection s={ws} />}
+            {active.id === 'browser' && <BrowserServiceSection />}
           </div>
         </div>
       </div>

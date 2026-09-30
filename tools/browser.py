@@ -72,10 +72,17 @@ class BrowserError(Exception):
 # ── Configuration and context ────────────────────────────────────────────────
 
 def _config() -> Tuple[str, str, float]:
-    from common.config import settings
+    """URL, token and timeout of the browser service. The URL and the token
+    are read live (the .env file first, then the process environment, see
+    ``common.config.live_setting``), so setting them on the Settings page
+    applies to the next call without a restart; the Settings object is the
+    fallback for a process that has neither."""
+    from common.config import live_setting, settings
+    url = live_setting("AGENTS_HUB_BROWSER_URL") or str(settings.browser_url or "")
+    token = live_setting("AGENTS_HUB_BROWSER_TOKEN") or str(settings.browser_token or "")
     return (
-        str(settings.browser_url or "").strip().rstrip("/"),
-        str(settings.browser_token or "").strip(),
+        url.strip().rstrip("/"),
+        token.strip(),
         float(settings.browser_timeout or 45.0),
     )
 
@@ -139,11 +146,20 @@ def session_policy() -> Dict[str, Any]:
         allow, enabled = (), True
     elif net == "limited":
         allow, enabled = env_hosts, True
-    return {
+    policy = {
         "deny_domains": [str(d) for d in deny],
         "allow_domains": [str(d) for d in allow],
         "allowlist_enabled": enabled,
     }
+    # The hub's own app pages (project deployments, previews): the service
+    # lets the page load them although their address is private from where
+    # it sits. See common/hub_urls.py and deploy/browser/policy.py.
+    try:
+        from common.hub_urls import browser_policy_fields
+        policy.update(browser_policy_fields())
+    except Exception:  # noqa: BLE001 - without the fields the service simply blocks the hub
+        pass
+    return policy
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────

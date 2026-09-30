@@ -30,7 +30,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from common import access, identity
+from common import access, browser_service, identity
 from common.auth import WS_EDITOR
 from tools import browser as browser_tools
 
@@ -128,6 +128,138 @@ class HandoffBody(BaseModel):
 async def status() -> Dict[str, Any]:
     url, _token, _timeout = browser_tools._config()
     return {"configured": browser_tools._configured(), "url": url or None}
+
+
+# ── The service itself, from the Settings page ───────────────────────────────
+#
+# common/browser_service.py does the work; these routes are its API. Changing
+# the address, the token or the mode writes .env (the same writer the Settings
+# page uses) and applies at once, since tools/browser.py reads them live.
+# Everything here is an operator action: admin only in multi mode.
+
+class ServiceConfigBody(BaseModel):
+    url: Optional[str] = Field(default=None, max_length=500)
+    token: Optional[str] = Field(default=None, max_length=500)
+    mode: Optional[Literal["local", "container"]] = None
+    #: True: mint a fresh token server side (the answer carries it once).
+    generate_token: bool = False
+
+
+def _require_admin(request: Request) -> None:
+    identity.require_role(identity.request_principal(request), admin=True)
+
+
+def _service_error(exc: "browser_service.BrowserServiceError") -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=str(exc))
+
+
+def _hub_port(request: Request) -> int:
+    try:
+        return int(request.url.port or 8000)
+    except (TypeError, ValueError):
+        return 8000
+
+
+@router.get("/service")
+async def service_status(request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    return await asyncio.to_thread(browser_service.status)
+
+
+@router.put("/service/config")
+async def service_config(body: ServiceConfigBody, request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    from routes.settings import _write_env_key
+    minted: Optional[str] = None
+    if body.url is not None:
+        url = body.url.strip().rstrip("/")
+        if url and not url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=422, detail="url must start with http:// or https://")
+        _write_env_key("AGENTS_HUB_BROWSER_URL", url)
+    if body.generate_token:
+        import secrets as _secrets
+        minted = _secrets.token_urlsafe(32)
+        _write_env_key("AGENTS_HUB_BROWSER_TOKEN", minted)
+    elif body.token is not None:
+        _write_env_key("AGENTS_HUB_BROWSER_TOKEN", body.token.strip())
+    if body.mode is not None:
+        _write_env_key("AGENTS_HUB_BROWSER_MODE", body.mode)
+        if body.mode == "container" and not browser_service.setting("AGENTS_HUB_BROWSER_HUB_URL"):
+            # The container reaches the hub through the host gateway, not
+            # localhost (common/hub_urls.py); set it once so a deployed app
+            # opens in the agent's browser without more configuration.
+            _write_env_key("AGENTS_HUB_BROWSER_HUB_URL", f"http://host.docker.internal:{_hub_port(request)}")
+    out = await asyncio.to_thread(browser_service.status)
+    if minted:
+        out["token"] = minted
+    return out
+
+
+@router.post("/service/start")
+async def service_start(request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    from routes.settings import _write_env_key
+    mode = browser_service.configured_mode()
+    token = browser_service.configured_token()
+    url = browser_service.configured_url()
+    port = browser_service.DEFAULT_PORT
+    if url:
+        from urllib.parse import urlsplit
+        port = int(urlsplit(url).port or browser_service.DEFAULT_PORT)
+    try:
+        if mode == "container":
+            result = await asyncio.to_thread(browser_service.start_container, token, port)
+        else:
+            result = await asyncio.to_thread(browser_service.start_local, token, port)
+    except browser_service.BrowserServiceError as exc:
+        raise _service_error(exc)
+    if not url:
+        # Nothing configured yet: the service this hub just started is the one.
+        _write_env_key("AGENTS_HUB_BROWSER_URL", f"http://127.0.0.1:{port}")
+    return {**result, "status": await asyncio.to_thread(browser_service.status)}
+
+
+@router.post("/service/stop")
+async def service_stop(request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    try:
+        stopped_local = await asyncio.to_thread(browser_service.stop_local)
+        stopped_container = False
+        if browser_service.docker_status()["available"]:
+            stopped_container = await asyncio.to_thread(browser_service.stop_container)
+    except browser_service.BrowserServiceError as exc:
+        raise _service_error(exc)
+    return {"stopped": stopped_local or stopped_container,
+            "status": await asyncio.to_thread(browser_service.status)}
+
+
+@router.post("/service/install-chromium")
+async def service_install_chromium(request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    try:
+        return {"job": browser_service.install_chromium()}
+    except browser_service.BrowserServiceError as exc:
+        raise _service_error(exc)
+
+
+@router.get("/service/jobs/{job_id}")
+async def service_job(job_id: str, request: Request) -> Dict[str, Any]:
+    _require_admin(request)
+    job = browser_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="no such job")
+    return job
+
+
+@router.get("/service/log")
+async def service_log(request: Request, tail: int = 200) -> Dict[str, Any]:
+    _require_admin(request)
+    tail = max(1, min(int(tail), 2000))
+    if browser_service.configured_mode() == "container" and browser_service.docker_status()["available"]:
+        text = await asyncio.to_thread(browser_service.container_logs, tail)
+    else:
+        text = browser_service.log_tail(tail)
+    return {"text": text}
 
 
 @router.get("/sessions")

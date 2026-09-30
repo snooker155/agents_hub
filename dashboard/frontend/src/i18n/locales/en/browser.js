@@ -1,4 +1,5 @@
 export default {
+  openSettings: 'Set it up in Settings',
   title: 'Browser',
   description: 'A real browser on the hub\'s browser service. Watch the page an agent is on, take control of it, or browse yourself under a workspace\'s domain policy and hand the page to an agent.',
   notConfigured: 'The browser service is not configured, so there is nothing to show here yet. Set AGENTS_HUB_BROWSER_URL and AGENTS_HUB_BROWSER_TOKEN and start the browser container.',

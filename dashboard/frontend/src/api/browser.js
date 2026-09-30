@@ -10,6 +10,17 @@ import api, { API_ORIGIN, getAuthToken, withAuthTicket } from './index';
 // {configured, url}: whether the hub has a browser service to talk to.
 export const getBrowserStatus = () => api.get('/browser/status');
 
+// Settings → Browser: the service configured and run from the hub
+// (common/browser_service.py, docs/browser.md "Setting it up").
+export const getBrowserService = () => api.get('/browser/service');
+// {url?, token?, mode?: 'local'|'container', generate_token?}: writes .env and applies at once.
+export const configureBrowserService = (body) => api.put('/browser/service/config', body);
+export const startBrowserService = () => api.post('/browser/service/start');
+export const stopBrowserService = () => api.post('/browser/service/stop');
+export const installBrowserChromium = () => api.post('/browser/service/install-chromium');
+export const getBrowserServiceJob = (id) => api.get(`/browser/service/jobs/${encodeURIComponent(id)}`);
+export const getBrowserServiceLog = (tail = 200) => api.get('/browser/service/log', { params: { tail } });
+
 // {sessions: [{session_id, run_id, workspace, owner, label, url, title, ...}]}
 export const listBrowserSessions = (workspace) =>
   api.get('/browser/sessions', { params: workspace ? { workspace } : {} });

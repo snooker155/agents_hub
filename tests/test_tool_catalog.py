@@ -76,6 +76,7 @@ def _tool_objects_by_id() -> dict:
     from tools.project_management import PROJECT_MANAGEMENT_TOOLS
     from tools.entity_runs import ENTITY_RUN_TOOLS
     from tools.git_publish import GIT_PUBLISH_TOOLS
+    from tools.project_deploy import PROJECT_DEPLOY_TOOLS
     from tools.service_ops import SERVICE_OPS_TOOLS
     from tools.system_ops import SYSTEM_OPS_TOOLS
     from tools.docs_tool import DOCS_TOOLS
@@ -113,7 +114,7 @@ def _tool_objects_by_id() -> dict:
         *SCENARIO_MANAGEMENT_TOOLS, *WORLD_MANAGEMENT_TOOLS,
         *TEAM_MANAGEMENT_TOOLS, *LOOP_MANAGEMENT_TOOLS,
         *PROJECT_MANAGEMENT_TOOLS,
-        *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
+        *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
         schedule_notification, schedule_task, notify_user, list_scheduled,
         cancel_scheduled, update_scheduled,
         *WEB_TOOLS, *BROWSER_TOOLS, run_code,

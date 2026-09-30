@@ -30,6 +30,16 @@ its own, and relays its events; `chat/turns.py` is the replica's side. The
 runner service of each workspace, created on first use and kept warm by
 `services/supervisor.py`, is where a turn goes when the agent has no service
 of its own. See docs/services.md.
+
+Project deployments (`deployments/`) run a project's own frontend and
+backend from inside the hub: `detect.py` proposes the services from the
+folder, `runner.py` starts them as containers, a compose project or local
+processes, `service.py` is every transition (deploy, refresh, stop, links),
+`supervisor.py` keeps them alive on its own lease, and
+`dashboard/backend/routes/project_deployments.py` serves the API and the
+published pages under `/apps/<slug>/` through the same proxy as the preview
+iframe. See docs/project-deployments.md.
+
 Agents Hub is split into two main runtime layers:
 
 1. Backend API

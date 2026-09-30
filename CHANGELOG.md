@@ -13,6 +13,30 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Project deployments (docs/project-deployments.md): a project's frontend
+  and backend run from inside the hub. The Deploy tab of a project proposes
+  the services from the folder (compose file, Dockerfiles, package.json,
+  Python entrypoints), deploys them as containers, a compose project or
+  local processes, shows logs and a journal, keeps them alive through a
+  supervisor with a crash-loop pause, shows the running app inside the hub
+  through the ticket proxy (ticket kind `deployment`), publishes it under
+  `/apps/<slug>/` behind a share key or publicly, and opens it in the agent's
+  own browser (the hub's app pages are exempt from the private-network block,
+  narrowly: `common/hub_urls.py`, `deploy/browser/policy.py`). New tools
+  `deploy_project`, `project_deployment_status`, `project_deployment_logs`,
+  `stop_project_deployment`; new settings `AGENTS_HUB_BROWSER_HUB_URL`,
+  `AGENTS_HUB_INTERNAL_ORIGINS`; the Deployments page lists the deployed apps;
+  the Browser page opens `?url=` on load.
+- Settings gains a Browser section (`/api/browser/service/*`,
+  common/browser_service.py): the service's address and token (generated),
+  local or container mode, start and stop, and a Chromium install job; the
+  browser tools read these settings live.
+- A project page loses its frontend and backend blocks and its API and
+  Preview tabs, which the Deploy tab replaces; deleting a project moved into
+  its edit form.
+
 ## [0.5.0] - 2026-09-30
 
 ### Added

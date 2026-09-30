@@ -471,8 +471,12 @@ def test_happy_path_open_read_act_close(configured, monkeypatch, tmp_path):
     out = browser.browser_open.invoke({"url": "https://example.com/"})
     assert out.startswith("<<<UNTRUSTED_WEB_CONTENT>>>")
     # The session was created with the workspace's effective domain policy.
-    assert seen[0][2]["json"]["policy"] == {
+    sent = seen[0][2]["json"]["policy"]
+    assert {k: sent[k] for k in ("deny_domains", "allow_domains", "allowlist_enabled")} == {
         "deny_domains": [], "allow_domains": [], "allowlist_enabled": False}
+    # The hub's own app pages (project deployments) travel with the policy.
+    assert sent["internal_paths"] == ["/apps/", "/preview/"]
+    assert all(o.startswith("http") for o in sent["internal_origins"])
 
     text = browser.browser_read.invoke({})
     assert "<<<UNTRUSTED_WEB_CONTENT>>>" in text and "Hello world" in text

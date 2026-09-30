@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Globe, Plus, Bot, User, Send, Loader2, RefreshCw } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useWorkspace } from '../components/workspace';
@@ -173,7 +173,11 @@ export default function Browser() {
   const { t } = useI18n();
   const toast = useToast();
   const { selectedWorkspace } = useWorkspace() || {};
-  const [workspace, setWorkspace] = useState(selectedWorkspace || 'default');
+  // ?url=...&workspace=...: a page to open at once (the project page's "open
+  // in the agent's browser" link for a deployed app, docs/project-deployments.md).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const autoOpened = useRef(false);
+  const [workspace, setWorkspace] = useState(searchParams.get('workspace') || selectedWorkspace || 'default');
   const [workspaces, setWorkspaces] = useState([]);
   const [status, setStatus] = useState(null);
   const [sessions, setSessions] = useState([]);
@@ -219,6 +223,14 @@ export default function Browser() {
     }
   };
 
+  useEffect(() => {
+    const url = searchParams.get('url');
+    if (!url || autoOpened.current || !status?.configured) return;
+    autoOpened.current = true;
+    create(url);
+    setSearchParams({}, { replace: true });
+  }, [status, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const workspaceNames = workspaces.map((w) => w.name).filter(Boolean);
   if (!workspaceNames.includes(workspace)) workspaceNames.unshift(workspace);
 
@@ -244,6 +256,8 @@ export default function Browser() {
       {status && !status.configured && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           {t('browser.notConfigured')}{' '}
+          <Link to="/settings/browser" className="font-medium text-indigo-600 underline">{t('browser.openSettings')}</Link>
+          {' · '}
           <Link to="/docs/browser" className="font-medium text-indigo-600 underline">{t('browser.readDocs')}</Link>
         </div>
       )}

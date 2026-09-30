@@ -1,4 +1,8 @@
 export default {
+  deleteProject: 'Удалить проект',
+  deleteConfirm: 'Удалить проект «{{name}}»? Его задачи сохранятся, папка на диске не удаляется.',
+  deleted: 'Проект удалён',
+  deleteFailed: 'Не удалось удалить проект',
   publish: {
     button: 'Опубликовать ветку',
     title: 'Опубликовать ветку',
@@ -24,6 +28,7 @@ export default {
     repository: 'Репозиторий',
     api: 'API',
     preview: 'Предпросмотр',
+    deploy: 'Развёртка',
   },
   projects: 'Проекты',
   loading: 'Загрузка…',

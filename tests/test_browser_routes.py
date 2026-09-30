@@ -136,7 +136,8 @@ def test_create_a_user_session_under_the_workspace_policy(service, client):
     assert body["url"] == "https://example.com/start"
     created = next(c for c in service.calls if c[:2] == ("POST", "/sessions"))[2]["json"]
     assert created["owner"] == "user" and created["workspace"] == "default"
-    assert set(created["policy"]) == {"deny_domains", "allow_domains", "allowlist_enabled"}
+    assert set(created["policy"]) == {"deny_domains", "allow_domains", "allowlist_enabled",
+                                      "internal_origins", "internal_paths"}
 
 
 def test_a_refused_first_address_opens_no_session(service, client, monkeypatch):

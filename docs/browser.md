@@ -2,7 +2,16 @@
 
 The agent's browser on screen: a live view of a run's browser session with the option to take control, and a free browsing page whose session can be handed to an agent. Built on the same browser service the browser tools use, under the same domain policy.
 
-Everything here needs the browser service (`deploy/browser/`) and the two settings `AGENTS_HUB_BROWSER_URL` and `AGENTS_HUB_BROWSER_TOKEN`; see [Tools and capabilities](tools-and-capabilities.md), section "The browser tools", for how to start it. Without them the Browser page says so and links here, and a run's live output shows no browser panel.
+Everything here needs the browser service (`deploy/browser/`) and the two settings `AGENTS_HUB_BROWSER_URL` and `AGENTS_HUB_BROWSER_TOKEN`. Without them the Browser page says so and links to the Settings section that sets it up, and a run's live output shows no browser panel.
+
+## Setting it up
+
+**Settings → Browser** does the whole thing without a restart: the service address and the token (generated with one click), how to run it, a Start button, the log, and a Chromium install for the local mode. The two settings are read live (`common.config.live_setting`), so saving applies to the next call.
+
+- **Local process**: the service runs as a subprocess of the hub's own Python, the one with Playwright installed (`deploy/browser/requirements.txt`), bound to loopback on the configured port (3000 by default), logging to `.agents_hub/browser_service.log`. It needs Chromium for that Playwright version, which the same page installs (`python -m playwright install chromium`). The hub remembers the process in `.agents_hub/browser_service.json`, so a restarted hub still finds and stops it.
+- **Docker container**: the image from `deploy/browser/Dockerfile`, built on the first start (a few minutes, shown as a job), run as `agents-hub-browser` with the port published on loopback only. Offered only while docker answers; otherwise the option is disabled with the reason. Choosing it also sets `AGENTS_HUB_BROWSER_HUB_URL` to the host gateway once, so the agent's browser can open a [deployed app](project-deployments.md).
+
+The same can be done by hand: `AGENTS_HUB_BROWSER_URL` and `AGENTS_HUB_BROWSER_TOKEN` in `.env`, `docker compose --profile browser up --build` (see [Tools and capabilities](tools-and-capabilities.md), "The browser tools"). `AGENTS_HUB_BROWSER_MODE` (`local` or `container`) is what the page's mode switch writes.
 
 ## Watching a run's browser
 
@@ -31,6 +40,19 @@ What a person does is subject to exactly what the agent is:
 The list on the left shows the workspace's open sessions, the agents' and the people's, with a badge for each. Opening an agent's session shows it the way a run's panel does, with the same Take control toggle. The close button ends the session on the service.
 
 Sessions close on their own after `BROWSER_IDLE_TIMEOUT` seconds without use. Watching counts as use: every frame touches the session.
+
+## A deployed app in the browser
+
+A [project deployment](project-deployments.md) is served by the hub itself,
+on an address the private-network block would refuse from where the service
+sits. The hub declares its own origins with the session's policy
+(`internal_origins`, from `AGENTS_HUB_PUBLIC_URL`, `AGENTS_HUB_BROWSER_HUB_URL`
+and `AGENTS_HUB_INTERNAL_ORIGINS`), and the service and the hub's own
+`validate_url` let a URL through when it is on one of them *and* under
+`/apps/` or `/preview/`; the rest of the hub stays blocked. "Open in the
+agent browser" on a project's Deploy tab lands on this page with `?url=`,
+which opens a session on that address at once, and `project_deployment_status`
+gives an agent the same address as `browser_url`.
 
 ## Handing a page to an agent
 

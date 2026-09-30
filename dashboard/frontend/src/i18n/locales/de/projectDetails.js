@@ -1,4 +1,8 @@
 export default {
+  deleteProject: 'Projekt löschen',
+  deleteConfirm: 'Projekt „{{name}}“ löschen? Seine Aufgaben bleiben, der Ordner auf der Festplatte wird nicht entfernt.',
+  deleted: 'Projekt gelöscht',
+  deleteFailed: 'Das Projekt konnte nicht gelöscht werden',
   publish: {
     button: 'Branch veröffentlichen',
     title: 'Branch veröffentlichen',
@@ -24,6 +28,7 @@ export default {
     repository: 'Repository',
     api: 'API',
     preview: 'Vorschau',
+    deploy: 'Deploy',
   },
   projects: 'Projekte',
   loading: 'Wird geladen…',

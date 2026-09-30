@@ -1,4 +1,8 @@
 export default {
+  deleteProject: 'Delete project',
+  deleteConfirm: 'Delete project "{{name}}"? Its tasks are kept and its folder on disk is not removed.',
+  deleted: 'Project deleted',
+  deleteFailed: 'Could not delete the project',
   publish: {
     button: 'Publish branch',
     title: 'Publish branch',
@@ -24,6 +28,7 @@ export default {
     repository: 'Repository',
     api: 'API',
     preview: 'Preview',
+    deploy: 'Deploy',
   },
   projects: 'Projects',
   loading: 'Loading…',

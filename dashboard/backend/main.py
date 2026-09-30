@@ -576,6 +576,14 @@ from routes import preview as preview_router
 app.include_router(preview_router.router)
 app.include_router(preview_router.public_router)
 
+# Project deployments: a project's frontend and backend run from inside the
+# hub, previewed through the ticket proxy and published under /apps/<slug>/.
+# See docs/project-deployments.md.
+from routes import project_deployments as project_deployments_router
+app.include_router(project_deployments_router.router)
+app.include_router(project_deployments_router.list_router)
+app.include_router(project_deployments_router.apps_router)
+
 # Browser (feature 7b): the agent's browser session on screen, and free
 # browsing on the same service. See docs/browser.md.
 from routes import browser as browser_router

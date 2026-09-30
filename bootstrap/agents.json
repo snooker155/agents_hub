@@ -571,6 +571,9 @@
       "tools": [
         "list_files",
         "read_file",
+        "create_file",
+        "write_file",
+        "delete_file",
         "run_flow_tool",
         "run_agent_tool",
         "list_flows_tool",

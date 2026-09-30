@@ -14,6 +14,18 @@ const apiProxy = {
     target: apiProxyTarget,
     changeOrigin: true,
   },
+  // The proxied pages live outside /api: a preview iframe loads
+  // /preview/<ticket>/ and a deployed app is published under /apps/<slug>/
+  // (docs/project-deployments.md). Without these two the dev server answers
+  // both with the dashboard's own index.html and the frame stays blank.
+  '/preview': {
+    target: apiProxyTarget,
+    changeOrigin: true,
+  },
+  '/apps': {
+    target: apiProxyTarget,
+    changeOrigin: true,
+  },
 }
 
 // The demo build (`npm run build:demo`): the real dashboard over recorded data,

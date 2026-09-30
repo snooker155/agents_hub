@@ -66,6 +66,7 @@ from tools.loop_management import LOOP_MANAGEMENT_TOOLS
 from tools.project_management import PROJECT_MANAGEMENT_TOOLS
 from tools.entity_runs import ENTITY_RUN_TOOLS
 from tools.git_publish import GIT_PUBLISH_TOOLS
+from tools.project_deploy import PROJECT_DEPLOY_TOOLS
 from tools.service_ops import SERVICE_OPS_TOOLS
 from tools.docs_tool import DOCS_TOOLS
 from tools.eval_ops import EVAL_TOOLS
@@ -590,7 +591,7 @@ class AgentFactory:
         # NB: think/plan are intentionally NOT auto-included here. They are
         # added by create_agent() based on the agent's reasoning config, which
         # is the source of truth for the reasoning capabilities.
-        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
+        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
         # The workspace file objects (tools/workspace_files.py): plain per-tool
         # grants, like the web tools; the workspace comes from the run.
         from tools.workspace_files import WORKSPACE_FILE_TOOLS
