@@ -13,6 +13,8 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-30
+
 ### Added
 
 - Personal memory (memory/personal.py): what the agents learn about the
