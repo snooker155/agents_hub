@@ -260,16 +260,25 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # backend and agents are two targets of one Dockerfile sharing its
+      # dependency stages; the builder keeps those between the two steps, so
+      # the second build only adds its own final layers.
       - name: Build backend image
         uses: docker/build-push-action@v6
         with:
           context: .
           target: backend
-          build-args: |
-            WITH_RAG=false
           push: false
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+          cache-from: type=gha,scope=python-amd64
+          cache-to: type=gha,mode=max,scope=python-amd64
+
+      - name: Build agents image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: agents
+          push: false
+          cache-from: type=gha,scope=python-amd64
 
       - name: Build frontend image
         uses: docker/build-push-action@v6

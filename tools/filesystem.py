@@ -81,7 +81,7 @@ def _extract_pdf_text(content_bytes: bytes, rel: str) -> str:
         raise ValueError(
             f"Cannot read PDF '{rel}': the 'pypdf' package is not available in this "
             f"runtime. If agents run in Docker, rebuild the agent image "
-            f"(docker build -t agents-hub/base:latest -f Dockerfile.agents .) so the "
+            f"(docker build -t agents-hub/base:latest --target agents .) so the "
             f"updated requirements-agents.txt is installed."
         ) from e
 

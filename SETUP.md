@@ -301,7 +301,7 @@ docker compose logs -f backend    # tail backend logs
   which host path is mounted at `/app` so the bind mounts it hands the daemon
   resolve correctly. Turn it on with `AGENT_EXECUTION_MODE=docker` in `.env`,
   then build the agent base image from the Containers page (or
-  `docker build -t agents-hub/base:latest -f Dockerfile.agents .`).
+  `docker build -t agents-hub/base:latest --target agents .`).
 - That socket mount is real privilege: anything running in the backend container
   can control the host daemon, which is host root in practice. Drop the
   `/var/run/docker.sock` line from `docker-compose.yml` if you would rather not

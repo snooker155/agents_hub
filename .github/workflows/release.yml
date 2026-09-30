@@ -4,8 +4,14 @@
 #   1. the tag must match the version in every versioned file and have a
 #      CHANGELOG section (scripts/release.py check --tag),
 #   2. the full CI suite runs against the tagged commit,
-#   3. the images are built and pushed to GHCR, tagged X.Y.Z and X.Y, and
-#      `latest` unless the version is a prerelease (X.Y.Z-rc.1),
+#   3. the images are built natively on an amd64 and an arm64 runner (no
+#      QEMU: emulating pip's work on the torch wheels took longer than
+#      everything else together), pushed to GHCR by digest, and the two
+#      digests of each image are joined into one multi-platform manifest
+#      tagged X.Y.Z and X.Y, and `latest` unless the version is a prerelease
+#      (X.Y.Z-rc.1). backend and agents come in two flavours from the same
+#      Dockerfile: the default without the RAG stack, and X.Y.Z-rag (and
+#      X.Y-rag, latest-rag) with it,
 #   4. a GitHub release is created with that version's CHANGELOG section.
 #
 # Nothing is pushed for a tag that fails steps 1 or 2.
@@ -25,6 +31,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       prerelease: ${{ steps.v.outputs.prerelease }}
+      owner: ${{ steps.v.outputs.owner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,41 +44,196 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+          # GHCR repository names are lower case; the account name need not be.
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
   tests:
     needs: check
     uses: ./.github/workflows/ci.yml
 
+  # One job per platform, on a runner of that architecture, building every
+  # image for it and pushing each by digest (no tag yet). The four Python
+  # images are targets of one Dockerfile and share its dependency stages; the
+  # builder keeps those between the steps of a job, so the stack is installed
+  # once per platform, not once per image. The gha cache scope is shared the
+  # same way: the last export (agents-rag) carries every dependency layer the
+  # next release's builds start from.
   images:
     needs: [check, tests]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      REGISTRY: ghcr.io/${{ needs.check.outputs.owner }}
+      VERSION_ARGS: |
+        AGENTS_HUB_VERSION=${{ needs.check.outputs.version }}
+        AGENTS_HUB_GIT_SHA=${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: backend
+        id: backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: backend
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            WITH_RAG=false
+            ${{ env.VERSION_ARGS }}
+          outputs: type=image,name=${{ env.REGISTRY }}/agents-hub-backend,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=python-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=python-${{ matrix.arch }}
+
+      - name: agents
+        id: agents
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: agents
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            WITH_RAG=false
+            ${{ env.VERSION_ARGS }}
+          outputs: type=image,name=${{ env.REGISTRY }}/agents-hub-agents,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=python-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=python-${{ matrix.arch }}
+
+      - name: backend-rag
+        id: backend-rag
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: backend
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            WITH_RAG=true
+            ${{ env.VERSION_ARGS }}
+          outputs: type=image,name=${{ env.REGISTRY }}/agents-hub-backend,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=python-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=python-${{ matrix.arch }}
+
+      - name: agents-rag
+        id: agents-rag
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: agents
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            WITH_RAG=true
+            ${{ env.VERSION_ARGS }}
+          outputs: type=image,name=${{ env.REGISTRY }}/agents-hub-agents,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=python-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=python-${{ matrix.arch }}
+
+      - name: frontend
+        id: frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: dashboard/frontend
+          file: dashboard/frontend/Dockerfile
+          target: nginx
+          platforms: linux/${{ matrix.arch }}
+          build-args: ${{ env.VERSION_ARGS }}
+          outputs: type=image,name=${{ env.REGISTRY }}/agents-hub-frontend,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=frontend-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=frontend-${{ matrix.arch }}
+
+      - name: models
+        id: models
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/models/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: ${{ env.VERSION_ARGS }}
+          outputs: type=image,name=${{ env.REGISTRY }}/agents-hub-models,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=models-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=models-${{ matrix.arch }}
+
+      - name: browser
+        id: browser
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/browser/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: ${{ env.VERSION_ARGS }}
+          outputs: type=image,name=${{ env.REGISTRY }}/agents-hub-browser,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=browser-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=browser-${{ matrix.arch }}
+
+      - name: Record the digests for the manifests job
+        run: |
+          record() { mkdir -p "digests/$1"; echo "${2#sha256:}" > "digests/$1/${{ matrix.arch }}"; }
+          record backend     "${{ steps.backend.outputs.digest }}"
+          record agents      "${{ steps.agents.outputs.digest }}"
+          record backend-rag "${{ steps.backend-rag.outputs.digest }}"
+          record agents-rag  "${{ steps.agents-rag.outputs.digest }}"
+          record frontend    "${{ steps.frontend.outputs.digest }}"
+          record models      "${{ steps.models.outputs.digest }}"
+          record browser     "${{ steps.browser.outputs.digest }}"
+          find digests -type f -exec sh -c 'echo "$1: $(cat "$1")"' _ {} \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: digests/
+          if-no-files-found: error
+          retention-days: 1
+
+  # One manifest list per image and flavour, pointing at the amd64 and arm64
+  # digests the two images jobs pushed, under the release tags.
+  manifests:
+    needs: [check, images]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
         include:
-          - name: backend
-            context: .
-            file: Dockerfile
-            target: backend
-          - name: frontend
-            context: dashboard/frontend
-            file: dashboard/frontend/Dockerfile
-            target: nginx
-          - name: agents
-            context: .
-            file: Dockerfile.agents
-            target: ""
-          - name: models
-            context: .
-            file: deploy/models/Dockerfile
-            target: ""
-          - name: browser
-            context: .
-            file: deploy/browser/Dockerfile
-            target: ""
+          - image: backend
+            repository: backend
+            suffix: ""
+          - image: backend-rag
+            repository: backend
+            suffix: "-rag"
+          - image: agents
+            repository: agents
+            suffix: ""
+          - image: agents-rag
+            repository: agents
+            suffix: "-rag"
+          - image: frontend
+            repository: frontend
+            suffix: ""
+          - image: models
+            repository: models
+            suffix: ""
+          - image: browser
+            repository: browser
+            suffix: ""
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-*
+          path: digests
+          merge-multiple: true
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -81,28 +243,27 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/agents-hub-${{ matrix.name }}
+          images: ghcr.io/${{ needs.check.outputs.owner }}/agents-hub-${{ matrix.repository }}
+          flavor: |
+            latest=false
+            suffix=${{ matrix.suffix }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ needs.check.outputs.prerelease == 'false' }}
             type=raw,value=latest,enable=${{ needs.check.outputs.prerelease == 'false' }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
-          target: ${{ matrix.target }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            AGENTS_HUB_VERSION=${{ needs.check.outputs.version }}
-            AGENTS_HUB_GIT_SHA=${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Join the platform images into one manifest per tag
+        run: |
+          image="ghcr.io/${{ needs.check.outputs.owner }}/agents-hub-${{ matrix.repository }}"
+          tags=$(jq -r '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          refs=""
+          for f in digests/${{ matrix.image }}/*; do refs="$refs ${image}@sha256:$(cat "$f")"; done
+          test -n "$refs"
+          docker buildx imagetools create $tags $refs
+      - name: Inspect
+        run: docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
 
   github-release:
-    needs: [check, images]
+    needs: [check, manifests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -196,6 +196,16 @@ for amd64 and arm64, pushes them to GHCR as
 final release), and creates the GitHub release from the CHANGELOG section. A
 tag that fails the check or the tests publishes nothing.
 
+Each platform is built natively, on an amd64 and an arm64 runner, and the two
+results are joined into one multi-platform manifest per tag; nothing runs
+under QEMU. The backend and agents images come in two flavours from the one
+`Dockerfile`: the default leaves out the RAG stack (torch,
+sentence-transformers, chromadb and the remote vector stores, a gigabyte of
+wheels that only the embedding features import, docs/memory.md), and
+`:X.Y.Z-rag` (`:X.Y-rag`, `:latest-rag`) carries it. Pick the `-rag` tag when
+`RAG_VECTOR_DB` is anything but `none`; a local build gets the same with
+`WITH_RAG=true` in `.env` (docker-compose.yml passes it to the image).
+
 Which release is running: `ah version` (the client, and the service when
 `AGENTS_HUB_URL` points at one) or `GET /api/system/version`, which also names
 the newest schema migration the build knows. Images carry the version and

@@ -8,6 +8,11 @@ x-backend: &backend
     context: .
     dockerfile: Dockerfile
     target: backend
+    args:
+      # The RAG extras (torch, sentence-transformers, chromadb, the remote
+      # vector stores) are a gigabyte of wheels; the image leaves them out
+      # unless WITH_RAG=true is in .env (docs/memory.md).
+      WITH_RAG: ${WITH_RAG:-false}
   env_file:
     # Optional so a fresh clone comes up without one; copy .env.example to
     # .env to supply provider keys.

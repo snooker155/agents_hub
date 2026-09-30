@@ -3,7 +3,7 @@
 # requirements-cli.txt), for reproducing an environment exactly. This is what
 # the backend image (Dockerfile) and CI install from; requirements-postgres.txt
 # and requirements-rag.txt are not part of it and are still installed
-# separately (docs/scaling.md, docs/rag.md say why). It is universal (built
+# separately (docs/scaling.md, docs/memory.md say why). It is universal (built
 # with --universal, markers cover the platform/version differences), so pip
 # can install it unmodified on Python 3.11 and 3.12.
 #

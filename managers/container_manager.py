@@ -442,7 +442,7 @@ def generate_dockerfile(
 #     -f .agents_hub/dockerfiles/{agent_id}.Dockerfile .
 #
 # The base image must exist first:
-#   docker build -t {BASE_IMAGE} -f Dockerfile.agents .
+#   docker build -t {BASE_IMAGE} --target agents .
 
 FROM {BASE_IMAGE}
 
@@ -474,15 +474,30 @@ def save_dockerfile(
 
 # ── Image management ──────────────────────────────────────────────────────────
 
+def _with_rag() -> str:
+    """``true`` or ``false``: whether the images built here carry the RAG
+    stack, from WITH_RAG in .env or the environment (default off)."""
+    try:
+        from common.config import live_setting
+        raw = live_setting("WITH_RAG", "false")
+    except Exception:  # noqa: BLE001 - no config module in a stripped-down process; the environment decides
+        raw = os.environ.get("WITH_RAG", "false")
+    return "true" if str(raw).strip().lower() in ("1", "true", "yes", "on") else "false"
+
+
 def build_base_image(no_cache: bool = False) -> Dict[str, Any]:
-    """Build the unified base image (agents-hub/base:latest).
+    """Build the unified base image (agents-hub/base:latest): the ``agents``
+    target of the repository's Dockerfile.
 
     Returns a result dict with keys: success, image, log, error.
     """
-    cmd = ["docker", "build", "-t", BASE_IMAGE]
+    cmd = ["docker", "build", "-t", BASE_IMAGE, "--target", "agents"]
     if no_cache:
         cmd.append("--no-cache")
-    cmd += ["-f", "Dockerfile.agents", "."]
+    # The RAG extras (torch, the vector stores) are left out of the image
+    # unless WITH_RAG=true, the same switch docker-compose.yml passes to the
+    # backend image (Dockerfile, docs/memory.md).
+    cmd += ["--build-arg", f"WITH_RAG={_with_rag()}", "."]
     try:
         result = _run(cmd, timeout=600)
         success = result.returncode == 0
