@@ -172,6 +172,15 @@ def guard_defaults(monkeypatch):
         monkeypatch.delenv(key, raising=False)
         monkeypatch.setattr(_cfg.settings, field, default, raising=False)
     monkeypatch.setattr(_cfg, "read_dot_env", lambda: {k: v for k, v in real().items() if k not in _PINNED_ENV})
+    # memory/rag_query.py reads the .env file through its own parser, not
+    # through os.environ or common.config, so stripping the keys above does
+    # not reach it: a developer's RAG_VECTOR_DB=chroma made every recall in
+    # the suite import torch, fetch the embedding model and query the real
+    # chroma_db (15 s per test). Its _read_env looks at os.environ first, so
+    # a pinned "none" wins over the file; a test that wants RAG on sets both
+    # variables itself, as the RAG tests already do.
+    monkeypatch.setenv("RAG_VECTOR_DB", "none")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "none")
 
 
 @pytest.fixture(autouse=True)
