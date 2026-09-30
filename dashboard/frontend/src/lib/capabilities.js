@@ -78,3 +78,40 @@ export function checkCombination(selectedTools, toolsMeta) {
 
   return { ...rule, sources: ruleSources, message, blocking: rule.severity === 'block' };
 }
+
+const VIA_SUFFIX = '_via_delegation';
+
+/**
+ * The violation with its texts in the UI language: rule title and explanation
+ * by rule id (with the delegation suffix folded back on), capability labels,
+ * and the "via" of a delegation hop in each source. The backend text is kept
+ * for a rule id the locale does not know. `t` is the i18n function.
+ */
+export function localizeViolation(violation, t) {
+  if (!violation) return null;
+  const rawId = violation.rule_id || violation.id || '';
+  const via = rawId.endsWith(VIA_SUFFIX);
+  const baseId = via ? rawId.slice(0, -VIA_SUFFIX.length) : rawId;
+  const known = baseId && t(`capabilities.rules.${baseId}.title`, { defaultValue: '' });
+  let title = violation.title;
+  let explanation = violation.explanation;
+  if (known) {
+    title = known;
+    explanation = t(`capabilities.rules.${baseId}.explanation`);
+    if (via) {
+      title = `${title} ${t('capabilities.viaDelegation.title')}`;
+      explanation = `${explanation} ${t('capabilities.viaDelegation.explanation')}`;
+    }
+  }
+  const viaWord = t('capabilities.via', { defaultValue: 'via' });
+  const sources = {};
+  for (const [cap, list] of Object.entries(violation.sources || {})) {
+    sources[cap] = (list || []).map((src) => String(src).replace(/(^|-> )via /g, `$1${viaWord} `));
+  }
+  return { ...violation, title, explanation, sources };
+}
+
+/** The UI-language label of a capability, the English one as fallback. */
+export function capabilityLabel(cap, t) {
+  return t(`capabilities.labels.${cap}`, { defaultValue: CAPABILITY_LABELS[cap] || cap });
+}

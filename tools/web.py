@@ -141,16 +141,18 @@ def check_domain_policy(url: str) -> Tuple[bool, str]:
         return True, ""
     ws = _workspace_web_settings()
 
-    deny = tuple(ws.get("web_deny_domains") or ()) or tuple(settings.web_deny_domains or ())
+    # Global values are read live (the Settings page writes them to .env); a
+    # workspace's own list, when set, replaces the global one as before.
+    deny = tuple(ws.get("web_deny_domains") or ()) or _live_list("WEB_DENY_DOMAINS", settings.web_deny_domains)
     for pattern in deny:
         if _host_matches(host, str(pattern)):
             return False, f"host {host!r} is on the deny list"
 
-    enabled = bool(settings.web_domain_policy_enabled) or bool(ws.get("web_domain_policy_enabled"))
+    enabled = _live_bool("WEB_DOMAIN_POLICY_ENABLED", settings.web_domain_policy_enabled) or bool(ws.get("web_domain_policy_enabled"))
     if not enabled:
         return True, ""
 
-    allow = tuple(ws.get("web_allow_domains") or ()) or tuple(settings.web_allow_domains or ())
+    allow = tuple(ws.get("web_allow_domains") or ()) or _live_list("WEB_ALLOW_DOMAINS", settings.web_allow_domains)
     if not allow:
         return False, "the domain allowlist is enabled but empty — no host may be fetched"
     for pattern in allow:
@@ -339,10 +341,88 @@ def _collapse(text: str) -> str:
 # ── Search providers ──────────────────────────────────────────────────────────
 
 def _search_config() -> Tuple[str, str]:
+    """Provider and key, resolved live (``common.config.live_setting``): the
+    Settings page writes them to .env and a search must work on the next call,
+    in the backend and in every runner, without a restart. The ``settings``
+    fields stay the fallback and are what tests monkeypatch."""
+    from common.config import live_setting, settings
+    provider = live_setting("WEB_SEARCH_PROVIDER") or str(settings.web_search_provider or "")
+    key = live_setting("WEB_SEARCH_API_KEY") or str(settings.web_search_api_key or "")
+    return provider.strip().lower(), key.strip()
+
+
+def _live_number(env_key: str, fallback: Any, cast=int):
+    """A numeric .env-backed setting, live, the ``settings`` field as fallback."""
+    from common.config import live_setting
+    raw = live_setting(env_key)
+    try:
+        return cast(raw) if raw else cast(fallback)
+    except (TypeError, ValueError):
+        return cast(fallback)
+
+
+def _live_bool(env_key: str, fallback: bool) -> bool:
+    from common.config import live_setting
+    raw = live_setting(env_key)
+    if not raw:
+        return bool(fallback)
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _live_list(env_key: str, fallback: Any) -> Tuple[str, ...]:
+    """A list setting, live: the JSON list pydantic-settings expects in .env
+    (what the Settings page writes) or a comma-separated line typed by hand."""
+    from common.config import live_setting
+    raw = (live_setting(env_key) or "").strip()
+    if not raw:
+        return tuple(str(x).strip() for x in (fallback or ()) if str(x).strip())
+    if raw.startswith("["):
+        try:
+            return tuple(str(x).strip() for x in json.loads(raw) if str(x).strip())
+        except ValueError:
+            pass
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def clean_host_list(raw: Any) -> List[str]:
+    """Host names for an allow or deny list, lower-cased, de-duplicated, in
+    order. Raises ``ValueError`` naming the first entry that is not a bare
+    host (a URL, a path, a port). Shared by the global Settings route and the
+    workspace web policy route so both lists are cleaned the same way."""
+    hosts: List[str] = []
+    for item in (raw or []):
+        host = str(item or "").strip().lower().lstrip(".")
+        if not host:
+            continue
+        if " " in host or "/" in host or ":" in host:
+            raise ValueError(f"'{item}' is not a host name")
+        if host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def global_domain_policy() -> Dict[str, Any]:
+    """The machine-wide domain policy as the Settings page shows it, live."""
+    from common.config import settings
+    return {
+        "enabled": _live_bool("WEB_DOMAIN_POLICY_ENABLED", settings.web_domain_policy_enabled),
+        "allow_domains": list(_live_list("WEB_ALLOW_DOMAINS", settings.web_allow_domains)),
+        "deny_domains": list(_live_list("WEB_DENY_DOMAINS", settings.web_deny_domains)),
+    }
+
+
+def _search_max_results() -> int:
+    from common.config import settings
+    return _live_number("WEB_SEARCH_MAX_RESULTS", settings.web_search_max_results)
+
+
+def _fetch_limits() -> Tuple[int, float, int]:
+    """``(max_chars, timeout, max_redirects)`` for ``fetch_url``, live."""
     from common.config import settings
     return (
-        str(settings.web_search_provider or "").strip().lower(),
-        str(settings.web_search_api_key or "").strip(),
+        _live_number("WEB_FETCH_MAX_CHARS", settings.web_fetch_max_chars),
+        _live_number("WEB_FETCH_TIMEOUT", settings.web_fetch_timeout, float),
+        _live_number("WEB_FETCH_MAX_REDIRECTS", settings.web_fetch_max_redirects),
     )
 
 
@@ -449,14 +529,14 @@ def web_search(query: str, count: Optional[int] = None) -> str:
         return call.set(status="not_configured", error="WEB_SEARCH_API_KEY is empty").finish(
             f"web_search is not configured: WEB_SEARCH_API_KEY is empty for provider {provider!r}.")
 
-    n = max(1, min(int(count or settings.web_search_max_results), 20))
+    n = max(1, min(int(count or _search_max_results()), 20))
     cache_key = (provider, query.lower(), n)
     if cache_key in _SEARCH_CACHE:
         results = _SEARCH_CACHE[cache_key]
         call.set(cache_hit=True)
     else:
         try:
-            results = _PROVIDERS[provider](query, n, key, float(settings.web_fetch_timeout))
+            results = _PROVIDERS[provider](query, n, key, _fetch_limits()[1])
         except Exception as e:
             log.warning("web_search failed (provider=%s): %s", provider, e)
             return call.set(status="error", error=f"{type(e).__name__}: {e}").finish(
@@ -524,9 +604,8 @@ def fetch_url(url: str, max_chars: Optional[int] = None) -> str:
     if not url:
         return call.set(status="error", error="url is empty").finish("fetch_url error: url is empty")
 
-    limit = max(500, min(int(max_chars or settings.web_fetch_max_chars), 200_000))
-    timeout = float(settings.web_fetch_timeout)
-    hops = int(settings.web_fetch_max_redirects)
+    default_chars, timeout, hops = _fetch_limits()
+    limit = max(500, min(int(max_chars or default_chars), 200_000))
 
     current = url
     redirects: List[str] = []

@@ -156,3 +156,28 @@ def test_settings_save_keeps_the_keys_other_routes_own(client, ws):
     policy = _policy(client, ws)
     assert policy["require_tool_approval"] is True
     assert policy["tool_policy"] == {"*": "auto"}
+
+
+def test_settings_save_keeps_palette_and_web_policy(client, ws):
+    """The workspace Settings tab saves its form next to the palette editor:
+    a Save that names only the form's keys must not drop either."""
+    from workspace import get_workspace_metadata, update_workspace_metadata
+
+    update_workspace_metadata(ws, {"settings": {
+        "palette": {"brand": "#166534"},
+        "web_domain_policy_enabled": True,
+        "web_allow_domains": ["example.org"],
+    }})
+    resp = client.put(f"/api/workspaces/{ws}/settings-overrides",
+                      json={"overrides": {"orch_log_level": "DEBUG"}})
+    assert resp.status_code == 200, resp.text
+    settings = get_workspace_metadata(ws).get("settings") or {}
+    assert settings["orch_log_level"] == "DEBUG"
+    assert settings["palette"] == {"brand": "#166534"}
+    assert settings["web_domain_policy_enabled"] is True
+    assert settings["web_allow_domains"] == ["example.org"]
+
+    # Naming a key with null is how the palette editor clears it.
+    client.put(f"/api/workspaces/{ws}/settings-overrides",
+               json={"overrides": {"palette": None}})
+    assert "palette" not in (get_workspace_metadata(ws).get("settings") or {})

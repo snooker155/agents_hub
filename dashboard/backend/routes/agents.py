@@ -20,8 +20,11 @@ from agents.agent_factory import get_factory
 from agents import prompt_assembly
 from agents import versions as agent_versions
 from tools.registry import get_all_tools
-from agents.capability_guard import CapabilityViolation
-from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentHandoffsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate, AgentListItem, AgentDetail, AgentPage
+from agents.capability_guard import (
+    CapabilityViolation, capability_warning, guard_mode, is_system_workspace_agent,
+    override_honoured_at_build, override_requires_container,
+)
+from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentHandoffsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentPersonalMemoryUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentCapabilityOverrideUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate, AgentListItem, AgentDetail, AgentPage
 from workspace import system_agent_ids, get_workspace_metadata, update_workspace_metadata, create_workspace_folder
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
@@ -41,8 +44,11 @@ def _get_workspace_default_chat_agent(workspace: Optional[str]) -> Optional[str]
 
 
 def _set_workspace_default_chat_agent(workspace: Optional[str], agent_id: Optional[str]) -> None:
+    from memory import personal
     ws_name = _workspace_for_chat_default(workspace)
     create_workspace_folder(ws_name)
+    # A new main agent gets personal memory on; the old one keeps what it had.
+    personal.main_agent_changed(ws_name, personal.main_agent(ws_name), agent_id or None)
     update_workspace_metadata(ws_name, {"default_chat_agent": agent_id or None})
 
 
@@ -176,32 +182,30 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
         start = offset or 0
         page_items = visible[start: start + limit] if limit is not None else visible[start:]
 
-    # Annotate each agent with whether it has a running node in the requested
-    # workspace and flag system agents that cannot be removed. Memory
-    # assignments are per-workspace, so patch them to the requesting
+    # Annotate each agent with whether it has a running resident instance in
+    # the requested workspace and flag system agents that cannot be removed.
+    # Memory assignments are per-workspace, so patch them to the requesting
     # workspace's view. Only the page pays for any of this.
-    from managers.node_manager import list_nodes
+    from instances.carrier import list_resident
     _ws = (workspace or "default").strip() or "default"
     _mem_overrides = _workspace_memory_overrides(_ws)
     _default_chat_agent = _get_workspace_default_chat_agent(workspace)
-    # One pass over every node instead of one list_nodes() call per agent —
-    # list_nodes() re-syncs every node's live status (a process check each),
-    # so calling it once per agent turned this into an O(agents * nodes)
-    # liveness scan.
+    # One pass over every resident instance instead of one list_resident()
+    # call per agent — list_resident() re-syncs every instance's live status
+    # (a process check each), so calling it once per agent turned this into
+    # an O(agents * instances) liveness scan.
     _running_by_agent: Dict[str, List[Dict[str, Any]]] = {}
-    for node in list_nodes():
-        if node.get("status") != "running":
-            continue
-        _running_by_agent.setdefault(node.get("agent_id"), []).append(node)
+    for instance in list_resident(live=True):
+        _running_by_agent.setdefault(instance.get("agent_id"), []).append(instance)
 
     page: List[Dict[str, Any]] = []
     for item in page_items:
         agent = item.to_dict() if hasattr(item, "to_dict") else dict(item)
         _apply_workspace_memory(agent, _ws, _mem_overrides)
-        running_nodes = _running_by_agent.get(agent["id"], [])
+        running_instances = _running_by_agent.get(agent["id"], [])
         if workspace and workspace != "default":
-            running_nodes = [n for n in running_nodes if n.get("workspace") == workspace]
-        agent["has_running_node"] = len(running_nodes) > 0
+            running_instances = [i for i in running_instances if i.get("workspace") == workspace]
+        agent["has_running_node"] = len(running_instances) > 0
         agent["system"] = agent["id"] in _SYS_IDS
         agent["is_default_chat_agent"] = agent["id"] == _default_chat_agent
         page.append(agent)
@@ -599,15 +603,12 @@ async def get_agent_workspace_capacities(agent_id: str):
 
 
 @router.get("/{agent_id}/history")
-async def get_agent_history(agent_id: str, workspace: Optional[str] = None):
-    runs = run_manager.load_runs()
-    agent_runs = [r for r in runs if r.get("agent_id") == agent_id]
+async def get_agent_history(agent_id: str, workspace: Optional[str] = None, limit: int = 200):
+    """This agent's newest runs, paged in SQL like /api/messages."""
     # Scope to the active workspace; the default workspace sees every workspace.
-    if workspace and workspace != "default":
-        agent_runs = [r for r in agent_runs if r.get("workspace") == workspace]
-    # Sort by started_at desc
-    agent_runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-    return agent_runs
+    ws = workspace if workspace and workspace != "default" else None
+    page = run_manager.query_runs(agent_id=agent_id, workspace=ws, limit=max(1, min(int(limit), 500)))
+    return page["items"]
 
 
 @router.get("/{agent_id}/logs")
@@ -617,39 +618,41 @@ async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: in
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    from managers import node_manager
+    from instances.carrier import list_resident
 
     # Scope to the active workspace; the default workspace sees every workspace.
     ws_scoped = bool(workspace and workspace != "default")
 
-    runs = run_manager.load_runs()
-    agent_runs = [r for r in runs if r.get("agent_id") == agent_id]
-    if ws_scoped:
-        agent_runs = [r for r in agent_runs if r.get("workspace") == workspace]
-    if node_id:
-        agent_runs = [r for r in agent_runs if str(r.get("node_id") or "") == str(node_id)]
-    agent_runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-    if limit > 0:
-        agent_runs = agent_runs[: max(1, min(int(limit), 500))]
+    # Paged in SQL: loading every run ever recorded to keep this agent's
+    # newest few is a full scan on each open of the agent page.
+    agent_runs = run_manager.query_runs(
+        agent_id=agent_id,
+        workspace=workspace if ws_scoped else None,
+        node_id=node_id or None,
+        limit=max(1, min(int(limit), 500)) if limit > 0 else 500,
+    )["items"]
 
     for r in agent_runs:
         lp = r.get("log_file")
         r["log_exists"] = bool(lp and Path(lp).exists())
 
-    nodes = [n for n in node_manager.list_nodes() if n.get("agent_id") == agent_id]
+    # ``node_id`` keeps its name on the query string for callers still passing
+    # the id of a migrated node; store.get_by_node resolves it to the instance
+    # it became, so it is matched by instance_id here.
+    instances = [i for i in list_resident() if i.get("agent_id") == agent_id]
     if ws_scoped:
-        nodes = [n for n in nodes if n.get("workspace") == workspace]
+        instances = [i for i in instances if i.get("workspace") == workspace]
     if node_id:
-        nodes = [n for n in nodes if str(n.get("node_id") or "") == str(node_id)]
-    nodes.sort(key=lambda n: n.get("started_at") or "", reverse=True)
-    for n in nodes:
-        lp = n.get("log_file")
-        n["log_exists"] = bool(lp and Path(lp).exists())
+        instances = [i for i in instances if str(i.get("instance_id") or "") == str(node_id)]
+    instances.sort(key=lambda i: i.get("started_at") or "", reverse=True)
+    for i in instances:
+        lp = i.get("carrier_log_file")
+        i["log_exists"] = bool(lp and Path(lp).exists())
 
     return {
         "agent_id": agent_id,
         "runs": agent_runs,
-        "nodes": nodes,
+        "nodes": instances,
     }
 
 
@@ -815,6 +818,49 @@ async def update_agent_episodic_config(agent_id: str, data: AgentEpisodicConfigU
     }
 
 
+def _personal_memory_config(spec, workspace: Optional[str]) -> dict:
+    from memory import personal
+    from memory.binding import effective_memory_pools
+    settings = personal.agent_settings(workspace)
+    own = settings["agents"].get(spec.id, False)
+    return {
+        "workspace": settings["workspace"],
+        # This agent's switch, and whether the workspace has personal memory
+        # at all: off there, the switch is shown off and cannot be changed.
+        "enabled": own,
+        "workspace_enabled": settings["enabled"],
+        "is_main_agent": settings["main_agent"] == spec.id,
+        "effective": settings["enabled"] and own,
+        # Whether a pool of the agent's own is attached too: the agent then
+        # has both, its own as the primary one (memory/personal.py).
+        "has_own_pool": bool(effective_memory_pools(spec, workspace)),
+    }
+
+
+@router.get("/{agent_id}/personal-memory")
+async def get_agent_personal_memory(agent_id: str, workspace: Optional[str] = None):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _personal_memory_config(spec, workspace)
+
+
+@router.post("/{agent_id}/personal-memory")
+async def update_agent_personal_memory(agent_id: str, data: AgentPersonalMemoryUpdate,
+                                       workspace: Optional[str] = None):
+    """Turn personal memory (memory/personal.py) on or off for this agent in
+    one workspace. Refused while the workspace has personal memory off."""
+    from memory import personal
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        personal.set_agent(agent_id, workspace, data.enabled)
+    except personal.PersonalMemoryDisabled as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _personal_memory_config(spec, workspace)
+
+
 @router.get("/{agent_id}/response-format")
 async def get_agent_response_format(agent_id: str):
     spec = registry.get_agent(agent_id)
@@ -952,6 +998,98 @@ async def delete_agent_skill(agent_id: str, skill_id: str, workspace: str):
     return {"ok": True}
 
 
+def _capability_conflict(e: CapabilityViolation) -> HTTPException:
+    """409, not 400: the request is well-formed, the resulting *state* is
+    refused. Carries the structured violation so the editor can name the
+    offending capabilities and the tools (or delegation hops) that granted
+    them, plus the two switches that would let the save through."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "error": "capability_violation",
+            "guard_mode": guard_mode(),
+            **e.violation.to_dict(),
+        },
+    )
+
+
+def _capability_warning_dict(spec) -> Optional[Dict[str, Any]]:
+    """The combination a just-saved record still forms, for the response.
+
+    A save that went through on the per-agent override, in warn mode or by
+    grandfathering has not made the exposure go away; the editor shows it as
+    an amber banner. Delegation paths cannot be evaluated client-side (the
+    delegates' tool lists are not in the page), so this is the only place the
+    delegation card learns about them."""
+    from tools.capabilities import secret_grant_ids
+    v = capability_warning(
+        spec.id,
+        list(spec.tools or []) + secret_grant_ids(spec.secrets),
+        delegates=list(spec.delegates or []),
+        workspace=getattr(spec, "owner_workspace", None),
+    )
+    return v.to_dict() if v is not None else None
+
+
+def _capability_override_state(spec) -> Dict[str, Any]:
+    return {
+        "capability_override": bool(spec.capability_override),
+        "guard_mode": guard_mode(),
+        "override_requires_container": override_requires_container(),
+        # Whether the override, once on, actually lifts the block when the
+        # agent is built: not in block mode with the container requirement on
+        # and a local execution mode. Shown next to the switch.
+        "honoured_at_build": override_honoured_at_build(spec.id),
+        "capability_warning": _capability_warning_dict(spec),
+    }
+
+
+@router.get("/{agent_id}/auto-tools")
+async def get_agent_auto_tools(agent_id: str, workspace: Optional[str] = None):
+    """The tools the factory adds to this agent at build time on top of its
+    record (agents/auto_tools.py), each with the setting that brings it, so
+    the Tools tab can list everything a run will hold."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    from agents.auto_tools import auto_injected_tools
+    ws = workspace or getattr(spec, "owner_workspace", None) or None
+    return {"agent_id": agent_id, "workspace": ws, "tools": auto_injected_tools(spec, ws)}
+
+
+@router.get("/{agent_id}/capability-override")
+async def get_agent_capability_override(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _capability_override_state(spec)
+
+
+@router.post("/{agent_id}/capability-override")
+async def update_agent_capability_override(agent_id: str, data: AgentCapabilityOverrideUpdate):
+    """Accept, for this one agent, a tool combination the capability guard
+    would otherwise refuse (tools/capabilities.py, the lethal trifecta).
+
+    With the override on, a blocked combination is saved and reported as a
+    warning instead of refused, whether it comes from the agent's own tools
+    or from an agent it may delegate to. Turning the override back off never
+    fails: the record keeps the combination it already holds (grandfathered)
+    and the next tool or delegate that would widen it is refused again.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if data.capability_override and is_system_workspace_agent(agent_id, spec.owner_workspace):
+        # The system workspace rule is never softened (docs/system-workspace.md).
+        raise HTTPException(status_code=400, detail="A system workspace agent cannot carry a capability override")
+    new_spec = dataclasses.replace(spec, capability_override=bool(data.capability_override))
+    try:
+        registry.add_agent(new_spec)
+    except CapabilityViolation as e:
+        raise _capability_conflict(e)
+    return _capability_override_state(new_spec)
+
+
 @router.post("/{agent_id}/tools")
 async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
     spec = registry.get_agent(agent_id)
@@ -966,14 +1104,8 @@ async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
     try:
         registry.add_agent(new_spec)
     except CapabilityViolation as e:
-        # 409, not 400: the request is well-formed, the resulting *state* is
-        # refused. Carries the structured violation so the editor can name the
-        # offending capabilities and the tools that granted them.
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "capability_violation", **e.violation.to_dict()},
-        )
-    return new_spec.to_dict()
+        raise _capability_conflict(e)
+    return {**new_spec.to_dict(), "capability_warning": _capability_warning_dict(new_spec)}
 
 
 @router.get("/{agent_id}/delegates")
@@ -996,8 +1128,13 @@ async def update_agent_delegates(agent_id: str, data: AgentDelegatesUpdate):
         if did and did not in cleaned:
             cleaned.append(did)
     new_spec = dataclasses.replace(spec, delegates=cleaned)
-    registry.add_agent(new_spec)
-    return new_spec.to_dict()
+    try:
+        # The guard walks the delegation graph, so a delegate that brings the
+        # missing third of the trifecta is refused here exactly like a tool.
+        registry.add_agent(new_spec)
+    except CapabilityViolation as e:
+        raise _capability_conflict(e)
+    return {**new_spec.to_dict(), "capability_warning": _capability_warning_dict(new_spec)}
 
 
 def _validated_handoffs(agent_id: str, ids: List[str]) -> List[str]:

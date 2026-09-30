@@ -19,6 +19,7 @@ import { getMarketplaceAgents, getMarketplaceFlows, addAgentToWorkspace, addFlow
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const Marketplace = () => {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
@@ -162,10 +163,7 @@ const Marketplace = () => {
       )}
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
-          <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mb-4" />
-          <p className="text-gray-500 font-medium">{t('marketplace.loadingMarketplace')}</p>
-        </div>
+        <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('marketplace.loadingMarketplace')} /></div>
       ) : tab === 'flows' ? (
         visibleFlows.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">

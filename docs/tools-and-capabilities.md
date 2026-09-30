@@ -41,8 +41,32 @@ against the single most dangerous tool.
 - **Adding a tool in the editor can be refused.** The message names the
   capabilities that collided.
 
-There is an override for a combination you have deliberately accepted, and under
-a stricter setting it is only honoured for container-isolated, network-free runs.
+## Lifting the block: per agent, or for every agent
+
+Two switches turn a refusal into a warning, and both keep the combination
+visible on the agent page and in the log rather than pretending it is gone.
+
+- **Per agent.** The Tools tab of an agent has a checkbox, "Lift the block for
+  this agent: warn only" (`capability_override` on the record,
+  `POST /api/agents/{id}/capability-override`). With it on, a blocked
+  combination on that agent, in its own tools or reached through an agent it
+  delegates to, is saved and returned as `capability_warning`. Turning it off
+  again never fails: the record keeps what it already holds, and the next tool
+  or delegate that would widen it is refused again. A system workspace agent
+  never gets the switch.
+- **For every agent.** Settings, "Agent execution", "Capability guard":
+  `block` (default), `warn` or `off`, written to `.env` as `CAPABILITY_GUARD`
+  and read live, so the change applies to the next save or build without a
+  restart. `warn` saves and builds everything and logs the combination; `off`
+  stops checking, warnings included.
+
+A stricter setting sits under the mode: "A per-agent exemption needs a
+no-network container" (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`, on by
+default). In block mode, an agent's override is then honoured at build time
+only when the agent runs in a container with the network set to `none`; a
+local run of that agent is still refused, and its page says so next to the
+checkbox. Turn the setting off to honour the exemption everywhere, or switch
+the guard to `warn`.
 
 ## Delegation counts as holding the capability
 
@@ -61,17 +85,22 @@ every agent in the registry. `create_agent_tool` and `modify_agent_tool` are
 not delegation edges: whatever they create or change is re-validated by this
 same guard at save time, so there is nothing extra to add on top.
 
-A combination that only closes through delegation is reported as a warning,
-never a block: an agent whose own list is clean keeps saving and building, and
-the editor and the audit show the path. Blocking it would refuse the seed
-orchestrator, whose unrestricted `delegates` reaches the web searcher. To
-remove the warning, narrow the agent's `delegates` list. A combination the
-agent's own tools form still blocks as before. The report names the path, not
-just the tools:
+A combination that only closes through delegation blocks at the rule's own
+severity, exactly like one the agent's own tools form: an agent that reads
+private data and can notify the user cannot be given a web searcher as a
+delegate, since it then effectively holds all three. The rule id carries a
+`_via_delegation` suffix and the report names the path, not just the tools:
 
-> Lethal trifecta: ingests untrusted content (via run_agent_tool -> swe_agent:
-> run_shell) + reads private data (get_task) + can send data outside (via
-> run_agent_tool -> swe_agent: run_shell).
+> Lethal trifecta via delegation: ingests untrusted content (via
+> run_agent_tool -> web_searcher: fetch_url, web_search) + reads private data
+> (read_file) + can send data outside (notify_user).
+
+Saving such a `delegates` list is refused with a 409 that carries this report,
+and the Delegation card shows it under the toggles. To remove it, narrow the
+agent's `delegates` list, take the offending tool off the delegate, or lift the
+block for the agent (above). A record that already held the combination when
+the guard was turned on is grandfathered: it saves unchanged or narrower, but
+cannot gain a new violating capability.
 
 The tables backing all of this live in `tools/capabilities.py`: `CAPABILITY_GRANTS`
 (what a tool grants directly), `REVIEWED_NO_GRANT` (classified, grants nothing —
@@ -79,6 +108,30 @@ a write into the hub's own store, a control action, a piece of configuration),
 and `DELEGATING_TOOLS` (the seven edges above). Every catalog tool id ends up in
 exactly one of them; a test enforces that, and `python -m agents.capability_guard`
 reports zero unclassified tools alongside the current roster's violations.
+
+## Web search provider
+
+`web_search` calls an external search API; the hub ships no search engine of
+its own. Settings, "Web search" picks the provider (Brave
+Search, Tavily or Exa), takes its API key and the number of results a call
+returns, and writes them to `.env` as `WEB_SEARCH_PROVIDER`,
+`WEB_SEARCH_API_KEY` and `WEB_SEARCH_MAX_RESULTS`. They are read live, so a
+change applies to the next call in the backend and in every runner without a
+restart. With no provider or no key the tool performs no search and answers
+that it is not configured, an ordinary tool answer the agent relays to the
+user. `fetch_url` and the browser tools need none of this.
+
+The same page holds the `fetch_url` limits (`WEB_FETCH_MAX_CHARS`,
+`WEB_FETCH_TIMEOUT`, `WEB_FETCH_MAX_REDIRECTS`) and the global domain policy:
+a deny list that always applies to fetches and to search results
+(`WEB_DENY_DOMAINS`), and an opt-in allow list (`WEB_DOMAIN_POLICY_ENABLED`,
+`WEB_ALLOW_DOMAINS`) that, once on, is the only set of hosts a fetch may reach.
+A host matches itself and its subdomains. The file holds each list as a JSON
+array, which is how pydantic-settings reads a list field; a comma-separated
+line typed by hand is accepted too. A workspace's own lists replace the
+global ones for runs in that workspace: the workspace page, Settings tab,
+"Web access" (`GET`/`PUT /api/workspaces/{name}/web-policy`), stored in the
+workspace's metadata; an empty list there keeps the global one.
 
 ## The browser tools
 
@@ -110,8 +163,10 @@ continue in it. See [The browser](browser.md).
 
 ### Enabling it
 
-The browser runs as a separate service, `deploy/browser/`, in its own
-container. With compose:
+The quickest way is **Settings → Browser**: address, token, local process or
+container, Start, Chromium install, all without a restart (see
+[The browser](browser.md), "Setting it up"). By hand, the browser runs as a
+separate service, `deploy/browser/`, in its own container. With compose:
 
 ```
 # .env

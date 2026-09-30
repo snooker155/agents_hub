@@ -163,14 +163,78 @@ class CapabilityViolation(ValueError):
         super().__init__(f"Agent '{agent_id}' — {violation.message}")
 
 
+GUARD_MODES = ("block", "warn", "off")
+
+
 def guard_mode() -> str:
-    """Current enforcement mode: ``block`` (default), ``warn`` or ``off``."""
+    """Current enforcement mode: ``block`` (default), ``warn`` or ``off``.
+
+    Resolved live, the way ``common.config.agent_execution_mode`` is: the
+    Settings page writes ``CAPABILITY_GUARD`` to .env, and a mode switch must
+    take effect on the next save or build rather than on the next restart.
+    The file wins, then the environment, then the ``settings`` field (which
+    also carries the default and is what tests monkeypatch).
+    """
     try:
-        from common.config import settings
-        mode = str(getattr(settings, "capability_guard", "block") or "block").strip().lower()
+        from common.config import live_setting, settings
+        mode = live_setting("CAPABILITY_GUARD") or str(
+            getattr(settings, "capability_guard", "block") or "block"
+        )
+        mode = mode.strip().lower()
     except Exception:
         return "block"
-    return mode if mode in ("block", "warn", "off") else "block"
+    return mode if mode in GUARD_MODES else "block"
+
+
+def override_requires_container() -> bool:
+    """Whether a per-agent ``capability_override`` is honoured at build time
+    only for container-isolated runs (``settings.capability_override_requires_container``),
+    resolved live so the Settings page switch applies without a restart."""
+    try:
+        from common.config import live_setting, settings
+        raw = live_setting("CAPABILITY_OVERRIDE_REQUIRES_CONTAINER")
+        if raw:
+            return raw.strip().lower() in ("1", "true", "yes", "on")
+        return bool(getattr(settings, "capability_override_requires_container", False))
+    except Exception:
+        return False
+
+
+def override_honoured_at_build(agent_id: str) -> bool:
+    """Whether ``capability_override`` on this agent would actually lift the
+    block when the agent is built: always in ``warn``/``off`` mode or when the
+    container requirement is off, otherwise only for a no-network container.
+    The agent editor shows this next to the override switch so an operator
+    is not left with a saved override and a refused run."""
+    if guard_mode() != "block":
+        return True
+    if not override_requires_container():
+        return True
+    return _container_isolated(agent_id)
+
+
+def capability_warning(
+    agent_id: str,
+    tools: Sequence[str],
+    *,
+    delegates: Optional[Sequence[str]] = None,
+    workspace: Optional[str] = None,
+) -> Optional[Violation]:
+    """The blocked or warn-level combination a *saved* record still forms.
+
+    ``check_agent_tools`` answers "may this be saved"; this answers "what does
+    the operator need to see about it". A record that got through on the
+    per-agent override, in ``warn`` mode or by grandfathering still holds the
+    combination, and the routes return it as ``capability_warning`` so the
+    editor can show the amber banner after the save instead of pretending the
+    exposure is gone. Returns None when the mode is ``off`` or the set is clean.
+    """
+    if guard_mode() == "off":
+        return None
+    system_violation = system_workspace_violation(agent_id, tools, workspace=workspace)
+    if system_violation is not None:
+        return system_violation
+    return _effective_violation(agent_id, tools, delegates=delegates)
 
 
 def _same_rule(a: Optional[Violation], b: Optional[Violation]) -> bool:
@@ -276,13 +340,16 @@ def enforce_agent_tools(
 def _container_isolated(agent_id: str) -> bool:
     """True when this agent is configured to run in a no-network container."""
     try:
-        from common.config import settings
-        if str(getattr(settings, "agent_mode", "local")).strip().lower() != "docker":
+        from common.config import agent_execution_mode, live_setting, settings
+        if agent_execution_mode() != "docker":
             return False
         # A container that shares the host network is not isolated. Docker's
         # default bridge still reaches the internet, so only an explicit
-        # "none" network counts.
-        network = str(getattr(settings, "agent_docker_network", "") or "").strip().lower()
+        # "none" network counts. Resolved live like the mode, so a Settings
+        # page change counts on the next build.
+        network = live_setting(
+            "AGENT_DOCKER_NETWORK", str(getattr(settings, "agent_docker_network", "") or ""),
+        ).strip().lower()
         return network == "none"
     except Exception:
         return False
@@ -329,12 +396,7 @@ def enforce_built_tools(
         return
 
     if override:
-        try:
-            from common.config import settings
-            strict = bool(getattr(settings, "capability_override_requires_container", False))
-        except Exception:
-            strict = False
-        if not strict or _container_isolated(agent_id):
+        if not override_requires_container() or _container_isolated(agent_id):
             return
         log.error(
             "capability guard: agent %r has capability_override but is not container-isolated, "

@@ -31,6 +31,11 @@ os.environ["AGENTS_HUB_ROOT"] = str(_TEST_ROOT)
 TEST_DATABASE_URL = os.environ.get("AGENTS_HUB_TEST_DATABASE_URL", "").strip()
 os.environ["AGENTS_HUB_DATABASE_URL"] = TEST_DATABASE_URL
 
+# Chat turns run in this process under test (chat/routing.py): the default
+# hands every turn to a service replica, a process the suite must not spawn.
+# Tests of the routing itself patch ``chat.routing.enabled``.
+os.environ.setdefault("AGENTS_HUB_CHAT_EXECUTION", "inprocess")
+
 # The backend's route modules import their request models as a top level
 # ``models`` package (``from models import TaskCreate``), which only resolves
 # with dashboard/backend on the path. Put it there before any test module is
@@ -83,6 +88,51 @@ def _fresh_database(db, path: Path) -> None:
             conn.execute("TRUNCATE " + ", ".join(names) + " RESTART IDENTITY")
         db._local = threading.local()
         db._schema_ready = False
+
+
+# Settings the developer's own .env may carry that the suite must not
+# inherit: dashboard/backend/main.py exports the file into os.environ on
+# import (load_dotenv), and common.config.live_setting reads the file first
+# and the environment second, so without this a guard test would see the
+# operator's "warn" instead of the default "block".
+_PINNED_ENV = {
+    "CAPABILITY_GUARD": ("capability_guard", "block"),
+    "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", True),
+}
+
+
+# The environment as the session started, before any test imported
+# dashboard/backend/main.py and its load_dotenv exported the developer's .env
+# into os.environ. Keys the file adds on top of this are removed again before
+# every test, so a live setting (common.config.live_setting) never answers
+# from the operator's file in a test that monkeypatched ``settings``.
+_BASE_ENV_KEYS = frozenset(os.environ)
+
+
+def _dot_env_keys() -> set:
+    try:
+        from common.dotenv import read_env
+        return set(read_env())
+    except Exception:  # noqa: BLE001 - no readable .env, nothing to strip
+        return set()
+
+
+@pytest.fixture(autouse=True)
+def guard_defaults(monkeypatch):
+    """Keep the developer's .env out of the tests: every key the file exports
+    into os.environ (load_dotenv on the backend import) is dropped again, the
+    capability guard keys are dropped from what ``read_dot_env`` returns, and
+    the guard's ``settings`` fields (built from the same file at import) are
+    reset to their defaults. A test that wants another mode sets it on
+    ``settings`` or patches ``common.config.read_dot_env`` itself, as before."""
+    import common.config as _cfg
+    for key in _dot_env_keys() - _BASE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    real = _cfg.read_dot_env
+    for key, (field, default) in _PINNED_ENV.items():
+        monkeypatch.delenv(key, raising=False)
+        monkeypatch.setattr(_cfg.settings, field, default, raising=False)
+    monkeypatch.setattr(_cfg, "read_dot_env", lambda: {k: v for k, v in real().items() if k not in _PINNED_ENV})
 
 
 @pytest.fixture(autouse=True)

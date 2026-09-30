@@ -39,6 +39,9 @@ vi.mock('../../components/workspace', () => ({
 }));
 
 vi.mock('../../api', () => ({
+  getSettings: () => ok({ env_defined_fields: [] }),
+  testProvider: () => ok({ ok: true }),
+  testLocalModel: () => ok({ ok: true, models: [] }),
   getWorkspaceSettingsOverrides: () => ok({ overrides: {} }),
   updateWorkspaceSettingsOverrides: () => ok({}),
   getWorkspacePolicy: () => ok({ require_tool_approval: false, hooks: {} }),

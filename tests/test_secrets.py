@@ -12,6 +12,19 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _guard_defaults(monkeypatch):
+    """These tests assume the guard's defaults (block mode, an override that
+    needs a container). The developer's .env may say otherwise, both through
+    the live reader and through the ``settings`` object built from that file
+    at import, so both are pinned here rather than inherited."""
+    from common.config import settings
+    monkeypatch.setattr("common.config.read_dot_env", lambda: {})
+    monkeypatch.setattr(settings, "capability_guard", "block")
+    monkeypatch.setattr(settings, "capability_override_requires_container", True)
+
+
 BACKEND = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
 if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)

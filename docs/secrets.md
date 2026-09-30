@@ -116,7 +116,7 @@ In the dashboard: a workspace's Agents tab has a Secrets card, in every mode.
 It lists name, scope, the last four characters of the value (only for values
 longer than eight characters), and when it was set. In `multi` mode only the
 workspace owner or an administrator sees it. The agent side is on the agent's
-Tools tab: a Secrets card with the names this agent may receive, offering the
+Behavior tab: a Secrets card with the names this agent may receive, offering the
 names the current workspace holds as one-click suggestions. Saving it goes
 through the capability guard like the tools list does.
 

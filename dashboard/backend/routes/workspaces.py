@@ -29,7 +29,7 @@ from workspace import (
     set_workspace_instructions,
 )
 from workspace import storage as _workspace_storage
-from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem
+from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
@@ -536,11 +536,14 @@ async def set_workspace_default_model(name: str, payload: dict):
     return {"provider": provider, "model": model}
 
 
-# ``settings`` keys written by their own routes (the tool policy block below,
-# the agent mode, the loop settings of the agent loop's extensions), which the
-# settings-overrides Save must not drop.
+# ``settings`` keys written by their own routes or editors (the tool policy
+# block below, the agent mode, the loop settings of the agent loop's
+# extensions, the workspace palette, the web domain policy), which the
+# settings-overrides Save must not drop. A caller clears one by naming it
+# with a null value.
 _SETTINGS_OWNED_ELSEWHERE = (
     "require_tool_approval", "tool_policy", "tool_policy_model", "agent_mode", "loop",
+    "palette", "web_domain_policy_enabled", "web_allow_domains", "web_deny_domains",
 )
 
 
@@ -667,6 +670,66 @@ def _policy_payload(name: str) -> dict:
     }
 
 
+# ── Web domain policy of a workspace ──────────────────────────────────────────
+#
+# The three keys tools/web.py reads from the workspace's ``settings`` block:
+# ``web_deny_domains``, ``web_domain_policy_enabled``, ``web_allow_domains``.
+# A workspace list, when set, replaces the global one of the same name for
+# runs in this workspace; an empty list means "use the global one". The
+# switch turns the allow list on for this workspace even when it is off
+# globally. Edited on Settings, "Web search", and read live by every process.
+
+_WEB_POLICY_KEYS = ("web_domain_policy_enabled", "web_allow_domains", "web_deny_domains")
+
+
+def _web_policy_payload(name: str) -> dict:
+    from tools.web import global_domain_policy
+    settings = get_workspace_metadata(name).get("settings") or {}
+    return {
+        "workspace": name,
+        "policy": {
+            "enabled": bool(settings.get("web_domain_policy_enabled")),
+            "allow_domains": [str(h) for h in (settings.get("web_allow_domains") or [])],
+            "deny_domains": [str(h) for h in (settings.get("web_deny_domains") or [])],
+        },
+        "global": global_domain_policy(),
+    }
+
+
+@router.get("/{name}/web-policy")
+async def get_workspace_web_policy(name: str):
+    """The workspace's web domain policy next to the global one it overrides."""
+    return _web_policy_payload(name)
+
+
+@router.put("/{name}/web-policy")
+async def update_workspace_web_policy(request: Request, name: str, payload: dict):
+    """Set the workspace's web domain policy. Each key is optional; an empty
+    list (or a missing key left as it was) falls back to the global list."""
+    _ensure_writable_workspace(name)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="web policy must be a key-value object")
+    from tools.web import clean_host_list
+    settings = dict(get_workspace_metadata(name).get("settings") or {})
+    if "enabled" in payload:
+        settings["web_domain_policy_enabled"] = bool(payload.get("enabled"))
+    for key, field in (("allow_domains", "web_allow_domains"), ("deny_domains", "web_deny_domains")):
+        if key in payload:
+            raw = payload.get(key) or []
+            if not isinstance(raw, list):
+                raise HTTPException(status_code=400, detail=f"{key} must be a list of host names")
+            try:
+                settings[field] = clean_host_list(raw)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"{key}: {exc}")
+    update_workspace_metadata(name, {"settings": settings})
+    audit.record("workspace.web_policy", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request),
+                 details={k: settings.get(k) for k in _WEB_POLICY_KEYS})
+    return _web_policy_payload(name)
+
+
 @router.get("/{name}/policy")
 async def get_workspace_policy(name: str):
     """The workspace's tool policy: the approval gate and the hook config."""
@@ -737,6 +800,27 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
                      ip=identity.client_ip(request),
                      details={"keys": sorted(k for k in payload if k in (*settings_keys, "hooks"))})
     return _policy_payload(name)
+
+
+@router.get("/{name}/personal-memory")
+async def get_workspace_personal_memory(name: str):
+    """Personal memory in this workspace (memory/personal.py): the workspace
+    switch, its main agent and each agent's setting (missing = off)."""
+    from memory import personal
+    return personal.agent_settings(name)
+
+
+@router.put("/{name}/personal-memory")
+async def update_workspace_personal_memory(request: Request, name: str, data: WorkspacePersonalMemoryUpdate):
+    """Turn personal memory in this workspace on or off. Off, every agent has
+    it off; the agents' own switches are kept for when it is turned back on."""
+    from memory import personal
+    _ensure_writable_workspace(name)
+    result = personal.set_workspace_enabled(name, data.enabled)
+    audit.record("workspace.personal_memory", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request), details={"enabled": data.enabled})
+    return result
 
 
 @router.get("/{name}/env")

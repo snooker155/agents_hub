@@ -3,20 +3,27 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, GitBranch, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound } from 'lucide-react';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
 import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
 import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
+import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
 import { useAuth, isAdmin, isMultiUser } from '../components/auth';
 import { useTheme, resolvePalette } from '../components/theme';
 import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
 import { inputCls } from '../components/settingsUi';
+import {
+  SaveWorkspaceSettingsButton, WorkspaceSettingsStatus,
+  ExecutionModeSection, ToolPolicySection, TaskAssignmentSection, WorkspaceDomainPolicyCard,
+} from '../components/settings/WorkspaceSettingsSections';
+import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import PageLoader from '../components/PageLoader';
 import { useI18n } from '../i18n';
 // Tab ids the page can open, so a ?tab= deep-link can be validated before use.
-const WORKSPACE_TABS = ['files', 'agents', 'instructions', 'tasks', 'projects', 'progress'];
+const WORKSPACE_TABS = ['files', 'agents', 'instructions', 'tasks', 'projects', 'progress', 'settings'];
 
 const isMarkdownPath = (p) => /\.(md|markdown|mdx)$/i.test(String(p || ''));
 
@@ -108,6 +115,15 @@ const WorkspaceDetails = () => {
   const [activeTab, setActiveTab] = useState(
     WORKSPACE_TABS.includes(linkedTab) ? linkedTab : 'files');
   const [agentSearch, setAgentSearch] = useState('');
+  // System agents are in every workspace and cannot be removed, so they only
+  // crowd the authorized list; hidden by default, and the choice sticks.
+  const [showSystem, setShowSystem] = useState(() => {
+    try { return localStorage.getItem('workspace_agents_show_system') === 'true'; } catch { return false; }
+  });
+  const toggleSystem = (next) => {
+    setShowSystem(next);
+    try { localStorage.setItem('workspace_agents_show_system', next ? 'true' : 'false'); } catch { /* per-viewer convenience only */ }
+  };
   const [taskToolbar, setTaskToolbar] = useState(null);
   const [wsProjects, setWsProjects] = useState([]);
   const [expandedFolders, setExpandedFolders] = useState(new Set());
@@ -197,7 +213,7 @@ const WorkspaceDetails = () => {
   useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   const handleDelete = async () => {
-    if (!window.confirm(`Delete workspace "${ws.name}"? This cannot be undone.`)) return;
+    if (!window.confirm(t('workspaceDetails.confirmDeleteWorkspace', { name: ws.name }))) return;
     try {
       await deleteWorkspace(name);
       navigate('/workspaces');
@@ -307,7 +323,7 @@ const WorkspaceDetails = () => {
       }
       await fetchData();
     } catch (e) {
-      const detail = e?.response?.data?.detail || `Failed to delete ${label}`;
+      const detail = e?.response?.data?.detail || t('workspaceDetails.errors.deletePath', { label });
       setFileContentError(detail);
     } finally {
       setFileDeleting(false);
@@ -344,14 +360,21 @@ const WorkspaceDetails = () => {
 
   // Keep in sync with WORKSPACE_TABS (the ?tab= allowlist).
   const tabs = [
-    { id: 'files', label: 'Files', icon: FileText },
-    { id: 'agents', label: 'Agents', icon: Users },
-    { id: 'instructions', label: 'Instructions', icon: BookOpen },
-    { id: 'tasks', label: 'Tasks', icon: CheckSquare },
-    { id: 'projects', label: 'Projects', icon: FolderGit2 },
-    { id: 'progress', label: 'Progress', icon: BarChart2 },
+    { id: 'files', label: t('workspaceDetails.tabs.files'), icon: FileText },
+    { id: 'agents', label: t('workspaceDetails.tabs.agents'), icon: Users },
+    { id: 'instructions', label: t('workspaceDetails.tabs.instructions'), icon: BookOpen },
+    { id: 'tasks', label: t('workspaceDetails.tabs.tasks'), icon: CheckSquare },
+    { id: 'projects', label: t('workspaceDetails.tabs.projects'), icon: FolderGit2 },
+    { id: 'progress', label: t('workspaceDetails.tabs.progress'), icon: BarChart2 },
+    { id: 'settings', label: t('workspaceDetails.tabs.settings'), icon: SettingsIcon },
   ];
-  const marketAgents = allAgents.filter(a => !ws?.metadata?.allowed_agents?.includes(a.id));
+  const agentById = new Map(allAgents.map(a => [a.id, a]));
+  const allowedAgentIds = ws?.metadata?.allowed_agents || [];
+  const isSystemAgentId = (id) => agentById.get(id)?.system === true;
+  const systemAllowedCount = allowedAgentIds.filter(isSystemAgentId).length;
+  const shownAllowedAgentIds = showSystem ? allowedAgentIds : allowedAgentIds.filter(id => !isSystemAgentId(id));
+  // System agents are already in every workspace, so they are never offered here.
+  const marketAgents = allAgents.filter(a => !a.system && !allowedAgentIds.includes(a.id));
   const normalizedQuery = agentSearch.trim().toLowerCase();
   const filteredMarketAgents = marketAgents.filter((agent) => {
     if (!normalizedQuery) return true;
@@ -483,11 +506,11 @@ const WorkspaceDetails = () => {
     );
   });
 
-  if (loading) return <div className="text-center py-10">{t('workspaceDetails.loadingWorkspace')}</div>;
+  if (loading) return <PageLoader size="lg" label={t('workspaceDetails.loadingWorkspace')} />;
   if (!ws) return <div className="text-center py-10">{t('workspaceDetails.workspaceNotFound')}</div>;
 
   return (
-    <PageContainer fill={activeTab === 'files' || activeTab === 'tasks'}>
+    <PageContainer fill={activeTab === 'files' || activeTab === 'tasks' || activeTab === 'settings'}>
       <PageHeader
         icon={Folder}
         title={ws.name}
@@ -909,20 +932,35 @@ const WorkspaceDetails = () => {
         <div className="bg-white p-6 shadow-md rounded-lg">
           <h3 className="text-lg font-bold mb-6 flex items-center border-b pb-4">
             <ShoppingBag className="w-6 h-6 mr-2 text-indigo-600" />
-            Agent Marketplace & Active Personnel
+            {t('workspaceDetails.agentsHeading')}
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Active Agents */}
             <div>
-              <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-                <Users className="w-4 h-4 mr-2" />
-                {t('workspaceDetails.authorizedAgentsInWorkspace')}
-              </h4>
+              <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
+                <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center">
+                  <Users className="w-4 h-4 mr-2" />
+                  {t('workspaceDetails.authorizedAgentsInWorkspace')}
+                </h4>
+                <label
+                  className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none"
+                  title={t('workspaceDetails.showSystemAgentsHint')}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showSystem}
+                    onChange={(e) => toggleSystem(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-indigo-600 cursor-pointer"
+                  />
+                  {t('workspaceDetails.showSystemAgents')}
+                  {systemAllowedCount > 0 && <span className="text-gray-400">({systemAllowedCount})</span>}
+                </label>
+              </div>
               <div className="space-y-3">
-                {ws.metadata?.allowed_agents?.length ? (
-                  ws.metadata.allowed_agents.map(agentId => {
-                    const agent = allAgents.find(a => a.id === agentId);
+                {shownAllowedAgentIds.length ? (
+                  shownAllowedAgentIds.map(agentId => {
+                    const agent = agentById.get(agentId);
                     const isSystem = agent?.system === true;
                     return (
                       <div key={agentId} className="flex items-center justify-between p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
@@ -963,7 +1001,9 @@ const WorkspaceDetails = () => {
                     );
                   })
                 ) : (
-                  <p className="text-gray-500 text-sm italic">{t('workspaceDetails.noAgentsAuthorizedForThis')}</p>
+                  <p className="text-gray-500 text-sm italic">
+                    {allowedAgentIds.length ? t('workspaceDetails.onlySystemAgentsAuthorized') : t('workspaceDetails.noAgentsAuthorizedForThis')}
+                  </p>
                 )}
               </div>
             </div>
@@ -987,15 +1027,8 @@ const WorkspaceDetails = () => {
               <div className="grid grid-cols-1 gap-3">
                 {filteredMarketAgents.length ? (
                   filteredMarketAgents.map(agent => {
-                    const isDefaultOnly = agent.default_workspace_only && name !== 'default';
-                    const isSystem = agent.system === true;
-                    const isDisabled = isDefaultOnly || isSystem;
-                    const disabledLabel = isSystem ? t('workspaceDetails.systemAgentActive') : t('workspaceDetails.restricted');
-                    const disabledTitle = isSystem
-                      ? t('workspaceDetails.systemAgentIncluded')
-                      : isDefaultOnly
-                        ? t('workspaceDetails.defaultWorkspaceOnlyTitle')
-                        : undefined;
+                    const isDisabled = agent.default_workspace_only && name !== 'default';
+                    const disabledTitle = isDisabled ? t('workspaceDetails.defaultWorkspaceOnlyTitle') : undefined;
                     return (
                       <div
                         key={agent.id}
@@ -1018,7 +1051,7 @@ const WorkspaceDetails = () => {
                               {isDisabled && <Lock className="w-3 h-3 text-gray-400" />}
                             </div>
                             <div className="text-[10px] text-gray-400 line-clamp-1">
-                              {isSystem ? t('workspaceDetails.systemAgentRequiredEverywhere') : isDefaultOnly ? t('workspaceDetails.defaultWorkspaceOnly') : agent.description}
+                              {isDisabled ? t('workspaceDetails.defaultWorkspaceOnly') : agent.description}
                             </div>
                           </div>
                         </div>
@@ -1032,7 +1065,7 @@ const WorkspaceDetails = () => {
                               : 'bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-600 hover:text-white'
                           }`}
                         >
-                          {isDisabled ? disabledLabel : t('workspaceDetails.addAgent')}
+                          {isDisabled ? t('workspaceDetails.restricted') : t('workspaceDetails.addAgent')}
                         </button>
                       </div>
                     );
@@ -1079,7 +1112,7 @@ const WorkspaceDetails = () => {
                 })
               ) : (
                 <p className="text-gray-500 text-sm italic">
-                  No flows authorized for this workspace. Add flows from the Marketplace, and any flow becomes assignable to this workspace's tasks.
+                  {t('workspaceDetails.noFlowsAuthorized')}
                 </p>
               )}
             </div>
@@ -1091,11 +1124,10 @@ const WorkspaceDetails = () => {
           and nothing for a viewer who is neither an owner of it nor an admin.
           See components/workspace/WorkspaceMembers.jsx. */}
       {activeTab === 'agents' && <WorkspaceMembers workspace={name} />}
-      {activeTab === 'agents' && <WorkspaceSecrets workspace={name} agents={ws?.metadata?.allowed_agents || []} />}
-      {/* This workspace's default palette (docs/settings.md "Palette"): renders
-          nothing for a non-admin in multi mode, since only an admin may set a
-          default that reaches everyone in the workspace. */}
-      {activeTab === 'agents' && <WorkspacePaletteDefault workspace={name} />}
+
+      {activeTab === 'settings' && (
+        <WorkspaceSettingsTab workspace={name} agents={ws?.metadata?.allowed_agents || []} />
+      )}
 
       {activeTab === 'instructions' && (
         <div className="bg-white p-6 shadow-md rounded-lg">
@@ -1106,7 +1138,7 @@ const WorkspaceDetails = () => {
                 {t('workspaceDetails.workspaceInstructions')}
               </h3>
               <p className="text-sm text-gray-500 mt-0.5">
-                These instructions are prepended to every agent's system prompt when running in this workspace.
+                {t('workspaceDetails.instructionsDescription')}
               </p>
             </div>
             <button
@@ -1124,7 +1156,7 @@ const WorkspaceDetails = () => {
               {instructionsSaved ? (
                 <><Check className="w-4 h-4" /> {t('workspaceDetails.saved')}</>
               ) : (
-                <><Save className="w-4 h-4" /> {instructionsSaving ? 'Saving…' : 'Save'}</>
+                <><Save className="w-4 h-4" /> {instructionsSaving ? t('workspaceDetails.saving') : t('workspaceDetails.save')}</>
               )}
             </button>
           </div>
@@ -1132,7 +1164,7 @@ const WorkspaceDetails = () => {
             value={instructionsDraft}
             onChange={(e) => setInstructionsDraft(e.target.value)}
             rows={20}
-            placeholder={`# ${name} Workspace Instructions\n\nWrite high-level instructions for all agents in this workspace.\nSupports Markdown formatting.\n\nExample:\n- Always respond in English\n- Keep output concise\n- Prefer editing existing files over creating new ones`}
+            placeholder={t('workspaceDetails.instructionsPlaceholder', { name })}
             className="w-full font-mono text-sm border border-gray-200 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none resize-y leading-relaxed"
           />
           {instructions && instructionsDraft !== instructions && (
@@ -1144,6 +1176,149 @@ const WorkspaceDetails = () => {
     </PageContainer>
   );
 };
+
+// ── settings tab ─────────────────────────────────────────────────────────────
+
+// What is configured per workspace, laid out the way the Settings page lays
+// out its sections: a left-hand menu and one content column. Provider keys,
+// RAG, observability and logging are not here: they are not a property of a
+// workspace, so they live on the Settings page only. `saves` marks the
+// sections whose fields ride on the Save button; the others save themselves.
+const SETTINGS_GROUPS = [
+  {
+    key: 'agents',
+    items: [
+      { id: 'execution', icon: Server, saves: true },
+      { id: 'toolPolicy', icon: Shield },
+      { id: 'webPolicy', icon: Globe },
+      { id: 'personalMemory', icon: UserRound },
+      { id: 'tasks', icon: CheckSquare, saves: true },
+    ],
+  },
+  {
+    key: 'workspace',
+    items: [
+      { id: 'secrets', icon: Lock },
+      { id: 'palette', icon: PaletteIcon, adminOnly: true },
+    ],
+  },
+];
+
+/**
+ * The workspace's own settings. The override fields are drawn by the shared
+ * components/settings/WorkspaceSettingsSections.jsx, the same ones the
+ * Settings page shows for the workspace picked in the header, so the two
+ * never drift. The open section lives in the URL (?tab=settings&section=…).
+ */
+function WorkspaceSettingsTab({ workspace, agents }) {
+  const { t } = useI18n();
+  const auth = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const s = useWorkspaceSettings(workspace);
+
+  // The palette card renders nothing for a non-admin in multi mode, so its
+  // menu entry would lead to an empty page.
+  const canSeePalette = !isMultiUser(auth) || isAdmin(auth);
+  const groups = SETTINGS_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.adminOnly || canSeePalette),
+  }));
+  const items = groups.flatMap((group) => group.items);
+  const active = items.find((item) => item.id === searchParams.get('section')) || items[0];
+
+  const open = (id) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', 'settings');
+    next.set('section', id);
+    setSearchParams(next, { replace: true });
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 gap-6">
+      <nav className="hidden w-56 shrink-0 overflow-y-auto md:block">
+        <div className="pb-8">
+          {groups.map((group) => (
+            <div key={group.key} className="mb-2">
+              <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                {t(`workspaceDetails.settingsTab.groups.${group.key}`)}
+              </p>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = item.id === active.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => open(item.id)}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                      isActive
+                        ? 'bg-indigo-50 font-semibold text-indigo-600'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                    aria-current={isActive ? 'page' : undefined}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    {t(`workspaceDetails.settingsTab.sections.${item.id}`)}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+          <p className="mx-1 mt-2 rounded-lg border border-dashed border-gray-200 px-3 py-2 text-[11px] leading-snug text-gray-500">
+            {t('workspaceDetails.settingsTab.globalHint')}{' '}
+            <Link to="/settings" className="text-indigo-600 hover:text-indigo-800">{t('workspaceDetails.settingsTab.openSettings')}</Link>
+          </p>
+        </div>
+      </nav>
+
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <div className="max-w-3xl space-y-5 pb-16">
+          {/* Mobile section selector */}
+          <div className="md:hidden">
+            <select
+              value={active.id}
+              onChange={(e) => open(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
+            >
+              {groups.map((group) => (
+                <optgroup key={group.key} label={t(`workspaceDetails.settingsTab.groups.${group.key}`)}>
+                  {group.items.map((item) => (
+                    <option key={item.id} value={item.id}>{t(`workspaceDetails.settingsTab.sections.${item.id}`)}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+
+          {active.saves && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-gray-500 max-w-xl">{t('workspaceDetails.settingsTab.description')}</p>
+              <SaveWorkspaceSettingsButton s={s} />
+            </div>
+          )}
+          <WorkspaceSettingsStatus s={s} />
+
+          {s.loading && (active.saves || active.id === 'toolPolicy') ? (
+            <p className="text-sm text-gray-500 flex items-center gap-2">
+              <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
+            </p>
+          ) : (
+            <>
+              {active.id === 'execution' && <ExecutionModeSection s={s} />}
+              {active.id === 'toolPolicy' && <ToolPolicySection s={s} />}
+              {active.id === 'tasks' && <TaskAssignmentSection s={s} />}
+            </>
+          )}
+          {active.id === 'webPolicy' && <WorkspaceDomainPolicyCard key={workspace} workspace={workspace} />}
+          {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}
+          {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agents} />}
+          {/* This workspace's default palette (docs/settings.md "Palette"). */}
+          {active.id === 'palette' && <WorkspacePaletteDefault workspace={workspace} />}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── default palette ──────────────────────────────────────────────────────────
 
@@ -1205,12 +1380,19 @@ function WorkspacePaletteDefault({ workspace }) {
     return payload;
   };
 
+  // The route replaces the whole override bag, and the settings form on the
+  // same tab may have saved since this card loaded: build on what is stored
+  // now, not on the copy from mount.
+  const freshOverrides = async () => {
+    const { data } = await getWorkspaceSettingsOverrides(workspace);
+    return data?.overrides && typeof data.overrides === 'object' ? data.overrides : {};
+  };
+
   const save = async () => {
     setBusy(true);
     setError('');
     try {
-      const payload = activePalette();
-      const nextOverrides = { ...(overrides || {}), palette: payload };
+      const nextOverrides = { ...(await freshOverrides()), palette: activePalette() };
       await updateWorkspaceSettingsOverrides(workspace, nextOverrides);
       setOverrides(nextOverrides);
       setJustSaved(true);
@@ -1227,9 +1409,10 @@ function WorkspacePaletteDefault({ workspace }) {
     setBusy(true);
     setError('');
     try {
-      const nextOverrides = { ...(overrides || {}) };
-      delete nextOverrides.palette;
+      // A null names the key, so the route clears it instead of carrying it over.
+      const nextOverrides = { ...(await freshOverrides()), palette: null };
       await updateWorkspaceSettingsOverrides(workspace, nextOverrides);
+      delete nextOverrides.palette;
       setOverrides(nextOverrides);
       setDraft(PRESETS.navy);
       setEnabled({ neutral: false, ok: false, danger: false });

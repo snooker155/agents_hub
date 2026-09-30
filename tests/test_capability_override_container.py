@@ -43,6 +43,19 @@ from agents.registry import AgentSpec, add_agent, get_agent, replace_all_raw
 
 
 @pytest.fixture(autouse=True)
+def _guard_defaults(monkeypatch):
+    """These tests assume the guard's defaults (block mode, an override that
+    needs a container). The developer's .env may say otherwise, both through
+    the live reader and through the ``settings`` object built from that file
+    at import, so both are pinned here rather than inherited."""
+    from common.config import settings
+    monkeypatch.setattr("common.config.read_dot_env", lambda: {})
+    monkeypatch.setattr(settings, "capability_guard", "block")
+    monkeypatch.setattr(settings, "capability_override_requires_container", True)
+
+
+
+@pytest.fixture(autouse=True)
 def fresh_registry():
     """Start each test from an empty, valid agents.json (as in
     tests/test_registry_locking.py) so add_agent round-trips for real."""

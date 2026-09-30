@@ -106,6 +106,16 @@ class AgentEpisodicConfigUpdate(BaseModel):
     episodic_write_enabled: Optional[bool] = None
 
 
+class AgentPersonalMemoryUpdate(BaseModel):
+    # This agent's personal memory in one workspace (memory/personal.py).
+    enabled: bool
+
+
+class WorkspacePersonalMemoryUpdate(BaseModel):
+    # Whether personal memory exists in the workspace at all.
+    enabled: bool
+
+
 class AgentResponseFormatUpdate(BaseModel):
     # Structured response the agent may emit: "none" | "buttons" | "telegram".
     response_format: str = "none"
@@ -121,6 +131,13 @@ class AgentSelfDelegationUpdate(BaseModel):
     # When True, the agent may target itself in run_agent_tool / assign_agent_tool.
     # Off by default because a self-run recurses the same agent.
     allow_self_delegation: bool = False
+
+
+class AgentCapabilityOverrideUpdate(BaseModel):
+    # When True, the capability guard reports a blocked tool combination on
+    # this agent (own tools or reached by delegation) as a warning instead of
+    # refusing the save. See agents/capability_guard.py.
+    capability_override: bool = False
 
 
 class AgentSkillCreate(BaseModel):

@@ -433,6 +433,13 @@ export const updateAgentResponseFormat = (id, response_format) => api.post(`/age
 export const updateAgentClarifyGate = (id, clarify_gate) => api.post(`/agents/${id}/clarify-gate`, { clarify_gate });
 export const getAgentSelfDelegation = (id) => api.get(`/agents/${id}/self-delegation`);
 export const updateAgentSelfDelegation = (id, allow_self_delegation) => api.post(`/agents/${id}/self-delegation`, { allow_self_delegation });
+// Capability guard escape hatch for one agent (agents/capability_guard.py):
+// with the override on, a blocked tool combination, own or reached by
+// delegation, is saved and reported as a warning instead of refused.
+export const getAgentCapabilityOverride = (id) => api.get(`/agents/${id}/capability-override`);
+// Tools the factory adds at build time on top of the record (agents/auto_tools.py).
+export const getAgentAutoTools = (id, workspace) => api.get(`/agents/${id}/auto-tools`, workspace ? { params: { workspace } } : {});
+export const updateAgentCapabilityOverride = (id, capability_override) => api.post(`/agents/${id}/capability-override`, { capability_override });
 export const getAgentModel = (id) => api.get(`/agents/${id}/model`);
 export const updateAgentModel = (id, data) => api.post(`/agents/${id}/model`, data);
 export const testLocalModel = (provider, base_url) => api.post('/settings/test-local-model', { provider, base_url });
@@ -637,6 +644,10 @@ export const updateWorkspaceSettingsOverrides = (name, overrides) => api.put(`/w
 // The workspace's tool policy: the approval gate and the PreToolUse/PostToolUse
 // hooks (see tools/approval.py and agents/hooks.py).
 export const getWorkspacePolicy = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/policy`);
+// The workspace's web domain policy (tools/web.py): its own allow and deny
+// lists and switch, which replace the global ones for runs in the workspace.
+export const getWorkspaceWebPolicy = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/web-policy`);
+export const updateWorkspaceWebPolicy = (name, policy) => api.put(`/workspaces/${encodeURIComponent(name)}/web-policy`, policy);
 export const updateWorkspacePolicy = (name, policy) => api.put(`/workspaces/${encodeURIComponent(name)}/policy`, policy);
 export const getWorkspaceModel = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/model`);
 export const updateWorkspaceModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/model`, data);
@@ -759,22 +770,6 @@ export const deleteMessage = (runId, params) => api.delete(`/messages/${runId}`,
 // and diff outputs. Long-running (a real LLM call).
 export const replayRun = (runId, data) => api.post(`/runs/${runId}/replay`, data || {}, { timeout: 300000 });
 
-// Nodes API
-export const getNodes = (workspace) => api.get('/nodes', { params: workspace ? { workspace } : {} });
-export const startNode = (data) => api.post('/nodes', data);
-export const getNodeById = (nodeId) => api.get(`/nodes/${nodeId}`);
-export const getNodeLogs = (nodeId) => api.get(`/nodes/${nodeId}/logs`);
-export const stopNode = (nodeId) => api.post(`/nodes/${nodeId}/stop`);
-export const restartNode = (nodeId) => api.post(`/nodes/${nodeId}/restart`);
-export const deleteNode = (nodeId) => api.delete(`/nodes/${nodeId}`);
-export const exposeNode = (nodeId) => api.post(`/nodes/${nodeId}/expose`);
-export const unexposeNode = (nodeId) => api.delete(`/nodes/${nodeId}/expose`);
-// Inbound signing for an exposed node. Write-only: a node reports only
-// `inbound_secret_configured`, never the value.
-export const setNodeInboundSecret = (nodeId, secret) => api.put(`/nodes/${nodeId}/inbound-secret`, { secret });
-export const clearNodeInboundSecret = (nodeId) => api.delete(`/nodes/${nodeId}/inbound-secret`);
-export const getNodeConnections = (nodeId) => api.get(`/nodes/${nodeId}/connections`);
-export const getNodeRuns = (nodeId, limit = 50) => api.get(`/nodes/${nodeId}/runs`, { params: { limit } });
 // Resident instance actions — starting, stopping and steering the carrier
 // process behind an instance (instances/carrier.py). A resident instance is
 // what the agent page's Run button starts; everything here targets one by id.

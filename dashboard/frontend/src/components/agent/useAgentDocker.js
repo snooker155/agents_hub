@@ -21,6 +21,10 @@ export function useAgentDocker({ id, activeTab, t, toast }) {
   const [dockerImages, setDockerImages] = useState([]);
   const [dockerContainers, setDockerContainers] = useState([]);
   const [dockerLoading, setDockerLoading] = useState(false);
+  // Why the images could not be read (Docker missing or not answering), so
+  // the tab says so instead of calling every image "not built".
+  const [dockerError, setDockerError] = useState('');
+  const [imagesKnown, setImagesKnown] = useState(false);
   const [buildingBase, setBuildingBase] = useState(false);
   const [buildingAgent, setBuildingAgent] = useState(false);
   const [buildLog, setBuildLog] = useState('');
@@ -32,16 +36,28 @@ export function useAgentDocker({ id, activeTab, t, toast }) {
 
   const fetchDockerData = useCallback(async () => {
     setDockerLoading(true);
-    try {
-      const [imagesResp, containersResp] = await Promise.all([
-        getContainerImages(),
-        getContainers(),
-      ]);
-      setDockerImages(imagesResp.data?.images || []);
-      const allContainers = containersResp.data?.containers || [];
+    setDockerError('');
+    // Each list on its own: one failing must not hide the other.
+    const [imagesResult, containersResult] = await Promise.allSettled([
+      getContainerImages(),
+      getContainers(),
+    ]);
+    if (imagesResult.status === 'fulfilled') {
+      setDockerImages(imagesResult.value.data?.images || []);
+      setImagesKnown(true);
+    } else {
+      setDockerImages([]);
+      setImagesKnown(false);
+      setDockerError(errorDetail(imagesResult.reason) || t('agentDetails.errors.dockerData'));
+    }
+    if (containersResult.status === 'fulfilled') {
+      const allContainers = containersResult.value.data?.containers || [];
       setDockerContainers(allContainers.filter(c => c.agent_id === id || c.name?.includes(id)));
-    } catch (e) {
-      toast.error(t('agentDetails.errors.dockerData'), errorDetail(e));
+    } else {
+      setDockerContainers([]);
+      if (imagesResult.status === 'fulfilled') {
+        toast.error(t('agentDetails.errors.dockerData'), errorDetail(containersResult.reason));
+      }
     }
     setDockerLoading(false);
   }, [id, t, toast]);
@@ -132,6 +148,7 @@ export function useAgentDocker({ id, activeTab, t, toast }) {
 
   return {
     dockerfileContent, dockerfileLoading, dockerImages, dockerContainers, dockerLoading,
+    dockerError, imagesKnown,
     buildingBase, buildingAgent, buildLog, buildError,
     containerLogsName, setContainerLogsName, containerLogsText, containerLogsLoading,
     dockerActionBusy,

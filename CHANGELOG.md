@@ -59,6 +59,18 @@ turns that section into the next release.
   message box fixed to the bottom of the screen with the page scrolling
   behind it, and Process and Access tabs for the carrier with its journal and
   for the inputs, the public address and its inbound secret.
+- Capability guard switches. A per-agent checkbox on the Tools tab, "Lift the
+  block for this agent: warn only" (`POST /api/agents/{id}/capability-override`),
+  saves a blocked tool combination, own or reached through a delegate, as a
+  warning; Settings, "Agent execution", gains the guard mode (block, warn,
+  off; `CAPABILITY_GUARD`, read live) and the container requirement for a
+  per-agent exemption (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`). The agent
+  page says when an exemption counts at save time only.
+- The workspace page gains a Settings tab with what is configured per
+  workspace, drawn by the same sections as the Settings page: agent
+  execution, the tool policy, web access (the workspace's own domain lists,
+  `/api/workspaces/{name}/web-policy`, which replace the global ones for its
+  runs), personal memory, task assignment, secrets and the palette.
 
 ### Changed
 
@@ -85,6 +97,33 @@ turns that section into the next release.
   `instance_logs`, `stop_instance` and `restart_instance`.
 - The orchestrator page lost its cluster status card (the Cluster page holds
   that) and the routing history scrolls inside its card.
+- The Tools tab of an agent: each tool is a compact card that toggles on
+  click and turns green when on, up to six to a row; the tool's permission
+  policy is picked inside its card and the default for other tools sits in
+  the card header, saved with the tool list by the one button. The separate
+  Tool policy card is gone; the recent decisions are a fold under the tools.
+- The agent page gains a Behavior tab: the reasoning, clarification gate and
+  self-delegation card, the response format card and the Secrets card moved
+  there from the Tools tab, which now holds the tools, their policy, the
+  delegation allowlist and the handoff card.
+- The Tools tab also lists the tools the factory adds at build time on top
+  of the record (`GET /api/agents/{id}/auto-tools`): the handoff tool once
+  targets are set, think and the plan store, skills tools, `ask_user` behind
+  the clarification gate, the shared memory pool tools, each as a read-only
+  card naming the setting that brings it.
+- Settings gains a Web search page: the provider behind
+  the `web_search` tool (Brave, Tavily or Exa), its key and the results per
+  call, plus the `fetch_url` limits and the global domain policy (deny list,
+  opt-in allow list), written to `.env` and read live by the backend and
+  every runner (docs/tools-and-capabilities.md, "Web search provider"). The
+  workspace page's Settings tab gains "Web access": the workspace's own
+  domain lists (`/api/workspaces/{name}/web-policy`), which replace the
+  global ones for runs in that workspace.
+- A model call that never reached its provider now says which provider, model
+  and address were tried (`Cannot reach the model provider lmstudio (...) at
+  http://localhost:1234: Connection error.`) in the chat's error events and
+  the reply that closes the turn, instead of the client library's bare
+  "Connection error."
 
 ### Fixed
 
@@ -104,6 +143,12 @@ turns that section into the next release.
   workspace's folder (`workspace_operating_path`), so the workspace's model
   applies when one is set and the global default otherwise, in this process
   and on a runner replica alike.
+- Saving a delegation that closes the lethal trifecta through a delegate
+  answered with a 500 and the page showed nothing. It is now a 409 with the
+  structured violation, and the Delegation card names the delegate and the
+  tools it brings, as the Tools card already did for a tool.
+- The agent, workspace and marketplace agent pages show the loading
+  animation with their loading text under it, instead of the text alone.
 
 ### Upgrade notes
 

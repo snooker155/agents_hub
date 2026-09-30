@@ -38,7 +38,8 @@ record, saved through `GET` / `POST /api/agents/{id}/handoffs` (and accepted by
 its tools.
 
 An agent that has targets gets the `handoff_to_agent` tool and a short section
-in its system prompt. The tool's description lists each target with its name and
+in its system prompt. The tool is not in the tool catalog and is never picked
+by hand: the Tools tab lists it under "Added automatically" once targets exist. The tool's description lists each target with its name and
 description, so the model can choose without looking anything up. The tool
 takes `agent_id`, a `reason` the user sees, an optional `note` only the
 receiving agent sees, and an optional narrower `history`.
