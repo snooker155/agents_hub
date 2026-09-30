@@ -128,15 +128,32 @@ export function isKnownLanguage(language) {
 // Cache of resolved language extensions so re-highlighting the same language
 // (e.g. a second code block in the same message) doesn't re-import.
 const languageCache = new Map();
+// The same languages once their import has settled, readable synchronously:
+// a block that is still streaming re-renders on every token, and waiting a
+// microtask for each one would show the previous token's colours a beat late.
+const resolvedLanguages = new Map();
 
 async function loadLanguage(language) {
   const key = normalizeLanguage(language);
   const loader = LOADERS[key];
   if (!loader) return null;
   if (languageCache.has(key)) return languageCache.get(key);
-  const promise = loader().catch(() => null);
+  const promise = loader().catch(() => null).then((support) => {
+    resolvedLanguages.set(key, support);
+    return support;
+  });
   languageCache.set(key, promise);
   return promise;
+}
+
+/** Whether `language`'s grammar is already loaded (see highlightCodeSync). */
+export function isLanguageLoaded(language) {
+  return resolvedLanguages.has(normalizeLanguage(language));
+}
+
+/** Start loading `language`'s grammar; resolves once it can be used. */
+export function preloadLanguage(language) {
+  return loadLanguage(language);
 }
 
 // The same loader, exported for CodeEditor.jsx: what `@codemirror/lang-*`
@@ -168,7 +185,20 @@ export function cmHighlightExtension() {
  * back to plain text in that case.
  */
 export async function highlightCode(code, language) {
-  const langSupport = await loadLanguage(language);
+  return highlightWith(await loadLanguage(language), code);
+}
+
+/**
+ * `highlightCode` for a language that is already loaded, without waiting;
+ * `null` when it is not (call preloadLanguage first) or cannot be parsed.
+ */
+export function highlightCodeSync(code, language) {
+  const key = normalizeLanguage(language);
+  if (!resolvedLanguages.has(key)) return null;
+  return highlightWith(resolvedLanguages.get(key), code);
+}
+
+function highlightWith(langSupport, code) {
   if (!langSupport) return null;
   // Both LanguageSupport (from lang-* packages) and a bare Language
   // (StreamLanguage.define(...)) expose `.language.parser` / `.parser`.

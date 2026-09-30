@@ -12,8 +12,11 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { indentOnInput, bracketMatching } from '@codemirror/language';
 import { cmHighlightExtension, loadLanguageExtension } from '../../lib/highlight';
 
+// `height: 100%` makes the editor fill its host, not just its text: the
+// background and the line-number gutter run to the bottom of the panel, and a
+// click below the last line lands in the editor.
 const LIGHT_THEME = EditorView.theme({
-  '&': { backgroundColor: '#ffffff', color: '#111827', fontSize: '0.8rem' },
+  '&': { height: '100%', backgroundColor: '#ffffff', color: '#111827', fontSize: '0.8rem' },
   '.cm-content': { caretColor: '#4f46e5' },
   '.cm-gutters': { backgroundColor: '#f9fafb', color: '#9ca3af', border: 'none' },
   '.cm-activeLine': { backgroundColor: 'rgba(79, 70, 229, 0.06)' },
@@ -21,7 +24,7 @@ const LIGHT_THEME = EditorView.theme({
 });
 
 const DARK_THEME = EditorView.theme({
-  '&': { backgroundColor: '#0f172a', color: '#e5e7eb', fontSize: '0.8rem' },
+  '&': { height: '100%', backgroundColor: '#0f172a', color: '#e5e7eb', fontSize: '0.8rem' },
   '.cm-content': { caretColor: '#a5b4fc' },
   '.cm-gutters': { backgroundColor: '#0b1220', color: '#6b7280', border: 'none' },
   '.cm-activeLine': { backgroundColor: 'rgba(165, 180, 252, 0.08)' },
@@ -95,5 +98,7 @@ export default function CodeEditor({ value = '', onChange, language = '', dark =
     view.dispatch({ changes: { from: 0, to: current.length, insert: value || '' } });
   }, [value]);
 
-  return <div ref={hostRef} className={className} />;
+  // The host carries the editor's background too, so the area is already the
+  // right colour in the moment before the editor is built.
+  return <div ref={hostRef} className={className} style={{ backgroundColor: dark ? '#0f172a' : '#ffffff' }} />;
 }

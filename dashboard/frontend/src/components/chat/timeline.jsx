@@ -7,6 +7,7 @@ import { useI18n } from '../../i18n';
 import { ExtractionToolCard, RecallToolCard } from './memoryCards';
 import { EXTRACTION_TOOLS } from './memoryTools';
 import { GraphNodeStep, ReasoningStep } from './reasoning';
+import { foldDelegationTools } from './trail';
 import { ChevronDown, ChevronUp, Repeat, Terminal, Zap } from 'lucide-react';
 import { useState } from 'react';
 
@@ -57,16 +58,19 @@ function TimelineToolCard({ entry }) {
 }
 
 // A live, collapsible block for one delegated agent run: header (agent + status)
-// over its nested thoughts and tool calls, the same cards the parent uses.
+// over everything the worker did (its thoughts, tool calls, the text it wrote
+// between them, and its answer), with the same cards the parent uses.
 // Recursive: a nested `delegation` entry renders another DelegationCard.
-function DelegationCard({ entry }) {
+function DelegationCard({ entry, defaultOpen = true }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(true);
-  const nested = entry.timeline || [];
+  const [open, setOpen] = useState(defaultOpen);
+  const nested = foldDelegationTools(entry.timeline);
   const running = entry.running;
   const failed = entry.ok === false && !running;
+  const last = nested[nested.length - 1];
+  const answer = !running && (entry.output || '').trim() && last?.type !== 'text' ? entry.output : '';
   return (
-    <div className="rounded-lg border border-indigo-200 bg-indigo-50/40">
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50/40" data-testid="delegation-card">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -74,7 +78,7 @@ function DelegationCard({ entry }) {
       >
         <Repeat className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
         <span className="text-xs font-semibold text-indigo-700 flex-shrink-0">
-          Delegated → {entry.agent_name || entry.agent_id}
+          {t('chat.delegatedTo', { agent: entry.agent_name || entry.agent_id })}
         </span>
         {running ? (
           <span className="flex gap-1 ml-1">
@@ -84,7 +88,7 @@ function DelegationCard({ entry }) {
           </span>
         ) : (
           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ml-1 ${failed ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-            {failed ? 'failed' : 'done'}
+            {failed ? t('chat.delegationFailed') : t('chat.delegationDone')}
           </span>
         )}
         {!open && entry.input && (
@@ -94,13 +98,13 @@ function DelegationCard({ entry }) {
       </button>
       {open && (
         <div className="px-3 pb-2.5 pt-0.5 ml-2 border-l-2 border-indigo-100 space-y-1.5">
-          {nested.length === 0 ? (
-            <div className="text-[11px] text-gray-400 italic">{t('chat.working')}</div>
+          {nested.length === 0 && !answer ? (
+            <div className="text-[11px] text-gray-400 italic">{running ? t('chat.working') : t('chat.noOutput')}</div>
           ) : (
             nested.map((e, i) => {
               if (e.type === 'reasoning') return <ReasoningStep key={i} step={e} />;
               if (e.type === 'graph_node') return <GraphNodeStep key={i} entry={e} />;
-              if (e.type === 'delegation') return <DelegationCard key={i} entry={e} />;
+              if (e.type === 'delegation') return <DelegationCard key={e.run_id || i} entry={e} defaultOpen={defaultOpen} />;
               if (e.type === 'tool') {
                 if (EXTRACTION_TOOLS.includes(e.tool)) return <ExtractionToolCard key={i} entry={e} />;
                 if (e.tool === 'recall') return <RecallToolCard key={i} entry={e} />;
@@ -108,12 +112,14 @@ function DelegationCard({ entry }) {
               }
               if (e.type === 'text') {
                 return e.text && e.text.trim()
-                  ? <div key={i} className="text-[11px] text-gray-700 whitespace-pre-wrap break-words">{e.text}</div>
+                  ? <div key={i} className="text-xs text-gray-700 whitespace-pre-wrap break-words">{e.text}</div>
                   : null;
               }
               return null;
             })
           )}
+          {answer && <div className="text-xs text-gray-700 whitespace-pre-wrap break-words">{answer}</div>}
+          {failed && entry.error && <div className="text-[11px] text-red-600 whitespace-pre-wrap break-words">{entry.error}</div>}
         </div>
       )}
     </div>

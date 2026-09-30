@@ -1,6 +1,7 @@
 import { SKILL_TOOL, preview } from './processUtils';
 import { toolInline } from './toolFormatters';
 import ProcessNode from './ProcessNode';
+import StepText from './StepText';
 import { useI18n } from '../i18n';
 
 // Message-page process view. Unlike the shared ProcessGraph (Chat/Task), this
@@ -42,11 +43,15 @@ export default function MessageProcessFlow({ runs = [] }) {
 
   return (
     <div>
-      {/* Pinned input — stays at the top while the process nodes scroll under it. */}
-      <div className="sticky top-0 z-10 bg-blue-50 border-b border-blue-200 px-4 py-3">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700 mb-1">{t('messageProcessFlow.input')}</div>
-        <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words max-h-40 overflow-auto">
-          {input || '(empty)'}
+      {/* Pinned input: stays at the top while the process nodes scroll under
+          it. The blue tint is translucent in the dark theme, so it sits on an
+          opaque card background; otherwise the steps show through it. */}
+      <div className="sticky top-0 z-10 bg-white shadow-sm">
+        <div className="bg-blue-50 border-b border-blue-200 px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700 mb-1">{t('messageProcessFlow.input')}</div>
+          <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words max-h-40 overflow-auto">
+            {input || '(empty)'}
+          </div>
         </div>
       </div>
 
@@ -83,6 +88,7 @@ export default function MessageProcessFlow({ runs = [] }) {
                   borderColor="border-violet-300"
                   bgColor="bg-violet-50"
                   hint={preview(tc.input || tc.output)}
+                  tool={tc}
                 >
                   {tc.input && (
                     <div className="text-[11px] text-violet-700 whitespace-pre-wrap break-all">
@@ -109,6 +115,7 @@ export default function MessageProcessFlow({ runs = [] }) {
                 borderColor="border-amber-200"
                 bgColor="bg-amber-50"
                 hint={toolInline(tc.tool, tc.input)}
+                tool={tc}
               >
                 {!isReasoningTool && tc.input && (
                   <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
@@ -130,9 +137,7 @@ export default function MessageProcessFlow({ runs = [] }) {
       {output && (
         <div className="border-t border-green-200 bg-green-50 px-4 py-3">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-green-700 mb-1">{t('messageProcessFlow.output')}</div>
-          <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words">
-            {output}
-          </div>
+          <StepText text={output} />
         </div>
       )}
     </div>

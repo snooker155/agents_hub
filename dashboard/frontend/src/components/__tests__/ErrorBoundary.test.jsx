@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { useEffect, useRef } from 'react';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ErrorBoundary from '../ErrorBoundary';
@@ -44,5 +45,36 @@ describe('ErrorBoundary', () => {
     expect(errorSpy).toHaveBeenCalledWith(
       'Route render failed:', expect.any(Error), expect.anything(),
     );
+  });
+
+  it('clears a caught error when resetKey changes', () => {
+    const wrap = (resetKey, child) => (
+      <MemoryRouter>
+        <I18nProvider><ErrorBoundary resetKey={resetKey}>{child}</ErrorBoundary></I18nProvider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(wrap('/broken', <Boom />));
+    expect(screen.getByText('This page stopped working')).toBeInTheDocument();
+    rerender(wrap('/works', <p>all good</p>));
+    expect(screen.getByText('all good')).toBeInTheDocument();
+  });
+
+  it('keeps a healthy page mounted when resetKey changes', () => {
+    // Chat moves /chat to /chat/<id> while its first reply is streaming; a
+    // remount there dropped the stream and left duplicate bubbles behind.
+    let mounts = 0;
+    function Page() {
+      const counted = useRef(false);
+      useEffect(() => { if (!counted.current) { counted.current = true; mounts += 1; } }, []);
+      return <p>page</p>;
+    }
+    const wrap = (resetKey) => (
+      <MemoryRouter>
+        <I18nProvider><ErrorBoundary resetKey={resetKey}><Page /></ErrorBoundary></I18nProvider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(wrap('/chat'));
+    rerender(wrap('/chat/abc'));
+    expect(mounts).toBe(1);
   });
 });

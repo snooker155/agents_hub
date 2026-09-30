@@ -2,7 +2,7 @@
  * Token colours for read-only syntax highlighting (src/lib/highlight.js) and
  * for the CodeMirror editor (src/components/chat/CodeEditor.jsx), which is
  * themed to match. Light values first, dark values under `html.dark`, both
- * built from the existing --brand-*/--text-* tokens (src/theme.css) so the
+ * built from the existing --brand-* and --text-* tokens (src/theme.css) so the
  * palette stays in step with the rest of the app instead of hard-coding a
  * separate scheme.
  */
@@ -44,7 +44,7 @@ html.dark .tok-invalid { color: #f87171; }
 /* The highlighted-block chrome shared by MarkdownRenderer's fenced blocks and
    CodeView's body: a dark surface in both themes (code reads better on a
    near-black panel even in light mode, matching the previous plain <pre>),
-   with the language label and Copy button docked in the header row. */
+   with the language label, Copy and any other actions in the header row. */
 .hl-code-block {
   position: relative;
   margin: 0.75rem 0;
@@ -59,12 +59,44 @@ html.dark .tok-invalid { color: #f87171; }
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.375rem 0.75rem;
+  padding: 0.25rem 0.375rem 0.25rem 0.75rem;
   background: rgba(255, 255, 255, 0.04);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 0.7rem;
   color: #9ca3af;
+}
+
+.hl-code-block__lang {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   text-transform: lowercase;
+}
+
+.hl-code-block__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.hl-code-block__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.375rem;
+  color: #9ca3af;
+  font-size: 0.7rem;
+  line-height: 1;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.hl-code-block__action:hover:not(:disabled) {
+  color: #f3f4f6;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.hl-code-block__action:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .hl-code-block__body {
@@ -74,6 +106,26 @@ html.dark .tok-invalid { color: #f87171; }
   font-size: 0.75rem;
   line-height: 1.5;
   color: #e5e7eb;
+  white-space: pre;
+}
+
+/* Line numbers: a gutter beside the code, the same line height so the two
+   columns stay in step, and stuck to the left edge while the code scrolls
+   sideways. Not selectable, so a copy of the code stays code. */
+.hl-code-block__body--numbered {
+  display: flex;
+  align-items: flex-start;
+  padding-left: 0;
+}
+.hl-code-block__gutter {
+  position: sticky;
+  left: 0;
+  flex: 0 0 auto;
+  padding: 0 0.75rem 0 1rem;
+  text-align: right;
+  color: #64748b;
+  background: #0f172a;
+  user-select: none;
   white-space: pre;
 }
 

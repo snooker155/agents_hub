@@ -561,6 +561,11 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
                 )
             )
 
+        # The worker's own view binding: a view it creates is the one its view
+        # tools build, never the caller's (tools/views.py).
+        from common.agent_context import current_view_binding
+        view_binding: dict = {}
+        _view_binding_token = current_view_binding.set(view_binding)
         # run_id is tracked via open_run/close_run_from_result below; we don't pass
         # it into invoke_agent because StandardAgent.run() takes no positional run_id.
         try:
@@ -568,6 +573,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
                 worker, input, stats=stats, extra_callbacks=extra_cbs, catch_exceptions=True
             )
         finally:
+            current_view_binding.reset(_view_binding_token)
             # Leave the delegation scope before emitting the end event, so a nested
             # delegation's depth/parent bookkeeping is fully unwound.
             if deleg_scope is not None:
@@ -627,19 +633,33 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
             )
 
         if ok:
-            return _json_ok({
+            # run_id first: the run log keeps only the head of a long tool
+            # result, and the process graph finds the delegated run by it.
+            result_payload = {
+                "run_id": run_id,
+                "agent_id": agent_id,
                 "message": (
                     "Worker finished. Review this output and decide: if the request "
                     "is fully handled, summarise it for the user; if follow-up work "
                     "is needed, chain another agent with run_agent_tool."
                 ),
                 "output": output,
-                "run_id": run_id,
                 "session_id": session_id,
                 "agent": spec.to_dict(),
                 "workspace": ws or None,
                 "succeeded": True,
-            })
+            }
+            # Views the worker created. The chat shows them under the reply by
+            # itself; the ids are for a follow-up delegation that should keep
+            # building the same view instead of starting a new one.
+            if view_binding.get("created"):
+                result_payload["views"] = list(dict.fromkeys(view_binding["created"]))
+                result_payload["message"] += (
+                    " The worker created the view(s) listed in `views`; they are "
+                    "already shown to the user. To change or finish one, delegate "
+                    "again and pass its view_id in the input."
+                )
+            return _json_ok(result_payload)
         return _json_err(
             f"Worker '{agent_id}' failed: {error or 'unknown error'}",
             code="worker_failed",

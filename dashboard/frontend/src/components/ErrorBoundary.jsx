@@ -15,6 +15,12 @@ import { I18nContext } from '../i18n';
  * A class component because that is still the only way to catch a render error
  * in React; `contextType` is how it reaches the translator, since hooks are not
  * available here.
+ *
+ * `resetKey` clears a caught error when it changes (the route passes its
+ * pathname). It is a prop rather than a React `key` on purpose: a key would
+ * also remount a healthy page on every navigation, and Chat navigates from
+ * /chat to /chat/<id> in the middle of sending its first message, which then
+ * lost the stream it had just opened.
  */
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -24,6 +30,12 @@ class ErrorBoundary extends React.Component {
 
   static getDerivedStateFromError(error) {
     return { error };
+  }
+
+  componentDidUpdate(prevProps) {
+    if (this.state.error && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ error: null });
+    }
   }
 
   componentDidCatch(error, info) {

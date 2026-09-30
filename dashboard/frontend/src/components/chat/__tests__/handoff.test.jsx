@@ -2,7 +2,10 @@ import { act, render, renderHook, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../api', () => ({ streamChat: vi.fn() }));
-vi.mock('../context', () => ({ useChatPage: vi.fn() }));
+vi.mock('../context', async () => {
+  const { createContext } = await import('react');
+  return { useChatPage: vi.fn(), ChatPageContext: createContext(null) };
+});
 
 import { streamChat } from '../../../api';
 import { I18nProvider } from '../../../i18n';

@@ -3,6 +3,7 @@
  * structured response, the files a turn touched, and the hub records attached to it.
  */
 import { useI18n } from '../../i18n';
+import ViewCard from '../../views/ViewCard';
 import { ArtifactItem } from './panels';
 import { ArrowUpRight, ChevronDown, ChevronUp, FileText, Link2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -160,4 +161,15 @@ function MessageEntities({ entities }) {
   );
 }
 
-export { ResponseButtons, MessageFiles, MessageEntities };
+// Each view as a live preview in the reply: the card renders the view, opens it
+// full size in a modal, and links to the view's own page.
+function MessageViews({ views }) {
+  if (!views?.length) return null;
+  return (
+    <div className="space-y-2" data-testid="message-views">
+      {views.map((v) => <ViewCard key={v.view_id} viewRef={v} />)}
+    </div>
+  );
+}
+
+export { ResponseButtons, MessageFiles, MessageEntities, MessageViews };

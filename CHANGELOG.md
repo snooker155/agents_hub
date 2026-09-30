@@ -13,6 +13,23 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Chat replies are rendered as markdown with GitHub tables, task lists and
+  line breaks as people type them, and formulas in any of the usual LaTeX
+  delimiters through KaTeX, loaded the first time a reply has one. A reply
+  still arriving is rendered from its first token with its unfinished markup
+  closed, so it never flashes raw syntax. Code blocks everywhere share one
+  header with the language, Copy and synchronous highlighting.
+- The chat's trail: the Build view draws a turn's thoughts, tool calls,
+  intermediate text and delegated runs in the order they happened; the Chat
+  view shows only the delegated runs and, while the turn is live, the one
+  step each worker is on. The transcript sticks to the bottom while a reply
+  is written and lets go when scrolled up.
+- The process graph draws each step of a run as a card that opens its full
+  content in a dialog, with a tool call's arguments and result parsed into a
+  foldable tree, and follows a delegated run live.
+
 ## [0.3.0] - 2026-09-30
 
 ### Added

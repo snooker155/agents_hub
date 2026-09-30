@@ -1,16 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
-  History, RotateCcw, Bot, Layers, MessageSquareText, Wrench,
-  ShieldCheck, ShieldAlert, FileJson, KeySquare, Loader, Cpu,
+  History, Bot, Layers, MessageSquareText, Wrench,
+  ShieldCheck, ShieldAlert, FileJson, KeySquare, Cpu,
 } from 'lucide-react';
-import { getRunAgentVersion, rollbackRunAgent } from '../../api/agentVersions';
 import { useI18n } from '../../i18n';
+import AgentVersion from './AgentVersion';
 
 /**
  * RunLoopPanel: what the agent loop recorded beyond the tool trail
  * (agents/agent_loop.py's LoopState.summary(), stored as `run.loop`), plus
  * the agent version this run built from (`run.agent_version`) with a
  * one-button rollback.
+ *
+ * The run page shows the version beside the agent's name instead and passes
+ * `showVersion={false}`.
  *
  * Every section is independently optional — a plain run predating the loop
  * or the version pin has neither, and the panel renders nothing at all in
@@ -29,72 +32,19 @@ function Section({ icon: Icon, title, children }) {
   );
 }
 
-export default function RunLoopPanel({ run, onChanged }) {
+export default function RunLoopPanel({ run, onChanged, showVersion = true }) {
   const { t } = useI18n();
-  const runId = run?.run_id;
   const loop = run?.loop && typeof run.loop === 'object' ? run.loop : null;
-  const hasVersion = run?.agent_version != null;
-  const [versionInfo, setVersionInfo] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    setVersionInfo(null);
-    setError('');
-    if (!runId || !hasVersion) return;
-    let cancelled = false;
-    getRunAgentVersion(runId)
-      .then(({ data }) => { if (!cancelled) setVersionInfo(data); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, run?.agent_version]);
-
-  const rollback = async () => {
-    if (!runId) return;
-    if (!window.confirm(t('runLoop.rollbackConfirm', { version: run.agent_version }))) return;
-    setBusy(true);
-    setError('');
-    try {
-      await rollbackRunAgent(runId);
-      const { data } = await getRunAgentVersion(runId);
-      setVersionInfo(data);
-      if (onChanged) onChanged();
-    } catch (err) {
-      setError(err?.response?.data?.detail || t('runLoop.rollbackFailed'));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const hasVersion = showVersion && run?.agent_version != null;
 
   const hasLoop = !!loop && Object.keys(loop).length > 0;
   if (!hasVersion && !hasLoop) return null;
-
-  const versionLabel = () => {
-    if (versionInfo?.is_current) return t('runLoop.versionLive', { version: run.agent_version });
-    if (versionInfo?.pinned) return t('runLoop.versionPinned', { version: run.agent_version });
-    return t('runLoop.versionRan', { version: run.agent_version });
-  };
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6 space-y-3" data-testid="run-loop-panel">
       {hasVersion && (
         <Section icon={History} title={t('runLoop.agentVersion')}>
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-sm text-gray-800">{versionLabel()}</span>
-            {versionInfo && !versionInfo.is_current && (
-              <button
-                type="button"
-                onClick={rollback}
-                disabled={busy}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {busy ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                {t('runLoop.rollback')}
-              </button>
-            )}
-          </div>
-          {error && <p className="text-sm text-red-600 mt-1">{error}</p>}
+          <AgentVersion run={run} onChanged={onChanged} />
         </Section>
       )}
 

@@ -12,6 +12,7 @@ import { reduceGraphRun } from '../../graphRun';
 import { appendLiveThought, buildCompactionNotice, genId, mergeMessageFile } from '../turnState';
 import { applyHandoff } from '../handoff';
 import { applyUndelivered, markSteerDelivered } from '../steering';
+import { applyDelegationEvent } from '../processLive';
 
 // Which bubble a per-turn event belongs in: the single assistant bubble in
 // agent mode, or the bubble for the currently active node in flow mode.
@@ -26,12 +27,17 @@ function targetMsgId(event, ctx) {
 // Delegated child runs (run_agent_tool) stream their inner events tagged with
 // `delegation` + the child run_id. Folded into a nested `delegation` timeline
 // entry instead of the top-level timeline, so the UI renders a live nested
-// block.
+// block, and into the Process panel's run row, so the worker's graph grows
+// step by step (see ../processLive).
 function handleDelegationEvent(event, ctx) {
   if (!(event.type === 'delegation_start' || event.type === 'delegation_end' || event.delegation)) {
     return false;
   }
-  const { convId, setConversations } = ctx;
+  const { convId, setConversations, setProcessInsights } = ctx;
+  setProcessInsights?.((prev) => {
+    const message_runs = applyDelegationEvent(prev.message_runs, event);
+    return message_runs === prev.message_runs ? prev : { ...prev, message_runs };
+  });
   const tgt = targetMsgId(event, ctx);
   if (tgt) {
     setConversations((prev) =>
@@ -60,6 +66,9 @@ function handleDelegationEvent(event, ctx) {
                 running: false,
                 ok: event.ok,
                 error: event.error || '',
+                // The worker's answer, shown at the end of its card when its
+                // own steps did not already end on that text.
+                output: event.output || '',
                 duration_ms: event.duration_ms,
               }));
             } else if (event.type === 'think' || event.type === 'plan') {
@@ -74,6 +83,9 @@ function handleDelegationEvent(event, ctx) {
               tl = resolveDelegationTool(tl, event.run_id, { output: event.output });
             } else if (event.type === 'tool_error') {
               tl = resolveDelegationTool(tl, event.run_id, { output: `ERROR: ${event.error}`, error: true });
+            } else if (event.type === 'text' && (event.content || '').trim()) {
+              // What the worker wrote at a step, between its tool calls.
+              tl = appendIntoDelegation(tl, event.run_id, { type: 'text', text: event.content });
             }
             return { ...m, timeline: tl };
           }),
@@ -89,7 +101,7 @@ function handleAgentEvent(event, ctx) {
 
   const {
     convId, setConversations, setActiveRunId, setSessionId, setGraphRun,
-    setProcessInsights, mergeArtifact, processOpen, isMultiAgent, assistantId,
+    setProcessInsights, mergeArtifact, isMultiAgent, assistantId,
     userMsgText, t, state,
   } = ctx;
 
@@ -97,7 +109,7 @@ function handleAgentEvent(event, ctx) {
     state.runId = event.run_id;
     setActiveRunId(state.runId);
     if (event.session_id) setSessionId(event.session_id);
-    if (processOpen && !isMultiAgent) {
+    if (!isMultiAgent) {
       // In flow mode, node_start already created the process row.
       setProcessInsights((prev) => ({
         ...prev,
@@ -173,7 +185,7 @@ function handleAgentEvent(event, ctx) {
       ),
     );
     // Native model thoughts also feed the Process column live.
-    if (processOpen && event.native) {
+    if (event.native) {
       setProcessInsights((prev) => ({
         ...prev,
         message_runs: (prev.message_runs || []).map((mr, idx) =>
@@ -284,27 +296,25 @@ function handleAgentEvent(event, ctx) {
         },
       ),
     );
-    if (processOpen) {
-      setProcessInsights((prev) => ({
-        ...prev,
-        tools: [
-          ...(prev.tools || []),
-          { step: event.step, tool: event.tool, input: event.input, output: null, running: true },
-        ],
-        message_runs: (prev.message_runs || []).map((mr, idx) =>
-          idx === (prev.message_runs || []).length - 1
-            ? {
-                ...mr,
-                tools: [
-                  ...(mr.tools || []),
-                  { step: event.step, tool: event.tool, input: event.input, output: null, running: true },
-                ],
-                tool_calls: ((mr.tool_calls || 0) + 1),
-              }
-            : mr
-        ),
-      }));
-    }
+    setProcessInsights((prev) => ({
+      ...prev,
+      tools: [
+        ...(prev.tools || []),
+        { step: event.step, tool: event.tool, input: event.input, output: null, running: true },
+      ],
+      message_runs: (prev.message_runs || []).map((mr, idx) =>
+        idx === (prev.message_runs || []).length - 1
+          ? {
+              ...mr,
+              tools: [
+                ...(mr.tools || []),
+                { step: event.step, tool: event.tool, input: event.input, output: null, running: true },
+              ],
+              tool_calls: ((mr.tool_calls || 0) + 1),
+            }
+          : mr
+      ),
+    }));
   } else if (event.type === 'tool_end') {
     // Keep running_tool set so the name stays visible until the next token arrives.
     // Resolve the last running tool entry in the Build-view timeline.
@@ -329,29 +339,27 @@ function handleAgentEvent(event, ctx) {
         ),
       );
     }
-    if (processOpen) {
-      setProcessInsights((prev) => {
-        const tools = [...(prev.tools || [])];
-        for (let i = tools.length - 1; i >= 0; i -= 1) {
-          if (tools[i].running) {
-            tools[i] = { ...tools[i], output: event.output, running: false };
+    setProcessInsights((prev) => {
+      const tools = [...(prev.tools || [])];
+      for (let i = tools.length - 1; i >= 0; i -= 1) {
+        if (tools[i].running) {
+          tools[i] = { ...tools[i], output: event.output, running: false };
+          break;
+        }
+      }
+      const message_runs = (prev.message_runs || []).map((mr, idx) => {
+        if (idx !== (prev.message_runs || []).length - 1) return mr;
+        const mrTools = [...(mr.tools || [])];
+        for (let i = mrTools.length - 1; i >= 0; i -= 1) {
+          if (mrTools[i].running) {
+            mrTools[i] = { ...mrTools[i], output: event.output, running: false };
             break;
           }
         }
-        const message_runs = (prev.message_runs || []).map((mr, idx) => {
-          if (idx !== (prev.message_runs || []).length - 1) return mr;
-          const mrTools = [...(mr.tools || [])];
-          for (let i = mrTools.length - 1; i >= 0; i -= 1) {
-            if (mrTools[i].running) {
-              mrTools[i] = { ...mrTools[i], output: event.output, running: false };
-              break;
-            }
-          }
-          return { ...mr, tools: mrTools };
-        });
-        return { ...prev, tools, message_runs };
+        return { ...mr, tools: mrTools };
       });
-    }
+      return { ...prev, tools, message_runs };
+    });
   } else if (event.type === 'token') {
     const tgt = targetMsgId(event, ctx);
     const tok = event.token || '';
@@ -380,16 +388,14 @@ function handleAgentEvent(event, ctx) {
         },
       ),
     );
-    if (processOpen) {
-      setProcessInsights((prev) => ({
-        ...prev,
-        message_runs: (prev.message_runs || []).map((mr, idx) =>
-          idx === (prev.message_runs || []).length - 1
-            ? { ...mr, output: `${mr.output || ''}${event.token || ''}` }
-            : mr
-        ),
-      }));
-    }
+    setProcessInsights((prev) => ({
+      ...prev,
+      message_runs: (prev.message_runs || []).map((mr, idx) =>
+        idx === (prev.message_runs || []).length - 1
+          ? { ...mr, output: `${mr.output || ''}${event.token || ''}` }
+          : mr
+      ),
+    }));
   } else if (event.type === 'handoff') {
     // The agent gave the conversation to another one (chat/handoff.py): its
     // bubble closes with its own reply, the receiving agent's bubble opens
@@ -481,7 +487,7 @@ function handleAgentEvent(event, ctx) {
         ),
       );
     }
-    if (processOpen && !isMultiAgent) {
+    if (!isMultiAgent) {
       setProcessInsights((prev) => {
         const inTok = event.usage?.inbound_tokens || 0;
         const outTok = event.usage?.outbound_tokens || 0;
