@@ -568,6 +568,7 @@ html.dark {
 :where(html.dark) .bg-amber-50,
 :where(html.dark) .hover\:bg-amber-50:hover { background-color: rgba(var(--hue-amber-rgb), 0.14); }
 :where(html.dark) .bg-amber-50\/50 { background-color: rgba(245, 158, 11, 0.070); }
+:where(html.dark) .bg-amber-50\/60 { background-color: rgba(245, 158, 11, 0.084); }
 :where(html.dark) .bg-blue-100 { background-color: rgba(var(--hue-blue-rgb), 0.22); }
 :where(html.dark) .bg-blue-200 { background-color: rgba(var(--hue-blue-rgb), 0.30); }
 :where(html.dark) .bg-blue-50,
@@ -966,6 +967,7 @@ html.dark {
 :where(html.dark) .border-slate-600,
 :where(html.dark) .border-stone-600,
 :where(html.dark) .border-zinc-600,
+:where(html) .dark .dark\:hover\:border-gray-600:hover,
 :where(html.dark) .divide-gray-600 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-neutral-600 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-slate-600 > :not([hidden]) ~ :not([hidden]),

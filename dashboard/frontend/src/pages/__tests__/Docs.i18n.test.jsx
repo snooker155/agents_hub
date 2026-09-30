@@ -72,14 +72,16 @@ describe('OnboardingModal', () => {
   beforeEach(() => localStorage.clear());
 
   it('opens on first launch and links to the Getting Started guide', () => {
-    const { container, getByText } = render(
+    const { container, getByText, queryByText } = render(
       <I18nProvider>
         <MemoryRouter><OnboardingModal /></MemoryRouter>
       </I18nProvider>,
     );
+    expect(getByText('Start the tour')).toBeTruthy();
     expect(getByText('Open Getting Started')).toBeTruthy();
-    expect(getByText('Open documentation')).toBeTruthy();
     expect(getByText('Skip')).toBeTruthy();
+    // The docs link was dropped so the footer fits one row.
+    expect(queryByText('Open documentation')).toBeNull();
     expect(container.textContent).not.toMatch(/onboardingModal\./);
   });
 

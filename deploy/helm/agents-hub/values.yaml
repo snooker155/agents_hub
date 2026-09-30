@@ -9,6 +9,8 @@
 # (.github/workflows/release.yml) publishes both to GHCR under the release
 # version; an empty tag means the chart's appVersion, so a chart and the
 # images it runs are always the same release (docs/deployment.md "Releases").
+# The plain version tag has no RAG stack; "X.Y.Z-rag" carries it, for a
+# deployment whose RAG_VECTOR_DB is anything but none.
 image:
   repository: ghcr.io/snooker155/agents-hub-backend
   tag: ""

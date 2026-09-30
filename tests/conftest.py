@@ -23,6 +23,7 @@ import os
 import tempfile
 import threading
 from pathlib import Path
+from typing import List
 
 # Redirect the state root before common.paths is imported by anything else.
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="agents_hub_tests_"))
@@ -66,11 +67,47 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+# The Postgres tables the suite empties before every test, listed once: the
+# schema is built by the migrations on the first test's startup sequence and
+# never changes afterwards, so asking information_schema again for each of the
+# thousands of tests is pure overhead. Empty until the tables exist (the very
+# first test on a new database finds none), and rebuilt once if a reset fails
+# because the list went stale (a test that dropped or created a table itself).
+_PG_TABLES: List[str] = []
+
+
+def _pg_table_names(conn) -> List[str]:
+    rows = conn.execute(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+    ).fetchall()
+    return [str(r[0]) for r in rows if str(r[0]) != "schema_migrations"]
+
+
+def _pg_reset_sql(tables: List[str]) -> str:
+    """One round trip that empties every table and rewinds the sequences that
+    were used. DELETE rather than TRUNCATE: nearly every table is empty before
+    nearly every test, and a DELETE on an empty table costs nothing, whereas
+    TRUNCATE takes an exclusive lock and allocates new storage for the table
+    and each of its indexes, and then waits for the disk at commit; on seventy
+    tables that was most of the Postgres run. setval(seq, 1, false) is what
+    RESTART IDENTITY did, applied only to sequences that ever advanced
+    (last_value is null until the first nextval). Sent as one multi-statement
+    string, which Postgres runs as a single implicit transaction."""
+    statements = [f"DELETE FROM {name}" for name in tables]
+    statements.append(
+        "SELECT setval(format('%I.%I', schemaname, sequencename)::regclass, 1, false) "
+        "FROM pg_sequences WHERE schemaname = current_schema() AND last_value IS NOT NULL"
+    )
+    return "; ".join(statements)
+
+
 def _fresh_database(db, path: Path) -> None:
     """Point the process at an empty database: a new file on SQLite, the one
     shared database emptied on Postgres. Resets the per-thread connections and
     the schema-ready flag either way, so the next ``get_conn()`` runs the
     startup sequence (migrations, legacy JSON import) again."""
+    global _PG_TABLES
     db.DB_FILE = path
     db._local = threading.local()
     db._schema_ready = False
@@ -79,13 +116,15 @@ def _fresh_database(db, path: Path) -> None:
         # and the legacy JSON import) must run only once the tables are empty
         # again, from the first get_conn() the test itself makes.
         conn = db._connect()
-        rows = conn.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
-        ).fetchall()
-        names = [str(r[0]) for r in rows if str(r[0]) != "schema_migrations"]
-        if names:
-            conn.execute("TRUNCATE " + ", ".join(names) + " RESTART IDENTITY")
+        if not _PG_TABLES:
+            _PG_TABLES = _pg_table_names(conn)
+        if _PG_TABLES:
+            try:
+                conn.execute(_pg_reset_sql(_PG_TABLES))
+            except Exception:  # noqa: BLE001 - the cached table list went stale; rebuild it once
+                _PG_TABLES = _pg_table_names(conn)
+                if _PG_TABLES:
+                    conn.execute(_pg_reset_sql(_PG_TABLES))
         db._local = threading.local()
         db._schema_ready = False
 

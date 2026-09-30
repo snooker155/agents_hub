@@ -77,6 +77,35 @@ directly, mounted read-only or not; a tool that touches them inside an
 `http`-transport run still needs the state dir writable for that path, which
 this mode does not provide. `db` (the default) remains the fully-capable mode.
 
+## Delegation from a container
+
+`delegate_task_tool` (docs/tasks.md) decides *what* to hand over inside the
+run that delegates; *where* the subtask is created and the delegate launched
+is the state transport's business (`tasks/delegate.py`, reached through
+`common/state_transport.py`). A run that is a host subprocess does both in
+its own process, as it always did. A run in a container instead posts the
+request to the backend (`POST /api/run-state/tasks/<id>/delegate`, the same
+relay and token as above, whatever `AGENT_RUN_STATE_TRANSPORT` says), and
+the backend creates the subtask and launches the delegate exactly as it
+launches a run from the dashboard: in its own container with its own limits
+and environment, or onto the run queue for a worker in the `api` role
+(docs/workers.md). Nothing is spawned inside the delegating container, whose
+environment is forced to `AGENT_EXECUTION_MODE=local` and has neither the
+Docker CLI nor the socket; before this the delegate ran there as a bare
+subprocess sharing the parent's cgroup, network and read-only root, and
+under the `http` transport could not be launched at all, since the subtask
+row could not be written. While it waits, the tool polls
+`GET /api/run-state/tasks/<id>/delegation` and reads its own parent's status
+from `GET /api/run-state/runs/<id>`; a parent stopped meanwhile stops the
+child through `POST /api/run-state/runs/<id>/stop`. The child is attributed
+to the user the parent run was launched by, as an in-process delegation
+attributes it.
+
+A container whose environment allows no network (`network: none`,
+docs/environments.md) cannot reach the backend and therefore cannot
+delegate: the tool answers with `code: unreachable` and tells the agent to do
+the work itself, rather than falling back to a nested subprocess.
+
 ## Logs in Docker mode
 
 A local subprocess run has its stdout/stderr piped straight into the run's log
@@ -192,6 +221,9 @@ refused combination survivable.
   in-process and have no containers at all.
 - Stopping a container kills the run inside it. Read its logs first: a container
   looping on a fatal error is still telling you why.
+- A delegate launched from a container is a sibling container, not a child
+  process: look for it on the Containers page under its own run, and stop the
+  parent's run (not its container) to stop the whole tree.
 - A run record's `execution_mode` field can read `local` again moments after a
   Docker run starts — the container's own `agent_run.py` writes that field
   from its own environment, which is forced to `local` so an agent never tries

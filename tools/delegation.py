@@ -10,7 +10,12 @@ caller is working, launches the chosen agent on it through the ordinary
 launcher (a real run: its own process or container, the environment, the
 money cap, the live stream, the log), and, by default, waits for that run to
 finish and returns the result the way the caller would read it with
-``get_task_result``. The subtask stays under the parent on the task page, so
+``get_task_result``. The subtask and the launch are ``tasks/delegate.py``,
+run through the state transport (``common/state_transport.py``): in-process
+for a run that is a host subprocess, on the backend (over
+``/api/run-state``) for a run in a container, so the delegate is launched by
+the host like any other run rather than nested inside the parent's
+container, and so it works when the container cannot open the database. The subtask stays under the parent on the task page, so
 what was delegated, to whom, on which model and what came back is all on
 record.
 
@@ -224,58 +229,59 @@ def _child_env() -> Dict[str, str]:
     return env
 
 
-def _parent_stopped() -> bool:
+def _transport():
+    """Where the subtask is created and the delegate launched
+    (``tasks/delegate.py`` runs there). Inside a container that is always the
+    backend, over HTTP: the host launches the delegate, so it gets its own
+    container or a place on the run queue, instead of a subprocess nested in
+    this one (docs/containers.md, "Delegation from a container"). Elsewhere
+    it is the run's own state transport, direct by default."""
+    from common.hostnet import in_container
+    from common.state_transport import HttpStateTransport, get_state_transport
+    transport = get_state_transport()
+    if in_container() and not isinstance(transport, HttpStateTransport):
+        return HttpStateTransport()
+    return transport
+
+
+def _parent_stopped(transport: Any) -> bool:
     """Whether the run this tool executes in was told to stop meanwhile."""
     parent_run = os.environ.get("AGENT_RUN_ID") or ""
     if not parent_run:
         return False
     try:
-        from managers.run_manager import get_run_by_id
-        rec = get_run_by_id(parent_run) or {}
+        rec = transport.get_run(parent_run) or {}
     except Exception:  # noqa: BLE001 - a store hiccup is not a stop
         return False
     return str(rec.get("status") or "") in ("stop", "stopped")
 
 
-def _result_of(child_id: Any, run: Dict[str, Any]) -> Tuple[str, str]:
-    """``(output, error)`` for a finished child."""
-    output = ""
-    try:
-        from tasks.service import get_task_result
-        output = str(get_task_result(child_id) or "")
-    except Exception:  # noqa: BLE001 - the run record's own output is the fallback
-        log.debug("task result lookup failed for %s", child_id, exc_info=True)
-    if not output:
-        output = str(run.get("output") or "")
-    error = str(run.get("error") or "") if str(run.get("status") or "") != "completed" else ""
-    return output.strip(), error
-
-
-def _answer(child: Any, run: Dict[str, Any], spec: Any, *, requested: Dict[str, str],
-            waited: float, finished: bool, timed_out: bool = False, stopped: bool = False) -> str:
-    from tools.task_management import _task_to_dict
-    from tasks.service import get_task
+def _answer(task: Dict[str, Any], run: Dict[str, Any], agent: Dict[str, Any], *,
+            requested: Dict[str, str], waited: float, finished: bool, output: str = "",
+            timed_out: bool = False, stopped: bool = False) -> str:
     status = str(run.get("status") or "")
-    output, error = _result_of(child.id, run) if finished else ("", "")
-    fresh = get_task(child.id) or child
+    agent_id = str(agent.get("id") or "")
+    # The task's stored result first, the run record's own output as the fallback.
+    text = ((output or "").strip() or str(run.get("output") or "").strip()) if finished else ""
+    error = str(run.get("error") or "") if finished and status != "completed" else ""
     payload: Dict[str, Any] = {
-        "task_id": str(child.id),
+        "task_id": str(task.get("id") or ""),
         "run_id": str(run.get("run_id") or ""),
-        "agent_id": spec.id,
-        "agent_name": spec.name,
+        "agent_id": agent_id,
+        "agent_name": str(agent.get("name") or agent_id),
         "provider": str(run.get("provider") or requested.get("provider") or ""),
         "model": str(run.get("model") or requested.get("model") or ""),
         "status": status,
-        "task_status": str(getattr(fresh.status, "value", fresh.status) or ""),
+        "task_status": str(task.get("status") or ""),
         "finished": finished,
         "waited_seconds": round(waited, 1),
-        "output": output,
+        "output": text,
         "error": error,
-        "task": _task_to_dict(fresh),
+        "task": task,
     }
     if stopped:
         return _json_err(
-            f"Delegation to '{spec.id}' was stopped with your run. Do not retry.",
+            f"Delegation to '{agent_id}' was stopped with your run. Do not retry.",
             code="stopped", extra=payload)
     if timed_out:
         payload["message"] = (
@@ -296,7 +302,7 @@ def _answer(child: Any, run: Dict[str, Any], spec: Any, *, requested: Dict[str, 
         )
         return _json_ok(payload)
     return _json_err(
-        f"Delegate '{spec.id}' ended with status {status}: {error or 'no error recorded'}",
+        f"Delegate '{agent_id}' ended with status {status}: {error or 'no error recorded'}",
         code="delegate_failed", extra=payload)
 
 
@@ -324,14 +330,9 @@ def delegate_task_tool(agent_id: str, input: str, model: Optional[str] = None,
     delegate without end.
     """
     try:
-        from common.agent_context import current_task_id
-        from tools.langchain_tools import _active_workspace, _delegation_blocked
-        from agents.registry import get_agent
-        from common.workspace_context import filter_agents_for_workspace
-        from tasks.service import (
-            CreatedBy, TaskStatus, add_subtask, assign_agent, get_task, update_task,
-        )
-        from tools.task_management import _uuid_from_str
+        from common.agent_context import current_agent_id, current_task_id
+        from common.attribution import launching_user
+        from tools.langchain_tools import _active_workspace
 
         parent_id = current_task_id.get()
         if not parent_id:
@@ -339,101 +340,66 @@ def delegate_task_tool(agent_id: str, input: str, model: Optional[str] = None,
                 "delegate_task_tool only works inside a task run. In a chat, hand the "
                 "request over with run_agent_tool instead.",
                 code="no_task")
-        parent = get_task(_uuid_from_str(parent_id))
-        if parent is None:
-            return _json_err("The current task no longer exists", code="not_found",
-                             extra={"task_id": parent_id})
 
-        spec = get_agent(agent_id)
-        if not spec:
-            return _json_err("Agent not found", code="not_found", extra={"agent_id": agent_id})
-        ws = _active_workspace() or parent.workspace
-        if ws and not filter_agents_for_workspace([spec], ws):
-            return _json_err(f"Agent '{agent_id}' is not available in workspace '{ws}'",
-                             code="forbidden", extra={"agent_id": agent_id})
-        blocked = _delegation_blocked(agent_id)
-        if blocked:
-            return _json_err(blocked, code="forbidden", extra={"agent_id": agent_id})
-
-        depth = current_depth()
-        if depth + 1 >= max_depth() + 1:
+        # What to delegate is decided here; the subtask and the launch happen
+        # wherever the transport puts them (tasks/delegate.py has the checks).
+        request: Dict[str, Any] = {
+            "agent_id": agent_id,
+            "input": input,
+            "title": title,
+            "model": model,
+            "workspace": _active_workspace(),
+            "caller_agent_id": current_agent_id.get(),
+            "depth": current_depth(),
+            "env": _child_env(),
+            "launched_by": launching_user(),
+        }
+        transport = _transport()
+        result = transport.delegate(parent_id, request)
+        if result is None:
             return _json_err(
-                f"This run is already {depth} delegation(s) deep; the limit is {max_depth()}. "
-                "Do the work yourself or report what you could not do.",
-                code="too_deep", extra={"depth": depth, "max_depth": max_depth()})
+                "The delegation could not be launched: the backend that launches runs is "
+                "unreachable from this run (a container whose environment allows no network "
+                "cannot delegate). Do the work yourself or report what you could not do.",
+                code="unreachable")
+        if not result.get("ok"):
+            extra = {k: v for k, v in result.items() if k not in ("ok", "error", "code")}
+            return _json_err(str(result.get("error") or "The delegation was refused"),
+                             code=str(result.get("code") or "bad_request"), extra=extra or None)
 
-        requested: Dict[str, str] = {}
-        if model and str(model).strip():
-            try:
-                provider_id, model_id = resolve_model(model)
-            except ValueError as exc:
-                return _json_err(str(exc), code="bad_model",
-                                 extra={"models": [m["id"] for m in enabled_models()]})
-            requested = {"provider": provider_id, "model": model_id}
+        task: Dict[str, Any] = dict(result.get("task") or {})
+        run: Dict[str, Any] = dict(result.get("run") or {})
+        agent: Dict[str, Any] = dict(result.get("agent") or {"id": agent_id, "name": agent_id})
+        requested: Dict[str, str] = dict(result.get("requested") or {})
+        task_id = str(task.get("id") or "")
+        run_id = str(run.get("run_id") or "")
 
-        subtask_title = (title or "").strip() or input.strip().splitlines()[0][:80]
-        child = add_subtask(parent.id, subtask_title, description=input.strip(),
-                            created_by=CreatedBy.orchestrator)
-        if child.status == TaskStatus.blocked:
-            return _json_err(
-                f"The subtask was created blocked ({child.blocked_reason}); unblock the "
-                "parent task first.",
-                code="blocked", extra={"task_id": str(child.id)})
-        try:
-            update_task(child.id, routing_reason=f"delegated by {parent.assigned_agent_type or 'the task agent'}"
-                        + (f" on {requested['provider']}/{requested['model']}" if requested else ""))
-        except Exception:  # noqa: BLE001 - the note is decoration
-            log.debug("routing reason update failed for %s", child.id, exc_info=True)
-
-        session_id = getattr(parent, "session_id", None)
-        params: Dict[str, Any] = dict(requested)
-
-        from agents.agent_launcher import preregister_run, start_run
-        from common.budget import BudgetExceededError
-        from common.entity_sink import record_entity
-        from runtime.entity_launch import child_env
-
-        run_id = preregister_run(str(child.id), agent_id, session_id=session_id)
-        try:
-            with child_env(_child_env()):
-                run_id, _ = start_run(str(child.id), agent_id, params, run_id=run_id)
-        except BudgetExceededError as exc:
-            update_task(child.id, status=TaskStatus.blocked, blocked_reason=str(exc))
-            return _json_err(str(exc), code="budget", extra={"task_id": str(child.id)})
-        assign_agent(child.id, agent_id, params, run_id=run_id)
-        update_task(child.id, status=TaskStatus.in_progress)
-        if session_id:
-            try:
-                from common.session_service import add_run_to_session
-                add_run_to_session(session_id, run_id)
-            except Exception:  # noqa: BLE001 - the session link is best-effort, as in start_agent_tool
-                log.debug("session link failed for run %s", run_id, exc_info=True)
-        record_entity("task", str(child.id), "delegated", subtask_title)
-
-        from managers.run_manager import get_run_by_id, stop_run
         started = time.monotonic()
-        run = get_run_by_id(run_id) or {"run_id": run_id, "status": "pending"}
         if not wait:
-            return _answer(child, run, spec, requested=requested, waited=0.0, finished=False)
+            return _answer(task, run, agent, requested=requested, waited=0.0, finished=False)
 
         limit = min(float(timeout_seconds) if timeout_seconds else default_wait_seconds(), MAX_WAIT_SECONDS)
         while True:
-            run = get_run_by_id(run_id) or run
+            snap = transport.delegation_status(task_id, run_id) or {}
+            run = dict(snap.get("run") or run)
+            task = dict(snap.get("task") or task)
             status = str(run.get("status") or "")
             if status not in LIVE_STATUSES:
-                return _answer(child, run, spec, requested=requested,
+                return _answer(task, run, agent, requested=requested,
                                waited=time.monotonic() - started, finished=True,
-                               stopped=(status == "stopped"))
-            if _parent_stopped():
+                               output=str(snap.get("output") or ""), stopped=(status == "stopped"))
+            if _parent_stopped(transport):
                 try:
-                    stop_run(str(child.id), run_id)
+                    transport.stop_run(task_id, run_id)
                 except Exception:  # noqa: BLE001 - the watchdog reaps what a failed stop leaves
                     log.debug("could not stop delegated run %s", run_id, exc_info=True)
-                run = get_run_by_id(run_id) or run
-                return _answer(child, run, spec, requested=requested,
+                snap = transport.delegation_status(task_id, run_id) or {}
+                run = dict(snap.get("run") or run)
+                task = dict(snap.get("task") or task)
+                return _answer(task, run, agent, requested=requested,
                                waited=time.monotonic() - started, finished=False, stopped=True)
             if time.monotonic() - started >= limit:
-                return _answer(child, run, spec, requested=requested,
+                return _answer(task, run, agent, requested=requested,
                                waited=time.monotonic() - started, finished=False, timed_out=True)
             time.sleep(POLL_SECONDS)
     except Exception as e:  # noqa: BLE001 - a tool answers with an error envelope, never a traceback

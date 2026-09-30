@@ -12,7 +12,10 @@ A tagged release publishes both images to GHCR
 (`ghcr.io/snooker155/agents-hub-backend` and `-frontend`, tagged with the
 version), and the chart's `appVersion` names that same version, so
 `helm install` with the default values runs the release the chart came from.
-Build your own only for a fork or an unreleased commit.
+The backend image without a suffix leaves out the RAG stack; set `image.tag`
+to `X.Y.Z-rag` when `RAG_VECTOR_DB` is anything but `none`
+(docs/deployment.md "Releases"). Build your own only for a fork or an
+unreleased commit.
 
 ```bash
 # 1. Build and push the two images this chart deploys (or point image.repository

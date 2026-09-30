@@ -151,6 +151,7 @@
         "Execution modes",
         "Images",
         "Environments: image, limits, network",
+        "Delegation from a container",
         "The Containers page",
         "Preview through the hub",
         "Why it matters beyond isolation",

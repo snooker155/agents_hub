@@ -105,6 +105,30 @@ class StateTransport:
         delivered``), for a run that picks up again under the same id."""
         return []
 
+    # -- delegation (tools/delegation.py, tasks/delegate.py) -----------------
+    # The delegating run decides what to hand over; where the subtask is
+    # created and the delegate launched is this transport's business, so a run
+    # container's delegation is launched by the backend (its own container,
+    # or the run queue), never as a subprocess nested inside the parent's.
+
+    def delegate(self, parent_task_id: str, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create the subtask and launch the delegate (``tasks.delegate.
+        launch_delegation``). ``None`` only when the call could not be made."""
+        raise NotImplementedError
+
+    def delegation_status(self, task_id: str, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """``{"run", "task", "output"}`` for a delegated subtask
+        (``tasks.delegate.delegation_status``); ``None`` when unreachable."""
+        raise NotImplementedError
+
+    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """One run record, or ``None``."""
+        raise NotImplementedError
+
+    def stop_run(self, task_id: str, run_id: str) -> bool:
+        """``managers.run_manager.stop_run``: ask a run to stop."""
+        raise NotImplementedError
+
 
 class DirectStateTransport(StateTransport):
     """Calls the existing manager/task functions in-process. The default, and
@@ -175,6 +199,22 @@ class DirectStateTransport(StateTransport):
             log.debug("delivered_steering failed for %s", run_id, exc_info=True)
             return None
 
+    def delegate(self, parent_task_id: str, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        from tasks.delegate import launch_delegation
+        return launch_delegation(parent_task_id, request)
+
+    def delegation_status(self, task_id: str, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        from tasks.delegate import delegation_status
+        return delegation_status(task_id, run_id)
+
+    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        from managers.run_manager import get_run_by_id
+        return get_run_by_id(run_id)
+
+    def stop_run(self, task_id: str, run_id: str) -> bool:
+        from managers.run_manager import stop_run
+        return bool(stop_run(task_id, run_id))
+
 
 class HttpStateTransport(StateTransport):
     """Posts the same calls to the backend's ``/api/run-state`` routes.
@@ -205,13 +245,14 @@ class HttpStateTransport(StateTransport):
         from common.hostnet import host_service_url
         self._base = host_service_url(f"http://localhost:{port}") + "/api/run-state"
 
-    def _call(self, method: str, path: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _call(self, method: str, path: str, body: Dict[str, Any],
+              timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
         try:
             import requests
             from common.auth import auth_headers
             resp = requests.request(
                 method, f"{self._base}{path}", json=body,
-                headers=auth_headers(), timeout=self._timeout,
+                headers=auth_headers(), timeout=timeout or self._timeout,
             )
             try:
                 data = resp.json()
@@ -320,6 +361,25 @@ class HttpStateTransport(StateTransport):
             return None
         messages = data.get("messages")
         return [m for m in messages if isinstance(m, dict)] if isinstance(messages, list) else []
+
+    def delegate(self, parent_task_id: str, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        # A launch is not best-effort the way a record update is: the tool
+        # needs to know it did not happen, so a generous timeout (the backend
+        # prepares the run and spawns or enqueues it) and None on failure.
+        return self._call("POST", f"/tasks/{parent_task_id}/delegate", dict(request), timeout=60.0)
+
+    def delegation_status(self, task_id: str, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        query = f"?run_id={run_id}" if run_id else ""
+        return self._call("GET", f"/tasks/{task_id}/delegation{query}", {})
+
+    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        data = self._call("GET", f"/runs/{run_id}", {})
+        run = data.get("run") if data else None
+        return run if isinstance(run, dict) else None
+
+    def stop_run(self, task_id: str, run_id: str) -> bool:
+        data = self._call("POST", f"/runs/{run_id}/stop", {"task_id": task_id})
+        return bool(data and data.get("ok"))
 
 
 def get_state_transport() -> StateTransport:

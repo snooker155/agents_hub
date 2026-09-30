@@ -24,7 +24,7 @@ An agent run inside a managed Docker container instead of a local subprocess. Th
 1. Build the base agent image:
 
 ```bash
-docker build -t agents-hub/base:latest -f Dockerfile.agents .
+docker build -t agents-hub/base:latest --target agents .
 ```
 
 2. Update `.env` with the settings above.

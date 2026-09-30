@@ -264,3 +264,84 @@ async def finalize_task_route(run_id: str, body: FinalizeTaskBody):
     # call: off the event loop, like every other blocking call here.
     await asyncio.to_thread(finalize_task_from_run, run_id, body.status, body.exit_code)
     return {"ok": True}
+
+
+# ── delegation (tasks/delegate.py, tools/delegation.py) ──────────────────────
+#
+# A run that delegates from inside a container asks the backend to create the
+# subtask and launch the delegate: launched here, the delegate gets its own
+# container (or a place on the run queue in the ``api`` role) exactly like a
+# launch from the dashboard, instead of a subprocess nested inside the
+# parent's container; and it works when the container's state directory is
+# read-only. The routes below are the four calls ``HttpStateTransport`` makes
+# for that; ``DirectStateTransport`` calls the same functions in-process.
+
+class DelegateBody(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    agent_id: str
+    input: str
+    title: Optional[str] = None
+    model: Optional[str] = None
+    workspace: Optional[str] = None
+    caller_agent_id: Optional[str] = None
+    depth: int = 0
+    env: Dict[str, str] = {}
+    #: The user the delegating run belongs to (``common.attribution.
+    #: launching_user`` inside that run), so the child is attributed the way
+    #: an in-process delegation attributes it, not to the relay's token.
+    launched_by: Optional[str] = None
+
+
+@router.post("/tasks/{task_id}/delegate")
+async def delegate_route(task_id: str, body: DelegateBody):
+    """Mirrors ``tasks.delegate.launch_delegation``: every check the tool
+    makes (agent, workspace, allowlist, depth, model), the subtask, the
+    launch. The answer is the function's own ``{"ok": ...}`` dict, refusals
+    included, so the tool renders it the same either way."""
+    import asyncio
+
+    from tasks.delegate import launch_delegation
+
+    def _launch() -> Dict[str, Any]:
+        from common.identity import reset_current_user, set_current_user
+        token = set_current_user(body.launched_by) if body.launched_by else None
+        try:
+            return launch_delegation(task_id, body.model_dump())
+        finally:
+            if token is not None:
+                reset_current_user(token)
+
+    return await asyncio.to_thread(_launch)
+
+
+@router.get("/tasks/{task_id}/delegation")
+async def delegation_status_route(task_id: str, run_id: Optional[str] = None):
+    """Mirrors ``tasks.delegate.delegation_status``: what the waiting tool polls."""
+    import asyncio
+
+    from tasks.delegate import delegation_status
+
+    return await asyncio.to_thread(delegation_status, task_id, run_id)
+
+
+@router.get("/runs/{run_id}")
+async def get_run_route(run_id: str):
+    """One run record (``managers.run_manager.get_run_by_id``); the waiting
+    tool reads its own parent's status with it."""
+    from managers.run_manager import get_run_by_id
+
+    return {"run": get_run_by_id(run_id)}
+
+
+class StopRunBody(BaseModel):
+    task_id: str
+
+
+@router.post("/runs/{run_id}/stop")
+async def stop_run_route(run_id: str, body: StopRunBody):
+    """Mirrors ``managers.run_manager.stop_run``: a parent that was stopped
+    while it waited stops its delegate."""
+    from managers.run_manager import stop_run
+
+    return {"ok": bool(stop_run(body.task_id, run_id))}
