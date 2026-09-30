@@ -1634,6 +1634,26 @@
         "Citations",
         "API"
       ]
+    },
+    {
+      "id": "changelog",
+      "path": "CHANGELOG.md",
+      "title": "Changelog: what's new in each release",
+      "summary": "What changed in every release, newest first: features added, behaviour changed, bugs fixed, security notes and upgrade notes. The place to find the latest, recent and new functionality of the service.",
+      "surface": "Product",
+      "related": [
+        "overview",
+        "installation",
+        "deployment"
+      ],
+      "headings": [
+        "Unreleased",
+        "Added",
+        "Changed",
+        "Fixed",
+        "Security",
+        "Upgrade notes"
+      ]
     }
   ]
 }

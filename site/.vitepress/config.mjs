@@ -17,7 +17,7 @@ const TITLES = new Map(CORPUS.map((e) => [e.id, e.title]));
  * than disappearing from the site.
  */
 const GROUPS = [
-  ['Start here', ['overview', 'installation', 'cli', 'troubleshooting']],
+  ['Start here', ['overview', 'installation', 'cli', 'troubleshooting', 'changelog']],
   ['The work', ['workspaces', 'projects', 'tasks', 'outcomes', 'scheduling', 'deployments']],
   ['Agents', ['agents', 'agent-loop', 'tool-policy', 'guardrails', 'system-agents', 'imported-agents', 'tools-and-capabilities', 'skills', 'memory']],
   ['Talking to them', ['chat', 'page-chat', 'steering', 'telegram']],
@@ -111,6 +111,7 @@ export default defineConfig({
       { text: 'Documentation', link: '/guide/overview', activeMatch: '/guide/' },
       { text: 'Install', link: '/guide/installation' },
       { text: 'Recipes', link: '/recipes/', activeMatch: '/recipes/' },
+      { text: 'Changelog', link: '/guide/changelog' },
       // A separate app (the dashboard over recorded data), not a VitePress
       // page: `target` stops the VitePress router from trying to render it.
       { text: 'Demo', link: '/demo/index.html', target: '_self' },
@@ -134,8 +135,14 @@ export default defineConfig({
     editLink: {
       // Pages under /guide/ are copies; the file a reader should edit is the
       // corpus entry they were made from.
-      pattern: ({ filePath }) =>
-        `https://github.com/snooker155/agents_hub/edit/main/${filePath.replace(/^guide\//, 'docs/')}`,
+      // The function is shipped to the browser as source, so it cannot read
+      // the index here: the one entry outside docs/ is named inline.
+      pattern: ({ filePath }) => {
+        const source = filePath === 'guide/changelog.md'
+          ? 'CHANGELOG.md'
+          : filePath.replace(/^guide\//, 'docs/');
+        return `https://github.com/snooker155/agents_hub/edit/main/${source}`;
+      },
       text: 'Edit this page on GitHub',
     },
 

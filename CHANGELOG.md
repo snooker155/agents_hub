@@ -53,6 +53,16 @@ turns that section into the next release.
   to the removed nodes page, passes again. The dashboard's Docs page has a Changelog
   section under Start here that shows the same file through
   `GET /api/docs/{id}`, so it needs no copy of its own.
+- The dashboard's Docs page covers the features it had fallen behind on, in
+  English, Russian and German: project deployments, workspace files, the agent
+  registry, the agent loop with tool policy and guardrails, steering and
+  handoffs, MCP servers, the browser, outcomes and experiments, sessions and
+  runs, services, deployments with environments and sandboxes, local models
+  and the hub as a provider, health, production, users and access, the chat
+  widget and integrations. Each section is written as data in the `docsGuide`
+  locale namespace and ends with a "Full reference" that opens the corpus
+  documents it summarises (English), with their cross links pointing at the
+  page's own sections.
 
 ## [0.6.0] - 2026-09-30
 

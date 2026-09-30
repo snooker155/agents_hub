@@ -172,7 +172,7 @@ def test_builtin_agent_mentions_are_actually_seeded():
 
 def test_docs_index_matches_files_on_disk():
     index = json.loads(DOCS_INDEX.read_text())
-    indexed_ids = {e["id"] for e in index["docs"]}
+    indexed_ids = {e["id"] for e in index["docs"] if not e.get("path")}
     on_disk_ids = {p.stem for p in DOCS_DIR.glob("*.md")}
     assert indexed_ids == on_disk_ids, (
         f"only in docs/index.json: {sorted(indexed_ids - on_disk_ids)}; "

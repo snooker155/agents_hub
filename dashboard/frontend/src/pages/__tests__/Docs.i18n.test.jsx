@@ -16,6 +16,7 @@ vi.mock('../../api', () => ({
   getWorkspaces: () => Promise.resolve({ data: [] }),
   getAgents: () => Promise.resolve({ data: [] }),
   testProvider: () => Promise.resolve({ data: { ok: true } }),
+  getDoc: (id) => Promise.resolve({ data: { id, title: id, content: `# ${id}\n\nReference text.` } }),
 }));
 
 const SECTIONS = [
@@ -24,6 +25,10 @@ const SECTIONS = [
   'teams', 'flows', 'loops', 'tools', 'memory', 'web-logs', 'evals', 'playground',
   'instances', 'nodes', 'containers', 'models', 'costs', 'providers', 'connectors',
   'tutorials', 'cli', 'cli-api', 'faq',
+  // Guide sections (GuideDoc, the docsGuide namespace).
+  'project-deployments', 'files', 'registry', 'agent-loop', 'steering', 'mcp', 'browser',
+  'outcomes', 'sessions-runs', 'services', 'deployments', 'local-models', 'health',
+  'production', 'accounts', 'widget', 'integrations',
 ];
 
 // A language is "reaching the page" when its own script/function words show up.
@@ -54,6 +59,7 @@ describe('Docs', () => {
           const text = container.textContent;
           expect(text.length).toBeGreaterThan(200);
           expect(text).not.toMatch(/docs\.[a-zA-Z]/);
+          expect(text).not.toMatch(/docsGuide\./);
           if (EVIDENCE[lang]) expect(text).toMatch(EVIDENCE[lang]);
           unmount();
         });

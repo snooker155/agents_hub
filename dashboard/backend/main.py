@@ -684,7 +684,11 @@ app.include_router(accounting_router.router)
 app.include_router(registry_router.router)
 app.include_router(support_router.router)
 
-# External domain: token-authenticated access for exposed nodes
+# Docs domain: a corpus document (the changelog) for the in-app Docs page.
+from routes import docs as docs_router
+app.include_router(docs_router.router)
+
+# External domain: the public address of published instances (token auth)
 app.include_router(external.router)
 
 # A2A domain: agent cards and the JSON-RPC endpoint of the Agent2Agent protocol.

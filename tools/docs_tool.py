@@ -4,9 +4,10 @@ this part of it work" from the product's own documentation rather than from
 whatever it can infer.
 
 The corpus is ``docs/*.md`` at the repository root, with ``docs/index.json``
-listing each file's title, summary, surface and links. Both are shipped with the
-product, so this is the same text for every install and there is nothing to
-configure.
+listing each file's title, summary, surface and links; an entry may instead name
+a ``path`` from the repository root, which is how CHANGELOG.md is in the corpus
+as ``changelog``. All of it is shipped with the product, so this is the same
+text for every install and there is nothing to configure.
 
 Two tools, deliberately small:
 
@@ -54,23 +55,55 @@ _json_ok = json_ok
 _json_err = json_err
 
 
-@lru_cache(maxsize=1)
-def _index() -> List[Dict[str, Any]]:
-    """The doc index, read once per process. Empty when the corpus is missing,
-    so a trimmed deployment degrades to "no documentation" rather than errors."""
+def _mtime(path: Any) -> float:
+    """A file's modification time, or 0 when it is missing. Part of every cache
+    key below, so a long-lived process (a runner replica) sees an edited index
+    or CHANGELOG.md on its next call instead of the text it read at start."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+@lru_cache(maxsize=4)
+def _index_at(mtime: float) -> List[Dict[str, Any]]:
     try:
         return list(json.loads(INDEX_FILE.read_text(encoding="utf-8")).get("docs") or [])
     except Exception:
         return []
 
 
-@lru_cache(maxsize=64)
-def _body(doc_id: str) -> str:
-    path = DOCS_DIR / f"{doc_id}.md"
+def _index() -> List[Dict[str, Any]]:
+    """The doc index, reread when the file changes. Empty when the corpus is
+    missing, so a trimmed deployment degrades to "no documentation" rather than
+    errors."""
+    return _index_at(_mtime(INDEX_FILE))
+
+
+def _path_for(entry: Dict[str, Any]) -> Any:
+    """Where an entry's text lives: ``docs/<id>.md`` unless the entry names a
+    ``path`` relative to the repository root (the changelog is CHANGELOG.md at
+    the root, shipped with the product like the rest)."""
+    rel = str(entry.get("path") or "").strip()
+    return (PROJECT_ROOT / rel) if rel else (DOCS_DIR / f"{entry['id']}.md")
+
+
+def _doc_path(doc_id: str) -> Any:
+    entry = next((e for e in _index() if e.get("id") == doc_id), None)
+    return _path_for(entry) if entry else DOCS_DIR / f"{doc_id}.md"
+
+
+@lru_cache(maxsize=128)
+def _read_at(path: Any, mtime: float) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except Exception:
         return ""
+
+
+def _body(doc_id: str) -> str:
+    path = _doc_path(doc_id)
+    return _read_at(path, _mtime(path))
 
 
 #: Endings after which a plural "es" is the whole suffix ("matches" -> "match").
@@ -106,9 +139,13 @@ def _terms(query: str) -> List[str]:
             if len(t) > 1 and t not in _STOPWORDS]
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=128)
+def _tokens_of(text: str) -> Tuple[str, ...]:
+    return tuple(_tokens(text))
+
+
 def _body_tokens(doc_id: str) -> Tuple[str, ...]:
-    return tuple(_tokens(_body(doc_id)))
+    return _tokens_of(_body(doc_id))
 
 
 def _score(entry: Dict[str, Any], terms: List[str], phrase: str) -> Tuple[float, str]:
@@ -254,6 +291,16 @@ def read_doc(doc_id: str) -> str:
             extra={"available": available} if available else None,
         )
     content = _body(doc_id)
+    if not content:
+        # The index names it but its file is missing or unreadable. An empty
+        # "content" reads as "this page says nothing", and an agent reports
+        # exactly that, so name the fault instead.
+        return _json_err(
+            f"Document '{doc_id}' is listed in the index but its file "
+            f"({_doc_path(doc_id).relative_to(PROJECT_ROOT)}) could not be read. "
+            "Say the documentation could not be loaded; do not describe the "
+            "document as empty.",
+            code="unreadable")
     truncated = False
     if len(content) > MAX_DOC_CHARS:
         content = content[:MAX_DOC_CHARS]

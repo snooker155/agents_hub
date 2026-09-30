@@ -269,6 +269,10 @@ export const removeWorkspaceMember = (name, userId) =>
 // config — and produce a browser CORS error nothing else in the app would hit.
 export const getSystemHealth = () => api.get('/health');
 
+// One document of the documentation corpus the agents read (docs/index.json),
+// e.g. 'changelog'. Returns { id, title, content, truncated }.
+export const getDoc = (id) => api.get(`/docs/${id}`);
+
 /**
  * Drain one `text/event-stream` response, calling `onEvent` per `data:` frame.
  *

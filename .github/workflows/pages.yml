@@ -11,6 +11,8 @@ on:
     paths:
       - 'site/**'
       - 'docs/**'
+      # Published as guide/changelog (docs/index.json names it by path).
+      - 'CHANGELOG.md'
       - 'dashboard/frontend/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
