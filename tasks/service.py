@@ -21,9 +21,15 @@ from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID, uuid4
 
 from tasks.models import (
+    Actor,
     CreatedBy,
+    Executor,
+    IllegalTransition,  # noqa: F401 — re-exported for callers that catch it from here
     Task,
     TaskStatus,
+    check_transition,
+    coerce_priority,
+    priority_sort_key,
 )
 from tasks.storage import (
     TaskStore,
@@ -91,12 +97,30 @@ def create_task(
     should_decompose: bool = False,
     external_source: Optional[Dict[str, Any]] = None,
     depends: Optional[Sequence[UUID]] = None,
+    due_at: Optional[datetime] = None,
+    budget_usd: Optional[float] = None,
+    environment_id: Optional[str] = None,
+    agent_version: Optional[int] = None,
+    outcome: Optional[Dict[str, Any]] = None,
+    file_ids: Optional[Sequence[str]] = None,
+    secrets: Optional[Sequence[str]] = None,
+    memory_pool_ids: Optional[Sequence[str]] = None,
+    memory_access: str = "write",
     store: TaskStore = default_store,
 ) -> Task:
     """Create a new task and persist it in the store.
 
     When `depends` names tasks that are not yet completed, the new task is
     created blocked and is released automatically once they all finish.
+
+    ``agent_version`` pins the task's agent runs to a stored version
+    (agents/versions.py); a task is created with no assigned agent, so there
+    is nothing yet to validate the version against — the route layer
+    (dashboard/backend/routes/tasks.py) validates it once an agent is
+    assigned. ``outcome`` is the grading rubric (tasks/outcome.py), passed
+    through unvalidated the same way. ``file_ids`` are workspace files
+    (files/service.py) the task works from; the route layer checks they
+    belong to the task's workspace.
     """
     dep_ids = [d if isinstance(d, UUID) else UUID(str(d)) for d in (depends or [])]
     if dep_ids:
@@ -123,6 +147,15 @@ def create_task(
         should_decompose=should_decompose,
         external_source=external_source,
         depends=dep_ids,
+        due_at=due_at,
+        budget_usd=budget_usd,
+        environment_id=environment_id,
+        agent_version=agent_version,
+        outcome=outcome,
+        file_ids=file_ids,
+        secrets=secrets,
+        memory_pool_ids=memory_pool_ids,
+        memory_access=memory_access,
     )
     append_task_activity_log(task.id, "created", "Task created")
     if task.status == TaskStatus.blocked and (task.blocked_reason or "").startswith(DEPENDENCY_BLOCK_PREFIX):
@@ -134,6 +167,24 @@ def create_task(
 def get_task(task_id: UUID, *, store: TaskStore = default_store) -> Optional[Task]:
     """Return a task by id or None if not found."""
     return store.get(task_id)
+
+
+def validate_agent_version(agent_id: Optional[str], agent_version: Optional[int]) -> None:
+    """Raise ``ValueError`` unless ``agent_version`` names a real stored
+    version of ``agent_id`` (agents/versions.py, ``agent_versions`` table).
+
+    A no-op (never raises) when ``agent_version`` is None (a null pin always
+    clears cleanly) or when ``agent_id`` is falsy: a task with no assigned
+    agent has nothing to validate the pin against yet, so the route layer
+    (dashboard/backend/routes/tasks.py) calls this only once one is known —
+    the task's own ``assigned_agent_type`` on update, or not at all on
+    create, where no agent is assigned.
+    """
+    if agent_version is None or not agent_id:
+        return
+    from agents.versions import get_version_row
+    if get_version_row(agent_id, int(agent_version)) is None:
+        raise ValueError(f"Agent '{agent_id}' has no version {agent_version}")
 
 
 def get_tasks(task_ids, *, store: TaskStore = default_store) -> dict:
@@ -150,9 +201,50 @@ def list_tasks(*, store: TaskStore = default_store) -> List[Task]:
     return store.list()
 
 
-def update_task(task_id: UUID, *, store: TaskStore = default_store, **fields) -> Optional[Task]:
-    """Update fields of a given task. Returns updated task or None if not found."""
+def list_tasks_page(
+    *, workspace: Optional[str] = None, limit: Optional[int] = None,
+    offset: Optional[int] = None, store: TaskStore = default_store,
+) -> tuple[List[Task], int]:
+    """One page of tasks plus the total that matched, for ``GET /api/tasks``.
+
+    Without a workspace filter, ``limit``/``offset`` are pushed straight into
+    the store's SQL query. A workspace filter has to be applied in Python (the
+    stored value isn't always the trimmed form ``list_tasks`` compares
+    against), so that case loads the table once and slices here — still one
+    pass, not one query per page.
+    """
+    if workspace:
+        matching = [t for t in store.list() if (t.workspace or "").strip() == workspace]
+        total = len(matching)
+        start = offset or 0
+        page = matching[start: start + limit] if limit is not None else matching[start:]
+        return page, total
+    return store.list(limit=limit, offset=offset), store.count()
+
+
+def update_task(
+    task_id: UUID,
+    *,
+    store: TaskStore = default_store,
+    actor: Actor | str = Actor.system,
+    **fields,
+) -> Optional[Task]:
+    """Update fields of a given task. Returns updated task or None if not found.
+
+    ``actor`` gates a status change against the transition table (see
+    ``tasks.models.TRANSITIONS``): a ``system`` actor (the default, so every
+    internal caller keeps working unchanged) may perform any transition in
+    the table; ``user`` and ``agent`` are further restricted. Raises
+    ``IllegalTransition`` (a ``ValueError``) when the move is not allowed.
+    """
     fields.pop("id", None)
+
+    # A caller that clears the compatibility field directly (there are a
+    # handful outside this module, e.g. a run-deletion route) without knowing
+    # about ``executor`` would otherwise leave it stale. Clearing one clears
+    # both unless the caller explicitly says what ``executor`` should become.
+    if "assigned_agent_type" in fields and fields["assigned_agent_type"] is None and "executor" not in fields:
+        fields["executor"] = None
 
     if "depends" in fields:
         dep_ids = [d if isinstance(d, UUID) else UUID(str(d)) for d in (fields["depends"] or [])]
@@ -175,6 +267,8 @@ def update_task(task_id: UUID, *, store: TaskStore = default_store, **fields) ->
 
         task = store.get(task_id)
         if task and task.status != new_status:
+            check_transition(task.status, new_status, actor)
+
             # Clear blocked_reason when leaving blocked
             if new_status != TaskStatus.blocked and "blocked_reason" not in fields:
                 fields["blocked_reason"] = None
@@ -187,7 +281,8 @@ def update_task(task_id: UUID, *, store: TaskStore = default_store, **fields) ->
 
             # Clear agent assignment when resetting to todo (preserve routing history for reviewed/done)
             if new_status in _CLEAR_AGENT_STATUSES:
-                for key in ("assigned_agent_type", "assigned_agent_params", "assigned_agent_run_id", "pre_assignment_status"):
+                for key in ("executor", "assigned_agent_type", "assigned_agent_params",
+                            "assigned_agent_run_id", "pre_assignment_status"):
                     if key not in fields:
                         fields[key] = None
             # Only clear session on full todo reset (keep session history for reviewed/done)
@@ -540,6 +635,7 @@ _SUBTASK_ACTIVE = {
     TaskStatus.pending,
     TaskStatus.in_progress,
     TaskStatus.awaiting_input,
+    TaskStatus.awaiting_approval,
     TaskStatus.reviewing,
     TaskStatus.resolved,
     TaskStatus.reviewed,
@@ -854,19 +950,41 @@ def add_subtask(
     description: str = "",
     *,
     depends: Optional[Sequence[UUID]] = None,
+    created_by: CreatedBy = CreatedBy.orchestrator,
+    budget_usd: Optional[float] = None,
+    environment_id: Optional[str] = None,
+    agent_version: Optional[int] = None,
+    file_ids: Optional[Sequence[str]] = None,
     store: TaskStore = default_store,
 ) -> Task:
-    """Create a subtask under the given parent with created_by=orchestrator.
+    """Create a subtask under the given parent, by default with created_by=orchestrator.
 
-    The subtask inherits workspace, project, and project_id from its parent task.
-    `depends` lets a decomposition express execution order between subtasks;
-    a subtask with unfinished dependencies is created blocked and released
-    automatically when they complete.
+    The subtask inherits workspace, project, project_id, and, unless given
+    here, the parent's money cap (``budget_usd``), environment and workspace
+    files (``file_ids``), so a piece of work an agent hands down runs under
+    the same limits, and from the same documents, as the task it came
+    from. `depends` lets a decomposition express execution order between
+    subtasks; a subtask with unfinished dependencies is created blocked and
+    released automatically when they complete.
+
+    ``agent_version`` is deliberately NOT inherited from the parent (unlike
+    ``budget_usd``/``environment_id``): a subtask commonly runs a different
+    agent than its parent (delegate_task_tool picks its own delegate;
+    add_subtask itself creates the task agent-less, assigned later), and a
+    version pin only means something for the specific agent it names. A
+    caller that genuinely wants "same agent, same pin" passes this explicitly
+    alongside its own ``assign_agent`` call.
     """
     parent = store.get(parent_id)
     workspace = parent.workspace if parent else None
     project = parent.project if parent else None
     project_id = parent.project_id if parent else None
+    if budget_usd is None and parent is not None:
+        budget_usd = parent.budget_usd
+    if environment_id is None and parent is not None:
+        environment_id = parent.environment_id
+    if file_ids is None and parent is not None:
+        file_ids = list(getattr(parent, "file_ids", None) or [])
 
     # A subtask created under an already-blocked parent inherits the block, so a
     # decomposition run cannot spawn immediately-runnable work under a blocked task.
@@ -890,7 +1008,7 @@ def add_subtask(
     return store.create(
         title=title,
         description=description,
-        created_by=CreatedBy.orchestrator,
+        created_by=created_by,
         parent_id=parent_id,
         workspace=workspace,
         project=project,
@@ -898,20 +1016,231 @@ def add_subtask(
         status=status,
         blocked_reason=blocked_reason,
         depends=dep_ids,
+        budget_usd=budget_usd,
+        environment_id=environment_id,
+        agent_version=agent_version,
+        file_ids=file_ids,
     )
 
 
-def stop_task(task_id: UUID, *, store: TaskStore = default_store) -> Optional[Task]:
-    """Mark the task as stopped. Returns updated task or None if not found."""
-    return store.update(task_id, status=TaskStatus.stopped)
+def stop_task(task_id: UUID, *, actor: Actor | str = Actor.system, store: TaskStore = default_store) -> Optional[Task]:
+    """Mark the task as stopped. Returns updated task or None if not found.
+
+    Goes through update_task so the transition is gated and logged the same
+    way every other status change is.
+    """
+    return update_task(task_id, store=store, actor=actor, status=TaskStatus.stopped)
 
 
-def block_task(task_id: UUID, reason: str, *, store: TaskStore = default_store) -> Optional[Task]:
+def block_task(
+    task_id: UUID, reason: str, *, actor: Actor | str = Actor.system, store: TaskStore = default_store
+) -> Optional[Task]:
     """Mark the task as blocked with a given reason. Returns updated task or None.
 
     Goes through update_task so blocking a parent cascades to its descendants.
     """
-    return update_task(task_id, store=store, status=TaskStatus.blocked, blocked_reason=reason)
+    return update_task(task_id, store=store, actor=actor, status=TaskStatus.blocked, blocked_reason=reason)
+
+
+# -------------------- Tool-call approval --------------------
+#
+# A task parks here when its agent tried to make a tool call that needs a human
+# yes (see tools/approval.py for which calls, agents/hooks.py for the gate).
+# Deliberately separate from ``park_task_awaiting_input``: that one lives in
+# run_manager because it has to resolve the task from a run record, while these
+# are called with the task in hand, from the runner and from the approve route.
+
+
+def park_task_awaiting_approval(
+    task_id: UUID,
+    pending: Dict[str, Any],
+    *,
+    run_id: str = "",
+    agent_id: str = "",
+    store: TaskStore = default_store,
+) -> Optional[Task]:
+    """Pause a task on a tool call that is waiting for the user's decision.
+
+    Like the ask_user park, this does NOT run the completion path: the task is
+    paused, not resolved, so a session continuation waiting on it stays pending
+    until the operator answers and the resumed run finishes. The agent
+    assignment is kept so the resume path knows who to re-run.
+    """
+    tid = _uuid_from_str(task_id)
+    record = {
+        "tool": str((pending or {}).get("tool") or ""),
+        "input": (pending or {}).get("input"),
+        "reason": str((pending or {}).get("reason") or ""),
+        "fingerprint": str((pending or {}).get("fingerprint") or ""),
+        "hook": str((pending or {}).get("hook") or ""),
+        "run_id": str((pending or {}).get("run_id") or run_id or ""),
+        "agent_id": str((pending or {}).get("agent_id") or agent_id or ""),
+        "asked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Which tool policy mode held the call and who decided (tools/
+    # permission_policy.py): "always_ask", or "auto" with the classifier's
+    # reason, so the task page can say why this call waits.
+    for key in ("mode", "by"):
+        if (pending or {}).get(key):
+            record[key] = str(pending[key])
+    # A run that reached its money cap parks here too (common/run_budget.py):
+    # the decision is a new cap, not a call, so the record keeps what the
+    # dashboard and the approve route need to offer one.
+    is_budget = str((pending or {}).get("kind") or "") == "budget"
+    if is_budget:
+        record["kind"] = "budget"
+        for key in ("spent_usd", "limit_usd"):
+            try:
+                record[key] = float((pending or {}).get(key) or 0.0)
+            except (TypeError, ValueError):
+                record[key] = 0.0
+    updated = update_task(
+        tid, store=store,
+        status=TaskStatus.awaiting_approval,
+        pending_approval=record,
+    )
+    try:
+        append_task_activity_log(
+            tid, "awaiting_approval",
+            (f"Run paused at its money cap (${record['spent_usd']:.2f} of ${record['limit_usd']:.2f})"
+             if is_budget else f"Agent wants to call {record['tool']}"),
+            run_id=record["run_id"], agent_id=record["agent_id"],
+        )
+    except Exception:
+        pass
+    if is_budget:
+        _notify_budget_park(tid, record, store=store)
+        return updated
+    # Surface it the same way a question is surfaced: a call nobody is told
+    # about is a task that silently stops.
+    try:
+        from plans import service as _plan_service
+        current = get_task(tid, store=store)
+        _plan_service.create_notification(
+            title="A task needs your approval",
+            body=f"The agent wants to call {record['tool']}. {record['reason']}".strip(),
+            severity="warning",
+            source={"origin": "agent", "task_id": str(tid)},
+            workspace=str(getattr(current, "workspace", "") or "") or None,
+            channels=["dashboard"],
+        )
+    except Exception:
+        pass
+    return updated
+
+
+def _notify_budget_park(tid: UUID, record: Dict[str, Any], *, store: TaskStore) -> None:
+    """Tell the operator a run stopped at its money cap.
+
+    A paused run that nobody hears about is a task that silently never
+    finishes, and this one needs a decision only a person can make (spend more
+    or stop). Best effort: a notification failure never undoes the park.
+    """
+    try:
+        from plans import service as _plan_service
+        current = get_task(tid, store=store)
+        title = str(getattr(current, "title", "") or "") or str(tid)
+        _plan_service.create_notification(
+            title="Run paused at its money cap",
+            body=(f"Task \"{title}\" spent ${record.get('spent_usd', 0.0):.2f} of its "
+                  f"${record.get('limit_usd', 0.0):.2f} cap. Raise the cap to continue or stop the task."),
+            severity="warning",
+            source={"origin": "budget", "task_id": str(tid), "run_id": str(record.get("run_id") or "")},
+            workspace=str(getattr(current, "workspace", "") or "") or None,
+            channels=["dashboard"],
+        )
+    except Exception:  # noqa: BLE001 - best effort, the park stands either way
+        pass
+
+
+def resolve_budget_pause(
+    task_id: UUID,
+    *,
+    approved: bool,
+    budget_usd: Optional[float] = None,
+    store: TaskStore = default_store,
+) -> Optional[Task]:
+    """Apply the operator's answer to a run parked at its money cap.
+
+    ``approved`` stores the new cap on the task (the route re-launches it,
+    and the launcher hands the new cap to the run). A refusal ends the task:
+    it is blocked with the reason "stopped at budget cap", the assignment is
+    released and the pending record cleared, so nothing picks it up again
+    until someone reassigns it. The route checks the new cap first.
+    """
+    tid = _uuid_from_str(task_id)
+    task = get_task(tid, store=store)
+    if task is None:
+        return None
+    pending = dict(getattr(task, "pending_approval", None) or {})
+    if approved:
+        return update_task(tid, store=store, budget_usd=float(budget_usd or 0.0))
+    reason = (f"Stopped at budget cap: spent ${float(pending.get('spent_usd') or 0.0):.2f} "
+              f"of ${float(pending.get('limit_usd') or 0.0):.2f}.")
+    update_task(tid, store=store, status=TaskStatus.blocked, blocked_reason=reason,
+                pending_approval=None)
+    clear_agent(tid, store=store)
+    try:
+        append_task_activity_log(tid, "budget_stop", reason,
+                                 run_id=str(pending.get("run_id") or ""))
+    except Exception:
+        pass
+    return get_task(tid, store=store)
+
+
+def approve_tool_call(
+    task_id: UUID,
+    tool: str,
+    fingerprint: str,
+    *,
+    note: str = "",
+    store: TaskStore = default_store,
+) -> Optional[Task]:
+    """Record that the user approved one specific tool call on this task.
+
+    The fingerprint covers the tool *and its arguments*, so approving does not
+    hand the agent the tool: the resumed run may repeat that exact call, once.
+    """
+    tid = _uuid_from_str(task_id)
+    task = store.get(tid)
+    if task is None:
+        return None
+    approved = list(getattr(task, "approved_calls", None) or [])
+    approved.append({
+        "tool": str(tool or ""),
+        "fingerprint": str(fingerprint or ""),
+        "note": str(note or ""),
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return store.update(tid, approved_calls=approved)
+
+
+def consume_approved_call(
+    task_id: UUID | str,
+    fingerprint: str,
+    *,
+    store: TaskStore = default_store,
+) -> bool:
+    """Spend one approval for *fingerprint*. True when there was one to spend.
+
+    Called from the gate inside the agent subprocess, so it removes the entry
+    before the call runs: a second attempt at the same call is gated again
+    rather than riding on the first approval.
+    """
+    try:
+        tid = _uuid_from_str(task_id)
+    except ValueError:
+        return False
+    task = store.get(tid)
+    if task is None:
+        return False
+    approved = list(getattr(task, "approved_calls", None) or [])
+    for i, entry in enumerate(approved):
+        if str(entry.get("fingerprint") or "") == str(fingerprint or ""):
+            approved.pop(i)
+            store.update(tid, approved_calls=approved)
+            return True
+    return False
 
 
 def create_sequence(
@@ -950,6 +1279,26 @@ def create_sequence(
     # Persist all tasks in one save call
     store.save(tasks)
     return seq_id
+
+
+# -------------------- Dispatch ordering --------------------
+
+def order_for_dispatch(tasks: Sequence[Task]) -> List[Task]:
+    """Sort candidate tasks the way the orchestrator/worker loops dispatch them.
+
+    Order: priority descending (critical first), then due_at ascending with
+    tasks that have no deadline sorted last, then created_at ascending (oldest
+    first) as the final tie-breaker. A single helper so both node_run.py loops
+    (and anything else picking the next task to run) agree on the same order.
+    """
+    def _key(t: Task):
+        pr = coerce_priority(getattr(t, "priority", None))
+        due = getattr(t, "due_at", None)
+        due_key = (1, "") if due is None else (0, due.isoformat())
+        created = getattr(t, "created_at", None)
+        return (priority_sort_key(pr), due_key, created.isoformat() if created else "")
+
+    return sorted(tasks, key=_key)
 
 
 # -------------------- Activity log --------------------
@@ -1085,24 +1434,40 @@ def delete_task_result_file(task_id: UUID) -> None:
     _delete_task_result(_tasks_path(), str(task_id))
 
 
-# -------------------- Agent management --------------------
+# -------------------- Executor management --------------------
+#
+# assign_executor is the one write behind every assignment, whatever kind of
+# executor a task gets: an agent, a flow, a team or a loop. assign_agent is
+# kept as a thin kind="agent" wrapper over it — a dozen call sites across the
+# codebase (the orchestrator's own tools, the retry/review cycle, the
+# approval routes, teams/loops claiming a task, flow.launcher.trigger_flow...)
+# call it directly with exactly this signature, and none of them need to
+# change for a task to gain the other three kinds.
 
-def assign_agent(
+def assign_executor(
     task_id: UUID,
-    agent_type: str,
+    executor: Executor | Dict[str, Any],
     params: Optional[Dict[str, Any]] = None,
     *,
     store: TaskStore = default_store,
     run_id: Optional[str] = None,
 ) -> Optional[Task]:
-    """Assign an agent to the task.
+    """Hand the task to an executor: an agent, a flow, a team or a loop.
 
-    - agent_type: string identifier of the agent
-    - params: arbitrary dict with agent configuration
-    - run_id: optional external run identifier
+    - executor: an Executor, or an equivalent {"kind": ..., "id": ...} dict
+    - params: arbitrary config for whatever runs it (an agent's launch params,
+      a flow/team/loop's own params)
+    - run_id: the run this assignment now points at (that kind's own run id —
+      an agent run, a flow run, a team run or a loop run)
+
+    Writes ``executor``; the store keeps ``assigned_agent_type`` in agreement
+    with it on the next read (tasks.storage._sync_executor) so every caller
+    written for the old, agent-only shape of a task keeps working.
     """
+    if not isinstance(executor, Executor):
+        executor = Executor.model_validate(executor)
     fields: Dict[str, Any] = {
-        "assigned_agent_type": agent_type,
+        "executor": executor.model_dump(),
         "assigned_agent_params": params if params is not None else None,
         "assigned_agent_run_id": run_id,
     }
@@ -1116,13 +1481,32 @@ def assign_agent(
     return updated
 
 
+def assign_agent(
+    task_id: UUID,
+    agent_type: str,
+    params: Optional[Dict[str, Any]] = None,
+    *,
+    store: TaskStore = default_store,
+    run_id: Optional[str] = None,
+) -> Optional[Task]:
+    """Assign an agent to the task (a thin kind="agent" wrapper over assign_executor).
+
+    - agent_type: string identifier of the agent
+    - params: arbitrary dict with agent configuration
+    - run_id: optional external run identifier
+    """
+    return assign_executor(task_id, Executor(kind="agent", id=agent_type), params,
+                            store=store, run_id=run_id)
+
+
 def clear_agent(
     task_id: UUID,
     *,
     store: TaskStore = default_store,
 ) -> Optional[Task]:
-    """Clear agent assignment."""
+    """Clear the task's executor assignment, of any kind."""
     fields: Dict[str, Any] = {
+        "executor": None,
         "assigned_agent_type": None,
         "assigned_agent_params": None,
         "assigned_agent_run_id": None,
@@ -1131,19 +1515,31 @@ def clear_agent(
     return store.update(task_id, **fields)
 
 
+# Same function, named for a caller that is not thinking in agent terms.
+clear_executor = clear_agent
+
+
 __all__ = [
     "Task",
     "TaskStatus",
     "CreatedBy",
+    "Actor",
+    "IllegalTransition",
     "TaskStore",
+    "order_for_dispatch",
     "create_task",
     "get_task",
+    "validate_agent_version",
     "list_tasks",
     "update_task",
     "delete_task",
     "add_subtask",
     "stop_task",
     "block_task",
+    "park_task_awaiting_approval",
+    "resolve_budget_pause",
+    "approve_tool_call",
+    "consume_approved_call",
     "set_dependencies",
     "find_task_by_key",
     "get_subtasks",
@@ -1153,8 +1549,10 @@ __all__ = [
     "resume_container",
     "PAUSE_MARKER",
     "create_sequence",
+    "assign_executor",
     "assign_agent",
     "clear_agent",
+    "clear_executor",
     "get_task_activity_log",
     "append_task_activity_log",
     "delete_task_activity_log",

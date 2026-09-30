@@ -97,8 +97,23 @@ def recent(view_id: str) -> List[str]:
     base = view_dir(view_id)
     if base is None or not (base / "geometry").is_dir():
         return []
+
+    def _last_ts(path) -> str:
+        # Two logs written within the file system's timestamp granularity tie
+        # on mtime; the timestamp of each log's last record breaks the tie the
+        # way the build actually happened.
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for line in reversed(lines):
+                line = line.strip()
+                if line:
+                    return str(json.loads(line).get("ts") or "")
+        except Exception:
+            pass
+        return ""
+
     logs = sorted((base / "geometry").glob("*.jsonl"),
-                  key=lambda p: p.stat().st_mtime, reverse=True)
+                  key=lambda p: (p.stat().st_mtime, _last_ts(p)), reverse=True)
     return [p.stem for p in logs]
 
 

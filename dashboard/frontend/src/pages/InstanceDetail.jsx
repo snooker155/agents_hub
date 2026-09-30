@@ -1,38 +1,45 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Link } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
-  Activity, Box, Brain, Check, Clock, FileText, History, Layers, MessageSquare,
-  Pencil, Send, Server, Square, Trash2, Wrench, X,
+  Activity, Box, Brain, Check, ChevronDown, Cpu, FileText, History, MessageSquare,
+  Pencil, Plus, RefreshCw, RotateCw, Square, Trash2, Wrench, X,
 } from 'lucide-react';
 
 import {
-  deleteInstance, getInstance, getInstanceContext, getInstanceLogs,
-  getInstanceRuns, getInstanceTimeline, messageInstance, renameInstance,
-  stopInstance,
+  deleteInstance, getAgents, getInstance, getInstanceContext, getInstanceConversations,
+  getInstanceLogs, getInstanceRuns, getInstanceTimeline, interruptInstance,
+  messageInstance, renameInstance, restartInstance, stopInstance,
 } from '../api';
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import ComposerDock from '../components/ComposerDock';
+import InstanceComposer from '../components/instances/InstanceComposer';
 import { useStream, useChannel } from '../components/stream';
 import { StateBadge } from '../components/InstanceList';
 import { formatDuration, relativeTime } from '../components/instanceUtils';
 import MarkdownRenderer from '../components/MarkdownRenderer';
+import ProcessTab from '../components/instances/ProcessTab';
+import AccessTab from '../components/instances/AccessTab';
 import { useI18n } from '../i18n';
 
 /*
  * One live agent copy.
  *
  * The page is a conversation, not a log dump: what this copy was asked, what it
- * answered, what it used to get there — and a box to write to it. The box works
- * whatever state the copy is in. A copy that finished hours ago is revived with
- * its own history rebuilt from its journal; a node in standby is handed the
- * message through its mailbox and answers in its own process.
+ * answered, what it used to get there, and a box to write to it. The box works
+ * whatever state the copy is in. A resident instance is a process or container
+ * of its own (instances/carrier.py): it holds several conversations at once,
+ * the Process tab is its carrier, and the Access tab is its public address.
  */
 
-const TABS = [
+const CORE_TABS = [
   { id: 'timeline', icon: MessageSquare, key: 'timeline' },
   { id: 'runs', icon: History, key: 'runs' },
   { id: 'context', icon: Brain, key: 'context' },
   { id: 'logs', icon: FileText, key: 'logs' },
+];
+const RESIDENT_TABS = [
+  { id: 'process', icon: Activity, key: 'process' },
+  { id: 'access', icon: Box, key: 'access' },
 ];
 
 function Stat({ label, value }) {
@@ -84,36 +91,152 @@ function Turn({ turn, t }) {
   );
 }
 
+/**
+ * "Main" first, then every other conversation the instance is holding: a tile
+ * of the stats row that opens the list, so which thread the page shows reads
+ * next to what the copy is and has done.
+ */
+function ConversationStat({ conversations, selected, onSelect, onNew, t }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const current = conversations.find((c) => c.conversation_id === selected);
+  const name = (c) => (c?.conversation_id === 'main' ? t('instanceDetail.conversations.main') : (c?.conversation_id || selected));
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${
+          open ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/40'
+        }`}
+      >
+        <div className="text-[11px] uppercase tracking-wide text-gray-400">{t('instanceDetail.stats.conversation')}</div>
+        <div className="text-sm font-medium text-gray-800 mt-0.5 flex items-center justify-between gap-1 min-w-0">
+          <span className="truncate">{name(current)}</span>
+          <ChevronDown className={`w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </div>
+      </button>
+      {open && (
+        <div className="absolute left-0 z-30 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+          {conversations.map((c) => (
+            <button
+              key={c.conversation_id}
+              type="button"
+              onClick={() => { onSelect(c.conversation_id); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 flex items-center justify-between ${
+                c.conversation_id === selected ? 'text-indigo-600 font-medium' : 'text-gray-700'
+              }`}
+            >
+              <span className="truncate">{name(c)}</span>
+              <span className="text-[11px] text-gray-400 ml-2">{c.messages ?? 0}</span>
+            </button>
+          ))}
+          <div className="border-t border-gray-100 mt-1 pt-1">
+            <button
+              type="button"
+              onClick={() => { onNew(); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {t('instanceDetail.conversations.new')}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The agent a runner answers as until the person picks another
+// (workspace.storage.DEFAULT_CHAT_AGENT_ID on the backend).
+const DEFAULT_RUNNER_AGENT = 'main-agent';
+
 export default function InstanceDetail() {
   const { instanceId } = useParams();
+  // `?agent=`: whom a runner replica opened from an agent's Run answers for.
+  const [searchParams] = useSearchParams();
   const { t } = useI18n();
   const { clientId } = useStream();
 
   const [instance, setInstance] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversation, setSelectedConversation] = useState('main');
   const [timeline, setTimeline] = useState(null);
   const [runs, setRuns] = useState({ items: [], total: 0 });
   const [context, setContext] = useState(null);
   const [logs, setLogs] = useState('');
+  const [logsLoading, setLogsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('timeline');
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [pageError, setPageError] = useState('');
 
-  const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
   const [queuedNote, setQueuedNote] = useState('');
   const [liveText, setLiveText] = useState('');
   const [liveActivity, setLiveActivity] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [liveTaskId, setLiveTaskId] = useState(null);
+  // The run the copy is answering with, from the stream's own `meta`: what a
+  // message typed meanwhile is steered into (see InstanceComposer).
+  const [liveRunId, setLiveRunId] = useState(null);
 
   const [renaming, setRenaming] = useState(false);
   const [labelDraft, setLabelDraft] = useState('');
+  // The workspace's agents: a runner (a replica bound to no agent) answers
+  // for the one picked here, and the composer reads any agent's commands.
+  const [agentChoices, setAgentChoices] = useState([]);
+  const [runnerAgent, setRunnerAgent] = useState(() => searchParams.get('agent') || '');
+
+  const resident = !!instance?.resident;
+  const isRunner = !!instance?.runner;
+
+  useEffect(() => {
+    if (!instance) return;
+    getAgents(instance.workspace || undefined)
+      .then((r) => {
+        const list = r.data?.agents || r.data || [];
+        setAgentChoices(list);
+        // A runner answers as the main agent until another is picked (a
+        // `?agent=` in the link wins); the first agent when there is no main.
+        if (instance.runner && list.length) {
+          setRunnerAgent((prev) => prev || (list.some((a) => a.id === DEFAULT_RUNNER_AGENT)
+            ? DEFAULT_RUNNER_AGENT : list[0].id));
+        }
+      })
+      .catch(() => setAgentChoices([]));
+  }, [instance]);
 
   const load = useCallback(async () => {
     try {
-      const [inst, tl] = await Promise.all([
-        getInstance(instanceId),
-        getInstanceTimeline(instanceId),
-      ]);
+      const inst = await getInstance(instanceId);
       setInstance(inst.data);
+      if (inst.data.resident) {
+        const convResp = await getInstanceConversations(instanceId).catch(() => ({ data: { items: [{ conversation_id: 'main' }] } }));
+        const items = convResp.data?.items?.length ? convResp.data.items : [{ conversation_id: 'main' }];
+        setConversations((prev) => {
+          // Keep a locally created, not-yet-used conversation in the list
+          // (the server does not know about it until the first message).
+          const extra = prev.filter((p) => !items.some((i) => i.conversation_id === p.conversation_id) && p.local);
+          return [...items, ...extra];
+        });
+      } else {
+        setConversations([{ conversation_id: 'main' }]);
+      }
+      const tl = await getInstanceTimeline(instanceId, inst.data.resident ? { conversation_id: selectedConversation } : undefined);
       setTimeline(tl.data);
     } catch (e) {
       console.error('Failed to load instance', e);
@@ -121,23 +244,59 @@ export default function InstanceDetail() {
     } finally {
       setLoading(false);
     }
-  }, [instanceId]);
+  }, [instanceId, selectedConversation]);
 
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     if (activeTab === 'runs') getInstanceRuns(instanceId, { limit: 100 })
       .then((r) => setRuns(r.data)).catch(() => setRuns({ items: [], total: 0 }));
-    if (activeTab === 'context') getInstanceContext(instanceId)
+    if (activeTab === 'context') getInstanceContext(instanceId, resident ? { conversation_id: selectedConversation } : undefined)
       .then((r) => setContext(r.data)).catch(() => setContext(null));
-    if (activeTab === 'logs') getInstanceLogs(instanceId)
-      .then((r) => setLogs(r.data?.logs || '')).catch(() => setLogs(''));
-  }, [activeTab, instanceId]);
+  }, [activeTab, instanceId, resident, selectedConversation]);
 
-  // The instance's own channel carries a revived turn as it streams. A message
-  // handed to a node's mailbox streams here too, over the run's session.
+  const fetchLogs = useCallback(async () => {
+    setLogsLoading(true);
+    try {
+      const r = await getInstanceLogs(instanceId);
+      setLogs(r.data?.logs || '');
+    } catch {
+      setLogs('');
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [instanceId]);
+
+  useEffect(() => {
+    if (activeTab === 'logs') fetchLogs();
+  }, [activeTab, fetchLogs]);
+
+  // Carrier log tail while the tab is open and the instance is live.
+  const isLive = resident && ['starting', 'active', 'standby'].includes(instance?.state);
+  useChannel(activeTab === 'logs' && isLive ? `logs:instance:${instanceId}` : null, (ev) => {
+    if (ev.type === 'logs') setLogs(ev.content || '');
+  });
+
+  // The instance's own channel: a revived turn, a resident's queued reply, or
+  // a task run it picked up while taking tasks.
   useChannel(instanceId ? `instance:${instanceId}` : null, useCallback((ev) => {
     if (!ev || !ev.type) return;
+    if (ev.type === 'meta') {
+      const matchesConversation = !resident || (ev.conversation_id || 'main') === selectedConversation;
+      if (ev.task_id) {
+        setLiveTaskId(ev.task_id);
+        setLiveRunId(ev.run_id || null);
+        setStreaming(true);
+        setLiveText('');
+        setQueuedNote('');
+      } else if (matchesConversation) {
+        setLiveRunId(ev.run_id || null);
+        setStreaming(true);
+        setLiveText('');
+        setQueuedNote('');
+      }
+      return;
+    }
     if (ev.type === 'token') { setLiveText((prev) => prev + (ev.token || '')); return; }
     if (ev.type === 'tool_start') { setLiveActivity(`${ev.tool || ''}`); return; }
     if (ev.type === 'thinking') { setLiveActivity(ev.message || ''); return; }
@@ -150,35 +309,69 @@ export default function InstanceDetail() {
       setStreaming(false);
       setLiveText('');
       setLiveActivity('');
+      setLiveTaskId(null);
+      setLiveRunId(null);
       load();
     }
-  }, [load]));
+  }, [load, resident, selectedConversation]));
 
-  const handleSend = async () => {
-    const text = draft.trim();
-    if (!text || sending) return;
-    setSending(true);
+  // The composer's delivery: true when the copy took the message.
+  const sendMessage = useCallback(async ({ message, attachments = [], references = [] }) => {
+    if (isRunner && !runnerAgent) {
+      setQueuedNote(t('instanceDetail.message.runnerNeedsAgent'));
+      return false;
+    }
     setQueuedNote('');
     try {
-      const res = await messageInstance(instanceId, { message: text, client_id: clientId });
-      setDraft('');
+      const res = await messageInstance(instanceId, {
+        message,
+        attachments,
+        references,
+        client_id: clientId,
+        ...(resident ? { conversation_id: selectedConversation } : {}),
+        ...(isRunner ? { agent_id: runnerAgent } : {}),
+      });
       if (res.data?.mode === 'running') {
         setStreaming(true);
         setLiveText('');
+      } else if (res.data?.mode === 'steered') {
+        // Busy with a task run: the agent reads it before its next step.
+        setQueuedNote(t('instanceDetail.message.steered'));
+      } else if (res.data?.mode === 'queued') {
+        setQueuedNote(res.data.started
+          ? t('instanceDetail.message.startingAgain')
+          : t('instanceDetail.message.queued'));
       } else {
         setQueuedNote(t('instanceDetail.message.queued'));
       }
       load();
+      return true;
     } catch (e) {
-      setQueuedNote(e.response?.data?.detail || t('instanceDetail.message.failed'));
-    } finally {
-      setSending(false);
+      const detail = e.response?.data?.detail;
+      setQueuedNote((typeof detail === 'string' && detail) || t('instanceDetail.message.failed'));
+      return false;
     }
-  };
+  }, [clientId, instanceId, isRunner, load, resident, runnerAgent, selectedConversation, t]);
 
   const handleStop = async () => {
+    setBusy('stopping');
     try { await stopInstance(instanceId); await load(); }
-    catch (e) { console.error(e); }
+    catch (e) { setPageError(e.response?.data?.detail || ''); }
+    finally { setBusy(''); }
+  };
+
+  const handleInterrupt = async () => {
+    setBusy('interrupting');
+    try { await interruptInstance(instanceId); await load(); }
+    catch (e) { setPageError(e.response?.data?.detail || ''); }
+    finally { setBusy(''); }
+  };
+
+  const handleRestart = async () => {
+    setBusy('restarting');
+    try { const { data } = await restartInstance(instanceId); setInstance(data); await load(); }
+    catch (e) { setPageError(e.response?.data?.detail || ''); }
+    finally { setBusy(''); }
   };
 
   const handleDelete = async () => {
@@ -199,9 +392,10 @@ export default function InstanceDetail() {
     finally { setRenaming(false); }
   };
 
-  const textareaRef = useRef(null);
-  const onKeyDown = (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
+  const handleNewConversation = () => {
+    const id = `c_${Date.now().toString(36)}`;
+    setConversations((prev) => [...prev, { conversation_id: id, messages: 0, local: true }]);
+    setSelectedConversation(id);
   };
 
   if (loading) {
@@ -228,6 +422,7 @@ export default function InstanceDetail() {
   const isBusy = ['active', 'starting'].includes(instance.state);
   const turns = timeline?.turns || [];
   const pending = timeline?.pending || [];
+  const tabs = resident ? [...CORE_TABS, ...RESIDENT_TABS] : CORE_TABS;
 
   return (
     <PageContainer>
@@ -257,28 +452,77 @@ export default function InstanceDetail() {
           </span>
         )}
         description={t('instanceDetail.description', {
-          agent: instance.agent_id,
+          agent: instance.agent_id || t('instances.kinds.runner'),
           kind: t(`instances.kinds.${instance.kind}`, { defaultValue: instance.kind }),
         })}
+        badges={instance.service_id && (
+          <Link to={`/services/${instance.service_id}`}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100">
+            <Cpu className="w-3 h-3" />
+            {t('instances.replicaOf', { service: instance.service_name || instance.service_id })}
+          </Link>
+        )}
         actions={(
           <div className="flex items-center gap-2">
             <StateBadge state={instance.state} t={t} />
-            {isBusy && (
-              <button type="button" onClick={handleStop}
-                      className="px-3 py-1.5 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50 inline-flex items-center gap-1.5">
-                <Square className="w-3.5 h-3.5" />{t('instanceDetail.stop')}
-              </button>
+            {resident ? (
+              <>
+                {isLive ? (
+                  <>
+                    {instance.state === 'active' && (
+                      <button type="button" onClick={handleInterrupt} disabled={!!busy}
+                              className="px-3 py-1.5 text-sm rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 inline-flex items-center gap-1.5 disabled:opacity-50">
+                        <Square className="w-3.5 h-3.5" />{t('instanceDetail.interrupt')}
+                      </button>
+                    )}
+                    <button type="button" onClick={handleRestart} disabled={!!busy}
+                            className="px-3 py-1.5 text-sm rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 inline-flex items-center gap-1.5 disabled:opacity-50">
+                      <RotateCw className="w-3.5 h-3.5" />{t('instanceDetail.restart')}
+                    </button>
+                    <button type="button" onClick={handleStop} disabled={!!busy}
+                            className="px-3 py-1.5 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50 inline-flex items-center gap-1.5 disabled:opacity-50">
+                      <Square className="w-3.5 h-3.5" />{t('instanceDetail.stop')}
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" onClick={handleRestart} disabled={!!busy}
+                          className="px-3 py-1.5 text-sm rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 inline-flex items-center gap-1.5 disabled:opacity-50">
+                    <RotateCw className="w-3.5 h-3.5" />{t('instanceDetail.startAgain')}
+                  </button>
+                )}
+              </>
+            ) : (
+              isBusy && (
+                <button type="button" onClick={handleStop}
+                        className="px-3 py-1.5 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50 inline-flex items-center gap-1.5">
+                  <Square className="w-3.5 h-3.5" />{t('instanceDetail.stop')}
+                </button>
+              )
             )}
             <button type="button" onClick={handleDelete}
-                    className="p-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-600 hover:bg-red-50"
-                    title={t('instanceDetail.delete')}>
+                    disabled={resident && isLive}
+                    title={resident && isLive ? t('instanceDetail.deleteWhileLive') : t('instanceDetail.delete')}
+                    className="p-2 rounded-lg border border-gray-200 text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:cursor-not-allowed">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
       />
 
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-4">
+      {pageError && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-xs text-red-700">{pageError}</div>
+      )}
+
+      <div className={`grid grid-cols-2 md:grid-cols-4 gap-2 mb-4 ${resident ? 'xl:grid-cols-7' : 'xl:grid-cols-6'}`}>
+        {resident && (
+          <ConversationStat
+            conversations={conversations}
+            selected={selectedConversation}
+            onSelect={setSelectedConversation}
+            onNew={handleNewConversation}
+            t={t}
+          />
+        )}
         <Stat label={t('instanceDetail.stats.agent')} value={
           <Link to={`/agents/${instance.agent_id}`} className="hover:text-indigo-600">{instance.agent_id}</Link>
         } />
@@ -289,63 +533,8 @@ export default function InstanceDetail() {
         <Stat label={t('instanceDetail.stats.lastActivity')} value={relativeTime(instance.last_activity_at, t)} />
       </div>
 
-      {(instance.node_id || instance.container_name) && (
-        <div className="mb-4 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100 text-xs text-blue-800 flex items-center gap-2">
-          {instance.container_name ? <Box className="w-3.5 h-3.5" /> : <Server className="w-3.5 h-3.5" />}
-          {t('instanceDetail.carrierNote')}
-          {instance.node_id && (
-            <Link to={`/nodes/${instance.node_id}`} className="underline">{t('instanceDetail.openCarrier')}</Link>
-          )}
-        </div>
-      )}
-
-      {/* The message box: the reason an instance is not just a run log. */}
-      <div className="bg-white border border-gray-200 rounded-xl p-3 mb-4">
-        <div className="text-xs text-gray-500 mb-2">
-          {instance.delivery === 'direct'
-            ? t('instanceDetail.message.directHint')
-            : t('instanceDetail.message.queuedHint')}
-        </div>
-        <div className="flex gap-2 items-end">
-          <textarea
-            ref={textareaRef}
-            rows={2}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={t('instanceDetail.message.placeholder')}
-            className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg resize-y bg-white"
-          />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={sending || !draft.trim()}
-            className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm disabled:opacity-40 inline-flex items-center gap-1.5"
-          >
-            <Send className="w-3.5 h-3.5" />{t('instanceDetail.message.send')}
-          </button>
-        </div>
-        {queuedNote && <div className="mt-2 text-xs text-amber-700">{queuedNote}</div>}
-        {pending.length > 0 && (
-          <div className="mt-2 text-xs text-gray-500 inline-flex items-center gap-1.5">
-            <Clock className="w-3 h-3" />
-            {t('instanceDetail.message.pending', { count: pending.length })}
-          </div>
-        )}
-      </div>
-
-      {streaming && (
-        <div className="bg-white border border-indigo-200 rounded-xl p-3 mb-4">
-          <div className="text-xs text-indigo-600 mb-1 inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            {liveActivity || t('instanceDetail.message.working')}
-          </div>
-          <div className="text-sm text-gray-800 whitespace-pre-wrap">{liveText}</div>
-        </div>
-      )}
-
-      <div className="flex gap-1 border-b border-gray-200 mb-3">
-        {TABS.map((tab) => (
+      <div className="flex gap-1 border-b border-gray-200">
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -429,10 +618,64 @@ export default function InstanceDetail() {
       )}
 
       {activeTab === 'logs' && (
-        <pre className="bg-gray-900 text-gray-100 text-xs rounded-xl p-4 overflow-auto max-h-[600px] whitespace-pre-wrap">
-          {logs || t('instanceDetail.logs.empty')}
-        </pre>
+        <div className="bg-gray-900 rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
+            <span className="text-xs text-gray-400">{resident ? t('instanceDetail.logs.carrierLog') : t('instanceDetail.logs.runLog')}</span>
+            <button type="button" onClick={fetchLogs} className="p-1 rounded text-gray-500 hover:text-gray-300 hover:bg-gray-800">
+              <RefreshCw className={`w-3.5 h-3.5 ${logsLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+          <pre className="text-gray-100 text-xs p-4 overflow-auto max-h-[600px] whitespace-pre-wrap">
+            {logs || t('instanceDetail.logs.empty')}
+          </pre>
+        </div>
       )}
+
+      {activeTab === 'process' && resident && (
+        <ProcessTab instance={instance} onInstanceUpdated={setInstance} />
+      )}
+
+      {activeTab === 'access' && resident && (
+        <AccessTab instance={instance} onInstanceUpdated={setInstance} />
+      )}
+
+      {streaming && (
+        <div className="bg-white border border-indigo-200 rounded-xl p-3 mt-4">
+          <div className="text-xs text-indigo-600 mb-1 inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            {liveTaskId ? t('instanceDetail.message.taskRun') : (liveActivity || t('instanceDetail.message.working'))}
+          </div>
+          <div className="text-sm text-gray-800 whitespace-pre-wrap">{liveText}</div>
+        </div>
+      )}
+
+      {/* The message box: the reason an instance is not just a run log. The
+          page's floor, always at the bottom of the screen, the conversation
+          scrolling behind it (components/ComposerDock.jsx). */}
+      <ComposerDock>
+        <InstanceComposer
+          agents={agentChoices}
+          agentId={isRunner ? runnerAgent : (instance.agent_id || '')}
+          isRunner={isRunner}
+          runnerAgent={runnerAgent}
+          onRunnerAgent={setRunnerAgent}
+          canNewConversation={resident}
+          onNewConversation={handleNewConversation}
+          workspace={instance.workspace || 'default'}
+          projectId={instance.project_id || ''}
+          streaming={streaming}
+          liveRunId={liveRunId}
+          onSend={sendMessage}
+          onStop={resident ? handleInterrupt : handleStop}
+          hint={isRunner
+            ? t('instanceDetail.message.runnerHint')
+            : instance.delivery === 'direct'
+              ? t('instanceDetail.message.directHint')
+              : t('instanceDetail.message.queuedHint')}
+          note={queuedNote}
+          pendingCount={pending.length}
+        />
+      </ComposerDock>
     </PageContainer>
   );
 }

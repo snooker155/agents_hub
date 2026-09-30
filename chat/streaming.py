@@ -38,6 +38,50 @@ class StreamDriveResult:
     # to link payloads — see ``common.entity_links``. The chat UI renders them as
     # links under the reply; text-only surfaces append them to the text.
     entities: list = field(default_factory=list)
+    # What the agent loop recorded beyond the tool trail (AgentResult.loop,
+    # agents/agent_loop.py): injected steering messages, the answering model,
+    # compactions. Stored on the run record as ``loop``; empty on a plain turn.
+    loop: dict = field(default_factory=dict)
+    # Sources the answer may cite as [n] (common/citation_sink.py): passages a
+    # retrieval tool showed the model during the turn. Empty when none did.
+    citations: list = field(default_factory=list)
+    # ``{spent_usd, limit_usd}`` when the turn stopped at its money cap
+    # (agents.callbacks.guards.RunBudgetGuard): a chat turn has no task to
+    # park, so the cap ends it as a failure the reply names.
+    budget: dict | None = None
+
+
+def budget_pause(agent_result) -> dict | None:
+    """The ``kind: "budget"`` pending record of a result parked at its money
+    cap (agents.standard_agent._budget_paused_result), or None."""
+    if not getattr(agent_result, "ok", False):
+        return None
+    if getattr(agent_result, "status", "") != "awaiting_approval":
+        return None
+    pending = getattr(agent_result, "pending_approval", None)
+    if isinstance(pending, dict) and pending.get("kind") == "budget":
+        return pending
+    return None
+
+
+def _without_steering(user_message: str, history: list, full_prompt: str) -> tuple:
+    """Undo what a steering message does to the prompt split.
+
+    ``build_prompt_struct`` takes the last user message of the final model
+    call as the turn's message, and a message the user sent mid-turn is a user
+    message placed after the tool results (agents/loop_ext/steering.py). When
+    that is what it found, the turn's own message is the last non-steering
+    user entry of the history; everything after it is the turn's own loop
+    output and is dropped, as it is for a plain turn.
+    """
+    from agents.loop_ext.steering import is_steering_text
+    if not is_steering_text(user_message):
+        return user_message, history
+    for idx in range(len(history) - 1, -1, -1):
+        item = history[idx] if isinstance(history[idx], dict) else {}
+        if item.get("role") == "user" and not is_steering_text(item.get("content")):
+            return str(item.get("content") or ""), history[:idx]
+    return full_prompt, []
 
 
 async def drive_streaming_run(
@@ -51,6 +95,7 @@ async def drive_streaming_run(
     result: StreamDriveResult,
     enrich: Callable[[dict], dict] | None = None,
     entity_sink=None,
+    citation_sink=None,
 ):
     """Drive one streaming agent run: forward queued events and resolve the result.
 
@@ -104,14 +149,27 @@ async def drive_streaming_run(
     response_obj = None
     try:
         agent_result = await task
-        if agent_result.ok:
+        loop_summary = getattr(agent_result, "loop", None)
+        if isinstance(loop_summary, dict):
+            result.loop = dict(loop_summary)
+        budget_pending = budget_pause(agent_result)
+        if budget_pending is not None:
+            final_error = str(budget_pending.get("reason") or "The turn reached its money cap")
+            result.budget = {"spent_usd": budget_pending.get("spent_usd"),
+                             "limit_usd": budget_pending.get("limit_usd")}
+        elif agent_result.ok:
             final_response = str(agent_result.agent_output)
             response_obj = getattr(agent_result, "response", None)
             final_ok = True
         else:
             final_error = agent_result.error or "Agent returned no output"
     except asyncio.CancelledError:
-        pass
+        # A stopped turn has no result, but its loop may have done things
+        # worth keeping (steering, tool policy decisions, compactions).
+        from agents.agent_loop import pop_cancelled_summary
+        cancelled_loop = pop_cancelled_summary(run_id)
+        if cancelled_loop:
+            result.loop = cancelled_loop
     except Exception as e:
         final_error = str(e)
 
@@ -139,6 +197,21 @@ async def drive_streaming_run(
             result.entities = entity_payloads(entity_sink.records())
         except Exception:
             result.entities = []
+    if citation_sink is not None:
+        result.citations = citation_sink.payloads()
+    # Both lists are kept at the top of the run record, where the run page
+    # reads them back: the structured payload table (common/run_payloads.py,
+    # ``run_payloads``) stores a fixed set of columns, and a list carried
+    # only inside ``process`` would be dropped on the way in.
+    links = {k: v for k, v in (("entities", result.entities), ("citations", result.citations)) if v}
+    if links:
+        try:
+            from managers.run_manager import update_run
+            update_run(run_id, links)
+        except Exception:  # noqa: BLE001 - the reply still carries them; only the run page would miss them
+            import logging
+            logging.getLogger(__name__).debug("could not store the links of run %s", run_id,
+                                              exc_info=True)
 
     usage = {
         "inbound_tokens": callback.prompt_tokens,
@@ -162,14 +235,21 @@ async def drive_streaming_run(
     result.duration_ms = duration_ms
     result.usage = usage
     last_struct = getattr(callback, "_last_prompt_struct", None) or {}
-    # The prompt the agent ran on folds prior session turns into one string
-    # (build_chat_context). Recover them as dedicated history blocks so the
-    # stored input context shows the previous user/assistant turns and a clean
-    # latest user message — never the agent's own intra-run loop output ("middle
-    # response tokens"), which lives only in the live bubble and thinking trace.
+    # Prior turns now reach the model as real messages, so the callback's own
+    # split of the prompt (build_prompt_struct) already holds them and the latest
+    # user message is clean. A session recorded before that — history folded into
+    # the prompt text as a "Conversation history:" block — is read back apart
+    # here, so an old run still shows its turns rather than one blob. Either way
+    # the agent's own intra-run loop output ("middle response tokens") stays out:
+    # it belongs to the live bubble and the thinking trace.
     from chat.context import split_embedded_history
     prompt_text = last_struct.get("user_message") or full_prompt
-    history, user_message = split_embedded_history(prompt_text)
+    history = list(last_struct.get("history") or [])
+    prompt_text, history = _without_steering(prompt_text, history, full_prompt)
+    if history:
+        user_message = prompt_text
+    else:
+        history, user_message = split_embedded_history(prompt_text)
     structured_response = None
     if response_obj is not None:
         try:
@@ -192,6 +272,7 @@ async def drive_streaming_run(
         "llm_raw_responses": callback.llm_invoke_responses,
         "artifacts": callback.artifact_history,
         "entities": result.entities,
+        "citations": result.citations,
         "token_usage": usage,
         "duration_ms": duration_ms,
     }

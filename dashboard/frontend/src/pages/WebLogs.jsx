@@ -19,6 +19,7 @@ import { getWebLogs, getWebLogStats, getWebLogEntry, clearWebLogs } from '../api
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const SEVERITY_STYLES = {
   high: 'bg-red-50 text-red-700 border-red-200',
   medium: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -232,10 +233,7 @@ const WebLogs = () => {
 
       {/* Rows */}
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
-          <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mb-4" />
-          <p className="text-gray-500 font-medium">{t('webLogs.loadingWebCalls')}</p>
-        </div>
+        <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('webLogs.loadingWebCalls')} /></div>
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
           <Globe className="w-10 h-10 text-gray-300 mb-3" />
@@ -324,9 +322,7 @@ const WebLogs = () => {
             onClick={(e) => e.stopPropagation()}
           >
             {entryLoading || !entry ? (
-              <div className="flex items-center justify-center h-full">
-                <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin" />
-              </div>
+              <div className="h-full"><PageLoader /></div>
             ) : (
               <>
                 <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white z-10">

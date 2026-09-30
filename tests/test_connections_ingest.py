@@ -18,12 +18,12 @@ from managers import run_manager
 
 
 @pytest.fixture(autouse=True)
-def isolated_connections(tmp_path, monkeypatch):
-    """A connections file per test, and no in-memory state carried between them."""
-    monkeypatch.setattr(connection_store, "CONNECTIONS_FILE", tmp_path / "connections.json")
-    monkeypatch.setattr(connection_store, "CONNECTIONS_LOCK", tmp_path / "connections.json.lock")
-    connection_store._cache = None
-    connection_store._cache_stamp = None
+def isolated_connections():
+    """No in-memory state carried between tests.
+
+    The connections themselves live in the database, and the autouse
+    ``fresh_db`` fixture already gives every test its own empty one.
+    """
     ingest_service.reset_for_tests()
     yield
     ingest_service.reset_for_tests()
@@ -63,11 +63,14 @@ def connected(api_client):
 # ── the token ───────────────────────────────────────────────────────────────
 
 def test_the_token_is_returned_once_and_never_stored(api_client):
-    """A leaked connections.json must not let anyone report runs."""
+    """A leaked database must not let anyone report runs."""
+    from common import db
+
     token = api_client.post("/api/connections", json={"id": "c1", "name": "C1"}).json()["token"]
 
-    stored = connection_store.CONNECTIONS_FILE.read_text(encoding="utf-8")
-    assert token not in stored, "the raw token reached disk"
+    row = db.get_conn().execute(
+        "SELECT doc FROM documents WHERE store = 'connections' AND key = 'c1'").fetchone()
+    assert token not in row["doc"], "the raw token reached the database"
 
     listed = api_client.get("/api/connections").json()["connections"][0]
     assert "token" not in listed and "token_hash" not in listed

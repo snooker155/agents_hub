@@ -127,6 +127,71 @@ a graph looks the same here whichever runtime it runs on. Its own README lists
 the four places the JS event stream differs from the Python one, which is the
 part worth reading before writing an adapter of your own.
 
+## Claude Code and Codex
+
+Two more bundled examples wrap coding agent CLIs directly: **Claude Code**
+under `examples/imported-agents/claude-code-agenthub` and **Codex** under
+`examples/imported-agents/codex-agenthub`. Both follow the same three-file
+shape as the Aider example: a manifest, a Dockerfile, and an adapter that
+translates the CLI's own JSON output into the frame vocabulary above.
+
+**Adding one.** On the Agents page, the "Add Claude Code" and "Add Codex"
+buttons next to "Import from repo" open the import dialog preselected on the
+matching preset, with no repository URL to type. Under the hood this calls
+`GET /api/agent-import/presets` to list what is bundled, then
+`POST /api/agent-import/inspect` and `/register` with `{"preset": "claude-code"}`
+(or `"codex"`) in place of `repo_url`. The example directory is copied into
+scratch space the same way `prepare_example_repo.sh` makes one clone-able, so
+a preset import needs no network and no git repository of its own.
+
+**What each CLI needs.** Claude Code runs
+`claude -p <prompt> --output-format stream-json --verbose` in the run's
+mounted workspace, so the container needs
+`ANTHROPIC_API_KEY` (and optionally `CLAUDE_MODEL`, `ANTHROPIC_BASE_URL`).
+Codex runs `codex exec --json <prompt>` and needs `OPENAI_API_KEY` (and
+optionally `CODEX_MODEL`, `CODEX_ARGS` for a version-specific non-interactive
+flag). Both need their own key: the hub's own configured providers play no
+part in what these agents run on, since the model call happens inside the
+CLI's own process, not this hub's.
+
+**What the run record shows.** Claude Code prices its own call and reports it
+on the closing `result` event as `total_cost_usd`. The adapter puts that
+figure on the stream's `usage` frame as an optional `cost_usd`, and the hub
+credits it to the run as `reported_cost_usd`, preferred over catalog pricing
+wherever a run's cost is read (`managers.runs.groups.runs_cost`, the Costs
+page). Practically: launching Claude Code from chat shows Anthropic's own
+bill for that call in the run record, not an estimate. Codex is not known to
+report a dollar figure of its own, so its runs are priced from its reported
+token counts against the hub's catalog, the same as any other agent that
+sends a plain `usage` frame.
+
+**Limits.** The CLI runs inside the agent's own container and needs its own
+key: nothing about the hub's configured model providers reaches it. Cost
+credit only happens on the streamed path (chat, a flow node with someone
+watching); the synchronous `/run` endpoint returns the same figures inside
+its response body, but the hub does not read them from there, same as every
+other bundled example's `/run`. The Codex adapter's event shapes were written
+from documentation rather than a captured transcript, since the CLI was not
+installed while writing it; its README says so and names what to verify
+against a real install.
+
+## Importing an A2A agent
+
+An agent that speaks [A2A](a2a.md), the Agent2Agent protocol, needs no manifest
+and no repository: it is already running and its Agent Card already says where
+its endpoint is and what it can do. Paste the card URL (it ends in
+`/.well-known/agent-card.json`) where the dialog asks for a repository URL, and
+the hub reads the card instead of cloning. Everything after that is the same:
+the same readiness report, the same registry record, the same agent page.
+
+A repository may also declare `runtime.kind = "a2a"` with the endpoint under
+`runtime.url`, for an agent whose code lives in git but whose service runs
+somewhere else.
+
+The hub serves the other direction too: every agent here has its own A2A card,
+so an outside orchestrator can drive it without knowing this API. The agent page
+shows that URL with a copy button.
+
 ## What you give up
 
 The process boundary that keeps a foreign agent's dependencies out also hides
@@ -134,7 +199,10 @@ its internals:
 
 - **Token and cost accounting depend on the agent.** Callbacks observe nothing
   across a process boundary. A remote that sends a `usage` frame is accounted
-  for normally; one that does not leaves the cost columns at zero.
+  for normally; one that does not leaves the cost columns at zero. A remote
+  that also knows its own dollar cost (Claude Code prices its own call) may
+  add `cost_usd` to that frame, and the hub prefers that reported figure over
+  its own catalog pricing everywhere a run's cost is read.
 - **No hub tools.** The imported agent uses its own tool layer. The tool list in
   its manifest is documentation, not a grant.
 - **The graph is a report, not an instrumented truth.** The hub draws the shape
@@ -155,4 +223,4 @@ its internals:
 - An import whose service is not running imports fine and simply cannot run.
   That is the intended state, not a failure.
 
-Related: [agents](agents.md), [marketplace](marketplace.md), [containers](containers.md), [tools-and-capabilities](tools-and-capabilities.md).
+Related: [agents](agents.md), [a2a](a2a.md), [marketplace](marketplace.md), [containers](containers.md), [tools-and-capabilities](tools-and-capabilities.md).

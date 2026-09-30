@@ -6,13 +6,16 @@
   "description": "Public landing page and documentation site, published to GitHub Pages.",
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
+    "demo": "node scripts/build-demo.mjs",
+    "screenshots": "node scripts/screenshots.mjs",
     "predev": "npm run sync",
     "dev": "vitepress dev",
-    "prebuild": "npm run sync",
+    "prebuild": "npm run sync && npm run demo",
     "build": "vitepress build",
     "preview": "vitepress preview"
   },
   "devDependencies": {
+    "playwright": "^1.63.0",
     "vitepress": "^1.6.4"
   }
 }

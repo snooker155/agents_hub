@@ -22,7 +22,7 @@ this module is what makes pressing the button feel like pressing the button.
 from __future__ import annotations
 
 import threading
-from typing import Dict, Optional, Set
+from typing import Dict, Set
 
 from langchain_core.callbacks import BaseCallbackHandler
 

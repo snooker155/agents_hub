@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from enum import Enum
-from pathlib import Path
-from typing import Any, Iterable, List, Literal, Optional, Sequence
+from typing import Any, List, Literal, Optional, Sequence
 from uuid import UUID, uuid4
 
-from filelock import FileLock
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 
-from common.paths import AGENTS_HUB_ROOT, WORKSPACES_ROOT, ensure_agents_hub_root
+from common import db
+from common import review as review_mod
+from common.docstore import DocStore
+from common.paths import PROCEDURES_FILE as _PROCEDURES_FILE
+from common.paths import WORKSPACES_ROOT, ensure_agents_hub_root
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -21,9 +22,27 @@ class Procedure(BaseModel):
     name: str
     # "When to use this" — matched against task instructions to surface relevant skills
     description: str
-    steps: List[str]
+    # Ordered steps, and/or free Markdown instructions (``body``, what a
+    # SKILL.md holds under its frontmatter). A skill needs at least one of them.
+    steps: List[str] = Field(default_factory=list)
+    body: str = ""
     tags: List[str] = Field(default_factory=list)
-    source: Literal["user", "agent"] = "user"
+    # "repo": imported from a project's .claude/skills folder (memory/skill_import.py);
+    # ``repo`` then says where, and a sync keeps it in step with the folder.
+    source: Literal["user", "agent", "repo"] = "user"
+    # Files next to a repo skill's SKILL.md, relative to its folder; the agent
+    # reads them with ``read_skill_file``. Empty for a hand-written skill.
+    resources: List[str] = Field(default_factory=list)
+    # SKILL.md ``allowed-tools``: informational, shown on the Skills page.
+    allowed_tools: List[str] = Field(default_factory=list)
+    # {"dir", "project_id", "root", "sha256", "synced_at", "missing"} for a repo skill.
+    repo: Optional[dict] = None
+    # Current version number in memory/skill_versions.py (0 before the first save
+    # that recorded history, i.e. a skill written by an older build).
+    version: int = 0
+    # On a skill attached to an agent: serve this version of it instead of the
+    # current one, so the agent keeps the text it was tested with.
+    pinned_version: Optional[int] = None
     # The agent this skill is attached to. Empty means it is a catalog entry in
     # its workspace — visible in the Skills page and installable onto an agent,
     # but not injected into anyone's prompt until it is.
@@ -33,8 +52,23 @@ class Procedure(BaseModel):
     # default (a skill belongs to the workspace that authored it), on once the
     # author publishes it, at which point any workspace may install a copy.
     shared: bool = False
-    # Set on an installed copy, pointing at the published skill it came from.
+    # Set on an installed copy, pointing at the published skill it came from,
+    # and the version of that skill the copy holds (for "update available").
     origin_skill_id: Optional[str] = None
+    origin_version: Optional[int] = None
+    # ── Registry: owner and review status (common/review.py) ────────────────
+    # The user id that authored it (stamped on first save, "local" outside a
+    # request). None for skills that predate the field.
+    owner_user: Optional[str] = None
+    # draft: not published. in_review: shared, waiting on an admin. approved:
+    # listed on the skills catalog when AGENTS_HUB_REGISTRY_REQUIRE_REVIEW is
+    # on. rejected: an admin turned it down. A record loaded with no stored
+    # value defaults to "approved" when shared, "draft" otherwise (see
+    # ProcedureStore._load_all and common.review.default_status).
+    review_status: str = "draft"
+    review_note: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[str] = None
     # None for user-authored; tracked for agent-discovered procedures over time
     success_rate: Optional[float] = None
     use_count: int = 0
@@ -47,30 +81,40 @@ class Procedure(BaseModel):
 
 # ── Store ─────────────────────────────────────────────────────────────────────
 
-def _json_default(o: Any) -> Any:
-    if isinstance(o, Enum):
-        return o.value
-    if isinstance(o, datetime):
-        return o.isoformat()
-    if isinstance(o, UUID):
-        return str(o)
-    raise TypeError(f"Object of type {type(o)!r} is not JSON serializable")
+def _model_to_dict(procedure: Procedure) -> dict:
+    # JSON mode: enums as their values, datetimes as ISO strings, UUIDs as
+    # strings, exactly what the JSON files used to hold.
+    return procedure.model_dump(mode="json")
 
 
-# Canonical single-file location, parallel to tasks.json / projects.json.
-_PROCEDURES_FILE = AGENTS_HUB_ROOT / "procedures.json"
-_PROCEDURES_LOCK = AGENTS_HUB_ROOT / "procedures.json.lock"
+def _record_key(rec: Any) -> Optional[str]:
+    return str(rec.get("id")) if isinstance(rec, dict) and rec.get("id") else None
+
+
+def _normalize_review(doc: Any) -> Any:
+    """A stored skill dict with ``review_status`` filled in, for one loaded
+    before the field existed: "approved" when it was already shared, "draft"
+    otherwise (common.review.default_status), so an upgrade never drops a
+    published skill out of the catalog. Non-dict input passes through
+    unchanged (Procedure(**doc) will raise its own error on it)."""
+    if not isinstance(doc, dict):
+        return doc
+    return {**doc, "review_status": review_mod.default_status(
+        doc.get("review_status"), bool(doc.get("shared")))}
+
 
 _LEGACY_MIGRATED = False
 
 
 def _migrate_legacy_files() -> None:
-    """One-shot: merge any per-workspace procedures.json files into the new single file.
+    """One-shot: merge any per-workspace procedures.json files directly into
+    the single 'procedures' collection.
 
     Each old file lives at .agents_hub/workspaces/<ws>/procedures.json and is a
-    list of Procedure records. We append unique-by-id records to the new file,
-    then rename each legacy file to procedures.json.migrated.bak so a second
-    boot doesn't re-import them.
+    list of Procedure records. Records already present (by id, or already
+    imported from the legacy single-file procedures.json) are skipped; the
+    rest are put into the store, then each legacy file is renamed to
+    procedures.json.migrated.bak so a second boot doesn't re-import them.
     """
     global _LEGACY_MIGRATED
     if _LEGACY_MIGRATED:
@@ -80,24 +124,18 @@ def _migrate_legacy_files() -> None:
     if not WORKSPACES_ROOT.exists():
         return
 
-    ensure_agents_hub_root()
-
     legacy_files = list(WORKSPACES_ROOT.glob("*/procedures.json"))
     if not legacy_files:
         return
 
-    with FileLock(str(_PROCEDURES_LOCK), timeout=10.0):
-        existing: list[dict] = []
-        if _PROCEDURES_FILE.exists():
-            try:
-                text = _PROCEDURES_FILE.read_text(encoding="utf-8")
-                if text.strip():
-                    existing = json.loads(text) or []
-            except Exception:
-                existing = []
-        seen_ids = {str(r.get("id")) for r in existing if r.get("id")}
+    ensure_agents_hub_root()
 
-        merged_any = False
+    docs_store = DocStore("procedures", legacy_file=_PROCEDURES_FILE, legacy_key=_record_key)
+    with db.transaction():
+        # Reading .keys() imports the legacy single-file procedures.json first
+        # (if it still exists), so per-workspace records are only added when
+        # not already covered by that import.
+        existing_ids = set(docs_store.keys())
         for legacy in legacy_files:
             try:
                 text = legacy.read_text(encoding="utf-8")
@@ -113,133 +151,181 @@ def _migrate_legacy_files() -> None:
                 # Old records may not carry `workspace` — backfill from folder name.
                 rec.setdefault("workspace", workspace_name)
                 rid = str(rec.get("id") or "")
-                if rid and rid in seen_ids:
+                if rid and rid in existing_ids:
                     continue
-                if rid:
-                    seen_ids.add(rid)
-                existing.append(rec)
-                merged_any = True
+                store_key = rid or str(uuid4())
+                existing_ids.add(store_key)
+                docs_store.put(store_key, rec)
 
             try:
                 legacy.rename(legacy.with_suffix(legacy.suffix + ".migrated.bak"))
             except Exception:
                 pass
 
-        if merged_any or not _PROCEDURES_FILE.exists():
-            tmp = _PROCEDURES_FILE.with_suffix(_PROCEDURES_FILE.suffix + ".tmp")
-            tmp.write_text(
-                json.dumps(existing, ensure_ascii=False, indent=2, default=_json_default) + "\n",
-                encoding="utf-8",
-            )
-            tmp.replace(_PROCEDURES_FILE)
-
 
 class ProcedureStore:
-    """File-based store for Procedure objects.
+    """Store for Procedure objects.
 
-    All procedures live in a single file at .agents_hub/procedures.json. The
-    `workspace` argument is retained on the constructor so call sites stay
-    unchanged — internally it's used to filter records on read and to stamp
-    the `workspace` field on writes.
+    All procedures live in one collection ('procedures') in the ``documents``
+    table. The `workspace` argument is retained on the constructor so call
+    sites stay unchanged — it filters records on read and stamps the
+    `workspace` field on writes.
     """
 
     def __init__(self, workspace: str):
         self.workspace = workspace
         self.path = _PROCEDURES_FILE
-        self.lock_path = _PROCEDURES_LOCK
         ensure_agents_hub_root()
         _migrate_legacy_files()
-        if not self.path.exists():
-            self._atomic_write_all([])
+        self.docs = DocStore("procedures", legacy_file=self.path, legacy_key=_record_key)
 
-    # ── unfiltered I/O (operates on the whole file) ─────────────────────────
+    # ── unfiltered I/O (operates on the whole collection) ───────────────────
 
-    def _load_all_unlocked(self) -> List[Procedure]:
-        try:
-            text = self.path.read_text(encoding="utf-8")
-            if not text.strip():
-                return []
-            return [Procedure(**obj) for obj in json.loads(text)]
-        except Exception:
-            return []
-
-    def _atomic_write_all(self, payload: Iterable[dict]) -> None:
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        text = json.dumps(list(payload), ensure_ascii=False, indent=2, default=_json_default)
-        tmp_path.write_text(text + "\n", encoding="utf-8")
-        tmp_path.replace(self.path)
+    def _load_all(self) -> List[Procedure]:
+        out: List[Procedure] = []
+        for obj in self.docs.values():
+            try:
+                out.append(Procedure(**_normalize_review(obj)))
+            except Exception:
+                continue
+        return out
 
     # ── workspace-scoped API ────────────────────────────────────────────────
 
     def load(self, timeout: float = 10.0) -> List[Procedure]:
         """Return procedures belonging to this workspace."""
-        with FileLock(str(self.lock_path), timeout=timeout):
-            return [p for p in self._load_all_unlocked() if p.workspace == self.workspace]
+        return [p for p in self._load_all() if p.workspace == self.workspace]
 
     def save(self, procedures: Sequence[Procedure], timeout: float = 10.0) -> None:
         """Replace this workspace's procedures with the given list (other workspaces untouched)."""
-        with FileLock(str(self.lock_path), timeout=timeout):
-            others = [p for p in self._load_all_unlocked() if p.workspace != self.workspace]
-            # Make sure incoming records are stamped with the right workspace.
-            stamped = []
+        with self.docs.transaction():
+            others = {
+                k: v for k, v in self.docs.all().items()
+                if not (isinstance(v, dict) and v.get("workspace") == self.workspace)
+            }
+            stamped: dict = {}
             for p in procedures:
                 if p.workspace != self.workspace:
                     p = p.model_copy(update={"workspace": self.workspace})
-                stamped.append(p)
-            self._atomic_write_all([p.model_dump() for p in (others + stamped)])
+                stamped[str(p.id)] = _model_to_dict(p)
+            self.docs.replace_all({**others, **stamped})
 
     def get(self, procedure_id: UUID | str, timeout: float = 10.0) -> Optional[Procedure]:
-        pid = str(procedure_id)
-        for p in self.load(timeout=timeout):
-            if str(p.id) == pid:
-                return p
-        return None
+        doc = self.docs.get(str(procedure_id))
+        if doc is None:
+            return None
+        try:
+            p = Procedure(**_normalize_review(doc))
+        except Exception:
+            return None
+        return p if p.workspace == self.workspace else None
 
-    def add(self, procedure: Procedure, timeout: float = 10.0) -> Procedure:
+    def add(self, procedure: Procedure, timeout: float = 10.0, *,
+            version_op: Optional[str] = None, version_note: str = "") -> Procedure:
+        """Store a new skill and record its first version. The version is
+        stamped on ``procedure`` itself, so the caller sees the number.
+
+        Also stamps ``owner_user`` (the current request's user id, "local"
+        outside a request) when the caller did not set one, and applies the
+        review publish gate (common/review.py): a brand new skill created
+        already ``shared`` is held at ``in_review`` when the hub requires it,
+        the same as a brand new shared agent or flow.
+        """
+        from memory import skill_versions
+
         if procedure.workspace != self.workspace:
             procedure = procedure.model_copy(update={"workspace": self.workspace})
-        with FileLock(str(self.lock_path), timeout=timeout):
-            all_procs = self._load_all_unlocked()
-            all_procs.append(procedure)
-            self._atomic_write_all([p.model_dump() for p in all_procs])
+        if not procedure.owner_user:
+            from common import identity
+            procedure.owner_user = identity.current_user_id()
+        gated = review_mod.gate_on_publish(False, procedure.shared, procedure.review_status)
+        if gated is not None:
+            procedure.review_status = gated
+            procedure.reviewed_by = None
+            procedure.reviewed_at = None
+            procedure.review_note = None
+        with self.docs.transaction():
+            number = skill_versions.record_if_changed(procedure, op=version_op, note=version_note)
+            if number:
+                procedure.version = number
+            self.docs.put(str(procedure.id), _model_to_dict(procedure))
         return procedure
 
-    def update(self, procedure: Procedure, timeout: float = 10.0) -> bool:
+    def update(self, procedure: Procedure, timeout: float = 10.0, *,
+               version_op: Optional[str] = None, version_note: str = "") -> bool:
+        """Write a skill back. A change to its content (skill_versions.CONTENT_FIELDS)
+        becomes a new version; a bookkeeping change (use count, pin, sharing)
+        does not. A skill saved before history existed gets its stored content
+        recorded first, so the edit that follows is undoable.
+
+        Also the review gate's other half (common/review.py, see ``add`` for
+        the publish gate): a content change to an already approved, shared
+        skill moves it back to ``in_review``, using the same content fields
+        (``skill_versions.CONTENT_FIELDS``) versioning already tracks.
+        """
+        from memory import skill_versions
+
         pid = str(procedure.id)
         if procedure.workspace != self.workspace:
             procedure = procedure.model_copy(update={"workspace": self.workspace})
-        with FileLock(str(self.lock_path), timeout=timeout):
-            all_procs = self._load_all_unlocked()
-            for i, p in enumerate(all_procs):
-                if str(p.id) == pid and p.workspace == self.workspace:
-                    all_procs[i] = procedure
-                    self._atomic_write_all([pp.model_dump() for pp in all_procs])
-                    return True
-        return False
+        with self.docs.transaction():
+            existing = self.docs.get(pid)
+            if not isinstance(existing, dict) or existing.get("workspace") != self.workspace:
+                return False
+
+            prev_shared = bool(existing.get("shared"))
+            prev_status = review_mod.default_status(existing.get("review_status"), prev_shared)
+            current_status = review_mod.default_status(procedure.review_status, procedure.shared)
+            gated = review_mod.gate_on_publish(prev_shared, procedure.shared, current_status)
+            if gated is None:
+                changed = skill_versions.content_of(existing) != skill_versions.content_of(procedure)
+                gated = review_mod.gate_on_content_change(
+                    prev_status, current_status, procedure.shared, changed)
+            if gated is not None:
+                procedure.review_status = gated
+                procedure.reviewed_by = None
+                procedure.reviewed_at = None
+                procedure.review_note = None
+            else:
+                procedure.review_status = current_status
+            if not procedure.owner_user:
+                procedure.owner_user = existing.get("owner_user")
+
+            if skill_versions.latest(pid) is None:
+                try:
+                    before = Procedure(**_normalize_review(existing))
+                except Exception:  # noqa: BLE001 - an unreadable old record just has no baseline
+                    before = None
+                if before is not None:
+                    skill_versions.record_if_changed(
+                        before, op=skill_versions.OP_CREATE, note="content before history")
+            number = skill_versions.record_if_changed(procedure, op=version_op, note=version_note)
+            if number:
+                procedure.version = number
+            self.docs.put(pid, _model_to_dict(procedure))
+            return True
 
     def delete(self, procedure_id: UUID | str, timeout: float = 10.0) -> bool:
+        from memory import skill_versions
+
         pid = str(procedure_id)
-        with FileLock(str(self.lock_path), timeout=timeout):
-            all_procs = self._load_all_unlocked()
-            new_list = [
-                p for p in all_procs
-                if not (str(p.id) == pid and p.workspace == self.workspace)
-            ]
-            if len(new_list) == len(all_procs):
+        with self.docs.transaction():
+            existing = self.docs.get(pid)
+            if not isinstance(existing, dict) or existing.get("workspace") != self.workspace:
                 return False
-            self._atomic_write_all([p.model_dump() for p in new_list])
-            return True
+            deleted = self.docs.delete(pid)
+            if deleted:
+                skill_versions.delete_history(pid)
+            return deleted
 
 
 def all_procedures() -> List[Procedure]:
-    """Every procedure in every workspace, newest file state.
+    """Every procedure in every workspace, newest store state.
 
     The per-workspace ``ProcedureStore`` deliberately filters on read; the
     global skills catalog is the one caller that needs the unfiltered view.
     """
-    store = ProcedureStore("default")
-    with FileLock(str(store.lock_path), timeout=10.0):
-        return store._load_all_unlocked()
+    return ProcedureStore("default")._load_all()
 
 
 def find_procedure(procedure_id: UUID | str) -> Optional[Procedure]:
@@ -279,28 +365,6 @@ def find_relevant_procedures(
     return [p for p, score in scored[:top_k] if score > 0.0]
 
 
-_SKILL_INQUIRY_WORDS = {"skill", "skills", "procedure", "procedures"}
-
-
-def is_skills_inquiry(query: str) -> bool:
-    """Return True if the query is asking about what skills the agent has."""
-    return bool(_SKILL_INQUIRY_WORDS & set(query.lower().split()))
-
-
-def _format_procedures(procedures: List[Procedure], header: str) -> str:
-    lines = [f"## {header}\n"]
-    for p in procedures:
-        lines.append(f"**{p.name}** (ID: `{p.id}`)")
-        lines.append(f"_{p.description}_")
-        for i, step in enumerate(p.steps, 1):
-            lines.append(f"  {i}. {step}")
-        lines.append("")
-    return "\n".join(lines) + "\n\n"
-
-
-SKILLS_RELEVANCE_THRESHOLD = 0.15
-
-
 def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> str:
     """Append a skills catalog (name + description) to the system prompt.
 
@@ -313,45 +377,20 @@ def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> 
         procedures = [p for p in store.load() if p.agent_id == agent_id]
         if not procedures:
             return system_prompt
+        from memory.skill_versions import effective_content
+
         lines = ["\n\n## Available Skills\n",
                  "The following skills are available to you. "
                  "When the task matches a skill, its full steps will be provided automatically. "
                  "Use `get_skill` with the skill's name to fetch its steps.\n"]
         for p in procedures:
-            lines.append(f"- **{p.name}**: {p.description}")
+            # A pinned skill is listed as its pinned version says, so the line
+            # the agent matches on is the one it was tested with.
+            content = effective_content(p)
+            lines.append(f"- **{p.name}**: {content['description']}")
         return system_prompt + "\n".join(lines) + "\n"
     except Exception:
         return system_prompt
-
-
-def inject_procedural_context(agent_id: str, workspace: str, instruction: str) -> str:
-    """Return a block of matching skill steps to prepend to the instruction.
-
-    Only skills whose name/description/tags are relevant to the instruction
-    (score above threshold) have their full steps injected. The catalog is
-    already in the system prompt, so we only add the actionable detail here.
-    """
-    try:
-        store = ProcedureStore(workspace)
-        agent_procedures = [p for p in store.load() if p.agent_id == agent_id]
-
-        if not agent_procedures:
-            return ""
-
-        if is_skills_inquiry(instruction):
-            # For explicit skill queries, show the full listing with steps
-            return _format_procedures(agent_procedures, "Your Skills")
-
-        matched = [
-            p for p in agent_procedures
-            if _score_relevance(p, instruction) >= SKILLS_RELEVANCE_THRESHOLD
-        ]
-        if not matched:
-            return ""
-
-        return _format_procedures(matched, "Relevant Skills for This Task")
-    except Exception:
-        return ""
 
 
 # ── Scoped tool factory ───────────────────────────────────────────────────────
@@ -359,7 +398,7 @@ def inject_procedural_context(agent_id: str, workspace: str, instruction: str) -
 def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
     """Create skill tools scoped to a specific agent+workspace pair.
 
-    Returns three StructuredTool instances with agent_id and workspace baked in,
+    Returns four StructuredTool instances with agent_id and workspace baked in,
     so agents cannot read or write skills belonging to other agents or workspaces.
     """
 
@@ -453,14 +492,28 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
             p.touch()
             store.update(p)
 
-            return json.dumps({
+            # The pinned version's text when the agent is pinned to one.
+            from memory.skill_versions import effective_content
+            content = effective_content(p)
+            result = {
                 "ok": True,
                 "name": p.name,
-                "description": p.description,
-                "steps": p.steps,
-                "tags": p.tags,
+                "description": content["description"],
+                "steps": content["steps"],
+                "tags": content["tags"],
                 "source": p.source,
-            })
+                "version": content["version"],
+            }
+            if content["body"]:
+                result["instructions"] = content["body"]
+            if content["resources"]:
+                result["files"] = content["resources"]
+                result["files_note"] = (
+                    "Read one of these files with read_skill_file(name, path) "
+                    "when the instructions refer to it.")
+            if content["pinned"]:
+                result["pinned"] = True
+            return json.dumps(result)
         except Exception as e:
             return json.dumps({"ok": False, "error": f"get_skill failed: {e}"})
 
@@ -479,11 +532,20 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
     class CreateSkillInput(BaseModel):
         name: str = Field(..., description="Short name for this skill")
         description: str = Field(..., description="When to use this skill — matched against future task instructions")
-        steps: List[str] = Field(..., description="Ordered list of steps that make up this skill")
+        steps: List[str] = Field(default_factory=list, description="Ordered list of steps that make up this skill")
+        instructions: Optional[str] = Field(
+            None, description="Free-form Markdown instructions, instead of or besides steps")
         tags: Optional[str] = Field(None, description="Comma-separated tags, e.g. 'debugging,python,api'")
 
-    def _create_skill(name: str, description: str, steps: List[str], tags: Optional[str] = None) -> str:
+    def _create_skill(name: str, description: str, steps: Optional[List[str]] = None,
+                      instructions: Optional[str] = None, tags: Optional[str] = None) -> str:
         try:
+            steps = [s for s in (steps or []) if str(s).strip()]
+            if not steps and not (instructions or "").strip():
+                return json.dumps({
+                    "ok": False,
+                    "error": "A skill needs steps or instructions.",
+                })
             store = ProcedureStore(workspace)
             target = name.strip().lower()
             for p in store.load():
@@ -497,13 +559,14 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
                 name=name,
                 description=description,
                 steps=steps,
+                body=(instructions or "").strip(),
                 tags=tag_list,
                 source="agent",
                 agent_id=agent_id,
                 workspace=workspace,
             )
             store.add(procedure)
-            return json.dumps({"ok": True, "name": name})
+            return json.dumps({"ok": True, "name": name, "version": procedure.version})
         except Exception as e:
             return json.dumps({"ok": False, "error": f"create_skill failed: {e}"})
 
@@ -518,4 +581,48 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
         args_schema=CreateSkillInput,
     )
 
-    return [list_skills_tool, get_skill_tool, create_skill_tool]
+    # read_skill_file ──────────────────────────────────────────────────────────
+
+    class ReadSkillFileInput(BaseModel):
+        name: Optional[str] = Field(None, description="Name of the skill the file belongs to")
+        path: Optional[str] = Field(
+            None, description="Path of the file as get_skill lists it under 'files'")
+
+    def _read_skill_file(name: Optional[str] = None, path: Optional[str] = None) -> str:
+        try:
+            if not name or not path:
+                return json.dumps({"ok": False,
+                                   "error": "read_skill_file needs both 'name' and 'path'."})
+            target = name.strip().lower()
+            matches = [p for p in ProcedureStore(workspace).load()
+                       if p.agent_id == agent_id and p.name.strip().lower() == target]
+            if not matches:
+                return json.dumps({"ok": False, "error": f"Skill not found: {name!r}"})
+            from memory.skill_import import read_resource
+            from memory.skill_versions import effective_content
+            skill = matches[0]
+            # A pinned skill lists the files of its pinned version; the text
+            # itself is whatever the folder holds now.
+            listed = effective_content(skill)["resources"]
+            if str(path).strip().lstrip("/") not in set(listed):
+                return json.dumps({"ok": False,
+                                   "error": f"{path!r} is not a file of skill {skill.name!r}",
+                                   "files": listed})
+            return json.dumps({"ok": True, "name": skill.name, "path": path,
+                               "content": read_resource(skill, path)})
+        except (FileNotFoundError, PermissionError) as e:
+            return json.dumps({"ok": False, "error": str(e)})
+        except Exception as e:  # noqa: BLE001 - a tool answers with the error instead of aborting the run
+            return json.dumps({"ok": False, "error": f"read_skill_file failed: {e}"})
+
+    read_skill_file_tool = StructuredTool.from_function(
+        name="read_skill_file",
+        description=(
+            "Read one file that belongs to a skill (a script, template or reference note "
+            "kept next to its instructions). get_skill lists a skill's files."
+        ),
+        func=_read_skill_file,
+        args_schema=ReadSkillFileInput,
+    )
+
+    return [list_skills_tool, get_skill_tool, create_skill_tool, read_skill_file_tool]

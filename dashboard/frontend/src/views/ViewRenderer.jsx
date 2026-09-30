@@ -21,6 +21,7 @@ const SimView = lazy(() => import('./renderers/SimView'));
 const ProcessView = lazy(() => import('./renderers/ProcessView'));
 const SlidesView = lazy(() => import('./renderers/SlidesView'));
 const DocumentView = lazy(() => import('./renderers/DocumentView'));
+const CodeView = lazy(() => import('./renderers/CodeView'));
 
 // Resolve the actually-applied theme from the DOM (ThemeContext toggles the
 // `dark` class on <html>), so renderers pick the right palette under 'system'.
@@ -46,6 +47,7 @@ const RENDERERS = {
   process: ProcessView,
   slides: SlidesView,
   document: DocumentView,
+  code: CodeView,
 };
 
 // Kinds whose renderer sizes itself to the frame it is given (canvas/iframe/

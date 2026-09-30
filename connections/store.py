@@ -1,10 +1,11 @@
 """The connection record and its token.
 
-File-backed, like the agent registry it sits beside: a hub has a handful of
-connections, they change rarely, and a JSON file keeps them readable and
-hand-editable when something has to be fixed without the UI. Reads are cached
-on the file's mtime, because every ingest request authenticates against this
-file and a production graph reports often.
+A hub has a handful of connections, they change rarely, and every ingest
+request authenticates against this collection. It lives in the ``documents``
+table through :class:`common.docstore.DocStore` (one row per connection,
+keyed by ``id``), so a read-modify-write is atomic across every process and
+host instead of relying on a file lock that only worked on one. An existing
+``connections.json`` is imported once on first use and renamed ``.migrated``.
 
 **What the token is for.** It tells the hub which process is reporting. This is
 a single-tenant install with no user accounts and no authorisation model, so the
@@ -16,8 +17,8 @@ It is still handled as a secret, because a value that can speak for a connection
 should not be lying around in plain text:
 
 * generated once and never stored — only its SHA-256 hash is, so a copied
-  ``connections.json`` cannot be used to report;
-* compared in constant time, so the file cannot be probed by timing;
+  database cannot be used to report;
+* compared in constant time, so the store cannot be probed by timing;
 * rotating or deleting one record affects only that one reporter.
 
 SHA-256 rather than a slow KDF on purpose: these are 256-bit random secrets,
@@ -27,19 +28,17 @@ the hot path of every ingest call.
 from __future__ import annotations
 
 import hashlib
-import json
 import secrets
-import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from filelock import FileLock
-
+from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT
 
+#: Legacy JSON file this collection was imported from (kept as a constant:
+#: other modules reference it, e.g. for display or cleanup).
 CONNECTIONS_FILE = AGENTS_HUB_ROOT / "connections.json"
-CONNECTIONS_LOCK = AGENTS_HUB_ROOT / "connections.json.lock"
 
 # Prefix on every issued token. Makes one recognisable in a log or a config
 # file, and lets a secret scanner match it.
@@ -49,9 +48,7 @@ TOKEN_PREFIX = "ahc_"
 # meaningless, and the list is cheap to extend when something new shows up.
 KINDS = ("langgraph", "crewai", "autogen", "llamaindex", "http", "other")
 
-_lock = threading.Lock()
-_cache: Optional[List[Dict[str, Any]]] = None
-_cache_stamp: Optional[tuple] = None
+_store = DocStore("connections", legacy_file=CONNECTIONS_FILE, legacy_key=lambda d: d.get("id"))
 
 
 def _utc_now_iso() -> str:
@@ -99,71 +96,24 @@ def _hash(token: str) -> str:
 
 
 def _read() -> List[Dict[str, Any]]:
-    """Every record, from cache when the file has not changed."""
-    global _cache, _cache_stamp
-    try:
-        stat = CONNECTIONS_FILE.stat()
-        stamp = (stat.st_mtime_ns, stat.st_size)
-    except OSError:
-        with _lock:
-            _cache, _cache_stamp = [], None
-        return []
-
-    with _lock:
-        if _cache is not None and _cache_stamp == stamp:
-            return list(_cache)
-
-    try:
-        raw = json.loads(CONNECTIONS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        # A corrupt file must not take the API down: an empty list means "no
-        # connection authenticates", which fails closed.
-        raw = []
-    records = [r for r in raw if isinstance(r, dict) and r.get("id")]
-
-    with _lock:
-        _cache, _cache_stamp = records, stamp
-    return list(records)
-
-
-def _write(records: List[Dict[str, Any]]) -> None:
-    global _cache, _cache_stamp
-    CONNECTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with FileLock(str(CONNECTIONS_LOCK), timeout=10):
-        CONNECTIONS_FILE.write_text(
-            json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-    with _lock:
-        _cache, _cache_stamp = None, None
+    """Every record, in insertion order."""
+    return list(_store.values())
 
 
 def _mutate(connection_id: str, changes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Apply changes to one record under the file lock. Returns the new record.
+    """Apply changes to one record atomically. Returns the new record.
 
-    Read-modify-write inside the lock rather than around ``_read``: two ingest
-    workers touching ``last_seen`` at the same moment would otherwise drop one
-    another's writes, and with them whatever else was being changed.
+    Read-modify-write inside a transaction rather than around ``_read``: two
+    ingest workers touching ``last_seen`` at the same moment would otherwise
+    drop one another's writes, and with them whatever else was being changed.
     """
-    global _cache, _cache_stamp
-    CONNECTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with FileLock(str(CONNECTIONS_LOCK), timeout=10):
-        try:
-            raw = json.loads(CONNECTIONS_FILE.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            raw = []
-        records = [r for r in raw if isinstance(r, dict) and r.get("id")]
-        updated = None
-        for i, record in enumerate(records):
-            if record.get("id") == connection_id:
-                updated = {**record, **changes}
-                records[i] = updated
-                break
-        if updated is None:
+    with _store.transaction():
+        record = _store.get(connection_id)
+        if record is None:
             return None
-        CONNECTIONS_FILE.write_text(
-            json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-    with _lock:
-        _cache, _cache_stamp = None, None
-    return updated
+        updated = {**record, **changes}
+        _store.put(connection_id, updated)
+        return updated
 
 
 # ── reads ────────────────────────────────────────────────────────────────────
@@ -202,20 +152,20 @@ def get_connection(connection_id: str, workspace: Optional[str] = None) -> Optio
     which is how every other workspace-scoped thing in this product behaves: a
     page shows what is in the workspace it is looking at.
     """
-    for record in _read():
-        if record.get("id") == connection_id:
-            if not visible_in_workspace(record, workspace):
-                return None
-            return Connection(**_coerce(record)).to_dict()
-    return None
+    record = _store.get(connection_id)
+    if record is None:
+        return None
+    if not visible_in_workspace(record, workspace):
+        return None
+    return Connection(**_coerce(record)).to_dict()
 
 
 def resolve_token(token: str) -> Optional[Dict[str, Any]]:
     """The connection a token authenticates, or None.
 
     Compared in constant time against every record, and the loop is not cut
-    short on a match, so a caller cannot learn where in the file a token sits
-    from how long the answer took.
+    short on a match, so a caller cannot learn where in the collection a token
+    sits from how long the answer took.
     """
     if not token or not token.startswith(TOKEN_PREFIX):
         return None
@@ -230,7 +180,7 @@ def resolve_token(token: str) -> Optional[Dict[str, Any]]:
 
 
 def _coerce(record: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep only fields the dataclass knows, so an older or newer file loads."""
+    """Keep only fields the dataclass knows, so an older or newer record loads."""
     allowed = set(Connection.__dataclass_fields__)
     return {k: v for k, v in record.items() if k in allowed}
 
@@ -258,8 +208,6 @@ def create_connection(
     connection_id = (connection_id or "").strip()
     if not connection_id:
         raise ValueError("a connection needs an id")
-    if get_connection(connection_id) is not None:
-        raise ValueError(f"connection '{connection_id}' already exists")
 
     token, token_hash, hint = _new_token()
     record = Connection(
@@ -271,9 +219,10 @@ def create_connection(
         token_hash=token_hash,
         token_hint=hint,
     )
-    records = _read()
-    records.append(asdict(record))
-    _write(records)
+    with _store.transaction():
+        if _store.exists(connection_id):
+            raise ValueError(f"connection '{connection_id}' already exists")
+        _store.put(connection_id, asdict(record))
     return record.to_dict(), token
 
 
@@ -328,12 +277,7 @@ def delete_connection(connection_id: str) -> bool:
     and deleting the connection that reported them would erase the record of
     work that really ran.
     """
-    records = _read()
-    remaining = [r for r in records if r.get("id") != connection_id]
-    if len(remaining) == len(records):
-        return False
-    _write(remaining)
-    return True
+    return _store.delete(connection_id)
 
 
 __all__ = [

@@ -4,8 +4,10 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from common import db
+from common.entity_runs import EntityRunStore
+from common.run_status import RunStatus
 from playground.models import (
-    AgentDecision, ActionResult, Role, Scenario, SimRun, TickRecord, utc_iso,
+    Scenario, SimRun, TickRecord, utc_iso,
 )
 from playground.worlds import WorldSpec
 
@@ -33,6 +35,14 @@ _CONFIG_FIELDS = (
     "activation", "max_ticks", "stall_timeout", "max_turn_seconds", "seed",
     "max_concurrent", "cost_ceiling", "default_model", "default_provider",
     "max_wall_seconds", "idle_grace_seconds",
+    # Who plays a role (personas or agents), its per-tick tool call cap, the
+    # task this scenario works on, and the reference documents injected into
+    # every role's prompt. Rides in this JSON blob too, the same reasoning:
+    # one more knob here needs no migration.
+    "mode", "max_tool_calls_per_tick", "task_id", "documents",
+    # The team whose members play the scenario when it has no roles of its
+    # own (playground.runner.roles_from_team).
+    "team_id",
 )
 
 
@@ -43,10 +53,12 @@ def save_scenario(scenario: Scenario) -> Scenario:
     config = {f: getattr(scenario, f) for f in _CONFIG_FIELDS}
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO scenarios
-               (scenario_id, name, description, workspace, environment,
-                env_params, roles, config, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "scenarios",
+                ("scenario_id", "name", "description", "workspace", "environment",
+                 "env_params", "roles", "config", "created_at", "updated_at"),
+                ("scenario_id",),
+            ),
             (
                 scenario.scenario_id, scenario.name, scenario.description,
                 scenario.workspace, scenario.environment,
@@ -105,13 +117,15 @@ def list_scenarios(workspace: Optional[str] = None) -> List[Scenario]:
 def delete_scenario(scenario_id: str) -> bool:
     with db.transaction() as conn:
         run_ids = [
-            r["sim_run_id"] for r in conn.execute(
-                "SELECT sim_run_id FROM sim_runs WHERE scenario_id = ?", (scenario_id,)
+            r["run_id"] for r in conn.execute(
+                "SELECT run_id FROM entity_runs WHERE kind = 'scenario' AND entity_id = ?",
+                (scenario_id,)
             ).fetchall()
         ]
         for rid in run_ids:
             conn.execute("DELETE FROM sim_ticks WHERE sim_run_id = ?", (rid,))
-        conn.execute("DELETE FROM sim_runs WHERE scenario_id = ?", (scenario_id,))
+        conn.execute("DELETE FROM entity_runs WHERE kind = 'scenario' AND entity_id = ?",
+                     (scenario_id,))
         cur = conn.execute("DELETE FROM scenarios WHERE scenario_id = ?", (scenario_id,))
         deleted = cur.rowcount > 0
     if deleted:
@@ -128,9 +142,12 @@ def save_world(spec: WorldSpec) -> WorldSpec:
     spec.updated_at = utc_iso()
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO worlds
-               (world_id, name, description, workspace, spec, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "worlds",
+                ("world_id", "name", "description", "workspace", "spec",
+                 "created_at", "updated_at"),
+                ("world_id",),
+            ),
             (spec.world_id, spec.name, spec.description, spec.workspace,
              db.dumps(spec.to_dict()), spec.created_at, spec.updated_at),
         )
@@ -204,54 +221,69 @@ def delete_world(world_id: str) -> bool:
 
 
 # ── Sim runs ──────────────────────────────────────────────────────────────────
+# Scenario runs live in the ``entity_runs`` table every kind of run shares
+# (common/entity_runs.py, kind ``scenario``). The columns every kind has
+# (status, pid, host, heartbeat, checkpoint, cost, error, times) are the
+# table's; the scenario's own fields (environment, activation, ticks,
+# scores, final state, the frozen config, the story) ride in the document.
+
+def _to_sim_run(rec: Dict[str, Any]) -> SimRun:
+    return SimRun(
+        sim_run_id=rec["sim_run_id"],
+        scenario_id=rec.get("scenario_id") or "",
+        workspace=rec.get("workspace"),
+        environment=rec.get("environment") or "",
+        status=rec.get("status") or RunStatus.pending.value,
+        activation=rec.get("activation") or "synchronous",
+        task_id=rec.get("task_id"),
+        session_id=rec.get("session_id"),
+        parent_run_id=rec.get("parent_run_id"),
+        stop_reason=rec.get("stop_reason") or "",
+        ticks_done=int(rec.get("ticks_done") or 0),
+        total_cost=float(rec.get("total_cost") or 0.0),
+        error=rec.get("error"),
+        scores=dict(rec.get("scores") or {}),
+        final_state=dict(rec.get("final_state") or {}),
+        config=dict(rec.get("config") or {}),
+        pid=rec.get("pid"),
+        host=rec.get("host"),
+        heartbeat_at=rec.get("heartbeat_at"),
+        resume_attempts=int(rec.get("resume_attempts") or 0),
+        log_file=rec.get("log_file"),
+        created_at=rec.get("created_at") or rec.get("started_at") or "",
+        started_at=rec.get("started_at") or "",
+        finished_at=rec.get("finished_at"),
+    )
+
+
+#: Scenario-run records: kind ``scenario`` of the shared table.
+RUNS: EntityRunStore[SimRun] = EntityRunStore(
+    "scenario",
+    convert=_to_sim_run,
+    order_by="COALESCE(started_at, created_at, '') DESC, run_id",
+    live_statuses=(RunStatus.pending.value, RunStatus.running.value,
+                   RunStatus.stopping.value),
+)
+_RUNS = RUNS
+
 
 def save_sim_run(run: SimRun) -> SimRun:
-    with db.transaction() as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO sim_runs
-               (sim_run_id, scenario_id, workspace, environment, status,
-                activation, stop_reason, ticks_done, total_cost, error,
-                scores, final_state, config, started_at, finished_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                run.sim_run_id, run.scenario_id, run.workspace, run.environment,
-                run.status, run.activation, run.stop_reason, run.ticks_done,
-                run.total_cost, run.error,
-                db.dumps(run.scores), db.dumps(run.final_state),
-                db.dumps(run.config),
-                run.started_at, run.finished_at,
-            ),
-        )
-    _notify("sim_runs", sim_run_id=run.sim_run_id, scenario_id=run.scenario_id,
-            status=run.status)
+    """Write the run whole. The process fields the launcher and the watchdog
+    own (pid, host, heartbeat, attempts) and the story are merged in from the
+    stored record, so a save from the runner never blanks them."""
+    rec = run.to_dict()
+    _RUNS.upsert(rec, merge=True)
     return run
 
 
 def _row_to_sim_run(row) -> SimRun:
-    return SimRun(
-        sim_run_id=row["sim_run_id"],
-        scenario_id=row["scenario_id"] or "",
-        workspace=row["workspace"],
-        environment=row["environment"] or "",
-        status=row["status"] or "running",
-        activation=row["activation"] or "synchronous",
-        stop_reason=row["stop_reason"] or "",
-        ticks_done=int(row["ticks_done"] or 0),
-        total_cost=float(row["total_cost"] or 0.0),
-        error=row["error"],
-        scores=db.loads(row["scores"], {}) or {},
-        final_state=db.loads(row["final_state"], {}) or {},
-        config=db.loads(row["config"], {}) or {},
-        started_at=row["started_at"] or "",
-        finished_at=row["finished_at"],
-    )
+    """Kept for callers that read rows themselves."""
+    from common.entity_runs import record_from_row
+    return _to_sim_run(record_from_row(row))
 
 
 def get_sim_run(sim_run_id: str) -> Optional[SimRun]:
-    row = db.get_conn().execute(
-        "SELECT * FROM sim_runs WHERE sim_run_id = ?", (sim_run_id,)
-    ).fetchone()
-    return _row_to_sim_run(row) if row else None
+    return _RUNS.get(sim_run_id)
 
 
 def save_story(sim_run_id: str, story: Dict[str, Any]) -> bool:
@@ -262,17 +294,12 @@ def save_story(sim_run_id: str, story: Dict[str, Any]) -> bool:
     was written from is *not* stored — that one is a pure function of the tick
     log, so keeping it would only create a second version of the truth.
     """
-    with db.transaction() as conn:
-        cur = conn.execute("UPDATE sim_runs SET story = ? WHERE sim_run_id = ?",
-                           (db.dumps(story), sim_run_id))
-    return cur.rowcount > 0
+    return _RUNS.update(sim_run_id, {"story": dict(story or {})}, notify=False) is not None
 
 
 def get_story(sim_run_id: str) -> Dict[str, Any]:
-    row = db.get_conn().execute(
-        "SELECT story FROM sim_runs WHERE sim_run_id = ?", (sim_run_id,)
-    ).fetchone()
-    return (db.loads(row["story"], {}) or {}) if row else {}
+    rec = _RUNS.read(sim_run_id)
+    return dict((rec or {}).get("story") or {})
 
 
 def list_sim_runs(scenario_id: Optional[str] = None, limit: int = 50,
@@ -284,18 +311,16 @@ def list_sim_runs(scenario_id: Optional[str] = None, limit: int = 50,
     workspace's runs plus the workspace-less ones, the same rule the scenario
     catalogue uses.
     """
-    where: List[str] = []
+    where: List[str] = ["kind = 'scenario'"]
     params: List[Any] = []
     if scenario_id:
-        where.append("scenario_id = ?")
+        where.append("entity_id = ?")
         params.append(scenario_id)
     if workspace:
         where.append("(workspace = ? OR workspace IS NULL)")
         params.append(workspace)
-    sql = "SELECT * FROM sim_runs"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY started_at DESC LIMIT ?"
+    sql = "SELECT * FROM entity_runs WHERE " + " AND ".join(where)
+    sql += " ORDER BY COALESCE(started_at, created_at, '') DESC, run_id LIMIT ?"
     params.append(limit)
     rows = db.get_conn().execute(sql, tuple(params)).fetchall()
     return [_row_to_sim_run(r) for r in rows]
@@ -325,16 +350,16 @@ def latest_runs_by_scenario(scenario_ids: Optional[List[str]] = None) -> Dict[st
     sql = """
         SELECT * FROM (
             SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY scenario_id ORDER BY started_at DESC
+                PARTITION BY entity_id ORDER BY COALESCE(started_at, created_at, '') DESC
             ) AS rn
-            FROM sim_runs
-        ) WHERE rn = 1
+            FROM entity_runs WHERE kind = 'scenario'
+        ) AS latest WHERE rn = 1
     """
     rows = db.get_conn().execute(sql).fetchall()
     wanted = set(scenario_ids) if scenario_ids is not None else None
     latest: Dict[str, SimRun] = {}
     for row in rows:
-        scenario_id = row["scenario_id"] or ""
+        scenario_id = row["entity_id"] or ""
         if not scenario_id or (wanted is not None and scenario_id not in wanted):
             continue
         latest[scenario_id] = _row_to_sim_run(row)
@@ -342,48 +367,109 @@ def latest_runs_by_scenario(scenario_ids: Optional[List[str]] = None) -> Dict[st
 
 
 def request_stop(sim_run_id: str) -> bool:
-    """Mark a running sim as stopping — the durable half of a stop.
+    """Mark a live sim as stopping — the durable half of a stop.
 
     This row is the cross-process record and what a reloaded page reads. It is
     *not* what makes the button feel immediate: :mod:`playground.control` holds
     an in-memory event that interrupts the model calls already in flight, and
-    ``runner.stop_simulation`` sets both.
+    ``runner.stop_simulation`` sets both. A runner in another process reads
+    the status back on its next heartbeat.
     """
-    with db.transaction() as conn:
-        cur = conn.execute(
-            "UPDATE sim_runs SET status = 'stopping' "
-            "WHERE sim_run_id = ? AND status IN ('starting', 'running')",
-            (sim_run_id,),
-        )
-        stopping = cur.rowcount > 0
-    if stopping:
-        _notify("sim_runs", sim_run_id=sim_run_id, status="stopping")
-    return stopping
+    return _RUNS.request_stop(sim_run_id)
 
 
 def mark_running(sim_run_id: str) -> bool:
-    """Promote a starting run to running — what the first tick means.
+    """Promote a pending run to running — what the first tick means.
 
-    Conditional on the row still being ``starting`` so that a stop requested
+    Conditional on the row still being ``pending`` so that a stop requested
     during the first tick is not overwritten by the tick that finished after it.
     """
-    with db.transaction() as conn:
-        cur = conn.execute(
-            "UPDATE sim_runs SET status = 'running' "
-            "WHERE sim_run_id = ? AND status = 'starting'",
-            (sim_run_id,),
-        )
-        started = cur.rowcount > 0
-    if started:
-        _notify("sim_runs", sim_run_id=sim_run_id, status="running")
-    return started
+    from common.entity_runs import utc_now_iso
+    now = utc_now_iso()
+    return _RUNS.set_status(sim_run_id, RunStatus.running.value,
+                            from_statuses=(RunStatus.pending.value,),
+                            started_at=now, heartbeat_at=now)
 
 
 def stop_requested(sim_run_id: str) -> bool:
+    return _RUNS.stop_requested(sim_run_id)
+
+
+def touch_heartbeat(sim_run_id: str) -> Optional[str]:
+    """Stamp the run's heartbeat and return its current status (the runner's
+    process reads ``stopping`` back this way)."""
+    from common import entity_runs
+    return entity_runs.touch_heartbeat(sim_run_id)
+
+
+# ── Durable triggers ─────────────────────────────────────────────────────────
+#
+# playground.control's trigger queue only reaches a run this process is
+# actually executing — fine while every simulation ran on a daemon thread of
+# the one API process, not once a scenario runs in its own subprocess
+# (playground.launcher, runtime/scenario_run.py). An external poke (a webhook,
+# an operator on a different dashboard replica) has to reach that process
+# through the database instead, so it rides in the run's own document under
+# ``pending_triggers`` — a plain list, read and rewritten inside one
+# transaction so a push and a drain (or two pushes) racing each other can never
+# interleave: ``db.transaction()`` serialises writers the same way every other
+# write to this table does (see common/entity_runs.py).
+
+def push_trigger(sim_run_id: str, agent: str, text: str,
+                 sender: str = "(external)") -> bool:
+    """Queue a message for one agent, durably, whichever process is running
+    the sim. Returns whether the run exists at all; the queue accepts an entry
+    for a finished run too — nothing but ``playground.runner._deliver_external``
+    ever reads it, and a run that has already ended never ticks again to do so."""
+    with db.transaction() as conn:
+        row = conn.execute(
+            "SELECT doc FROM entity_runs WHERE run_id = ? AND kind = 'scenario'",
+            (sim_run_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        doc = db.loads(row["doc"], {}) or {}
+        pending = list(doc.get("pending_triggers") or [])
+        pending.append({"agent": agent, "text": text, "sender": sender})
+        doc["pending_triggers"] = pending
+        conn.execute("UPDATE entity_runs SET doc = ? WHERE run_id = ?",
+                     (db.dumps(doc), sim_run_id))
+    return True
+
+
+def drain_triggers(sim_run_id: str) -> List[Dict[str, Any]]:
+    """Take every durably queued trigger for this run, atomically — read and
+    clear happen inside the same transaction a concurrent :func:`push_trigger`
+    would need, so a trigger pushed between the two can never be lost."""
+    with db.transaction() as conn:
+        row = conn.execute(
+            "SELECT doc FROM entity_runs WHERE run_id = ? AND kind = 'scenario'",
+            (sim_run_id,),
+        ).fetchone()
+        if row is None:
+            return []
+        doc = db.loads(row["doc"], {}) or {}
+        pending = list(doc.get("pending_triggers") or [])
+        if not pending:
+            return []
+        doc["pending_triggers"] = []
+        conn.execute("UPDATE entity_runs SET doc = ? WHERE run_id = ?",
+                     (db.dumps(doc), sim_run_id))
+    return pending
+
+
+def has_pending_triggers(sim_run_id: str) -> bool:
+    """Peek the durable queue without draining it — what an idle loop polls to
+    decide whether to wake, without consuming the trigger before its own tick's
+    ``_deliver_external`` gets to it."""
     row = db.get_conn().execute(
-        "SELECT status FROM sim_runs WHERE sim_run_id = ?", (sim_run_id,)
+        "SELECT doc FROM entity_runs WHERE run_id = ? AND kind = 'scenario'",
+        (sim_run_id,),
     ).fetchone()
-    return bool(row and row["status"] == "stopping")
+    if row is None:
+        return False
+    doc = db.loads(row["doc"], {}) or {}
+    return bool(doc.get("pending_triggers"))
 
 
 # ── Ticks ─────────────────────────────────────────────────────────────────────
@@ -391,10 +477,12 @@ def stop_requested(sim_run_id: str) -> bool:
 def save_tick(record: TickRecord) -> TickRecord:
     with db.transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO sim_ticks
-               (sim_run_id, tick, ts, decisions, resolutions, frame, events,
-                idle, cost)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+            db.upsert_sql(
+                "sim_ticks",
+                ("sim_run_id", "tick", "ts", "decisions", "resolutions", "frame",
+                 "events", "idle", "cost"),
+                ("sim_run_id", "tick"),
+            ),
             (
                 record.sim_run_id, record.tick, record.ts,
                 db.dumps([d.to_dict() for d in record.decisions]),
@@ -441,6 +529,8 @@ __all__ = [
     "save_scenario", "get_scenario", "list_scenarios", "delete_scenario",
     "save_sim_run", "get_sim_run", "list_sim_runs", "latest_runs_by_scenario",
     "scenario_names",
-    "request_stop", "stop_requested",
+    "request_stop", "stop_requested", "mark_running", "touch_heartbeat", "RUNS",
+    "push_trigger", "drain_triggers", "has_pending_triggers",
+    "save_story", "get_story",
     "save_tick", "list_ticks", "get_tick",
 ]

@@ -31,11 +31,19 @@ RUN set -eux; \
     rm -rf /tmp/docker /tmp/docker.tgz; \
     docker --version
 
-COPY dashboard/backend/requirements.txt /tmp/requirements-backend.txt
-COPY requirements-agents.txt /tmp/requirements-agents.txt
+# requirements.lock is the pinned resolution of requirements-agents.txt,
+# dashboard/backend/requirements.txt and requirements-cli.txt (it is
+# universal, so the same file installs cleanly here); refresh it with the
+# command in its header when one of those three files changes.
+COPY requirements.lock /tmp/requirements.lock
+# The Postgres driver rides along: a few megabytes, and inert until
+# AGENTS_HUB_DATABASE_URL names a postgresql:// database (docs/scaling.md).
+# It is not part of requirements.lock (see that file's header), so it is
+# still installed from its own requirement file.
+COPY requirements-postgres.txt /tmp/requirements-postgres.txt
 
-RUN pip install --no-cache-dir -r /tmp/requirements-backend.txt \
-    && pip install --no-cache-dir -r /tmp/requirements-agents.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.lock \
+    && pip install --no-cache-dir -r /tmp/requirements-postgres.txt
 
 # ---------- RAG extras ----------
 # Embeddings and vector stores. Torch comes from the CPU-only index first so
@@ -50,7 +58,29 @@ RUN if [ "$WITH_RAG" = "true" ]; then \
         && pip install --no-cache-dir -r /tmp/requirements-rag.txt; \
     fi
 
+# ---------- security: non-root user ----------
+# Root is only needed for apt-get and pip install above. The docker CLI is
+# still usable from here: docker-compose.yml adds this user to the socket's
+# host group via group_add, so the backend can keep driving the daemon
+# without running as root itself.
+RUN groupadd -g 1000 hub \
+    && useradd -u 1000 -g hub -m hub --shell /bin/bash
+
 COPY . /app
+RUN chown -R hub:hub /app
+
+USER hub
+
+# The release this image is (common/version.py): set by the release workflow
+# from the tag, so /api/system/version answers correctly even though a
+# compose deployment bind mounts a checkout over /app.
+ARG AGENTS_HUB_VERSION=""
+ARG AGENTS_HUB_GIT_SHA=""
+ENV AGENTS_HUB_VERSION=$AGENTS_HUB_VERSION \
+    AGENTS_HUB_GIT_SHA=$AGENTS_HUB_GIT_SHA
+LABEL org.opencontainers.image.title="agents-hub-backend" \
+      org.opencontainers.image.version=$AGENTS_HUB_VERSION \
+      org.opencontainers.image.revision=$AGENTS_HUB_GIT_SHA
 
 EXPOSE 8000
 

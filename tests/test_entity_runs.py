@@ -63,22 +63,21 @@ def scenario():
 
 @pytest.fixture
 def sim_runner(monkeypatch, scenario):
-    """A ``run_simulation`` that writes its row and returns, without any models."""
+    """A ``start_scenario_run`` that writes its row and returns, without
+    spawning anything (the tool launches through playground/launcher.py)."""
     from playground import store
     from playground.models import SimRun
-    import playground.runner as runner
+    import playground.launcher as launcher
 
     started = {}
 
-    def _fake_run(scenario_id, *, workspace=None, on_start=None, on_tick=None):
-        run = store.save_sim_run(SimRun(scenario_id=scenario_id, status="running",
+    def _fake_start(scenario_id, *, workspace=None, **kwargs):
+        run = store.save_sim_run(SimRun(scenario_id=scenario_id, status="pending",
                                         workspace=workspace, environment="social"))
         started["run"] = run
-        if on_start:
-            on_start(run)
         return run
 
-    monkeypatch.setattr(runner, "run_simulation", _fake_run)
+    monkeypatch.setattr(launcher, "start_scenario_run", _fake_start)
     return started
 
 
@@ -133,12 +132,12 @@ def test_a_scenario_from_another_workspace_is_refused(monkeypatch, sim_runner):
 
 
 def test_a_failing_launch_is_reported_rather_than_raised(monkeypatch, scenario):
-    import playground.runner as runner
+    import playground.launcher as launcher
 
     def _boom(*a, **k):
         raise RuntimeError("the world would not build")
 
-    monkeypatch.setattr(runner, "run_simulation", _boom)
+    monkeypatch.setattr(launcher, "start_scenario_run", _boom)
     out = call(run_scenario_tool, scenario_id=scenario.scenario_id, user_approved=True)
     assert out["ok"] is False
     assert out["code"] == "start_failed"
@@ -194,21 +193,18 @@ def team():
 def team_runner(monkeypatch, team):
     from teams import store
     from teams.models import TeamRun
-    import teams.runner as runner
+    import teams.launcher as launcher
 
     started = {}
 
-    def _fake_run(team_id, goal, *, workspace=None, task_id=None, session_id=None,
-                  conversation_id=None, on_message=None):
-        run = store.save_run(TeamRun(team_id=team_id, goal=goal, status="running",
+    def _fake_start(team_id, goal, *, workspace=None, **kwargs):
+        run = store.save_run(TeamRun(team_id=team_id, goal=goal, status="pending",
                                      workspace=workspace))
         started["run"] = run
         started["goal"] = goal
-        if on_message:
-            on_message(None)
         return run
 
-    monkeypatch.setattr(runner, "run_team", _fake_run)
+    monkeypatch.setattr(launcher, "start_team_run", _fake_start)
     return started
 
 
@@ -298,21 +294,18 @@ def loop(one_flow):
 def loop_runner(monkeypatch, loop):
     from loops import store
     from loops.models import LoopRun
-    import loops.runner as runner
+    import loops.launcher as launcher
 
     started = {}
 
-    def _fake_run(loop_id, *, goal="", workspace=None, task_id=None, seed=None,
-                  on_iteration=None):
-        run = store.save_run(LoopRun(loop_id=loop_id, goal=goal, status="running",
+    def _fake_start(loop_id, goal="", *, workspace=None, **kwargs):
+        run = store.save_run(LoopRun(loop_id=loop_id, goal=goal, status="pending",
                                      workspace=workspace))
         started["run"] = run
         started["goal"] = goal
-        if on_iteration:
-            on_iteration(None)
         return run
 
-    monkeypatch.setattr(runner, "run_loop", _fake_run)
+    monkeypatch.setattr(launcher, "start_loop_run", _fake_start)
     return started
 
 

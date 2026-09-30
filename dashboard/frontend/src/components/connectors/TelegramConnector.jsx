@@ -6,6 +6,8 @@ import {
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
+import { useLiveRefetch } from '../stream';
+import PageLoader from '../PageLoader';
 
 // Moved out of the Settings page, which is where nobody looked for it: a
 // connector is something you *attach*, so it belongs with the other things you
@@ -52,17 +54,20 @@ export default function TelegramConnector() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Poll status every 5s so the running flag and last_poll/last_error stay fresh.
-  useEffect(() => {
-    const id = setInterval(async () => {
-      try {
-        const { data } = await getTelegramStatus();
-        setStatus(data);
-        setConfig((c) => ({ ...c, running: data.running, bot_username: data.bot_username }));
-      } catch { /* a failed poll just waits for the next tick */ }
-    }, 5000);
-    return () => clearInterval(id);
+  // The poller's liveness (running, last_poll, last_error) changes from its
+  // own background loop, not from anything this tab did, so it needs a live
+  // update rather than a fixed refresh point. The backend publishes
+  // `telegram.changed` on the app channel for exactly this; a save already
+  // refreshes the same fields outright, so this only needs to cover changes
+  // from elsewhere.
+  const refreshStatus = useCallback(async () => {
+    try {
+      const { data } = await getTelegramStatus();
+      setStatus(data);
+      setConfig((c) => ({ ...c, running: data.running, bot_username: data.bot_username }));
+    } catch { /* a failed read just waits for the next event */ }
   }, []);
+  useLiveRefetch(refreshStatus, { type: 'telegram.changed' });
 
   const handleSave = async ({ enabled, clear_token } = {}) => {
     setSaving(true);
@@ -115,9 +120,7 @@ export default function TelegramConnector() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-10">
-        <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
-      </div>
+      <PageLoader size="sm" />
     );
   }
 

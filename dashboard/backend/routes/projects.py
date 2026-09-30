@@ -9,6 +9,7 @@ A project:
   - Can have a backend (with Swagger docs + request proxy)
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -18,7 +19,7 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 # Ensure project root is on sys.path
 _project_root = Path(__file__).resolve().parents[3]
@@ -32,12 +33,12 @@ from workspace import get_workspace_folder, resolve_project_root, project_folder
 from models import ProjectCreate, ProjectAttach, ProjectUpdate, ProjectApiRequest, ProjectImportFromRepo, ProjectConnectRepo, ProjectGraphSave, ProjectGraphChat, ProjectTasksChat
 from projects.models import Project, RepoConfig
 from projects.storage import ProjectStore
-from common.paths import PROJECTS_FILE
-from connectors.git import git_ops
-from connectors.git.git_ops import GitOpsError
-from connectors.git.providers import get_provider, GitProviderError
-from connectors.git.issue_sync import sync_issues as _sync_project_issues
+from common.paths import PROJECTS_FILE, PROJECT_ROOT, AGENTS_HUB_ROOT
 from chat.errors import error_event as _error_event
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+from projects import git_service, planner_service, proxy_service
+from projects.errors import ServiceError
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -56,6 +57,54 @@ def _task_to_dict(task) -> dict:
     if data.get("parent_id"):
         data["parent_id"] = str(data["parent_id"])
     return data
+
+
+# ─────────────────────────── Attach allowlist ────────────────────────────
+#
+# POST /attach symlinks an arbitrary directory into a workspace. Without a
+# check, any directory the backend process can read (/etc, $HOME, ...) could
+# be exposed this way, whether the caller is a dashboard user or an agent
+# using the api tool.
+
+
+def _attach_allowed_roots() -> list[Path]:
+    """Directories a project may be attached from.
+
+    ``AGENTS_HUB_ATTACH_ROOTS`` (os.pathsep separated absolute directories)
+    replaces the default entirely when set. Unset, the default is the user's
+    home directory plus this service's own repo and state roots — enough for
+    the common "attach my project" case without allowing the whole filesystem.
+    """
+    raw = (os.environ.get("AGENTS_HUB_ATTACH_ROOTS") or "").strip()
+    if raw:
+        return [Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip()]
+    return [Path.home().resolve(), PROJECT_ROOT.resolve(), AGENTS_HUB_ROOT.resolve()]
+
+
+def _check_attach_allowed(target: Path) -> None:
+    """Reject an attach target outside the configured allowlist.
+
+    Not a general sandbox: a permissively configured ``AGENTS_HUB_ATTACH_ROOTS``,
+    or a root that itself holds sensitive data (e.g. the home directory), still
+    lets that data be attached. It only closes the "any readable path" case.
+    """
+    target = target.resolve()
+    for root in _attach_allowed_roots():
+        if target == root or root in target.parents:
+            return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"{target} is outside the allowed attach roots. Set the "
+            "AGENTS_HUB_ATTACH_ROOTS environment variable to allow it."
+        ),
+    )
+
+
+# POST /{project_id}/api-request proxies an HTTP request to whatever base_url
+# it is given. The allowlist (scheme + cloud metadata address) and the
+# container host rewrite live in projects/proxy_service.py — see
+# proxy_service.validated_api_base_url for what is and isn't checked.
 
 
 # ─────────────────────────── CRUD ────────────────────────────
@@ -1012,26 +1061,18 @@ async def _run_turn_guarded(run_turn, queue: asyncio.Queue):
 
 
 # ─────────────────────────── PLANNER (tasks from views) ────────────────────────────
+#
+# The Planner agent itself — its prompt, and how it is built and run — lives in
+# projects/planner_service.py; this section is the SSE/run-record plumbing
+# around one turn, shared in shape with the graph chat above.
 
-_PLANNER_AGENT_ID = "planner"
+from chat import remote_agent as _remote_agent  # noqa: E402
+
+_PLANNER_AGENT_ID = planner_service.PLANNER_AGENT_ID
 # Store key for the planner chat (its trace/messages/session live on the Tasks
 # tab, decoupled from the architecture/process graph views).
 _TASKS_VIEW = "tasks"
 _PLANNER_USER_MSG = "Generate tasks from the architecture & process graphs."
-
-
-def _ensure_planner_agent() -> bool:
-    """Ensure the Planner agent is registered, backfilling it on installs that
-    predate it. Returns False if it cannot be made available."""
-    try:
-        from agents.registry import get_agent
-        if get_agent(_PLANNER_AGENT_ID) is not None:
-            return True
-        from common.bootstrap import _ensure_system_agents
-        _ensure_system_agents()
-        return get_agent(_PLANNER_AGENT_ID) is not None
-    except Exception:
-        return False
 
 
 @router.get("/{project_id}/tasks/chat")
@@ -1147,20 +1188,7 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
         # Recent conversation so multi-turn planning ("also split X", "reprioritise
         # Y") has context. The user turn was just recorded above, so drop it here.
         history = _graph_store.get_messages(project_id, _TASKS_VIEW)[:-1]
-        convo = "\n".join(f"{m.get('role')}: {m.get('content')}" for m in history[-12:])
-        prompt = (
-            "You are the project's task planner: read its structure graphs and manage the "
-            "task tree in the shared tracker.\n\n"
-            "Rules:\n"
-            "1. Call list_tasks first to see what already exists — extend/refine it, do not duplicate.\n"
-            "2. Call get_project_graph for view='process' AND for view='architecture' to read both graphs.\n"
-            "3. Create top-level tasks for the major components/stages with create_task, break them into "
-            "steps with add_subtask, and use create_sequence for work that must run in order. Align task "
-            "titles with the project's structure. For a refinement request, change only what's asked.\n\n"
-            f"--- CONVERSATION SO FAR ---\n{convo or '(none)'}\n\n"
-            f"--- USER REQUEST ---\n{user_message}\n\n"
-            "After applying the changes, reply with ONE short sentence summarising what you did."
-        )
+        prompt = planner_service.build_prompt(history, user_message)
 
         reply, status, err = "", "completed", None
         callback = None
@@ -1173,24 +1201,49 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
         # once the task has captured it (mirrors the graph_sink handler pattern).
         ws_token = _workspace_ctx.set(project.workspace)
         pj_token = _project_ctx.set(normalize_project_id(project_id))
-        if not _ensure_planner_agent():
+        # The agent part on a runner replica (chat/remote_agent.py): what it
+        # reported, when the turn ran there rather than in this process.
+        remote = None
+        if not planner_service.ensure_planner_agent():
             status, err = "failed", "planner agent unavailable"
             await emit(_error_event("registry", err))
+        elif _remote_agent.enabled():
+            task = asyncio.create_task(_remote_agent.stream_agent_turn(
+                queue, agent_id=_PLANNER_AGENT_ID, run_id=run_id, prompt=prompt,
+                workspace=project.workspace, workspace_path=agent_workspace_path(project, root),
+                project_id=normalize_project_id(project_id), session_id=session_id,
+                log_file=str(log_file), log_lines=log_lines,
+                build={"max_tool_repeats": 0, "max_iterations": 400},
+                user_message=user_message))
+            _register_run(project_id, "__plan__", task)
+            try:
+                remote = await task
+            except asyncio.CancelledError:
+                status = "stopped"
+                await emit({"type": "stopped"})
+            except Exception as e:  # noqa: BLE001
+                status, err = "failed", str(e)
+                await emit(_error_event("agent", err))
+            if remote is not None:
+                provider, model = remote.provider, remote.model
+                _update_run(run_id, {"provider": provider, "model": model, **remote.run_fields()})
+                if remote.status == "stopped":
+                    status = "stopped"
+                    await emit({"type": "stopped"})
+                elif remote.ok:
+                    reply = _clean_agent_reply(remote.agent_output)
+                else:
+                    status, err = "failed", (remote.error or "agent returned no output")
+                    await emit(_error_event("agent", err))
         else:
             try:
-                from agents.agent_factory import create_agent
                 from agents.callbacks import ChatStreamCallback
 
                 loop = asyncio.get_running_loop()
                 callback = ChatStreamCallback(loop, queue, log_lines, log_file, session_id=session_id)
 
-                # Planning a project is task after task through the same tool, so
-                # there is no repetition ceiling here either (0 = UNLIMITED_TOOL_REPEATS).
                 agent = await asyncio.to_thread(
-                    create_agent, _PLANNER_AGENT_ID,
-                    workspace=agent_workspace_path(project, root), streaming=True,
-                    max_tool_repeats=0, max_iterations=400,
-                )
+                    planner_service.build_agent, agent_workspace_path(project, root))
                 provider, model = agent.provider or "", agent.model or ""
                 _update_run(run_id, {"provider": provider, "model": model})
                 callback.bind_model(provider, model)
@@ -1249,19 +1302,27 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
             "artifacts": getattr(callback, "artifact_history", []) if callback else [],
             "token_usage": usage,
         }
+        if remote is not None:
+            usage = {**usage, **remote.usage}
+            process_payload = {**process_payload, **remote.process, "token_usage": usage}
+            process_payload["llm_input_context"] = {
+                **(process_payload.get("llm_input_context") or {}),
+                "user_message": user_message, "response": reply}
         finished = _iso()
         duration_ms = int((_time.perf_counter() - message_started) * 1000)
-        summary_line = (
-            f"[message_summary] id={msg_id} "
-            f"inbound_tokens={usage['inbound_tokens']} "
-            f"outbound_tokens={usage['outbound_tokens']} "
-            f"total_tokens={usage['total_tokens']} "
-            f"tool_calls={getattr(callback, 'tool_calls', 0) if callback else 0} "
-            f"duration_ms={duration_ms}"
-        )
-        _append_log(log_lines, reply, log_file)
-        _append_log(log_lines, summary_line, log_file)
-        _write_log(log_file, log_lines + ["", f"Finished: {finished}", f"Status  : {status}"])
+        if remote is None:
+            # The runner closes the log itself when the turn ran there.
+            summary_line = (
+                f"[message_summary] id={msg_id} "
+                f"inbound_tokens={usage['inbound_tokens']} "
+                f"outbound_tokens={usage['outbound_tokens']} "
+                f"total_tokens={usage['total_tokens']} "
+                f"tool_calls={getattr(callback, 'tool_calls', 0) if callback else 0} "
+                f"duration_ms={duration_ms}"
+            )
+            _append_log(log_lines, reply, log_file)
+            _append_log(log_lines, summary_line, log_file)
+            _write_log(log_file, log_lines + ["", f"Finished: {finished}", f"Status  : {status}"])
 
         _update_run(run_id, {
             "status": status, "finished_at": finished,
@@ -1298,20 +1359,10 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
 
 
 # ─────────────────────────── REPO ────────────────────────────
-
-def _repo_provider(project: Project) -> Optional[str]:
-    """Provider name for git auth injection, when applicable."""
-    repo_type = str(project.repo.type.value if hasattr(project.repo.type, "value") else project.repo.type)
-    return repo_type if repo_type in ("github", "gitlab") else None
-
-
-def _run_issue_sync(project: Project) -> dict:
-    """Run issue sync, mapping failures to a UI-safe error payload."""
-    try:
-        return _sync_project_issues(project)
-    except (GitProviderError, ValueError) as e:
-        return {"imported": 0, "updated": 0, "total": 0, "error": str(e)}
-
+#
+# The git mechanics (clone, status, pull, issue sync, publish) live in
+# projects/git_service.py; these handlers resolve the project/workspace and
+# map a ServiceError to the matching HTTPException.
 
 @router.post("/import-from-repo")
 async def import_from_repo(payload: ProjectImportFromRepo):
@@ -1321,9 +1372,10 @@ async def import_from_repo(payload: ProjectImportFromRepo):
         raise HTTPException(status_code=404, detail=f"Workspace '{payload.workspace}' not found")
 
     try:
-        repo_info = await asyncio.to_thread(get_provider(payload.provider).get_repo, payload.remote_id)
-    except GitProviderError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        repo_info = await asyncio.to_thread(
+            git_service.resolve_repo_info, payload.provider, payload.remote_id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
     name = (payload.name or "").strip() or repo_info["name"]
     branch = (payload.branch or "").strip() or repo_info["default_branch"]
@@ -1339,11 +1391,11 @@ async def import_from_repo(payload: ProjectImportFromRepo):
     resolve_project_root(payload.workspace, folder)
     try:
         await asyncio.to_thread(
-            git_ops.clone, repo_info["clone_url"], clone_dir,
-            branch=branch, provider=payload.provider,
+            git_service.clone_from_provider, repo_info["clone_url"], clone_dir,
+            branch=branch, provider_name=payload.provider,
         )
-    except GitOpsError as e:
-        raise HTTPException(status_code=500, detail=f"Clone failed: {e}")
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
     project = Project(
         name=name,
@@ -1362,11 +1414,13 @@ async def import_from_repo(payload: ProjectImportFromRepo):
 
     issues = None
     if payload.import_issues:
-        issues = await asyncio.to_thread(_run_issue_sync, project)
+        issues = await asyncio.to_thread(git_service.run_issue_sync, project)
+
+    skills = await asyncio.to_thread(git_service.sync_project_skills, project)
 
     d = _project_to_dict(project)
     d["folder"] = folder
-    return {"project": d, "cloned": True, "issues": issues}
+    return {"project": d, "cloned": True, "issues": issues, "skills": skills}
 
 
 @router.post("/{project_id}/connect-repo")
@@ -1381,9 +1435,10 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
         raise HTTPException(status_code=404, detail=f"Workspace '{project.workspace}' not found")
 
     try:
-        repo_info = await asyncio.to_thread(get_provider(payload.provider).get_repo, payload.remote_id)
-    except GitProviderError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        repo_info = await asyncio.to_thread(
+            git_service.resolve_repo_info, payload.provider, payload.remote_id)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
     branch = (payload.branch or "").strip() or repo_info["default_branch"]
     folder = project_folder_name(project.name)
@@ -1392,6 +1447,7 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
 
     cloned = False
     if clone_dir.exists():
+        from connectors.git import git_ops
         existing_remote = git_ops.remote_url(clone_dir)
         if existing_remote not in (repo_info["clone_url"], repo_info["web_url"]):
             raise HTTPException(
@@ -1401,12 +1457,12 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
     else:
         try:
             await asyncio.to_thread(
-                git_ops.clone, repo_info["clone_url"], clone_dir,
-                branch=branch, provider=payload.provider,
+                git_service.clone_from_provider, repo_info["clone_url"], clone_dir,
+                branch=branch, provider_name=payload.provider,
             )
             cloned = True
-        except GitOpsError as e:
-            raise HTTPException(status_code=500, detail=f"Clone failed: {e}")
+        except ServiceError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail)
 
     project = _store.update(project_id, repo={
         "type": payload.provider,
@@ -1418,11 +1474,14 @@ async def connect_repo(project_id: str, payload: ProjectConnectRepo):
 
     issues = None
     if payload.import_issues:
-        issues = await asyncio.to_thread(_run_issue_sync, project)
+        issues = await asyncio.to_thread(git_service.run_issue_sync, project)
+
+    skills = (await asyncio.to_thread(git_service.sync_project_skills, project)
+              if cloned else None)
 
     d = _project_to_dict(project)
     d["folder"] = folder
-    return {"project": d, "cloned": cloned, "issues": issues}
+    return {"project": d, "cloned": cloned, "issues": issues, "skills": skills}
 
 
 @router.post("/{project_id}/sync-issues")
@@ -1431,15 +1490,10 @@ async def sync_issues(project_id: str):
     project = _store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if _repo_provider(project) is None or not project.repo.remote_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Project is not connected to a GitHub/GitLab repo",
-        )
     try:
-        return await asyncio.to_thread(_sync_project_issues, project)
-    except (GitProviderError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return await asyncio.to_thread(git_service.sync_issues, project)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
 
 @router.post("/{project_id}/clone-repo")
@@ -1449,33 +1503,20 @@ async def clone_repo(project_id: str):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    repo = project.repo
-    if not repo.url:
-        raise HTTPException(status_code=400, detail="No repo URL configured")
-
     ws_folder = get_workspace_folder(project.workspace)
     if ws_folder is None:
         raise HTTPException(status_code=404, detail=f"Workspace '{project.workspace}' not found")
 
-    clone_dir = ws_folder / (repo.local_path or "repo")
-
-    if clone_dir.exists():
-        raise HTTPException(status_code=409, detail=f"Target directory already exists: {clone_dir}")
-
     try:
-        output = await asyncio.to_thread(
-            git_ops.clone, repo.url, clone_dir,
-            branch=repo.branch or None, provider=_repo_provider(project),
-        )
-    except GitOpsError as e:
-        status = 504 if "timed out" in str(e) else 500
-        raise HTTPException(status_code=status, detail=str(e))
+        result = await asyncio.to_thread(git_service.clone_repo, project, ws_folder)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
     # Update local_path in project
-    rel_path = repo.local_path or "repo"
+    rel_path = project.repo.local_path or "repo"
     _store.update(project_id, repo={"local_path": rel_path})
 
-    return {"cloned": True, "path": str(clone_dir), "output": output}
+    return result
 
 
 @router.post("/attach")
@@ -1499,6 +1540,7 @@ async def attach_project(payload: ProjectAttach):
         raise HTTPException(status_code=400, detail=f"No such directory: {target}")
     if not target.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {target}")
+    _check_attach_allowed(target)
 
     # The folder name has to survive project_folder_name() unchanged, otherwise
     # the link, the project's derived folder and repo.local_path would disagree.
@@ -1576,34 +1618,10 @@ async def git_status(project_id: str):
     if ws_folder is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    repo_path = ws_folder / (project.repo.local_path or "repo")
-    if not repo_path.exists():
-        raise HTTPException(status_code=404, detail="Repo directory not found. Clone first.")
-
-    def _collect_git_status():
-        status = subprocess.run(
-            ["git", "status", "--short"], cwd=str(repo_path),
-            capture_output=True, text=True, timeout=10
-        )
-        log = subprocess.run(
-            ["git", "log", "--oneline", "-10"], cwd=str(repo_path),
-            capture_output=True, text=True, timeout=10
-        )
-        branch = subprocess.run(
-            ["git", "branch", "--show-current"], cwd=str(repo_path),
-            capture_output=True, text=True, timeout=10
-        )
-        return status, log, branch
-
     try:
-        status, log, branch = await asyncio.to_thread(_collect_git_status)
-        return {
-            "branch": branch.stdout.strip(),
-            "status": status.stdout.strip(),
-            "recent_commits": log.stdout.strip(),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return await asyncio.to_thread(git_service.git_status, project, ws_folder)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
 
 @router.post("/{project_id}/git-pull")
@@ -1617,16 +1635,39 @@ async def git_pull(project_id: str):
     if ws_folder is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    repo_path = ws_folder / (project.repo.local_path or "repo")
-    if not repo_path.exists():
-        raise HTTPException(status_code=404, detail="Repo directory not found")
-
     try:
-        output = await asyncio.to_thread(git_ops.pull, repo_path, provider=_repo_provider(project))
-        return {"output": output, "returncode": 0}
-    except GitOpsError as e:
-        status = 504 if "timed out" in str(e) else 500
-        raise HTTPException(status_code=status, detail=str(e))
+        return await asyncio.to_thread(git_service.git_pull, project, ws_folder)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+
+class GitPublishRequest(BaseModel):
+    branch: Optional[str] = None
+    title: str
+    body: str = ""
+    base: Optional[str] = None
+    draft: bool = True
+    open_pr: bool = True
+
+
+@router.post("/{project_id}/git/publish")
+async def git_publish_route(project_id: str, payload: GitPublishRequest):
+    """Commit, push a branch and open a PR/MR: the dashboard button for git_publish.
+
+    Delegates to git_service.publish, which itself delegates to
+    tools.git_publish.run_git_publish — the same function the git_publish
+    agent tool calls, so the branch-protection refusals (never the default
+    branch, never a PR/MR from a branch onto itself) apply exactly the same
+    way here as they do to an agent's own call.
+    """
+    try:
+        return await asyncio.to_thread(
+            git_service.publish, project_id,
+            branch=payload.branch, title=payload.title, body=payload.body,
+            base=payload.base, draft=payload.draft, open_pr=payload.open_pr,
+        )
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
 
 # ─────────────────────────── BACKEND / SWAGGER ────────────────────────────
@@ -1672,32 +1713,12 @@ async def proxy_api_request(project_id: str, payload: ProjectApiRequest):
     base = payload.base_url or backend.base_url or (f"http://localhost:{backend.port}" if backend.port else None)
     if not base:
         raise HTTPException(status_code=400, detail="No backend URL configured. Set base_url in the API tab.")
-    url = f"{base}{payload.path}"
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.request(
-                method=payload.method.upper(),
-                url=url,
-                headers=payload.headers or {},
-                json=payload.body if payload.method.upper() not in ("GET", "DELETE") else None,
-            )
-            try:
-                body = response.json()
-            except Exception:
-                body = response.text
-
-            return {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "body": body,
-            }
-    except httpx.ConnectError:
-        raise HTTPException(status_code=502, detail=f"Cannot connect to backend at {base}")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Request to backend timed out")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return await proxy_service.proxy_api_request(
+            base, payload.method, payload.path, payload.headers, payload.body)
+    except ServiceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
 
 # ── The project registry chat ────────────────────────────────────────────────
@@ -1780,60 +1801,34 @@ def _registry_chat_prompt(workspace: str, history: list, user_message: str) -> s
     return "\n".join(parts)
 
 
-@router.get("/registry/chat")
-async def get_registry_chat(workspace: Optional[str] = Query(None)):
-    """The registry chat for one workspace: transcript plus the replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_registry_chat(request):
+    from types import SimpleNamespace
 
-    chat_id = _registry_chat_id(workspace)
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(REGISTRY_CHAT_KIND, chat_id),
-        "trace": chat_store.get_trace(REGISTRY_CHAT_KIND, chat_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": REGISTRY_CHAT_KIND, "id": chat_id},
-    }
+    workspace = _registry_chat_id(request.query_params.get("workspace"))
+    return SimpleNamespace(entity_id=workspace, workspace=workspace)
 
 
-@router.delete("/registry/chat")
-async def clear_registry_chat(workspace: Optional[str] = Query(None)):
-    """Clear the transcript and start a fresh session. No project is touched."""
-    from common.entity_chat_store import entity_chat_store
-
-    chat_id = _registry_chat_id(workspace)
-    epoch = entity_chat_store().clear(REGISTRY_CHAT_KIND, chat_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/registry/chat")
-async def chat_registry(payload: RegistryChatIn,
-                        workspace: Optional[str] = Query(None)):
-    """Run one turn of the project registry chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
-    ``projects`` event carrying the registry as it stands after the turn, the
-    final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
+def _load_registry_send(request, body):
     from common.bootstrap import ensure_system_agent
 
     if not ensure_system_agent(REGISTRY_AGENT_ID):
         raise HTTPException(status_code=503,
                             detail=f"The '{REGISTRY_AGENT_ID}' agent is not registered")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    from types import SimpleNamespace
 
-    workspace = _registry_chat_id(workspace or payload.workspace)
-    chat_id = workspace
-    before = _registry_state(workspace)
+    # Accepted in the body too, but the query parameter wins — the shared SSE
+    # client posts only ``{message}``, so the query string is how every caller
+    # actually gets the workspace across.
+    workspace = _registry_chat_id(request.query_params.get("workspace") or body.get("workspace"))
+    ctx = SimpleNamespace(entity_id=workspace, workspace=workspace)
+    ctx.before = _registry_state(workspace)
+    return ctx
 
+
+def _registry_summarize(ctx):
     def _summarize() -> str:
-        after = _registry_state(workspace)
+        after = _registry_state(ctx.workspace)
+        before = ctx.before
         if after == before:
             return ""
         was = {p["id"] for p in before["projects"]}
@@ -1846,44 +1841,32 @@ async def chat_registry(payload: RegistryChatIn,
         if not bits:
             bits.append("updated a project")
         return "Done — " + ", ".join(bits) + "."
-
-    spec = EntityChatSpec(
-        kind=REGISTRY_CHAT_KIND,
-        agent_id=REGISTRY_AGENT_ID,
-        title=f"{workspace} · projects",
-        workspace=workspace,
-    )
-
-    async def run_turn(queue: asyncio.Queue):
-        from common.workspace_context import _workspace_ctx
-
-        # The registry tools resolve the workspace from this ContextVar, so a
-        # project lands where the user is looking.
-        _workspace_ctx.set(workspace)
-
-        await run_entity_chat_turn(
-            queue, spec, chat_id, user_message,
-            lambda history: _registry_chat_prompt(workspace, history, user_message),
-            summarize=_summarize,
-        )
-        await queue.put({"type": "projects", "projects": _registry_state(workspace)["projects"]})
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": REGISTRY_CHAT_KIND, "id": chat_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+    return _summarize
 
 
-@router.post("/registry/chat/stop")
-async def stop_registry_chat(workspace: Optional[str] = Query(None)):
-    """Stop the in-flight registry turn for this workspace."""
-    from chat.entity_chat import cancel_entity_runs
+def _registry_context_setup(ctx):
+    from common.workspace_context import _workspace_ctx
 
-    cancelled = cancel_entity_runs(REGISTRY_CHAT_KIND, _registry_chat_id(workspace))
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+    # The registry tools resolve the workspace from this ContextVar, so a
+    # project lands where the user is looking.
+    _workspace_ctx.set(ctx.workspace)
+
+
+async def _registry_post_turn(queue, ctx):
+    await queue.put({"type": "projects", "projects": _registry_state(ctx.workspace)["projects"]})
+
+
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=REGISTRY_CHAT_KIND,
+    path="/registry/chat",
+    load=_load_registry_chat,
+    load_for_send=_load_registry_send,
+    prompt=lambda ctx, history, msg: _registry_chat_prompt(ctx.workspace, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=REGISTRY_CHAT_KIND, agent_id=REGISTRY_AGENT_ID,
+        title=f"{ctx.workspace} · projects", workspace=ctx.workspace,
+    ),
+    summarize=_registry_summarize,
+    context_setup=_registry_context_setup,
+    post_turn=_registry_post_turn,
+)))

@@ -9,40 +9,57 @@ Agent Playground API — scenarios, simulation runs, the tick log.
 ``POST /api/playground/worlds/generate``       build a whole world from a description
 ``GET|POST|DELETE /api/playground/worlds/{id}/chat``   the world's build chat
 ``GET|POST /api/playground/scenarios``         list / create scenarios
+``GET  /api/playground/scenarios/templates``   ready made scenarios (the lab)
+``POST /api/playground/scenarios/from-template``   create one from a template
+``POST /api/playground/scenarios/{id}/repeat-eval``   reproducibility eval over N repeats
 ``GET|PUT|DELETE /api/playground/scenarios/{id}``
 ``POST /api/playground/scenarios/{id}/estimate``   projected spend
-``POST /api/playground/scenarios/{id}/run``        start a simulation (background)
+``POST /api/playground/scenarios/{id}/run``        start a simulation, as its own process
 ``GET  /api/playground/runs``                  run history (all scenarios, or one)
 ``GET  /api/playground/runs/{id}``             one run + its scores
 ``GET  /api/playground/runs/{id}/ticks``       the tick log (``?since=`` to poll)
 ``POST /api/playground/runs/{id}/stop``        stop a running sim now
+``POST /api/playground/runs/{id}/resume``      relaunch a stopped or failed run from its checkpoint
 ``POST /api/playground/runs/{id}/trigger``     poke one agent from outside
 
 A simulation is N agents x T ticks of LLM calls — minutes, not seconds — so a
-run starts on a background thread and the UI follows the ``sim:<id>`` stream
-(or polls ``/ticks?since=``). The tick log is the artifact of record, so
-watching live and reviewing afterwards read the same rows.
+run is its own process (``playground.launcher``, ``runtime/scenario_run.py``,
+the same shared launch envelope a flow or a team run gets), launched here and
+followed on the UI's side through the ``sim:<id>`` stream (or a poll of
+``/ticks?since=``). The tick log is the artifact of record, so watching live
+and reviewing afterwards read the same rows.
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from playground import store, story as story_lib
-from playground.environments import list_environments
-from playground.models import ACTIVATIONS, Role, Scenario, utc_iso
-from playground.worlds import WorldSpec, new_world_id, validate_world, warnings_for
-from playground.runner import (
-    estimate_cost, run_simulation, stop_simulation, trigger_agent,
-)
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+from common.config import playground_enabled
 
 router = APIRouter(prefix="/api/playground", tags=["playground"])
+
+# The ``playground`` package (~17% of the backend by line count) is optional:
+# when PLAYGROUND_ENABLED=false, main.py never includes this router, so the
+# names below are never called. Guarding the import here (rather than only
+# skipping include_router) is what keeps ``import playground`` itself out of
+# a disabled backend's startup path. See docs/playground.md.
+if playground_enabled():
+    from playground import store, story as story_lib
+    from playground.environments import list_environments
+    from playground.models import ACTIVATIONS, MODES, Role, Scenario, utc_iso
+    from playground.worlds import WorldSpec, new_world_id, validate_world, warnings_for
+    from playground.runner import estimate_cost
+    from playground.launcher import (
+        ScenarioResumeError, resume_scenario_run, start_scenario_run,
+        stop_scenario_run, trigger_scenario_run,
+    )
 
 
 class RoleIn(BaseModel):
@@ -70,6 +87,23 @@ class ScenarioIn(BaseModel):
     environment: str = "market"
     env_params: Dict[str, Any] = {}
     roles: List[RoleIn] = []
+    # Who plays a role: personas (the default, a bare model) or agents (the
+    # real agent behind each role.agent_id, with the environment's tool
+    # allowlist). See playground.models.MODES and docs/playground.md.
+    mode: str = "personas"
+    # How many tool calls one agents-mode decision may make in a tick before
+    # it is cut off. Ignored in personas mode.
+    max_tool_calls_per_tick: int = 8
+    # The task this scenario's runs work on, when it has one. Optional on
+    # the wire so a client that predates it does not blank what was set.
+    task_id: Optional[str] = None
+    # Reference material injected into every role's system prompt. Each entry
+    # is either {"name", "text"} or a plain workspace-relative path string.
+    documents: Optional[List[Any]] = None
+    # A team whose members play the scenario when it has no roles of its own
+    # (playground.runner.roles_from_team). Optional on the wire: omitted means
+    # unchanged, an empty string clears it.
+    team_id: Optional[str] = None
     activation: str = "synchronous"
     max_ticks: int = 20
     # Seconds of silence tolerated from a model, not seconds to a finished
@@ -100,6 +134,17 @@ def _scenario_from_in(data: ScenarioIn, existing: Optional[Scenario] = None) -> 
         environment=data.environment,
         env_params=dict(data.env_params or {}),
         roles=[Role.from_dict(r.model_dump()) for r in data.roles],
+        mode=(data.mode if data.mode in MODES else "personas"),
+        max_tool_calls_per_tick=data.max_tool_calls_per_tick,
+        # Omitted means unchanged, not cleared — the same rule ``narrative``
+        # follows above: a client that predates task_id/documents must not
+        # blank what an earlier save (or the build chat) set.
+        task_id=(data.task_id if data.task_id is not None
+                 else (existing.task_id if existing else None)),
+        documents=(list(data.documents) if data.documents is not None
+                   else (list(existing.documents) if existing else [])),
+        team_id=((data.team_id.strip() or None) if data.team_id is not None
+                 else (existing.team_id if existing else None)),
         activation=(data.activation if data.activation in ACTIVATIONS
                     else "synchronous"),
         max_ticks=data.max_ticks,
@@ -441,10 +486,6 @@ _WORLD_FIELDS = ("name", "description", "starting_location", "time_of_day",
                  "hours_per_tick", "rules", "base_actions", "end_when")
 
 
-class WorldChatIn(BaseModel):
-    message: str = ""
-
-
 class WorldGenerateIn(BaseModel):
     requirement: str
     workspace: Optional[str] = None
@@ -534,63 +575,31 @@ def _world_workspace_path(spec: WorldSpec) -> Optional[str]:
         return None
 
 
-@router.get("/worlds/{world_id}/chat")
-async def get_world_chat(world_id: str):
-    """The build chat for one world: the transcript, and the rich trace the UI
-    replays on reload so the session comes back, not just the conversation."""
-    from common.entity_chat_store import entity_chat_store
+def _load_world_chat(request):
+    """The world a build-chat route needs, or a 404 in the shape ``_refuse`` gives."""
+    from types import SimpleNamespace
 
-    if not store.get_world(world_id):
+    world_id = request.path_params["world_id"]
+    world = store.get_world(world_id)
+    if not world:
         raise _refuse(404, "world_not_found", "World not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(WORLD_CHAT_KIND, world_id),
-        "trace": chat_store.get_trace(WORLD_CHAT_KIND, world_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": WORLD_CHAT_KIND, "id": world_id},
-    }
+    return SimpleNamespace(entity_id=world_id, world=world)
 
 
-@router.delete("/worlds/{world_id}/chat")
-async def clear_world_chat(world_id: str):
-    """Clear the transcript and start a fresh session. The world is untouched."""
-    from common.entity_chat_store import entity_chat_store
-
-    if not store.get_world(world_id):
-        raise _refuse(404, "world_not_found", "World not found")
-    epoch = entity_chat_store().clear(WORLD_CHAT_KIND, world_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
+def _load_world_send(request, body):
+    ctx = _load_world_chat(request)
+    ctx.before = ctx.world.to_dict()
+    return ctx
 
 
-@router.post("/worlds/{world_id}/chat")
-async def chat_world(world_id: str, payload: WorldChatIn):
-    """Run one turn of the world build chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
-    ``world`` event carrying the world as it stands after the turn — so the
-    form reloads without a second request — the final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
-
-    spec = store.get_world(world_id)
-    if not spec:
-        raise _refuse(404, "world_not_found", "World not found")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise _refuse(400, "empty_message", "Empty message")
-
-    before = spec.to_dict()
-
+def _world_summarize(ctx):
     def _summarize() -> str:
         """What changed, for a run that ended without usable words of its own."""
-        after_spec = store.get_world(world_id)
+        after_spec = store.get_world(ctx.entity_id)
         if not after_spec:
             return "The world is gone."
         after = after_spec.to_dict()
+        before = ctx.before
         if after == before:
             return ""
         bits = []
@@ -604,55 +613,56 @@ async def chat_world(world_id: str, payload: WorldChatIn):
         if not bits:
             bits.append("retuned its details")
         return "Done — " + ", ".join(bits) + "."
+    return _summarize
 
-    chat_spec = EntityChatSpec(
-        kind=WORLD_CHAT_KIND,
-        agent_id=WORLD_AGENT_ID,
-        title=f"{spec.name} · world",
-        workspace=spec.workspace,
-        workspace_path=_world_workspace_path(spec),
-    )
 
-    async def run_turn(queue: asyncio.Queue):
+def _world_context_setup(ctx):
+    # The builder's tools resolve the workspace from this ContextVar (it
+    # propagates into the threads the sync tools run on), so edits land in
+    # the world's own workspace rather than the UI's current one.
+    if ctx.world.workspace:
         from common.workspace_context import _workspace_ctx
+        _workspace_ctx.set(ctx.world.workspace)
 
-        # The builder's tools resolve the workspace from this ContextVar (it
-        # propagates into the threads the sync tools run on), so edits land in
-        # the world's own workspace rather than the UI's current one.
-        if spec.workspace:
-            _workspace_ctx.set(spec.workspace)
 
-        await run_entity_chat_turn(
-            queue, chat_spec, world_id, user_message,
-            lambda history: _world_chat_prompt(store.get_world(world_id) or spec,
-                                               history, user_message),
-            summarize=_summarize,
-        )
-        after = store.get_world(world_id)
-        if after:
-            await queue.put({"type": "world", "world": _world_payload(after)})
+async def _world_post_turn(queue, ctx):
+    after = store.get_world(ctx.entity_id)
+    if after:
+        await queue.put({"type": "world", "world": _world_payload(after)})
 
+
+def _world_tap(ctx):
+    # The tap is what makes the turn watchable: every tool the builder
+    # finishes is followed by whatever it changed in the world, as lines in
+    # the chat and as a fresh world for the form.
     def _read_world():
-        current = store.get_world(world_id)
+        current = store.get_world(ctx.entity_id)
         return (current.to_dict(), current) if current else None
 
-    async def event_stream():
-        # The tap is what makes the turn watchable: every tool the builder
-        # finishes is followed by whatever it changed in the world, as lines in
-        # the chat and as a fresh world for the form.
-        queue = RecordingQueue(tap=_live_change_tap(
-            _read_world,
-            lambda spec: {"type": "world", "world": _world_payload(spec)},
-            sections=_WORLD_SECTIONS, fields=_WORLD_FIELDS,
-        ))
-        yield sse({"type": "meta", "kind": WORLD_CHAT_KIND, "id": world_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
+    return _live_change_tap(
+        _read_world,
+        lambda spec: {"type": "world", "world": _world_payload(spec)},
+        sections=_WORLD_SECTIONS, fields=_WORLD_FIELDS,
+    )
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=WORLD_CHAT_KIND,
+    path="/worlds/{world_id}/chat",
+    load=_load_world_chat,
+    load_for_send=_load_world_send,
+    prompt=lambda ctx, history, msg: _world_chat_prompt(
+        store.get_world(ctx.entity_id) or ctx.world, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=WORLD_CHAT_KIND, agent_id=WORLD_AGENT_ID,
+        title=f"{ctx.world.name} · world", workspace=ctx.world.workspace,
+        workspace_path=_world_workspace_path(ctx.world),
+    ),
+    summarize=_world_summarize,
+    context_setup=_world_context_setup,
+    post_turn=_world_post_turn,
+    tap=_world_tap,
+)))
 
 
 @router.post("/worlds/generate")
@@ -692,7 +702,6 @@ async def generate_world(data: WorldGenerateIn):
         overrides = {k: v for k, v in (("provider", data.provider),
                                        ("model", data.model),
                                        ("base_url", data.base_url)) if v}
-        agent = create_agent(WORLD_AGENT_ID, workspace=ws_path, **overrides)
 
         instruction = (
             "Design and create a playground world for the following request. "
@@ -704,7 +713,16 @@ async def generate_world(data: WorldGenerateIn):
             "create_world_tool and check it with validate_world_tool.\n\n"
             f"Request:\n{data.requirement}"
         )
-        result = await asyncio.to_thread(agent.run, instruction)
+        from services import jobs as _jobs
+        if _jobs.enabled():
+            # On a runner replica (docs/services.md); the result reads like
+            # the agent's own, tool steps included.
+            result = _jobs.InvokeResult(await _jobs.invoke_async(ws_name, {
+                "agent_id": WORLD_AGENT_ID, "workspace": ws_path, "workspace_name": ws_name,
+                "overrides": overrides, "prompt": instruction}))
+        else:
+            agent = create_agent(WORLD_AGENT_ID, workspace=ws_path, **overrides)
+            result = await asyncio.to_thread(agent.run, instruction)
     except Exception as e:  # noqa: BLE001
         raise _refuse(500, "generation_failed", f"World generation failed: {e}")
 
@@ -745,22 +763,6 @@ async def generate_world(data: WorldGenerateIn):
     }
 
 
-@router.post("/worlds/{world_id}/chat/stop")
-async def stop_world_chat(world_id: str):
-    """Stop the in-flight build run for this world.
-
-    The agent runs detached from the SSE connection, so aborting the browser
-    request cannot stop it — this cancels the underlying task. Whatever it
-    already saved is kept and the run closes cleanly.
-    """
-    from chat.entity_chat import cancel_entity_runs
-
-    if not store.get_world(world_id):
-        raise _refuse(404, "world_not_found", "World not found")
-    cancelled = cancel_entity_runs(WORLD_CHAT_KIND, world_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
-
-
 # ── Scenarios ─────────────────────────────────────────────────────────────────
 
 @router.get("/scenarios")
@@ -781,10 +783,58 @@ async def get_scenarios(workspace: Optional[str] = None):
     ]}
 
 
+def _check_team(team_id: Optional[str]) -> None:
+    """Refuse a team id that names no team: a scenario cast by a missing team
+    fails at Run with no roles, and the save is where that is cheap to say."""
+    if not team_id:
+        return
+    from teams.store import get_team
+    if get_team(team_id) is None:
+        raise HTTPException(status_code=400, detail=f"team {team_id!r} does not exist")
+
+
+@router.get("/scenarios/templates")
+async def get_scenario_templates():
+    """Ready made scenarios to start from (``playground.scenario_templates``).
+
+    Declared before ``/scenarios/{scenario_id}`` so the path is not read as
+    a scenario id.
+    """
+    from playground.scenario_templates import list_templates
+    return {"templates": list_templates()}
+
+
+class FromTemplateIn(BaseModel):
+    template: str = "lab"
+    workspace: Optional[str] = None
+    # One agent plays every role, or a team's members play the scenario.
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    name: Optional[str] = None
+
+
+@router.post("/scenarios/from-template")
+async def create_scenario_from_template(data: FromTemplateIn):
+    """Create a scenario from a template, cast by one agent or by a team."""
+    from playground.scenario_templates import scenario_from_template
+    try:
+        payload = scenario_from_template(data.template, workspace=data.workspace,
+                                         agent_id=data.agent_id, team_id=data.team_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown template {data.template!r}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if data.name and data.name.strip():
+        payload["name"] = data.name.strip()
+    _check_team(payload.get("team_id"))
+    return store.save_scenario(Scenario.from_dict(payload)).to_dict()
+
+
 @router.post("/scenarios")
 async def create_scenario(data: ScenarioIn):
     if not data.name.strip():
         raise HTTPException(status_code=400, detail="name is required")
+    _check_team(data.team_id)
     return store.save_scenario(_scenario_from_in(data)).to_dict()
 
 
@@ -805,6 +855,7 @@ async def update_scenario(scenario_id: str, data: ScenarioIn):
     # nameless one is a blank row in every list that offers to run it.
     if not data.name.strip():
         raise HTTPException(status_code=400, detail="name is required")
+    _check_team(data.team_id)
     return store.save_scenario(_scenario_from_in(data, existing)).to_dict()
 
 
@@ -830,55 +881,133 @@ async def estimate_scenario(scenario_id: str):
     return estimate_cost(scenario)
 
 
+class RepeatEvalIn(BaseModel):
+    repeats: int = 3
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+def _repeat_eval_graders(scenario) -> List[Dict[str, Any]]:
+    """What a reproducibility run checks on every repeat.
+
+    The eval output of a scenario is ``evals.targets.render_scenario``: the
+    scores and the final state as text. The lab scores ``hypotheses_decided``
+    and ``experiments_run`` on every role, so "at least one hypothesis
+    decided, at least one experiment run" is two regex assertions over that
+    text; any other environment gets the generic check that the run produced
+    scores at all.
+    """
+    if scenario.environment == "lab":
+        checks = [
+            {"type": "matches", "value": r'"hypotheses_decided":\s*[1-9]'},
+            {"type": "matches", "value": r'"experiments_run":\s*[1-9]'},
+        ]
+    else:
+        checks = [{"type": "matches", "value": r"Scores:\n\s+\S"}]
+    return [{"kind": "assertions", "params": {"assertions": checks}, "weight": 1.0}]
+
+
+@router.post("/scenarios/{scenario_id}/repeat-eval")
+async def repeat_eval(scenario_id: str, data: RepeatEvalIn):
+    """Run the same scenario N times as an eval, to see whether it reproduces.
+
+    Creates an eval set "Reproducibility: <name>" with one case (the research
+    question, or the scenario's description) targeting this scenario with
+    ``repeats``, then starts the sweep through ``evals.runner.run_eval``, the
+    function ``POST /api/evals/{id}/run`` uses, on a background thread: a
+    sweep is N whole simulations. Returns once the eval run row exists, with
+    ``{eval_id, eval_run_id}`` for the Evals page to follow.
+    """
+    from evals import store as eval_store
+    from evals.models import MAX_REPEATS, Case, EvalSet, GraderSpec, RunConfig
+
+    scenario = store.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    repeats = int(data.repeats or 1)
+    if repeats < 1 or repeats > MAX_REPEATS:
+        raise HTTPException(status_code=400,
+                            detail=f"repeats must be between 1 and {MAX_REPEATS}")
+    question = str((scenario.env_params or {}).get("question") or "").strip()
+    evalset = EvalSet(
+        name=f"Reproducibility: {scenario.name or scenario_id}",
+        description=f"{repeats} repeats of scenario {scenario.name or scenario_id}",
+        workspace=scenario.workspace,
+        target={"kind": "scenario", "id": scenario_id},
+        cases=[Case(input=question or scenario.description or scenario.name,
+                    metadata={"scenario_id": scenario_id})],
+        graders=[GraderSpec.from_dict(g) for g in _repeat_eval_graders(scenario)],
+    )
+    eval_store.save_eval_set(evalset)
+    config = RunConfig(target={"kind": "scenario", "id": scenario_id},
+                       provider=data.provider or None, model=data.model or None,
+                       repeats=repeats)
+    eval_run_id = await asyncio.to_thread(
+        _start_eval_in_background, evalset.eval_set_id, config, scenario.workspace,
+    )
+    return {"eval_id": evalset.eval_set_id, "eval_run_id": eval_run_id,
+            "repeats": repeats}
+
+
+def _start_eval_in_background(eval_set_id: str, config, workspace: Optional[str],
+                              wait_seconds: float = 10.0) -> Optional[str]:
+    """Start ``run_eval`` on a daemon thread and return its run id.
+
+    ``run_eval`` writes the eval run row before its first cell and only
+    returns when the whole sweep is done, so the id is read back from the
+    store (the set is brand new: its only run is this one) rather than from
+    the return value. ``None`` when the row did not appear in time; the sweep
+    still runs, and the set's run history shows it.
+    """
+    import threading
+    import time as _time
+
+    from evals import store as eval_store
+    from evals.runner import run_eval
+
+    def _go() -> None:
+        try:
+            run_eval(eval_set_id, [config], workspace=workspace)
+        except Exception:  # noqa: BLE001 - a failed sweep is recorded on its run row
+            import logging
+            logging.getLogger(__name__).exception("reproducibility eval %s failed", eval_set_id)
+
+    threading.Thread(target=_go, name=f"repeat-eval-{eval_set_id}", daemon=True).start()
+    deadline = _time.monotonic() + wait_seconds
+    while _time.monotonic() < deadline:
+        runs = eval_store.list_eval_runs(eval_set_id, 1)
+        if runs:
+            return runs[0].eval_run_id
+        _time.sleep(0.05)
+    return None
+
+
 # ── Runs ──────────────────────────────────────────────────────────────────────
 
 @router.post("/scenarios/{scenario_id}/run")
 async def start_run(scenario_id: str, workspace: Optional[str] = None):
-    """Start a simulation on a background thread and return its id immediately.
+    """Start a simulation as its own process and return its run record.
 
-    A sim is minutes of LLM calls; holding the request open for it would tie up
-    a worker and give the UI nothing to show in the meantime. The caller follows
-    ``sim:<id>`` on the stream, or polls the tick log.
+    A sim is minutes of LLM calls; holding the request open for them would tie
+    up a worker and give the UI nothing to show in the meantime. This returns
+    as soon as the run record is written and its process is launched (or
+    queued, in the ``api`` role — see ``runtime/entity_launch.py``), which is
+    normally milliseconds. The caller follows ``sim:<id>`` on the stream, or
+    polls the tick log.
     """
     scenario = store.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
-    if not scenario.roles:
+    if not scenario.roles and not scenario.team_id:
         raise HTTPException(status_code=400, detail="Scenario has no roles")
 
-    # The client needs a run id to poll, and only run_simulation mints one, so
-    # the run reports itself the moment its row is written — well before the
-    # first model call answers. Taking "the newest run of this scenario"
-    # instead would hand back the *previous* run whenever this one has not been
-    # written yet, and the page would sit on a finished run watching nothing.
-    ready = threading.Event()
-    started: Dict[str, Any] = {}
-    failure: Dict[str, Any] = {}
-
-    def _worker():
-        def _on_start(run) -> None:
-            started["run"] = run.to_dict()
-            ready.set()
-
-        try:
-            run_simulation(scenario_id, workspace=workspace or scenario.workspace,
-                           on_start=_on_start)
-        except Exception as e:  # noqa: BLE001
-            failure["error"] = f"{type(e).__name__}: {e}"
-        finally:
-            ready.set()
-
-    threading.Thread(target=_worker, name=f"sim-{scenario_id}", daemon=True).start()
-
-    # Everything before the row is written is setup — building the world,
-    # validating the roster — so this normally returns in milliseconds. The
-    # simulation itself keeps running regardless of when we return.
-    await asyncio.to_thread(ready.wait, 10.0)
-    if started:
-        return started["run"]
-    if failure:
-        raise HTTPException(status_code=400, detail=failure["error"])
-    return {"scenario_id": scenario_id, "status": "starting"}
+    try:
+        run = await asyncio.to_thread(
+            start_scenario_run, scenario_id, workspace=workspace or scenario.workspace,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return run.to_dict()
 
 
 @router.get("/runs")
@@ -1009,9 +1138,23 @@ async def stop_run(sim_run_id: str):
     the end of the tick they were already in. The world is left as of the last
     tick that completed, which is the last consistent state there is.
     """
-    if not stop_simulation(sim_run_id):
+    if not stop_scenario_run(sim_run_id):
         raise HTTPException(status_code=400, detail="Run is not running")
     return {"ok": True}
+
+
+@router.post("/runs/{sim_run_id}/resume")
+async def resume_run(sim_run_id: str):
+    """Relaunch a stopped or failed run from its checkpoint, under the same id.
+
+    Refused (400) for a run that has already completed or has no checkpoint to
+    resume from — see ``playground.launcher.resume_scenario_run``.
+    """
+    try:
+        run = await asyncio.to_thread(resume_scenario_run, sim_run_id)
+    except ScenarioResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return run.to_dict()
 
 
 class TriggerIn(BaseModel):
@@ -1033,8 +1176,8 @@ async def trigger_run(sim_run_id: str, data: TriggerIn):
         raise HTTPException(status_code=400, detail="agent is required")
     if not data.text.strip():
         raise HTTPException(status_code=400, detail="text is required")
-    if not trigger_agent(sim_run_id, data.agent.strip(), data.text,
-                         data.sender or "(external)"):
+    if not trigger_scenario_run(sim_run_id, data.agent.strip(), data.text,
+                                data.sender or "(external)"):
         raise HTTPException(
             status_code=400,
             detail="Run is not accepting triggers (finished, or running in another process)",
@@ -1061,10 +1204,6 @@ _SCENARIO_SECTIONS = ("roles",)
 _SCENARIO_FIELDS = ("name", "description", "environment", "activation")
 _SCENARIO_MAPS = ("env_params", "limits")
 SCENARIO_CHAT_KIND = "scenario"
-
-
-class ScenarioChatIn(BaseModel):
-    message: str = ""
 
 
 class ScenarioGenerateIn(BaseModel):
@@ -1187,72 +1326,31 @@ def _scenario_workspace_path(scenario) -> Optional[str]:
         return None
 
 
-@router.get("/scenarios/{scenario_id}/chat")
-async def get_scenario_chat(scenario_id: str):
-    """The build chat for one scenario.
+def _load_scenario_chat(request):
+    """The scenario a build-chat route needs, or a plain 404 as before."""
+    from types import SimpleNamespace
 
-    ``messages`` is the plain transcript; ``trace`` is the rich feed (thinking +
-    tool steps interleaved) the UI replays on reload so the whole session — not
-    just the conversation — comes back.
-    """
-    from common.entity_chat_store import entity_chat_store
-
-    if not store.get_scenario(scenario_id):
-        raise HTTPException(status_code=404, detail="Scenario not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(SCENARIO_CHAT_KIND, scenario_id),
-        "trace": chat_store.get_trace(SCENARIO_CHAT_KIND, scenario_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": SCENARIO_CHAT_KIND, "id": scenario_id},
-    }
-
-
-@router.delete("/scenarios/{scenario_id}/chat")
-async def clear_scenario_chat(scenario_id: str):
-    """Clear the transcript and start a fresh chat session.
-
-    The scenario itself is untouched — this wipes the conversation and advances
-    the session epoch so the next turn opens a new run-thread in Messages.
-    """
-    from common.entity_chat_store import entity_chat_store
-
-    if not store.get_scenario(scenario_id):
-        raise HTTPException(status_code=404, detail="Scenario not found")
-    epoch = entity_chat_store().clear(SCENARIO_CHAT_KIND, scenario_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/scenarios/{scenario_id}/chat")
-async def chat_scenario(scenario_id: str, payload: ScenarioChatIn):
-    """Run one turn of the scenario build chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
-    ``scenario`` event carrying the configuration as it stands after the turn
-    (so the form reloads without a second request), the final ``message`` and
-    ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        register_entity_run, run_entity_chat_turn, spawn_detached, sse,
-    )
-
+    scenario_id = request.path_params["scenario_id"]
     scenario = store.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    return SimpleNamespace(entity_id=scenario_id, scenario=scenario)
 
-    before = _scenario_state(scenario)
 
+def _load_scenario_send(request, body):
+    ctx = _load_scenario_chat(request)
+    ctx.before = _scenario_state(ctx.scenario)
+    return ctx
+
+
+def _scenario_summarize(ctx):
     def _summarize() -> str:
         """What changed, for a run that ended without usable words of its own."""
-        after_scenario = store.get_scenario(scenario_id)
+        after_scenario = store.get_scenario(ctx.entity_id)
         if not after_scenario:
             return "The scenario is gone."
         after = _scenario_state(after_scenario)
+        before = ctx.before
         if after == before:
             return ""
         bits = []
@@ -1269,74 +1367,59 @@ async def chat_scenario(scenario_id: str, payload: ScenarioChatIn):
         if after.get("narrative") != before.get("narrative"):
             bits.append("wrote its narrative")
         return ("Done — " + ", ".join(bits) + ".") if bits else "Done — the scenario was updated."
+    return _summarize
 
-    spec = EntityChatSpec(
-        kind=SCENARIO_CHAT_KIND,
-        agent_id=SCENARIO_AGENT_ID,
-        title=f"{scenario.name} · scenario",
-        workspace=scenario.workspace,
-        workspace_path=_scenario_workspace_path(scenario),
-    )
 
-    async def run_turn(queue: asyncio.Queue):
+def _scenario_context_setup(ctx):
+    # The builder's tools resolve the workspace from this ContextVar (it
+    # propagates into the threads the sync tools run on), so edits land in
+    # the scenario's own workspace rather than the UI's current one.
+    if ctx.scenario.workspace:
         from common.workspace_context import _workspace_ctx
+        _workspace_ctx.set(ctx.scenario.workspace)
 
-        # The builder's tools resolve the workspace from this ContextVar (it
-        # propagates into the threads the sync tools run on), so edits land in
-        # the scenario's own workspace rather than the UI's current one.
-        if scenario.workspace:
-            _workspace_ctx.set(scenario.workspace)
 
-        await run_entity_chat_turn(
-            queue, spec, scenario_id, user_message,
-            lambda history: _scenario_chat_prompt(store.get_scenario(scenario_id) or scenario,
-                                                  history, user_message),
-            summarize=_summarize,
-        )
-        # The page's form is driven off this: one event with the configuration
-        # as it now stands, rather than a refetch the user has to wait for.
-        after = store.get_scenario(scenario_id)
-        if after:
-            await queue.put({"type": "scenario", "scenario": after.to_dict()})
+async def _scenario_post_turn(queue, ctx):
+    # The page's form is driven off this: one event with the configuration
+    # as it now stands, rather than a refetch the user has to wait for.
+    after = store.get_scenario(ctx.entity_id)
+    if after:
+        await queue.put({"type": "scenario", "scenario": after.to_dict()})
 
+
+def _scenario_tap(ctx):
+    # Same live reporting the world chat has: the cast, the environment
+    # parameters and the limits appear in the form as the tools set them,
+    # each one announced in the conversation.
     def _read_scenario():
-        current = store.get_scenario(scenario_id)
+        current = store.get_scenario(ctx.entity_id)
         return (_scenario_state(current), current) if current else None
 
-    async def event_stream():
-        # Same live reporting the world chat has: the cast, the environment
-        # parameters and the limits appear in the form as the tools set them,
-        # each one announced in the conversation.
-        queue = RecordingQueue(tap=_live_change_tap(
-            _read_scenario,
-            lambda current: {"type": "scenario", "scenario": current.to_dict()},
-            sections=_SCENARIO_SECTIONS, fields=_SCENARIO_FIELDS,
-            maps=_SCENARIO_MAPS,
-        ))
-        yield sse({"type": "meta", "kind": SCENARIO_CHAT_KIND, "id": scenario_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+    return _live_change_tap(
+        _read_scenario,
+        lambda current: {"type": "scenario", "scenario": current.to_dict()},
+        sections=_SCENARIO_SECTIONS, fields=_SCENARIO_FIELDS,
+        maps=_SCENARIO_MAPS,
+    )
 
 
-@router.post("/scenarios/{scenario_id}/chat/stop")
-async def stop_scenario_chat(scenario_id: str):
-    """Stop the in-flight build run for this scenario.
-
-    The agent runs detached from the SSE connection, so aborting the browser
-    request cannot stop it — this cancels the underlying task. Whatever it
-    already saved is kept and the run closes cleanly.
-    """
-    from chat.entity_chat import cancel_entity_runs
-
-    if not store.get_scenario(scenario_id):
-        raise HTTPException(status_code=404, detail="Scenario not found")
-    cancelled = cancel_entity_runs(SCENARIO_CHAT_KIND, scenario_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=SCENARIO_CHAT_KIND,
+    path="/scenarios/{scenario_id}/chat",
+    load=_load_scenario_chat,
+    load_for_send=_load_scenario_send,
+    prompt=lambda ctx, history, msg: _scenario_chat_prompt(
+        store.get_scenario(ctx.entity_id) or ctx.scenario, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=SCENARIO_CHAT_KIND, agent_id=SCENARIO_AGENT_ID,
+        title=f"{ctx.scenario.name} · scenario", workspace=ctx.scenario.workspace,
+        workspace_path=_scenario_workspace_path(ctx.scenario),
+    ),
+    summarize=_scenario_summarize,
+    context_setup=_scenario_context_setup,
+    post_turn=_scenario_post_turn,
+    tap=_scenario_tap,
+)))
 
 
 #: The one instruction the Scenario Creator is given, either way it is run.
@@ -1368,14 +1451,17 @@ def _scenario_generate_scope(data: ScenarioGenerateIn) -> Optional[str]:
     return ws_path
 
 
+def _scenario_overrides(data: ScenarioGenerateIn) -> Dict[str, Any]:
+    return {k: v for k, v in (("provider", data.provider),
+                              ("model", data.model),
+                              ("base_url", data.base_url)) if v}
+
+
 def _scenario_generate_agent(data: ScenarioGenerateIn, ws_path: Optional[str], **extra):
     """Build the Scenario Creator with the caller's model overrides applied."""
     from agents.agent_factory import create_agent
 
-    overrides = {k: v for k, v in (("provider", data.provider),
-                                   ("model", data.model),
-                                   ("base_url", data.base_url)) if v}
-    return create_agent(SCENARIO_AGENT_ID, workspace=ws_path, **overrides, **extra)
+    return create_agent(SCENARIO_AGENT_ID, workspace=ws_path, **_scenario_overrides(data), **extra)
 
 
 def _scenario_generate_preflight(data: ScenarioGenerateIn) -> Optional[Dict[str, Any]]:
@@ -1484,11 +1570,18 @@ async def generate_scenario(data: ScenarioGenerateIn):
         return blocked
 
     try:
-        agent = _scenario_generate_agent(data, _scenario_generate_scope(data))
-        result = await asyncio.to_thread(
-            agent.run,
-            _SCENARIO_GENERATE_INSTRUCTION.format(requirement=data.requirement),
-        )
+        ws_path = _scenario_generate_scope(data)
+        instruction = _SCENARIO_GENERATE_INSTRUCTION.format(requirement=data.requirement)
+        from services import jobs as _jobs
+        if _jobs.enabled():
+            # On a runner replica (docs/services.md).
+            result = _jobs.InvokeResult(await _jobs.invoke_async(data.workspace, {
+                "agent_id": SCENARIO_AGENT_ID, "workspace": ws_path,
+                "workspace_name": data.workspace, "overrides": _scenario_overrides(data),
+                "prompt": instruction}))
+        else:
+            agent = _scenario_generate_agent(data, ws_path)
+            result = await asyncio.to_thread(agent.run, instruction)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Scenario generation failed: {e}")
 
@@ -1536,16 +1629,25 @@ async def generate_scenario_stream(data: ScenarioGenerateIn):
         # Scoped here, inside the detached task, so the ContextVar the tools
         # read is the one this run's threads inherit.
         ws_path = _scenario_generate_scope(data)
+        instruction = _SCENARIO_GENERATE_INSTRUCTION.format(requirement=data.requirement)
         try:
-            agent = await asyncio.to_thread(
-                _scenario_generate_agent, data, ws_path, streaming=True)
-            callback.bind_model(agent.provider or "", agent.model or "")
-            await queue.put({"type": "agent", "agent_id": SCENARIO_AGENT_ID,
-                             "provider": agent.provider or "", "model": agent.model or ""})
-            result = await agent.arun(
-                _SCENARIO_GENERATE_INSTRUCTION.format(requirement=data.requirement),
-                callbacks=[callback],
-            )
+            from chat import remote_agent as _remote_agent
+            if _remote_agent.enabled():
+                # On a runner replica (docs/services.md): its steps stream
+                # back through the same queue.
+                result = await _remote_agent.stream_agent_turn(
+                    queue, agent_id=SCENARIO_AGENT_ID, run_id=new_unique_run_id(),
+                    prompt=instruction, workspace=data.workspace, workspace_path=ws_path,
+                    log_file=str(log_file), build=_scenario_overrides(data))
+                if not result.ok and not result.steps and result.error:
+                    raise RuntimeError(result.error)
+            else:
+                agent = await asyncio.to_thread(
+                    _scenario_generate_agent, data, ws_path, streaming=True)
+                callback.bind_model(agent.provider or "", agent.model or "")
+                await queue.put({"type": "agent", "agent_id": SCENARIO_AGENT_ID,
+                                 "provider": agent.provider or "", "model": agent.model or ""})
+                result = await agent.arun(instruction, callbacks=[callback])
         except Exception as e:  # noqa: BLE001
             await queue.put({"type": "result", "outcome": {
                 "type": "error", "error": f"Scenario generation failed: {e}"}})

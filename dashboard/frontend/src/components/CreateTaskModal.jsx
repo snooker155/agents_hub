@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { createTask, getProjects } from '../api';
 import { useI18n } from '../i18n';
+import DateInput from './DateInput';
+import FileIdsField from './files/FileIdsField';
 
 // Selectable initial statuses (mirrors the task board, minus the system-only
 // "pending"/waiting-approval state which can't be set manually).
@@ -27,6 +29,8 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
     should_decompose: false,
     status: defaultStatus || 'todo',
     project_id: defaultProjectId || '',
+    due_at: '',
+    file_ids: [],
   });
   const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState([]);
@@ -44,7 +48,13 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
     e.preventDefault();
     setLoading(true);
     try {
-      const resp = await createTask({ ...form, project_id: form.project_id || null, workspace_name: selectedWorkspace || null });
+      const resp = await createTask({
+        ...form,
+        project_id: form.project_id || null,
+        workspace_name: selectedWorkspace || null,
+        due_at: form.due_at || null,
+        file_ids: form.file_ids.length ? form.file_ids : null,
+      });
       onCreated?.(resp.data);
       onClose();
     } catch (err) {
@@ -93,6 +103,16 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
             </select>
           </div>
           <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('createTaskModal.dueDateOptional')}</label>
+            <DateInput
+              mode="datetime"
+              valueFormat="iso"
+              value={form.due_at}
+              onChange={(value) => setForm({ ...form, due_at: value || '' })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+            />
+          </div>
+          <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('createTaskModal.projectOptional')}</label>
             <select
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-500"
@@ -105,6 +125,15 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+          </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('files.field.label')}</label>
+            <FileIdsField
+              workspace={selectedWorkspace || ''}
+              value={form.file_ids}
+              onChange={(ids) => setForm({ ...form, file_ids: ids })}
+              uploadSource="task"
+            />
           </div>
           <div className="mb-6 flex items-center">
             <input

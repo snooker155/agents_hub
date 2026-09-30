@@ -13,23 +13,28 @@ A backend is stored as::
       "default_model": "my-model"            # optional convenience default
     }
 
-Backends are stored in ``custom_providers.json``. The per-model catalog (which
-models are enabled, pricing, the provider default star) lives in the existing
-``models.json`` keyed by the backend id — a custom backend is just another
-provider there, so it reuses the whole Models-page machinery.
+Backends are a keyed collection in the database (``common/docstore.py``), one
+document per backend id, store name ``"custom_providers"``. The per-model
+catalog (which models are enabled, pricing, the provider default star) lives
+in ``providers.catalog`` keyed by the backend id — a custom backend is just
+another provider there, so it reuses the whole Models-page machinery.
 
-The api_key is persisted here (the file lives under the local ``.agents_hub``
-state dir, same trust level as ``.env`` where the built-in provider keys live).
+A run container gets neither the database nor the JSON file: it is served the
+launcher's frozen snapshot (``common/snapshot.py``) and refuses writes, so a
+process inside a container can neither see anyone else's edits mid-run nor
+register a backend that was not there when it started.
+
+The api_key is persisted here (the database, same trust level as ``.env``
+where the built-in provider keys live).
 """
 from __future__ import annotations
 
-import json
-import os
 import re
-import threading
 from typing import Any, Dict, List, Optional
 
-from common.paths import CUSTOM_PROVIDERS_FILE, ensure_agents_hub_root
+from common import snapshot
+from common.docstore import DocStore
+from common.paths import CUSTOM_PROVIDERS_FILE
 
 # The hardcoded providers handled directly by build_chat_model. Custom backend
 # ids must not collide with these (nor with each other).
@@ -37,7 +42,11 @@ BUILTIN_PROVIDERS: tuple[str, ...] = ("openai", "anthropic", "google", "ollama",
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 
-_lock = threading.Lock()
+# A list of backend dicts keyed by their own id — legacy_file is a LIST, so
+# DocStore imports it once on first use (keyed by legacy_key) and renames it
+# ``.migrated``.
+_store = DocStore("custom_providers", legacy_file=CUSTOM_PROVIDERS_FILE,
+                   legacy_key=lambda d: d.get("id"))
 
 
 def validate_backend_id(backend_id: str) -> str:
@@ -78,18 +87,20 @@ def _norm_backend(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def _load_unlocked() -> List[Dict[str, Any]]:
-    if not CUSTOM_PROVIDERS_FILE.exists():
-        return []
-    try:
-        data = json.loads(CUSTOM_PROVIDERS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    if not isinstance(data, list):
-        return []
+def list_backends() -> List[Dict[str, Any]]:
+    """All custom backends (canonical shape), in stored order.
+
+    A run container serves the launcher's frozen snapshot instead of the
+    database, so it never sees an edit made mid-run.
+    """
+    snap = snapshot.read_snapshot(snapshot.PROVIDERS_SNAPSHOT)
+    if snap is None:
+        raw_list = list(_store.values())
+    else:
+        raw_list = snap if isinstance(snap, list) else []
     out: List[Dict[str, Any]] = []
     seen: set[str] = set()
-    for raw in data:
+    for raw in raw_list:
         if not isinstance(raw, dict):
             continue
         b = _norm_backend(raw)
@@ -97,19 +108,6 @@ def _load_unlocked() -> List[Dict[str, Any]]:
             seen.add(b["id"])
             out.append(b)
     return out
-
-
-def _save_unlocked(backends: List[Dict[str, Any]]) -> None:
-    ensure_agents_hub_root()
-    tmp = CUSTOM_PROVIDERS_FILE.with_suffix(CUSTOM_PROVIDERS_FILE.suffix + ".tmp")
-    tmp.write_text(json.dumps(backends, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, CUSTOM_PROVIDERS_FILE)
-
-
-def list_backends() -> List[Dict[str, Any]]:
-    """All custom backends (canonical shape), in stored order."""
-    with _lock:
-        return _load_unlocked()
 
 
 def backend_ids() -> List[str]:
@@ -157,27 +155,21 @@ def upsert_backend(backend: Dict[str, Any]) -> Dict[str, Any]:
     if get_adapter(norm["adapter"]) is None:
         raise ValueError(f"Unknown adapter '{norm['adapter']}'.")
 
-    with _lock:
-        backends = _load_unlocked()
-        replaced = False
-        for i, b in enumerate(backends):
-            if b["id"] == norm["id"]:
-                backends[i] = norm
-                replaced = True
-                break
-        if not replaced:
-            backends.append(norm)
-        _save_unlocked(backends)
+    if snapshot.in_snapshot_mode():
+        snapshot.refuse_write("the custom provider list")
+    _store.put(norm["id"], norm)
     return norm
 
 
 def delete_backend(backend_id: str) -> bool:
     """Remove a backend by id. Returns True when one was removed."""
+    if snapshot.in_snapshot_mode():
+        snapshot.refuse_write("the custom provider list")
     bid = (backend_id or "").strip().lower()
-    with _lock:
-        backends = _load_unlocked()
-        kept = [b for b in backends if b["id"] != bid]
-        if len(kept) == len(backends):
-            return False
-        _save_unlocked(kept)
-    return True
+    return _store.delete(bid)
+
+
+def export_snapshot() -> List[Dict[str, Any]]:
+    """The JSON document ``custom_providers.json`` held: the list of backends,
+    in stored order — the same shape a run container's snapshot serves."""
+    return list_backends()

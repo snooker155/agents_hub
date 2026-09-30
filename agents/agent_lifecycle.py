@@ -41,6 +41,7 @@ def run_agent_lifecycle(
     catch_invoke_exceptions: bool = True,
     run_id: Optional[str] = None,
     resume: Optional[dict] = None,
+    history: Optional[Sequence[Any]] = None,
     after_build: Optional[Callable[[Any], None]] = None,
     on_build_error: Callable[[str], Any],
     on_success: Callable[[Any, AgentInvocation], Any],
@@ -60,6 +61,15 @@ def run_agent_lifecycle(
     The hooks own all run-record / task / return-value specifics; this function
     owns only the ordering and the create_agent failure handling that both the
     subprocess and in-process runners previously hand-rolled.
+
+    ``history`` is the conversation before this turn (a resumed run's replayed
+    tool trail, see ``agents/checkpoint.py``), forwarded to ``invoke_agent``.
+
+    A *paused* run is a successful one here: an agent that stopped to ask the
+    user (``status == "awaiting_input"``) or to wait for a tool call to be
+    approved (``status == "awaiting_approval"``) comes back with ``ok`` set and
+    goes to ``on_success``. Parking the task is that hook's job, because only it
+    knows whether there is a task at all — see ``runtime/agent_run.py``.
     """
     try:
         agent = create_agent(agent_id, workspace=workspace, **(overrides or {}))
@@ -72,6 +82,7 @@ def run_agent_lifecycle(
     invocation = invoke_agent(
         agent, prompt,
         resume=resume,
+        history=history,
         stats=stats,
         extra_callbacks=extra_callbacks,
         catch_exceptions=catch_invoke_exceptions,

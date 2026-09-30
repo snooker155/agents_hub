@@ -162,3 +162,40 @@ register_adapter(Adapter(
     builder=_build_openai_compatible,
     openai_compatible=True,
 ))
+
+
+# ── Prompt caching ────────────────────────────────────────────────────────────
+# Anthropic caches a prompt prefix only when it is explicitly marked: a content
+# block carrying ``cache_control: {"type": "ephemeral"}`` ends a cacheable
+# prefix, and every later turn that repeats that prefix is billed at the cached
+# rate. OpenAI needs no marker (it caches stable prefixes on its own), so the
+# helpers below are no-ops for every other provider.
+
+#: Anthropic ignores a cacheable block under ~1024 tokens, so marking a short
+#: system prompt only adds a write with no read to follow. ~4 chars per token.
+MIN_CACHEABLE_CHARS = 4000
+
+
+def supports_prompt_cache_control(provider: str) -> bool:
+    """True for providers whose prompt cache is opt-in per content block."""
+    return (provider or "").strip().lower() == "anthropic"
+
+
+def cacheable_content(provider: str, text: str, *, min_chars: int = MIN_CACHEABLE_CHARS):
+    """Message content marked for the provider's prompt cache, or the plain text.
+
+    Returns a one-element block list with ``cache_control`` when the provider
+    reads that marker and the text is long enough to be worth caching; the text
+    unchanged otherwise, so callers can always assign the result as content.
+    """
+    body = text or ""
+    if not supports_prompt_cache_control(provider) or len(body) < max(0, int(min_chars)):
+        return body
+    return [{"type": "text", "text": body, "cache_control": {"type": "ephemeral"}}]
+
+
+def is_cache_marked(content) -> bool:
+    """True when a message content carries a cache_control marker."""
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(b, dict) and b.get("cache_control") for b in content)

@@ -7,23 +7,43 @@ import {
   Play, Pause, Square, Split, Trash2, Folder, FolderOpen, Plus, Check, X,
   User, UserPlus, Flag, GitBranch, Layers, ExternalLink, Loader,
   ChevronDown, ChevronRight, ThumbsUp, ThumbsDown, History, FileText, Eye, Code2, HelpCircle,
-  CheckSquare,
+  CheckSquare, ShieldQuestion, Calendar, Workflow, Users, RotateCw, DollarSign,
 } from 'lucide-react';
+import DateInput from '../components/DateInput';
 import {
   getTask, getAgents, assignAgent, approveAssignment, rejectAssignment, stopAgent, getMessageLogs,
   runDecomposer, getTaskExecutionLog, deleteTask, updateTask, createTask, getProjects,
   getTaskActivityLog, getTaskResult, getSettings, getTaskFileContent, getTaskFileRawUrl,
-  answerTask, pauseTaskContainer, resumeTaskContainer, getMessageInsights,
+  answerTask, approveTaskCall, pauseTaskContainer, resumeTaskContainer, getMessageInsights,
+  listFlows, getTeams, getLoops,
 } from '../api';
 import api from '../api';
 import MarkdownRenderer from '../components/MarkdownRenderer';
+import SystemPatchCard from '../components/SystemPatchCard';
+import { parseSystemPatch } from '../components/systemPatch';
 import ProcessGraph, { TokenPill } from '../components/ProcessGraph';
 import LiveRunStream from '../components/LiveRunStream';
+import TaskAgentVersionPin from '../components/task/TaskAgentVersionPin';
+import TaskOutcomeCard from '../components/task/TaskOutcomeCard';
+import TaskFilesCard from '../components/files/TaskFilesCard';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import InlineEdit from '../components/InlineEdit';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
+
+// ─── Executor display (agent / flow / team / loop) ──────────────────────────
+// task.executor (tasks.models.Executor) is the source of truth for what is
+// running a task; a task from before that field existed falls back to the
+// compatibility assigned_agent_type string, read as a plain agent.
+const EXECUTOR_KIND_ICON = { agent: User, flow: Workflow, team: Users, loop: RotateCw };
+function executorLabel(task) {
+  const ex = task?.executor;
+  const kind = ex?.kind || 'agent';
+  const id = ex?.id || task?.assigned_agent_type || '';
+  return { kind, id, Icon: EXECUTOR_KIND_ICON[kind] || User };
+}
+const fmtUsd = (n) => `$${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 // ─── File tree helpers (shared shape with WorkspaceDetails) ─────────────────────
 const buildFileTree = (paths) => {
   const root = { type: 'dir', children: {} };
@@ -83,6 +103,7 @@ const ALL_STATUSES = [
   { value: 'in_progress', bg: 'bg-yellow-100',  text: 'text-yellow-700', dot: 'bg-yellow-500' },
   { value: 'blocked',     bg: 'bg-red-100',     text: 'text-red-700',    dot: 'bg-red-500' },
   { value: 'awaiting_input', bg: 'bg-amber-100', text: 'text-amber-700',  dot: 'bg-amber-500', readonly: true },
+  { value: 'awaiting_approval', bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500', readonly: true },
   { value: 'stopped',     bg: 'bg-gray-100',    text: 'text-gray-500',   dot: 'bg-gray-400' },
   { value: 'resolved',    bg: 'bg-purple-100',  text: 'text-purple-700', dot: 'bg-purple-500' },
   { value: 'reviewing',   bg: 'bg-cyan-100',    text: 'text-cyan-700',   dot: 'bg-cyan-500',  readonly: true },
@@ -307,6 +328,59 @@ function ProjectSelector({ current, projects, onChange }) {
   );
 }
 
+// Due date field: a badge that opens a date picker; turns red once overdue.
+// `overdue` comes from the task record (the backend already derives it from
+// due_at + status), so this never computes against the current time itself.
+function DueDateField({ current, overdue, onChange }) {
+  const { t, language } = useI18n();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const label = current
+    ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(current))
+    : t('taskDetails.noDueDate');
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-opacity hover:opacity-80 ${
+          overdue ? 'text-red-600 bg-red-50 border-red-200' : current ? 'text-gray-600 bg-gray-50 border-gray-200' : 'text-gray-400 bg-gray-50 border-gray-200'
+        }`}
+        title={t('taskDetails.dueDate')}
+      >
+        <Calendar className="w-3 h-3" />
+        {label}
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-2">
+          <DateInput
+            mode="datetime"
+            valueFormat="iso"
+            value={current || ''}
+            onChange={(v) => onChange(v || null)}
+            className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+          />
+          {current && (
+            <button
+              onClick={() => { onChange(null); setOpen(false); }}
+              className="mt-2 w-full text-xs text-gray-500 hover:text-gray-700 text-center"
+            >
+              {t('common.clear')}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Add Subtask Modal ────────────────────────────────────────────────────────
 function AddSubtaskModal({ parentId, parentWorkspace, onCreated, onCancel }) {
   const { t } = useI18n();
@@ -408,8 +482,8 @@ function SubtaskRow({ st, onDelete, onStatusChange, onAssign, deleting }) {
         )}
         {st.assigned_agent_type && (
           <span className="inline-flex items-center gap-1 text-xs text-gray-400 mt-0.5">
-            <User className="w-3 h-3" />
-            {st.assigned_agent_type}
+            {(() => { const { Icon } = executorLabel(st); return <Icon className="w-3 h-3" />; })()}
+            {executorLabel(st).id}
             {st.agent_state && st.agent_state !== 'none' && (
               <span className={`ml-1 px-1 py-0.5 rounded text-xs ${
                 st.agent_state === 'running' ? 'bg-blue-100 text-blue-700' :
@@ -458,6 +532,11 @@ function ResultBlock({ entry }) {
   const { t } = useI18n();
   const [view, setView] = useState('rendered');
   const text = String(entry.result ?? '');
+  // A result the system loop wrote leads with a machine readable marker line;
+  // the card built from it goes above the diff, and the marker itself is
+  // stripped so it never renders as literal markdown text.
+  const patch = useMemo(() => parseSystemPatch(text), [text]);
+  const renderedText = patch ? patch.body : text;
   return (
     <div className="border border-indigo-100 rounded-lg p-3 bg-indigo-50">
       <div className="flex items-center gap-3 mb-2">
@@ -489,7 +568,8 @@ function ResultBlock({ entry }) {
       </div>
       {view === 'rendered' ? (
         <div className="bg-white rounded-md p-3 border border-indigo-100">
-          <MarkdownRenderer content={text} />
+          {patch && <SystemPatchCard meta={patch.meta} />}
+          <MarkdownRenderer content={renderedText} />
         </div>
       ) : (
         <pre className="text-xs text-gray-700 whitespace-pre-wrap">{text}</pre>
@@ -531,10 +611,38 @@ const TaskDetails = () => {
 
   const [answerDraft, setAnswerDraft] = useState('');
   const [answerSubmitting, setAnswerSubmitting] = useState(false);
+  const [approvalNote, setApprovalNote] = useState('');
+  const [approvalSubmitting, setApprovalSubmitting] = useState(false);
+  // The new cap offered on a budget pause card, seeded once at twice the
+  // limit the run just hit (a plausible next stop, not a guess the operator
+  // has to type from scratch) and left alone after that so an edit sticks.
+  const [budgetCapDraft, setBudgetCapDraft] = useState('');
+  useEffect(() => {
+    if (task?.status === 'awaiting_approval' && task?.pending_approval?.kind === 'budget' && !budgetCapDraft) {
+      const limit = Number(task.pending_approval.limit_usd) || 0;
+      setBudgetCapDraft(String(limit > 0 ? limit * 2 : 10));
+    }
+    if (!(task?.status === 'awaiting_approval' && task?.pending_approval?.kind === 'budget') && budgetCapDraft) {
+      setBudgetCapDraft('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.status, task?.pending_approval?.kind, task?.pending_approval?.limit_usd]);
   const [activeTab, setActiveTab] = useState('execution');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null); // null = parent task, subtask obj otherwise
   const [selectedAgent, setSelectedAgent] = useState('');
+  // Besides an agent, a task may be assigned a flow, a team or a loop
+  // (tasks.models.Executor). 'agent' keeps the original single-list picker;
+  // the other three each pick from their own catalog, fetched lazily when
+  // the modal opens.
+  const [executorKind, setExecutorKind] = useState('agent');
+  const [flows, setFlows] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [loops, setLoops] = useState([]);
+  const [selectedFlow, setSelectedFlow] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState('');
+  const [selectedLoop, setSelectedLoop] = useState('');
+  const [catalogsLoaded, setCatalogsLoaded] = useState(false);
 
 
   const [deletingTask, setDeletingTask] = useState(false);
@@ -838,14 +946,21 @@ const TaskDetails = () => {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleAssignAgent = async () => {
-    if (!selectedAgent) return;
+    const selection = { agent: selectedAgent, flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind];
+    if (!selection) return;
     try {
       const targetId = assignTarget ? assignTarget.id : id;
-      const resp = await assignAgent(targetId, { agent_id: selectedAgent });
+      const body = executorKind === 'agent'
+        ? { agent_id: selectedAgent }
+        : { executor: { kind: executorKind, id: selection } };
+      const resp = await assignAgent(targetId, body);
       setActiveRunId(resp.data.run_id);
       setShowAssignModal(false);
       setAssignTarget(null);
       setSelectedAgent('');
+      setSelectedFlow('');
+      setSelectedTeam('');
+      setSelectedLoop('');
       fetchData();
     } catch (err) {
       alert(`${t('taskDetails.errors.assignAgent')}: ` + (err.response?.data?.detail || err.message));
@@ -855,7 +970,24 @@ const TaskDetails = () => {
   const openAssign = (subtask = null) => {
     setAssignTarget(subtask);
     setSelectedAgent('');
+    setSelectedFlow('');
+    setSelectedTeam('');
+    setSelectedLoop('');
+    setExecutorKind('agent');
     setShowAssignModal(true);
+    if (!catalogsLoaded) {
+      const ws = task?.workspace || undefined;
+      Promise.all([
+        listFlows(ws).catch(() => ({ data: [] })),
+        getTeams(ws).catch(() => ({ data: { teams: [] } })),
+        getLoops(ws).catch(() => ({ data: { loops: [] } })),
+      ]).then(([flowsResp, teamsResp, loopsResp]) => {
+        setFlows(flowsResp.data || []);
+        setTeams(teamsResp.data?.teams || []);
+        setLoops(loopsResp.data?.loops || []);
+        setCatalogsLoaded(true);
+      });
+    }
   };
 
   const handleStopAgent = async () => {
@@ -885,6 +1017,42 @@ const TaskDetails = () => {
       alert(`${t('taskDetails.errors.submitAnswer')}: ` + (err.response?.data?.detail || err.message));
     } finally {
       setAnswerSubmitting(false);
+    }
+  };
+
+  // Decide on the tool call the agent stopped for. Approving records that exact
+  // call (tool + arguments) as allowed once and resumes the agent; denying
+  // resumes it with the refusal and the note, so it can pick another route.
+  const handleApprovalDecision = async (approved) => {
+    setApprovalSubmitting(true);
+    try {
+      const resp = await approveTaskCall(id, approved, approvalNote.trim());
+      if (resp.data?.run_id) setActiveRunId(resp.data.run_id);
+      setApprovalNote('');
+      fetchData();
+    } catch (err) {
+      alert(`${t('taskDetails.errors.submitApproval')}: ` + (err.response?.data?.detail || err.message));
+    } finally {
+      setApprovalSubmitting(false);
+    }
+  };
+
+  // Decide on a run parked at its money cap (pending_approval.kind ===
+  // 'budget'). Approving raises the cap to the operator's new number and
+  // resumes from where it stopped; refusing stops the task instead of
+  // resuming it, since there is no tool call to deny here.
+  const handleBudgetDecision = async (approved) => {
+    setApprovalSubmitting(true);
+    try {
+      const resp = await approveTaskCall(id, approved, approvalNote.trim(), approved ? Number(budgetCapDraft) : undefined);
+      if (resp.data?.run_id) setActiveRunId(resp.data.run_id);
+      setApprovalNote('');
+      setBudgetCapDraft('');
+      fetchData();
+    } catch (err) {
+      alert(`${t('taskDetails.errors.submitApproval')}: ` + (err.response?.data?.detail || err.message));
+    } finally {
+      setApprovalSubmitting(false);
     }
   };
 
@@ -1014,6 +1182,7 @@ const TaskDetails = () => {
         <div className="flex items-center flex-wrap gap-2 mt-3">
           <StatusDropdown current={task.status} onChange={v => patch({ status: v })} />
           <PriorityDropdown current={task.priority} onChange={v => patch({ priority: v })} />
+          <DueDateField current={task.due_at} overdue={task.overdue} onChange={v => patch({ due_at: v })} />
           <ProjectSelector
             current={task.project_id || null}
             projects={projects}
@@ -1061,7 +1230,8 @@ const TaskDetails = () => {
                 {parentTask.priority && <PriorityBadge priority={parentTask.priority} />}
                 {parentTask.assigned_agent_type && (
                   <span className="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
-                    <User className="w-3 h-3" />{parentTask.assigned_agent_type}
+                    {(() => { const { Icon } = executorLabel(parentTask); return <Icon className="w-3 h-3" />; })()}
+                    {executorLabel(parentTask).id}
                   </span>
                 )}
               </div>
@@ -1094,7 +1264,12 @@ const TaskDetails = () => {
           <span className="text-xs text-gray-400">{t('taskDetails.createdAt')}: {new Date(task.created_at).toLocaleString()}</span>
           {task.assigned_agent_type && (
             <span className="flex items-center gap-1 text-xs text-gray-500">
-              <User className="w-3.5 h-3.5" /> {task.assigned_agent_type}
+              {(() => { const { Icon } = executorLabel(task); return <Icon className="w-3.5 h-3.5" />; })()} {executorLabel(task).id}
+              {executorLabel(task).kind !== 'agent' && (
+                <span className="px-1 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-600 border border-indigo-100">
+                  {executorLabel(task).kind}
+                </span>
+              )}
               <span className={`ml-1 px-1.5 py-0.5 rounded text-xs font-medium ${
                 task.agent_state === 'running' ? 'bg-blue-100 text-blue-700' :
                 task.agent_state === 'completed' ? 'bg-green-100 text-green-700' :
@@ -1180,7 +1355,105 @@ const TaskDetails = () => {
             </div>
           </div>
         )}
+
+        {/* Awaiting approval — either a tool call that needs a human yes, or a
+            run parked at its own money cap (task.pending_approval.kind ===
+            'budget', set by RunBudgetGuard; see common/run_budget.py). The
+            two share one status but ask a different question, so they get
+            different cards rather than one trying to cover both. */}
+        {task.status === 'awaiting_approval' && task.pending_approval?.kind === 'budget' ? (
+          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
+              <DollarSign className="w-4 h-4" /> {t('taskDetails.pausedAtMoneyCap')}
+            </p>
+            <p className="text-sm text-amber-900 mt-1">
+              {t('taskDetails.budgetPauseDetail', {
+                spent: fmtUsd(task.pending_approval?.spent_usd),
+                limit: fmtUsd(task.pending_approval?.limit_usd),
+              })}
+            </p>
+            {task.pending_approval?.reason && (
+              <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap">{task.pending_approval.reason}</p>
+            )}
+            <div className="flex items-center gap-2 mt-3">
+              <label className="text-xs font-medium text-amber-700 uppercase tracking-wide">{t('taskDetails.newCapUsd')}</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={budgetCapDraft}
+                onChange={(e) => setBudgetCapDraft(e.target.value)}
+                className="w-28 px-2 py-1.5 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+              />
+              <button
+                type="button"
+                disabled={approvalSubmitting || !budgetCapDraft || Number(budgetCapDraft) <= Number(task.pending_approval?.spent_usd || 0)}
+                onClick={() => handleBudgetDecision(true)}
+                className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
+              >
+                {approvalSubmitting ? t('taskDetails.sending') : t('taskDetails.continueTask')}
+              </button>
+              <button
+                type="button"
+                disabled={approvalSubmitting}
+                onClick={() => handleBudgetDecision(false)}
+                className="px-4 py-2 rounded-lg border border-amber-300 bg-white text-amber-800 text-sm font-semibold hover:bg-amber-100 disabled:opacity-50"
+              >
+                {t('taskDetails.stopTask')}
+              </button>
+            </div>
+          </div>
+        ) : task.status === 'awaiting_approval' && (
+          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <p className="text-sm text-amber-800 font-semibold flex items-center gap-1.5">
+              <ShieldQuestion className="w-4 h-4" /> {t('taskDetails.theAgentNeedsApproval')}
+            </p>
+            <p className="text-sm text-amber-900 mt-1">
+              <code className="px-1.5 py-0.5 rounded bg-amber-100 font-mono text-xs">
+                {task.pending_approval?.tool || '—'}
+              </code>
+            </p>
+            {task.pending_approval?.reason && (
+              <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap">{task.pending_approval.reason}</p>
+            )}
+            <pre className="mt-2 p-2 bg-white border border-amber-200 rounded text-xs text-gray-800 overflow-x-auto">
+              {JSON.stringify(task.pending_approval?.input ?? {}, null, 2)}
+            </pre>
+            <div className="flex items-center gap-2 mt-3">
+              <input
+                type="text"
+                value={approvalNote}
+                onChange={(e) => setApprovalNote(e.target.value)}
+                placeholder={t('taskDetails.approvalNotePlaceholder')}
+                className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+              />
+              <button
+                type="button"
+                disabled={approvalSubmitting}
+                onClick={() => handleApprovalDecision(true)}
+                className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50"
+              >
+                {approvalSubmitting ? t('taskDetails.sending') : t('taskDetails.approveCall')}
+              </button>
+              <button
+                type="button"
+                disabled={approvalSubmitting}
+                onClick={() => handleApprovalDecision(false)}
+                className="px-4 py-2 rounded-lg border border-amber-300 bg-white text-amber-800 text-sm font-semibold hover:bg-amber-100 disabled:opacity-50"
+              >
+                {t('taskDetails.denyCall')}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* The run's pinned agent version and the task's outcome rubric with
+          its gradings (components/task/). Each renders nothing it has no
+          data for beyond its own compact header. */}
+      <TaskAgentVersionPin task={task} onChanged={fetchData} />
+      <TaskOutcomeCard task={task} onChanged={fetchData} />
+      <TaskFilesCard task={task} onChanged={fetchData} />
 
       {/* Live agent output for this task's session. Renders nothing until the
           session channel produces events, so a task with nothing running keeps
@@ -1491,48 +1764,113 @@ const TaskDetails = () => {
               </button>
             </div>
 
-            <div className="mb-2 flex items-center gap-3 text-xs text-gray-400">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> {t('taskDetails.nodeRunning')}</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300 inline-block" /> {t('taskDetails.noNode')}</span>
-              {taskAssignmentMode === 'nodes_only' && (
-                <span className="ml-auto text-amber-600 font-medium">{t('taskDetails.nodesOnlyModeAgentsWithout')}</span>
-              )}
+            {/* Executor kind: agent / flow / team / loop */}
+            <div className="flex items-center bg-gray-100 rounded-lg p-1 mb-3">
+              {[
+                { kind: 'agent', Icon: User, label: t('taskDetails.assignAgent') },
+                { kind: 'flow', Icon: Workflow, label: t('taskBoard.flow') },
+                { kind: 'team', Icon: Users, label: 'Team' },
+                { kind: 'loop', Icon: RotateCw, label: 'Loop' },
+              ].map(({ kind, Icon, label }) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => setExecutorKind(kind)}
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    executorKind === kind ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />{label}
+                </button>
+              ))}
             </div>
 
-            <div className="mb-5 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
-              {agents.length === 0 && (
-                <p className="text-sm text-gray-400 italic py-2">{t('taskDetails.noAgentsAvailableForThis')}</p>
-              )}
-              {agents.map(a => {
-                const hasNode = a.has_running_node;
-                const disabled = taskAssignmentMode === 'nodes_only' && !hasNode;
-                const selected = selectedAgent === a.id;
-                return (
-                  <button
-                    key={a.id}
-                    onClick={() => !disabled && setSelectedAgent(a.id)}
-                    disabled={disabled}
-                    title={disabled ? t('taskDetails.noRunningNodeHint') : undefined}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
-                      disabled
-                        ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed'
-                        : selected
-                          ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400'
-                          : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'
-                    }`}
-                  >
-                    <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-0.5 ${hasNode ? 'bg-green-500' : 'bg-gray-300'}`} />
-                    <span className="flex-1 min-w-0">
-                      <span className={`block text-sm font-medium ${selected ? 'text-indigo-700' : 'text-gray-800'}`}>
-                        {a.name}
+            {executorKind === 'agent' && (
+              <div className="mb-2 flex items-center gap-3 text-xs text-gray-400">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> {t('taskDetails.nodeRunning')}</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300 inline-block" /> {t('taskDetails.noNode')}</span>
+                {taskAssignmentMode === 'nodes_only' && (
+                  <span className="ml-auto text-amber-600 font-medium">{t('taskDetails.nodesOnlyModeAgentsWithout')}</span>
+                )}
+              </div>
+            )}
+
+            {executorKind === 'agent' && (
+              <div className="mb-5 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
+                {agents.length === 0 && (
+                  <p className="text-sm text-gray-400 italic py-2">{t('taskDetails.noAgentsAvailableForThis')}</p>
+                )}
+                {agents.map(a => {
+                  const hasNode = a.has_running_node;
+                  const disabled = taskAssignmentMode === 'nodes_only' && !hasNode;
+                  const selected = selectedAgent === a.id;
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => !disabled && setSelectedAgent(a.id)}
+                      disabled={disabled}
+                      title={disabled ? t('taskDetails.noRunningNodeHint') : undefined}
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                        disabled
+                          ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed'
+                          : selected
+                            ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400'
+                            : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'
+                      }`}
+                    >
+                      <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full mt-0.5 ${hasNode ? 'bg-green-500' : 'bg-gray-300'}`} />
+                      <span className="flex-1 min-w-0">
+                        <span className={`block text-sm font-medium ${selected ? 'text-indigo-700' : 'text-gray-800'}`}>
+                          {a.name}
+                        </span>
+                        <span className="block text-xs text-gray-400 truncate">{a.id}{!hasNode && ` · ${t('taskDetails.noRunningNode')}`}</span>
                       </span>
-                      <span className="block text-xs text-gray-400 truncate">{a.id}{!hasNode && ` · ${t('taskDetails.noRunningNode')}`}</span>
-                    </span>
-                    {selected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
-                  </button>
-                );
-              })}
-            </div>
+                      {selected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {executorKind !== 'agent' && (() => {
+              const catalog = { flow: flows, team: teams, loop: loops }[executorKind];
+              const idKey = { flow: 'id', team: 'team_id', loop: 'loop_id' }[executorKind];
+              const nameKey = 'name';
+              const selected = { flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind];
+              const setSelected = { flow: setSelectedFlow, team: setSelectedTeam, loop: setSelectedLoop }[executorKind];
+              return (
+                <div className="mb-5 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
+                  {catalog.length === 0 && (
+                    <p className="text-sm text-gray-400 italic py-2">
+                      {catalogsLoaded ? t('taskDetails.noAgentsAvailableForThis') : '…'}
+                    </p>
+                  )}
+                  {catalog.map(item => {
+                    const itemId = item[idKey];
+                    const isSelected = selected === itemId;
+                    return (
+                      <button
+                        key={itemId}
+                        onClick={() => setSelected(itemId)}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                          isSelected
+                            ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-400'
+                            : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'
+                        }`}
+                      >
+                        <span className="flex-1 min-w-0">
+                          <span className={`block text-sm font-medium ${isSelected ? 'text-indigo-700' : 'text-gray-800'}`}>
+                            {item[nameKey] || itemId}
+                          </span>
+                          <span className="block text-xs text-gray-400 truncate">{itemId}</span>
+                        </span>
+                        {isSelected && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             <div className="flex justify-end gap-3">
               <button
@@ -1541,7 +1879,7 @@ const TaskDetails = () => {
               >{t('taskDetails.cancel')}</button>
               <button
                 onClick={handleAssignAgent}
-                disabled={!selectedAgent}
+                disabled={!{ agent: selectedAgent, flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind]}
                 className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >{t('taskDetails.startExecution')}</button>
             </div>

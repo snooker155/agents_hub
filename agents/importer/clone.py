@@ -157,6 +157,30 @@ def staged_dir(token: str) -> Path:
     return path
 
 
+def stage_preset(source_dir: Path) -> Tuple[str, Path]:
+    """Stage a bundled example directory as if it had just been cloned.
+
+    Bundled examples under ``examples/imported-agents/`` are not git
+    repositories of their own (see ``prepare_example_repo.sh``), so there is
+    nothing for ``git clone`` to reach and :func:`stage` does not apply. This
+    copies the example the same way that script does, straight into the same
+    staging area a git clone would land in, so everything downstream,
+    ``promote()``, the readiness checks, the generated documentation, treats
+    a preset import exactly like an import from a repository URL, with one
+    fewer step: no throwaway ``git init``, since nothing here ever calls
+    ``git`` on the staged copy.
+    """
+    if not source_dir.is_dir():
+        raise ImportSourceError(f"No such bundled example: {source_dir}")
+    _sweep_staging()
+
+    token = uuid.uuid4().hex
+    dest = STAGING_DIR / token
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_dir, dest, ignore=shutil.ignore_patterns("__pycache__"))
+    return token, dest
+
+
 def promote(token: str, agent_id: str) -> Path:
     """Move a staged clone to the permanent folder for *agent_id*.
 
@@ -196,6 +220,7 @@ __all__ = [
     "normalize_source",
     "head_commit",
     "stage",
+    "stage_preset",
     "staged_dir",
     "promote",
     "discard",

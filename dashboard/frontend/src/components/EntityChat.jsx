@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Brain, Loader2, MessageSquare, MessageSquarePlus, Send, StopCircle } from 'lucide-react';
+import { Brain, Loader2, MessageSquare, MessageSquarePlus, PanelRightClose, Send, StopCircle } from 'lucide-react';
 import { streamEntityChat } from '../api';
 import ChatSessionList, { ChatSessionsToggle } from './ChatSessionList';
 import { useChatSessions } from './chatSessions';
@@ -9,6 +9,7 @@ import ContextMeter from './ContextMeter';
 import { useContextUsage } from './contextUsage';
 import { useI18n } from '../i18n';
 import { useInlineChatOpen } from './pageChat/pageChat';
+import { autoGrowTextarea } from '../lib/autoGrow';
 
 //: A long thought would otherwise leave the chat blank for many seconds — the
 //: reasoning only becomes a `think` step once it is finished. The ticker shows
@@ -26,7 +27,7 @@ function LiveThought({ text }) {
     <div className="flex items-start gap-1.5">
       <Brain className="w-3.5 h-3.5 mt-0.5 text-amber-400 shrink-0 animate-pulse" />
       <div className="flex-1 min-w-0 h-[3.25rem] overflow-hidden flex flex-col justify-end">
-        <div className="text-[11px] leading-[1.1rem] text-gray-400 italic whitespace-pre-wrap break-words">
+        <div className="text-xs leading-[1.2rem] text-gray-400 italic whitespace-pre-wrap break-words">
           {text}
         </div>
       </div>
@@ -67,6 +68,9 @@ function LiveThought({ text }) {
  * @param {function} props.clearChat   () => Promise<any>
  * @param {function} props.stopChat    () => Promise<any>
  * @param {function} [props.onEvent]   called with every stream event.
+ * @param {function} [props.registerComposer] handed a prefill(text) that puts
+ *   text in the composer and focuses it, for a host that starts a message for
+ *   the user to finish (a code view's Discuss and Edit).
  * @param {function} [props.registerSend] handed this chat's send(text), so a
  *   page can post a turn from outside the composer — a control the agent
  *   authored, a button inside the view it built. Called with null on unmount.
@@ -102,6 +106,7 @@ export default function EntityChat({
   stopChat,
   onEvent = null,
   registerSend = null,
+  registerComposer = null,
   title,
   header = null,
   clearTarget = null,
@@ -111,6 +116,7 @@ export default function EntityChat({
   className = '',
   inline = true,
   composerClassName = '',
+  onHide = null,
 }) {
   const { t } = useI18n();
   useInlineChatOpen(inline);
@@ -327,13 +333,26 @@ export default function EntityChat({
     return () => registerSend(null);
   }, [registerSend, runTurn]);
 
+  const prefill = useCallback((text) => {
+    setInput(text);
+    textareaRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (!registerComposer) return undefined;
+    registerComposer(prefill);
+    return () => registerComposer(null);
+  }, [registerComposer, prefill]);
+
   const onSend = useCallback(() => {
     const message = input.trim();
     if (!message) return;
     setInput('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     runTurn(message);
   }, [input, runTurn]);
+
+  // The box follows its text: typed, put there by a host (Discuss, a run
+  // report) or emptied after a send, up to ten lines, then it scrolls.
+  useEffect(() => { autoGrowTextarea(textareaRef.current); }, [input]);
 
   // Stopping has to happen server-side: the agent runs detached from this
   // connection, so aborting the fetch alone would leave it running.
@@ -421,7 +440,7 @@ export default function EntityChat({
 
   // The row carries the title, History and New chat. Kept without its margin
   // when it has nothing to show, so an untitled chat gains no empty rule.
-  const showRow = header !== false || !clearTarget;
+  const showRow = header !== false || !clearTarget || Boolean(onHide);
   const rowFilled = header !== false || Boolean(clearButton) || sessionHistory.hasHistory;
 
   return (
@@ -443,7 +462,16 @@ export default function EntityChat({
                 about the chats beside this one. */}
             {!clearTarget && clearButton}
           </div>
-          {!clearTarget && historyToggle}
+          <div className="flex items-center gap-1 shrink-0">
+            {!clearTarget && historyToggle}
+            {/* Folds the column away; the page's header button brings it back. */}
+            {onHide && (
+              <button type="button" onClick={onHide} title={t('entityChat.hide')} aria-label={t('entityChat.hide')}
+                className="p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+                <PanelRightClose className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -471,7 +499,7 @@ export default function EntityChat({
           <div className="text-xs text-gray-400">{t('common.loading')}</div>
         ) : feed.length === 0 ? (
           <div className="space-y-3">
-            <p className="text-xs text-gray-500 leading-relaxed">
+            <p className="text-sm text-gray-500 leading-relaxed">
               {emptyHint || t('entityChat.emptyHint')}
             </p>
             {/* Openers, not a menu: the hard part of a build chat is the first
@@ -482,7 +510,7 @@ export default function EntityChat({
                   <button
                     key={s}
                     onClick={() => runTurn(s)}
-                    className="text-left text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-md px-2.5 py-1.5 hover:bg-indigo-100"
+                    className="text-left text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-md px-2.5 py-1.5 hover:bg-indigo-100"
                   >
                     {s}
                   </button>
@@ -499,7 +527,7 @@ export default function EntityChat({
             starting — that silence is what made this chat look dead. */}
         {busy && (
           <>
-            <div className="flex items-center gap-1.5 text-[11px] text-violet-500">
+            <div className="flex items-center gap-1.5 text-xs text-violet-500">
               <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
               {stopping ? t('entityChat.stopping') : t('entityChat.working')}
             </div>
@@ -522,25 +550,21 @@ export default function EntityChat({
             ref={textareaRef}
             rows={1}
             value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
-            }}
+            onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
             }}
             placeholder={t('entityChat.placeholder')}
             disabled={busy}
-            className="flex-1 resize-none text-xs border border-gray-300 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:bg-gray-50"
+            // One line is 40px (line 20 + padding 16 + border 2), the buttons'
+            // h-10, so the row lines up until the field grows.
+            className="flex-1 resize-none text-sm leading-5 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-400 disabled:bg-gray-50"
           />
           {busy ? (
             <button
               onClick={onStop} disabled={stopping}
               title={t('entityChat.stop')}
-              // The transparent border is load-bearing: it matches the
-              // textarea's own border so both boxes end up the same height.
-              className="p-2 rounded-lg border border-transparent bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+              className="h-10 w-10 inline-flex items-center justify-center shrink-0 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
             >
               <StopCircle className="w-4 h-4" />
             </button>
@@ -548,7 +572,7 @@ export default function EntityChat({
             <button
               onClick={onSend} disabled={!input.trim()}
               title={t('entityChat.send')}
-              className="p-2 rounded-lg border border-transparent bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+              className="h-10 w-10 inline-flex items-center justify-center shrink-0 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
             >
               <Send className="w-4 h-4" />
             </button>

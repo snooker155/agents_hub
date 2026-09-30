@@ -1,15 +1,14 @@
 """Agent execution mode: resolved live, not frozen at import.
 
-The mode decides whether a node becomes a subprocess of the backend or a
-container of its own. It used to be read off the ``settings`` object, which
-absorbs .env once at import, so flipping it on the Settings page did nothing
-until the process was restarted. These tests pin the resolution order and that
-a change reaches the next node start.
+The mode decides whether a resident instance becomes a subprocess of the
+backend or a container of its own. It used to be read off the ``settings``
+object, which absorbs .env once at import, so flipping it on the Settings
+page did nothing until the process was restarted. These tests pin the
+resolution order and that a change reaches the next instance start.
 """
 import pytest
 
 from common import config
-from managers import node_manager
 
 
 @pytest.fixture
@@ -67,14 +66,16 @@ def test_the_value_is_re_read_per_call(dot_env):
     assert config.agent_execution_mode() == "docker"
 
 
-# ── what the launcher does with it ───────────────────────────────────────────
+# ── what the carrier does with it ────────────────────────────────────────────
 
 @pytest.fixture
 def launched(monkeypatch):
-    """Capture how a node would be started, without starting anything."""
+    """Capture how a resident instance would be started, without starting anything."""
     calls = {"container": [], "subprocess": []}
 
     import managers.container_manager as cm
+    from agents import registry as agent_registry
+    from instances import carrier
 
     class _Spec:
         name = "Code Reviewer"
@@ -83,13 +84,13 @@ def launched(monkeypatch):
 
     # The test state root holds no agents.json, and which agent this is does
     # not matter to the mode decision.
-    monkeypatch.setattr(node_manager, "get_agent", lambda agent_id: _Spec())
+    monkeypatch.setattr(agent_registry, "get_agent", lambda agent_id: _Spec())
 
-    def _fake_start_node_container(node_id, agent_id, inner_cmd, workspace=None,
+    def _fake_start_node_container(instance_id, agent_id, inner_cmd, workspace=None,
                                    env=None, **kwargs):
         calls["container"].append(agent_id)
         return {"success": True, "container_id": "deadbeef",
-                "container_name": f"agents-hub-node-{node_id[:12]}",
+                "container_name": f"agents-hub-node-{instance_id[:12]}",
                 "image": "agents-hub/base:latest", "error": None}
 
     class _FakeProc:
@@ -97,19 +98,29 @@ def launched(monkeypatch):
 
     monkeypatch.setattr(cm, "start_node_container", _fake_start_node_container)
     monkeypatch.setattr(
-        node_manager.subprocess, "Popen",
+        carrier.subprocess, "Popen",
         lambda *a, **k: calls["subprocess"].append(a) or _FakeProc(),
     )
+    # sync()/process_alive() probes a docker-mode instance with
+    # container_running(), which shells out to `docker ps`. `subprocess.Popen`
+    # above is the same global module object container_manager's
+    # `subprocess.run` uses internally, and the bare `_FakeProc` fake is not a
+    # context manager, so without this the probe would hit a real (or
+    # broken-fake) subprocess call the fixture never intended to exercise.
+    # Pretend nothing is running, the same as a docker-less test host.
+    monkeypatch.setattr(cm, "container_running", lambda name: False)
     return calls
 
 
-def test_a_change_on_the_settings_page_reaches_the_next_node(dot_env, launched):
-    """No restart in between: the second node starts in the other mode."""
+def test_a_change_on_the_settings_page_reaches_the_next_instance(dot_env, launched):
+    """No restart in between: the second instance starts in the other mode."""
+    from instances import carrier
+
     dot_env["AGENT_EXECUTION_MODE"] = "local"
-    node_manager.start_node("code_reviewer", label="first")
+    carrier.start("code_reviewer", label="first")
     assert launched["subprocess"] and not launched["container"]
 
     dot_env["AGENT_EXECUTION_MODE"] = "docker"
-    node_id = node_manager.start_node("code_reviewer", label="second")
+    instance = carrier.start("code_reviewer", label="second")
     assert launched["container"] == ["code_reviewer"]
-    assert node_manager.get_node(node_id)["execution_mode"] == "docker"
+    assert instance["carrier_mode"] == "docker"

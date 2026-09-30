@@ -16,6 +16,10 @@ hero:
       text: "Install it"
       link: /guide/installation
     - theme: alt
+      text: "Try the demo"
+      link: /demo/index.html
+      target: _self
+    - theme: alt
       text: "What this service is"
       link: /guide/overview
     - theme: alt
@@ -108,6 +112,9 @@ thought behind each move, the action it took and the state that changed.
 </div>
 
 </div>
+
+Every screen above is also live: the <a href="./demo/index.html" target="_self">demo</a> is the real
+dashboard running in your browser over recorded data, with no backend and nothing to install.
 
 <style scoped>
 /* Alternating rows: the screenshot on one side, its caption on the other, and
@@ -207,7 +214,7 @@ invocation, a session is the runs that belong together, and an
 3. Create [tasks](/guide/tasks) and assign them to an agent, or let the
    orchestrator route them.
 4. Use [chat](/guide/chat), a [flow](/guide/flows), a [loop](/guide/loops), a
-   [team](/guide/teams) or a [node](/guide/nodes), depending on the work.
+   [team](/guide/teams) or an [instance](/guide/instances), depending on the work.
 5. Read the run logs, messages, results, [views](/guide/views) and generated files.
 6. Iterate on the agent's layered instructions, its model and its tools, and
    curate its [memory](/guide/memory) from the Memory Manager.

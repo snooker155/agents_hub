@@ -14,11 +14,46 @@ keeps the import graph acyclic).
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 from pathlib import Path
 
 from langchain_core.callbacks import BaseCallbackHandler
+
+log = logging.getLogger(__name__)
+
+#: Exception class names that mean the provider was never reached (the OpenAI
+#: and httpx clients every provider adapter here builds on).
+_CONNECTION_ERRORS = frozenset({
+    "APIConnectionError", "APITimeoutError", "ConnectError", "ConnectTimeout",
+    "ConnectionError", "ConnectionRefusedError", "RemoteProtocolError",
+})
+
+
+def describe_llm_error(error: BaseException, provider: str = "", model: str = "") -> str:
+    """The error as a person can act on it.
+
+    A client library's "Connection error." says nothing about which provider
+    was tried or where; here it becomes "Cannot reach the model provider
+    lmstudio (qwen/...) at http://localhost:1234: ...", so a chat that fails
+    because a local server is down says so. Anything else is passed through.
+    """
+    text = str(error) or type(error).__name__
+    if type(error).__name__ not in _CONNECTION_ERRORS and "Connection error" not in text:
+        return text
+    url = getattr(getattr(error, "request", None), "url", None)
+    where = ""
+    if url is not None:
+        host = getattr(url, "host", None)
+        if host:
+            port = getattr(url, "port", None)
+            where = f" at {getattr(url, 'scheme', 'http')}://{host}" + (f":{port}" if port else "")
+        else:
+            where = f" at {url}"
+    who = " ".join(part for part in (provider or "", f"({model})" if model else "") if part)
+    return (f"Cannot reach the model provider{(' ' + who) if who else ''}{where}: {text} "
+            "Check that the provider is running and its base URL in Settings.")
 
 from agents.callbacks.run_statistics import (
     StatsCollectorCallback,
@@ -485,6 +520,8 @@ class ChatStreamCallback(BaseCallbackHandler):
         callback has no other way to learn it. Failure is not worth reporting:
         an unknown window simply means no context meter this run.
         """
+        self.bound_provider = provider or ""
+        self.bound_model = model or ""
         try:
             from providers.context_windows import get_model_context_window
             self.context_window = int(get_model_context_window(provider or "", model or ""))
@@ -717,7 +754,7 @@ class ChatStreamCallback(BaseCallbackHandler):
     def on_llm_error(self, error, **kwargs):
         line = f"[llm_error] {type(error).__name__}: {error}"
         append_log(self.log_lines, line, self.log_file)
-        self._emit({"type": "error", "source": "llm", "error": str(error)})
+        self._emit({"type": "error", "source": "llm", "error": self._describe(error)})
 
     def on_tool_error(self, error, **kwargs):
         tool_name = (self._pending_tool or {}).get("tool", "unknown")
@@ -740,7 +777,10 @@ class ChatStreamCallback(BaseCallbackHandler):
     def on_chain_error(self, error, **kwargs):
         line = f"[chain_error] {type(error).__name__}: {error}"
         append_log(self.log_lines, line, self.log_file)
-        self._emit({"type": "error", "source": "chain", "error": str(error)})
+        self._emit({"type": "error", "source": "chain", "error": self._describe(error)})
+
+    def _describe(self, error: BaseException) -> str:
+        return describe_llm_error(error, getattr(self, "bound_provider", ""), getattr(self, "bound_model", ""))
 
     def record_artifact(self, op: str, path: str, before: str | None, after: str | None) -> None:
         """Receive a file change from the filesystem tools (via the artifact sink).
@@ -886,3 +926,33 @@ class DelegationStreamCallback(BaseCallbackHandler):
         tool = (self._pending_tool or {}).get("tool", "unknown")
         self._pending_tool = None
         self._send({"type": "tool_error", "tool": tool, "error": str(error)})
+
+    def on_llm_end(self, response, **kwargs):
+        # What the child's model said at this step: its own reasoning, then the
+        # text it wrote before (or instead of) calling a tool. Without these the
+        # nested block shows only tool calls, and a worker that explains itself
+        # between steps reads as silent.
+        from reasoning.native_reasoning import (
+            _message_text, extract_reasoning_from_llm_result, strip_think_tags,
+        )
+        try:
+            reasoning = extract_reasoning_from_llm_result(response)
+        except Exception:  # noqa: BLE001 - an odd provider payload loses the reasoning, not the turn
+            log.debug("chat_stream: could not extract reasoning", exc_info=True)
+            reasoning = ""
+        if reasoning:
+            self._step += 1
+            self._send({"type": "think", "step": self._step, "content": reasoning, "native": True})
+        parts = []
+        try:
+            for grp in (getattr(response, "generations", []) or []):
+                for g in grp:
+                    message = getattr(g, "message", None)
+                    text = _message_text(getattr(message, "content", None)) if message is not None else ""
+                    parts.append(text or getattr(g, "text", "") or "")
+        except Exception:  # noqa: BLE001 - an odd provider payload loses the text, not the turn
+            log.debug("chat_stream: could not read the generations", exc_info=True)
+            parts = []
+        text = strip_think_tags("".join(parts)).strip()
+        if text:
+            self._send({"type": "text", "content": text})

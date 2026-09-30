@@ -2,11 +2,17 @@
 Asyncio scheduler loop for plan jobs.
 
 Started once at FastAPI startup (same pattern as the Telegram poller). Each
-tick scans plans.json for due jobs and fires them in a worker thread so file
-locks and subprocess launches never block the event loop.
+tick claims due jobs from the plans store (plans/storage.py, in the database)
+and fires them in a worker thread so database waits and subprocess launches
+never block the event loop.
 
-Agent subprocesses that create jobs via tools write to the same plans.json,
-so their jobs are picked up on the next tick without any IPC.
+Agent subprocesses that create jobs via tools write to the same store, so
+their jobs are picked up on the next tick without any IPC; the claim is a
+database lease, so several backend replicas ticking at once never fire the
+same job twice. On top of that, only the replica holding the ``scheduler``
+service lease (common/leases.py) ticks at all: the maintenance sweep and the
+escalation sweep it also drives are not per-job leased, and one process
+doing them is enough.
 """
 from __future__ import annotations
 
@@ -24,13 +30,19 @@ class PlanScheduler:
     # keeps the 20s job tick cheap.
     ESCALATION_INTERVAL_SECONDS = 300.0
 
+    LEASE_ROLE = "scheduler"
+
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
         self._last_escalation: float = 0.0
+        self._leader = False
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def holds_lease(self) -> bool:
+        return self._leader
 
     async def start(self) -> None:
         if self.is_running():
@@ -47,13 +59,34 @@ class PlanScheduler:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self._task.cancel()
         self._task = None
+        if self._leader:
+            self._leader = False
+            try:
+                from common import leases
+                await asyncio.to_thread(leases.release, self.LEASE_ROLE)
+            except Exception:
+                pass
 
     async def _loop(self) -> None:
         from plans import service
+        from common import leases
 
+        owner = service._default_owner()
+        ttl = max(self.TICK_SECONDS * 3, leases.DEFAULT_TTL_SECONDS)
         while not self._stop.is_set():
             try:
-                results = await asyncio.to_thread(service.run_due_jobs)
+                self._leader = await asyncio.to_thread(leases.hold, self.LEASE_ROLE, ttl)
+            except Exception:
+                self._leader = False
+            if not self._leader:
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=self.TICK_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+            try:
+                token = leases.fencing_token(self.LEASE_ROLE)
+                results = await asyncio.to_thread(service.run_due_jobs, owner, token)
                 for r in results:
                     if r.get("ok"):
                         log.info("fired job %s (%s)", r.get("job_id"), r.get("kind"))
@@ -69,6 +102,22 @@ class PlanScheduler:
                 await asyncio.to_thread(run_maintenance)
             except Exception:
                 log.exception("maintenance tick failed")
+            # Batch eval runs (evals/batch.py): check the open provider batches,
+            # self-throttled to AGENTS_HUB_EVAL_BATCH_POLL_SECONDS; an ended
+            # batch is processed in its own thread, so this never waits on it.
+            try:
+                from evals.batch import poll_pending
+                await asyncio.to_thread(poll_pending)
+            except Exception:
+                log.exception("eval batch poll failed")
+            # SLO alerts (common/slo.py, notify/rules.py): self-throttled inside
+            # evaluate_slo_alerts to a 60s cadence, so ticking it every cycle
+            # here is as cheap as the batch eval poll above.
+            try:
+                from notify.rules import evaluate_slo_alerts
+                await asyncio.to_thread(evaluate_slo_alerts)
+            except Exception:
+                log.exception("SLO alert tick failed")
             # Awaiting-input escalation: remind on / auto-answer long-parked tasks.
             # Self-guarded to a 5-min cadence so the fast job tick stays cheap.
             now = time.monotonic()

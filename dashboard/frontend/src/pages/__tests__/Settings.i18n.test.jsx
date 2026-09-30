@@ -18,6 +18,11 @@ function Landed({ onRender }) {
   return <div>connectors</div>;
 }
 
+// The tool policy and agent loop cards on this page have their own tests
+// (components/__tests__); here they would only need more of the api mocked.
+vi.mock('../../components/settings/ToolPolicySettings', () => ({ default: () => null }));
+vi.mock('../../components/settings/LoopSettingsWorkspace', () => ({ default: () => null }));
+
 vi.mock('axios', () => ({
   default: {
     create: () => ({
@@ -34,8 +39,13 @@ vi.mock('../../components/workspace', () => ({
 }));
 
 vi.mock('../../api', () => ({
+  getSettings: () => ok({ env_defined_fields: [] }),
+  testProvider: () => ok({ ok: true }),
+  testLocalModel: () => ok({ ok: true, models: [] }),
   getWorkspaceSettingsOverrides: () => ok({ overrides: {} }),
   updateWorkspaceSettingsOverrides: () => ok({}),
+  getWorkspacePolicy: () => ok({ require_tool_approval: false, hooks: {} }),
+  updateWorkspacePolicy: () => ok({ require_tool_approval: true, hooks: {} }),
   getTelegramConfig: () => ok({ enabled: false, has_token: false, running: false }),
   updateTelegramConfig: () => ok({}),
   testTelegramToken: () => ok({ ok: true }),

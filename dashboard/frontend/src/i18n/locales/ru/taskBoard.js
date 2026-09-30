@@ -42,6 +42,7 @@ export default {
   created: 'Создано',
   actions: 'Действия',
   external: 'Внешняя',
+  overdue: 'Просрочено',
   yes: 'Да',
   no: 'Нет',
   openDetails: 'Открыть детали',

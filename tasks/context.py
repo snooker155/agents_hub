@@ -2,7 +2,7 @@
 Task context helpers shared by the agent entry points.
 
 Two concerns live here, both previously inlined in ``agent_run.py`` and
-imported back out of it by ``runtime.node_run`` and ``runtime.flow_run``:
+imported back out of it by ``runtime.flow_run`` and the other entry points:
 
 - :func:`collect_changed_files` — list workspace/project files a run touched.
 - :func:`build_task_instruction` — enrich a base instruction with parent-task,
@@ -13,12 +13,21 @@ imported back out of it by ``runtime.node_run`` and ``runtime.flow_run``:
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from common.paths import PROJECTS_FILE
 
+_log = logging.getLogger(__name__)
+
+#: Where a task run finds the task's workspace files (``Task.file_ids``),
+#: relative to its working directory. See :func:`task_files_section`.
+TASK_FILES_DIR = "task_files"
+
 # Internal bookkeeping files that should never appear in a task's Files tab.
-_INTERNAL_PREFIXES = (".logs/", ".progress.json", ".task_result")
+# The task's own input files are copied in when a run starts, which is not
+# work the run did, so they are left out too.
+_INTERNAL_PREFIXES = (".logs/", ".progress.json", ".task_result", f"{TASK_FILES_DIR}/")
 
 # Routing agents produce assignment summaries, not work output — skip their
 # results when looking back at "previous agent output on this task".
@@ -130,13 +139,65 @@ def _dep_result_excerpt(text: str, limit: int = 1500) -> str:
     return f"{text[:limit]}\n… (result truncated, {len(text) - limit} more chars)"
 
 
-def build_task_instruction(task_id: str, base_instruction: str) -> str:
+def task_files_section(file_ids, work_dir=None) -> str:
+    """The prompt block naming a task's workspace files, or "" for none.
+
+    With ``work_dir`` (a task run's working directory) the files are first
+    copied into ``<work_dir>/task_files/`` (``files.service.materialize``:
+    safe names, never overwriting, the same bytes reused on a re-run) and the
+    block gives each one's path there. Without it, the files are named by id
+    for ``read_workspace_file``. A deleted file is named as missing rather
+    than dropped silently.
+    """
+    ids = [str(f).strip() for f in (file_ids or []) if str(f or "").strip()]
+    if not ids:
+        return ""
+    from files import service as files_service
+
+    lines = []
+    if work_dir:
+        from pathlib import Path
+        base = Path(work_dir)
+        dest = base / TASK_FILES_DIR
+        for fid in ids:
+            record = files_service.get_file(fid)
+            if record is None:
+                lines.append(f"- {fid}: missing (deleted from the workspace files)")
+                continue
+            paths = files_service.materialize([fid], dest)
+            if paths:
+                lines.append(f"- {paths[0].relative_to(base).as_posix()}  ({files_service.describe(record)})")
+            else:
+                lines.append(f"- {record['name']}  ({fid}): its content is not available")
+        intro = (f"These files are attached to the task and were copied into your working "
+                 f"directory under {TASK_FILES_DIR}/. Open them with your file tools, or read "
+                 f"them by id with read_workspace_file when you have it.")
+    else:
+        records = files_service.get_files(ids)
+        present = {r["file_id"] for r in records}
+        lines.extend(f"- {files_service.describe(record)}" for record in records)
+        lines.extend(f"- {fid}: missing (deleted from the workspace files)"
+                     for fid in ids if fid not in present)
+        intro = "These workspace files are attached to the task. Read them by id with read_workspace_file."
+    return (
+        f"{'=' * 60}\n"
+        f"FILES ATTACHED TO THIS TASK\n"
+        f"{'=' * 60}\n"
+        f"{intro}\n" + "\n".join(lines)
+    )
+
+
+def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -> str:
     """Enrich ``base_instruction`` with context drawn from the task store.
 
     Layers, in order: a task title prefix + the task description, then the
     ``base_instruction`` itself, then the parent task's goal (for subtasks),
-    result excerpts from the tasks this task ``depends`` on, and the most
-    recent prior agent output on this same task (re-run scenario). The task
+    result excerpts from the tasks this task ``depends`` on, the most
+    recent prior agent output on this same task (re-run scenario), the
+    task's workspace files (copied into ``work_dir`` when given, see
+    :func:`task_files_section`), and the task's outcome: its rubric as the
+    definition of done, plus the grader's feedback when the previous attempt
+    did not meet it. The task
     description and base instruction are both included when both are present.
     Each layer is best-effort — a failure to load any piece leaves the
     instruction as-is. Returns the final instruction (never empty for a task_id).
@@ -164,6 +225,10 @@ def build_task_instruction(task_id: str, base_instruction: str) -> str:
             "\n\n".join(p for p in (f"{title_prefix}{desc}".strip(), instruction.strip()) if p)
             or f"Process task {task_id}"
         )
+
+        # One line naming the deadline, when set, so the agent knows there is one.
+        if getattr(task, "due_at", None):
+            instruction = f"Deadline: {task.due_at.isoformat()}\n{instruction}"
 
         # If this is a subtask, prepend the parent task's title+description so the
         # agent understands the big-picture goal.
@@ -242,6 +307,26 @@ def build_task_instruction(task_id: str, base_instruction: str) -> str:
                 )
         except Exception:
             pass
+
+        # The workspace files the task works from: copied into the run's
+        # working directory when there is one, named in the prompt either way.
+        try:
+            files_block = task_files_section(getattr(task, "file_ids", None), work_dir)
+            if files_block:
+                instruction = f"{instruction}\n\n{files_block}"
+        except Exception:  # noqa: BLE001 - best-effort layer like the others, the instruction stands without it
+            _log.warning("task files could not be prepared for task %s", task_id, exc_info=True)
+
+        # The task's definition of done and, after an attempt that did not
+        # meet it, the grader's per-criterion feedback (tasks/outcome.py).
+        # Last, so it is the freshest thing the agent reads before starting.
+        try:
+            from tasks.outcome import instruction_sections
+            outcome_block = instruction_sections(task)
+            if outcome_block:
+                instruction = f"{instruction}\n\n{outcome_block}"
+        except Exception:  # noqa: BLE001 - best-effort layer like the others, the instruction stands without it
+            _log.debug("outcome sections failed for task %s", task_id, exc_info=True)
     except Exception:
         pass
 

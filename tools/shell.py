@@ -4,15 +4,60 @@ see stdout/stderr/exit-code so they can verify their own output and iterate.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 
 _MAX_OUTPUT = 20_000  # chars — keeps context window manageable
+
+# Variable names ending in one of these are treated as secrets regardless of
+# provider, so a new integration's key is scrubbed without needing a code change.
+_SECRET_NAME_SUFFIXES = ("_API_KEY", "_SECRET", "_TOKEN", "_PASSWORD")
+
+# Specific names that do not follow the suffix convention above but still
+# hold credentials the command's own environment must never see.
+_SECRET_NAMES = frozenset({
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "AGENTS_HUB_API_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+    "LANGFUSE_SECRET_KEY",
+    "LANGFUSE_PUBLIC_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "GITHUB_TOKEN",
+    "GITLAB_TOKEN",
+})
+
+
+def scrubbed_env(base: Optional[Mapping[str, str]] = None) -> dict:
+    """Build a subprocess environment with provider keys and other secrets removed.
+
+    Starts from ``base`` (the current process environment when omitted) and
+    drops any variable whose name ends with ``_API_KEY``, ``_SECRET``,
+    ``_TOKEN`` or ``_PASSWORD``, or matches a short explicit list of known
+    credential names. Everything else passes through unchanged, so ordinary
+    variables a command needs (PATH, HOME, locale, PYTHON*, VIRTUAL_ENV,
+    CONDA_*, AGENT_WORKSPACE, non-secret AGENTS_HUB_* settings, and so on)
+    still reach the command. This is what an agent-run shell command should
+    see: it can run `env` without reading out the backend's provider keys.
+    """
+    source = base if base is not None else os.environ
+    result: dict = {}
+    for name, value in source.items():
+        upper = name.upper()
+        if name in _SECRET_NAMES:
+            continue
+        if any(upper.endswith(suffix) for suffix in _SECRET_NAME_SUFFIXES):
+            continue
+        result[name] = value
+    return result
 
 
 def _shell_allowlist() -> Optional[tuple]:
@@ -148,6 +193,7 @@ def run_shell(command: str, timeout: Optional[int] = 30) -> str:
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=scrubbed_env(),
         )
         stdout = proc.stdout or ""
         stderr = proc.stderr or ""

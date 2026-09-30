@@ -3,16 +3,17 @@ Settings API – read and update LLM / application settings stored in .env.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common.config import agent_execution_mode, live_setting, settings as _cfg
+from common.config import agent_execution_mode, chat_execution, live_setting, settings as _cfg
 from common.hostnet import host_service_url
 from providers import (
     is_custom_backend,
@@ -150,6 +151,8 @@ class SettingsResponse(BaseModel):
     rag_embedding_base_url: str
     # Agent mode
     agent_mode: str
+    # Where a chat turn runs: "instances" (a service replica) or "inprocess".
+    chat_execution: str
     agent_docker_image: str
     agent_docker_network: str
     agent_docker_extra_args: str
@@ -157,6 +160,28 @@ class SettingsResponse(BaseModel):
     task_assignment_mode: str
     # Live streaming
     agent_streaming: bool
+    # Tool capability guard (agents/capability_guard.py): block | warn | off,
+    # and whether a per-agent override needs a no-network container to count.
+    capability_guard: str
+    capability_override_requires_container: bool
+    # Web search (tools/web.py): the provider behind ``web_search`` and its key.
+    web_search_provider: str
+    web_search_api_key_masked: str
+    web_search_max_results: int
+    # fetch_url limits and the global domain policy (tools/web.py).
+    web_fetch_max_chars: int
+    web_fetch_timeout: float
+    web_fetch_max_redirects: int
+    web_domain_policy_enabled: bool
+    web_allow_domains: list[str]
+    web_deny_domains: list[str]
+    # Code execution (tools/run_code.py, sandbox/registry.py): the sandbox
+    # provider a run gets when its environment names none, what happens when
+    # docker is down, and whether docker answers right now.
+    code_runner_provider: str
+    code_runner_fallback: str
+    code_runner_docker_available: bool
+    code_runner_docker_reason: str
     # Fields explicitly set in .env (not just defaults)
     env_defined_fields: list[str] = []
 
@@ -192,12 +217,73 @@ _FIELD_TO_ENV = {
     "rag_embedding_api_key": "RAG_EMBEDDING_API_KEY",
     "rag_embedding_base_url": "RAG_EMBEDDING_BASE_URL",
     "agent_mode": "AGENT_EXECUTION_MODE",
+    "chat_execution": "AGENTS_HUB_CHAT_EXECUTION",
     "agent_docker_image": "AGENT_DOCKER_IMAGE",
     "agent_docker_network": "AGENT_DOCKER_NETWORK",
     "agent_docker_extra_args": "AGENT_DOCKER_EXTRA_ARGS",
     "task_assignment_mode": "TASK_ASSIGNMENT_MODE",
     "agent_streaming": "AGENT_STREAMING",
+    "capability_guard": "CAPABILITY_GUARD",
+    "code_runner_provider": "CODE_RUNNER_PROVIDER",
+    "code_runner_fallback": "CODE_RUNNER_FALLBACK",
+    "capability_override_requires_container": "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER",
+    "web_search_provider": "WEB_SEARCH_PROVIDER",
+    "web_search_api_key": "WEB_SEARCH_API_KEY",
+    "web_search_max_results": "WEB_SEARCH_MAX_RESULTS",
+    "web_fetch_max_chars": "WEB_FETCH_MAX_CHARS",
+    "web_fetch_timeout": "WEB_FETCH_TIMEOUT",
+    "web_fetch_max_redirects": "WEB_FETCH_MAX_REDIRECTS",
+    "web_domain_policy_enabled": "WEB_DOMAIN_POLICY_ENABLED",
+    "web_allow_domains": "WEB_ALLOW_DOMAINS",
+    "web_deny_domains": "WEB_DENY_DOMAINS",
 }
+
+WEB_SEARCH_PROVIDERS = ("", "brave", "tavily", "exa")
+
+
+def _web_limits():
+    from tools.web import _fetch_limits
+    return _fetch_limits()
+
+
+def _web_bool(key: str, fallback: bool) -> bool:
+    from tools.web import _live_bool
+    return _live_bool(key, fallback)
+
+
+def _web_list(key: str, fallback):
+    from tools.web import _live_list
+    return _live_list(key, fallback)
+
+
+CODE_RUNNER_FALLBACKS = ("none", "local")
+
+
+def _code_runner_live(field: str, default: str) -> str:
+    """What run_code uses right now: the in-process Settings object, which the
+    update route changes in place (see update_settings), not only .env."""
+    from common.config import settings as live
+    return str(getattr(live, field, "") or default).strip().lower() or default
+
+
+def _docker_status() -> tuple[bool, str]:
+    """Whether the docker sandbox can run something now, and why not."""
+    try:
+        from sandbox.registry import get_provider
+        ok, reason = get_provider("docker").is_available()
+        return bool(ok), str(reason or "")
+    except Exception as exc:  # noqa: BLE001 - the page still loads without the probe
+        return False, str(exc)
+
+
+def _guard_mode() -> str:
+    from agents.capability_guard import guard_mode
+    return guard_mode()
+
+
+def _override_requires_container() -> bool:
+    from agents.capability_guard import override_requires_container
+    return override_requires_container()
 
 
 @router.get("", response_model=SettingsResponse)
@@ -205,6 +291,7 @@ async def get_settings():
     """Return current settings (API keys are masked)."""
     env = _read_env()
     env_defined_fields = [field for field, env_key in _FIELD_TO_ENV.items() if env.get(env_key)]
+    docker_ok, docker_reason = _docker_status()
     return SettingsResponse(
         openai_api_key_masked=_mask_key(env.get("OPENAI_API_KEY") or _cfg.openai_api_key),
         anthropic_api_key_masked=_mask_key(env.get("ANTHROPIC_API_KEY")),
@@ -238,6 +325,7 @@ async def get_settings():
         # environment, and the page must not report "local" while nodes are
         # starting as containers.
         agent_mode=agent_execution_mode(),
+        chat_execution=chat_execution(),
         agent_docker_image=live_setting("AGENT_DOCKER_IMAGE"),
         agent_docker_network=live_setting("AGENT_DOCKER_NETWORK"),
         agent_docker_extra_args=live_setting("AGENT_DOCKER_EXTRA_ARGS"),
@@ -245,6 +333,26 @@ async def get_settings():
         task_assignment_mode=env.get("TASK_ASSIGNMENT_MODE") or "any",
         # Live streaming
         agent_streaming=_as_bool(env.get("AGENT_STREAMING")),
+        capability_guard=_guard_mode(),
+        capability_override_requires_container=_override_requires_container(),
+        web_search_provider=(env.get("WEB_SEARCH_PROVIDER") or _cfg.web_search_provider or "").strip().lower(),
+        # Empty when no key is set, so the page can tell "not configured"
+        # from "configured": _mask_key masks an empty key like a short one.
+        web_search_api_key_masked=(
+            _mask_key(env.get("WEB_SEARCH_API_KEY") or _cfg.web_search_api_key)
+            if (env.get("WEB_SEARCH_API_KEY") or _cfg.web_search_api_key) else ""
+        ),
+        web_search_max_results=int(env.get("WEB_SEARCH_MAX_RESULTS") or _cfg.web_search_max_results or 5),
+        web_fetch_max_chars=_web_limits()[0],
+        web_fetch_timeout=_web_limits()[1],
+        web_fetch_max_redirects=_web_limits()[2],
+        web_domain_policy_enabled=_web_bool("WEB_DOMAIN_POLICY_ENABLED", _cfg.web_domain_policy_enabled),
+        web_allow_domains=list(_web_list("WEB_ALLOW_DOMAINS", _cfg.web_allow_domains)),
+        web_deny_domains=list(_web_list("WEB_DENY_DOMAINS", _cfg.web_deny_domains)),
+        code_runner_provider=_code_runner_live("code_runner_provider", "docker"),
+        code_runner_fallback=_code_runner_live("code_runner_fallback", "none"),
+        code_runner_docker_available=docker_ok,
+        code_runner_docker_reason=docker_reason,
         env_defined_fields=env_defined_fields,
     )
 
@@ -280,21 +388,95 @@ class SettingsUpdate(BaseModel):
     rag_embedding_api_key: Optional[str] = None
     rag_embedding_base_url: Optional[str] = None
     agent_mode: Optional[str] = None
+    chat_execution: Optional[str] = None
     agent_docker_image: Optional[str] = None
     agent_docker_network: Optional[str] = None
     agent_docker_extra_args: Optional[str] = None
     task_assignment_mode: Optional[str] = None
     agent_streaming: Optional[bool] = None
+    capability_guard: Optional[str] = None
+    capability_override_requires_container: Optional[bool] = None
+    web_search_provider: Optional[str] = None
+    web_search_api_key: Optional[str] = None
+    web_search_max_results: Optional[int] = None
+    web_fetch_max_chars: Optional[int] = None
+    web_fetch_timeout: Optional[float] = None
+    web_fetch_max_redirects: Optional[int] = None
+    web_domain_policy_enabled: Optional[bool] = None
+    web_allow_domains: Optional[List[str]] = None
+    web_deny_domains: Optional[List[str]] = None
+    code_runner_provider: Optional[str] = None
+    code_runner_fallback: Optional[str] = None
 
 
 @router.put("")
 async def update_settings(data: SettingsUpdate):
     """Persist settings to the .env file."""
     updates = data.model_dump(exclude_none=True)
+    if updates.get("chat_execution") not in (None, "instances", "inprocess"):
+        raise HTTPException(status_code=400, detail="chat_execution must be 'instances' or 'inprocess'")
+    if "capability_guard" in updates:
+        from agents.capability_guard import GUARD_MODES
+        mode = str(updates["capability_guard"]).strip().lower()
+        if mode not in GUARD_MODES:
+            raise HTTPException(status_code=400, detail=f"capability_guard must be one of {', '.join(GUARD_MODES)}")
+        updates["capability_guard"] = mode
+    if "code_runner_provider" in updates:
+        from sandbox.registry import PROVIDER_NAMES
+        provider = str(updates["code_runner_provider"]).strip().lower()
+        if provider not in PROVIDER_NAMES:
+            raise HTTPException(status_code=400, detail=f"code_runner_provider must be one of {', '.join(PROVIDER_NAMES)}")
+        updates["code_runner_provider"] = provider
+    if "code_runner_fallback" in updates:
+        fallback = str(updates["code_runner_fallback"]).strip().lower()
+        if fallback not in CODE_RUNNER_FALLBACKS:
+            raise HTTPException(status_code=400, detail="code_runner_fallback must be 'none' or 'local'")
+        updates["code_runner_fallback"] = fallback
+    if "web_search_provider" in updates:
+        provider = str(updates["web_search_provider"]).strip().lower()
+        if provider not in WEB_SEARCH_PROVIDERS:
+            raise HTTPException(status_code=400, detail="web_search_provider must be brave, tavily, exa or empty")
+        updates["web_search_provider"] = provider
+    if "web_search_max_results" in updates:
+        n = int(updates["web_search_max_results"])
+        if not 1 <= n <= 20:
+            raise HTTPException(status_code=400, detail="web_search_max_results must be between 1 and 20")
+    if "web_fetch_max_chars" in updates and not 500 <= int(updates["web_fetch_max_chars"]) <= 200_000:
+        raise HTTPException(status_code=400, detail="web_fetch_max_chars must be between 500 and 200000")
+    if "web_fetch_timeout" in updates and not 1 <= float(updates["web_fetch_timeout"]) <= 120:
+        raise HTTPException(status_code=400, detail="web_fetch_timeout must be between 1 and 120 seconds")
+    if "web_fetch_max_redirects" in updates and not 0 <= int(updates["web_fetch_max_redirects"]) <= 20:
+        raise HTTPException(status_code=400, detail="web_fetch_max_redirects must be between 0 and 20")
+    for list_field in ("web_allow_domains", "web_deny_domains"):
+        if list_field in updates:
+            # pydantic-settings reads a tuple field from .env as JSON, so the
+            # file holds a JSON list; tools/web.py reads the same form live.
+            from tools.web import clean_host_list
+            try:
+                hosts = clean_host_list(updates[list_field])
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"{list_field}: {exc}")
+            updates[list_field] = json.dumps(hosts)
+    if "web_domain_policy_enabled" in updates:
+        updates["web_domain_policy_enabled"] = "true" if updates["web_domain_policy_enabled"] else "false"
+    if "capability_override_requires_container" in updates:
+        # .env holds text; the guard parses true/false back (override_requires_container).
+        updates["capability_override_requires_container"] = (
+            "true" if updates["capability_override_requires_container"] else "false"
+        )
     for field, value in updates.items():
         env_key = _FIELD_TO_ENV.get(field)
         if env_key:
             _write_env_key(env_key, str(value))
+    # run_code reads these off the in-process Settings object at each call
+    # (tools/run_code.py _settings, sandbox/registry.py resolve), so changing
+    # them there applies to the next run without a restart. The .env write
+    # above is for the next start, and for worker processes started later.
+    for field in ("code_runner_provider", "code_runner_fallback"):
+        if field in updates:
+            from common.config import settings as live
+            setattr(live, field, updates[field])
+            os.environ[_FIELD_TO_ENV[field]] = str(updates[field])
     if "orch_log_level" in updates:
         # _write_env_key only touches the file, and the cached Settings object
         # was built at import time — so without seeding os.environ the running
@@ -343,7 +525,7 @@ async def test_local_model(data: TestLocalModelRequest):
     except httpx.ConnectError:
         return {"ok": False, "error": f"Could not connect to {base}. Is the server running?"}
     except httpx.TimeoutException:
-        return {"ok": False, "error": f"Connection timed out after 5 s."}
+        return {"ok": False, "error": "Connection timed out after 5 s."}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

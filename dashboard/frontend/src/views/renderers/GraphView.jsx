@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useThemeColors } from '../../lib/themeColors';
 
 // Graph renderer — Cytoscape. Reads spec.nodes / spec.edges (keyed maps, the
 // live op shape; arrays are also accepted) and reconciles them into a persistent
@@ -25,13 +26,28 @@ function toElements(spec) {
   return { nodes, edges };
 }
 
-const STYLE = (dark) => [
+// Cytoscape takes colours as values, not classes, so the palette tokens are
+// resolved through useThemeColors and re-read when the palette or theme
+// changes. Fallbacks are the literals this renderer always shipped.
+const GRAPH_COLOR_SPEC = {
+  node: ['--brand-600', '#2a4fbd'],
+  nodeDark: ['--brand-700', '#6b90ff'],
+  text: ['--text-primary', '#111827'],
+  selected: ['--hue-amber-400', '#f59e0b'],
+  selectedBorder: ['--warn', '#b45309'],
+  edge: ['--neutral-400', '#9ca3af'],
+  edgeDark: ['--neutral-600', '#4b5563'],
+  edgeText: ['--text-muted', '#6b7280'],
+  edgeTextBg: ['--surface-card', '#ffffff'],
+};
+
+const STYLE = (dark, c) => [
   {
     selector: 'node',
     style: {
-      'background-color': dark ? '#6b90ff' : '#2a4fbd',
+      'background-color': dark ? c.nodeDark : c.node,
       label: 'data(label)',
-      color: dark ? '#e5e7eb' : '#111827',
+      color: c.text,
       'font-size': 11,
       'text-valign': 'bottom',
       'text-margin-y': 4,
@@ -39,23 +55,23 @@ const STYLE = (dark) => [
       'border-width': 0,
     },
   },
-  { selector: 'node:selected', style: { 'background-color': '#f59e0b', 'border-width': 3, 'border-color': '#b45309' } },
+  { selector: 'node:selected', style: { 'background-color': c.selected, 'border-width': 3, 'border-color': c.selectedBorder } },
   {
     selector: 'edge',
     style: {
       width: 1.5,
-      'line-color': dark ? '#4b5563' : '#9ca3af',
-      'target-arrow-color': dark ? '#4b5563' : '#9ca3af',
+      'line-color': dark ? c.edgeDark : c.edge,
+      'target-arrow-color': dark ? c.edgeDark : c.edge,
       'target-arrow-shape': 'triangle',
       'curve-style': 'bezier',
       label: 'data(label)',
       'font-size': 9,
-      color: dark ? '#9ca3af' : '#6b7280',
-      'text-background-color': dark ? '#111827' : '#ffffff',
+      color: c.edgeText,
+      'text-background-color': c.edgeTextBg,
       'text-background-opacity': 0.8,
     },
   },
-  { selector: 'edge:selected', style: { 'line-color': '#f59e0b', 'target-arrow-color': '#f59e0b', width: 2.5 } },
+  { selector: 'edge:selected', style: { 'line-color': c.selected, 'target-arrow-color': c.selected, width: 2.5 } },
 ];
 
 export default function GraphView({ view, theme, onSelect }) {
@@ -63,6 +79,7 @@ export default function GraphView({ view, theme, onSelect }) {
   const cyRef = useRef(null);
   const layoutName = view?.spec?.layout || 'cose';
   const dark = theme === 'dark';
+  const colors = useThemeColors(GRAPH_COLOR_SPEC);
 
   // Create the instance once.
   useEffect(() => {
@@ -71,7 +88,7 @@ export default function GraphView({ view, theme, onSelect }) {
     (async () => {
       const cytoscape = (await import('cytoscape')).default;
       if (cancelled || !elRef.current) return;
-      cy = cytoscape({ container: elRef.current, elements: [], style: STYLE(dark), wheelSensitivity: 0.2 });
+      cy = cytoscape({ container: elRef.current, elements: [], style: STYLE(dark, colors), wheelSensitivity: 0.2 });
       cy.on('tap', 'node, edge', (evt) => onSelect && onSelect(evt.target.id()));
       cy.on('tap', (evt) => { if (evt.target === cy && onSelect) onSelect(null); });
       cyRef.current = cy;
@@ -85,9 +102,9 @@ export default function GraphView({ view, theme, onSelect }) {
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    cy.style(STYLE(dark));
+    cy.style(STYLE(dark, colors));
     reconcile(cy, view, layoutName);
-  }, [view, dark, layoutName]);
+  }, [view, dark, colors, layoutName]);
 
   return <div ref={elRef} className="w-full h-full min-h-[320px]" style={{ height: '100%' }} />;
 }

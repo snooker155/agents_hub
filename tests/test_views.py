@@ -23,7 +23,7 @@ def test_supported_kinds():
     assert set(SUPPORTED_KINDS) == {
         "markdown", "table", "chart", "diagram", "image", "graph",
         "scene3d", "html", "latex", "math", "simulation", "process",
-        "slides", "document",
+        "slides", "document", "code",
     }
 
 
@@ -146,6 +146,55 @@ def test_create_view_tool(tmp_path):
         "summary": "s", "files": '["../secret"]',
     }))
     assert esc["ok"] is False and "escapes workspace" in esc["error"]
+
+
+def test_created_view_becomes_the_runs_target(tmp_path):
+    """A run with no Studio view (a chat, a delegated worker) creates one and
+    builds it: the mutation tools act on the view it made, without its id."""
+    import json
+    from common.agent_context import current_view_binding
+    from tools.views import create_view_tools, view_apply_ops
+
+    create = create_view_tools(workspace=str(tmp_path))[0]
+    # Outside a run there is nothing to bind, and the refusal says what to do.
+    lost = json.loads(view_apply_ops.invoke({"ops": "[]"}))
+    assert lost["ok"] is False and "create_view" in lost["error"]
+
+    binding: dict = {}
+    token = current_view_binding.set(binding)
+    try:
+        made = json.loads(create.invoke({
+            "view_kind": "scene3d", "title": "Cube", "spec": "{}", "summary": "a cube",
+        }))
+        assert made["ok"] and made["active"] is True
+        applied = json.loads(view_apply_ops.invoke({"ops": json.dumps([
+            {"op": "add", "path": "spec.lights.key", "value": {"type": "directional"}},
+        ])}))
+        assert applied["ok"] and applied["view_id"] == made["view_id"]
+        assert binding["created"] == [made["view_id"]]
+    finally:
+        current_view_binding.reset(token)
+    assert get_view(made["view_id"])["spec"]["lights"]["key"]["type"] == "directional"
+
+
+def test_first_named_view_becomes_the_runs_target(tmp_path):
+    """A worker asked to continue view X names it once; later calls follow."""
+    import json
+    from common.agent_context import current_view_binding
+    from tools.views import view_apply_ops
+
+    env = create_view("graph", "G", {"nodes": {}, "edges": {}}, summary="g")
+    token = current_view_binding.set({})
+    try:
+        first = json.loads(view_apply_ops.invoke({"ops": json.dumps([
+            {"op": "add", "path": "spec.nodes.a", "value": {"label": "A"}},
+        ]), "view_id": env.view_id}))
+        then = json.loads(view_apply_ops.invoke({"ops": json.dumps([
+            {"op": "add", "path": "spec.nodes.b", "value": {"label": "B"}},
+        ])}))
+    finally:
+        current_view_binding.reset(token)
+    assert first["ok"] and then["ok"] and then["view_id"] == env.view_id
 
 
 # ── inline publish path (parse → persist → view_ref) ──────────────────────────
@@ -621,10 +670,39 @@ def test_timeline_annotations_survive_revert():
 # ── Phase 4: publishing (slides / document) ───────────────────────────────────
 
 def test_slides_and_document_kinds():
-    from views.models import validate_spec, ViewValidationError
+    from views.models import validate_spec
     assert {"slides", "document"} <= set(SUPPORTED_KINDS)
     assert validate_spec("document", {"markdown": "# Hi", "title": "T"})["title"] == "T"
     assert "slides" in validate_spec("slides", {"slides": {}})
+
+
+def test_slides_spec_rejects_a_slide_the_renderer_cannot_draw():
+    """The renderer draws title + markdown body and nothing else. A deck
+    written with bullets or a structured body used to validate and then show
+    as bare titles (the "presentation with no content" incident)."""
+    from views.models import ViewValidationError, validate_spec
+    ok = validate_spec("slides", {"slides": [{"title": "T", "body": "- a\n- b"}]})
+    assert ok["slides"][0]["body"] == "- a\n- b"
+    for bad in (
+        {"slides": [{"title": "T", "bullets": ["a", "b"]}]},
+        {"slides": [{"title": "T", "body": {"format": "title_only"}}]},
+        {"slides": {"s1": {"title": "", "body": ""}}},
+    ):
+        with pytest.raises(ViewValidationError) as exc:
+            validate_spec("slides", bad)
+        assert "slides_add" in str(exc.value) or "markdown" in str(exc.value)
+
+
+def test_view_apply_ops_refuses_a_malformed_slide():
+    import json
+    from views.store import create_live_view, get_view
+    from tools.views import view_apply_ops
+    vid = create_live_view("slides", "Deck").view_id
+    _bind_view(vid)
+    res = json.loads(view_apply_ops.invoke({"ops": json.dumps([
+        {"op": "add", "path": "spec.slides.s1", "value": {"title": "T", "bullets": ["a"]}}])}))
+    assert res["ok"] is False and "markdown" in res["error"]
+    assert get_view(vid)["spec"]["slides"] == {}, "a refused batch must not be applied"
 
 
 def test_slides_add_tool_orders():
@@ -803,7 +881,8 @@ def test_run_compute_budget_caps_frames():
 
 
 def test_view_compute_tool_sets_fidelity_and_streams():
-    import json, time
+    import json
+    import time
     from views.store import create_live_view, get_view, list_clips
     from tools.views import view_compute
     vid = create_live_view("simulation", "N").view_id
@@ -877,7 +956,7 @@ def test_asset_binding_through_symlinked_root(tmp_path, monkeypatch):
     link.symlink_to(real, target_is_directory=True)
     monkeypatch.setattr(paths, "VIEWS_ROOT", link)
 
-    from views.store import create_live_view, add_asset, get_view
+    from views.store import create_live_view, add_asset
     src = tmp_path / "wood.png"
     src.write_bytes(b"\x89PNGfake")
     vid = create_live_view("scene3d", "S").view_id
@@ -973,7 +1052,8 @@ def test_nn_trace_frames_and_determinism():
     a = create_runtime("nn_trace", {"layers": [6, 8, 3], "seed": 11})
     b = create_runtime("nn_trace", {"layers": [6, 8, 3], "seed": 11})
     for _ in range(3):
-        a.step(0.01); b.step(0.01)
+        a.step(0.01)
+        b.step(0.01)
     fa, fb = a.frame(), b.frame()
     assert fa["shape"] == [3, 8] and len(fa["values"]) == 24
     assert fa["values"] == fb["values"]                      # seeded → deterministic
@@ -1013,7 +1093,8 @@ def test_view_serve_launch_gated_off_by_default():
 
 
 def test_view_serve_launch_and_stop(monkeypatch, tmp_path):
-    import json, sys as _sys
+    import json
+    import sys as _sys
     import common.paths as paths
     from common.config import settings
     from views.store import create_live_view, get_view
@@ -1051,7 +1132,8 @@ def test_view_serve_launch_validation(monkeypatch, tmp_path):
 
 
 def test_delete_view_kills_launched_service(monkeypatch, tmp_path):
-    import json, sys as _sys
+    import json
+    import sys as _sys
     import common.paths as paths
     from common.config import settings
     from views.store import create_live_view, delete_view
@@ -1304,16 +1386,12 @@ def test_the_view_chat_prompt_carries_the_live_view():
 
 def test_the_visualizer_ships_with_the_product():
     """A Studio pointed at an agent the install does not have is a dead page."""
-    import shutil
 
-    from agents.registry import _REGISTRY_CACHE, get_agent
-    from common.bootstrap import BOOTSTRAP_AGENTS_FILE
-    from common.paths import AGENTS_FILE
+    from agents.registry import get_agent
+    from common.bootstrap import seed_registry_from_bootstrap
     from routes.views import VIEW_AGENT_ID
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
-    _REGISTRY_CACHE["mtime"] = None
+    seed_registry_from_bootstrap()
 
     spec = get_agent(VIEW_AGENT_ID)
     assert spec is not None and spec.system is True

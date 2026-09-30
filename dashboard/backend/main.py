@@ -10,6 +10,7 @@ Organized by domains:
 - workspaces: Workspace management
 """
 import argparse
+import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path as PathlibPath
@@ -45,12 +46,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
-from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances
+from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
+from routes import a2a as a2a_router
+from routes import auth as auth_router
+from routes import oidc as oidc_router
+from routes import groups as groups_router
+from routes import scim as scim_router
+from routes import audit as audit_router
+from routes import account as account_router
+from routes import secrets as secrets_router
+from routes import github_app as github_app_router
+from routes import run_groups as run_groups_router
+from routes import run_state as run_state_router
 from routes import settings as settings_router
 from routes import models as models_router
+from routes import ops as ops_router
+from routes import deployment as deployment_router
+from routes import system as system_router
+from routes import demo as demo_router
 
-# Settings, for the optional bearer token below
-from common.config import settings
+# Settings: read at startup for the optional-feature checks below. The auth
+# guard reads the live settings object through common.identity instead, so a
+# mode changed in .env takes effect on the next restart without this import
+# having pinned an old value.
+from common.config import settings  # noqa: F401  (kept: imported by name elsewhere)
+
+log = logging.getLogger("dashboard.backend.main")
 
 
 @asynccontextmanager
@@ -62,8 +83,9 @@ async def lifespan(app: FastAPI):
     stops them again. Each is started inside its own try: a connector that
     will not come up must not take the API down with it.
 
-    The orchestrator node is intentionally NOT started here: orchestration runs
-    only when the user starts an orchestrator node (Nodes UI / POST /api/nodes).
+    The orchestrator is intentionally NOT started here: orchestration runs only
+    when the user starts an orchestrator instance that takes tasks (the
+    Orchestrator page, or POST /api/instances with take_tasks).
     """
     import asyncio
     from common.session_broker import broker
@@ -74,56 +96,153 @@ async def lifespan(app: FastAPI):
     # moves the threshold they log at. The level is read for the workspace the
     # UI has selected, which is where the Settings page writes it.
     from common.logging_config import configure_logging_for_active_workspace
-    print(f"✓ Log level: {configure_logging_for_active_workspace()}")
+    log.info(f"✓ Log level: {configure_logging_for_active_workspace()}")
 
     # The orchestrator node is started on demand by the user, not at startup.
 
-    # Auto-start the Telegram poller if it's been configured + enabled.
+    from common.config import hub_role
+    log.info(f"✓ Role: {hub_role()}"
+             + ("  (launches go to the run queue for workers)" if hub_role() == "api" else ""))
+
+    # The Telegram poller runs on exactly one replica: the supervisor holds
+    # the ``telegram`` lease and starts the poller when it gets it, stops it
+    # when it loses it (common/singletons.py). Configured-and-enabled is
+    # re-read on every check, so the Connectors page still applies live.
     try:
-        from connectors.telegram.telegram_runner import service as _tg_service
-        from connectors.telegram import telegram_store
-        if telegram_store.is_enabled() and telegram_store.has_token():
-            await _tg_service.start()
-            if _tg_service.is_running():
-                uname = _tg_service.status.get("bot_username") or "?"
-                print(f"✓ Telegram poller started  (@{uname})")
-            else:
-                err = _tg_service.status.get("last_error") or "unknown"
-                print(f"⚠ Telegram poller did not start: {err}")
+        from common.singletons import supervisor as _supervisor, telegram_service
+        _supervisor.add(telegram_service())
+        await _supervisor.start()
+        log.info("✓ Singleton supervisor started (telegram, online_evals)")
     except Exception as e:
-        print(f"⚠ Could not start Telegram poller: {e}")
+        log.warning(f"⚠ Could not start the singleton supervisor: {e}")
+
+    # This replica's row on the deployment map (common/members.py): registered
+    # now, refreshed from a daemon thread with what the process is carrying.
+    try:
+        from common.members import MemberBeat
+        from common.session_broker import broker as _broker
+
+        def _load():
+            from common import db as _dbm
+            try:
+                running = _dbm.get_conn().execute(
+                    "SELECT COUNT(*) FROM runs WHERE status = 'running' AND host = ?",
+                    (__import__("socket").gethostname(),)).fetchone()[0]
+            except Exception:
+                running = None
+            return {"sse_clients": len(getattr(_broker, "_clients", {}) or {}),
+                    "running_runs_on_host": running}
+
+        app.state.member_beat = MemberBeat(hub_role(), capabilities={
+            "http": True, "execution_modes": ["local", "docker"],
+        }, load_fn=_load)
+        app.state.member_beat.start()
+        log.info("✓ Registered on the deployment map")
+    except Exception as e:
+        log.warning(f"⚠ Could not register this replica: {e}")
+
+    # Outbound webhook deliveries left in the outbox by an earlier process go
+    # out as soon as this replica holds the ``outbox`` lease.
+    try:
+        from notify import outbound as _notify_outbound
+        _notify_outbound.start()
+    except Exception as e:
+        log.warning(f"⚠ Could not start the outbox drainer: {e}")
 
     # Start the plan scheduler (fires due scheduled jobs / notifications).
     try:
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.start()
-        print("✓ Plan scheduler started")
+        log.info("✓ Plan scheduler started")
     except Exception as e:
-        print(f"⚠ Could not start plan scheduler: {e}")
+        log.warning(f"⚠ Could not start plan scheduler: {e}")
 
     # Start the periodic external-state publisher (containers, node heartbeats,
     # log tails) — pushes snapshots over the single SSE stream so the UI never polls.
     try:
         from common.live_state import run_external_publisher
         app.state.external_publisher = asyncio.create_task(run_external_publisher())
-        print("✓ External-state publisher started")
+        log.info("✓ External-state publisher started")
     except Exception as e:
-        print(f"⚠ Could not start external-state publisher: {e}")
+        log.warning(f"⚠ Could not start external-state publisher: {e}")
+
+    # Start the cross-replica broker bridge (common/broker_bridge.py). A no-op
+    # when AGENTS_HUB_BROKER_URL is unset, which is the default and what a
+    # single-replica deployment wants; see docs/scaling.md.
+    try:
+        from common.broker_bridge import start_bridge
+        await start_bridge()
+    except Exception as e:
+        log.warning(f"⚠ Could not start broker bridge: {e}")
 
     # Start the run watchdog (fails runs stuck in 'pending' and runs whose
     # process died, so tasks never freeze waiting on a run that cannot finish).
     try:
         from managers.run_watchdog import watchdog as _run_watchdog
         await _run_watchdog.start()
-        print("✓ Run watchdog started")
+        log.info("✓ Run watchdog started")
     except Exception as e:
-        print(f"⚠ Could not start run watchdog: {e}")
+        log.warning(f"⚠ Could not start run watchdog: {e}")
+
+    # The egress proxy for environments with a limited network
+    # (environments/egress.py); a no-op unless AGENTS_HUB_EGRESS_PROXY is on.
+    try:
+        from environments import egress as _egress
+        if _egress.start_background() is not None:
+            log.info("✓ Egress proxy started")
+    except Exception as e:
+        log.warning(f"⚠ Could not start the egress proxy: {e}")
+
+    # The service supervisor (services/supervisor.py): keeps every service's
+    # replicas at its desired state, and the default runner warm, so a chat
+    # turn never waits for a process to boot. A worker serves no chat and
+    # starts no replicas.
+    if hub_role() != "worker":
+        try:
+            from services.supervisor import supervisor as _service_supervisor
+            await _service_supervisor.start()
+            log.info("✓ Service supervisor started")
+        except Exception as e:  # noqa: BLE001 - the hub starts without it; services stay down
+            log.warning(f"⚠ Could not start the service supervisor: {e}")
+
+    # The deployment supervisor (deployments/supervisor.py): keeps a project's
+    # deployed services alive and pauses a crash loop. See
+    # docs/project-deployments.md.
+    if hub_role() != "worker":
+        try:
+            from deployments.supervisor import supervisor as _deployment_supervisor
+            await _deployment_supervisor.start()
+            log.info("✓ Deployment supervisor started")
+        except Exception as e:  # noqa: BLE001 - the hub starts without it; deployments stay down
+            log.warning(f"⚠ Could not start the deployment supervisor: {e}")
 
     yield
 
+    try:
+        from deployments.supervisor import supervisor as _deployment_supervisor
+        await _deployment_supervisor.stop()
+    except Exception:  # noqa: BLE001 - shutting down anyway
+        log.debug("could not stop the deployment supervisor", exc_info=True)
+
+    try:
+        from services.supervisor import supervisor as _service_supervisor
+        await _service_supervisor.stop()
+    except Exception:  # noqa: BLE001 - shutting down anyway
+        log.debug("could not stop the service supervisor", exc_info=True)
+
+    try:
+        from environments import egress as _egress
+        _egress.stop_background()
+    except Exception:
+        pass
     task = getattr(app.state, "external_publisher", None)
     if task:
         task.cancel()
+    try:
+        from common.broker_bridge import stop_bridge
+        await stop_bridge()
+    except Exception:
+        pass
     try:
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.stop()
@@ -135,8 +254,31 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     try:
-        from connectors.telegram.telegram_runner import service as _tg_service
-        await _tg_service.stop()
+        from common.singletons import supervisor as _supervisor
+        await _supervisor.stop()
+    except Exception:
+        pass
+    try:
+        from notify import outbound as _notify_outbound
+        _notify_outbound.shutdown()
+    except Exception:
+        pass
+    beat = getattr(app.state, "member_beat", None)
+    if beat is not None:
+        try:
+            beat.stop()
+        except Exception:
+            pass
+    # Every role this replica held goes back to the pool at once, so a
+    # restart is taken over by a sibling immediately, not after the TTL.
+    try:
+        from common import leases as _leases
+        _leases.release_all()
+    except Exception:
+        pass
+    try:
+        from common import db as _db
+        _db.close_pool()
     except Exception:
         pass
 
@@ -150,30 +292,22 @@ app = FastAPI(
 )
 
 
-# Helper to locate orchestrator settings (stored under .agents_hub)
-def get_orchestrator_settings_path() -> PathlibPath:
-    """Return the path to orchestrator settings JSON under .agents_hub.
-
-    Ensures the directory exists and initializes the file if missing.
-    """
-    from common.paths import AGENTS_HUB_ROOT
-    path = AGENTS_HUB_ROOT / "orchestrator_settings.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        try:
-            path.write_text("{\"enabled\": false}", encoding="utf-8")
-        except Exception:
-            pass
-    return path
-
 # ============================================================================
-# Optional bearer-token authentication
+# Identity: authentication and authorization
 # ============================================================================
-# Off by default (settings.api_token == "") so the local-only workflow is
-# unchanged. When a token is configured, every /api request must present it via
-# ``Authorization: Bearer <token>``, ``X-Api-Token: <token>`` header, or a
-# ``?token=<token>`` query parameter — the query form lets the browser's
-# EventSource (which cannot set headers) authenticate the /api/stream SSE.
+# One guard for all three AUTH_MODE postures (see common/identity.py and
+# docs/identity.md). ``single`` — the default — lets everything through
+# exactly as before any of this existed. ``token`` is the original shared
+# ``AGENTS_HUB_API_TOKEN``: every /api request must present it via
+# ``Authorization: Bearer <token>``, an ``X-Api-Token: <token>`` header, or a
+# ``?token=<token>`` query parameter (the query form lets the browser's
+# EventSource, which cannot set headers, authenticate the /api/stream SSE).
+# ``multi`` resolves a session token to a named user and checks their global
+# role and their membership of the workspace the request names.
+#
+# The decision itself lives in ``common.identity.authorize_request`` on top of
+# the pure predicates in ``common.auth``, so the whole matrix is testable
+# without a server; this function only translates the answer into a response.
 #
 # Registered BEFORE the CORS middleware on purpose. Starlette's add_middleware
 # inserts at the head of the list and the head is the outermost layer, so the
@@ -182,58 +316,165 @@ def get_orchestrator_settings_path() -> PathlibPath:
 # with no Access-Control-Allow-Origin header. The browser then reports a CORS
 # failure instead of the auth failure that actually happened.
 async def _api_token_guard(request, call_next):
-    from common.auth import is_authorized
-    if not is_authorized(
-        configured_token=settings.api_token,
-        method=request.method,
-        path=request.url.path,
-        auth_header=request.headers.get("authorization"),
-        x_api_token=request.headers.get("x-api-token"),
-        query_token=request.query_params.get("token"),
-    ):
+    from common import identity
+
+    allowed, principal = identity.authorize_request(request)
+    if not allowed:
         from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=401, content={"detail": "Invalid or missing API token"})
-    return await call_next(request)
+        if principal is None:
+            # Unchanged from before identity shipped: one ``detail`` string,
+            # whether the request carried no credential, a wrong token or an
+            # expired session. Which of the three it was is not information an
+            # unauthenticated caller has earned.
+            return JSONResponse(status_code=401,
+                                content={"detail": "Invalid or missing API token"})
+        # Authenticated, but not for this. 403 rather than 401 on purpose: the
+        # browser treats a 401 as "your session is gone" and signs itself out,
+        # so answering a workspace the caller simply is not a member of with
+        # 401 would log them out of the whole app.
+        return JSONResponse(status_code=403,
+                            content={"detail": "Not a member of this workspace"})
+
+    # Routes read the principal off the request; the stores that stamp an owner
+    # onto a new record read it off a contextvar instead, so they need no
+    # signature change (common.identity.current_user_id).
+    request.state.principal = principal
+
+    # Requests per minute per principal (common/rate_limit.py, docs/api-keys.md
+    # "Rate limits"). Off unless AGENTS_HUB_RATE_LIMIT_PER_MINUTE or the key's
+    # own limit is set. The event stream is one long request the browser
+    # reopens on its own, and open paths have no principal to count against.
+    path = request.url.path
+    if (principal is not None and path.startswith(("/api", "/v1"))
+            and not path.startswith(("/api/stream", "/api/auth/ticket"))):
+        from common import auth as _auth
+        from common import rate_limit
+        if not _auth.is_open_path(request.method, path):
+            allowed_now, retry_after = rate_limit.check_request(principal)
+            if not allowed_now:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded", "retry_after": retry_after},
+                    headers={"Retry-After": str(retry_after)})
+
+    token = identity.set_current_user(principal.id if principal else None)
+    # A personal key's id, so a run this request launches (directly or
+    # through a relayed chat turn) carries key_id (common/api_keys.py,
+    # docs/costs.md "Attribution"), the same contextvar trick as the user id
+    # just above.
+    from common import api_keys as _api_keys
+    _key_id = (principal.credential_id if principal is not None
+              and getattr(principal, "via", "") == "api_key" else None)
+    key_token = _api_keys.set_current_key_id(_key_id)
+    try:
+        response = await call_next(request)
+    finally:
+        identity.reset_current_user(token)
+        _api_keys.reset_current_key_id(key_token)
+
+    # The audit trail (common/audit.py): every write request by a person,
+    # with its outcome, in token and multi mode. The key points (login, role
+    # changes, launches, approvals, policy, budget) record themselves in
+    # every mode from their own routes. Recorded after the response so an
+    # audit failure can never turn into a failed request.
+    try:
+        from common import audit
+        if (audit.should_log_request(request.method, request.url.path, principal)
+                and audit.requests_enabled()):
+            audit.record(
+                f"http.{request.method.lower()}", principal=principal,
+                workspace=_workspace_of(request), ip=identity.client_ip(request),
+                method=request.method, path=request.url.path,
+                result=str(response.status_code),
+            )
+    except Exception:
+        pass
+    return response
+
+
+def _workspace_of(request) -> Optional[str]:
+    """The workspace a request names, for the audit row (same rule as the guard)."""
+    from common.auth import workspace_from_request
+    return workspace_from_request(
+        path=request.url.path,
+        query_workspace=request.query_params.get("workspace"),
+        header_workspace=request.headers.get("x-workspace"),
+    )
 
 
 app.add_middleware(BaseHTTPMiddleware, dispatch=_api_token_guard)
+
+
+# A workspace name taken from a request that is not one ordinary path
+# component (see workspace.storage.create_workspace_folder). Every route that
+# touches a workspace by name goes through that function, so one handler
+# turns the refusal into a 400 instead of each route repeating the check.
+from workspace import InvalidWorkspaceName as _InvalidWorkspaceName
+
+
+@app.exception_handler(_InvalidWorkspaceName)
+async def _invalid_workspace_name(request, exc):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+# A run launched with a personal key that already spent its monthly budget
+# (common.api_keys.KeyBudgetExceededError, docs/api-keys.md "Money quota"):
+# refused with the same 429 shape as every other rate limit, not a 500.
+from common.api_keys import KeyBudgetExceededError as _KeyBudgetExceededError
+
+
+@app.exception_handler(_KeyBudgetExceededError)
+async def _key_budget_exceeded(request, exc):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 # ============================================================================
 # CORS Configuration
 # ============================================================================
 # CORS configuration (safe defaults for local dev; override with ALLOW_ORIGINS)
-_env_allowed = os.getenv("ALLOW_ORIGINS", "").strip()
+_DEFAULT_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://0.0.0.0:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
-if _env_allowed == "*":
-    # Allow any origin (use only for local dev / proxies)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_origin_regex=r".*",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    _default_origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://0.0.0.0:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
-    _origins = (
-        [o.strip() for o in _env_allowed.split(",") if o.strip()]
-        or _default_origins
-    )
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_origins,
-        allow_origin_regex=r"http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+
+def cors_options(env_value: Optional[str]) -> dict:
+    """The CORSMiddleware keyword arguments for an ``ALLOW_ORIGINS`` value.
+
+    ``*`` allows any origin without credentials: browsers refuse a wildcard
+    with credentials anyway, and echoing any origin back with credentials
+    (what a catch-all regex would do) lets every site on the web call the API
+    as the signed-in person. The doctor's ``cors`` check flags ``*`` in
+    ``multi`` mode. A comma-separated list, or the local dev defaults when
+    empty, keeps credentials and the loopback regex.
+    """
+    value = (env_value or "").strip()
+    if value == "*":
+        return {"allow_origins": ["*"], "allow_credentials": False,
+                "allow_methods": ["*"], "allow_headers": ["*"]}
+    origins = [o.strip() for o in value.split(",") if o.strip()] or list(_DEFAULT_ORIGINS)
+    return {"allow_origins": origins,
+            "allow_origin_regex": r"http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?",
+            "allow_credentials": True,
+            "allow_methods": ["*"], "allow_headers": ["*"]}
+
+
+app.add_middleware(CORSMiddleware, **cors_options(os.getenv("ALLOW_ORIGINS", "")))
+
+# The chat widget's edge (widgets/edge.py, docs/widget.md): serves /widget.js
+# and answers CORS for /api/widgets/public/* per widget, from that widget's
+# allowed origins and without credentials. Registered after CORSMiddleware so
+# it is the outermost layer: it answers a widget preflight before the global
+# CORS setup would refuse an origin it does not know, and replaces that
+# setup's headers on the way out, so ALLOW_ORIGINS stays exactly as narrow
+# as it is for the dashboard.
+from widgets.edge import WidgetEdgeMiddleware
+app.add_middleware(WidgetEdgeMiddleware)
 
 # ============================================================================
 # Root Endpoint
@@ -272,6 +513,11 @@ app.include_router(agent_import.router)
 app.include_router(connections_router.router)
 app.include_router(ingest_router.router)
 
+# MCP domain: external MCP servers attached per workspace as a group of tools.
+# Beside the connectors in the sidebar, and the same direction: this hub reaches
+# out to a server somebody else runs. See docs/mcp.md.
+app.include_router(mcp_router.router)
+
 # Marketplace domain: catalog of agents published across workspaces
 app.include_router(marketplace.router)
 
@@ -290,6 +536,13 @@ app.include_router(flow_entities.router)
 # Loops domain: a flow re-run until an agent judges the exit criterion met
 app.include_router(loops.router)
 
+# Run groups: flows, loops, teams and task containers behind one interface
+app.include_router(run_groups_router.router)
+
+# Run state: the write surface a run container uses instead of opening the
+# database itself, when AGENT_RUN_STATE_TRANSPORT=http (see docs/containers.md)
+app.include_router(run_state_router.router)
+
 # Teams domain: a bounded roster of agents that know each other and talk
 app.include_router(teams.router)
 
@@ -302,14 +555,53 @@ app.include_router(models_router.router)
 # Costs domain: token/$ spend breakdowns and per-workspace budget caps
 app.include_router(costs.router)
 
+# Local models (feature 5): an external Ollama managed from the UI and the
+# hub's own runtime under deploy/models. See docs/local-models.md.
+from routes import local_models as local_models_router
+app.include_router(local_models_router.router)
+
+# The hub as a provider (feature 5C): OpenAI-compatible /v1 served by the hub
+# itself, authorised by personal API keys. See docs/hub-as-provider.md.
+from routes import openai_compat as openai_compat_router
+app.include_router(openai_compat_router.router)
+app.include_router(openai_compat_router.serving_router)
+
+# Model structure (feature 6): GGUF and safetensors headers as one block graph.
+from routes import model_structure as model_structure_router
+app.include_router(model_structure_router.router)
+
+# Preview (feature 7a): project and container pages through the hub, behind a
+# short-lived ticket. See docs/containers.md.
+from routes import preview as preview_router
+app.include_router(preview_router.router)
+app.include_router(preview_router.public_router)
+
+# Project deployments: a project's frontend and backend run from inside the
+# hub, previewed through the ticket proxy and published under /apps/<slug>/.
+# See docs/project-deployments.md.
+from routes import project_deployments as project_deployments_router
+app.include_router(project_deployments_router.router)
+app.include_router(project_deployments_router.list_router)
+app.include_router(project_deployments_router.apps_router)
+
+# Browser (feature 7b): the agent's browser session on screen, and free
+# browsing on the same service. See docs/browser.md.
+from routes import browser as browser_router
+app.include_router(browser_router.router)
+
 # Replay domain: re-run a recorded run and diff outputs (regression eval)
 app.include_router(replay.router)
 
 # Evals domain: batch replay across cases x models, scored by graders
 app.include_router(evals.router)
 
-# Playground domain: multi-agent simulation against a deterministic environment
-app.include_router(playground.router)
+# Playground domain: multi-agent simulation against a deterministic environment.
+# Optional: off (PLAYGROUND_ENABLED=false) skips both the routes and the
+# ``playground`` package import they would otherwise trigger. See
+# docs/playground.md, "Turning the playground off".
+from common.config import playground_enabled as _playground_enabled
+if _playground_enabled():
+    app.include_router(playground.router)
 
 # Memory domain: shared memory management
 app.include_router(memory.router)
@@ -331,9 +623,16 @@ app.include_router(sessions.router)
 
 # Messages domain: individual agent run logs
 app.include_router(messages.router)
+# /api/runs/{id}/agent-version and rollback-agent: the agent version a run ran
+# and a rollback to it (routes/messages.py).
+app.include_router(messages.runs_router)
 
 # Live agent copies: what is running right now, and how to write to one.
 app.include_router(instances.router)
+# Services: agents kept running as replicas, and the runner every chat turn
+# goes to (docs/services.md).
+from routes import services as services_router  # noqa: E402
+app.include_router(services_router.router)
 
 # Chat domain: direct in-process agent conversation
 app.include_router(chat.router)
@@ -350,11 +649,52 @@ app.include_router(page_chat.router)
 # Session history shared by every entity build chat: list past threads, reopen one
 app.include_router(entity_chats.router)
 
-# Nodes domain: long-running agent node management
-app.include_router(nodes.router)
+# Environments: execution profiles for runs, instances and scheduled jobs
+from routes import environments as environments_router
+app.include_router(environments_router.router)
 
-# External domain: token-authenticated access for exposed nodes
+# The agent loop's policies (fourth-cycle stage 2): per-tool permission
+# policy, task outcomes graded against a rubric, messages steering a running
+# turn, guardrails, per-agent loop settings (fallback models, output schema,
+# tool search, compaction) and the version history of memory pools.
+from routes import (
+    tool_policy as tool_policy_router,
+    outcomes as outcomes_router,
+    steering as steering_router,
+    guardrails as guardrails_router,
+    agent_loop_settings as agent_loop_settings_router,
+    memory_versions as memory_versions_router,
+)
+for _loop_router in (tool_policy_router, outcomes_router, steering_router, guardrails_router,
+                     agent_loop_settings_router, memory_versions_router):
+    app.include_router(_loop_router.router)
+
+# Fourth-cycle stage 3: files a workspace keeps by id (chat, memory, tasks and
+# evals reuse them), and the chat widget an outside site embeds with one tag.
+from routes import files as files_router, widget as widget_router
+app.include_router(files_router.router)
+app.include_router(widget_router.router)
+
+# Fourth-cycle stage 4: the spend report by key, user and project, the registry
+# of agents and MCP servers with owners and approval, and the support bundle
+# with the SLO status.
+from routes import (accounting as accounting_router, registry as registry_router,
+                    support as support_router)
+app.include_router(accounting_router.router)
+app.include_router(registry_router.router)
+app.include_router(support_router.router)
+
+# Docs domain: a corpus document (the changelog) for the in-app Docs page.
+from routes import docs as docs_router
+app.include_router(docs_router.router)
+
+# External domain: the public address of published instances (token auth)
 app.include_router(external.router)
+
+# A2A domain: agent cards and the JSON-RPC endpoint of the Agent2Agent protocol.
+# Carries no prefix of its own: the well-known card path is fixed by the spec
+# and sits at the site root, so this router spells out its own paths.
+app.include_router(a2a_router.router)
 
 # Projects domain: project management, repo, frontend/backend preview
 app.include_router(projects.router)
@@ -380,8 +720,48 @@ app.include_router(stream.router)
 # Health domain: liveness, store counts, background-service status, state sizes
 app.include_router(health.router)
 
+# Ops domain: liveness, readiness and Prometheus metrics — /livez, /readyz,
+# /metrics, unprefixed and open in every AUTH_MODE (see routes/ops.py).
+app.include_router(ops_router.router)
+
+# Cluster domain: the map of members, leases, queue and where everything runs
+# (docs/deployment.md, "The cluster map"), under /api/cluster; /api/deployment
+# stays live as an alias for anything still calling the old path.
+app.include_router(deployment_router.router)
+app.include_router(deployment_router.deployment_alias_router)
+
+# System workspace domain: the repository copy, the maintenance loop and its
+# branches (docs/system-workspace.md).
+app.include_router(system_router.router)
+
+# Demo workspace domain: present or not, add or remove (docs/demo.md).
+app.include_router(demo_router.router)
+
 # Views domain: rich agent-generated views + their assets and per-user state
 app.include_router(views.router)
+
+# Notifications domain: outbound webhook/slack endpoints, alert rules, and the
+# inbound task-filing webhook.
+app.include_router(notify_router.router)
+
+# Identity domain: the auth-mode probe, login/logout, users and workspace
+# membership. Registered in every mode — ``GET /api/auth/mode`` is how the
+# frontend learns there is nothing to render.
+app.include_router(auth_router.router)
+
+# Stage 3 of the identity plan (docs/identity.md): single sign-on, groups
+# and their mappings, SCIM provisioning, the audit trail, the caller's own
+# account (sessions, API keys) and workspace secrets. Each router answers
+# 404 outside the mode it needs, the same way the accounts routes do.
+app.include_router(oidc_router.router)
+app.include_router(groups_router.router)
+app.include_router(scim_router.router)
+app.include_router(audit_router.router)
+app.include_router(account_router.router)
+app.include_router(secrets_router.router)
+# The GitHub App: installations bound to workspaces, and people connecting
+# their own GitHub account (connectors/git/github_app.py).
+app.include_router(github_app_router.router)
 
 # ============================================================================
 # Entry Point
@@ -419,4 +799,7 @@ def uvicorn_options(argv: Optional[List[str]] = None) -> Dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", **uvicorn_options())
+    options = uvicorn_options()
+    # The reloader needs an import string. Without it, hand over the app this
+    # run has already built: "main:app" would execute this file a second time.
+    uvicorn.run("main:app" if options["reload"] else app, **options)

@@ -32,6 +32,68 @@ export function parseToolInput(input) {
   }
 }
 
+// The run log keeps the first 2000 characters of a long tool result and marks
+// the cut (agents/callbacks/chat_stream.py).
+const TRUNCATED_RE = /\s*(?:\.\.\.|…)\s*\(truncated\)\s*$/;
+const PARTIAL_LITERAL_RE = /(?:^|[\s,:[])(?:t|tr|tru|f|fa|fal|fals|n|nu|nul)$/;
+
+// JSON cut off at an arbitrary character, made whole: an open string is
+// closed, a dangling key, colon, comma or half-written literal is dropped, and
+// the open brackets are closed. What is left is the head of the value, exactly
+// as far as it got. Returns null when there is nothing to repair.
+export function repairTruncatedJson(text) {
+  let out = String(text || '').trim();
+  if (!/^[[{]/.test(out)) return null;
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of out) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') stack.push(ch === '{' ? '}' : ']');
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+  if (inString) out = `${escaped ? out.slice(0, -1) : out}"`;
+  for (;;) {
+    const before = out;
+    out = out.replace(/\s+$/, '');
+    if (out.endsWith(',') || out.endsWith(':')) out = out.slice(0, -1);
+    // A key with no value yet: a string right after `{` or `,` inside an object.
+    else if (stack[stack.length - 1] === '}' && /[{,]\s*"(?:[^"\\]|\\.)*"$/.test(out)) {
+      out = out.replace(/"(?:[^"\\]|\\.)*"$/, '');
+    } else if (PARTIAL_LITERAL_RE.test(out)) out = out.replace(/[a-z]+$/, '');
+    else if (/[-+.eE]$/.test(out) && /\d[-+.eE]*$/.test(out)) out = out.replace(/[-+.eE]+$/, '');
+    if (out === before) break;
+  }
+  return out + stack.reverse().join('');
+}
+
+// A tool result as a value to show: `{ value, truncated }`. JSON (or a Python
+// literal) is parsed; one the log cut short is repaired and parsed as far as
+// it goes, with `truncated` set so the modal can say so. Anything else comes
+// back as its text.
+export function parseToolOutput(raw) {
+  const text = String(raw ?? '').trim();
+  const marked = TRUNCATED_RE.test(text);
+  const body = marked ? text.replace(TRUNCATED_RE, '') : text;
+  const whole = parseToolInput(body);
+  if (whole !== null && typeof whole === 'object') return { value: whole, truncated: marked };
+  const repaired = repairTruncatedJson(body);
+  if (repaired) {
+    for (const candidate of [repaired, repairTruncatedJson(body.replace(/\bNone\b/g, 'null')
+      .replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false').replace(/'/g, '"'))]) {
+      try {
+        const value = JSON.parse(candidate);
+        if (value !== null && typeof value === 'object') return { value, truncated: true };
+      } catch { /* try the next reading */ }
+    }
+  }
+  return { value: text, truncated: false };
+}
+
 // Last path segment, e.g. "/a/b/read_me.py" -> "read_me.py".
 function basename(v) {
   const s = String(v ?? '');
@@ -83,9 +145,21 @@ const FORMATTERS = {
 
   // Execution / reasoning.
   run_shell: (a) => a.command ?? '',
+  // The language, then the first non-empty line of the snippet.
+  run_code: (a) => {
+    const first = String(a.code ?? '').split('\n').find((l) => l.trim()) ?? '';
+    return [a.language, first.trim()].filter(Boolean).join(': ');
+  },
   calculator: (a) => a.expression ?? '',
   think: (a) => a.thought ?? '',
   plan: (a) => a.plan ?? '',
+
+  // Browser (tools/browser.py): the page, or what was done on it.
+  browser_open: (a) => a.url ?? '',
+  browser_act: (a) => [a.action, a.selector].filter(Boolean).join(' '),
+  browser_read: (a) => (a.max_chars ? `${a.max_chars} chars` : ''),
+  browser_screenshot: (a) => (a.full_page ? 'full page' : ''),
+  browser_close: () => '',
 
   // Interaction / skills.
   ask_user: (a) => a.question ?? a.prompt ?? '',

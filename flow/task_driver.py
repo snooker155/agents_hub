@@ -15,8 +15,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+
+from langchain_core.callbacks import BaseCallbackHandler
 
 from agents.callbacks import (
     NodeFileCallback as _NodeFileCallback,
@@ -32,6 +35,48 @@ from flow.engine import (
 )
 from flow.state import RunContext, StateMutationError
 from flow.dispatch import DispatchResult
+
+
+class _NodeStopped(RuntimeError):
+    """Raised by :class:`_StopFlagGuard` once a node's stop flag is set."""
+
+
+class _StopFlagGuard(BaseCallbackHandler):
+    """Abort a synchronous agent run the next time it starts an LLM call or a
+    tool call, once ``stop_event`` has been set.
+
+    This is the actual stop for a node that hit its ``timeout_seconds``: the
+    invocation runs synchronously on a worker thread (``asyncio.to_thread``,
+    see ``_run_agent_node_async``), which ``asyncio.wait_for``'s cancellation
+    at the engine level cannot reach — cancelling the coroutine that is
+    *awaiting* the thread does nothing to the thread already inside a
+    blocking call. ``_stop_agent_node`` sets the flag from the engine's task;
+    this guard is the thing actually watching for it from inside the run, so
+    the model stops observably at its next step instead of running to
+    completion unobserved while the engine has already moved on and closed
+    its run record.
+
+    It cannot interrupt a call already in flight — the HTTP request to the
+    model, or a tool already executing — only the boundary before the next
+    one starts. ``raise_error = True`` tells LangChain to propagate the
+    exception out of the executor instead of swallowing it, exactly like the
+    other run guards in ``agents/callbacks/guards.py``.
+    """
+
+    def __init__(self, stop_event: threading.Event) -> None:
+        super().__init__()
+        self.raise_error = True
+        self._stop_event = stop_event
+
+    def _check(self) -> None:
+        if self._stop_event.is_set():
+            raise _NodeStopped("node stopped: it exceeded its timeout_seconds")
+
+    def on_llm_start(self, *args: Any, **kwargs: Any) -> None:
+        self._check()
+
+    def on_tool_start(self, *args: Any, **kwargs: Any) -> None:
+        self._check()
 
 
 def _utc_now_iso() -> str:
@@ -88,12 +133,20 @@ def _run_agent_node(
     flow_state: Any,
     agent_overrides: Dict[str, Any],
     port: int,
+    outcome: Any = None,
 ) -> Any:
     """Execute an agent node in-process: open a run record, run the LLM agent
     with callbacks against the prebuilt ``prompt``, write its output to flow
     state, and close the record. Returns the same DispatchResult shape the
     dispatcher produced, so the caller handles agent and entity nodes uniformly.
-    The prompt is built by the engine driver (flow.engine.build_agent_input)."""
+    The prompt is built by the engine driver (flow.engine.build_agent_input).
+
+    Runs synchronously on a worker thread (see ``_run_agent_node_async``), so
+    when ``outcome`` is given, a ``_StopFlagGuard`` watching its
+    ``stop_event`` rides along as an extra callback: it is how
+    ``_stop_agent_node`` actually reaches into this call from the engine's
+    side once the node's ``timeout_seconds`` has passed.
+    """
     from uuid import uuid4
 
     agent_id = _resolve_agent_id(node)
@@ -102,6 +155,12 @@ def _run_agent_node(
     label = _node_value(node, "label") or agent_id
 
     run_id = str(uuid4())
+    # Publish the run id on the outcome as soon as it exists: a node that hits
+    # its timeout is stopped from the engine's thread, and closing its run
+    # record is the only stop this surface can offer (the LLM call itself runs
+    # in a worker thread that cannot be interrupted).
+    if outcome is not None:
+        outcome.run_id = run_id
     log_path = run_log_path(run_id)
 
     # One instance per node of this flow run — re-executions of the same node
@@ -184,10 +243,18 @@ def _run_agent_node(
             written=written, run_id=run_id, duration_ms=inv.duration_ms,
         )
 
+    # Watches outcome.stop_event, so a node the engine has already timed out
+    # actually stops here at its next LLM/tool call instead of running to
+    # completion unobserved on this worker thread — see _StopFlagGuard and
+    # _stop_agent_node below.
+    extra_callbacks = [file_cb, pub_cb]
+    if outcome is not None:
+        extra_callbacks.append(_StopFlagGuard(outcome.stop_event))
+
     return run_agent_lifecycle(
         agent_id, args.workspace, prompt,
         overrides=agent_overrides,
-        extra_callbacks=[file_cb, pub_cb], catch_invoke_exceptions=True,
+        extra_callbacks=extra_callbacks, catch_invoke_exceptions=True,
         on_build_error=_on_build_error, on_success=_on_success, on_failure=_on_failure,
     )
 
@@ -210,7 +277,9 @@ def build_task_driver(
     Captures the per-run context in closures: agent nodes run through the sync
     ``_run_agent_node`` (off the event loop via ``asyncio.to_thread``), node
     outcomes are mirrored into flow-log events + the ``node_run_ids`` map, and
-    the stop check reads the live flow-run record.
+    the stop check reads the live flow-run record. The checkpoint and heartbeat
+    hooks write to the same record, which is what lets a killed run be resumed
+    instead of failed.
     """
     agent_overrides = agent_overrides or {}
 
@@ -222,7 +291,8 @@ def build_task_driver(
         # successor nodes read them.
         dr = await asyncio.to_thread(
             _run_agent_node, node, node_id, prompt,
-            args=args, flow_state=flow_state, agent_overrides=agent_overrides, port=port,
+            args=args, flow_state=flow_state, agent_overrides=agent_overrides,
+            port=port, outcome=outcome,
         )
         outcome.ok = dr.ok
         outcome.output = dr.output
@@ -235,6 +305,68 @@ def build_task_driver(
         return
         yield  # make this an async generator (never reached)
 
+    def _stop_agent_node(node: Dict[str, Any], node_id: str, outcome: Any) -> None:
+        """Stop a node that ran past its ``timeout_seconds``.
+
+        The invocation runs synchronously on a worker thread
+        (``asyncio.to_thread``, see ``_run_agent_node_async``), which nothing
+        here can forcibly kill or interrupt mid-call: a blocking HTTP request
+        to the model, or a tool already executing, runs to its own end
+        regardless. Two things happen instead:
+
+        1. The node's run record is closed as failed immediately, so the
+           engine (and everything reading the record — the task's execution
+           log, the dashboard) sees the node as done right now rather than
+           waiting on a thread that may never return in a useful time.
+        2. ``outcome.stop_event`` is set. ``_StopFlagGuard`` (installed as a
+           callback on the same invocation, see ``_run_agent_node``) checks it
+           at the start of the model's *next* LLM call or tool call and aborts
+           the run there, from inside the still-running thread. This is the
+           actual stop: the model does not keep going indefinitely, it stops
+           at most one step after the timeout fires. It is not immediate — a
+           call already in flight still has to finish first — so this narrows
+           "abandoned, runs to completion unobserved" down to "stops at its
+           next step," not all the way to "stops now."
+
+        Either way the thread's own eventual return (whether it stopped there
+        or, rarer, finished normally just after) tries to close the same run
+        record again; that second close is a no-op against the one already
+        written here.
+        """
+        rid = getattr(outcome, "run_id", "") or ""
+        stop_event = getattr(outcome, "stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+        if not rid:
+            return
+        try:
+            close_run(rid, status="failed", exit_code=1,
+                      error="node exceeded its timeout_seconds and was abandoned")
+        except Exception as e:  # noqa: BLE001
+            print(f"[node_timeout] could not close run {rid[:8]}: {e}")
+
+    def _on_checkpoint(cp: Dict[str, Any]) -> None:
+        """Persist the resume point on the flow-run record after every node.
+
+        Arbitrary keys survive on a flow-run record, so the checkpoint rides on
+        the record the watchdog and the resume endpoint already read, rather
+        than in a file of its own that could disagree with it.
+        """
+        try:
+            run_store.update_flow_run(run_id, {
+                "checkpoint": cp, "heartbeat_at": _utc_now_iso(),
+            })
+        except Exception as e:  # noqa: BLE001 - a checkpoint never fails a run
+            print(f"[checkpoint] could not write checkpoint for {run_id[:8]}: {e}")
+
+    def _on_heartbeat() -> None:
+        """Prove the run is alive while one node takes a long time. The watchdog
+        treats a stale heartbeat, not a missing pid, as death."""
+        try:
+            run_store.update_flow_run(run_id, {"heartbeat_at": _utc_now_iso()})
+        except Exception:
+            pass
+
     def _make_run_context(node_id: str) -> RunContext:
         return RunContext(
             flow_id=args.flow_id, run_id=args.run_id, task_id=args.task_id,
@@ -243,7 +375,7 @@ def build_task_driver(
 
     def _should_stop() -> bool:
         _fr = run_store.get_flow_run(run_id)
-        return bool(_fr and _fr.get("status") in ("stop", "stopped"))
+        return bool(_fr and _fr.get("status") in ("stop", "stopping", "stopped"))
 
     def _on_node_start(ev: dict) -> None:
         if ev.get("is_agent"):
@@ -254,11 +386,23 @@ def build_task_driver(
                 "status": "running",
             })
 
+    #: Why a node was not executed, in the words the history tab shows.
+    _SKIP_REASONS = {
+        "branch_not_selected": "not on the selected branch",
+        "predecessor_failed": "a node it depends on failed",
+        "branch_isolated": "its branch was isolated after a failure",
+        "cancelled_after_failure": "the run stopped at the first failure",
+        "already_done": "already completed before this run resumed",
+        "already_skipped": "already skipped before this run resumed",
+    }
+
     def _on_node_skip(ev: dict) -> None:
-        print(f"[node_skip] node={ev['node_id']} reason={ev.get('reason')}")
+        reason = ev.get("reason") or ""
+        print(f"[node_skip] node={ev['node_id']} reason={reason}")
         log_flow(flow_id, run_id, {
             "timestamp": _utc_now_iso(), "type": "node_skip", "node_id": ev["node_id"],
-            "content": f"Skipping node '{ev['node_id']}': not on the selected branch",
+            "content": f"Skipping node '{ev['node_id']}': "
+                       + _SKIP_REASONS.get(reason, reason or "not on the selected branch"),
             "status": "skipped",
         })
 
@@ -311,4 +455,11 @@ def build_task_driver(
         on_node_start=_on_node_start,
         on_node_done=_on_node_done,
         on_node_skip=_on_node_skip,
+        on_checkpoint=_on_checkpoint,
+        on_heartbeat=_on_heartbeat,
+        stop_agent_node=_stop_agent_node,
+        # The task surface owns a task and a flow-run record, so it can park a
+        # run in awaiting_input and come back to it. That is what makes a
+        # human_interrupt node work here and not in flow chat.
+        supports_interrupt=True,
     )

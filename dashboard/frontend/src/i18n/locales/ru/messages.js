@@ -34,6 +34,7 @@ export default {
   bulkDeletePartial: 'Часть удалений не прошла ({{count}}). Пример: {{id}} ({{reason}})',
   channels: {
     local: 'Локально',
+    instance: 'Инстанс',
     node: 'Узел',
     continuation: 'Продолжение',
     chat: 'Чат',

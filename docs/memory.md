@@ -1,11 +1,13 @@
 # Memory
 
-Agents have five complementary memory layers, bound to a pool. The pool is
+Agents have several complementary memory layers, bound to a pool. The pool is
 assigned per workspace, so the same agent can carry different knowledge in
 different workspaces.
 
 ## The layers
 
+- **Core memory blocks** — named blocks of text, rendered straight into the
+  system prompt. The only layer the agent reads without a tool call.
 - **Shared** — notes, structured slots and a dated journal. The general store.
 - **Episodic** — discrete events: interaction, task, decision, error,
   observation. What happened, when.
@@ -14,21 +16,156 @@ different workspaces.
 - **Knowledge graph** — typed entities and labelled relations.
 - **RAG** — retrieval over indexed workspace documents.
 
+## Core memory blocks
+
+A block is `{name, value, limit_chars, description, read_only}`. Every pool is
+seeded with two: **persona** (who the agent is in this pool) and **user**
+(facts about the person it works with). Blocks are written into the system
+prompt at build time, each truncated at its own `limit_chars` (2000 by default)
+with a marker saying how much was cut, so one runaway block cannot crowd out
+the conversation.
+
+The agent edits them with three tools:
+
+| Tool | What it does |
+|---|---|
+| `memory_block_read` | The full value, useful when the prompt shows a truncated one |
+| `memory_block_append` | Adds a line, refused when it would pass the limit |
+| `memory_block_replace` | Swaps one exact piece of text for another, refused when `old` is missing or ambiguous, or when the result would pass the limit |
+
+A refusal says by how many characters the edit was over, so the agent can
+shorten it or drop something stale first. A block marked `read_only` refuses
+every edit, from the agent and from the page alike.
+
+Blocks are not a replacement for slots: a slot is a dict-shaped record, fetched
+by name when it is needed, and it can hold far more than a block's budget. The
+blocks are the always-in-context summary the other layers feed.
+
 ## How agents use it
 
 With `recall`, `remember` and `forget` when a pool is bound, or the generic
 `read_memory` / `write_memory` / `search_memory` when one is not. A pool-bound
 agent never has to know or guess a pool id.
 
-Only **names and stats** are injected into the prompt. Values are fetched at
-runtime through tools, so a large pool does not crowd out the conversation.
+Apart from the blocks, only **names and stats** are injected into the prompt.
+Values are fetched at runtime through tools, so a large pool does not crowd out
+the conversation.
+
+## Ranking
+
+`recall` and `search_memory` rank instead of returning whatever the scan hit
+first. Blocks, slots, notes and episodes are scored with BM25; when a vector
+store is configured, its hits join the same ranking through reciprocal rank
+fusion, so a chunk and a note compete on their positions rather than on two
+incomparable numbers. On top of that:
+
+- an exact block, slot or note name match gets a large bonus, so asking for a
+  slot by name returns that slot first;
+- a plain substring match gets a small one, which is what keeps partial words
+  working;
+- episodes get a recency boost that halves every 30 days.
+
+Every result carries the `layer` it came from and its `score`. Knowledge-graph
+matches are added after the ranked layers and come back with their 1-hop
+relations.
+
+## Episodes
+
+The pool keeps the most recent 200. Pruning takes the oldest low-signal kinds
+first (`interaction`, `observation`), then the oldest of the rest, and never
+touches:
+
+- an **explicit** episode, one the agent recorded itself with `record_episode`;
+- a **pinned** episode, pinned through `record_episode(pinned=True)` or the
+  store.
+
+That is the rule that matters: the automatic per-exchange episodes can no
+longer evict what the agent chose to remember.
 
 ## Getting knowledge in
 
-The **Memory Extractor** runs a two-step pipeline on documents, transcripts and
-journals: `extract_from_text` proposes, `save_extraction` persists after review.
-The review step is the point — extraction is lossy, and committing straight to
-the pool would bake in whatever it got wrong.
+Two paths put knowledge into a pool. The **Memory Extractor** runs a two-step
+pipeline on documents, transcripts and journals: `extract_from_text` proposes,
+`save_extraction` persists after review. The review step is the point:
+extraction is lossy, and committing straight to the pool would bake in
+whatever it got wrong. RAG, below, indexes whole files for retrieval instead
+of extracting facts from them.
+
+## RAG
+
+A file already stored in the workspace files is added to a pool with "Add
+from workspace files" on the files tab (`POST
+/api/shared-memory/{pool}/files/from-workspace`): it is copied into the
+knowledge folder and indexed in one step, and the pool remembers the file id
+so a citation of one of its passages links back to it. `search_memory` and
+`recall` number the passages and notes they return for `[n]` citations, and
+search the indexed passages even with no vector store configured (BM25 over
+the chunk store). See [workspace files](files.md).
+
+A workspace knowledge file is indexed per pool under `{pool_id}::{filename}`.
+Indexing writes to two places that stay in step: the chunk store
+(`rag_chunks`, the source of truth for the chunk text, its headings and its
+character offsets) always, and the vector store (ids and vectors only)
+whenever one is configured.
+
+### Chunking
+
+Chunking (`dashboard/backend/rag/chunking.py`) reads the document's own
+structure before falling back to a raw character split. A markdown heading
+opens a new chunk and is tracked as a `heading_path`, a fenced code block is
+read whole and never split mid-fence even when that makes the chunk larger
+than the size target, and consecutive paragraphs are packed up to the size
+target with a configurable character overlap carried into the next chunk.
+Plain text with no headings or fences falls back to paragraph, then sentence,
+boundaries.
+
+### Search: keyword and vector, fused
+
+`search_rag` (`memory/rag_query.py`) runs two retrievers and fuses their
+rankings with reciprocal rank fusion:
+
+- **Keyword (BM25)** over the pool's chunks in `rag_chunks`, a pure-Python
+  implementation with no dependency. This retriever always runs: it needs
+  nothing installed and no external store.
+- **Vector similarity**, when `RAG_VECTOR_DB` and `RAG_EMBEDDING_PROVIDER` are
+  both configured and the embedding call succeeds.
+
+With no vector store configured, BM25 answers alone, so RAG works out of the
+box with no torch and no running vector database. Each result carries `text`,
+`filename`, `heading_path`, `chunk_idx`, `score` and `matched`: which
+retriever or retrievers found it.
+
+One `Embedder` (`dashboard/backend/rag/embeddings.py`) loads its model once
+per process and is shared by ingestion and query, so a query no longer pays
+for its own copy of the weights. A small LRU keeps recent query vectors, so
+the same question asked twice is not re-embedded.
+
+### Deletion and reindexing
+
+Deleting a file removes its rows from `rag_chunks` and its vectors from the
+configured store. Reindexing (`POST /api/shared-memory/{id}/rag/reindex`, the
+whole pool or one file with `?filename=`) replaces a file's chunks and vectors
+together, so a search never sees a mix of the old chunk set and the new one,
+and an edited file that shrinks leaves no stale chunk behind. A file whose
+content has not changed since it was last indexed (same sha256) is skipped
+unless `force=true`, so reindexing a whole pool does not re-embed a file that
+did not change. The file list endpoint reports each file's chunk count and
+content hash alongside its index status.
+
+Removing a file, de-indexing it, `forget(file=…)` or deleting the pool removes
+its chunks and vectors both.
+
+## Version history
+
+Every change to a memory pool's blocks, notes and structured slots is versioned automatically, whoever makes it: a person in the dashboard, an agent through its memory tools, or the API. Each changed item gets its own row and version counter in the `memory_versions` table, with operation type (create, update, delete, restore or redact), who did it (a user or the agent and run id inside a run) and when.
+
+Restore puts an item back to a past version's value, or deletes it again when that version recorded a deletion. Redact replaces a row's stored content with a marker without touching the live item unless `also_current` is set.
+
+History keeps the newest `AGENTS_HUB_MEMORY_VERSIONS_KEEP` versions per item (default 50).
+
+API: `GET /api/memory/{id}/versions?kind=&item_key=&limit=`, `GET /api/memory/{id}/versions/{version_id}`, `POST .../restore`, `POST .../redact` with `{also_current}`; audited as `memory.restore`, `memory.redact`.
+
+UI: Memory page, Pools tab, a "Pool history" button and a history icon next to each block, note and slot, with a diff against the previous version, Restore and Redact.
 
 ## Gotchas
 
@@ -38,5 +175,7 @@ the pool would bake in whatever it got wrong.
 - The assignment lives in workspace metadata, not on the agent. Moving an agent
   between workspaces does not move its memory.
 - The automatic journal writes regardless of the episodic-write setting.
+- Journal notes are left out of the ranking: they are an append-only log read by
+  date, and their bulk would swamp every other layer.
 
 Related: [workspaces](workspaces.md), [skills](skills.md).

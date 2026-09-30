@@ -1,16 +1,18 @@
 """
 Workspace-related API routes.
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse
-from typing import Optional
+from typing import List, Optional
 from pathlib import Path
 import mimetypes
+import os
 import shutil
 
 from tasks import service as tasks_service
 from common.bootstrap import ensure_initial_state
 from common.session_broker import notify_change
+from common import audit, identity
 from workspace import (
     create_workspace_folder,
     attach_workspace_folder,
@@ -26,19 +28,72 @@ from workspace import (
     get_workspace_instructions,
     set_workspace_instructions,
 )
-from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction
+from workspace import storage as _workspace_storage
+from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate
 
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+def _visible_to_caller(request, roots: List[Path]) -> List[Path]:
+    """Filter a workspace listing down to what the caller may see.
+
+    Only ``multi`` filters: in ``single`` and ``token`` mode there is one
+    operator and every workspace is theirs.
+    """
+    from common import identity
+    if identity.current_mode() != "multi":
+        return roots
+    principal = identity.request_principal(request)
+    if principal is None or principal.is_admin:
+        return roots
+    allowed = set(identity.workspaces_for_user(principal.id))
+    return [p for p in roots if p.name in allowed]
+
+
+def _is_safe_workspace_name(name: str) -> bool:
+    """Whether a caller-supplied name is safe to hand to create_workspace_folder.
+
+    A workspace name must be a single, ordinary path component: no "..", no
+    ".", no embedded separator and no absolute path — anything else would make
+    ``WORKSPACES_ROOT / name`` land somewhere other than a direct child of the
+    workspaces root, and ``create_workspace_folder`` mkdirs it unconditionally.
+    """
+    if not name or name in (".", ".."):
+        return False
+    candidate = Path(name)
+    return candidate.name == name and not candidate.is_absolute()
+
+
+def _is_direct_workspace_entry(name: str) -> bool:
+    """Whether ``name`` names an entry directly inside ``WORKSPACES_ROOT``.
+
+    ``WORKSPACES_ROOT / name`` can *exist* on disk without ``name`` actually
+    being a workspace: a name of ".." lexically walks up to the workspaces
+    root's own parent (``AGENTS_HUB_ROOT``), which — once the service has run
+    at all — always exists, so an existence check alone would pass with no
+    workspace folder ever having been created there. Comparing the *lexical*
+    join (``os.path.normpath``, which collapses ".."/"." without following
+    symlinks) against the root catches that, while a genuinely attached
+    workspace still passes: its entry is a symlink that lives directly in the
+    root even though it legitimately *resolves* somewhere else entirely.
+    """
+    root = _workspace_storage.WORKSPACES_ROOT.resolve()
+    entry = Path(os.path.normpath(str(root / name)))
+    return entry.parent == root
 
 
 def _ensure_writable_workspace(name: str) -> None:
     """Verify the workspace exists before writes; auto-create 'default' on demand.
 
     Re-runs bootstrap so a missing default workspace is seeded from `bootstrap/`.
-    For any other name, raises 404 instead of silently writing nowhere.
+    For any other name, raises 404 instead of silently writing nowhere — and,
+    same as `_require_workspace_folder` below, a name that only looks like it
+    exists by lexically escaping the workspaces root (see
+    `_is_direct_workspace_entry`) is treated as not existing, not as a green
+    light to delete or overwrite files outside it.
     """
-    if get_workspace_folder(name):
+    if get_workspace_folder(name) and _is_direct_workspace_entry(name):
         return
     if name == "default":
         ensure_initial_state()
@@ -47,6 +102,22 @@ def _ensure_writable_workspace(name: str) -> None:
         create_workspace_folder(name)
         return
     raise HTTPException(status_code=404, detail=f"Workspace '{name}' does not exist")
+
+
+def _require_workspace_folder(name: str) -> Path:
+    """Look up an existing workspace for a read-only route, creating nothing.
+
+    A read route must never resolve a caller-supplied name with
+    ``create_workspace_folder``: that function mkdirs
+    ``WORKSPACES_ROOT / name`` unconditionally, so a name such as
+    "../../etc" walks the folder creation (and any later join under it)
+    outside the workspaces root. Looking the workspace up instead means an
+    unknown or traversal-shaped name simply 404s, and nothing is created.
+    """
+    folder = get_workspace_folder(name)
+    if folder is None or not _is_direct_workspace_entry(name):
+        raise HTTPException(status_code=404, detail=f"Workspace '{name}' does not exist")
+    return folder
 
 
 def task_to_dict(task):
@@ -72,8 +143,8 @@ def _calc_task_progress(task, all_tasks):
     return int(round((done / len(subs)) * 100)) if subs else 0
 
 
-@router.get("")
-async def list_workspaces():
+@router.get("", response_model=List[WorkspaceListItem])
+async def list_workspaces(request: Request):
     roots = list_workspace_folders()
     if not roots:
         # Create default workspace if none exists
@@ -82,6 +153,11 @@ async def list_workspaces():
             roots = [p]
         except Exception:
             pass
+
+    # Under AUTH_MODE=multi a user sees the workspaces they are a member of and
+    # nothing else; an admin sees all of them. A no-op in the single-operator
+    # modes, where there is nobody to hide anything from. See common/identity.py.
+    roots = _visible_to_caller(request, roots)
 
     all_tasks = tasks_service.list_tasks()
     items = []
@@ -103,6 +179,8 @@ async def list_workspaces():
 
 @router.post("")
 async def create_workspace(payload: WorkspaceCreate):
+    if payload.name and not _is_safe_workspace_name(payload.name):
+        raise HTTPException(status_code=400, detail=f"'{payload.name}' is not a valid workspace name")
     try:
         p = create_workspace_folder(payload.name)
         # Let live listeners (e.g. the header workspace picker) refresh their list.
@@ -140,7 +218,7 @@ async def attach_workspace(payload: WorkspaceAttach):
 
 @router.get("/{name}")
 async def get_workspace(name: str):
-    root = create_workspace_folder(name)
+    root = _require_workspace_folder(name)
     all_tasks = tasks_service.list_tasks()
     ws_tasks = [t for t in all_tasks if (t.workspace or "").strip() == root.name and not t.parent_id]
     tasks_info = []
@@ -178,7 +256,7 @@ async def delete_workspace(name: str):
 
 @router.get("/{name}/files")
 async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
-    root = create_workspace_folder(name)
+    root = _require_workspace_folder(name)
     pattern = glob or "**/*"
     files = []
     directories = []
@@ -203,7 +281,7 @@ async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
 
 @router.get("/{name}/file-content")
 async def get_workspace_file_content(name: str, path: str):
-    root = create_workspace_folder(name).resolve()
+    root = _require_workspace_folder(name).resolve()
     rel_path = (path or "").strip()
     if not rel_path:
         raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
@@ -276,7 +354,7 @@ def _extract_pdf_preview(candidate: Path) -> str:
 @router.get("/{name}/file-raw")
 async def get_workspace_file_raw(name: str, path: str):
     """Serve a workspace file's raw bytes (e.g. for in-browser PDF rendering)."""
-    root = create_workspace_folder(name).resolve()
+    root = _require_workspace_folder(name).resolve()
     rel_path = (path or "").strip()
     if not rel_path:
         raise HTTPException(status_code=400, detail="Query parameter 'path' is required")
@@ -458,6 +536,17 @@ async def set_workspace_default_model(name: str, payload: dict):
     return {"provider": provider, "model": model}
 
 
+# ``settings`` keys written by their own routes or editors (the tool policy
+# block below, the agent mode, the loop settings of the agent loop's
+# extensions, the workspace palette, the web domain policy), which the
+# settings-overrides Save must not drop. A caller clears one by naming it
+# with a null value.
+_SETTINGS_OWNED_ELSEWHERE = (
+    "require_tool_approval", "tool_policy", "tool_policy_model", "agent_mode", "loop",
+    "palette", "web_domain_policy_enabled", "web_allow_domains", "web_deny_domains",
+)
+
+
 @router.get("/{name}/settings-overrides")
 async def get_workspace_settings_overrides(name: str):
     """Return workspace-scoped settings (raw values, not resolved)."""
@@ -467,7 +556,7 @@ async def get_workspace_settings_overrides(name: str):
 
 
 @router.put("/{name}/settings-overrides")
-async def update_workspace_settings_overrides(name: str, payload: dict):
+async def update_workspace_settings_overrides(request: Request, name: str, payload: dict):
     """Replace workspace-scoped settings."""
     _ensure_writable_workspace(name)
     overrides = payload.get("overrides", {})
@@ -475,7 +564,18 @@ async def update_workspace_settings_overrides(name: str, payload: dict):
         raise HTTPException(status_code=400, detail="overrides must be a key-value object")
     # Strip empty-string values (treat as cleared)
     cleaned = {k: v for k, v in overrides.items() if v is not None and str(v).strip() != ""}
+    # Keys other routes own live in the same ``settings`` block, and the
+    # Settings page sends only the keys of its own form. Carry them over unless
+    # the payload names them, or every Save would switch off the approval gate
+    # and drop the tool policy and the loop settings.
+    current = get_workspace_metadata(name).get("settings") or {}
+    for key in _SETTINGS_OWNED_ELSEWHERE:
+        if key not in overrides and key in current:
+            cleaned[key] = current[key]
     update_workspace_metadata(name, {"settings": cleaned})
+    audit.record("workspace.settings", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request), details={"keys": sorted(cleaned)})
     # The log level is the one override this process acts on itself, so re-read
     # it now instead of making the user restart the backend. Resolving through
     # the active workspace means editing some *other* workspace is a no-op here.
@@ -487,6 +587,242 @@ async def update_workspace_settings_overrides(name: str, payload: dict):
     return {"overrides": cleaned}
 
 
+# ── Tool policy: the approval gate and the hooks that run around a tool call ──
+#
+# Both live in the workspace metadata and are read live by the agent process:
+# ``tools.approval.approval_gate_enabled`` reads ``settings.require_tool_approval``
+# and ``agents.hooks.load_hooks`` reads the ``hooks`` key (which wins over a
+# ``.hooks.json`` file in the folder). They are edited together here because an
+# operator thinks of them as one thing: what happens around a tool call.
+
+_HOOK_EVENTS = ("PreToolUse", "PostToolUse")
+_HOOK_TYPES = ("command", "http")
+
+
+def _validate_hooks(raw) -> dict:
+    """Return the hook config to store, or raise 400 naming the bad entry.
+
+    A hook that never runs is worse than no hook at all, so the shape is checked
+    here rather than discovered at the first tool call: a malformed entry is
+    dropped silently by ``agents.hooks.load_hooks``.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="hooks must be an object keyed by event")
+    unknown = [k for k in raw if k not in _HOOK_EVENTS]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown hook event(s) {sorted(unknown)}; expected {', '.join(_HOOK_EVENTS)}",
+        )
+    out: dict = {}
+    for event in _HOOK_EVENTS:
+        entries = raw.get(event)
+        if entries is None:
+            continue
+        if not isinstance(entries, list):
+            raise HTTPException(status_code=400, detail=f"{event} must be a list of hook entries")
+        cleaned = []
+        for index, entry in enumerate(entries):
+            where = f"{event}[{index}]"
+            if not isinstance(entry, dict):
+                raise HTTPException(status_code=400, detail=f"{where}: each hook must be an object")
+            kind = str(entry.get("type") or "command").strip().lower()
+            if kind not in _HOOK_TYPES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{where}: type must be one of {', '.join(_HOOK_TYPES)}",
+                )
+            matcher = entry.get("matcher", "")
+            if not isinstance(matcher, str):
+                raise HTTPException(status_code=400, detail=f"{where}: matcher must be a string")
+            if kind == "command" and not str(entry.get("command") or "").strip():
+                raise HTTPException(status_code=400, detail=f"{where}: a command hook needs a command")
+            if kind == "http" and not str(entry.get("url") or "").strip():
+                raise HTTPException(status_code=400, detail=f"{where}: an http hook needs a url")
+            if "timeout" in entry and entry["timeout"] is not None:
+                try:
+                    float(entry["timeout"])
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=400, detail=f"{where}: timeout must be a number of seconds",
+                    )
+            cleaned.append({**entry, "type": kind, "matcher": matcher})
+        out[event] = cleaned
+    return out
+
+
+def _policy_payload(name: str) -> dict:
+    """What the Settings tool policy block shows. ``tool_policy`` and
+    ``tool_policy_model`` are the per-tool modes and the model that decides
+    ``auto`` calls (tools/permission_policy.py); they sit in ``settings`` next
+    to the gate flag, where the agent process reads them."""
+    from tools.permission_policy import clean_policy
+    metadata = get_workspace_metadata(name)
+    settings = metadata.get("settings") or {}
+    hooks = metadata.get("hooks")
+    return {
+        "require_tool_approval": bool(settings.get("require_tool_approval")),
+        "hooks": hooks if isinstance(hooks, dict) else {},
+        "tool_policy": clean_policy(settings.get("tool_policy")),
+        "tool_policy_model": str(settings.get("tool_policy_model") or "").strip() or None,
+    }
+
+
+# ── Web domain policy of a workspace ──────────────────────────────────────────
+#
+# The three keys tools/web.py reads from the workspace's ``settings`` block:
+# ``web_deny_domains``, ``web_domain_policy_enabled``, ``web_allow_domains``.
+# A workspace list, when set, replaces the global one of the same name for
+# runs in this workspace; an empty list means "use the global one". The
+# switch turns the allow list on for this workspace even when it is off
+# globally. Edited on Settings, "Web search", and read live by every process.
+
+_WEB_POLICY_KEYS = ("web_domain_policy_enabled", "web_allow_domains", "web_deny_domains")
+
+
+def _web_policy_payload(name: str) -> dict:
+    from tools.web import global_domain_policy
+    settings = get_workspace_metadata(name).get("settings") or {}
+    return {
+        "workspace": name,
+        "policy": {
+            "enabled": bool(settings.get("web_domain_policy_enabled")),
+            "allow_domains": [str(h) for h in (settings.get("web_allow_domains") or [])],
+            "deny_domains": [str(h) for h in (settings.get("web_deny_domains") or [])],
+        },
+        "global": global_domain_policy(),
+    }
+
+
+@router.get("/{name}/web-policy")
+async def get_workspace_web_policy(name: str):
+    """The workspace's web domain policy next to the global one it overrides."""
+    return _web_policy_payload(name)
+
+
+@router.put("/{name}/web-policy")
+async def update_workspace_web_policy(request: Request, name: str, payload: dict):
+    """Set the workspace's web domain policy. Each key is optional; an empty
+    list (or a missing key left as it was) falls back to the global list."""
+    _ensure_writable_workspace(name)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="web policy must be a key-value object")
+    from tools.web import clean_host_list
+    settings = dict(get_workspace_metadata(name).get("settings") or {})
+    if "enabled" in payload:
+        settings["web_domain_policy_enabled"] = bool(payload.get("enabled"))
+    for key, field in (("allow_domains", "web_allow_domains"), ("deny_domains", "web_deny_domains")):
+        if key in payload:
+            raw = payload.get(key) or []
+            if not isinstance(raw, list):
+                raise HTTPException(status_code=400, detail=f"{key} must be a list of host names")
+            try:
+                settings[field] = clean_host_list(raw)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"{key}: {exc}")
+    update_workspace_metadata(name, {"settings": settings})
+    audit.record("workspace.web_policy", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request),
+                 details={k: settings.get(k) for k in _WEB_POLICY_KEYS})
+    return _web_policy_payload(name)
+
+
+@router.get("/{name}/policy")
+async def get_workspace_policy(name: str):
+    """The workspace's tool policy: the approval gate and the hook config."""
+    return _policy_payload(name)
+
+
+@router.put("/{name}/policy")
+async def update_workspace_policy(request: Request, name: str, payload: dict):
+    """Replace the workspace's tool policy.
+
+    ``require_tool_approval``, ``tool_policy`` and ``tool_policy_model`` are
+    written into the same ``settings`` block the Settings page edits, so the
+    gate and the tool policy read them without a second lookup; ``hooks`` is a
+    top-level metadata key, validated entry by entry before it is stored. Each
+    key is optional: a request that names one leaves the others as they are.
+    """
+    _ensure_writable_workspace(name)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="policy must be a key-value object")
+
+    updates: dict = {}
+    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model")
+    if any(key in payload for key in settings_keys):
+        from tools.permission_policy import modes as _policy_modes, split_model_id
+        settings = dict(get_workspace_metadata(name).get("settings") or {})
+        if "require_tool_approval" in payload:
+            settings["require_tool_approval"] = bool(payload.get("require_tool_approval"))
+        if "tool_policy" in payload:
+            # Per-tool modes: tool id (or "*" for every other tool) to a mode.
+            # A bad entry is refused rather than dropped, so what the page saved
+            # is what the agent process will read.
+            raw = payload.get("tool_policy") or {}
+            if not isinstance(raw, dict):
+                raise HTTPException(status_code=400, detail="tool_policy must be an object of tool id to mode")
+            valid = _policy_modes()
+            cleaned: dict = {}
+            for key, mode in raw.items():
+                tool = str(key or "").strip()
+                value = str(mode or "").strip().lower()
+                if not tool:
+                    raise HTTPException(status_code=400, detail="tool_policy: a tool id cannot be empty")
+                if value not in valid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"tool_policy[{tool}]: mode must be one of {', '.join(valid)}",
+                    )
+                cleaned[tool] = value
+            settings["tool_policy"] = cleaned
+        if "tool_policy_model" in payload:
+            model_id = str(payload.get("tool_policy_model") or "").strip()
+            if model_id:
+                provider, model = split_model_id(model_id)
+                if not provider or not model:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="tool_policy_model must be a catalog id of the form provider/model",
+                    )
+                settings["tool_policy_model"] = model_id
+            else:
+                settings.pop("tool_policy_model", None)
+        updates["settings"] = settings
+    if "hooks" in payload:
+        updates["hooks"] = _validate_hooks(payload.get("hooks"))
+    if updates:
+        update_workspace_metadata(name, updates)
+        audit.record("workspace.policy", principal=identity.request_principal(request),
+                     object_type="workspace", object_id=name, workspace=name,
+                     ip=identity.client_ip(request),
+                     details={"keys": sorted(k for k in payload if k in (*settings_keys, "hooks"))})
+    return _policy_payload(name)
+
+
+@router.get("/{name}/personal-memory")
+async def get_workspace_personal_memory(name: str):
+    """Personal memory in this workspace (memory/personal.py): the workspace
+    switch, its main agent and each agent's setting (missing = off)."""
+    from memory import personal
+    return personal.agent_settings(name)
+
+
+@router.put("/{name}/personal-memory")
+async def update_workspace_personal_memory(request: Request, name: str, data: WorkspacePersonalMemoryUpdate):
+    """Turn personal memory in this workspace on or off. Off, every agent has
+    it off; the agents' own switches are kept for when it is turned back on."""
+    from memory import personal
+    _ensure_writable_workspace(name)
+    result = personal.set_workspace_enabled(name, data.enabled)
+    audit.record("workspace.personal_memory", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request), details={"enabled": data.enabled})
+    return result
+
+
 @router.get("/{name}/env")
 async def get_workspace_env(name: str):
     """Return workspace-scoped environment variables."""
@@ -495,13 +831,17 @@ async def get_workspace_env(name: str):
 
 
 @router.put("/{name}/env")
-async def update_workspace_env(name: str, payload: dict):
+async def update_workspace_env(request: Request, name: str, payload: dict):
     """Replace workspace-scoped environment variables."""
     _ensure_writable_workspace(name)
     env_vars = payload.get("env_vars", {})
     if not isinstance(env_vars, dict):
         raise HTTPException(status_code=400, detail="env_vars must be a key-value object")
     update_workspace_metadata(name, {"env_vars": env_vars})
+    # Names only, never values: an env block is exactly where a secret lives.
+    audit.record("workspace.env", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=name, workspace=name,
+                 ip=identity.client_ip(request), details={"keys": sorted(env_vars)})
     return {"env_vars": env_vars}
 
 

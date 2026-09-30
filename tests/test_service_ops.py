@@ -2,7 +2,7 @@
 
 Two things matter here and neither is "does it return data". First, the action
 tools must refuse until the user has approved, because the agent must not be
-able to turn "have a look" into "and I restarted the node". Second, the
+able to turn "have a look" into "and I restarted the instance". Second, the
 capability claims must be honest: these tools read every log in the system, and
 a log holds whatever the run handled, so the set must never be combinable with
 an outbound channel.
@@ -19,16 +19,12 @@ from tools.service_ops import (
     SERVICE_OPS_TOOLS,
     SERVICE_READ_TOOLS,
     _tail,
-    costs_summary,
     list_containers,
-    list_instances,
-    list_nodes,
-    list_runs,
     prune_run_logs,
     run_log,
     search_errors,
     service_health,
-    stop_node,
+    stop_instance,
     stop_run,
 )
 
@@ -45,8 +41,8 @@ def test_every_action_tool_refuses_without_approval(tool):
     different, much worse product than one that proposes and waits."""
     required = {
         "stop_run": {"run_id": "any"},
-        "stop_node": {"node_id": "any"},
-        "restart_node": {"node_id": "any"},
+        "stop_instance": {"instance_id": "any"},
+        "restart_instance": {"instance_id": "any"},
         "stop_container": {"name": "any"},
         "prune_run_logs": {},
     }[tool.name]
@@ -60,10 +56,10 @@ def test_every_action_tool_refuses_without_approval(tool):
 
 
 def test_the_refusal_names_what_would_be_destroyed():
-    result = _call(stop_node, node_id="node-7")
-    assert "node-7" in result["effect"]
-    assert "session" in result["effect"].lower(), (
-        "stopping a node fails its in-progress sessions; the user must be told that"
+    result = _call(stop_instance, instance_id="instance-7")
+    assert "instance-7" in result["effect"]
+    assert "run" in result["effect"].lower(), (
+        "stopping an instance fails its in-progress runs; the user must be told that"
     )
 
 
@@ -76,7 +72,6 @@ def test_approved_action_on_a_missing_target_reports_not_found():
 
 def test_prune_reports_what_it_removed(tmp_path, monkeypatch):
     import common.paths as paths
-    import tools.service_ops as ops
 
     logs = tmp_path / "run_logs"
     logs.mkdir()
@@ -125,7 +120,7 @@ def test_adding_an_outbound_channel_is_blocked():
 def test_log_readers_declare_that_they_ingest_untrusted_content():
     from tools.capabilities import INGESTS_UNTRUSTED, READS_PRIVATE, grants_of
 
-    for tool_id in ("run_log", "node_logs", "container_logs", "search_errors",
+    for tool_id in ("run_log", "instance_logs", "container_logs", "search_errors",
                     "instance_timeline", "web_log_recent", "list_runs"):
         grants = grants_of(tool_id)
         assert INGESTS_UNTRUSTED in grants, f"{tool_id} returns text the service did not author"
@@ -182,7 +177,7 @@ def test_read_tools_never_raise(tool):
     that crashes on an empty system is useless exactly when it is needed."""
     args = {
         "container_logs": {"name": "nope"},
-        "node_logs": {"node_id": "nope"},
+        "instance_logs": {"instance_id": "nope"},
         "instance_timeline": {"instance_id": "nope"},
         "run_log": {"run_id": "nope"},
     }.get(tool.name, {})
@@ -244,3 +239,19 @@ def test_search_errors_groups_the_whole_window_not_just_the_page():
     assert result["failed_runs_shown"] == 2, "only the page is returned"
     assert result["by_agent"] == {"agent-a": 3, "agent-b": 2}, "but everything is counted"
     assert result["by_error"]["Model unloaded."] == 3
+
+
+def test_list_instances_covers_every_copy_and_narrows_to_resident():
+    import json
+    from instances import registry, store
+    from tools.service_ops import list_instances
+
+    registry.ensure_instance("swe_agent", kind="chat", state="standby")
+    resident = registry.ensure_instance("swe_agent", kind="resident", state="stopped")
+    store.update(resident["instance_id"], carrier_status="stopped", inbound_secret="x")
+
+    everything = json.loads(list_instances.invoke({}))
+    only = json.loads(list_instances.invoke({"resident_only": True}))
+    assert everything["total"] == 2
+    assert [i["instance_id"] for i in only["instances"]] == [resident["instance_id"]]
+    assert "inbound_secret" not in only["instances"][0]

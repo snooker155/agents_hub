@@ -28,8 +28,17 @@ function ProjectTreeView({ workspace }) {
     return on('app', (ev) => { if (ev.type === 'tasks.changed') fetchData(); });
   }, [workspace, on]);
 
+  // task.executor (tasks.models.Executor) is the source of truth for who/what
+  // a task is assigned to; a task from before that field existed falls back
+  // to the compatibility assigned_agent_type string.
+  const executorLabel = (task) => {
+    const ex = task.executor;
+    if (!ex) return task.assigned_agent_type || 'Unassigned';
+    return ex.kind === 'agent' ? ex.id : `${ex.kind}: ${ex.id}`;
+  };
+
   const groupedTasks = tasks.reduce((acc, task) => {
-    const assignee = task.assigned_agent_type || 'Unassigned';
+    const assignee = executorLabel(task);
     if (!acc[assignee]) acc[assignee] = [];
     acc[assignee].push(task);
     return acc;

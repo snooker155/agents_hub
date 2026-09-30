@@ -6,7 +6,9 @@ Provides structured, LangChain-compatible tools for file operations.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+import logging
+import os
+from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -24,6 +26,8 @@ from common.config import SweAgentConfig, DEFAULT_IGNORE
 from common.artifact_sink import record_artifact as _record_artifact
 from common.entity_sink import record_entity
 from common.workspace_context import workspace_name_from_path
+
+log = logging.getLogger(__name__)
 
 
 def _snapshot_text(path: str, ws_path: Optional[Path]) -> Optional[str]:
@@ -43,6 +47,34 @@ def _snapshot_text(path: str, ws_path: Optional[Path]) -> Optional[str]:
         return abs_path.read_text(encoding="utf-8")
     except Exception:
         return None
+
+
+def _registry_target(workspace: Optional[str]) -> Optional[Tuple[str, str]]:
+    """``(workspace name, path prefix)`` when the operating dir is inside a
+    workspace folder under ``WORKSPACES_ROOT``, else None.
+
+    The workspace file registry (files/service.py) addresses a file as
+    ``workspaces/<ws>/<path>``, so only a dir under that root has files it
+    can name. Checked on the path as given before resolving symlinks, so an
+    attached workspace (a link under the root to a folder elsewhere) counts.
+    """
+    if not workspace:
+        return None
+    try:
+        from workspace import WORKSPACES_ROOT
+    except Exception:  # noqa: BLE001 - no workspace layout, nothing to register into
+        return None
+    root = Path(WORKSPACES_ROOT)
+    for candidate in (Path(os.path.abspath(str(workspace))), Path(workspace).resolve()):
+        for base in (root, root.resolve()):
+            try:
+                rel = candidate.relative_to(base)
+            except ValueError:
+                continue
+            if rel.parts:
+                inner = "/".join(rel.parts[1:])
+                return rel.parts[0], (inner + "/" if inner else "")
+    return None
 
 
 def _workspace_rel_prefix(ws_path: Optional[Path]) -> str:
@@ -159,9 +191,35 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
     ws_path = Path(workspace).resolve() if workspace else None
     ws_name = workspace_name_from_path(str(ws_path)) if ws_path else None
     ws_prefix = _workspace_rel_prefix(ws_path)
+    registry = _registry_target(workspace)
+
+    def _register(op: str, rel: str) -> None:
+        """Keep the workspace file registry in step with the folder: a file
+        written or created gets (or keeps) a record with source ``agent``
+        and the run's provenance, a deleted one is tombstoned. Best-effort:
+        the registry never fails a tool call that already succeeded.
+        """
+        if registry is None:
+            return
+        reg_ws, reg_prefix = registry
+        in_ws = f"{reg_prefix}{rel}"
+        try:
+            from files import service as files_service
+            if not files_service.is_indexable(in_ws):
+                return
+            if op == "delete":
+                files_service.unregister_path(reg_ws, in_ws)
+                return
+            from tools.workspace_files import agent_provenance
+            meta = agent_provenance()
+            files_service.register_path(reg_ws, in_ws, source="agent",
+                                        created_by=meta.get("agent_id"), meta=meta)
+        except Exception:  # noqa: BLE001 - the write is done; the registry is bookkeeping
+            log.debug("workspace files: could not register %s in %s", in_ws, reg_ws, exc_info=True)
 
     def _record(op: str, rel: str, before: Optional[str], after: Optional[str]) -> None:
-        """Report a file change as both a diff artifact and a linkable entity.
+        """Report a file change as both a diff artifact and a linkable entity,
+        and register the file as a workspace file.
 
         A deleted file gets no entity record: its page in the workspace browser
         is gone, and the change is already visible in the diff panel.
@@ -170,6 +228,7 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
         if op != "delete":
             record_entity("file", f"{ws_prefix}{rel}", "created" if op == "add" else "updated",
                           rel, workspace=ws_name)
+        _register(op, rel)
     
     c = config or {}
     cfg = SweAgentConfig(

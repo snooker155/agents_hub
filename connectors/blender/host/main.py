@@ -28,7 +28,6 @@ first and restores it if the operator raises or if the result breaks a budget.
 A geometry operator that fails must leave the object exactly as it was, because
 the caller's revision log assumes command boundaries are clean.
 """
-import json
 import math
 import os
 import selectors
@@ -549,24 +548,24 @@ def cmd_mesh_new(args):
     radius = args.get("radius", size / 2.0)
     depth = args.get("depth", size)
     if kind == "cube":
-        res = bmesh.ops.create_cube(bm, size=size)
+        bmesh.ops.create_cube(bm, size=size)
     elif kind == "plane":
-        res = bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=size / 2.0)
+        bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=size / 2.0)
     elif kind == "circle":
-        res = bmesh.ops.create_circle(bm, cap_ends=True, radius=radius, segments=segments)
+        bmesh.ops.create_circle(bm, cap_ends=True, radius=radius, segments=segments)
     elif kind in ("cylinder", "cone"):
         r2 = args.get("radius2", radius if kind == "cylinder" else 0.0)
-        res = bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=segments,
-                                    radius1=radius, radius2=r2, depth=depth)
+        bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=segments,
+                              radius1=radius, radius2=r2, depth=depth)
     elif kind == "uv_sphere":
-        res = bmesh.ops.create_uvsphere(bm, u_segments=segments,
-                                        v_segments=max(3, segments // 2), radius=radius)
+        bmesh.ops.create_uvsphere(bm, u_segments=segments,
+                                  v_segments=max(3, segments // 2), radius=radius)
     elif kind == "ico_sphere":
-        res = bmesh.ops.create_icosphere(bm, subdivisions=min(4, max(1, segments // 12)),
-                                         radius=radius)
+        bmesh.ops.create_icosphere(bm, subdivisions=min(4, max(1, segments // 12)),
+                                   radius=radius)
     else:  # torus
-        res = bmesh.ops.create_torus(bm, major_radius=radius, minor_radius=radius / 3.0,
-                                     major_segments=segments, minor_segments=max(3, segments // 3))
+        bmesh.ops.create_torus(bm, major_radius=radius, minor_radius=radius / 3.0,
+                               major_segments=segments, minor_segments=max(3, segments // 3))
 
     layers = _layers(bm)
     _sweep_gids(state, bm, layers)
@@ -860,7 +859,7 @@ def cmd_mesh_group(args):
 
 def cmd_mesh_stats(args):
     object_id = args["object_id"]
-    state = _state(object_id)
+    _state(object_id)
     obj, bm = _open(object_id)
     try:
         stats = _stats(bm)

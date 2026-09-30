@@ -43,7 +43,7 @@ def reset_handler(token) -> None:
     """Restore the previous handler using a token from :func:`set_handler`."""
     try:
         _graph_handler.reset(token)
-    except Exception:
+    except (ValueError, RuntimeError):
         pass
 
 

@@ -1,0 +1,32 @@
+# Claude Code plus the thin HTTP adapter that makes it importable into Agents Hub.
+#
+# The image carries the Claude Code CLI's own Node runtime, which is exactly
+# why the hub talks to it over HTTP instead of importing anything: nothing in
+# here has to agree with the hub's own Python dependency tree.
+FROM node:20-slim
+
+# The CLI itself. It owns the model call, the tool loop and the prompt; this
+# image adds nothing to what it can do, only a translator for its output.
+RUN npm install -g @anthropic-ai/claude-code@latest
+
+# python3/pip for the adapter server, git because the CLI works by editing a
+# git repository and reading its history.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+# --break-system-packages: Debian's own pip refuses a global install outside a
+# venv by default; this container has no other Python workload to protect.
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+
+COPY server.py agent-hub.json ./
+
+# The repository Claude Code edits is mounted here at run time:
+#   docker run -v /path/to/repo:/work ...
+ENV CLAUDE_WORKDIR=/work
+RUN mkdir -p /work
+
+EXPOSE 8430
+CMD ["python3", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8430"]

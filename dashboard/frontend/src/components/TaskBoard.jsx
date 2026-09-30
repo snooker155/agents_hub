@@ -5,7 +5,8 @@ import { useLiveRefetch } from './stream';
 import {
   Plus, CheckCircle, Clock, AlertCircle, StopCircle, Loader,
   ExternalLink, Trash2, List, Columns, UserPlus, ChevronRight,
-  GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle
+  GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle, ShieldQuestion,
+  Users, RotateCw
 } from 'lucide-react';
 import { getTasks, deleteTask, getAgents, assignAgent, approveAssignment, rejectAssignment, updateTask, listFlows, runFlow, getProjects } from '../api';
 import CreateTaskModal from './CreateTaskModal';
@@ -17,6 +18,7 @@ const STATUS_CONFIG = {
   ready:       { bg: 'bg-blue-100',   text: 'text-blue-700',   icon: CheckCircle,  },
   pending:     { bg: 'bg-amber-100',  text: 'text-amber-700',  icon: Clock,        },
   awaiting_input: { bg: 'bg-amber-100', text: 'text-amber-700', icon: HelpCircle, },
+  awaiting_approval: { bg: 'bg-amber-100', text: 'text-amber-700', icon: ShieldQuestion, },
   in_progress: { bg: 'bg-yellow-100', text: 'text-yellow-700', icon: Loader,       },
   blocked:     { bg: 'bg-red-100',    text: 'text-red-700',    icon: AlertCircle,  },
   stopped:     { bg: 'bg-gray-100',   text: 'text-gray-500',   icon: StopCircle,   },
@@ -25,6 +27,23 @@ const STATUS_CONFIG = {
   reviewed:    { bg: 'bg-teal-100',   text: 'text-teal-700',   icon: CheckCircle,  },
   done:        { bg: 'bg-green-100',  text: 'text-green-700',  icon: CheckCircle,  },
 };
+
+// ─── Executor display (agent / flow / team / loop) ──────────────────────────
+// task.executor is the source of truth (see tasks.models.Executor); a task
+// from before that field existed falls back to the flow_id heuristic this
+// used to rely on exclusively, so an older-shaped task still reads correctly.
+const EXECUTOR_ICON = { agent: User, flow: Workflow, team: Users, loop: RotateCw };
+const EXECUTOR_BADGE = {
+  flow: { label: 'flow', cls: 'bg-purple-50 text-purple-600 border-purple-100' },
+  team: { label: 'team', cls: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
+  loop: { label: 'loop', cls: 'bg-teal-50 text-teal-600 border-teal-100' },
+};
+
+function executorLabel(task) {
+  const kind = task.executor?.kind || (task.assigned_agent_params?.flow_id ? 'flow' : 'agent');
+  const id = task.executor?.id || task.assigned_agent_type || '';
+  return { kind, id, Icon: EXECUTOR_ICON[kind] || User, badge: EXECUTOR_BADGE[kind] };
+}
 
 // ─── Kanban columns: each column maps to one or more backend statuses ────────
 const KANBAN_COLUMNS = [
@@ -41,11 +60,12 @@ const KANBAN_COLUMNS = [
     dotColor: 'bg-blue-500', dropBorder: 'border-blue-300',
   },
   {
-    // Anything needing a human: assignment approval (pending) or an answer to the
-    // agent's question (awaiting_input). Not droppable — these are entered/left by
-    // the system or via the task's own actions, not by dragging.
+    // Anything needing a human: assignment approval (pending), an answer to the
+    // agent's question (awaiting_input), or a yes/no on a tool call it wants to
+    // make (awaiting_approval). Not droppable — these are entered/left by the
+    // system or via the task's own actions, not by dragging.
     id: 'waiting_approval', labelKey: 'taskBoard.columns.waiting', targetStatus: 'pending',
-    statuses: ['pending', 'awaiting_input'],
+    statuses: ['pending', 'awaiting_input', 'awaiting_approval'],
     headerBg: 'bg-amber-50', headerText: 'text-amber-700',
     dotColor: 'bg-amber-500', dropBorder: 'border-amber-300',
     droppable: false,
@@ -236,6 +256,12 @@ function KanbanCard({ task, allTasks, onDelete, onAssign, onApprove, onReject, d
 
       {/* Meta row */}
       <div className="flex flex-wrap gap-1.5 mb-2 empty:hidden">
+        {task.overdue && (
+          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-red-50 text-red-600 border border-red-200">
+            <AlertCircle className="w-3 h-3" />
+            {t('taskBoard.overdue')}
+          </span>
+        )}
         {showWorkspace && task.workspace && (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-gray-50 text-gray-500 border border-gray-200">
             {task.workspace}
@@ -250,17 +276,15 @@ function KanbanCard({ task, allTasks, onDelete, onAssign, onApprove, onReject, d
         )}
       </div>
 
-      {/* Agent / Flow info */}
+      {/* Executor info: agent / flow / team / loop */}
       {task.assigned_agent_type && (
         <div className="flex items-center gap-1 text-xs text-gray-500 mb-1">
-          {task.assigned_agent_params?.flow_id ? (
-            <Workflow className="w-3 h-3 text-purple-500" />
-          ) : (
-            <User className="w-3 h-3" />
-          )}
-          <span className="truncate">{task.assigned_agent_type}</span>
-          {task.assigned_agent_params?.flow_id && (
-            <span className="px-1 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-600 border border-purple-100">{t('taskBoard.flow')}</span>
+          {(() => { const { Icon } = executorLabel(task); return <Icon className="w-3 h-3 text-purple-500" />; })()}
+          <span className="truncate">{executorLabel(task).id}</span>
+          {executorLabel(task).badge && (
+            <span className={`px-1 py-0.5 rounded text-[10px] font-medium border ${executorLabel(task).badge.cls}`}>
+              {executorLabel(task).badge.label}
+            </span>
           )}
           {task.agent_state && task.agent_state !== 'none' && (
             <span className={`ml-auto px-1.5 py-0.5 rounded text-xs font-medium ${
@@ -644,7 +668,7 @@ export default function TaskBoard({
 
   const getColumnTasks = (column) => tasksForKanban.filter((t) => {
     // Human-interaction statuses live only in the Waiting column.
-    if (t.status === 'pending' || t.status === 'awaiting_input') return column.id === 'waiting_approval';
+    if (t.status === 'pending' || t.status === 'awaiting_input' || t.status === 'awaiting_approval') return column.id === 'waiting_approval';
     return column.statuses.includes(t.status);
   });
 
@@ -805,12 +829,13 @@ export default function TaskBoard({
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-600">
                       {task.assigned_agent_type ? (
                         <span className="flex items-center gap-1">
-                          {task.assigned_agent_params?.flow_id ? (
-                            <Workflow className="w-3 h-3 text-purple-500" />
-                          ) : (
-                            <User className="w-3 h-3" />
+                          {(() => { const { Icon } = executorLabel(task); return <Icon className="w-3 h-3 text-purple-500" />; })()}
+                          {executorLabel(task).id}
+                          {executorLabel(task).badge && (
+                            <span className={`px-1 py-0.5 rounded text-[10px] font-medium border ${executorLabel(task).badge.cls}`}>
+                              {executorLabel(task).badge.label}
+                            </span>
                           )}
-                          {task.assigned_agent_type}
                         </span>
                       ) : '—'}
                     </td>

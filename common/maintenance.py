@@ -5,8 +5,10 @@ Periodic state maintenance: run retention and orphan-file pruning.
 run logs and process sidecars accumulate forever. This module trims terminal
 run records older than ``run_retention_days``, trims each external connection
 back to its own run cap (``connections.retention``, a count rather than an age,
-because a reporting graph outgrows an age limit), and deletes the on-disk log/
-sidecar files left behind by any deleted or long-gone run.
+because a reporting graph outgrows an age limit), deletes the on-disk log/
+sidecar files left behind by any deleted or long-gone run, and prunes the
+scheduler's firing journal (``plans.storage.FireStore``) past
+``AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS`` (default 90 days, 0 disables it).
 
 It is invoked once a day by the plan scheduler (see ``plans.scheduler``), guarded
 by a ``last_maintenance`` marker in the DB ``meta`` table so it runs at most once
@@ -16,6 +18,7 @@ restarts. Everything runs off the event loop in a worker thread.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict
 
@@ -28,6 +31,9 @@ _MAINTENANCE_INTERVAL_HOURS = 24
 # Only these run states are ever pruned — an in-flight or paused run is kept
 # regardless of age so retention can never delete active work.
 _TERMINAL_STATUSES = ("completed", "failed", "stopped", "error")
+# Not on common.config.Settings (this module is the only reader): a plain
+# env var kept it out of that shared file. 0 disables the prune.
+_DEFAULT_PLAN_FIRES_RETENTION_DAYS = 90
 
 
 def _now() -> datetime:
@@ -42,7 +48,7 @@ def _due(marker: str | None) -> bool:
         if last.tzinfo is None:
             last = last.replace(tzinfo=timezone.utc)
         return (_now() - last) >= timedelta(hours=_MAINTENANCE_INTERVAL_HOURS)
-    except Exception:
+    except ValueError:
         return True
 
 
@@ -67,10 +73,13 @@ def prune_old_runs(retention_days: int) -> int:
             lf = r["log_file"]
             if lf:
                 try:
-                    from pathlib import Path
-                    Path(lf).unlink(missing_ok=True)
-                except Exception:
-                    pass
+                    # Local file and any mirrored copy (common/blobs.py): a
+                    # pruned run's log must not linger in the object store
+                    # either.
+                    from common import blobs
+                    blobs.delete(blobs.rel(lf))
+                except Exception:  # noqa: BLE001 - best-effort mirror cleanup, must not block pruning
+                    log.debug("blob cleanup failed for %s", lf, exc_info=True)
             removed += 1
     return removed
 
@@ -91,8 +100,26 @@ def prune_orphan_files() -> int:
                 try:
                     f.unlink()
                     removed += 1
-                except Exception:
-                    pass
+                except OSError:
+                    log.debug("orphan log delete failed for %s", f, exc_info=True)
+                try:
+                    from common import blobs
+                    blobs.delete(blobs.rel(f))
+                except Exception:  # noqa: BLE001 - best-effort mirror cleanup, must not block pruning
+                    log.debug("blob cleanup failed for %s", f, exc_info=True)
+
+    # Registry snapshots written for run containers (common/snapshot.py):
+    # gone once their run has finished. Node snapshots (node-<id>) stay while
+    # the node record exists.
+    try:
+        from common import snapshot
+        live = {row["run_id"] for row in conn.execute(
+            "SELECT run_id FROM runs WHERE status IN ('running', 'pending', 'stop', 'awaiting_approval')"
+        ).fetchall()}
+        live |= {f"node-{row['node_id']}" for row in conn.execute("SELECT node_id FROM nodes").fetchall()}
+        removed += snapshot.prune_snapshots(live)
+    except Exception:  # noqa: BLE001 - isolated cleanup pass, must not block orphan file pruning
+        log.debug("snapshot pruning failed", exc_info=True)
 
     # Legacy sidecar dir (renamed to .migrated post-migration, but a partially
     # upgraded environment may still have the live dir): drop stale entries.
@@ -103,9 +130,26 @@ def prune_orphan_files() -> int:
                     try:
                         f.unlink()
                         removed += 1
-                    except Exception:
-                        pass
+                    except OSError:
+                        log.debug("stale sidecar delete failed for %s", f, exc_info=True)
     return removed
+
+
+def prune_old_fires(retention_days: int) -> int:
+    """Delete scheduler firing-journal rows (``plans.storage.FireStore``,
+    ``plan_fires``) recorded before the cutoff. Returns the number removed.
+    0 disables pruning.
+
+    The journal gets one row per tick that finds a job due, forever, with
+    nothing else bounding it (unlike run retention, which only touches
+    terminal runs); this is its only cleanup.
+    """
+    if retention_days <= 0:
+        return 0
+    from plans.service import fire_store
+
+    cutoff = _now() - timedelta(days=retention_days)
+    return fire_store.prune_older_than(cutoff)
 
 
 def run_maintenance(*, force: bool = False) -> Dict[str, int]:
@@ -124,12 +168,19 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
             return {"skipped": 1}
         # Claim the slot immediately so a co-running scheduler in another process
         # sees "not due" and bows out.
-        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_maintenance', ?)",
-                     (_now().isoformat(),))
+        conn.execute(db.upsert_sql("meta", ("key", "value"), ("key",)),
+                     ("last_maintenance", _now().isoformat()))
 
     pruned_runs = prune_old_runs(settings.run_retention_days)
     pruned_files = prune_orphan_files()
     summary = {"pruned_runs": pruned_runs, "pruned_files": pruned_files}
+    # Members that stopped beating a day ago are history, not the map.
+    try:
+        from common import members
+        summary["pruned_members"] = members.prune()
+    except Exception:
+        log.exception("member pruning failed")
+        summary["pruned_members"] = 0
     # Connections are capped by run *count*, not by age: a graph reporting a few
     # hundred runs an hour outgrows a day-based limit long before the limit
     # notices. Isolated like the views pass below, so a connection store that
@@ -154,6 +205,46 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
         summary.update(run_view_maintenance())
     except Exception:
         log.exception("view maintenance failed")
+    # The audit trail (common/audit.py): rows past AUDIT_RETENTION_DAYS. Isolated
+    # like the passes above, and a no-op (0 rows, 0 disables it) outside
+    # single-mode where the trail is off, so this stays safe to call always.
+    try:
+        from common import audit
+        summary["pruned_audit_rows"] = audit.prune()
+    except Exception:
+        log.exception("audit prune failed")
+        summary["pruned_audit_rows"] = 0
+    # Scheduler firing journal (plans.storage.FireStore): unlike run retention
+    # above, every row is terminal the moment it is written, so there is no
+    # "still active" check here, only an age cutoff. Isolated like the passes
+    # above.
+    try:
+        retention_days = int(
+            os.environ.get(
+                "AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS", str(_DEFAULT_PLAN_FIRES_RETENTION_DAYS)
+            )
+            or _DEFAULT_PLAN_FIRES_RETENTION_DAYS
+        )
+        summary["pruned_fires"] = prune_old_fires(retention_days)
+    except Exception:
+        log.exception("fire journal pruning failed")
+        summary["pruned_fires"] = 0
+    # Guardrail findings (guardrails/runtime.py, AGENTS_HUB_GUARDRAIL_EVENTS_
+    # RETENTION_DAYS) and tool policy decisions (tools/permission_policy.py,
+    # AGENTS_HUB_TOOL_POLICY_RETENTION_DAYS): both are append-only logs
+    # bounded by age. Isolated like the passes above.
+    try:
+        from guardrails.runtime import prune_events
+        summary["pruned_guardrail_events"] = int(prune_events() or 0)
+    except Exception:
+        log.exception("guardrail event pruning failed")
+        summary["pruned_guardrail_events"] = 0
+    try:
+        from tools.permission_policy import prune
+        summary["pruned_tool_decisions"] = int(prune(force=True) or 0)
+    except Exception:
+        log.exception("tool policy decision pruning failed")
+        summary["pruned_tool_decisions"] = 0
     if pruned_runs or pruned_files or summary.get("pruned_view_dirs") \
             or summary.get("pruned_connection_runs"):
         log.info("maintenance: pruned %d run(s), %d connection run(s), %d orphan file(s), "
@@ -163,4 +254,4 @@ def run_maintenance(*, force: bool = False) -> Dict[str, int]:
     return summary
 
 
-__all__ = ["run_maintenance", "prune_old_runs", "prune_orphan_files"]
+__all__ = ["run_maintenance", "prune_old_runs", "prune_orphan_files", "prune_old_fires"]

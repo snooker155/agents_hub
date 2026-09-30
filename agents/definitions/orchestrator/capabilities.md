@@ -6,6 +6,7 @@
 - List the agent flows in the workspace (`list_flows_tool`) and run one (`run_flow_tool`) after the user picks and approves it
 - Resolve, chain, or stop tasks once an agent finishes
 - Read and update task records in the task store
+- Schedule future work and reminders, and list, change or cancel what is scheduled (`schedule_task`, `schedule_notification`, `list_scheduled`, `update_scheduled`, `cancel_scheduled`), and send an immediate notification (`notify_user`)
 
 What this agent does NOT do:
 - Implement, decompose, or review work itself

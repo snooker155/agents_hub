@@ -1,14 +1,18 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   FlaskConical, Plus, Play, Trash2, Loader, ChevronRight, ChevronDown,
-  AlertTriangle, DollarSign, CheckCircle, XCircle, X, Save, History,
+  AlertTriangle, DollarSign, CheckCircle, XCircle, X, Save, History, GitCompare,
 } from 'lucide-react';
 import {
-  getEvalSets, createEvalSet, getEvalSet, deleteEvalSet, addEvalCase,
+  getEvalSets, createEvalSet, getEvalSet, updateEvalSet, deleteEvalSet, addEvalCase,
   deleteEvalCase, estimateEvalRun, runEvalSet, getEvalRuns, getEvalRun,
-  getEvalGraders, getAgents,
+  getEvalRunDiff, getEvalGraders, getAgents, listFlows, getTeams, getLoops, getScenarios,
   getEvalChat, clearEvalChat, stopEvalChat, evalChatUrl,
 } from '../api';
+import BatchRunPanel from '../components/evals/BatchRunPanel';
+import PromptSuggestionPanel from '../components/evals/PromptSuggestionPanel';
+import FileIdsField from '../components/files/FileIdsField';
 import { useWorkspace } from '../components/workspace';
 import EntityChat from '../components/EntityChat';
 import { usePageChat } from '../components/pageChat/pageChat';
@@ -34,6 +38,67 @@ const scoreColor = (score, ok = true) => {
 };
 
 const pct = (n) => `${Math.round((n || 0) * 100)}%`;
+
+/** What an eval can target. The order is the order of the kind select. */
+const TARGET_KINDS = ['agent', 'flow', 'team', 'loop', 'scenario'];
+
+/** A set's or a config's target, read from `target` or the legacy `agent_id`. */
+const targetOf = (obj) => {
+  if (obj?.target?.id) return { kind: obj.target.kind || 'agent', id: obj.target.id };
+  if (obj?.agent_id) return { kind: 'agent', id: obj.agent_id };
+  return null;
+};
+
+/** Every catalog as `{id, name}`, whichever key each list endpoint uses. */
+const toOptions = (items, idKey) => (items || []).map((x) => ({
+  id: x[idKey] || x.id,
+  name: x.name || x[idKey] || x.id,
+})).filter((x) => x.id);
+
+/** Where a container run opens: the entity page with `?run=`. */
+const entityRunHref = (kind, entityId, runId) => {
+  if (!runId) return null;
+  switch (kind) {
+    case 'flow': return `/flows/${entityId}?run=${runId}`;
+    case 'team': return `/teams/${entityId}?run=${runId}`;
+    case 'loop': return `/loops?loop=${entityId}&run=${runId}`;
+    case 'scenario': return `/playground/${entityId}?run=${runId}`;
+    default: return `/messages/${runId}`;
+  }
+};
+
+/** A kind select plus an id select fed by that kind's catalog. */
+function TargetPicker({ value, onChange, catalogs, small }) {
+  const { t } = useI18n();
+  const kind = value?.kind || 'agent';
+  const cls = small
+    ? 'text-xs border border-gray-300 rounded-md px-2 py-1.5'
+    : 'text-sm border border-gray-300 rounded-md px-3 py-2';
+  return (
+    <div className="flex items-center gap-2 flex-1 min-w-0">
+      <select
+        value={kind}
+        onChange={(e) => onChange({ kind: e.target.value, id: '' })}
+        className={`${cls} w-28 shrink-0`}
+        title={t('evals.targetKind')}
+      >
+        {TARGET_KINDS.map((k) => (
+          <option key={k} value={k}>{t(`evals.kind_${k}`)}</option>
+        ))}
+      </select>
+      <select
+        value={value?.id || ''}
+        onChange={(e) => onChange({ kind, id: e.target.value })}
+        className={`${cls} flex-1 min-w-0`}
+      >
+        <option value="">{t('evals.selectTarget')}</option>
+        {(catalogs[kind] || []).map((o) => (
+          <option key={o.id} value={o.id}>{o.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 /**
  * The Eval Agent's chat, as one descriptor. Workspace-level rather than
@@ -80,7 +145,7 @@ export default function Evals() {
   const [runs, setRuns] = useState([]);
   const [activeRun, setActiveRun] = useState(null);
   const [graderCatalog, setGraderCatalog] = useState([]);
-  const [agents, setAgents] = useState([]);
+  const [catalogs, setCatalogs] = useState({ agent: [], flow: [], team: [], loop: [], scenario: [] });
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [estimate, setEstimate] = useState(null);
@@ -89,10 +154,15 @@ export default function Evals() {
   const [showCase, setShowCase] = useState(false);
   const [cellDetail, setCellDetail] = useState(null);
   const [expandedCases, setExpandedCases] = useState({});
+  const [diffResult, setDiffResult] = useState(null);
+  const [diffing, setDiffing] = useState(false);
 
   // Run configuration: which agent/model columns the sweep compares.
   const [configs, setConfigs] = useState([]);
   const [costCeiling, setCostCeiling] = useState('');
+  // "batch" sends agent cells and judge calls through the provider batch APIs
+  // at half price; results arrive within 24 hours (evals/batch.py).
+  const [mode, setMode] = useState('live');
   const chat = useChatColumn(false);
 
   const loadSets = useCallback(async () => {
@@ -115,40 +185,95 @@ export default function Evals() {
 
   useEffect(() => {
     (async () => {
-      try {
-        const [g, a] = await Promise.all([getEvalGraders(), getAgents(currentWorkspace)]);
-        setGraderCatalog(g.data.graders || []);
-        setAgents(a.data.agents || a.data || []);
-      } catch { /* catalogs are optional decoration */ }
+      // Each catalog is optional decoration: one failing list leaves its
+      // select empty rather than the page broken.
+      const safe = (p) => p.then((r) => r.data).catch(() => null);
+      const [g, a, f, tm, l, sc] = await Promise.all([
+        safe(getEvalGraders()), safe(getAgents(currentWorkspace)),
+        safe(listFlows(currentWorkspace)), safe(getTeams(currentWorkspace)),
+        safe(getLoops(currentWorkspace)), safe(getScenarios(currentWorkspace)),
+      ]);
+      setGraderCatalog(g?.graders || []);
+      setCatalogs({
+        agent: toOptions(a?.agents || (Array.isArray(a) ? a : []), 'id'),
+        flow: toOptions(f?.flows || (Array.isArray(f) ? f : []), 'id'),
+        team: toOptions(tm?.teams || [], 'team_id'),
+        loop: toOptions(l?.loops || [], 'loop_id'),
+        scenario: toOptions(sc?.scenarios || [], 'scenario_id'),
+      });
     })();
   }, [currentWorkspace]);
 
-  const selectSet = async (id) => {
+  // `runId` opens that run of the set instead of the newest one: a deep link
+  // (?set=&run=) from the page that started the run lands on it.
+  const selectSet = async (id, runId = null) => {
     setActiveRun(null);
     setEstimate(null);
     setMessage('');
+    setDiffResult(null);
     try {
       const [{ data: set }, { data: hist }] = await Promise.all([
         getEvalSet(id), getEvalRuns(id),
       ]);
       setSelected(set);
       setRuns(hist.eval_runs || []);
-      setConfigs(set.agent_id
-        ? [{ agent_id: set.agent_id, provider: '', model: '', label: 'baseline' }]
+      const baseline = targetOf(set);
+      setConfigs(baseline
+        ? [{ target: baseline, provider: '', model: '', label: 'baseline', repeats: 1 }]
         : []);
-      if ((hist.eval_runs || []).length) {
-        const { data: latest } = await getEvalRun(hist.eval_runs[0].eval_run_id);
-        setActiveRun(latest);
+      const history = hist.eval_runs || [];
+      const wanted = runId && history.find((r) => r.eval_run_id === runId) ? runId : null;
+      if (wanted || history.length) {
+        const { data: run } = await getEvalRun(wanted || history[0].eval_run_id);
+        setActiveRun(run);
       }
     } catch {
       setMessage(t('evals.loadFailed'));
     }
   };
 
+  // Deep link: /evals?set=<eval_set_id>&run=<eval_run_id>, the link the
+  // scenario page's reproducibility button and a finished run's notification
+  // carry. Consumed once, after the sets have loaded, so a later click on
+  // another set is not undone by the URL.
+  const [searchParams] = useSearchParams();
+  const deepLinkConsumed = useRef(false);
+  useEffect(() => {
+    if (loading || deepLinkConsumed.current) return;
+    const setId = searchParams.get('set');
+    if (!setId) return;
+    deepLinkConsumed.current = true;
+    selectSet(setId, searchParams.get('run'));
+    // selectSet is a plain closure over state setters and t; it is stable enough
+    // for a once-only effect and listing it would re-run this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, searchParams]);
+
+  // The run right before the one on screen, in this set's history (newest
+  // first) — what "compare with previous" means without asking the user to
+  // pick two runs by hand.
+  const previousRun = activeRun
+    ? runs[runs.findIndex((r) => r.eval_run_id === activeRun.eval_run_id) + 1]
+    : null;
+
+  const handleCompareWithPrevious = async () => {
+    if (!activeRun || !previousRun) return;
+    setDiffing(true);
+    setMessage('');
+    try {
+      const { data } = await getEvalRunDiff(previousRun.eval_run_id, activeRun.eval_run_id);
+      setDiffResult(data);
+    } catch (e) {
+      setMessage(e.response?.data?.detail || t('evals.diffFailed'));
+    } finally {
+      setDiffing(false);
+    }
+  };
+
   const handleEstimate = async () => {
     if (!selected) return;
     try {
-      const { data } = await estimateEvalRun(selected.eval_set_id, { configs });
+      const { data } = await estimateEvalRun(selected.eval_set_id, { configs, mode });
       setEstimate(data);
     } catch (e) {
       setMessage(e.response?.data?.detail || t('evals.estimateFailed'));
@@ -159,11 +284,13 @@ export default function Evals() {
     if (!selected) return;
     setRunning(true);
     setMessage('');
+    setDiffResult(null);
     try {
       const { data } = await runEvalSet(selected.eval_set_id, {
         configs,
         workspace: currentWorkspace,
         cost_ceiling: costCeiling ? parseFloat(costCeiling) : null,
+        mode,
       });
       setActiveRun(data);
       const { data: hist } = await getEvalRuns(selected.eval_set_id);
@@ -182,7 +309,29 @@ export default function Evals() {
     loadSets();
   };
 
+  const handleToggleSuggestOnFailure = async () => {
+    if (!selected) return;
+    const next = !selected.suggest_on_failure;
+    setSelected((prev) => ({ ...prev, suggest_on_failure: next }));
+    try {
+      // Cases and graders are left out: the route only replaces them when it
+      // is sent some, and resending the set's own cases would rebuild each
+      // one fresh (evals routes._case_from_in), losing its case_id and its
+      // link back to the run it was seeded from.
+      await updateEvalSet(selected.eval_set_id, {
+        name: selected.name, description: selected.description,
+        target: selected.target, suggest_on_failure: next,
+      });
+    } catch {
+      setSelected((prev) => ({ ...prev, suggest_on_failure: !next }));
+    }
+  };
+
   const configLabels = (activeRun?.configs || []).map((c) => c.label);
+  // Config label to its target, so the matrix can say what each column ran.
+  const configTargets = Object.fromEntries(
+    (activeRun?.configs || []).map((c) => [c.label, targetOf(c)]),
+  );
 
   return (
     <PageContainer>
@@ -240,7 +389,15 @@ export default function Evals() {
                       <div className="text-sm font-semibold text-gray-900 truncate">{s.name}</div>
                       <div className="text-xs text-gray-500">
                         {s.case_count} case{s.case_count === 1 ? '' : 's'}
-                        {s.agent_id ? ` · ${s.agent_id}` : ''}
+                        {targetOf(s) && (
+                          <>
+                            {' · '}
+                            <span className="inline-flex items-center px-1.5 rounded bg-gray-100 text-gray-600 text-[10px] font-semibold uppercase">
+                              {t(`evals.kind_${targetOf(s).kind}`)}
+                            </span>
+                            {` ${targetOf(s).id}`}
+                          </>
+                        )}
                       </div>
                     </button>
                     <button
@@ -277,6 +434,16 @@ export default function Evals() {
                       {selected.cases.length} cases ·{' '}
                       {selected.graders.map((g) => g.kind).join(', ') || 'no graders'}
                     </p>
+                    {selected.target_kind === 'agent' && (
+                      <label className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selected.suggest_on_failure)}
+                          onChange={handleToggleSuggestOnFailure}
+                        />
+                        {t('evals.suggestOnFailure')}
+                      </label>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -307,8 +474,8 @@ export default function Evals() {
                     </span>
                     <button
                       onClick={() => setConfigs([...configs, {
-                        agent_id: selected.agent_id || agents[0]?.id || '',
-                        provider: '', model: '', label: '',
+                        target: targetOf(selected) || { kind: 'agent', id: catalogs.agent[0]?.id || '' },
+                        provider: '', model: '', label: '', repeats: 1,
                       }])}
                       className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
                     >
@@ -317,26 +484,23 @@ export default function Evals() {
                   </div>
                   {configs.length === 0 && (
                     <p className="text-xs text-gray-500 italic">
-                      {t('evals.addAtLeastOneAgent')}
+                      {t('evals.addAtLeastOneTarget')}
                     </p>
                   )}
                   <div className="space-y-2">
                     {configs.map((c, i) => (
                       <div key={i} className="flex items-center gap-2">
-                        <select
-                          value={c.agent_id}
-                          onChange={(e) => {
+                        <TargetPicker
+                          small
+                          value={targetOf(c)}
+                          catalogs={catalogs}
+                          onChange={(target) => {
                             const next = [...configs];
-                            next[i] = { ...c, agent_id: e.target.value };
+                            // The target replaces the legacy agent_id alias.
+                            next[i] = { ...c, target, agent_id: undefined };
                             setConfigs(next);
                           }}
-                          className="text-xs border border-gray-300 rounded-md px-2 py-1.5 flex-1 min-w-0"
-                        >
-                          <option value="">{t('evals.selectAgent')}</option>
-                          {agents.map((a) => (
-                            <option key={a.id} value={a.id}>{a.name || a.id}</option>
-                          ))}
-                        </select>
+                        />
                         <input
                           value={c.model}
                           onChange={(e) => {
@@ -356,6 +520,18 @@ export default function Evals() {
                           }}
                           placeholder={t('evals.columnLabel')}
                           className="text-xs border border-gray-300 rounded-md px-2 py-1.5 w-36"
+                        />
+                        <input
+                          type="number" min="1" max="10"
+                          value={c.repeats || 1}
+                          onChange={(e) => {
+                            const next = [...configs];
+                            const n = parseInt(e.target.value, 10);
+                            next[i] = { ...c, repeats: Number.isFinite(n) ? n : 1 };
+                            setConfigs(next);
+                          }}
+                          title={t('evals.repeatsHint')}
+                          className="text-xs border border-gray-300 rounded-md px-2 py-1.5 w-16"
                         />
                         <button
                           onClick={() => setConfigs(configs.filter((_, j) => j !== i))}
@@ -378,6 +554,15 @@ export default function Evals() {
                       {t('evals.stopsTheWholeSweepNot')}
                     </span>
                   </div>
+                  <label className="flex items-center gap-2 mt-2 text-xs text-gray-600" title={t('evals.batch.modeHint')}>
+                    <input
+                      type="checkbox"
+                      checked={mode === 'batch'}
+                      onChange={(e) => { setMode(e.target.checked ? 'batch' : 'live'); setEstimate(null); }}
+                    />
+                    {t('evals.batch.mode')}
+                    <span className="text-gray-400">{t('evals.batch.modeHint')}</span>
+                  </label>
                 </div>
 
                 {estimate && (
@@ -426,6 +611,16 @@ export default function Evals() {
                               ? <ChevronDown className="w-3.5 h-3.5 mt-0.5 text-gray-400 shrink-0" />
                               : <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-gray-400 shrink-0" />}
                             <span className="text-sm text-gray-800 truncate">{c.input || '(empty)'}</span>
+                            {c.artifact && (
+                              <span className="ml-1.5 shrink-0 inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-semibold">
+                                {t('evals.taskSnapshot')}
+                              </span>
+                            )}
+                            {(c.file_ids || []).length > 0 && (
+                              <span className="ml-1.5 shrink-0 inline-flex items-center px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] font-semibold">
+                                {t('files.evalCase.badge', { count: c.file_ids.length })}
+                              </span>
+                            )}
                           </button>
                           <button
                             onClick={async () => {
@@ -461,6 +656,19 @@ export default function Evals() {
                                 seeded from run {c.source_run_id.slice(0, 12)}
                               </a>
                             )}
+                            {(c.file_ids || []).length > 0 && (
+                              <FileIdsField workspace={selected.workspace || currentWorkspace || ''}
+                                value={c.file_ids} onChange={() => {}} disabled />
+                            )}
+                            {c.artifact && (
+                              <div className="text-gray-600">
+                                {t('evals.snapshotSummary', {
+                                  files: (c.artifact.files || []).length,
+                                  documents: (c.artifact.documents || []).length,
+                                })}
+                                {c.artifact.truncated ? ` · ${t('evals.snapshotTruncated')}` : ''}
+                              </div>
+                            )}
                           </div>
                         )}
                       </li>
@@ -480,6 +688,7 @@ export default function Evals() {
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                         activeRun.status === 'completed' ? 'bg-green-100 text-green-700'
                         : activeRun.status === 'stopped' ? 'bg-amber-100 text-amber-700'
+                        : activeRun.status === 'batch_pending' ? 'bg-blue-100 text-blue-700'
                         : 'bg-red-100 text-red-700'
                       }`}>
                         {activeRun.status}
@@ -492,6 +701,7 @@ export default function Evals() {
                           onChange={async (e) => {
                             const { data } = await getEvalRun(e.target.value);
                             setActiveRun(data);
+                            setDiffResult(null);
                           }}
                           value={activeRun.eval_run_id}
                           className="text-xs border border-gray-300 rounded-md px-2 py-1"
@@ -503,21 +713,108 @@ export default function Evals() {
                           ))}
                         </select>
                       )}
+                      {previousRun && (
+                        <button
+                          onClick={handleCompareWithPrevious}
+                          disabled={diffing}
+                          title={t('evals.compareWithPreviousHint')}
+                          className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
+                        >
+                          {diffing
+                            ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
+                            : <GitCompare className="w-3.5 h-3.5 mr-1" />}
+                          {t('evals.compareWithPrevious')}
+                        </button>
+                      )}
                     </div>
                   </div>
+
+                  {activeRun.mode === 'batch' && (
+                    <BatchRunPanel run={activeRun} onChange={setActiveRun} />
+                  )}
+
+                  <PromptSuggestionPanel
+                    evalRun={activeRun}
+                    evalSet={selected}
+                    onApplied={(newRun) => { setActiveRun(newRun); getEvalRuns(selected.eval_set_id).then(({ data }) => setRuns(data.eval_runs || [])); }}
+                  />
+
+                  {diffResult && (
+                    <div className="mb-5 rounded-lg border border-gray-200 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">
+                          {t('evals.diffResult')}
+                        </span>
+                        <button onClick={() => setDiffResult(null)} className="p-1 text-gray-400 hover:text-gray-700">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-xs mb-2">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold">
+                          {t('evals.fixedCount', { count: diffResult.summary.fixed })}
+                        </span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-semibold">
+                          {t('evals.regressedCount', { count: diffResult.summary.regressed })}
+                        </span>
+                        <span className="text-gray-500">
+                          {t('evals.sameCount', { count: diffResult.summary.same })}
+                        </span>
+                        <span className="text-gray-400 ml-auto">
+                          {pct(diffResult.summary.pass_rate_a)} → {pct(diffResult.summary.pass_rate_b)}
+                        </span>
+                      </div>
+                      {diffResult.cases.filter((c) => c.change === 'fixed' || c.change === 'regressed').length === 0 ? (
+                        <p className="text-xs text-gray-500 italic">{t('evals.noChangedCases')}</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {diffResult.cases
+                            .filter((c) => c.change === 'fixed' || c.change === 'regressed')
+                            .map((c) => (
+                              <li key={`${c.case_id}-${c.config_a || c.config_b}`} className="flex items-center gap-2 text-xs">
+                                {c.change === 'fixed'
+                                  ? <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                                  : <XCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />}
+                                <span className="font-mono text-gray-500">{c.case_id.slice(0, 12)}</span>
+                                <span className="text-gray-400">·</span>
+                                <span className="text-gray-700">{c.config_a || c.config_b}</span>
+                              </li>
+                            ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
 
                   {/* Per-config headline: the one number, with the counts behind it. */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
                     {configLabels.map((label) => {
                       const s = activeRun.summary[label] || {};
+                      const target = configTargets[label];
+                      const repeated = (s.total || 0) > Object.keys(s.cases || {}).length;
                       return (
                         <div key={label} className="rounded-lg border border-gray-200 p-3">
-                          <div className="text-xs font-semibold text-gray-500 truncate">{label}</div>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {target && (
+                              <span className="shrink-0 inline-flex items-center px-1.5 rounded bg-gray-100 text-gray-600 text-[10px] font-semibold uppercase">
+                                {t(`evals.kind_${target.kind}`)}
+                              </span>
+                            )}
+                            <div className="text-xs font-semibold text-gray-500 truncate">{label}</div>
+                          </div>
                           <div className="text-2xl font-bold text-gray-900 mt-1">{pct(s.score)}</div>
                           <div className="text-xs text-gray-500 mt-0.5">
                             {s.passed || 0}/{s.total || 0} passed
                             {s.errors ? ` · ${s.errors} errored` : ''}
                           </div>
+                          {repeated && (
+                            <div className="text-[11px] text-gray-500 mt-0.5">
+                              {t('evals.passRate')} {pct(s.pass_rate)} · {t('evals.std')} {(s.std || 0).toFixed(2)}
+                              {s.unstable_cases > 0 && (
+                                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
+                                  {t('evals.unstableCases', { count: s.unstable_cases })}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           <div className="text-[11px] text-gray-400 mt-0.5">
                             ${(s.cost || 0).toFixed(4)}
                           </div>
@@ -532,7 +829,14 @@ export default function Evals() {
                         <tr className="border-b border-gray-200">
                           <th className="text-left py-2 pr-4 text-xs font-bold text-gray-500 uppercase">{t('evals.case')}</th>
                           {configLabels.map((l) => (
-                            <th key={l} className="text-center py-2 px-2 text-xs font-bold text-gray-500 uppercase whitespace-nowrap">{l}</th>
+                            <th key={l} className="text-center py-2 px-2 text-xs font-bold text-gray-500 uppercase whitespace-nowrap">
+                              {l}
+                              {configTargets[l] && configTargets[l].kind !== 'agent' && (
+                                <div className="text-[10px] font-semibold text-gray-400 normal-case">
+                                  {t(`evals.kind_${configTargets[l].kind}`)}
+                                </div>
+                              )}
+                            </th>
                           ))}
                         </tr>
                       </thead>
@@ -547,11 +851,16 @@ export default function Evals() {
                               if (!cell) {
                                 return <td key={label} className="text-center py-2 px-2 text-xs text-gray-300">—</td>;
                               }
+                              const caseStats = activeRun.summary?.[label]?.cases?.[c.case_id];
+                              const repeated = caseStats && caseStats.attempts > 1;
+                              const title = repeated
+                                ? `${t('evals.passRate')} ${pct(caseStats.pass_rate)} · ${t('evals.std')} ${caseStats.std.toFixed(2)}`
+                                : t('evals.openTheRawOutputBehind');
                               return (
                                 <td key={label} className="text-center py-2 px-2">
                                   <button
-                                    onClick={() => setCellDetail({ cell, case: c, label })}
-                                    title={t('evals.openTheRawOutputBehind')}
+                                    onClick={() => setCellDetail({ cell, case: c, label, caseStats, target: configTargets[label] })}
+                                    title={title}
                                     className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-semibold ${scoreColor(cell.score, cell.ok)}`}
                                   >
                                     {cell.ok
@@ -559,6 +868,13 @@ export default function Evals() {
                                       : <AlertTriangle className="w-3 h-3" />}
                                     {cell.ok ? pct(cell.score) : 'err'}
                                   </button>
+                                  {repeated && caseStats.unstable && (
+                                    <div className="mt-1">
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold">
+                                        {t('evals.unstable')}
+                                      </span>
+                                    </div>
+                                  )}
                                 </td>
                               );
                             })}
@@ -583,14 +899,14 @@ export default function Evals() {
 
         {chat.open && (
           <ChatColumn>
-            <EntityChat {...evalChat} {...FILL_COLUMN} />
+            <EntityChat {...evalChat} {...FILL_COLUMN} onHide={() => chat.setOpen(false)} />
           </ChatColumn>
         )}
       </div>
 
       {showCreate && (
         <CreateSetModal
-          agents={agents}
+          catalogs={catalogs}
           graderCatalog={graderCatalog}
           workspace={currentWorkspace}
           onClose={() => setShowCreate(false)}
@@ -601,6 +917,7 @@ export default function Evals() {
       {showCase && selected && (
         <AddCaseModal
           evalSetId={selected.eval_set_id}
+          workspace={selected.workspace || currentWorkspace}
           onClose={() => setShowCase(false)}
           onAdded={() => { setShowCase(false); selectSet(selected.eval_set_id); loadSets(); }}
         />
@@ -614,11 +931,11 @@ export default function Evals() {
 }
 
 
-function CreateSetModal({ agents, graderCatalog, workspace, onClose, onCreated }) {
+function CreateSetModal({ catalogs, graderCatalog, workspace, onClose, onCreated }) {
   const { t } = useI18n();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [agentId, setAgentId] = useState('');
+  const [target, setTarget] = useState({ kind: 'agent', id: '' });
   const [graders, setGraders] = useState([{ kind: 'substring', params: {}, weight: 1 }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -628,7 +945,7 @@ function CreateSetModal({ agents, graderCatalog, workspace, onClose, onCreated }
     setSaving(true);
     try {
       const { data } = await createEvalSet({
-        name, description, workspace, agent_id: agentId || null, cases: [], graders,
+        name, description, workspace, target: target.id ? target : null, cases: [], graders,
       });
       onCreated(data);
     } catch (e) {
@@ -649,12 +966,8 @@ function CreateSetModal({ agents, graderCatalog, workspace, onClose, onCreated }
         <input value={description} onChange={(e) => setDescription(e.target.value)}
                className="w-full text-sm border border-gray-300 rounded-md px-3 py-2" />
       </Field>
-      <Field label={t('evals.defaultAgent')} hint={t('evals.usedAsTheBaselineColumn')}>
-        <select value={agentId} onChange={(e) => setAgentId(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded-md px-3 py-2">
-          <option value="">{t('evals.none2')}</option>
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
-        </select>
+      <Field label={t('evals.defaultTarget')} hint={t('evals.usedAsTheBaselineColumn')}>
+        <TargetPicker value={target} onChange={setTarget} catalogs={catalogs} />
       </Field>
       <Field label={t('evals.graders')} hint={t('evals.everyGraderMustPassFor')}>
         <div className="space-y-2">
@@ -705,12 +1018,16 @@ function CreateSetModal({ agents, graderCatalog, workspace, onClose, onCreated }
 }
 
 
-function AddCaseModal({ evalSetId, onClose, onAdded }) {
+function AddCaseModal({ evalSetId, workspace, onClose, onAdded }) {
   const { t } = useI18n();
+  // Workspace files the case runs with (docs/files.md): copied into its
+  // working directory and named in its input.
+  const [fileIds, setFileIds] = useState([]);
   const [input, setInput] = useState('');
   const [expected, setExpected] = useState('');
   const [rubric, setRubric] = useState('');
   const [fromRunId, setFromRunId] = useState('');
+  const [fromTaskId, setFromTaskId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -720,6 +1037,8 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
       await addEvalCase(evalSetId, {
         input, expected: expected || null, rubric: rubric || null,
         from_run_id: fromRunId || null,
+        from_task_id: fromTaskId.trim() || null,
+        file_ids: fileIds,
       });
       onAdded();
     } catch (e) {
@@ -736,6 +1055,10 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
         <input value={fromRunId} onChange={(e) => setFromRunId(e.target.value)}
                placeholder={t('evals.run')} className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 font-mono" />
       </Field>
+      <Field label={t('evals.snapshotFromTask')} hint={t('evals.snapshotFromTaskHint')}>
+        <input value={fromTaskId} onChange={(e) => setFromTaskId(e.target.value)}
+               placeholder={t('evals.taskId')} className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 font-mono" />
+      </Field>
       <Field label={t('evals.input')} hint={t('evals.theUserMessageSentTo')}>
         <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={3}
                   className="w-full text-sm border border-gray-300 rounded-md px-3 py-2" />
@@ -748,6 +1071,9 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
         <textarea value={rubric} onChange={(e) => setRubric(e.target.value)} rows={2}
                   className="w-full text-sm border border-gray-300 rounded-md px-3 py-2" />
       </Field>
+      <Field label={t('files.evalCase.label')} hint={t('files.evalCase.hint')}>
+        <FileIdsField workspace={workspace || ''} value={fileIds} onChange={setFileIds} uploadSource="eval" />
+      </Field>
       <ModalActions onClose={onClose} onSubmit={submit} saving={saving} label={t('evals.add')} />
     </Modal>
   );
@@ -756,7 +1082,13 @@ function AddCaseModal({ evalSetId, onClose, onAdded }) {
 
 function CellDetailModal({ detail, onClose }) {
   const { t } = useI18n();
-  const { cell, case: c, label } = detail;
+  const { cell, case: c, label, caseStats, target } = detail;
+  const kind = cell.target_kind || target?.kind || 'agent';
+  const containerHref = kind === 'agent'
+    ? (cell.run_id ? `/messages/${cell.run_id}` : null)
+    : entityRunHref(kind, target?.id, cell.run_id);
+  const trajectory = cell.trajectory || [];
+  const repeated = caseStats && caseStats.attempts > 1;
   return (
     <Modal title={`${label} — ${c.input.slice(0, 60)}`} onClose={onClose} wide>
       <div className="space-y-4 text-sm">
@@ -767,13 +1099,28 @@ function CellDetailModal({ detail, onClose }) {
           <div className="text-xs text-gray-500">
             {cell.duration_ms}ms · {cell.inbound_tokens}+{cell.outbound_tokens} tokens ·
             ${cell.cost.toFixed(4)}
+            {cell.attempt > 1 && ` · ${t('evals.attempt', { n: cell.attempt })}`}
           </div>
-          {cell.run_id && (
-            <a href={`/messages/${cell.run_id}`} className="text-xs text-indigo-600 hover:underline ml-auto">
-              {t('evals.openFullRunTrace')}
+          {containerHref && (
+            <a href={containerHref} className="text-xs text-indigo-600 hover:underline ml-auto">
+              {kind === 'agent' ? t('evals.openFullRunTrace') : t('evals.openContainerRun', { kind: t(`evals.kind_${kind}`) })}
             </a>
           )}
         </div>
+
+        {repeated && (
+          <div className="rounded-lg border border-gray-200 p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+            <span>{t('evals.attempts')}: {caseStats.attempts}</span>
+            <span>{t('evals.passRate')}: {pct(caseStats.pass_rate)}</span>
+            <span>{t('evals.std')}: {caseStats.std.toFixed(3)}</span>
+            <span>{t('evals.range')}: {pct(caseStats.min)} {t('evals.to')} {pct(caseStats.max)}</span>
+            {caseStats.unstable && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
+                {t('evals.unstable')}
+              </span>
+            )}
+          </div>
+        )}
 
         {cell.error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
@@ -802,10 +1149,34 @@ function CellDetailModal({ detail, onClose }) {
           </div>
         )}
 
+        {kind !== 'agent' && trajectory.length > 0 && (
+          <div>
+            <div className="text-xs font-bold text-gray-500 uppercase mb-1.5">
+              {t('evals.trajectory')} ({trajectory.length})
+            </div>
+            <ol className="space-y-1 text-xs max-h-48 overflow-auto">
+              {trajectory.map((step, i) => {
+                const href = step.kind === 'run' ? `/messages/${step.run_id}` : containerHref;
+                return (
+                  <li key={`${step.run_id}-${i}`} className={`flex items-center gap-2 ${step.kind === 'run' ? 'pl-3' : ''}`}>
+                    <span className="text-gray-400 w-5 text-right shrink-0">{i + 1}</span>
+                    {href
+                      ? <a href={href} className="font-mono text-indigo-600 hover:underline">{String(step.run_id).slice(0, 12)}</a>
+                      : <span className="font-mono text-gray-600">{String(step.run_id).slice(0, 12)}</span>}
+                    {step.summary && <span className="text-gray-500 truncate">{step.summary}</span>}
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        )}
+
         {/* The raw output always sits next to the number: a grader is itself
             unreliable, and the score alone is not evidence. */}
         <div>
-          <div className="text-xs font-bold text-gray-500 uppercase mb-1.5">{t('evals.agentOutput')}</div>
+          <div className="text-xs font-bold text-gray-500 uppercase mb-1.5">
+            {kind === 'agent' ? t('evals.agentOutput') : t('evals.targetOutput')}
+          </div>
           <pre className="whitespace-pre-wrap text-xs text-gray-800 bg-gray-50 rounded-lg p-3 max-h-72 overflow-auto">
             {cell.output || '(empty)'}
           </pre>

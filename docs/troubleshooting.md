@@ -2,7 +2,9 @@
 
 Symptoms, in the order people hit them. For the liveness of the moving parts see
 [service-health](service-health.md); for a stack that never came up at all, the
-last section of [installation](installation.md).
+last section of [installation](installation.md); for a symptom-confirm-fix
+writeup of the dozen most common failures (plus how to build a support bundle
+to attach to a ticket), see the [runbook](runbook.md).
 
 ## Nothing runs
 
@@ -21,6 +23,11 @@ checked at launch, so nothing was half-run. See [costs](costs.md).
 its next tick. If it does not, `GET /api/health` says whether the watchdog is
 running at all.
 
+**A flow, loop, team or scenario run stays in pending status.** In the `api` role, the
+launch is queued for a worker. With no worker running (`ah worker`), the launch
+waits in `pending` until one appears. Start a worker on the same or another host,
+or use the `all` role (default) to launch runs in-process.
+
 ## It runs, but nothing appears
 
 **Output appears only when the run finishes.** Live updates ride a single
@@ -36,9 +43,17 @@ The built-in `visualizer` ships with the set already bound. See
 
 **A message written to an agent copy is never answered.** Open the copy on the
 Instances page and read its state. A message to a **busy** instance waits in its
-mailbox until the copy goes idle. A copy carried by a node or a container
-answers in its own process, so nothing happens if that process is gone; the
-watchdog reconciles instances whose carrier died. See [instances](instances.md).
+mailbox until the copy goes idle. A resident copy (started with Run) answers
+in its own process: if that process is gone the watchdog marks the instance
+stopped, and the next message starts it again. The Process tab of the
+instance shows the carrier's status and log. See [instances](instances.md).
+
+**A loop, team or scenario run was stopped and needs to resume.** `POST
+/api/loops/runs/{id}/resume`, `POST /api/teams/runs/{id}/resume` or `POST
+/api/playground/runs/{id}/resume` relaunches the run from its checkpoint (for
+a loop, its position: the iteration after the last one it finished). A team or
+scenario run record shows `has_checkpoint: true` when resumption is possible.
+The endpoints return 400 when there is nothing to resume.
 
 **A scheduled job never fired.** Jobs fire from a scheduler inside the backend,
 so nothing fires while the backend is down. `GET /api/health` reports whether

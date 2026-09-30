@@ -33,7 +33,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from loops import store
-from loops.evaluator import evaluate, resolve_evaluator
+from loops.evaluator import evaluate
 from loops.models import (
     Iteration, Loop, LoopRun, MAX_ITERATIONS_CAP, MAX_WALL_SECONDS_CAP,
     Verdict, utc_iso,
@@ -52,6 +52,22 @@ class LoopStopped(Exception):
 
 
 # ── Streaming ────────────────────────────────────────────────────────────────
+
+def _owner_id() -> str:
+    try:
+        from common.leases import owner_id
+        return owner_id()
+    except Exception:
+        return ""
+
+
+def _hostname() -> str:
+    import socket
+    try:
+        return socket.gethostname()
+    except Exception:
+        return ""
+
 
 def _publish(loop_run_id: str, event: Dict[str, Any]) -> None:
     """Push an event to the ``loop:<id>`` channel. Never fatal."""
@@ -114,6 +130,16 @@ def build_iteration_context(
     )
 
 
+def _criterion_of(loop: Loop) -> str:
+    """What the work must satisfy, as a pass reads it: the exit criterion,
+    the rubric, or both when the loop has both."""
+    parts = [str(loop.exit_criterion or "").strip()]
+    rubric = str(getattr(loop, "rubric", "") or "").strip()
+    if rubric:
+        parts.append(f"Rubric (graded per criterion):\n{rubric}")
+    return "\n\n".join(p for p in parts if p)
+
+
 def _seed_state(
     *, iteration: int, criterion: str, previous_output: str, verdict: Optional[Verdict],
     base_seed: Optional[Dict[str, Any]] = None,
@@ -135,22 +161,11 @@ def _seed_state(
 # ── Cost ─────────────────────────────────────────────────────────────────────
 
 def _runs_cost(run_ids: List[str]) -> float:
-    """Catalog-priced spend of a set of runs. Best effort — an unknown model is
-    zero-cost, never an exception."""
-    if not run_ids:
-        return 0.0
-    try:
-        from common.pricing import load_price_map, run_cost_usd
-        from managers.run_manager import get_run_by_id
-        prices = load_price_map()
-        total = 0.0
-        for rid in run_ids:
-            rec = get_run_by_id(rid)
-            if rec:
-                total += run_cost_usd(rec, prices)
-        return round(total, 6)
-    except Exception:
-        return 0.0
+    """Catalog-priced spend of a set of runs. Delegates to
+    managers.runs.groups.runs_cost, the one pricing loop over run records, so a
+    loop iteration is priced the same way a flow or a team is."""
+    from managers.runs.groups import runs_cost
+    return runs_cost(list(run_ids))
 
 
 # ── One iteration ────────────────────────────────────────────────────────────
@@ -225,6 +240,9 @@ def _run_flow_once(
                     "node_id": ev.get("node_id"), "label": ev.get("label"),
                     "ok": ev.get("ok"), "duration_ms": ev.get("duration_ms"),
                 })
+                # One iteration is a whole flow and can run for many minutes,
+                # so the run proves it is alive per node, not per iteration.
+                store.touch_heartbeat(loop_run_id)
         return final
 
     try:
@@ -253,11 +271,33 @@ def run_loop(
     task_id: Optional[str] = None,
     seed: Optional[Dict[str, Any]] = None,
     on_iteration: Optional[Callable[[Iteration], None]] = None,
+    resume_run: Optional[LoopRun] = None,
+    resumed_from_status: Optional[str] = None,
+    run: Optional[LoopRun] = None,
+    own_process: bool = True,
 ) -> LoopRun:
     """Run a loop to convergence, or to whichever ceiling it hits first.
 
-    Synchronous and long-running (iterations of a whole flow), so callers start
-    it on a background thread and follow the ``loop:<loop_run_id>`` channel.
+    Synchronous and long-running (iterations of a whole flow). The normal way
+    to start one is ``loops.launcher.start_loop_run``, which creates the
+    record and spawns ``runtime/loop_run.py`` (locally or on a worker); that
+    process calls this with the pre-created record as ``run``. Called without
+    ``run`` (a tool, a test) it mints its own record and runs right here, and
+    then marks the record with this process's pid and host and beats its own
+    heartbeat, so the watchdog treats it like every other run.
+
+    ``own_process`` says whether this call is the run's process: when False
+    (the subprocess entrypoint, which already beats a heartbeat and whose
+    launcher already marked the record running) no heartbeat thread is
+    started here.
+
+    ``resume_run`` continues an existing run from its stored position instead of
+    starting a new one: the iterations it already completed keep their rows and
+    their scores, and the next pass is the one after the last it finished. See
+    :func:`resume_loop_run`. ``resumed_from_status`` is the status the run was
+    in before this call (``"stopped"`` when a person's stop is being resumed
+    rather than a crash recovery); it is only used to annotate the
+    ``loop_resume`` event and the server log, never to change what runs.
     """
     loop = store.get_loop(loop_id)
     if not loop:
@@ -268,34 +308,97 @@ def run_loop(
     if not flow:
         raise ValueError(f"Loop '{loop.name or loop_id}' references a missing flow: {loop.flow_id}")
 
+    position: Dict[str, Any] = dict(resume_run.position or {}) if resume_run else {}
+    if resume_run:
+        goal = goal or resume_run.goal
+        workspace = workspace or resume_run.workspace
+        task_id = task_id or resume_run.task_id
     goal = (goal or "").strip() or (loop.description or "").strip() or (flow.get("description") or "")
     ws_name, ws_path, task_id, session_id = _prepare_context(loop, workspace, task_id, goal)
 
-    # Publish the workspace on the context var the agent tools read. A
-    # subprocess flow run sets AGENT_WORKSPACE instead, but this runs inside the
-    # backend process, where a process-wide env var would race with every
-    # concurrent chat request. asyncio.to_thread copies the context, so the value
-    # set here reaches the node executions.
+    # Publish the workspace on the context var the agent tools read. The
+    # subprocess entrypoint sets AGENT_WORKSPACE too, but the in-process door
+    # (a tool, a test) runs inside a process serving other requests, where a
+    # process-wide env var would race with them. asyncio.to_thread copies the
+    # context, so the value set here reaches the node executions.
     from common.workspace_context import _workspace_ctx
     _workspace_ctx.set(ws_name)
 
-    run = LoopRun(
-        loop_id=loop_id, workspace=ws_name, goal=goal,
-        task_id=task_id, session_id=session_id,
-    )
+    if resume_run:
+        run = resume_run
+        run.status = "running"
+        run.finished_at = None
+        run.stop_reason = ""
+        run.error = None
+        run.session_id = run.session_id or session_id
+    elif run is not None:
+        # A record the launcher created as ``pending``; the process half
+        # (runtime.entity_launch.launch_prepared) already moved it to running.
+        run.status = "running"
+        run.workspace = run.workspace or ws_name
+        run.goal = run.goal or goal
+        run.task_id = run.task_id or task_id
+        run.session_id = run.session_id or session_id
+    else:
+        run = LoopRun(
+            loop_id=loop_id, workspace=ws_name, goal=goal,
+            task_id=task_id, session_id=session_id,
+        )
     store.save_run(run)
-    _publish(run.loop_run_id, {"type": "loop_start", **run.to_dict()})
+    heartbeat = None
+    if own_process:
+        # This process is the run: say so on the record and beat, exactly as
+        # the subprocess entrypoint does for a launched run.
+        try:
+            from common import entity_runs
+            from runtime.entity_heartbeat import EntityHeartbeat
+            entity_runs.mark_running(run.loop_run_id, pid=os.getpid(), host=_hostname(),
+                                     execution_mode="local")
+            heartbeat = EntityHeartbeat(run.loop_run_id)
+            heartbeat.start()
+        except Exception:  # noqa: BLE001 - a run without a heartbeat thread still beats per node
+            log.debug("could not start the loop heartbeat for %s", run.loop_run_id, exc_info=True)
+    if task_id:
+        # Point the task at this run: the executor was recorded by
+        # _prepare_context before the run id existed.
+        try:
+            from tasks import service as _ts
+            _ts.assign_executor(
+                task_id, {"kind": "loop", "id": loop_id},
+                {"loop_id": loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
+                run_id=run.loop_run_id,
+            )
+        except Exception:
+            pass
+    if resume_run:
+        # Distinct from a plain resume (e.g. the watchdog picking a crashed run
+        # back up): a person's explicit stop is what "resumed from a stop"
+        # means here, and it is worth its own line in the server log plus a
+        # field on the event, so the run's activity trail says why it restarted.
+        resume_event = {"type": "loop_resume", **run.to_dict()}
+        if resumed_from_status:
+            resume_event["resumed_from_status"] = resumed_from_status
+            if resumed_from_status == "stopped":
+                log.info("loop %s resumed after being stopped by request", run.loop_run_id)
+        _publish(run.loop_run_id, resume_event)
+    else:
+        _publish(run.loop_run_id, {"type": "loop_start", **run.to_dict()})
 
     max_iterations = max(1, min(int(loop.max_iterations or 1), MAX_ITERATIONS_CAP))
     wall_cap = min(float(loop.max_wall_seconds or MAX_WALL_SECONDS_CAP), MAX_WALL_SECONDS_CAP)
     started = time.monotonic()
 
-    history: List[Dict[str, Any]] = []
-    verdict: Optional[Verdict] = None
-    previous_output = ""
-    best_score: Optional[float] = None
-    stale = 0                     # consecutive iterations that failed to improve
-    spend = 0.0
+    # Where this run starts. A fresh run starts at nothing; a resumed one picks
+    # up the trajectory it already has, because the whole point of a loop is
+    # that iteration N+1 knows what N was told.
+    history: List[Dict[str, Any]] = list(position.get("history") or [])
+    raw_verdict = position.get("verdict") or None
+    verdict: Optional[Verdict] = Verdict(**raw_verdict) if isinstance(raw_verdict, dict) else None
+    previous_output = str(position.get("previous_output") or "")
+    best_score: Optional[float] = position.get("best_score")
+    stale = int(position.get("stale") or 0)   # iterations that failed to improve
+    spend = float(position.get("spend") or 0.0)
+    done_iterations = int(position.get("iterations_done") or 0)
 
     try:
         from flow.launcher import _set_flow_running
@@ -304,70 +407,98 @@ def run_loop(
         pass
 
     try:
-        for iteration in range(1, max_iterations + 1):
-            _check_between_iterations(run.loop_run_id, started, wall_cap, spend, loop, ws_name)
+        try:
+            if done_iterations >= max_iterations:
+                raise LoopStopped("max_iterations", f"reached the cap of {max_iterations} iterations")
+            for iteration in range(done_iterations + 1, max_iterations + 1):
+                _check_between_iterations(run.loop_run_id, started, wall_cap, spend, loop, ws_name)
 
-            it = _execute_iteration(
-                loop=loop, flow=flow, run=run, iteration=iteration,
-                max_iterations=max_iterations, goal=goal,
-                previous_output=previous_output, verdict=verdict,
-                history=history, seed=seed, ws_name=ws_name, ws_path=ws_path,
-                task_id=task_id, session_id=session_id,
-            )
-            spend = round(spend + it.cost, 6)
-            previous_output = it.output or previous_output
-            verdict = Verdict(
-                score=it.score, verdict=it.verdict or "continue", reason=it.reason,
-                feedback=it.feedback, raw=it.evaluator_raw, agent=it.evaluator_agent,
-            )
-            history.append({"iteration": iteration, "score": it.score, "reason": it.reason})
+                it = _execute_iteration(
+                    loop=loop, flow=flow, run=run, iteration=iteration,
+                    max_iterations=max_iterations, goal=goal,
+                    previous_output=previous_output, verdict=verdict,
+                    history=history, seed=seed, ws_name=ws_name, ws_path=ws_path,
+                    task_id=task_id, session_id=session_id,
+                )
+                spend = round(spend + it.cost, 6)
+                previous_output = it.output or previous_output
+                verdict = Verdict(
+                    score=it.score, verdict=it.verdict or "continue", reason=it.reason,
+                    feedback=it.feedback, raw=it.evaluator_raw, agent=it.evaluator_agent,
+                )
+                history.append({"iteration": iteration, "score": it.score, "reason": it.reason})
 
-            run.iterations_done = iteration
-            run.final_score = it.score
-            run.total_cost = spend
-            run.result = it.output
-            if it.score is not None and (best_score is None or it.score > best_score):
-                best_score, stale = it.score, 0
-            elif it.score is not None:
-                stale += 1
-            run.best_score = best_score
-            store.update_progress(
-                run.loop_run_id, iterations_done=run.iterations_done,
-                best_score=run.best_score, final_score=run.final_score,
-                result=run.result, total_cost=run.total_cost,
-            )
+                run.iterations_done = iteration
+                run.final_score = it.score
+                run.total_cost = spend
+                run.result = it.output
+                if it.score is not None and (best_score is None or it.score > best_score):
+                    best_score, stale = it.score, 0
+                elif it.score is not None:
+                    stale += 1
+                run.best_score = best_score
+                run.position = {
+                    "iterations_done": iteration,
+                    "previous_output": previous_output,
+                    "best_score": best_score,
+                    "stale": stale,
+                    "spend": spend,
+                    "history": history,
+                    "verdict": verdict.to_dict() if verdict else None,
+                    "goal": goal,
+                    "resume_attempts": run.resume_attempts,
+                    "heartbeat_at": utc_iso(),
+                    "updated_at": utc_iso(),
+                    # Which replica is executing this loop (a loop is a thread in
+                    # the backend, not a queued process), for the deployment map.
+                    "owner": _owner_id(),
+                    "host": _hostname(),
+                }
+                store.update_progress(
+                    run.loop_run_id, iterations_done=run.iterations_done,
+                    best_score=run.best_score, final_score=run.final_score,
+                    result=run.result, total_cost=run.total_cost,
+                    position=run.position,
+                )
 
-            _publish(run.loop_run_id, {"type": "iteration", **it.to_dict()})
-            if on_iteration:
-                try:
-                    on_iteration(it)
-                except Exception:
-                    pass
+                _publish(run.loop_run_id, {"type": "iteration", **it.to_dict()})
+                if on_iteration:
+                    try:
+                        on_iteration(it)
+                    except Exception:
+                        pass
 
-            if it.status == "stopped":
-                raise LoopStopped("stopped", "stop requested during the flow run")
-            _check_convergence(loop, it, iteration, stale)
+                if it.status == "stopped":
+                    raise LoopStopped("stopped", "stop requested during the flow run")
+                _check_convergence(loop, it, iteration, stale)
 
-        raise LoopStopped("max_iterations", f"reached the cap of {max_iterations} iterations")
+            raise LoopStopped("max_iterations", f"reached the cap of {max_iterations} iterations")
 
-    except LoopStopped as e:
-        # Hitting a ceiling is a completed run with a reason, not a failure: the
-        # iterations it did produce are real work. Only a loop that could not
-        # run its flow, or one the user stopped, is anything else.
-        run.stop_reason = e.reason
-        if e.reason == "stopped":
-            run.status = "stopped"
-        elif e.reason in ("flow_failed", "error"):
+        except LoopStopped as e:
+            # Hitting a ceiling is a completed run with a reason, not a failure: the
+            # iterations it did produce are real work. Only a loop that could not
+            # run its flow, or one the user stopped, is anything else.
+            run.stop_reason = e.reason
+            if e.reason == "stopped":
+                run.status = "stopped"
+            elif e.reason in ("flow_failed", "error"):
+                run.status = "failed"
+                run.error = e.detail
+            else:
+                run.status = "completed"
+            log.info("loop %s finished: %s (%s)", run.loop_run_id, e.reason, e.detail)
+        except Exception as e:  # noqa: BLE001
+            log.exception("loop run failed")
             run.status = "failed"
-            run.error = e.detail
-        else:
-            run.status = "completed"
-        log.info("loop %s finished: %s (%s)", run.loop_run_id, e.reason, e.detail)
-    except Exception as e:  # noqa: BLE001
-        log.exception("loop run failed")
-        run.status = "failed"
-        run.stop_reason = "error"
-        run.error = f"{type(e).__name__}: {e}"
+            run.stop_reason = "error"
+            run.error = f"{type(e).__name__}: {e}"
+
+    finally:
+        # Whatever ends the loop, including a killed process's own
+        # unwinding, the beat must not outlive the run: a lingering thread
+        # would keep a finished run looking alive.
+        if heartbeat is not None:
+            heartbeat.stop()
 
     run.total_cost = spend
     run.finished_at = utc_iso()
@@ -401,12 +532,13 @@ def _execute_iteration(
     store.save_iteration(it)
     _publish(run.loop_run_id, {"type": "iteration_start", **it.to_dict()})
 
+    criterion = _criterion_of(loop)
     context = build_iteration_context(
-        goal=goal, criterion=loop.exit_criterion, iteration=iteration,
+        goal=goal, criterion=criterion, iteration=iteration,
         previous_output=previous_output, verdict=verdict,
     )
     seed_state = _seed_state(
-        iteration=iteration, criterion=loop.exit_criterion,
+        iteration=iteration, criterion=criterion,
         previous_output=previous_output, verdict=verdict, base_seed=seed,
     )
     try:
@@ -546,12 +678,13 @@ def _prepare_context(
         _ts.update_task(task_id, session_id=session_id)
     except Exception:
         pass
-    # Record the loop as the task's assignee, the same way a flow run does, so a
-    # task attached to a loop shows what is working on it instead of appearing
-    # unassigned for the whole run.
+    # Record the loop as the task's executor (kind loop), the same way a flow
+    # run does, so a task attached to a loop shows what is working on it
+    # instead of appearing unassigned for the whole run. The run id is added
+    # by run_loop once the run record exists.
     try:
-        _ts.assign_agent(
-            task.id, f"Loop: {loop.name or loop.loop_id}",
+        _ts.assign_executor(
+            task.id, {"kind": "loop", "id": loop.loop_id},
             {"loop_id": loop.loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
         )
     except Exception:
@@ -578,6 +711,55 @@ def _finalize_task(run: LoopRun) -> None:
                            0 if ok else 1, error=run.error)
     except Exception:
         pass
+
+
+class LoopResumeError(Exception):
+    """A loop run cannot be resumed (unknown run, finished, or no position)."""
+
+
+def resume_loop_run(
+    loop_run_id: str,
+    *,
+    auto: bool = False,
+    on_iteration: Optional[Callable[[Iteration], None]] = None,
+    own_process: bool = True,
+) -> LoopRun:
+    """Continue a loop run from the iteration after its last completed one.
+
+    The run keeps its id, its task, its session and every iteration row it
+    already produced: a resume is the same run carrying on. What it needs is
+    only what the next pass reads — the previous output, the reviewer's last
+    verdict, the best score, the patience counter and the spend — and that is
+    exactly what the position holds.
+
+    ``auto`` marks a resume the watchdog performed rather than a person, and is
+    what its attempt cap counts.
+
+    A run in ``stopped`` is resumable: it stopped at a valid position (the
+    iterations it had already done, their history, the running spend), so
+    picking it back up from there is exactly what a person who pressed Stop by
+    mistake, or wants to let it run further, needs. Only ``completed`` is
+    refused outright: nothing is left to continue.
+    """
+    run = store.get_run(loop_run_id)
+    if not run:
+        raise LoopResumeError(f"Loop run not found: {loop_run_id}")
+    if run.status == "completed":
+        raise LoopResumeError(f"Loop run {loop_run_id} already finished ({run.status})")
+    position = dict(run.position or {})
+    if not position.get("iterations_done"):
+        raise LoopResumeError(f"Loop run {loop_run_id} has no position to resume from")
+    resumed_from_status = run.status
+    if auto:
+        position["resume_attempts"] = int(position.get("resume_attempts") or 0) + 1
+        run.resume_attempts = position["resume_attempts"]
+        run.position = position
+        store.save_position(loop_run_id, position)
+    return run_loop(
+        run.loop_id, goal=run.goal, workspace=run.workspace, task_id=run.task_id,
+        on_iteration=on_iteration, resume_run=run, resumed_from_status=resumed_from_status,
+        own_process=own_process,
+    )
 
 
 def estimate_cost(loop: Loop) -> Dict[str, Any]:
@@ -615,4 +797,7 @@ def estimate_cost(loop: Loop) -> Dict[str, Any]:
     }
 
 
-__all__ = ["run_loop", "estimate_cost", "build_iteration_context", "LoopStopped"]
+__all__ = [
+    "run_loop", "resume_loop_run", "estimate_cost", "build_iteration_context",
+    "LoopStopped", "LoopResumeError",
+]

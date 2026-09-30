@@ -1,4 +1,10 @@
 export default {
+  newChat: 'Neuer Chat',
+  newChatHint: 'Eine neue Anfrage beginnen: das Board leert sich, der Lauf wandert in den Verlauf',
+  roundsDone_one: '{{count}} Runde',
+  roundsDone_other: '{{count}} Runden',
+  onHost: 'auf {{host}}',
+  lastBeat: 'letztes Signal vor {{age}}',
   allTeams: 'Alle Teams',
   loadingTheTeam: 'Team wird geladen…',
   loadRunFailed: 'Dieser Lauf konnte nicht geladen werden',

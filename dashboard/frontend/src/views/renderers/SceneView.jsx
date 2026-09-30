@@ -5,6 +5,14 @@ import { clone as cloneGltfScene } from 'three/examples/jsm/utils/SkeletonUtils.
 import * as THREE from 'three';
 import { viewAssetUrl } from '../../api';
 import { useI18n } from '../../i18n';
+import { useThemeColors } from '../../lib/themeColors';
+
+// three.js takes the grid colours as values, so they are resolved from the
+// palette; the canvas background is plain CSS and reads the token directly.
+const SCENE_COLOR_SPEC = {
+  gridMajor: ['--neutral-500', '#64748b'],
+  gridMinor: ['--neutral-700', '#334155'],
+};
 
 // 3D scene renderer — three.js via react-three-fiber.
 //
@@ -299,7 +307,8 @@ export default function SceneView({ view, theme }) {
 
   const camera = spec.camera || {};
   const env = spec.environment || {};
-  const bg = env.background || (theme === 'dark' ? '#0b1120' : '#f1f5f9');
+  const colors = useThemeColors(SCENE_COLOR_SPEC);
+  const bg = env.background || (theme === 'dark' ? 'var(--surface-page, #0b1120)' : 'var(--surface-raised, #f1f5f9)');
 
   return (
     <ErrorBoundary label={t('viewSceneView.sceneError')} scope="scene">
@@ -310,7 +319,7 @@ export default function SceneView({ view, theme }) {
         <Canvas shadows camera={{ position: camera.position || [4, 4, 6], fov: camera.fov || 50 }} style={{ background: bg }}>
           <CameraRig camera={camera} controlsRef={controlsRef} />
           <Lights lights={spec.lights} />
-          {env.grid === false ? null : <gridHelper args={[20, 20, '#64748b', '#334155']} />}
+          {env.grid === false ? null : <gridHelper args={[20, 20, colors.gridMajor, colors.gridMinor]} />}
           {/* `fit` frames whatever is in the scene — the sane default for a
               model or a generated body whose real scale nobody knows yet.
               Framing is a *cut*, not a camera move: Bounds otherwise lerps the

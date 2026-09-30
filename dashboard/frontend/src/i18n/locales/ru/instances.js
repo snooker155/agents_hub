@@ -11,7 +11,7 @@ export default {
   loadMore_other: 'Показать ещё {{count}}',
   empty: {
     title: 'Инстансов пока нет',
-    hint: 'Копия появляется здесь, как только агент начинает работу — из задачи, чата, ноды или флоу.',
+    hint: 'Копия появляется здесь, как только агент начинает работу: из задачи, чата, инстанса или флоу.',
   },
   states: {
     starting: 'запускается',
@@ -29,13 +29,16 @@ export default {
     failed: 'с ошибкой',
   },
   kinds: {
-    node: 'Нода',
+    runner: 'Раннер',
+    resident: 'Резидентный инстанс',
+    node: 'Узел (перенесён)',
     container: 'Контейнер',
     task: 'Задача',
     chat: 'Чат',
     flow_node: 'Узел флоу',
     team_member: 'Место в команде',
   },
+  replicaOf: 'реплика сервиса {{service}}',
   columns: {
     instance: 'Инстанс',
     agent: 'Агент',
@@ -58,6 +61,8 @@ export default {
   },
   carrier: {
     local: 'локальный процесс',
+    container: 'контейнер',
+    published: 'Опубликован',
   },
   time: {
     justNow: 'только что',

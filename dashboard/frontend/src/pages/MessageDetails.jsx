@@ -2,8 +2,12 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical } from 'lucide-react';
 
-import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun, getEvalSets, createEvalSet, addEvalCase } from '../api';
+import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
+import Citations from '../components/chat/Citations';
+import RunLoopPanel from '../components/run/RunLoopPanel';
+import AgentVersion from '../components/run/AgentVersion';
+import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { useChannel } from '../components/stream';
 import { TokenPill } from '../components/ProcessGraph';
 import MessageProcessFlow from '../components/MessageProcessFlow';
@@ -11,6 +15,12 @@ import MessageProcessFlow from '../components/MessageProcessFlow';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
+// One label and one value style for every field of the metadata card, so an
+// id, a date and a name read at the same size.
+const META_LABEL = 'text-gray-500';
+const META_VALUE = 'text-[15px] font-medium text-gray-900 break-words';
+
 function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString();
@@ -287,15 +297,11 @@ export default function MessageDetails() {
   const [replayResult, setReplayResult] = useState(null);
   const [replayError, setReplayError] = useState('');
 
-  // "Save as eval case" — seeding an eval dataset from real traffic is the
+  // "To eval case" — seeding an eval dataset from real traffic is the
   // cheapest way to build one, so the button lives next to Replay rather than
   // requiring a trip to the Evals page to type the input back in by hand.
-  const [caseOpen, setCaseOpen] = useState(false);
-  const [evalSets, setEvalSets] = useState([]);
-  const [caseTarget, setCaseTarget] = useState('');
-  const [newSetName, setNewSetName] = useState('');
-  const [caseSaving, setCaseSaving] = useState(false);
-  const [caseMessage, setCaseMessage] = useState('');
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
+  const [caseSavedMessage, setCaseSavedMessage] = useState('');
 
   const load = useCallback(async () => {
     if (!runId) return;
@@ -360,53 +366,8 @@ export default function MessageDetails() {
     }
   };
 
-  const openCasePanel = async () => {
-    const next = !caseOpen;
-    setCaseOpen(next);
-    setCaseMessage('');
-    if (next) {
-      try {
-        const { data } = await getEvalSets(message?.workspace);
-        setEvalSets(data.eval_sets || []);
-        setCaseTarget(data.eval_sets?.[0]?.eval_set_id || '');
-      } catch {
-        setEvalSets([]);
-      }
-    }
-  };
-
-  const handleSaveAsCase = async () => {
-    setCaseSaving(true);
-    setCaseMessage('');
-    try {
-      let targetId = caseTarget;
-      if (!targetId) {
-        if (!newSetName.trim()) {
-          setCaseMessage(t('messageDetails.pickEvalSet'));
-          return;
-        }
-        const { data } = await createEvalSet({
-          name: newSetName.trim(),
-          workspace: message?.workspace || null,
-          agent_id: message?.agent_id || null,
-          graders: [{ kind: 'substring', params: {}, weight: 1 }],
-        });
-        targetId = data.eval_set_id;
-      }
-      // The run's own output becomes `expected`, which makes the first eval a
-      // pure regression check: does this still do what it did.
-      await addEvalCase(targetId, { from_run_id: runId });
-      setCaseMessage(t('messageDetails.savedAsEvalCase'));
-      setNewSetName('');
-    } catch (err) {
-      setCaseMessage(err.response?.data?.detail || t('messageDetails.saveCaseFailed'));
-    } finally {
-      setCaseSaving(false);
-    }
-  };
-
   if (loading) {
-    return <div className="flex justify-center py-20"><Loader className="w-6 h-6 animate-spin text-indigo-500" /></div>;
+    return <PageLoader />;
   }
 
   if (error) {
@@ -495,12 +456,12 @@ export default function MessageDetails() {
           {message?.channel !== 'replay' && message?.channel !== 'eval'
             && (message?.status === 'completed' || message?.status === 'failed') && (
             <button
-              onClick={openCasePanel}
-              title={t('messageDetails.addThisRunToAn')}
+              onClick={() => setCaseDialogOpen(true)}
+              title={t('messageDetails.toEvalCaseHint')}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-50"
             >
               <FlaskConical className="w-4 h-4" />
-              {t('messageDetails.saveAsEvalCase')}
+              {t('messageDetails.toEvalCase')}
             </button>
           )}
           <button
@@ -513,50 +474,23 @@ export default function MessageDetails() {
         </>}
       />
 
+      {/* What the agent loop did beyond its tool trail: the model that answered, compactions,
+          steering messages, guardrail checks (components/run/RunLoopPanel). */}
+      <RunLoopPanel run={message} onChanged={load} showVersion={false} />
+
       {/* Metadata card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">
 
-      {/* Save-as-eval-case panel */}
-      {caseOpen && (
-        <div className="mt-4 border border-indigo-100 bg-indigo-50/40 rounded-xl p-4 space-y-3">
-          <div className="text-sm font-semibold text-gray-700">{t('messageDetails.saveThisRunAsAn')}</div>
-          <p className="text-xs text-gray-500">
-            {t('messageDetails.saveCaseHint')}
-          </p>
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={caseTarget}
-              onChange={(e) => setCaseTarget(e.target.value)}
-              className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-64"
-            >
-              <option value="">{t('messageDetails.newEvalSet')}</option>
-              {evalSets.map((s2) => (
-                <option key={s2.eval_set_id} value={s2.eval_set_id}>{s2.name}</option>
-              ))}
-            </select>
-            {!caseTarget && (
-              <input
-                value={newSetName}
-                onChange={(e) => setNewSetName(e.target.value)}
-                placeholder={t('messageDetails.newEvalSetName')}
-                className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-56"
-              />
-            )}
-            <button
-              onClick={handleSaveAsCase}
-              disabled={caseSaving}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {caseSaving ? <Loader className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
-              Save case
-            </button>
-            {caseMessage && (
-              <span className={`text-xs ${caseMessage.startsWith('Saved') ? 'text-green-600' : 'text-red-600'}`}>
-                {caseMessage}
-              </span>
-            )}
-          </div>
-        </div>
+      {caseDialogOpen && (
+        <SaveAsEvalCaseDialog
+          runId={runId}
+          workspace={message?.workspace}
+          onClose={() => setCaseDialogOpen(false)}
+          onSaved={() => setCaseSavedMessage(t('messageDetails.savedAsEvalCase'))}
+        />
+      )}
+      {caseSavedMessage && (
+        <p className="text-xs text-green-600 mt-2">{caseSavedMessage}</p>
       )}
 
       {/* Replay / regression panel */}
@@ -612,29 +546,64 @@ export default function MessageDetails() {
       )}
 
       {/* Metadata */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-        <div><span className="text-gray-500">{t('messageDetails.runId')}</span> <span className="text-xs">{message?.run_id}</span></div>
-        <div><span className="text-gray-500">{t('messageDetails.title')}</span> <span className="font-medium text-gray-800">{message?.task_title || message?.title || '—'}</span></div>
-        <div><span className="text-gray-500">{t('messageDetails.agent')}</span> <span className="text-xs">{message?.agent_id || '—'}</span></div>
-        <div><span className="text-gray-500">{t('messageDetails.model')}</span> <span className="text-xs">{message?.model || insights?.model || '—'}</span></div>
-        <div className="flex items-center gap-2"><span className="text-gray-500">{t('messageDetails.status')}</span> <StatusBadge status={message?.status || 'pending'} /></div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5 text-sm">
+        <div><span className={META_LABEL}>{t('messageDetails.runId')}</span> <span className={META_VALUE}>{message?.run_id}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.title')}</span> <span className={META_VALUE}>{message?.task_title || message?.title || '—'}</span></div>
+        {/* The agent version sits with the agent it belongs to. */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={META_LABEL}>{t('messageDetails.agent')}</span>
+          <span className={META_VALUE}>{message?.agent_id || '—'}</span>
+          <AgentVersion run={message} onChanged={load} compact />
+        </div>
+        <div><span className={META_LABEL}>{t('messageDetails.model')}</span> <span className={META_VALUE}>{message?.model || insights?.model || '—'}</span></div>
+        <div className="flex items-center gap-2"><span className={META_LABEL}>{t('messageDetails.status')}</span> <StatusBadge status={message?.status || 'pending'} /></div>
         {message?.session_id && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.session')}</span>{' '}
+            <span className={META_LABEL}>{t('messageDetails.session')}</span>{' '}
             <button
               onClick={() => navigate(`/sessions/${message.session_id}`)}
-              className="text-xs text-indigo-600 hover:underline"
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
             >
               {message.session_id}
             </button>
           </div>
         )}
+        {/* A chat turn that changed hands (chat/handoff.py): where this run
+            sent the conversation, and where a receiving run got it from. */}
+        {message?.handoff?.next_run_id && (
+          <div>
+            <span className={META_LABEL}>{t('handoffs.runHandedOffTo')}</span>{' '}
+            <button
+              onClick={() => navigate(`/messages/${message.handoff.next_run_id}`)}
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
+            >
+              {message.handoff.to_agent_name || message.handoff.to_agent_id}
+            </button>
+            {message.handoff.reason && (
+              <span className="text-sm text-gray-500 ml-1">({message.handoff.reason})</span>
+            )}
+          </div>
+        )}
+        {message?.handoff_from?.run_id && (
+          <div>
+            <span className={META_LABEL}>{t('handoffs.runReceivedFrom')}</span>{' '}
+            <button
+              onClick={() => navigate(`/messages/${message.handoff_from.run_id}`)}
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
+            >
+              {message.handoff_from.from_agent_name || message.handoff_from.from_agent_id}
+            </button>
+            {message.handoff_from.reason && (
+              <span className="text-sm text-gray-500 ml-1">({message.handoff_from.reason})</span>
+            )}
+          </div>
+        )}
         {message?.flow_run_id && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.flowRun')}</span>{' '}
+            <span className={META_LABEL}>{t('messageDetails.flowRun')}</span>{' '}
             <button
               onClick={() => navigate(`/messages/${message.flow_run_id}`)}
-              className="text-xs text-indigo-600 hover:underline"
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
             >
               {message.flow_run_id}
             </button>
@@ -642,10 +611,10 @@ export default function MessageDetails() {
         )}
         {message?.flow_id && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.flow')}</span>{' '}
+            <span className={META_LABEL}>{t('messageDetails.flow')}</span>{' '}
             <button
               onClick={() => navigate(`/flows/${message.flow_id}`)}
-              className="text-xs text-violet-600 hover:underline"
+              className={`${META_VALUE} !text-violet-600 hover:underline`}
             >
               {message.flow_id}
             </button>
@@ -653,10 +622,10 @@ export default function MessageDetails() {
         )}
         {message?.flow_node_label && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.flowNode')}</span>{' '}
-            <span className="text-xs text-gray-700">{message.flow_node_label}</span>
+            <span className={META_LABEL}>{t('messageDetails.flowNode')}</span>{' '}
+            <span className={META_VALUE}>{message.flow_node_label}</span>
             {message?.flow_node_id && (
-              <span className="text-xs text-gray-400 ml-1">({message.flow_node_id})</span>
+              <span className="text-sm text-gray-400 ml-1">({message.flow_node_id})</span>
             )}
           </div>
         )}
@@ -664,19 +633,19 @@ export default function MessageDetails() {
             these a sim run reads as an unattached agent call. */}
         {message?.sim_run_id && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.simulation')}</span>{' '}
+            <span className={META_LABEL}>{t('messageDetails.simulation')}</span>{' '}
             {message?.scenario_id ? (
               <button
                 onClick={() => navigate(`/playground/${message.scenario_id}`)}
-                className="text-xs text-fuchsia-600 hover:underline"
+                className={`${META_VALUE} !text-fuchsia-600 hover:underline`}
               >
                 {message.sim_role || message.sim_run_id}
               </button>
             ) : (
-              <span className="text-xs text-gray-700">{message.sim_role || message.sim_run_id}</span>
+              <span className={META_VALUE}>{message.sim_role || message.sim_run_id}</span>
             )}
             {message?.tick != null && (
-              <span className="text-xs text-gray-400 ml-1">
+              <span className="text-sm text-gray-400 ml-1">
                 {t('messageDetails.simTick', { tick: message.tick })}
               </span>
             )}
@@ -692,15 +661,15 @@ export default function MessageDetails() {
         )}
         {message?.session_type === 'chat' && (
           <div>
-            <span className="text-gray-500">{t('messageDetails.conversationId')}</span>{' '}
-            <span className="text-xs">{message?.task_id || insights?.session_task_id || '—'}</span>
+            <span className={META_LABEL}>{t('messageDetails.conversationId')}</span>{' '}
+            <span className={META_VALUE}>{message?.task_id || insights?.session_task_id || '—'}</span>
           </div>
         )}
-        <div><span className="text-gray-500">{t('messageDetails.workspace')}</span> {message?.workspace || '—'}</div>
-        <div><span className="text-gray-500">{t('messageDetails.started')}</span> {fmtDate(message?.started_at)}</div>
-        <div><span className="text-gray-500">{t('messageDetails.finished')}</span> {fmtDate(message?.finished_at)}</div>
-        <div><span className="text-gray-500">{t('messageDetails.duration')}</span> {duration(message?.started_at, message?.finished_at)}</div>
-        <div><span className="text-gray-500">{t('messageDetails.error')}</span> {message?.error || '—'}</div>
+        <div><span className={META_LABEL}>{t('messageDetails.workspace')}</span> <span className={META_VALUE}>{message?.workspace || '—'}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.started')}</span> <span className={META_VALUE}>{fmtDate(message?.started_at)}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.finished')}</span> <span className={META_VALUE}>{fmtDate(message?.finished_at)}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.duration')}</span> <span className={META_VALUE}>{duration(message?.started_at, message?.finished_at)}</span></div>
+        <div><span className={META_LABEL}>{t('messageDetails.error')}</span> <span className={META_VALUE}>{message?.error || '—'}</span></div>
         <div className="flex flex-wrap gap-2 pt-1 md:col-span-2">
           <TokenPill label={t('messageDetails.in')} value={insights?.token_usage?.inbound_tokens || 0} />
           <TokenPill label={t('messageDetails.out')} value={insights?.token_usage?.outbound_tokens || 0} />
@@ -737,6 +706,12 @@ export default function MessageDetails() {
                 <span className="text-gray-400">{t(`chat.entityAction.${e.action}`, { defaultValue: e.action })}</span>
               </Link>
             ))}
+          </div>
+        )}
+        {/* The sources the answer cited as [n] (common/citation_sink.py). */}
+        {!!(insights?.citations || []).length && (
+          <div className="md:col-span-2">
+            <Citations citations={insights.citations} anchor={`run-${runId}`} />
           </div>
         )}
       </div>
@@ -831,7 +806,7 @@ export default function MessageDetails() {
            scrollHeight, so the last card can be scrolled fully into view. With
            no padding it ended exactly on the clip edge and its bottom border
            was unreachable — which read as the block being cut off. */
-        <div className="flex-1 min-h-0 overflow-y-auto pt-4 pb-6">
+        <div className="flex-1 min-h-0 overflow-y-auto pb-6">
           <InputContextView struct={inputContextStruct} text={inputContextText} output={messageOutput} />
         </div>
       )}

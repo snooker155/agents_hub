@@ -542,7 +542,7 @@ export function ScenarioTranscript({
   // one on screen, which is the sentence that explains the silence.
   if (!turnCount) {
     if (isLiveStatus(status)) {
-      const line = { stopping: 'stopping', starting: 'launching' }[status] || 'starting';
+      const line = { stopping: 'stopping', starting: 'launching', pending: 'launching' }[status] || 'starting';
       return (
         <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-base text-blue-800">
           {status === 'stopping'

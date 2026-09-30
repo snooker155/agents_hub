@@ -4,8 +4,10 @@ import os
 from typing import Tuple, List, Optional, Union, Literal
 from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from dataclasses import dataclass, field
+
+from common.paths import PROJECT_ROOT
 
 DEFAULT_IGNORE: List[str] = [
     ".git",
@@ -78,8 +80,8 @@ class Settings(BaseSettings):
     Merges logic from original tasks/config.py and common/config.py.
     """
     # Core LLM settings
-    default_provider: str = Field(default="lmstudio", env="DEFAULT_PROVIDER")
-    openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    default_provider: str = Field(default="lmstudio")
+    openai_api_key: Optional[str] = Field(default=None)
     model: str = Field(default="gpt-4o",
                        validation_alias=AliasChoices("OPENAI_MODEL", "model"))
     temperature: float = Field(default=0.0,
@@ -103,13 +105,13 @@ class Settings(BaseSettings):
     chat_request_timeout: int = Field(default=900,
                                       validation_alias=AliasChoices("CHAT_REQUEST_TIMEOUT", "chat_request_timeout"))
     # Other cloud providers
-    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
-    google_api_key: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
+    anthropic_api_key: Optional[str] = Field(default=None)
+    google_api_key: Optional[str] = Field(default=None)
     # Local models
-    ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
-    ollama_model: str = Field(default="", env="OLLAMA_MODEL")
-    lmstudio_base_url: str = Field(default="http://localhost:1234", env="LMSTUDIO_BASE_URL")
-    lmstudio_model: str = Field(default="", env="LMSTUDIO_MODEL")
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    ollama_model: str = Field(default="")
+    lmstudio_base_url: str = Field(default="http://localhost:1234")
+    lmstudio_model: str = Field(default="")
 
     # Application settings
     mode_full: bool = True          # full (extensions/validations) or simple
@@ -121,13 +123,12 @@ class Settings(BaseSettings):
     # Policies / safety
     allow_shell: Tuple[str, ...] = Field(
         default_factory=lambda: tuple(("python,pytest,ruff,black").split(",")),
-        env="ALLOW_SHELL",
     )
 
     # Orchestration logging level, applied by common.logging_config at process
     # start. (ORCH_POLL_INTERVAL used to live here too; nothing polls, so it went.)
     orch_log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-        default="INFO", env="ORCH_LOG_LEVEL"
+        default="INFO"
     )
 
     # Tasks storage is fixed at .agents_hub/tasks.json (see common.paths) — not configurable.
@@ -146,18 +147,209 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return "local"
         return v
+    # How a run's own entrypoint (runtime/agent_run.py) reaches its run and
+    # task records: "db" (default) opens the shared SQLite database directly,
+    # same as always. "http" instead relays those writes to the backend's
+    # /api/run-state routes: the mode a run container uses when its
+    # .agents_hub mount is read-only (see common/state_transport.py,
+    # managers/container_manager.py's build_run_command, docs/containers.md).
+    run_state_transport: Literal["db", "http"] = Field(
+        default="db",
+        validation_alias=AliasChoices("AGENT_RUN_STATE_TRANSPORT", "run_state_transport"),
+        validate_default=False,
+    )
+
+    @field_validator("run_state_transport", mode="before")
+    @classmethod
+    def _default_run_state_transport(cls, v: object) -> object:
+        if v == "" or v is None:
+            return "db"
+        return v
+    # Where a chat turn runs (docs/services.md, chat/routing.py): "instances"
+    # (default) hands every turn of the chat, /v1, the widget and Telegram to a
+    # replica of a service, a process of its own, so this process never runs
+    # an agent; "inprocess" runs the turn here, the way it always did. Read
+    # live through chat_execution() below, so the Settings page applies it
+    # without a restart.
+    chat_execution: Literal["instances", "inprocess"] = Field(
+        default="instances",
+        validation_alias=AliasChoices("AGENTS_HUB_CHAT_EXECUTION", "chat_execution"),
+        validate_default=False,
+    )
+
+    @field_validator("chat_execution", mode="before")
+    @classmethod
+    def _default_chat_execution(cls, v: object) -> object:
+        if v == "" or v is None:
+            return "instances"
+        return v
+    # The runner service chat turns fall back to when the agent has no service
+    # of its own in the workspace (services/store.py ensure_runner): how many
+    # replicas it keeps warm, how many it may grow to, how many turns each
+    # answers at once, and after how long an idle replica beyond the minimum
+    # is stopped. Stored on the service row when it is created; the Services
+    # page changes a service after that.
+    runner_min: int = Field(default=1, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_MIN", "runner_min"))
+    runner_max: int = Field(default=4, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_MAX", "runner_max"))
+    runner_concurrency: int = Field(
+        default=8, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_CONCURRENCY", "runner_concurrency"))
+    runner_idle_seconds: int = Field(
+        default=600, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_IDLE_SECONDS", "runner_idle_seconds"))
+    # How long a routed chat turn may wait for its replica to pick it up
+    # (a cold start: process boot plus the agent build), in seconds.
+    turn_start_timeout: int = Field(
+        default=180, validation_alias=AliasChoices("AGENTS_HUB_TURN_START_TIMEOUT", "turn_start_timeout"))
     # Docker image to use when agent_mode = "docker"
-    agent_docker_image: str = Field(default="", env="AGENT_DOCKER_IMAGE")
+    agent_docker_image: str = Field(default="")
     # Optional Docker network (e.g. "host" or a named bridge network)
-    agent_docker_network: str = Field(default="", env="AGENT_DOCKER_NETWORK")
+    agent_docker_network: str = Field(default="")
     # Extra flags passed verbatim to `docker run` (e.g. "--memory 2g --cpus 1")
-    agent_docker_extra_args: str = Field(default="", env="AGENT_DOCKER_EXTRA_ARGS")
+    agent_docker_extra_args: str = Field(default="")
 
     # ── Security ──────────────────────────────────────────────────────────────
     # Optional bearer token. When set, every /api request must carry
     # ``Authorization: Bearer <token>`` (or ``X-Api-Token: <token>``). Empty
     # (default) keeps the API open, preserving the current local-only behaviour.
     api_token: str = Field(default="", validation_alias=AliasChoices("AGENTS_HUB_API_TOKEN", "api_token"))
+    # Rate limits (common/rate_limit.py, docs/api-keys.md "Rate limits"). All
+    # default to 0, off. Requests per minute apply to every /api and /v1
+    # request per principal (a personal key, a person, the shared token) and
+    # are counted in memory per API replica. Tokens per day apply to
+    # /v1/chat/completions, counted from serving_usage since 00:00 UTC. A
+    # personal key may carry its own values, which win over these.
+    rate_limit_per_minute: int = Field(
+        default=0,
+        validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_PER_MINUTE", "rate_limit_per_minute"))
+    rate_limit_tokens_per_day: int = Field(
+        default=0,
+        validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_TOKENS_PER_DAY",
+                                      "rate_limit_tokens_per_day"))
+    # Requests per minute per client address on the public instance routes
+    # (/api/external/{token}/messages and /run),
+    # known and unknown tokens alike, so token guessing is slow. 0 disables.
+    external_rate_per_minute: int = Field(
+        default=30,
+        validation_alias=AliasChoices("AGENTS_HUB_EXTERNAL_RATE_PER_MINUTE",
+                                      "external_rate_per_minute"))
+    # Identity posture. Three explicit modes, documented in docs/identity.md:
+    #   "single" (default) — exactly one operator on this machine or host. No
+    #     login, no users, no roles, no owner checks; the API behaves as it
+    #     always has and every ownable record is owned by the constant
+    #     ``common.auth.LOCAL_OPERATOR_ID``.
+    #   "token"  — the shared ``AGENTS_HUB_API_TOKEN`` below gates /api. Still
+    #     one operator: no users, no roles.
+    #   "multi"  — named users with passwords, sessions, a global role and
+    #     per-workspace membership roles.
+    # Backwards compatibility: leaving this unset (or "single") while a token
+    # *is* configured resolves to "token", so a deployment that only ever set
+    # AGENTS_HUB_API_TOKEN keeps working exactly as before. Resolve it through
+    # ``common.auth.effective_auth_mode``, never off this field directly.
+    auth_mode: str = Field(
+        default="single",
+        validation_alias=AliasChoices("AUTH_MODE", "auth_mode"),
+    )
+    # How long a login stays valid, in hours. Sessions are opaque random tokens
+    # stored hashed (no JWT, nothing to sign), so there is no signing secret to
+    # configure: revoking one is deleting its row.
+    auth_session_hours: int = Field(
+        default=24 * 14,
+        validation_alias=AliasChoices("AUTH_SESSION_HOURS", "auth_session_hours"),
+    )
+    # ── Corporate identity (stage 3, docs/identity.md) ─────────────────────
+    # OIDC single sign-on, Authorization Code + PKCE. Setting the issuer turns
+    # it on; the client secret may be empty for a public client.
+    auth_oidc_issuer: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_OIDC_ISSUER", "auth_oidc_issuer"))
+    auth_oidc_client_id: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_OIDC_CLIENT_ID", "auth_oidc_client_id"))
+    auth_oidc_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("AUTH_OIDC_CLIENT_SECRET", "auth_oidc_client_secret"))
+    auth_oidc_scopes: str = Field(
+        default="openid profile email",
+        validation_alias=AliasChoices("AUTH_OIDC_SCOPES", "auth_oidc_scopes"))
+    # The id-token claim that carries group names (Keycloak: ``groups`` with
+    # the mapper on; Entra ID: ``groups``; Google Workspace has none, so map
+    # by ``email`` domain or provision with SCIM instead).
+    auth_oidc_groups_claim: str = Field(
+        default="groups",
+        validation_alias=AliasChoices("AUTH_OIDC_GROUPS_CLAIM", "auth_oidc_groups_claim"))
+    # A label for the sign-in button ("Sign in with Keycloak").
+    auth_oidc_provider_name: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_OIDC_PROVIDER_NAME", "auth_oidc_provider_name"))
+    # OIDC sessions are shorter than password ones: the provider's own
+    # session makes a re-login silent, so there is no cost to asking again.
+    auth_oidc_session_hours: int = Field(
+        default=8, validation_alias=AliasChoices("AUTH_OIDC_SESSION_HOURS", "auth_oidc_session_hours"))
+    # Link an OIDC login to an existing local account with the same email
+    # (or username) instead of creating a second account for the same person.
+    auth_oidc_link_by_email: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("AUTH_OIDC_LINK_BY_EMAIL", "auth_oidc_link_by_email"))
+    # Password login. Off, only administrators may still sign in with a
+    # password (the emergency door when the provider is down).
+    auth_local_passwords: bool = Field(
+        default=True, validation_alias=AliasChoices("AUTH_LOCAL_PASSWORDS", "auth_local_passwords"))
+    # Failed logins per account (or per address) inside the window before
+    # further attempts are refused with 429.
+    auth_login_max_attempts: int = Field(
+        default=10, validation_alias=AliasChoices("AUTH_LOGIN_MAX_ATTEMPTS", "auth_login_max_attempts"))
+    auth_login_window_minutes: int = Field(
+        default=15, validation_alias=AliasChoices("AUTH_LOGIN_WINDOW_MINUTES", "auth_login_window_minutes"))
+    # The URL the browser reaches this hub at, for OIDC redirect URIs behind a
+    # reverse proxy. Empty: derived from the request (honouring
+    # X-Forwarded-Proto and X-Forwarded-Host).
+    auth_public_url: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_PUBLIC_URL", "auth_public_url"))
+    # Mark the short-lived OIDC state cookie Secure. Auto: on when the public
+    # URL (or the request) is https.
+    auth_cookie_secure: str = Field(
+        default="auto", validation_alias=AliasChoices("AUTH_COOKIE_SECURE", "auth_cookie_secure"))
+    # SCIM 2.0 provisioning: the bearer token an identity provider presents on
+    # /scim/v2. Empty turns the endpoints off.
+    auth_scim_token: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_SCIM_TOKEN", "auth_scim_token"))
+    # Audit log: record every write request from the middleware. "auto" is on
+    # in token and multi mode, off in single (where the key points are still
+    # recorded: login, role changes, launches, approvals, policy, budget).
+    audit_requests: str = Field(
+        default="auto", validation_alias=AliasChoices("AUDIT_REQUESTS", "audit_requests"))
+    # Days an audit row is kept; 0 keeps everything.
+    audit_retention_days: int = Field(
+        default=365, validation_alias=AliasChoices("AUDIT_RETENTION_DAYS", "audit_retention_days"))
+    # Secrets at rest (common/secrets.py): the encryption key, and the backend
+    # ("local" encrypts into the database; "vault" reads from HashiCorp Vault's
+    # KV v2 at AGENTS_HUB_VAULT_URL / AGENTS_HUB_VAULT_TOKEN through the same
+    # interface).
+    secret_key: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_SECRET_KEY", "secret_key"))
+    secret_backend: str = Field(
+        default="local", validation_alias=AliasChoices("AGENTS_HUB_SECRET_BACKEND", "secret_backend"))
+    # GitHub App (connectors/git/github_app.py, docs/github-app.md): the hub
+    # issues installation tokens and user-to-server tokens itself. Configured
+    # when the app id, the private key and the client id are set. The private
+    # key is PEM text, or a path to the .pem file in GITHUB_APP_PRIVATE_KEY_FILE.
+    github_app_id: str = Field(
+        default="", validation_alias=AliasChoices("GITHUB_APP_ID", "github_app_id"))
+    github_app_slug: str = Field(
+        default="", validation_alias=AliasChoices("GITHUB_APP_SLUG", "github_app_slug"))
+    github_app_client_id: str = Field(
+        default="", validation_alias=AliasChoices("GITHUB_APP_CLIENT_ID", "github_app_client_id"))
+    github_app_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("GITHUB_APP_CLIENT_SECRET", "github_app_client_secret"))
+    github_app_private_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GITHUB_APP_PRIVATE_KEY", "github_app_private_key"))
+    github_app_private_key_file: str = Field(
+        default="",
+        validation_alias=AliasChoices("GITHUB_APP_PRIVATE_KEY_FILE", "github_app_private_key_file"))
+    # GitHub Enterprise Server: https://<host>/api/v3 and https://<host>.
+    github_api_url: str = Field(
+        default="https://api.github.com",
+        validation_alias=AliasChoices("GITHUB_API_URL", "github_api_url"))
+    github_url: str = Field(
+        default="https://github.com", validation_alias=AliasChoices("GITHUB_URL", "github_url"))
     # When true, ``run_shell`` only permits commands whose first word is in
     # ``allow_shell``. Off by default so existing agent shell usage is unchanged;
     # a workspace can opt in via its settings (shell_allowlist_enabled).
@@ -178,14 +370,41 @@ class Settings(BaseSettings):
     )
     # Hardened posture. When true, a per-agent ``capability_override`` is only
     # honoured at build time for agents that run container-isolated on a
-    # no-network container. Off by default so in-process agents that were
-    # explicitly granted an override keep working; turn it on to require real
-    # isolation behind every override.
+    # no-network container. On by default now that the run sandbox exists:
+    # an override with no real isolation behind it is not a deliberate,
+    # bounded exception, it is the guard turned off. Set to false only for a
+    # deployment that runs every agent in-process and still needs an override
+    # to work everywhere.
     capability_override_requires_container: bool = Field(
-        default=False,
+        default=True,
         validation_alias=AliasChoices(
             "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER", "capability_override_requires_container"
         ),
+    )
+
+    # The system workspace (docs/system-workspace.md): a workspace whose project
+    # is a git clone of this repository kept beside the state directory, with
+    # the doctor and a scheduled maintenance loop working on that copy and
+    # never on the running instance's own tree. On by default; the copy is
+    # made lazily, the loop's schedule ships paused.
+    system_workspace: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("SYSTEM_WORKSPACE", "system_workspace"),
+    )
+    # The demo workspace (docs/demo.md): agents, a project, a flow, a team, a
+    # scenario, views and recorded runs seeded from bootstrap/workspaces/demo so
+    # a fresh install has something to look at. Off by default; install.sh
+    # --with-demo turns it on, and Settings can add or remove it later.
+    demo_workspace: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("DEMO_WORKSPACE", "demo_workspace"),
+    )
+
+    # Playground (simulation worlds/scenarios) is ~17% of the backend by line
+    # count; this lets a deployment that does not use it skip loading it.
+    playground_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("PLAYGROUND_ENABLED", "playground_enabled"),
     )
 
     # When true, the ``view_serve`` tool may *launch* a generated backend as a
@@ -248,6 +467,90 @@ class Settings(BaseSettings):
     web_log_body_chars: int = Field(
         default=20_000, validation_alias=AliasChoices("WEB_LOG_BODY_CHARS", "web_log_body_chars"))
 
+    # ── Browser service (tools/browser.py, deploy/browser/) ───────────────────
+    # Base URL of the browser service, e.g. http://browser:3000 under the
+    # compose `browser` profile. Empty (default) leaves the browser_* tools
+    # inert: they answer that the service is not configured.
+    browser_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BROWSER_URL", "browser_url"))
+    # Shared token the service requires on every call (its BROWSER_TOKEN).
+    # The _TOKEN suffix keeps it out of run_shell's environment (scrubbed_env).
+    browser_token: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TOKEN", "browser_token"))
+    # Seconds the hub waits for one call to the service.
+    browser_timeout: float = Field(
+        default=45.0, validation_alias=AliasChoices("AGENTS_HUB_BROWSER_TIMEOUT", "browser_timeout"))
+
+    # ── Model runtime (providers/local_models.py, deploy/models/) ──────────────
+    # Base URL of the hub's own model runtime, e.g. http://models:8200 under
+    # the compose `models` profile or http://127.0.0.1:8200 in host mode.
+    # Empty (default) hides the runtime: the Local models card says it is not
+    # configured and the provider hub-local is never registered.
+    models_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_URL", "models_url"))
+    # Shared token the runtime requires on every call (its MODELS_TOKEN). It
+    # is also the api_key of the hub-local backend. The _TOKEN suffix keeps it
+    # out of run_shell's environment (scrubbed_env).
+    models_token: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_MODELS_TOKEN", "models_token"))
+    # Seconds the hub waits for one call to the runtime. A load waits longer
+    # on its own (the runtime gives llama-server up to 120 s to come up).
+    models_timeout: float = Field(
+        default=60.0, validation_alias=AliasChoices("AGENTS_HUB_MODELS_TIMEOUT", "models_timeout"))
+
+    # ── Sandboxed code execution (tools/run_code.py) ──────────────────────────
+    # Image per language, as JSON ({"python": "python:3.12-slim"}) or as
+    # comma-separated lang=image pairs. Languages left out keep their default
+    # (python:3.12-slim, node:20-slim, bash:5).
+    code_runner_images: str = Field(
+        default="", validation_alias=AliasChoices("CODE_RUNNER_IMAGES", "code_runner_images"))
+    # What run_code does when docker is unavailable: "none" (default) returns
+    # an error; "local" runs the snippet as a plain subprocess in a temporary
+    # directory with the scrubbed environment. Local means no network or
+    # filesystem isolation at all, so it is an explicit opt-in.
+    code_runner_fallback: str = Field(
+        default="none", validation_alias=AliasChoices("CODE_RUNNER_FALLBACK", "code_runner_fallback"))
+    code_runner_memory: str = Field(
+        default="512m", validation_alias=AliasChoices("CODE_RUNNER_MEMORY", "code_runner_memory"))
+    code_runner_cpus: str = Field(
+        default="1", validation_alias=AliasChoices("CODE_RUNNER_CPUS", "code_runner_cpus"))
+    code_runner_pids_limit: int = Field(
+        default=128, validation_alias=AliasChoices("CODE_RUNNER_PIDS_LIMIT", "code_runner_pids_limit"))
+    # Upper bound on the per-call timeout an agent may ask for, in seconds.
+    code_runner_max_timeout: int = Field(
+        default=300, validation_alias=AliasChoices("CODE_RUNNER_MAX_TIMEOUT", "code_runner_max_timeout"))
+    # Which sandbox/registry.py provider a run gets when its environment does
+    # not name one explicitly (sandbox_provider "inherit" or no environment
+    # at all): "docker" (default), "local", "e2b" or "modal".
+    code_runner_provider: str = Field(
+        default="docker", validation_alias=AliasChoices("CODE_RUNNER_PROVIDER", "code_runner_provider"))
+
+    # ── Remote sandboxes (sandbox/e2b.py, sandbox/modal.py) ────────────────────
+    # e2b.dev. Optional dependency (requirements-sandbox.txt); the provider
+    # reports itself unavailable without a key, same as a missing docker.
+    e2b_api_key: str = Field(
+        default="", validation_alias=AliasChoices("E2B_API_KEY", "e2b_api_key"))
+    # Sandbox template name; e2b's own default template when empty.
+    e2b_template: str = Field(
+        default="", validation_alias=AliasChoices("E2B_TEMPLATE", "e2b_template"))
+    # modal.com. Optional dependency (requirements-sandbox.txt).
+    modal_token_id: str = Field(
+        default="", validation_alias=AliasChoices("MODAL_TOKEN_ID", "modal_token_id"))
+    modal_token_secret: str = Field(
+        default="", validation_alias=AliasChoices("MODAL_TOKEN_SECRET", "modal_token_secret"))
+    # A registry image name; modal.Image.debian_slim() (modal's own base) when empty.
+    modal_image: str = Field(
+        default="", validation_alias=AliasChoices("MODAL_IMAGE", "modal_image"))
+
+    # ── Egress gateway (managers/container_manager.py, environments/egress.py) ─
+    # The image the enforced-network-policy gateway container runs: a tiny
+    # TCP relay onto the egress proxy, so a container fenced to the internal,
+    # no-route-out network (managers.container_manager.EGRESS_NETWORK_NAME)
+    # can still reach it. Any image with `socat` on its PATH works.
+    egress_gateway_image: str = Field(
+        default="alpine/socat:latest",
+        validation_alias=AliasChoices("AGENTS_HUB_EGRESS_GATEWAY_IMAGE", "egress_gateway_image"))
+
     # ── Retention ─────────────────────────────────────────────────────────────
     # Daily maintenance deletes terminal run records (and their payloads/logs)
     # finished more than this many days ago. 0 disables run retention.
@@ -303,11 +606,84 @@ class Settings(BaseSettings):
     agent_cache_ttl: int = Field(
         default=900, validation_alias=AliasChoices("AGENT_CACHE_TTL", "agent_cache_ttl"))
 
-    class Config:
-        case_sensitive = False
-        env_file = str(Path(__file__).resolve().parents[1] / ".env")
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    # ── Cross-replica event bridge (common/broker_bridge.py) ──────────────────
+    # Empty (default, off): the session broker stays in-process only, exactly as
+    # today. Set to a Redis URL (e.g. redis://redis:6379/0) when more than one
+    # backend replica is running behind a load balancer: every local publish is
+    # then also fanned out over Redis pub/sub, so a browser tab connected to a
+    # different replica than the one that produced an event still receives it.
+    # See docs/scaling.md for when this is needed and how to run it.
+    broker_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BROKER_URL", "broker_url"))
+
+    # ── Database (common/db.py) ───────────────────────────────────────────────
+    # Empty (default): SQLite at <AGENTS_HUB_ROOT>/agents_hub.db, one host. A
+    # postgresql:// URL puts the same schema in Postgres, which is what lets
+    # backend replicas and workers run on different hosts. Every process that
+    # touches state (backend, agent subprocesses, node workers, the CLI in
+    # direct mode) reads this, so set it in .env rather than per service.
+    database_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_DATABASE_URL", "database_url"))
+    # Postgres only: connections in this process's pool. The backend serves
+    # requests from a thread pool and needs ten or so; a run subprocess needs
+    # one or two, so runtime entrypoints may set it lower in their environment.
+    db_pool_size: int = Field(
+        default=10, validation_alias=AliasChoices("AGENTS_HUB_DB_POOL_SIZE", "db_pool_size"))
+
+    # ── Object store mirror (common/blobs.py) ─────────────────────────────────
+    # Empty (default): run logs, node logs, flow logs, view assets and generated
+    # Dockerfiles live only under AGENTS_HUB_ROOT on the one host that wrote
+    # them, exactly as today. Set to an s3://bucket/prefix URL (real AWS S3, or
+    # MinIO via blob_endpoint below) and every writer also mirrors its file
+    # there, so a backend replica or worker on another host can read a
+    # finished run's log or a view's asset it does not have locally. See
+    # docs/storage.md.
+    blob_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BLOB_URL", "blob_url"))
+    # MinIO (or any other S3-compatible) endpoint; empty targets real AWS S3.
+    # Region and credentials come from the usual AWS env vars (AWS_ACCESS_KEY_ID,
+    # AWS_SECRET_ACCESS_KEY, AWS_REGION / AWS_DEFAULT_REGION), not a setting here.
+    blob_endpoint: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_BLOB_ENDPOINT", "blob_endpoint"))
+
+    # ── Process role (docs/workers.md) ────────────────────────────────────────
+    # "all" (default): this backend launches runs itself, exactly as it always
+    # has; one process does everything a laptop needs. "api": the backend only
+    # prepares runs and puts the launch on the queue (common/run_queue.py) for
+    # a worker on any host. "worker": a process started with `ah worker` that
+    # claims launches from that queue and spawns them; it serves no HTTP.
+    role: str = Field(
+        default="all", validation_alias=AliasChoices("AGENTS_HUB_ROLE", "role"))
+    # What a worker can run, comma separated: "local", "docker" or both. A
+    # worker without a Docker socket says "local" and never claims a run that
+    # wants a container.
+    worker_modes: str = Field(
+        default="local,docker",
+        validation_alias=AliasChoices("AGENTS_HUB_WORKER_MODES", "worker_modes"))
+    # How many launches one worker keeps alive at once.
+    worker_concurrency: int = Field(
+        default=4, validation_alias=AliasChoices("AGENTS_HUB_WORKER_CONCURRENCY", "worker_concurrency"))
+
+    # ── OTel export (common/otel_export.py) ───────────────────────────────────
+    # Empty (default, off): finished runs are recorded here and nowhere else.
+    # Set to a collector's OTLP/HTTP traces URL (including another Agents Hub's
+    # own .../api/ingest/v1/traces) and every run that reaches a terminal
+    # status is also posted there as one span, best-effort. See
+    # docs/service-health.md, "Exporting runs as spans".
+    otel_export_url: str = Field(
+        default="", validation_alias=AliasChoices("AGENTS_HUB_OTEL_EXPORT_URL", "otel_export_url"))
+    # Extra headers the export POST carries, as "k=v,k=v" (a collector token,
+    # say). Empty sends none beyond Content-Type.
+    otel_export_headers: str = Field(
+        default="",
+        validation_alias=AliasChoices("AGENTS_HUB_OTEL_EXPORT_HEADERS", "otel_export_headers"))
+
+    model_config = SettingsConfigDict(
+        case_sensitive=False,
+        env_file=str(PROJECT_ROOT / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 # Global settings instance
 settings = Settings()
@@ -327,7 +703,7 @@ class Paths:
 class Models:
     """Helper for role-based model names (defaults to main model)."""
     def __init__(self):
-        m = settings.model
+        self.main = settings.model
 
 
 def read_dot_env() -> dict:
@@ -336,18 +712,12 @@ def read_dot_env() -> dict:
     This is intentionally separate from the Settings object, which merges in
     field defaults that are indistinguishable from user-configured values.
     Use this when you need to know what the user has *actually set* via the UI.
+
+    Delegates to common.dotenv, which caches the parse by (mtime, size) so
+    repeated calls within a request do not re-read the file.
     """
-    env_file = Path(__file__).resolve().parents[1] / ".env"
-    result: dict = {}
-    if not env_file.exists():
-        return result
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        result[key.strip()] = val.strip().strip('"\'')
-    return result
+    from common.dotenv import read_env
+    return read_env()
 
 
 def streaming_enabled() -> bool:
@@ -391,6 +761,27 @@ def live_setting(env_key: str, default: str = "") -> str:
     return value or default
 
 
+def playground_enabled() -> bool:
+    """Whether the playground (simulation worlds/scenarios) feature is on.
+
+    Resolved live like ``agent_execution_mode``, so flipping the .env value
+    takes effect without a restart. Default is on, so an existing install
+    that has never set the flag sees no change.
+    """
+    default = "true" if settings.playground_enabled else "false"
+    raw = live_setting("PLAYGROUND_ENABLED", default)
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def blob_url() -> str:
+    """Effective ``AGENTS_HUB_BLOB_URL``, resolved live like the other
+    .env-backed settings (see :func:`live_setting`). Empty means the local,
+    no-op mirror (``common.blobs.LocalBlobStore``); an ``s3://bucket/prefix``
+    value is what ``common.blobs.store()`` builds an ``S3BlobStore`` from.
+    """
+    return live_setting("AGENTS_HUB_BLOB_URL", settings.blob_url)
+
+
 def agent_execution_mode() -> str:
     """How agents are launched: "local" subprocess or "docker" container.
 
@@ -401,6 +792,58 @@ def agent_execution_mode() -> str:
     """
     mode = live_setting("AGENT_EXECUTION_MODE", settings.agent_mode).lower()
     return mode if mode in ("local", "docker") else "local"
+
+
+def chat_execution() -> str:
+    """Where a chat turn runs: "instances" (a replica of a service, its own
+    process) or "inprocess" (this process). Resolved live like
+    ``agent_execution_mode``; anything unrecognised reads as "instances", the
+    documented default. See chat/routing.py for the two cases that always
+    run in process whatever this says: a worker, and the replica itself."""
+    mode = live_setting("AGENTS_HUB_CHAT_EXECUTION", settings.chat_execution).lower()
+    return mode if mode in ("instances", "inprocess") else "instances"
+
+
+def run_state_transport() -> str:
+    """How a run's own entrypoint reaches its run/task records: "db" (direct
+    database access) or "http" (relayed through the backend's /api/run-state
+    routes). Resolved live, the same way as ``agent_execution_mode``. Left
+    unset, it is "db" on SQLite and "http" on Postgres (docs/containers.md,
+    docs/scaling.md); an explicit value wins on either. Unrecognised reads as
+    the unset case.
+    """
+    mode = live_setting("AGENT_RUN_STATE_TRANSPORT", "").lower()
+    if mode in ("db", "http"):
+        return mode
+    # Not set anywhere: under Postgres the relay is the default, so a run
+    # container is never handed the database URL and password just to write
+    # its own status; under SQLite direct access stays the default, as the
+    # state directory is mounted into the container anyway.
+    try:
+        from common import db
+        if db.is_postgres():
+            return "http"
+    except (ImportError, RuntimeError):
+        pass
+    return settings.run_state_transport if settings.run_state_transport in ("db", "http") else "db"
+
+
+def hub_role() -> str:
+    """This process's role: "all", "api" or "worker" (docs/workers.md).
+
+    Read from the environment first so a worker started with
+    ``AGENTS_HUB_ROLE=worker ah worker`` never inherits the backend's ``.env``
+    value, then from settings. Anything unrecognised is "all", the mode that
+    needs nothing else running.
+    """
+    raw = (os.environ.get("AGENTS_HUB_ROLE") or settings.role or "all").strip().lower()
+    return raw if raw in ("all", "api", "worker") else "all"
+
+
+def worker_execution_modes() -> list:
+    raw = os.environ.get("AGENTS_HUB_WORKER_MODES") or settings.worker_modes or "local,docker"
+    modes = [m.strip().lower() for m in raw.split(",") if m.strip()]
+    return [m for m in modes if m in ("local", "docker")] or ["local"]
 
 
 # Convenience accessors to align with previous orchestrator.config API

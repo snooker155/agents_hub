@@ -12,7 +12,7 @@ including the "twin" case where a slot was mirrored onto an existing entity node
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from memory.store import MemoryStore
 from memory.graph import GraphStore, _normalize

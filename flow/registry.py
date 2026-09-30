@@ -18,9 +18,11 @@ catalog:
    they remain owned by the agent registry. Creating an agent (via UI or the
    ``agent_creator`` agent) therefore surfaces it in the flow registry for free.
 
-3. **User (data-defined)** — optional records in
-   ``.agents_hub/flow_entities.json`` (same shape as ``agents.json``), for
-   entities created through the UI or by an agent at runtime.
+3. **User (data-defined)** — optional records in the ``flow_entities``
+   document collection (:class:`common.docstore.DocStore`, one row per entity,
+   keyed by id; same shape as ``agents.json``), for entities created through
+   the UI or by an agent at runtime. An existing ``flow_entities.json`` is
+   imported once, on first use.
 
 Public API:
 - list_entities() -> list[FlowEntitySpec]
@@ -46,12 +48,19 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from common import db
+from common.docstore import DocStore
 from common.paths import FLOW_ENTITIES_FILE
 
 # Folder holding code-defined entities, scanned for subfolders (categories).
 ENTITIES_DIR = Path(__file__).resolve().parent / "entities"
 # Dotted package path used to import discovered modules.
 ENTITIES_PKG = "flow.entities"
+
+# User/agent-created entities, one row per entity keyed by id. FLOW_ENTITIES_FILE
+# (a dict wrapper: {"entities": [...]}) is not shaped for DocStore's automatic
+# import, so it is imported by hand — see _ensure_legacy_entities_imported.
+_ENTITIES_STORE = DocStore("flow_entities")
 
 
 # -------------------- Data model --------------------
@@ -152,7 +161,8 @@ def _spec_from_dict(d: Dict[str, Any], *, source: str) -> FlowEntitySpec:
 
 
 # Cache keyed on the inputs that can change at runtime: builtin-dir mtimes,
-# the user file mtime, and the agents registry signature.
+# the user store's signature, and the agents registry signature (see
+# _maybe_reload).
 _CACHE: Dict[str, Any] = {"key": None, "entities": None}
 
 
@@ -245,21 +255,47 @@ def _agents_signature() -> tuple:
         return ()
 
 
-def _load_user_entities() -> List[FlowEntitySpec]:
-    """Load data-defined entities from .agents_hub/flow_entities.json (optional)."""
+_legacy_entities_imported_for: Optional[str] = None
+
+
+def _ensure_legacy_entities_imported() -> None:
+    """Import an existing flow_entities.json into the store, at most once per
+    database (mirrors common.docstore.DocStore._ensure_imported's own marker:
+    a fresh/rewritten database makes this run again).
+
+    FLOW_ENTITIES_FILE is a dict wrapper (``{"entities": [...]}``), so it is
+    read and keyed by hand rather than left to DocStore's automatic
+    ``legacy_file`` import, which only understands a plain list or dict file.
+    """
+    global _legacy_entities_imported_for
+    db.get_conn()
+    marker = f"{db._generation}:{db.dialect()}:{db.DB_FILE}:{db.database_url()}"
+    if _legacy_entities_imported_for == marker:
+        return
+    _legacy_entities_imported_for = marker
     path = FLOW_ENTITIES_FILE
     if not path.exists():
-        return []
+        return
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:  # noqa: BLE001
         print(f"[flow_registry] invalid {path.name}: {e}")
-        return []
-    raw = data.get("entities") if isinstance(data, dict) else data
+        return
+    raw = data.get("entities") if isinstance(data, dict) else None
     if not isinstance(raw, list):
-        return []
-    specs: List[FlowEntitySpec] = []
+        return
+    docs: Dict[str, Any] = {}
     for item in raw:
+        if isinstance(item, dict) and item.get("id"):
+            docs[str(item["id"])] = item
+    _ENTITIES_STORE.import_legacy(docs, source=path)
+
+
+def _load_user_entities() -> List[FlowEntitySpec]:
+    """Load data-defined entities from the 'flow_entities' store (optional)."""
+    _ensure_legacy_entities_imported()
+    specs: List[FlowEntitySpec] = []
+    for item in _ENTITIES_STORE.values():
         if not isinstance(item, dict):
             continue
         try:
@@ -269,15 +305,11 @@ def _load_user_entities() -> List[FlowEntitySpec]:
     return specs
 
 
-def _user_file_mtime() -> Optional[float]:
-    try:
-        return FLOW_ENTITIES_FILE.stat().st_mtime
-    except OSError:
-        return None
-
-
 def _maybe_reload() -> List[FlowEntitySpec]:
-    key = (_builtin_dir_signature(), _user_file_mtime(), _agents_signature())
+    _ensure_legacy_entities_imported()
+    # Cache keyed on the inputs that can change at runtime: builtin-dir mtimes,
+    # the user store's signature, and the agents registry signature.
+    key = (_builtin_dir_signature(), _ENTITIES_STORE.signature(), _agents_signature())
     if _CACHE["entities"] is not None and _CACHE["key"] == key:
         return _CACHE["entities"]  # type: ignore[return-value]
 
@@ -393,44 +425,17 @@ def list_groups(workspace: Optional[str] = None) -> Dict[str, List[FlowEntitySpe
 
 
 def add_user_entity(spec: FlowEntitySpec) -> None:
-    """Persist a user/agent-created entity to flow_entities.json (upsert by id)."""
-    path = FLOW_ENTITIES_FILE
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except Exception:
-        data = {}
-    if not isinstance(data, dict) or not isinstance(data.get("entities"), list):
-        data = {"entities": []}
+    """Persist a user/agent-created entity to the 'flow_entities' store (upsert by id)."""
+    _ensure_legacy_entities_imported()
     record = replace(spec, source="user").to_dict()
-    entities = data["entities"]
-    for i, e in enumerate(entities):
-        if isinstance(e, dict) and e.get("id") == spec.id:
-            entities[i] = record
-            break
-    else:
-        entities.append(record)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _ENTITIES_STORE.put(spec.id, record)
     _CACHE["key"] = None  # force reload
 
 
 def remove_user_entity(entity_id: str) -> bool:
     """Remove a user-defined entity by id. Returns True if removed."""
-    path = FLOW_ENTITIES_FILE
-    if not path.exists():
-        return False
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    if not isinstance(data, dict) or not isinstance(data.get("entities"), list):
-        return False
-    before = len(data["entities"])
-    data["entities"] = [
-        e for e in data["entities"] if not (isinstance(e, dict) and e.get("id") == entity_id)
-    ]
-    if len(data["entities"]) == before:
-        return False
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    _CACHE["key"] = None
-    return True
+    _ensure_legacy_entities_imported()
+    removed = _ENTITIES_STORE.delete(entity_id)
+    if removed:
+        _CACHE["key"] = None  # force reload
+    return removed

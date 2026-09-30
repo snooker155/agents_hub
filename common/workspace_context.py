@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Iterable, List, Optional, TypeVar
 
 from workspace import get_workspace_metadata
+
+log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -27,6 +30,26 @@ def normalize_workspace_name(value: Optional[str]) -> Optional[str]:
     if not raw:
         return None
     return Path(raw).name
+
+
+def workspace_operating_path(workspace: Optional[str], path: Optional[str] = None) -> Optional[str]:
+    """What ``create_agent`` gets as ``workspace``: the operating path when
+    the caller has one (a project folder), else the workspace's own folder.
+
+    The factory resolves the model from that path (``workspace_name_from_path``
+    on the way to the workspace's model choice, then the workspace settings,
+    then the global default) and roots the filesystem tools there. A chat that
+    knows only the workspace's name (an agent's definition chat, the page
+    chat) used to pass nothing, so the workspace's model was skipped for the
+    global one; the folder path gives it the same cascade a task run has.
+    """
+    if path:
+        return str(path)
+    name = normalize_workspace_name(workspace)
+    if not name:
+        return None
+    from common.paths import WORKSPACES_ROOT
+    return str(Path(WORKSPACES_ROOT) / name)
 
 
 def workspace_name_from_path(value: Optional[str]) -> Optional[str]:
@@ -52,7 +75,7 @@ def workspace_name_from_path(value: Optional[str]) -> Optional[str]:
             rel = p.resolve().relative_to(Path(WORKSPACES_ROOT).resolve())
             if rel.parts:
                 return rel.parts[0]
-        except Exception:
+        except ValueError:
             pass
     return p.name
 
@@ -72,8 +95,8 @@ def resolve_active_workspace(preferred: Optional[str] = None) -> Optional[str]:
         stored = get_active_workspace()
         if stored:
             return normalize_workspace_name(stored)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - the UI-stored fallback must not break workspace resolution
+        log.debug("could not read the UI-stored active workspace", exc_info=True)
     return None
 
 

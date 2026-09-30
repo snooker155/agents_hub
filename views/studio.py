@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from views.owner import current_owner
 from views.store import get_view, create_live_view
 
 # How many collection element ids to list inline before truncating.
@@ -78,8 +79,13 @@ def scene_context_note(view_id: str) -> str:
 
 
 def create_studio_view(kind: str, title: str = "", *, workspace: Optional[str] = None) -> Dict[str, Any]:
-    """Create a new empty live view for a Studio session; return its envelope."""
-    env = create_live_view(kind, title, workspace=workspace)
+    """Create a new empty live view for a Studio session; return its envelope.
+
+    Owned the same way any other view is (views.owner.current_owner): the
+    Studio session is opened from a chat turn, so it is usually owned by that
+    turn's run, or by whatever entity run it climbs to.
+    """
+    env = create_live_view(kind, title, workspace=workspace, owner=current_owner())
     return get_view(env.view_id) or env.model_dump()
 
 

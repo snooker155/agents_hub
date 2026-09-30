@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Cpu, BarChart3, RefreshCw, Save, Plus, Trash2, Star, Loader,
   CheckCircle, AlertCircle, ChevronDown, ChevronRight, Search, X,
-  Brain,
+  Brain, HardDrive, Waypoints,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import {
@@ -13,6 +14,7 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
+import LocalTab from '../components/models/LocalTab';
 const BUILTIN_PROVIDERS = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
 
 const PROVIDER_CONFIG = {
@@ -247,7 +249,7 @@ function CatalogTab() {
           <div className="bg-indigo-50/40 border border-indigo-200 rounded-xl px-4 py-3">
             <div className="flex items-center flex-wrap gap-3">
               <span className="text-sm font-semibold text-gray-800">
-                Model for workspace <span className="text-indigo-600">{selectedWorkspace || '—'}</span>
+                {t('models.modelForWorkspace')} <span className="text-indigo-600">{selectedWorkspace || '—'}</span>
               </span>
               <select
                 value={wsForm.provider}
@@ -283,7 +285,7 @@ function CatalogTab() {
                 }`}
               >
                 {wsSaving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Apply
+                {t('models.apply')}
               </button>
             </div>
             <p className="text-xs text-gray-500 mt-2">
@@ -357,7 +359,7 @@ function CatalogTab() {
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-medium transition-colors"
                 >
                   {discovering[provider] ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                  Discover
+                  {t('models.discover')}
                 </button>
               </div>
             </div>
@@ -484,9 +486,18 @@ function CatalogTab() {
                                 />
                               </td>
                               <td className="px-2 py-1.5">
-                                <button onClick={() => removeModel(provider, m.id)} className="text-gray-300 hover:text-red-500">
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  <Link
+                                    to={`/models/${provider}/${encodeURIComponent(m.id)}`}
+                                    title={t('localModels.structure')}
+                                    className="text-gray-300 hover:text-indigo-500"
+                                  >
+                                    <Waypoints className="w-4 h-4" />
+                                  </Link>
+                                  <button onClick={() => removeModel(provider, m.id)} className="text-gray-300 hover:text-red-500">
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -567,7 +578,7 @@ function UsageTab() {
           onClick={load}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-sm font-medium"
         >
-          {loading ? <Loader className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Refresh
+          {loading ? <Loader className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {t('models.refresh')}
         </button>
       </div>
 
@@ -650,14 +661,14 @@ function UsageTab() {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const TABS = [
-  { id: 'catalog', label: 'Catalog', icon: Cpu },
-  { id: 'usage', label: 'Usage', icon: BarChart3 },
-];
-
 export default function Models() {
   const { t } = useI18n();
   const [tab, setTab] = useState('catalog');
+  const TABS = [
+    { id: 'catalog', label: t('models.tabs.catalog'), icon: Cpu },
+    { id: 'local', label: t('localModels.tab'), icon: HardDrive },
+    { id: 'usage', label: t('models.tabs.usage'), icon: BarChart3 },
+  ];
   return (
     <PageContainer>
       <PageHeader
@@ -665,24 +676,24 @@ export default function Models() {
         title={t('models.models')}
         description={t('models.theCatalogOfProvidersAnd')}
       />
-      <div className="flex items-center gap-1 border-b border-gray-200 mb-4">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const active = tab === t.id;
+      <div className="flex items-center gap-1 border-b border-gray-200">
+        {TABS.map((tabDef) => {
+          const Icon = tabDef.icon;
+          const active = tab === tabDef.id;
           return (
             <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
+              key={tabDef.id}
+              onClick={() => setTab(tabDef.id)}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 active ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
-              <Icon className="w-4 h-4" /> {t.label}
+              <Icon className="w-4 h-4" /> {tabDef.label}
             </button>
           );
         })}
       </div>
-      {tab === 'catalog' ? <CatalogTab /> : <UsageTab />}
+      {tab === 'catalog' ? <CatalogTab /> : tab === 'local' ? <LocalTab /> : <UsageTab />}
     </PageContainer>
   );
 }

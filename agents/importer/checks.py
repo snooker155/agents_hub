@@ -184,6 +184,11 @@ def check_runtime(manifest: AgentManifest) -> ReadinessCheck:
             detail=f"runtime.kind '{manifest.runtime_kind}' is not supported",
             fix=f"Set runtime.kind to one of: {', '.join(SUPPORTED_RUNTIME_KINDS)}.",
         )
+    if manifest.runtime_kind == "a2a":
+        return ReadinessCheck(
+            id="runtime", label="Runtime declared", ok=True,
+            detail="a2a, JSON-RPC message/send at the agent's own endpoint",
+        )
     return ReadinessCheck(
         id="runtime", label="Runtime declared", ok=True,
         detail=f"{manifest.runtime_kind} — POST {manifest.run_path}",
@@ -245,6 +250,21 @@ def check_streaming(manifest: AgentManifest) -> ReadinessCheck:
     that goes quiet until it is done, and that is worth knowing before the first
     long run rather than after it.
     """
+    if manifest.runtime_kind == "a2a":
+        # An A2A agent does not declare a path: its card declares whether
+        # message/stream works at all, and that is what the hub reads.
+        from a2a.card import card_streaming
+
+        if card_streaming(manifest.card):
+            return ReadinessCheck(
+                id="streaming", label="Live streaming", ok=True, required=False,
+                detail="the agent card declares capabilities.streaming, so runs use message/stream",
+            )
+        return ReadinessCheck(
+            id="streaming", label="Live streaming", ok=False, required=False,
+            detail="the agent card declares no streaming capability, so runs use message/send",
+            fix="Set capabilities.streaming in the agent's own card to stream its output into chat.",
+        )
     if manifest.stream_path:
         return ReadinessCheck(
             id="streaming", label="Live streaming", ok=True, required=False,
@@ -284,11 +304,59 @@ def check_resume(manifest: AgentManifest) -> Optional[ReadinessCheck]:
     reason as the graph check: an agent that never pauses has nothing to resume,
     and a permanent warning nobody can act on is how a report stops being read.
     """
+    if manifest.runtime_kind == "a2a":
+        # Nothing to declare: in A2A a paused task is continued by sending
+        # another message carrying its taskId, which every A2A agent supports
+        # by virtue of speaking the protocol.
+        return ReadinessCheck(
+            id="resume", label="Resumable", ok=True, required=False,
+            detail="a paused task is continued with message/send carrying its taskId",
+        )
     if not manifest.resume_path:
         return None
     return ReadinessCheck(
         id="resume", label="Resumable", ok=True, required=False,
         detail=f"POST {manifest.resume_path} — a paused run continues where it stopped",
+    )
+
+
+def check_card(manifest: AgentManifest, url: str) -> ReadinessCheck:
+    """Whether the A2A agent's card can still be read. Required for a2a.
+
+    This is the a2a runtime's health check and its contract check at once: a
+    card that answers is a service that is up, and a card that parses is an
+    endpoint the hub can address. Unlike the http health probe it *is* required,
+    because without a card there is nothing to send a message to: the endpoint
+    itself is what the card carries.
+    """
+    card_url = (manifest.card_url or "").strip()
+    if not card_url:
+        if (url or "").strip():
+            return ReadinessCheck(
+                id="card", label="Agent card", ok=True, required=False,
+                detail="no card URL recorded; the endpoint was configured directly",
+            )
+        return ReadinessCheck(
+            id="card", label="Agent card", ok=False,
+            detail="no agent card URL and no endpoint",
+            fix="Import the agent from its card URL, or type its JSON-RPC endpoint here.",
+        )
+
+    from agents.importer import a2a_import
+
+    probe = a2a_import.probe(card_url)
+    if probe["ok"]:
+        from a2a.card import card_streaming
+
+        streams = "streaming" if card_streaming(probe["card"]) else "no streaming"
+        return ReadinessCheck(
+            id="card", label="Agent card", ok=True,
+            detail=f"{probe['detail']} ({streams})",
+        )
+    return ReadinessCheck(
+        id="card", label="Agent card", ok=False,
+        detail=probe["detail"],
+        fix="Start the agent's service, or correct its card URL, then run the check again.",
     )
 
 
@@ -365,24 +433,34 @@ def evaluate(
     probe_health: bool = True,
     remote: Optional[Dict[str, Any]] = None,
 ) -> ReadinessReport:
-    """Run every check and return the combined report."""
-    checks = [
-        check_repo(repo_dir, commit),
+    """Run every check and return the combined report.
+
+    An A2A import has no repository and nothing to package: the agent is
+    already running somewhere and its card is the contract. Those two checks
+    are therefore replaced by the card check rather than reported as failures
+    an operator could never fix.
+    """
+    a2a_runtime = manifest.runtime_kind == "a2a"
+    checks = []
+    if not a2a_runtime:
+        checks.append(check_repo(repo_dir, commit))
+    checks += [
         check_manifest(manifest),
         check_agent_id(agent_id, conflict=id_conflict),
         check_runtime(manifest),
         check_endpoint(url),
         check_env(manifest, workspace),
-        check_packaging(repo_dir, manifest, url),
-        check_streaming(manifest),
     ]
+    checks.append(check_card(manifest, url) if a2a_runtime
+                  else check_packaging(repo_dir, manifest, url))
+    checks.append(check_streaming(manifest))
     graph = check_graph(manifest)
     if graph is not None:
         checks.append(graph)
     resume = check_resume(manifest)
     if resume is not None:
         checks.append(resume)
-    if probe_health:
+    if probe_health and not a2a_runtime:
         checks.append(check_health(url, manifest, remote))
     return ReadinessReport(checks=checks, checked_at=_now())
 
@@ -397,6 +475,7 @@ __all__ = [
     "check_runtime",
     "check_endpoint",
     "check_packaging",
+    "check_card",
     "check_env",
     "check_streaming",
     "check_graph",

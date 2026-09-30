@@ -12,6 +12,15 @@ Views created without a workspace land in the global ``VIEWS_ROOT``. The
 carries per-user ``state`` (control values / selection) so reopening restores
 the view. The heavy spec stays in ``view.json``; run records reference a view
 only by a lightweight ``view_ref`` (see :func:`view_ref`).
+
+Every view is owned by the run that made it (``owner_kind``/``owner_id``,
+migration 0013): ``run`` for an agent run (a row in ``runs``), or one of
+``flow``/``loop``/``team``/``scenario`` for the entity run itself (a row in
+``entity_runs``, common/entity_runs.py). See :mod:`views.models` for the
+``ViewOwner`` shape and :mod:`views.owner` for how a fresh view's owner is
+resolved. ``run_id`` on the index row is kept as the pre-owner shorthand: set
+only when the owner is a ``run``, so ``list_views(run_id=...)`` keeps working
+unchanged for that (still the common) case.
 """
 from __future__ import annotations
 
@@ -22,9 +31,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import blobs, db
 from common.paths import workspace_views_dir
-from views.models import ViewEnvelope, normalize_envelope, base_spec_for
+from views.models import ViewEnvelope, ViewOwner, ViewValidationError, normalize_envelope, base_spec_for
 from views import ops as vops
 
 
@@ -50,6 +59,22 @@ def _json_bytes(value: Any) -> int:
         return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
     except Exception:
         return 0
+
+
+def _mirror_view_file(path: Path) -> None:
+    """Mirror one view file to the blob store, best-effort (common/blobs.py)."""
+    try:
+        blobs.mirror(blobs.rel(path))
+    except Exception:
+        pass
+
+
+def _mirror_view_dir(view_dir: Path) -> None:
+    """Mirror every file currently in a view's dir, so a backend replica or
+    worker on another host can serve it even though this host wrote it."""
+    for f in view_dir.rglob("*"):
+        if f.is_file():
+            _mirror_view_file(f)
 
 
 def _dir_size(path: Path) -> int:
@@ -78,6 +103,7 @@ def create_view(
     fallback: Optional[Dict[str, Any]] = None,
     run_id: Optional[str] = None,
     task_id: Optional[str] = None,
+    owner: Optional[Any] = None,
     asset_sources: Optional[Dict[str, str]] = None,
     validate: bool = True,
 ) -> ViewEnvelope:
@@ -88,7 +114,17 @@ def create_view(
     copied into the view dir and its name recorded in ``assets``. ``validate``
     is False for live Studio views whose spec starts empty (built by ops).
     Raises :class:`views.models.ViewValidationError` on an invalid kind/spec.
+
+    ``owner`` is a :class:`~views.models.ViewOwner`, a ``{"kind": ..., "id":
+    ...}`` dict, or None. When both ``owner`` and ``run_id`` are given they
+    must agree (a ``run``-kind owner derives ``run_id``, so passing a
+    different one is a caller bug, not silently resolved here). A caller
+    that only has a leaf run id and doesn't know whose view this really is
+    should call :func:`views.owner.current_owner` first: this function does
+    not do that resolution itself, so a direct call with neither ``owner``
+    nor ``run_id`` stores an ownerless view.
     """
+    owner_dict = owner.model_dump() if isinstance(owner, ViewOwner) else owner
     env = normalize_envelope({
         "kind": kind,
         "title": title or "",
@@ -100,6 +136,8 @@ def create_view(
         "actions": list(actions or []),
         "complexity": complexity or "inline",
         "fallback": fallback or {},
+        "run_id": run_id,
+        "owner": owner_dict,
     }, validate_spec_body=validate)
     env.view_id = _new_view_id()
 
@@ -124,15 +162,28 @@ def create_view(
         json.dumps(env.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+    # The run_id column is the "run"-owner shorthand, not a second place to
+    # record an entity owner's leaf: it is set only when the owner itself is
+    # kind "run" (env.run_id may otherwise still carry a leaf run id passed
+    # alongside a non-run owner, kept on the envelope for round-trip but not
+    # promoted to the index row's run_id).
+    owner_run_id = env.owner.id if (env.owner and env.owner.kind == "run") else None
     now = utc_iso()
     with db.transaction() as conn:
         conn.execute(
             """INSERT INTO views (view_id, workspace, run_id, task_id, kind, title,
-                                  summary, state, size_bytes, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (env.view_id, workspace or None, run_id, task_id, env.kind, env.title,
-             env.summary, None, _dir_size(view_dir), now, now),
+                                  summary, state, size_bytes, created_at, updated_at,
+                                  owner_kind, owner_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (env.view_id, workspace or None, owner_run_id, task_id, env.kind, env.title,
+             env.summary, None, _dir_size(view_dir), now, now,
+             env.owner.kind if env.owner else None, env.owner.id if env.owner else None),
         )
+    if env.kind == "code":
+        body = str(env.spec.get("body") or "")
+        if body:
+            _seed_code_version(env.view_id, workspace, body)
+    _mirror_view_dir(view_dir)
     return env
 
 
@@ -173,7 +224,15 @@ def get_view(view_id: str) -> Optional[Dict[str, Any]]:
     view_dir = _view_dir(row.get("workspace"), view_id)
     view_file = view_dir / "view.json"
     if not view_file.exists():
-        return None
+        # Not on this host: a backend replica or worker elsewhere may have
+        # written it and mirrored it to the blob store (common/blobs.py).
+        try:
+            fetched = blobs.ensure_local(blobs.rel(view_file))
+        except Exception:
+            fetched = None
+        if fetched is None:
+            return None
+        view_file = fetched
     try:
         env = json.loads(view_file.read_text(encoding="utf-8"))
     except Exception:
@@ -183,6 +242,12 @@ def get_view(view_id: str) -> Optional[Dict[str, Any]]:
     env["workspace"] = row.get("workspace")
     env["run_id"] = row.get("run_id")
     env["task_id"] = row.get("task_id")
+    # The index row is the source of truth for who owns a view (like run_id
+    # above): it is what filters and links read, and it survives a view.json
+    # written before this field existed. No owner_id on the row means no
+    # owner rather than falling back to whatever an old view.json might hold.
+    owner_kind, owner_id = row.get("owner_kind"), row.get("owner_id")
+    env["owner"] = {"kind": owner_kind, "id": owner_id} if owner_kind and owner_id else None
     env["size_bytes"] = row.get("size_bytes")
     env["created_at"] = row.get("created_at")
     env["updated_at"] = row.get("updated_at")
@@ -193,9 +258,17 @@ def list_views(
     workspace: Optional[str] = None,
     *,
     run_id: Optional[str] = None,
+    owner_kind: Optional[str] = None,
+    owner_id: Optional[str] = None,
     limit: int = 200,
 ) -> List[Dict[str, Any]]:
-    """List view index rows (newest first), optionally filtered."""
+    """List view index rows (newest first), optionally filtered.
+
+    ``run_id`` is kept as the pre-owner shorthand every existing caller uses:
+    it is an alias for "owned by that agent run" (``owner_kind='run'``), not a
+    separate column read. Pass ``owner_kind``/``owner_id`` directly for a view
+    owned by a flow/loop/team/scenario run.
+    """
     conn = db.get_conn()
     clauses: List[str] = []
     params: List[Any] = []
@@ -203,17 +276,32 @@ def list_views(
         clauses.append("workspace = ?")
         params.append(workspace)
     if run_id is not None:
-        clauses.append("run_id = ?")
-        params.append(run_id)
+        clauses.append("owner_kind = ? AND owner_id = ?")
+        params.extend(["run", run_id])
+    if owner_kind is not None:
+        clauses.append("owner_kind = ?")
+        params.append(owner_kind)
+    if owner_id is not None:
+        clauses.append("owner_id = ?")
+        params.append(owner_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(int(limit))
     rows = conn.execute(
         f"""SELECT view_id, workspace, run_id, task_id, kind, title, summary,
-                   size_bytes, created_at, updated_at
+                   size_bytes, created_at, updated_at, owner_kind, owner_id
             FROM views{where} ORDER BY created_at DESC LIMIT ?""",
         params,
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def views_owned_by(kind: str, id: str, *, limit: int = 200) -> List[Dict[str, Any]]:  # noqa: A002 - matches the model field name
+    """Index rows for every view produced by one run, across all workspaces.
+
+    What a run's detail page reads to show "views it made": ``kind``/``id``
+    are a :class:`~views.models.ViewOwner` pair (e.g. ``("team", team_run_id)``).
+    """
+    return list_views(owner_kind=kind, owner_id=id, limit=limit)
 
 
 def set_view_state(view_id: str, state: Dict[str, Any]) -> bool:
@@ -232,8 +320,52 @@ def set_view_state(view_id: str, state: Dict[str, Any]) -> bool:
     return True
 
 
+def update_spec(view_id: str, spec: Dict[str, Any], *, title: Optional[str] = None,
+                summary: Optional[str] = None) -> bool:
+    """Replace a (non live) view's spec in place, validated against its kind.
+
+    For a producer that republishes the same view as its source changes, a
+    scenario run's results table growing tick by tick (playground.lab_views),
+    where minting a new view per change would bury the one that matters. The
+    view keeps its id, owner and state; ``view.json`` and ``base.json`` both
+    take the new spec so a later fold or revert does not resurrect the old
+    one. Returns False for an unknown view or a missing ``view.json``; raises
+    :class:`views.models.ViewValidationError` on an invalid spec.
+    """
+    from views.models import validate_spec
+
+    row = _row(view_id)
+    if not row:
+        return False
+    view_dir = _view_dir(row.get("workspace"), view_id)
+    view_file = view_dir / "view.json"
+    if not view_file.exists():
+        return False
+    env = json.loads(view_file.read_text(encoding="utf-8"))
+    env["spec"] = validate_spec(str(env.get("kind") or row.get("kind") or ""), spec)
+    if title is not None:
+        env["title"] = title
+    if summary is not None:
+        env["summary"] = summary
+    body = json.dumps(env, ensure_ascii=False, indent=2)
+    view_file.write_text(body, encoding="utf-8")
+    (view_dir / "base.json").write_text(body, encoding="utf-8")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE views SET title = ?, summary = ?, size_bytes = ?, updated_at = ? "
+            "WHERE view_id = ?",
+            (env.get("title") or "", env.get("summary") or "", _dir_size(view_dir),
+             utc_iso(), view_id),
+        )
+    _mirror_view_dir(view_dir)
+    return True
+
+
 def delete_view(view_id: str) -> bool:
-    """Remove a view's dir and index row. Returns False for an unknown id."""
+    """Remove a view's dir (local and mirrored) and index row.
+
+    Returns False for an unknown id.
+    """
     row = _row(view_id)
     if not row:
         return False
@@ -243,8 +375,18 @@ def delete_view(view_id: str) -> bool:
     except Exception:
         pass
     view_dir = _view_dir(row.get("workspace"), view_id)
+    try:
+        mirrored_prefix = blobs.rel(view_dir) + "/"
+    except Exception:
+        mirrored_prefix = None
     if view_dir.exists():
         shutil.rmtree(view_dir, ignore_errors=True)
+    if mirrored_prefix:
+        try:
+            for key in blobs.list(mirrored_prefix):
+                blobs.delete(key)
+        except Exception:
+            pass
     with db.transaction() as conn:
         conn.execute("DELETE FROM views WHERE view_id = ?", (view_id,))
     return True
@@ -287,6 +429,7 @@ def add_asset(view_id: str, src_abs: str, dest_name: Optional[str] = None) -> st
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(view_dir), view_id))
+    _mirror_view_file(dest)
     return f"asset://{rel}"
 
 
@@ -305,7 +448,7 @@ def set_snapshot(view_id: str, png_bytes: bytes) -> Optional[str]:
     view_file = view_dir / "view.json"
     try:
         doc = json.loads(view_file.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         doc = {}
     doc.setdefault("fallback", {})
     doc["fallback"]["image"] = "snapshot.png"
@@ -313,6 +456,8 @@ def set_snapshot(view_id: str, png_bytes: bytes) -> Optional[str]:
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(view_dir), view_id))
+    _mirror_view_file(view_dir / "snapshot.png")
+    _mirror_view_file(view_file)
     return "asset://snapshot.png"
 
 
@@ -328,10 +473,12 @@ def save_clip(view_id: str, name: str, clip: Dict[str, Any]) -> Optional[str]:
     safe = "".join(c for c in str(name) if c.isalnum() or c in "-_") or "clip"
     clips_dir = _view_dir(row.get("workspace"), view_id) / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
-    (clips_dir / f"{safe}.json").write_text(json.dumps(clip, ensure_ascii=False), encoding="utf-8")
+    clip_file = clips_dir / f"{safe}.json"
+    clip_file.write_text(json.dumps(clip, ensure_ascii=False), encoding="utf-8")
     with db.transaction() as conn:
         conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
                      (utc_iso(), _dir_size(_view_dir(row.get("workspace"), view_id)), view_id))
+    _mirror_view_file(clip_file)
     return f"clip://{safe}"
 
 
@@ -367,7 +514,10 @@ def view_asset_path(view_id: str, rel_path: str) -> Optional[Path]:
     """Resolve an asset path inside a view dir, guarding against traversal.
 
     Returns the absolute path if it exists and is contained within the view
-    dir; ``None`` otherwise. ``view.json`` is not served as an asset.
+    dir; ``None`` otherwise. ``view.json`` is not served as an asset. An asset
+    not on this host is fetched from the blob store first (common/blobs.py):
+    a view created on another worker or backend replica mirrors its assets
+    there, and a different replica may be the one serving them.
     """
     row = _row(view_id)
     if not row:
@@ -377,9 +527,14 @@ def view_asset_path(view_id: str, rel_path: str) -> Optional[Path]:
         target = _contained(view_dir, rel_path)
     except ValueError:
         return None
-    if target.name == "view.json" or not target.is_file():
+    if target.name == "view.json":
         return None
-    return target
+    if target.is_file():
+        return target
+    try:
+        return blobs.ensure_local(blobs.rel(target))
+    except Exception:
+        return None
 
 
 def _contained(base: Path, rel_path: str) -> Path:
@@ -405,6 +560,7 @@ def create_live_view(
     summary: str = "",
     run_id: Optional[str] = None,
     task_id: Optional[str] = None,
+    owner: Optional[Any] = None,
 ) -> ViewEnvelope:
     """Create an empty live view of ``kind``, seeded with its base spec, ready to
     be built up by ops in the Studio. Spec validation is deferred (the spec is
@@ -416,6 +572,7 @@ def create_live_view(
         complexity="fullscreen",
         run_id=run_id,
         task_id=task_id,
+        owner=owner,
         validate=False,
     )
 
@@ -497,6 +654,15 @@ def append_ops(
         seq = _next_seq(conn, view_id)
         for op in clean:
             vops.apply_op(doc, op)
+        if row.get("kind") == "slides":
+            # A slide written with bullets or a structured body renders as a
+            # bare title; refuse the batch instead (the transaction rolls back).
+            from views.models import validate_spec
+            try:
+                validate_spec("slides", doc.get("spec") or {})
+            except ViewValidationError as exc:
+                raise vops.OpError(str(exc)) from exc
+        for op in clean:
             record = {**op, "seq": seq, "ts": now, "source": source, "run_id": run_id}
             conn.execute(
                 "INSERT INTO view_ops (view_id, seq, ts, run_id, op) VALUES (?, ?, ?, ?, ?)",
@@ -554,6 +720,7 @@ def save_checkpoint(view_id: str, name: str) -> Optional[int]:
     f = _checkpoints_file(view_id, row.get("workspace"))
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(cps, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_view_file(f)
     return seq
 
 
@@ -615,6 +782,219 @@ def _broadcast_reset(view_id: str, doc: Dict[str, Any], seq: int) -> None:
         broker.publish_threadsafe(f"view:{view_id}", {"type": "view_reset", "view_id": view_id, "doc": doc, "seq": seq})
     except Exception:
         pass
+
+
+# ── code views: versions, runs, saves ─────────────────────────────────────────
+# A code view's edit history, run history and save-to-project history are
+# view-level facts, not a per-user preference — replacing them wholesale is
+# exactly what set_view_state does for a control's value, so they must not
+# share that column. They live in their own small JSON files beside
+# checkpoints.json/clips/, the same file-per-facet pattern already used there,
+# rather than a new table.
+
+MAX_CODE_RUNS = 10
+
+
+def _code_versions_file(view_id: str, workspace: Optional[str]) -> Path:
+    return _view_dir(workspace, view_id) / "code_versions.json"
+
+
+def _code_runs_file(view_id: str, workspace: Optional[str]) -> Path:
+    return _view_dir(workspace, view_id) / "code_runs.json"
+
+
+def _code_saves_file(view_id: str, workspace: Optional[str]) -> Path:
+    return _view_dir(workspace, view_id) / "code_saves.json"
+
+
+def _read_json_list(path: Path) -> List[Dict[str, Any]]:
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_json_list(path: Path, items: List[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_view_file(path)
+
+
+def _seed_code_version(view_id: str, workspace: Optional[str], body: str) -> None:
+    """Record version 1 at creation time (create_view calls this directly; the
+    envelope's view.json already carries the right spec.body/spec.version)."""
+    entry = {"version": 1, "body": body, "author": "agent", "note": "initial version",
+              "created_at": utc_iso()}
+    _write_json_list(_code_versions_file(view_id, workspace), [entry])
+
+
+def list_code_versions(view_id: str) -> List[Dict[str, Any]]:
+    """Every recorded version of a code view's body, oldest first. Empty for an
+    unknown view id or one with no recorded versions."""
+    row = _row(view_id)
+    if not row:
+        return []
+    return _read_json_list(_code_versions_file(view_id, row.get("workspace")))
+
+
+def add_code_version(view_id: str, body: str, *, author: str, note: str = "") -> Optional[Dict[str, Any]]:
+    """Record a new version of a code view's body; return the updated envelope.
+
+    Appends ``{"version", "body", "author", "note", "created_at"}`` to the
+    view's version history (oldest first), bumps ``spec.version`` and replaces
+    ``spec.body`` in the stored envelope. ``author`` is ``"agent"`` or
+    ``"user"``. Returns ``None`` for an unknown view id.
+    """
+    row = _row(view_id)
+    if not row:
+        return None
+    workspace = row.get("workspace")
+    versions = _read_json_list(_code_versions_file(view_id, workspace))
+    next_version = max((int(v.get("version", 0)) for v in versions), default=0) + 1
+    entry = {"version": next_version, "body": body, "author": author,
+              "note": note or "", "created_at": utc_iso()}
+    versions.append(entry)
+    _write_json_list(_code_versions_file(view_id, workspace), versions)
+
+    view_file = _view_dir(workspace, view_id) / "view.json"
+    try:
+        doc = json.loads(view_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        doc = {}
+    spec = doc.setdefault("spec", {})
+    spec["body"] = body
+    spec["version"] = next_version
+    view_file.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_view_file(view_file)
+
+    with db.transaction() as conn:
+        conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
+                     (utc_iso(), _dir_size(_view_dir(workspace, view_id)), view_id))
+    return get_view(view_id)
+
+
+def replace_code_body(view_id: str, body: str, *, author: str = "user") -> Optional[Dict[str, Any]]:
+    """Overwrite the current version's body in place; return the updated envelope.
+
+    The plain "Save" beside "Save version": the latest entry of the history
+    keeps its number and gets the new text (and who wrote it, and when it was
+    last changed), and ``spec.body`` follows. A view with no history yet gets
+    a version 1. Returns ``None`` for an unknown view id.
+    """
+    row = _row(view_id)
+    if not row:
+        return None
+    workspace = row.get("workspace")
+    versions = _read_json_list(_code_versions_file(view_id, workspace))
+    if versions:
+        versions[-1] = {**versions[-1], "body": body, "author": author, "updated_at": utc_iso()}
+    else:
+        versions.append({"version": 1, "body": body, "author": author, "note": "", "created_at": utc_iso()})
+    _write_json_list(_code_versions_file(view_id, workspace), versions)
+
+    view_file = _view_dir(workspace, view_id) / "view.json"
+    try:
+        doc = json.loads(view_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        doc = {}
+    spec = doc.setdefault("spec", {})
+    spec["body"] = body
+    spec["version"] = int(versions[-1].get("version") or 1)
+    view_file.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    _mirror_view_file(view_file)
+
+    with db.transaction() as conn:
+        conn.execute("UPDATE views SET updated_at = ?, size_bytes = ? WHERE view_id = ?",
+                     (utc_iso(), _dir_size(_view_dir(workspace, view_id)), view_id))
+    return get_view(view_id)
+
+
+# ── snippet versions without a view ──────────────────────────────────────────
+# The Chat code panel's "From replies" blocks: a fenced block of a reply can be
+# edited, versioned and diffed like a code view's body without ever becoming
+# a view. The history lives beside the workspace's views under a key the
+# panel chooses (conversation + message + block index), as the same JSON list
+# a view's code_versions.json holds, mirrored the same way.
+
+def _snippet_versions_file(key: str, workspace: Optional[str]) -> Path:
+    import hashlib
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:24]
+    return workspace_views_dir(workspace) / "_snippets" / digest / "code_versions.json"
+
+
+def list_snippet_versions(key: str, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Every recorded version of a keyed snippet, oldest first; empty when none."""
+    return _read_json_list(_snippet_versions_file(key, workspace))
+
+
+def add_snippet_version(key: str, body: str, *, workspace: Optional[str] = None, author: str = "user",
+                        note: str = "", base: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Record a new version of a keyed snippet; return the whole history.
+
+    ``base`` is the text the snippet started from (the reply's own block):
+    recorded as version 1 by the agent before the first user version, so the
+    history opens with what was answered and a diff against it works.
+    """
+    versions = _read_json_list(_snippet_versions_file(key, workspace))
+    if not versions and base is not None and base != body:
+        versions.append({"version": 1, "body": base, "author": "agent", "note": "from the reply",
+                         "created_at": utc_iso()})
+    next_version = max((int(v.get("version", 0)) for v in versions), default=0) + 1
+    versions.append({"version": next_version, "body": body, "author": author,
+                     "note": note or "", "created_at": utc_iso()})
+    _write_json_list(_snippet_versions_file(key, workspace), versions)
+    return versions
+
+
+def list_code_runs(view_id: str) -> List[Dict[str, Any]]:
+    """The recorded run results for a code view, oldest first (capped at
+    MAX_CODE_RUNS). Empty for an unknown view id or one never run."""
+    row = _row(view_id)
+    if not row:
+        return []
+    return _read_json_list(_code_runs_file(view_id, row.get("workspace")))
+
+
+def add_code_run(view_id: str, run_record: Dict[str, Any]) -> bool:
+    """Append one run result, keeping only the last MAX_CODE_RUNS. False for an
+    unknown view id."""
+    row = _row(view_id)
+    if not row:
+        return False
+    workspace = row.get("workspace")
+    runs = _read_json_list(_code_runs_file(view_id, workspace))
+    runs.append({**run_record, "created_at": run_record.get("created_at") or utc_iso()})
+    runs = runs[-MAX_CODE_RUNS:]
+    _write_json_list(_code_runs_file(view_id, workspace), runs)
+    with db.transaction() as conn:
+        conn.execute("UPDATE views SET updated_at = ? WHERE view_id = ?", (utc_iso(), view_id))
+    return True
+
+
+def list_code_saves(view_id: str) -> List[Dict[str, Any]]:
+    """Every recorded save-to-project of a code view, oldest first."""
+    row = _row(view_id)
+    if not row:
+        return []
+    return _read_json_list(_code_saves_file(view_id, row.get("workspace")))
+
+
+def add_code_save(view_id: str, save_record: Dict[str, Any]) -> bool:
+    """Append one save-to-project record (``project_id``, ``path``, ``version``).
+    False for an unknown view id."""
+    row = _row(view_id)
+    if not row:
+        return False
+    workspace = row.get("workspace")
+    saves = _read_json_list(_code_saves_file(view_id, workspace))
+    saves.append({**save_record, "created_at": save_record.get("created_at") or utc_iso()})
+    _write_json_list(_code_saves_file(view_id, workspace), saves)
+    with db.transaction() as conn:
+        conn.execute("UPDATE views SET updated_at = ? WHERE view_id = ?", (utc_iso(), view_id))
+    return True
 
 
 # ── retention (maintenance job) ───────────────────────────────────────────────
@@ -686,7 +1066,9 @@ __all__ = [
     "create_live_view",
     "get_view",
     "list_views",
+    "views_owned_by",
     "set_view_state",
+    "update_spec",
     "delete_view",
     "view_asset_path",
     "add_asset",
@@ -703,4 +1085,14 @@ __all__ = [
     "run_view_maintenance",
     "MAX_INLINE_SPEC_BYTES",
     "MAX_OPS_PER_VIEW",
+    "list_code_versions",
+    "replace_code_body",
+    "list_snippet_versions",
+    "add_snippet_version",
+    "add_code_version",
+    "list_code_runs",
+    "add_code_run",
+    "list_code_saves",
+    "add_code_save",
+    "MAX_CODE_RUNS",
 ]

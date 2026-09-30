@@ -7,6 +7,7 @@ system prompt assembled from per-agent markdown files in
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +51,7 @@ from tools.langchain_tools import (
     modify_agent_tool,
     delete_agent_tool,
 )
+from tools.delegation import delegate_task_tool, list_models_tool
 from tools.flow_management import (
     create_flow_tool,
     get_flow_tool,
@@ -63,6 +65,8 @@ from tools.team_management import TEAM_MANAGEMENT_TOOLS
 from tools.loop_management import LOOP_MANAGEMENT_TOOLS
 from tools.project_management import PROJECT_MANAGEMENT_TOOLS
 from tools.entity_runs import ENTITY_RUN_TOOLS
+from tools.git_publish import GIT_PUBLISH_TOOLS
+from tools.project_deploy import PROJECT_DEPLOY_TOOLS
 from tools.service_ops import SERVICE_OPS_TOOLS
 from tools.docs_tool import DOCS_TOOLS
 from tools.eval_ops import EVAL_TOOLS
@@ -158,6 +162,25 @@ DELEGATION_PROMPT = (
     "available to handle the request."
 )
 
+# Injected whenever the agent can delegate inside a task (delegate_task_tool
+# present). Kept apart from DELEGATION_PROMPT because the two tools apply in
+# different contexts: run_agent_tool in chat, delegate_task_tool in a task run.
+TASK_DELEGATION_PROMPT = (
+    "## Delegating part of a task\n"
+    "While you work a task, `delegate_task_tool` hands one self-contained piece of it "
+    "to another agent as a subtask of your task, runs that agent, and returns its "
+    "output. Use it the way a lead hands work to a colleague: when a part needs a "
+    "different role or tools, when several independent parts can run one after another "
+    "while you keep the whole in view, or when a cheaper or stronger model suits that "
+    "part better. `list_agents_tool` shows who is available; `list_models_tool` shows "
+    "the models you may pick for the delegate (its `model` argument, `provider/model`), "
+    "the workspace default and your own. Put everything the delegate needs into "
+    "`input`: it sees neither your task nor this conversation. Prefer waiting for the "
+    "result (the default); start several without waiting only when they are independent, "
+    "then read each with get_task_result. A refused delegation is final: do not retry it "
+    "with another agent unless one clearly fits."
+)
+
 # Injected for delegators that cannot administer agents themselves (no
 # create/modify/delete agent tools). Splits agent administration out of the
 # generic delegation guidance so the agent_creator is named explicitly as the
@@ -223,6 +246,9 @@ def resolve_streaming(definition_flag: Any, override_params: Dict[str, Any]) -> 
         return True
     from common.config import streaming_enabled
     return streaming_enabled()
+
+
+log = logging.getLogger(__name__)
 
 
 class AgentFactory:
@@ -380,7 +406,7 @@ class AgentFactory:
 
         return resolved_provider, resolved_model, resolved_base_url, ws_api_key
 
-    def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None, agent_id: Optional[str] = None, episodic_write: bool = True, pool_override: Optional[str] = None) -> List[Any]:
+    def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None, agent_id: Optional[str] = None, episodic_write: bool = True, pool_override: Optional[str] = None, personal_pool: Optional[str] = None) -> List[Any]:
         """Create tool instances based on tool ids.
 
         Also supports legacy group aliases:
@@ -419,6 +445,8 @@ class AgentFactory:
             stop_agent_tool,
             get_agent_status_tool,
             wait_for_agent_tool,
+            delegate_task_tool,
+            list_models_tool,
         ]
         agent_management_tools = [
             create_agent_tool,
@@ -456,6 +484,11 @@ class AgentFactory:
         # service needs the whole view — a partial one produces guesses. The
         # action half is gated inside the tools rather than split off here.
         service_ops_tools = list(SERVICE_OPS_TOOLS)
+        # The maintenance loop's own tools: git work on the system workspace's
+        # repository copy and a test run in it. Only agents of that workspace
+        # may hold them (agents.capability_guard, the system workspace rule).
+        from tools.system_ops import SYSTEM_OPS_TOOLS
+        system_ops_tools = list(SYSTEM_OPS_TOOLS)
         # This product's own documentation, as a searchable corpus. Granted
         # widely: any agent a person talks to should be able to explain the
         # service rather than guess at it.
@@ -523,7 +556,7 @@ class AgentFactory:
             from agents.registry import get_agent as _reg_get_pool
             from memory.binding import effective_memory_pools
             _spec_pool = _reg_get_pool(agent_id)
-            _mem_pools = (effective_memory_pools(_spec_pool, workspace, pool_override)
+            _mem_pools = (effective_memory_pools(_spec_pool, workspace, pool_override, personal_pool)
                           if _spec_pool else [])
             if _mem_pools:
                 _pool_id = _mem_pools[0]
@@ -532,7 +565,8 @@ class AgentFactory:
         if _pool_id:
             from memory.knowledge_extract import create_extraction_tools
             memory_tools = [
-                *create_memory_tools(_pool_id, _extra_pool_ids, include_episodic_write=episodic_write),
+                *create_memory_tools(_pool_id, _extra_pool_ids, include_episodic_write=episodic_write,
+                                     personal_pool_id=personal_pool),
                 *create_extraction_tools(_pool_id),
                 *skills_tools,
             ]
@@ -549,11 +583,19 @@ class AgentFactory:
         # fetch_url are separately grantable on purpose — search is a far
         # smaller injection surface than page content. See tools/web.py.
         from tools.web import WEB_TOOLS
+        # Browser tools and sandboxed code execution: plain per-tool grants,
+        # like the web tools. See tools/browser.py and tools/run_code.py.
+        from tools.browser import BROWSER_TOOLS
+        from tools.run_code import run_code
 
         # NB: think/plan are intentionally NOT auto-included here. They are
         # added by create_agent() based on the agent's reasoning config, which
         # is the source of truth for the reasoning capabilities.
-        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *service_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS]
+        available = [calculator, ask_user, run_shell, *fs_tools, *view_tools, *task_tools, *coordination_tools, *agent_management_tools, *flow_management_tools, *scenario_tools, *world_tools, *team_tools, *loop_tools, *project_tools, *entity_run_tools, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *service_ops_tools, *system_ops_tools, *docs_tools, *eval_tools, *schedule_tools, *memory_tools, *GRAPH_BUILDER_TOOLS, *WEB_TOOLS, *BROWSER_TOOLS, run_code]
+        # The workspace file objects (tools/workspace_files.py): plain per-tool
+        # grants, like the web tools; the workspace comes from the run.
+        from tools.workspace_files import WORKSPACE_FILE_TOOLS
+        available.extend(WORKSPACE_FILE_TOOLS)
         by_name = {getattr(t, "name", getattr(t, "__name__", "")): t for t in available}
 
         # No tools are injected by default — only the tools the agent explicitly
@@ -583,6 +625,35 @@ class AgentFactory:
         inputs (markdown, registry spec, workspace/model settings) change.
         """
         from agents import agent_cache
+
+        # A/B experiment arm (evals/experiments.py): open_run pinned a stored
+        # version for this agent's run. Building with ``definition_version``
+        # both selects the snapshot in _build_agent and puts the version into
+        # the cache key (it is one of the overrides), so two arms never share
+        # a cached build. An explicit ``definition_version`` from the caller
+        # wins over the pin.
+        if "definition_version" not in override_params:
+            pin = _experiment_pin(agent_id)
+            if pin is not None:
+                override_params = {**override_params, "definition_version": int(pin["version"])}
+                _record_experiment_assignment(pin)
+
+        # Personal memory (memory/personal.py): the user's own pool, attached
+        # next to the agent's own pools (or alone when it has none). Passed as
+        # ``personal_pool`` so it is part of the cache key: two users never
+        # share a build bound to one pool. A pinned ``memory_pool`` (the
+        # Memory page, a deployment's task pools) replaces both.
+        if "memory_pool" not in override_params and "personal_pool" not in override_params:
+            try:
+                from agents.registry import get_agent as _reg_get_personal
+                from memory import personal as _personal
+                _personal_pool = _personal.resolve(_reg_get_personal(agent_id), workspace)
+            except Exception:  # noqa: BLE001 - a memory hiccup must not stop the agent from building
+                log.warning("personal memory: could not resolve a pool for %s", agent_id, exc_info=True)
+                _personal_pool = None
+            if _personal_pool:
+                override_params = {**override_params, "personal_pool": _personal_pool}
+
         return agent_cache.get_or_build(
             agent_id,
             workspace,
@@ -590,6 +661,51 @@ class AgentFactory:
             definitions_dir=self.definitions_dir,
             builder=lambda: self._build_agent(agent_id, workspace, **override_params),
         )
+
+    def _definition_from_snapshot(self, spec: Any, parts: Dict[str, Any]) -> Dict[str, Any]:
+        """``load_definition``'s shape, from a stored version instead of the
+        live registry record and markdown files (an experiment arm)."""
+        instructions = str(parts.get("instructions") or "")
+        prompt_parts = [instructions]
+        capabilities = str(parts.get("capabilities") or "").strip()
+        if capabilities:
+            prompt_parts.append("## Capabilities\n\n" + capabilities)
+        usage = str(parts.get("usage") or "").strip()
+        if usage:
+            prompt_parts.append("## Usage\n\n" + usage)
+        return {
+            "id": spec.id,
+            "name": spec.name,
+            "description": spec.description,
+            "system_prompt": "\n\n".join(prompt_parts),
+            "tools": list(spec.tools or []),
+            "provider": spec.provider,
+            "model": spec.model,
+            "base_url": spec.base_url,
+            "temperature": spec.temperature if spec.temperature is not None else 0.0,
+            "max_tokens": spec.max_tokens,
+            "api_key": spec.api_key,
+            "verbose": spec.verbose,
+            "streaming": spec.streaming,
+        }
+
+    def _load_snapshot(self, agent_id: str, version: Any) -> Optional[tuple]:
+        """``(spec, definition)`` for a stored version, or None (logged) when
+        the version row is missing or unreadable."""
+        try:
+            from agents import versions as agent_versions
+            from agents.registry import _validate_agent_dict
+            entry = agent_versions.get_version_row(agent_id, int(version))
+            if entry is None:
+                log.warning("agent '%s' has no version %s; building the current definition",
+                            agent_id, version)
+                return None
+            spec = _validate_agent_dict(entry["spec"])
+            return spec, self._definition_from_snapshot(spec, entry.get("definition") or {})
+        except Exception:
+            log.warning("could not load version %s of agent '%s'; building the current definition",
+                        version, agent_id, exc_info=True)
+            return None
 
     def _build_agent(self, agent_id: str, workspace: Optional[str] = None, **override_params) -> AgentBase:
         """Build an agent from its definition (uncached).
@@ -607,6 +723,15 @@ class AgentFactory:
         from agents.registry import get_agent as _reg_get
         _spec = _reg_get(agent_id)
 
+        # A stored version to build from instead of the live definition (an
+        # experiment arm, see create_agent). Popped like memory_pool: it is
+        # not a definition field, and it already reached the cache key.
+        _definition_version = override_params.pop("definition_version", None)
+        _snapshot = (self._load_snapshot(agent_id, _definition_version)
+                     if _definition_version is not None else None)
+        if _snapshot is not None:
+            _spec = _snapshot[0]
+
         # Pinning the memory pool for this build. Taken out of the overrides
         # before they are merged into the config, because it is not a definition
         # field — it decides which pool the memory tools are bound to and which
@@ -614,6 +739,19 @@ class AgentFactory:
         # which is computed from the overrides before this runs, so two pools
         # are two cache entries rather than one stale agent.
         _pool_override = override_params.pop("memory_pool", None)
+        # The user's personal pool (create_agent), attached after the agent's
+        # own. Popped like memory_pool; it reached the cache key already.
+        _personal_pool = override_params.pop("personal_pool", None)
+        # Secret names a deployment attached to this task's runs, on top of
+        # the agent's own allowlist (Task.secrets). Not a definition field:
+        # popped here and folded into the build-time capability check below,
+        # since the run's environment already carries their values.
+        _extra_secrets = [str(n).strip() for n in (override_params.pop("extra_secrets", None) or []) if str(n or "").strip()]
+        # How a task may use the pools it binds (Task.memory_access, set by a
+        # deployment): "read" drops the memory write tools below, after every
+        # memory tool has been added, so the run can recall but never change
+        # the pool. Popped like memory_pool; it reached the cache key already.
+        _memory_access = str(override_params.pop("memory_access", None) or "write").strip().lower()
 
         # Imported agents run outside this process: there is no prompt to
         # assemble, no tool set to grant and no model to build here, because all
@@ -630,7 +768,8 @@ class AgentFactory:
                 verbose=_spec.verbose,
             )
 
-        definition = self.load_definition(agent_id)
+        definition = (dict(_snapshot[1]) if _snapshot is not None
+                      else self.load_definition(agent_id))
 
         # Resolve model first — the provider drives auto defaults (e.g. episodic
         # write off for local providers). Injection below only changes tools and
@@ -649,14 +788,27 @@ class AgentFactory:
         from memory.injection import inject_memory_into_definition
         definition = inject_memory_into_definition(
             agent_id, definition, workspace=workspace, episodic_write=_episodic_write,
-            pool_override=_pool_override,
+            pool_override=_pool_override, personal_pool=_personal_pool,
         )
 
         # Auto-add skills tools when skills_enabled=True in registry.
         # list_skills is omitted — the catalog is injected into the system prompt instead.
         if _spec and _spec.skills_enabled:
             tool_list = list(definition.get("tools") or [])
-            for _skill_tool in ("get_skill", "create_skill"):
+            _skill_tools = ["get_skill", "create_skill"]
+            # read_skill_file only for an agent with a skill that has files
+            # (one imported from a project's .claude/skills folder).
+            try:
+                from memory.procedural import ProcedureStore as _SkillStore
+                from common.workspace_context import normalize_workspace_name as _norm_ws
+                _skills_ws = _norm_ws(workspace)
+                if _skills_ws and any(
+                    p.resources for p in _SkillStore(_skills_ws).load() if p.agent_id == agent_id
+                ):
+                    _skill_tools.append("read_skill_file")
+            except Exception:  # noqa: BLE001 - a store hiccup only drops the optional file tool
+                log.debug("skills: could not check skill files for %s", agent_id, exc_info=True)
+            for _skill_tool in _skill_tools:
                 if _skill_tool not in tool_list:
                     tool_list.append(_skill_tool)
             definition["tools"] = tool_list
@@ -696,7 +848,8 @@ class AgentFactory:
         tool_list = config.get("tools", [])
         tools = self._create_tools(tool_list, workspace=workspace, agent_id=agent_id,
                                    episodic_write=_episodic_write,
-                                   pool_override=_pool_override)
+                                   pool_override=_pool_override,
+                                   personal_pool=_personal_pool)
 
         # Clarification gate also grants the ask_user tool so the agent can pause
         # and ask for missing requirements (in a task, this parks the task in the
@@ -760,6 +913,13 @@ class AgentFactory:
                     + AGENT_ADMIN_PROMPT
                 )
 
+        if "delegate_task_tool" in _tool_names:
+            config["system_prompt"] = (
+                config.get("system_prompt", "")
+                + "\n\n---\n\n"
+                + TASK_DELEGATION_PROMPT
+            )
+
         # Teach agents that carry task-tracker tools to use them instead of
         # storing tasks in memory (resolved tool instances, so group aliases count).
         _TASK_TOOL_NAMES = {
@@ -782,19 +942,15 @@ class AgentFactory:
             tool_list,
         )
         reasoning_tools, think_gate, plan_gate = build_reasoning_tools(reasoning)
-        # When step-by-step thinking is enforced, wrap the agent's action tools
-        # so they refuse to run until the agent has called `think` (see
-        # reasoning/think_gate.py). Reasoning tools themselves are never gated.
-        if think_gate is not None:
-            from reasoning.think_gate import gate_tools
-            tools = gate_tools(tools, think_gate)
         # When planning is enabled, gate the `plan` / `save_plan` tools on a
         # prior `assess_complexity` call so trivial requests skip planning
         # (see reasoning/plan_gate.py).
         if plan_gate is not None:
             from reasoning.plan_gate import gate_plan_tools
             reasoning_tools = gate_plan_tools(reasoning_tools, plan_gate)
-        tools = [*tools, *reasoning_tools]
+        # The think-gate wrap itself happens further down, after MCP tools are
+        # appended and after guard_action_tools — see the comment there.
+        # reasoning_tools are appended after that too, unwrapped either way.
         reasoning_prompt = build_reasoning_prompt(reasoning)
         if reasoning_prompt:
             config["system_prompt"] = (
@@ -830,16 +986,101 @@ class AgentFactory:
                 + _clarify_prompt
             )
 
+        # Tools from the external MCP servers this record asks for, by group
+        # alias (`mcp:<server>`) or by individual id (`mcp__<server>__<tool>`).
+        # Resolved here rather than in _create_tools because they are per
+        # workspace and involve a network round trip, and appended *before* the
+        # guard below on purpose: a tool defined on somebody else's server is
+        # the last one that should run outside the workspace's hooks and the
+        # approval gate. A server that will not connect is skipped with its
+        # error recorded on its own entry, never failing the build.
+        from mcp_client import append_mcp_tools
+        tools = append_mcp_tools(tools, tool_list, workspace)
+
+        # Human in the loop at the level of a single tool call: every action tool
+        # is wrapped so the workspace's PreToolUse/PostToolUse hooks run around it
+        # and a call that needs approval parks the task instead of happening (see
+        # agents/hooks.py). Wrapped here, after every tool has been resolved, so
+        # nothing appended above escapes the gate. Returns the list unchanged when
+        # the workspace configures neither hooks nor the approval gate.
+        from agents.hooks import guard_action_tools
+        tools = guard_action_tools(tools, agent_id=agent_id, spec=_spec, workspace=workspace)
+
+        # Step-by-step think enforcement wraps the approval guard, not the
+        # other way around: GatedTool(GuardedTool(tool)), gate outermost. A
+        # task resumed on an approved call (tools/approval.py call_fingerprint)
+        # is identified and consumed by GuardedTool; if the gate wrapped the
+        # *inside* instead, GuardedTool would spend that approval and hand the
+        # call to a GatedTool that can still refuse for want of a `think` in
+        # this fresh run, burning the approval on a refusal instead of the
+        # real call. With the gate outermost it refuses first, before the
+        # approval is ever touched, so the operator's yes is still there to
+        # spend once the model actually thinks. See reasoning/think_gate.py
+        # and agents/hooks.py (``_guards_of`` unwraps a GatedTool to find the
+        # ToolGuard it wraps, e.g. for ``pending_approval_for``).
+        #
+        # This also means the MCP tools appended just above are now gated on
+        # `think` like every other action tool — they were not before, since
+        # gating used to run ahead of the MCP append. That is a fix, not a
+        # side effect: an MCP tool is exactly the kind of action step / think
+        # mode is meant to slow down.
+        if think_gate is not None:
+            from reasoning.think_gate import gate_tools
+            tools = gate_tools(tools, think_gate)
+
+        # Reasoning tools are appended last, after both wraps, and are never
+        # gated or guarded themselves (gate_tools skips _REASONING_TOOL_NAMES
+        # regardless, but they are not even offered to it here).
+        tools = [*tools, *reasoning_tools]
+
+        # Conversation handoff (tools/handoff.py), only for an agent with
+        # targets. Appended after the approval guard and the think gate on
+        # purpose, like the reasoning tools: giving the conversation to a
+        # listed colleague acts on nothing outside the chat, and parking it for
+        # approval or a `think` first would leave the user waiting on a
+        # routing decision the operator already made by listing the target.
+        if _spec is not None and _spec.handoffs:
+            from tools.handoff import HANDOFF_PROMPT, create_handoff_tools
+            from common.workspace_context import workspace_name_from_path as _ws_from_path
+            _handoff_tools = create_handoff_tools(_spec, _ws_from_path(workspace))
+            if _handoff_tools:
+                tools = [*tools, *_handoff_tools]
+                config["system_prompt"] = (
+                    config.get("system_prompt", "")
+                    + "\n\n---\n\n"
+                    + HANDOFF_PROMPT
+                )
+
+        if _memory_access == "read":
+            from memory.binding import MEMORY_WRITE_TOOLS
+            _before = len(tools)
+            tools = [t for t in tools
+                     if getattr(t, "name", getattr(t, "__name__", "")) not in MEMORY_WRITE_TOOLS]
+            if len(tools) != _before:
+                config["system_prompt"] = (
+                    config.get("system_prompt", "")
+                    + "\n\n---\n\n## Memory is read-only in this run\n"
+                    "The memory pools of this run are reference material: recall and read "
+                    "from them, but the tools that write to memory (remember, forget, link, "
+                    "record_episode, block writes) are not available here. Do not claim to "
+                    "have saved anything."
+                )
+
         # Capability guard, defence in depth. The record was already checked at
         # save time, but everything above this point may have *appended* tools
         # (memory pools, skills, clarify-gate ask_user, the project graph reader,
         # reasoning tools), so the resolved set is re-checked before the agent
         # is handed a runtime. See agents/capability_guard.py.
         from agents.capability_guard import enforce_built_tools
+        from tools.capabilities import secret_grant_ids
         enforce_built_tools(
             agent_id,
-            [getattr(t, "name", getattr(t, "__name__", "")) for t in tools],
+            [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
+            # A declared secret is a grant of private data, checked with the
+            # tools it would be handed to (docs/secrets.md).
+            + secret_grant_ids(list(getattr(_spec, "secrets", None) or []) + _extra_secrets if _spec else _extra_secrets),
             override=bool(_spec.capability_override) if _spec else False,
+            delegates=list(_spec.delegates or []) if _spec else [],
         )
 
         # Create agent
@@ -871,6 +1112,9 @@ class AgentFactory:
                 else None
             ),
             native_reasoning=reasoning.get("thinking_level") not in (None, "", "off"),
+            # The record this build came from (a stored version when pinned),
+            # for the loop extensions and guardrails (agents/agent_loop.py).
+            spec=_spec,
         )
 
         return agent
@@ -891,6 +1135,23 @@ class AgentFactory:
                 "tools": list(spec.tools or []),
             })
         return agents
+
+
+def _experiment_pin(agent_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        from evals.experiments import take_pin
+        return take_pin(agent_id)
+    except Exception:
+        log.debug("experiment pin lookup failed for '%s'", agent_id, exc_info=True)
+        return None
+
+
+def _record_experiment_assignment(pin: Dict[str, Any]) -> None:
+    try:
+        from evals.experiments import record_assignment
+        record_assignment(pin)
+    except Exception:
+        log.debug("experiment assignment not recorded", exc_info=True)
 
 
 # Global factory instance

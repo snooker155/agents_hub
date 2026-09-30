@@ -59,17 +59,7 @@ from tools.task_management import (
     _task_to_dict,
     _active_workspace,
 )
-
-
-def _json_ok(payload: Dict[str, object]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+from tools._json import json_err as _json_err, json_ok as _json_ok
 
 
 
@@ -509,9 +499,17 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
             input=input,
         )
 
+        # A delegate runs under its own secret scope: its own allowlist, the
+        # same workspace and the same person as the delegating run.
+        from common import secrets as _secrets
+        _parent_scope = _secrets.active_scope()
+        _scope = _secrets.activate(ws or "", agent_id,
+                                   _parent_scope[2] if _parent_scope else None)
+        _scope.__enter__()
         try:
             worker = create_agent(agent_id, workspace=ws_path)
         except Exception as e:
+            _scope.__exit__(None, None, None)
             # Close the record here, or a build failure leaves it "running" forever.
             close_run(run_id, status="failed", exit_code=1, error=f"create_agent failed: {e}")
             return _json_err(
@@ -563,6 +561,11 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
                 )
             )
 
+        # The worker's own view binding: a view it creates is the one its view
+        # tools build, never the caller's (tools/views.py).
+        from common.agent_context import current_view_binding
+        view_binding: dict = {}
+        _view_binding_token = current_view_binding.set(view_binding)
         # run_id is tracked via open_run/close_run_from_result below; we don't pass
         # it into invoke_agent because StandardAgent.run() takes no positional run_id.
         try:
@@ -570,10 +573,12 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
                 worker, input, stats=stats, extra_callbacks=extra_cbs, catch_exceptions=True
             )
         finally:
+            current_view_binding.reset(_view_binding_token)
             # Leave the delegation scope before emitting the end event, so a nested
             # delegation's depth/parent bookkeeping is fully unwound.
             if deleg_scope is not None:
                 stream_sink.reset_scope(deleg_scope)
+            _scope.__exit__(None, None, None)
         result = invocation.result
         stopped = stop_cb.cancelled
         if stopped:
@@ -628,19 +633,33 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None) -
             )
 
         if ok:
-            return _json_ok({
+            # run_id first: the run log keeps only the head of a long tool
+            # result, and the process graph finds the delegated run by it.
+            result_payload = {
+                "run_id": run_id,
+                "agent_id": agent_id,
                 "message": (
                     "Worker finished. Review this output and decide: if the request "
                     "is fully handled, summarise it for the user; if follow-up work "
                     "is needed, chain another agent with run_agent_tool."
                 ),
                 "output": output,
-                "run_id": run_id,
                 "session_id": session_id,
                 "agent": spec.to_dict(),
                 "workspace": ws or None,
                 "succeeded": True,
-            })
+            }
+            # Views the worker created. The chat shows them under the reply by
+            # itself; the ids are for a follow-up delegation that should keep
+            # building the same view instead of starting a new one.
+            if view_binding.get("created"):
+                result_payload["views"] = list(dict.fromkeys(view_binding["created"]))
+                result_payload["message"] += (
+                    " The worker created the view(s) listed in `views`; they are "
+                    "already shown to the user. To change or finish one, delegate "
+                    "again and pass its view_id in the input."
+                )
+            return _json_ok(result_payload)
         return _json_err(
             f"Worker '{agent_id}' failed: {error or 'unknown error'}",
             code="worker_failed",
@@ -987,6 +1006,7 @@ def stop_agent_tool(task_id: str) -> str:
                 svc_update_task(
                     task.id,
                     status=TaskStatus.stopped,
+                    executor=None,
                     assigned_agent_type=None,
                     assigned_agent_params=None,
                     assigned_agent_run_id=None,
@@ -1439,35 +1459,25 @@ def modify_agent_tool(
             stripped = value.strip()
             return stripped or None
 
-        new_spec = AgentSpec(
-            id=spec.id,
+        # dataclasses.replace keeps every field this tool does not edit
+        # (handoffs, the loop policies, secrets, approval lists, ...); a
+        # field-by-field rebuild silently dropped whatever AgentSpec gained
+        # after it was written.
+        import dataclasses as _dc
+        new_spec = _dc.replace(
+            spec,
             name=name.strip() if name is not None and name.strip() else spec.name,
-            type=spec.type,
-            entrypoint=spec.entrypoint,
             description=description if description is not None else spec.description,
             domain=domain.strip() if domain is not None and domain.strip() else spec.domain,
-            default_params=dict(spec.default_params or {}),
             tools=list(tools) if tools is not None else list(spec.tools or []),
-            commands=list(spec.commands or []),
             capacity=int(capacity) if capacity is not None else spec.capacity,
             memory_type=memory_type if memory_type is not None else spec.memory_type,
             memory_data=memory_data if memory_data is not None else spec.memory_data,
-            default_workspace_only=spec.default_workspace_only,
-            owner_workspace=spec.owner_workspace,
-            shared=spec.shared,
             provider=_blank_to_none(provider) if provider is not None else spec.provider,
             model=_blank_to_none(model) if model is not None else spec.model,
             base_url=_blank_to_none(base_url) if base_url is not None else spec.base_url,
             temperature=temperature if temperature is not None else spec.temperature,
             max_tokens=int(max_tokens) if max_tokens is not None else spec.max_tokens,
-            api_key=spec.api_key,
-            verbose=spec.verbose,
-            streaming=spec.streaming,
-            http_expose=spec.http_expose,
-            http_port=spec.http_port,
-            http_host_port=spec.http_host_port,
-            node_type=spec.node_type,
-            is_default_chat_agent=spec.is_default_chat_agent,
             skills_enabled=bool(skills_enabled) if skills_enabled is not None else spec.skills_enabled,
             episodic_write_enabled=bool(episodic_write_enabled) if episodic_write_enabled is not None else spec.episodic_write_enabled,
             reasoning=dict(reasoning) if reasoning is not None else dict(spec.reasoning or {}),

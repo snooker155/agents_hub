@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteChat, getChat, importChats, listChats, saveChat } from '../api';
 import { useChannel, useStream } from './stream';
+import { compactTimeline } from './chat/trail';
 
 /**
  * The Chat page's conversations, stored on the server.
@@ -50,11 +51,9 @@ const MAX_SYNC_ATTEMPTS = 3;
 /** How long it then waits before giving the backend another chance. */
 const RETRY_COOLDOWN_MS = 30000;
 
-// Per-message fields that are large and only meaningful while the turn is live
-// (the Build-view timeline, the running-tool indicator, the reasoning ticker).
-// They accumulate every streamed token and every tool input/output, and they are
-// reconstructable from the run's server-side log, so they are not stored.
-export const TRANSIENT_MSG_FIELDS = ['timeline', 'running_tool', 'thinking_live'];
+// Per-message fields that are only meaningful while the turn is live (the
+// running-tool indicator, the reasoning ticker). Not stored.
+export const TRANSIENT_MSG_FIELDS = ['running_tool', 'thinking_live'];
 
 /** The conversation as it is stored: no transient bubble state, no local flags. */
 export function stripForStorage(conv) {
@@ -64,6 +63,14 @@ export function stripForStorage(conv) {
     messages: (conv.messages || []).map((m) => {
       const copy = { ...m };
       for (const f of TRANSIENT_MSG_FIELDS) delete copy[f];
+      // The turn's steps are kept, the intermediate text among them, so a
+      // reopened conversation still shows how each reply was reached. Long
+      // tool payloads are clipped: the run's own log holds them in full.
+      if (copy.timeline) {
+        const compact = compactTimeline(copy.timeline);
+        if (compact) copy.timeline = compact;
+        else delete copy.timeline;
+      }
       return copy;
     }),
   };

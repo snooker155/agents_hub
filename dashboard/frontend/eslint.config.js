@@ -5,7 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'coverage']),
+  globalIgnores(['dist', 'dist-demo', 'coverage', 'public/mockServiceWorker.js']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [
@@ -30,6 +30,14 @@ export default defineConfig([
         varsIgnorePattern: '^[A-Z_]',
         argsIgnorePattern: '^[A-Z_]',
       }],
+    },
+  },
+  {
+    // The config file itself runs under Node, not the browser, so it reads
+    // `process.env` — give it Node's globals instead of disabling the rule.
+    files: ['vite.config.js'],
+    languageOptions: {
+      globals: globals.node,
     },
   },
 ])

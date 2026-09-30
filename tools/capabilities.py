@@ -11,6 +11,11 @@ alone is already the whole trifecta (``curl`` = ingest + exfiltrate, ``cat`` /
 ``>`` = private read/write), so a rule that only fires when three *named* tools
 co-occur does nothing against the single most dangerous tool.
 
+A tool's own grant is only half the picture, though: an agent that holds none
+of the three but can delegate to one that does effectively holds all three.
+``DELEGATING_TOOLS`` and ``effective_capabilities`` cover that — see the
+"Delegation" section below.
+
 The module is deliberately pure and dependency-free at import time: it never
 imports the tool registry at module level, so it can be unit-tested in
 isolation and can never fail open because of an import cycle.
@@ -19,9 +24,38 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, Iterable, List, Optional, Set
+from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set
 
 log = logging.getLogger(__name__)
+
+
+# ── Idempotency ───────────────────────────────────────────────────────────────
+#
+# A run that died mid-tool-call is resumed from its checkpoint
+# (agents/checkpoint.py). A read, a search or a listing can simply be issued
+# again; a call that changes something outside the run cannot be repeated
+# blindly, because it may already have happened. These are the tools whose
+# interrupted call the resumed model is told about instead of retrying. Every
+# MCP tool (``mcp__*``) is treated the same way: a foreign server's side
+# effects are unknown here.
+
+NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
+    "run_shell", "run_code", "browser_act", "git_publish", "git_commit", "git_push",
+    "deploy_project", "stop_project_deployment",
+    "write_file", "delete_file", "apply_unified_diff", "create_file", "move_file",
+    "create_task", "add_subtask", "update_task", "set_task_dependencies",
+    "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow",
+    "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
+    "schedule_job", "create_view", "view_serve", "delegate",
+    "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
+    # The system workspace's repository copy (tools/system_ops.py): a commit,
+    # a written task result and a branch deletion have each already happened.
+    "system_commit", "system_attach_patch", "system_prune_branches",
+})
+
+
+def is_idempotent(tool_id: str) -> bool:
+    return tool_id not in NON_IDEMPOTENT_TOOLS and not tool_id.startswith(("mcp__", "mcp:"))
 
 
 # ── The three capabilities ────────────────────────────────────────────────────
@@ -54,18 +88,34 @@ CAPABILITY_LABELS: Dict[str, str] = {
 CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # ── execution: the whole trifecta in one tool ────────────────────────────
     "run_shell": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE, CAN_EXFILTRATE}),
+    # run_code's real grant depends on configuration and is answered by
+    # ``run_code_grants`` below: reads_private only in a no-network sandbox,
+    # ingests_untrusted and can_exfiltrate in a run with a limited network
+    # (no workspace mount then), the whole trifecta when
+    # CODE_RUNNER_FALLBACK=local. This entry is the worst case, which is what
+    # a static reading of the table should see.
+    "run_code": frozenset({INGESTS_UNTRUSTED, READS_PRIVATE, CAN_EXFILTRATE}),
 
     # ── filesystem reads ─────────────────────────────────────────────────────
     "read_file": frozenset({READS_PRIVATE}),
     "list_files": frozenset({READS_PRIVATE}),
     "search_text": frozenset({READS_PRIVATE}),
+    # The workspace file objects (tools/workspace_files.py): listing names
+    # them and reading returns their text, the same class of operator data
+    # as a file in the working directory.
+    "list_workspace_files": frozenset({READS_PRIVATE}),
+    "read_workspace_file": frozenset({READS_PRIVATE}),
 
     # ── memory reads ─────────────────────────────────────────────────────────
     "read_memory": frozenset({READS_PRIVATE}),
     "search_memory": frozenset({READS_PRIVATE}),
     "read_structured_memory": frozenset({READS_PRIVATE}),
     "recall": frozenset({READS_PRIVATE}),
+    # A memory block is pool content the agent reads back in full.
+    "memory_block_read": frozenset({READS_PRIVATE}),
     "recall_episodes": frozenset({READS_PRIVATE}),
+    # Walks the pool's knowledge graph and returns what it finds.
+    "traverse": frozenset({READS_PRIVATE}),
 
     # ── task / db reads ──────────────────────────────────────────────────────
     "get_task": frozenset({READS_PRIVATE}),
@@ -93,6 +143,16 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # a stolen secret can leave in the URL itself. Ingest and exfiltrate in one
     # tool, which is why it is the second, more restricted grant.
     "fetch_url": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
+    # The browser tools (tools/browser.py) are fetch_url with a real browser
+    # behind it, and carry the same claim. Opening a page sends the URL;
+    # reading returns page text; acting can type agent-chosen text into a
+    # form on a site the agent picked, and returns the page title; a
+    # screenshot is page content written into the workspace. browser_close
+    # moves no data and grants nothing (REVIEWED_NO_GRANT).
+    "browser_open": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
+    "browser_read": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
+    "browser_act": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
+    "browser_screenshot": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
 
     # ── evals ────────────────────────────────────────────────────────────────
     # A case carries operator-written input and the reference answer; a result
@@ -119,13 +179,14 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # outbound channel, which is exactly the shape that would turn the service's
     # own diagnostics into an exfiltration path.
     #
-    # The action tools (stop_run, stop_node, restart_node, stop_container,
-    # prune_run_logs) grant nothing: they stop and delete, which the approval
-    # gate governs, rather than moving data, which is what this table is about.
-    # Pure metadata tools (service_health, list_containers, list_nodes,
-    # costs_summary) grant nothing either — counts, statuses and totals.
+    # The action tools (stop_run, stop_instance, restart_instance,
+    # stop_container, prune_run_logs) grant nothing: they stop and delete,
+    # which the approval gate governs, rather than moving data, which is what
+    # this table is about. Pure metadata tools (service_health,
+    # list_containers, costs_summary) grant nothing either — counts, statuses
+    # and totals.
     "container_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "node_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
+    "instance_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "run_log": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "list_runs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "search_errors": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
@@ -135,6 +196,19 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "list_sessions": frozenset({READS_PRIVATE}),
     "routing_log": frozenset({READS_PRIVATE}),
 
+    # ── system workspace (tools/system_ops.py) ───────────────────────────────
+    # system_run_tests returns the tail of a pytest run over the repository
+    # copy: the operator's own code and whatever it prints, so it reads
+    # private data. It does not claim can_exfiltrate, and that claim is only
+    # fully true in one of its two runners. In docker mode the run is a
+    # container with --network none, like run_code's sandbox. In local mode it
+    # is a subprocess with a stripped environment (no keys, no database URL,
+    # a throwaway state directory) but the host's network, so test code the
+    # agent wrote could open a socket; docs/system-workspace.md tells the
+    # operator to run the system workspace in docker for that reason. The
+    # other system_* tools grant nothing (REVIEWED_NO_GRANT below).
+    "system_run_tests": frozenset({READS_PRIVATE}),
+
     # ── outbound channels ────────────────────────────────────────────────────
     # These deliver free text to a chat transport (Telegram today). The
     # destination is the operator, but the *payload* is agent-controlled, which
@@ -143,6 +217,35 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "schedule_notification": frozenset({CAN_EXFILTRATE}),
     # Proxies a caller-supplied upstream URL through the view server.
     "view_serve": frozenset({CAN_EXFILTRATE}),
+    # git_publish pushes a branch to GitHub/GitLab and opens a PR/MR — the
+    # payload is the workspace's own tracked (and newly added) files, chosen by
+    # the agent's commit, leaving the system over a real network destination.
+    # Reading issues/PRs with the same token (connectors/git/providers.py)
+    # grants nothing: this is the one direction that moves bytes outward.
+    "git_publish": frozenset({CAN_EXFILTRATE}),
+
+    # ── project deployments (tools/project_deploy.py) ────────────────────────
+    # Every answer carries the deployment's share key (in browser_url) and the
+    # services' commands and variables, operator-authored private content.
+    # The logs are whatever the deployed app printed, which includes the
+    # request lines of strangers who opened its share link.
+    "deploy_project": frozenset({READS_PRIVATE}),
+    "project_deployment_status": frozenset({READS_PRIVATE}),
+    "stop_project_deployment": frozenset({READS_PRIVATE}),
+    "project_deployment_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
+
+    # ── agent and job reads ──────────────────────────────────────────────────
+    # get_agent_tool returns instructions.md, capabilities.md and usage.md in
+    # full — an agent's system prompt is operator-authored private content in
+    # exactly the sense a task description is, so reading it carries the same
+    # grant as get_task. list_agents_tool, by contrast, returns only id, name
+    # and description, so it stays in REVIEWED_NO_GRANT.
+    "get_agent_tool": frozenset({READS_PRIVATE}),
+    # A scheduled job carries a title and message the operator or an agent
+    # wrote for later delivery — the same class of authored content a task's
+    # title and description carry, so list_scheduled is read under the same
+    # grant as list_tasks.
+    "list_scheduled": frozenset({READS_PRIVATE}),
 
     # ── geometry engine ──────────────────────────────────────────────────────
     # The mesh_* tools drive a local Blender through a fixed command whitelist.
@@ -160,6 +263,10 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "mesh_merge": frozenset(), "mesh_normals": frozenset(), "mesh_validate": frozenset(),
     "mesh_stats": frozenset(), "mesh_preview": frozenset(), "mesh_history": frozenset(),
     "mesh_revert": frozenset(), "mesh_export": frozenset(),
+    # slides_export writes a .pptx of a slides view the agent authored into the
+    # agent's own workspace, like mesh_export: nothing is read from outside the
+    # system (remote slide images are never fetched) and nothing leaves it.
+    "slides_export": frozenset(),
 }
 
 # Tools that are reachable from an agent tool list but do not appear in
@@ -174,8 +281,187 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     "clear_graph",
     # memory writers — write into pools, never out of the system
     "write_structured_memory", "append_journal", "remember", "record_episode",
-    # skills
-    "get_skill", "create_skill",
+    "memory_block_append", "memory_block_replace",
+    # and their counterparts: forget deletes from the pool, link adds a graph edge
+    "forget", "link",
+    # skills. read_skill_file reads only the files listed in one attached
+    # skill's own folder (.claude/skills/<name>/), material the workspace
+    # published as part of that skill, the same way get_skill returns its
+    # SKILL.md body; it cannot reach any other workspace file.
+    "get_skill", "create_skill", "read_skill_file",
+    # conversation handoff (tools/handoff.py): ends the turn and names the
+    # next agent, which then runs on its own tool set (checked at its own
+    # build). Nothing comes back to the caller, so unlike run_agent_tool it
+    # opens no path for the caller to read through another agent.
+    "handoff_to_agent",
+
+    # ── filesystem writes ────────────────────────────────────────────────────
+    # write_file, create_file and apply_unified_diff all return only the
+    # workspace-relative path(s) touched (apply_unified_diff also echoes the
+    # op per path); delete_file returns the path it removed. None of them read
+    # existing file content back into the caller's context, so unlike
+    # read_file/list_files/search_text they grant nothing.
+    "write_file", "delete_file", "apply_unified_diff", "create_file",
+    # save_workspace_file stores text the agent already holds as a workspace
+    # file and returns only the new record (id, name, size), like write_file.
+    "save_workspace_file",
+
+    # ── memory writes / derivations ──────────────────────────────────────────
+    # write_memory persists into a pool, like write_structured_memory above.
+    # extract_from_text distills text the caller already supplied into a
+    # reviewable proposal without touching the memory store; save_extraction
+    # then persists that already-seen proposal. Neither reads anything the
+    # caller did not already hand it.
+    "write_memory", "extract_from_text", "save_extraction",
+
+    # ── human-in-the-loop ─────────────────────────────────────────────────────
+    # ask_user's return value is the question it was given, tagged so the
+    # runner ends the turn — not the user's answer. The answer re-enters
+    # context later as ordinary conversation history, over the same trusted
+    # surface the rest of the run happens on, not through this tool's result.
+    "ask_user",
+
+    # ── task writes ───────────────────────────────────────────────────────────
+    # These persist into the task store, like create_task; whatever they echo
+    # back is content the calling agent already supplied or already had.
+    "create_task", "add_subtask", "update_task", "set_task_dependencies",
+
+    # ── pure computation / control flow ──────────────────────────────────────
+    # think is a scratchpad that returns its own input unchanged. calculator
+    # evaluates an expression the caller supplied. Neither touches a store, the
+    # network or another agent.
+    "think", "calculator",
+
+    # ── agent coordination: task-based delegation and status ────────────────
+    # assign_agent_tool and start_agent_tool set up and kick off a task-bound
+    # agent run but return only confirmation, not the run's output — the
+    # output is read later through get_task_result, which already carries its
+    # own grant. get_agent_status_tool and stop_agent_tool report/change run
+    # state (booleans, status strings), never run content. list_flows_tool
+    # lists flow ids/names for the user to pick from, not a flow's graph
+    # (that is get_flow_tool, itself configuration — see below).
+    "assign_agent_tool", "start_agent_tool", "get_agent_status_tool",
+    "stop_agent_tool", "list_flows_tool",
+    # reject_assignment_tool clears a pending assignment and resets task
+    # status; same shape as stop_agent_tool, control only.
+    "reject_assignment_tool",
+
+    # ── agent management: writes and structural listing ──────────────────────
+    # list_agents_tool returns id/name/description only, never a system prompt
+    # (that is get_agent_tool, classified above). create_agent_tool and
+    # delete_agent_tool report what was created/removed; modify_agent_tool
+    # echoes back the fields the caller supplied or merged. See
+    # ``effective_capabilities`` for why create/modify granting nothing extra
+    # still holds once delegation is considered.
+    "list_agents_tool", "create_agent_tool", "modify_agent_tool", "delete_agent_tool",
+    # list_models_tool returns catalog ids and context windows, configuration
+    # the Models page shows to everyone, never a key or a prompt.
+    "list_models_tool",
+
+    # ── schedule management: writes ──────────────────────────────────────────
+    # schedule_task creates a job from caller-supplied fields; cancel_scheduled
+    # and update_scheduled report/change a job the caller named by id. Reading
+    # the roster (list_scheduled) is classified above.
+    "schedule_task", "cancel_scheduled", "update_scheduled",
+
+    # ── flow / world / scenario / team / loop management ─────────────────────
+    # All of these are configuration the operator authored *for* the agents —
+    # a graph of nodes and edges, a simulated place, an environment plus a
+    # cast, a roster, an exit criterion — never operator data in the sense a
+    # task, a project record or an agent's instructions are. Reading, writing,
+    # deleting and validating any of them grants nothing.
+    "create_flow_tool", "get_flow_tool", "modify_flow_tool", "delete_flow_tool",
+    "validate_flow_tool",
+    "list_worlds_tool", "list_world_templates_tool", "get_world_tool",
+    "create_world_tool", "modify_world_tool", "validate_world_tool",
+    "delete_world_tool",
+    "list_environments_tool", "list_scenarios_tool", "create_scenario_tool",
+    "get_scenario_tool", "modify_scenario_tool", "delete_scenario_tool",
+    "validate_scenario_tool", "create_scenario_from_template_tool",
+    "list_teams_tool", "create_team_tool", "get_team_tool", "modify_team_tool",
+    "delete_team_tool",
+    "list_loops_tool", "create_loop_tool", "get_loop_tool", "modify_loop_tool",
+    "delete_loop_tool", "validate_loop_tool",
+
+    # ── project management: writes ───────────────────────────────────────────
+    # list_projects_tool / get_project_tool are classified READS_PRIVATE
+    # (CAPABILITY_GRANTS above) because a project record names a real repo and
+    # an on-disk path. These writes echo back only what the caller supplied or
+    # merged, the same reasoning as modify_agent_tool.
+    "create_project_tool", "modify_project_tool", "delete_project_tool",
+
+    # ── entity runs: stopping ────────────────────────────────────────────────
+    # stop_*_run_tool just interrupts a run in progress; the approval gate
+    # governs the spend/interruption, not this table. Starting one
+    # (run_scenario_tool / run_team_tool / run_loop_tool) is a delegation edge
+    # instead — see DELEGATING_TOOLS below, which is where their real
+    # capability lives (the run's content is read back later through
+    # get_scenario_run_tool / get_team_run_tool / get_loop_run_tool, already
+    # classified READS_PRIVATE above).
+    "stop_scenario_run_tool", "stop_team_run_tool", "stop_loop_run_tool",
+
+    # ── visualization / views / geometry-adjacent scene tools ───────────────
+    # Every view_*, graph_*, scene_*, slides_*, document_*, sim_configure,
+    # math_plot and view_compute tool operates on a view the agent itself is
+    # authoring, rendered through the hub's own view server — not a stored
+    # user document, not an external destination. view_get reads back only
+    # element ids, control values and a live user's control changes, which is
+    # the same trusted, same-session surface ask_user's answer arrives over,
+    # not attacker-controllable or private stored content. view_add_asset
+    # binds a workspace file into a view and returns an ``asset://`` ref, never
+    # the file's content. (view_serve is the one exception — it proxies an
+    # upstream URL and is classified CAN_EXFILTRATE above.)
+    "create_view", "view_apply_ops", "view_get", "view_add_control",
+    "view_remove_control", "view_revert", "view_snapshot", "view_link",
+    "graph_add_node", "graph_add_edge",
+    "graph_remove", "graph_set_layout", "scene_environment", "scene_camera",
+    "scene_light", "view_add_asset", "suggest_view", "view_set_timeline",
+    "sim_configure", "math_plot", "view_annotate", "slides_add", "slides_style",
+    "document_set", "view_compute", "view_serve_stop",
+
+    # ── evals: building and running ──────────────────────────────────────────
+    # list_evals_tool and list_graders_tool are structural metadata (counts,
+    # names, which graders cost money). create_eval_tool, modify_eval_tool,
+    # add_eval_case_tool and remove_eval_case_tool build a dataset from fields
+    # the caller supplies. estimate_eval_tool and run_eval_tool project or
+    # spend against that dataset; writing into the product's own store is not
+    # exfiltration, and the spend is the approval gate's job. list_eval_runs_tool
+    # returns only status and aggregate score, never the cases or the matrix
+    # (that is get_eval_run_tool, classified READS_PRIVATE + INGESTS_UNTRUSTED
+    # above, since a result can carry whatever the agent under test pulled in).
+    "list_evals_tool", "list_graders_tool", "create_eval_tool", "modify_eval_tool",
+    "add_eval_case_tool", "remove_eval_case_tool", "estimate_eval_tool",
+    "run_eval_tool", "list_eval_runs_tool",
+
+    # ── documentation ─────────────────────────────────────────────────────────
+    # Read-only over files the product ships — public by construction, so
+    # neither private data nor untrusted input.
+    "search_docs", "read_doc",
+
+    # ── browser ───────────────────────────────────────────────────────────────
+    # Ends this run's browser session; nothing is read or sent.
+    "browser_close",
+
+    # ── service ops: pure metadata and destructive actions ───────────────────
+    # service_health, list_containers and costs_summary are counts, statuses
+    # and totals, not content. stop_run, stop_instance, restart_instance,
+    # stop_container and prune_run_logs stop and delete, which the approval
+    # gate governs, not data.
+    "service_health", "list_containers", "costs_summary",
+    "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
+    # run_diagnostics (common/doctor.py) returns check statuses, counts and
+    # one sentence summaries, the same class of metadata as service_health.
+    "run_diagnostics",
+
+    # ── system workspace: the repository copy ────────────────────────────────
+    # system_repo_sync fetches the local repository into the local copy and
+    # returns a head and a branch name. system_commit writes a commit into the
+    # copy and echoes the branch, sha and file names the agent itself changed.
+    # system_attach_patch writes the diff into the task result (the product's
+    # own store) and returns the branch, commit and a diff stat.
+    # system_prune_branches deletes branches of the copy, which the approval
+    # gate governs. None of them moves data outside the system.
+    "system_repo_sync", "system_commit", "system_attach_patch", "system_prune_branches",
 })
 
 # Reviewed and classified, but outside the catalog.
@@ -215,6 +501,375 @@ ALIAS_GRANTS: Dict[str, FrozenSet[str]] = {
 }
 
 
+# ── External MCP servers ──────────────────────────────────────────────────────
+#
+# An MCP server is a collection of tools defined somewhere else, attached per
+# workspace (see mcp_client/). Its tools cannot appear in the tables above:
+# they are not in this repository, they differ per workspace, and a remote
+# server is free to rename them between two agent builds.
+#
+# They are still classified, just from a different source. The operator ticks
+# the three capabilities once per server when attaching it, and every tool from
+# that server inherits them. Per server rather than per tool because a per-tool
+# claim would have to be derived from the tool's own name or description, and a
+# server that calls its exfiltration endpoint ``get_weather`` would then classify
+# itself. The one party who can make an honest claim is the person who attached
+# the server.
+
+MCP_TOOL_PREFIX = "mcp__"
+MCP_ALIAS_PREFIX = "mcp:"
+
+
+def _mcp_server_of(tool_id: str) -> Optional[str]:
+    """The server id behind an MCP tool id or group alias, else ``None``.
+
+    ``mcp__<server>__<tool>`` names one tool, ``mcp:<server>`` names the whole
+    server the way ``filesystem`` names the filesystem group. Server ids are
+    validated (``mcp_client.store.validate_id``) to contain no double
+    underscore, so this split has exactly one reading.
+    """
+    text = str(tool_id or "")
+    if text.startswith(MCP_ALIAS_PREFIX):
+        return text[len(MCP_ALIAS_PREFIX):].strip().lower() or None
+    if text.startswith(MCP_TOOL_PREFIX):
+        server, sep, tool = text[len(MCP_TOOL_PREFIX):].partition("__")
+        if sep and server and tool:
+            return server.strip().lower()
+    return None
+
+
+def mcp_grants(tool_id: str) -> Optional[FrozenSet[str]]:
+    """Capabilities an MCP tool id or alias grants, or ``None`` if it is neither.
+
+    ``None`` and ``frozenset()`` mean different things here: the first says
+    "this is not an MCP id, keep looking", the second says "it is, and its
+    server grants nothing". A server that is not configured in the active
+    workspace also reads as granting nothing, and that is accurate rather than
+    lenient: with no configuration there is no server to connect to, so the
+    agent gets no tool from it either (``mcp_client.client.expand_ids``).
+
+    The lookup is lazy and defensive by design — this module must stay
+    importable without the MCP package, and a capability check must never be
+    the thing that raises.
+    """
+    server = _mcp_server_of(tool_id)
+    if server is None:
+        return None
+    try:
+        from common.workspace_context import resolve_active_workspace
+        from mcp_client.store import server_capabilities
+        return server_capabilities(resolve_active_workspace(), server)
+    except Exception:
+        log.warning(
+            "capability model: could not read the configuration of MCP server %r "
+            "— treating it as granting nothing.", server,
+        )
+        return frozenset()
+
+
+# ── Configuration-dependent grants ────────────────────────────────────────────
+#
+# run_code (tools/run_code.py) runs a snippet in a sandbox (sandbox/) with no
+# network and at most a read-only workspace mount: it can read private files
+# but has no way in for untrusted text and no way out. With
+# CODE_RUNNER_FALLBACK=local the same snippet runs as a host subprocess with
+# the network and the host's filesystem, which is run_shell's whole trifecta.
+# In a run whose environment has a ``limited`` network (AGENTS_HUB_NETWORK,
+# set by environments/launch.py in the run's own process), the snippet can
+# reach that environment's hosts: text from them comes in, anything can go
+# out to them. run_code then refuses the workspace mount, so it grants
+# ingests_untrusted and can_exfiltrate but not reads_private; the tool set's
+# own check catches an agent that also reads private files, exactly as it does
+# for the web tools. That is decided at build time, when the run's environment
+# is known (agents.capability_guard, build time); at save time no environment
+# is set and the sandboxed claim applies. The claim is looked up lazily the way
+# ``mcp_grants`` reads a server's configuration, and fails closed: if the
+# setting cannot be read, the worst case applies.
+
+_RUN_CODE_SANDBOXED: FrozenSet[str] = frozenset({READS_PRIVATE})
+_RUN_CODE_NETWORKED: FrozenSet[str] = frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE})
+
+
+def run_code_grants() -> FrozenSet[str]:
+    """What ``run_code`` grants under the current configuration and, inside
+    a run, under that run's environment network."""
+    import os
+
+    try:
+        from common.config import settings
+        fallback = str(getattr(settings, "code_runner_fallback", "") or "").strip().lower()
+    except Exception:
+        return CAPABILITY_GRANTS["run_code"]
+    if fallback == "local":
+        return CAPABILITY_GRANTS["run_code"]
+    if os.environ.get("AGENTS_HUB_NETWORK", "").strip().lower() == "limited":
+        return _RUN_CODE_NETWORKED
+    return _RUN_CODE_SANDBOXED
+
+
+# ── Delegation ────────────────────────────────────────────────────────────────
+#
+# A tool set's *own* grants (above) are only half the picture. An agent that
+# holds none of the three capabilities but can call ``run_agent_tool`` on an
+# agent that holds all three effectively holds all three: it can ask that
+# agent to do the reading/ingesting/sending on its behalf. These tools are the
+# edges of that delegation graph — calling one hands the request (and, for the
+# poll/wait tools, the eventual result) to another agent, whose own tool set
+# is not visible in the caller's tool list at all.
+#
+# They are deliberately NOT given a grant in ``CAPABILITY_GRANTS``: a bare
+# ``run_agent_tool`` grants nothing *on its own* (there is nothing to read,
+# ingest or send without a target), and folding its real effect into a static
+# per-tool grant would either overclaim for a caller with a harmless
+# delegation allowlist or underclaim for one with none. Instead
+# ``effective_capabilities`` below walks the graph these tools open and unions
+# in what is actually reachable.
+DELEGATING_TOOLS: FrozenSet[str] = frozenset({
+    "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
+    "run_team_tool", "run_loop_tool", "run_scenario_tool",
+})
+
+# create_agent_tool / modify_agent_tool are NOT in DELEGATING_TOOLS. They can
+# hand another agent an arbitrary tool list, which looks like the same shape —
+# but whatever they create or change is itself re-validated by the save-time
+# guard (``agents.registry.add_agent`` -> ``check_agent_tools``) before it can
+# be persisted. An agent holding create/modify can therefore only ever reach a
+# tool set the guard would already have accepted on its own; there is no
+# additional reach for this graph to add on top of that.
+
+
+# ── Declared secrets ─────────────────────────────────────────────────────────
+#
+# An agent that declares workspace secrets (``AgentSpec.secrets``, see
+# common/secrets.py) receives them as environment variables, which is reading
+# private data whatever its tools are. Rather than a second input to every
+# check, a declared secret travels as a pseudo tool id ``secrets:<NAME>``
+# that grants reads_private, so it shows up in ``capability_sources`` and in a
+# Violation under exactly that label.
+
+SECRET_GRANT_PREFIX = "secrets:"
+
+
+def secret_grant_ids(names: Optional[Iterable[str]]) -> List[str]:
+    """The pseudo tool ids for an agent's declared secrets."""
+    out: List[str] = []
+    for name in names or []:
+        label = f"{SECRET_GRANT_PREFIX}{str(name).strip()}"
+        if str(name).strip() and label not in out:
+            out.append(label)
+    return out
+
+
+def _secrets_of(agent_id: str) -> List[str]:
+    """A registered agent's declared secrets as pseudo tool ids. Never raises."""
+    try:
+        from agents.registry import get_agent  # lazy: avoid an import cycle
+        spec = get_agent(agent_id)
+    except Exception:
+        return []
+    return secret_grant_ids(getattr(spec, "secrets", None)) if spec is not None else []
+
+
+def _delegates_of(agent_id: str) -> Optional[List[str]]:
+    """Delegation allowlist of a registered agent, or ``None`` for "no restriction".
+
+    Mirrors ``tools.langchain_tools._caller_delegates``: a non-empty
+    ``AgentSpec.delegates`` restricts reachability to exactly that list; an
+    empty list, a missing field, or an agent record that does not exist yet
+    (the save-time check for a brand-new agent, before its first write) all
+    mean unrestricted — the agent can reach every agent in the registry.
+    Never raises: a lookup failure is treated the same as "not found".
+    """
+    try:
+        from agents.registry import get_agent  # lazy: avoid an import cycle
+        spec = get_agent(agent_id)
+    except Exception:
+        return None
+    if spec is None:
+        return None
+    allow = list(getattr(spec, "delegates", None) or [])
+    return allow or None
+
+
+def _all_agent_ids() -> List[str]:
+    """Every agent id currently in the registry. Lazy import, never fatal."""
+    try:
+        from agents.registry import list_agents  # lazy: avoid an import cycle
+        return [spec.id for spec in list_agents()]
+    except Exception:
+        return []
+
+
+def _delegation_targets(agent_id: str) -> List[str]:
+    allow = _delegates_of(agent_id)
+    return allow if allow is not None else _all_agent_ids()
+
+
+def _walk_delegation_graph(
+    agent_id: str,
+    tools: Sequence[str],
+    *,
+    resolve_agent_tools,
+    depth: int,
+    root_delegates: Optional[Sequence[str]] = None,
+) -> tuple:
+    """Shared traversal behind ``effective_capabilities`` / ``effective_capability_sources``.
+
+    Returns ``(capabilities, sources)`` where ``sources`` follows the same
+    shape as ``capability_sources`` — a capability mapped to the labels that
+    granted it — except a label reached through delegation reads
+    ``"via <tool> -> <agent id>: <tool ids>"`` instead of a bare tool id, so a
+    violation can name the path rather than just the fact of reachability.
+
+    Breadth-first, cycle-safe (a ``visited`` set seeded with ``agent_id``) and
+    depth-limited (at most ``depth`` delegation hops from the root).
+
+    ``root_delegates``: the reachability of every hop is normally resolved
+    from the registry (``_delegation_targets`` -> ``_delegates_of`` ->
+    ``agents.registry.get_agent``), which is exactly right for an agent
+    already on disk. It is wrong for the root of a save-time check: the spec
+    being validated (a brand-new agent, or an existing one with its
+    ``delegates`` field being changed) is not the one the registry would
+    return yet, so a lookup there sees either nothing or the stale prior
+    value, not the allowlist actually being saved. Pass the spec's own
+    ``delegates`` here to resolve the *first* hop from it instead of the
+    registry; every later hop (an already-persisted agent) still goes through
+    the registry as usual. ``None`` (the default) leaves the root on the
+    registry lookup too, unchanged from before this parameter existed.
+    """
+    tools = list(tools or [])
+    caps: Set[str] = set(capabilities_of(tools))
+    sources: Dict[str, List[str]] = capability_sources(tools)
+
+    if not any(t in DELEGATING_TOOLS for t in tools):
+        return caps, sources
+
+    def _targets_of(aid: str) -> List[str]:
+        if aid == agent_id and root_delegates is not None:
+            allow = list(root_delegates)
+            return allow if allow else _all_agent_ids()
+        return _delegation_targets(aid)
+
+    visited: Set[str] = {agent_id}
+    frontier: List[tuple] = [(agent_id, tools, "")]
+    hops = 0
+    while frontier and hops < max(0, int(depth)):
+        hops += 1
+        next_frontier: List[tuple] = []
+        for aid, atools, prefix in frontier:
+            delegating_tool = next((t for t in atools if t in DELEGATING_TOOLS), None)
+            if delegating_tool is None:
+                continue
+            for target_id in _targets_of(aid):
+                if target_id in visited:
+                    continue
+                visited.add(target_id)
+                # A delegate's declared secrets are part of what it can read,
+                # so they are reached through delegation like its tools are.
+                target_tools = list(resolve_agent_tools(target_id) or [])
+                target_tools += [s for s in _secrets_of(target_id) if s not in target_tools]
+                hop = f"via {delegating_tool} -> {target_id}"
+                path = f"{prefix} -> {hop}" if prefix else hop
+                for cap in capabilities_of(target_tools):
+                    granting = sorted(t for t in target_tools if cap in grants_of(t))
+                    label = f"{path}: {', '.join(granting) or '?'}"
+                    caps.add(cap)
+                    sources.setdefault(cap, [])
+                    if label not in sources[cap]:
+                        sources[cap].append(label)
+                next_frontier.append((target_id, target_tools, path))
+        frontier = next_frontier
+    return caps, sources
+
+
+def effective_capabilities(
+    agent_id: str,
+    tools: Iterable[str],
+    *,
+    resolve_agent_tools,
+    depth: int = 4,
+    root_delegates: Optional[Sequence[str]] = None,
+) -> Set[str]:
+    """The capabilities this agent's tool set grants, directly or by delegation.
+
+    An agent that cannot itself exfiltrate but can ``run_agent_tool`` an agent
+    that can, effectively can — the trifecta composes across the delegation
+    graph, not just within one tool list. This is the agent's own grants
+    (``capabilities_of(tools)``) unioned with the grants of every agent
+    reachable by following a tool in ``DELEGATING_TOOLS``.
+
+    Reachability: if ``agent_id`` (or an agent reached from it) has a non-empty
+    ``AgentSpec.delegates`` allowlist, only the ids on that list are reachable
+    from it. If the list is empty, absent, or the record does not exist yet,
+    it is unrestricted and every agent currently in the registry is reachable
+    — see ``_delegates_of``. ``create_agent_tool`` / ``modify_agent_tool`` add
+    no reach beyond that: see the comment above ``DELEGATING_TOOLS``.
+
+    ``resolve_agent_tools(agent_id) -> Sequence[str]`` looks up another
+    agent's current tool list — the caller wires this to
+    ``agents.registry.get_agent(id).tools`` with a lazy import, so this module
+    stays import-cycle-free and unit-testable with a fake resolver. The walk
+    is cycle-safe and stops after ``depth`` delegation hops (default 4).
+
+    ``root_delegates``, when given, resolves the root's own reachability
+    instead of a registry lookup — see ``_walk_delegation_graph``.
+    """
+    caps, _ = _walk_delegation_graph(
+        agent_id, tools, resolve_agent_tools=resolve_agent_tools, depth=depth,
+        root_delegates=root_delegates,
+    )
+    return caps
+
+
+def effective_capability_sources(
+    agent_id: str,
+    tools: Iterable[str],
+    *,
+    resolve_agent_tools,
+    depth: int = 4,
+    root_delegates: Optional[Sequence[str]] = None,
+) -> Dict[str, List[str]]:
+    """``effective_capabilities``, but with each capability's source path.
+
+    A direct grant is labelled with the granting tool id, exactly like
+    ``capability_sources``. A grant that only exists through delegation is
+    labelled ``"via <delegating tool> -> <agent id>: <tool ids>"`` (chained
+    with ``" -> "`` across multiple hops), so a :class:`Violation` can point at
+    the actual path instead of just the fact that it exists.
+
+    ``root_delegates``: see ``_walk_delegation_graph``.
+    """
+    _, sources = _walk_delegation_graph(
+        agent_id, tools, resolve_agent_tools=resolve_agent_tools, depth=depth,
+        root_delegates=root_delegates,
+    )
+    return sources
+
+
+def check_effective_combination(
+    capabilities: Iterable[str],
+    sources: Dict[str, List[str]],
+) -> Optional["Violation"]:
+    """Like :func:`check_combination`, but over an already-computed capability
+    set and source map — the delegation-aware pair from
+    ``effective_capabilities`` / ``effective_capability_sources`` — rather
+    than a raw tool list. Shares the rule-matching logic with
+    ``check_combination`` so the two never drift.
+    """
+    caps = set(capabilities)
+    rule = _matching_rule(caps)
+    if rule is None:
+        return None
+    return Violation(
+        rule_id=rule.id,
+        title=rule.title,
+        explanation=rule.explanation,
+        capabilities=rule.capabilities,
+        sources={c: s for c, s in sources.items() if c in rule.capabilities},
+        severity=rule.severity,
+    )
+
+
 # ── Channel-level ingest ──────────────────────────────────────────────────────
 #
 # The exposure is already live, before any web tool exists: the Telegram runner
@@ -232,6 +887,71 @@ def channel_capabilities(channel: Optional[str]) -> Set[str]:
     if channel and str(channel).strip().lower() in UNTRUSTED_CHANNELS:
         return {INGESTS_UNTRUSTED}
     return set()
+
+
+# ── The system workspace rule ─────────────────────────────────────────────────
+#
+# The system workspace (common/system_workspace.py) runs a scheduled loop over a
+# clone of this repository. The product owner's rule is that it never pushes,
+# and that nothing it does can send anything out. That is enforced here, at the
+# agent level, not in a prompt: an agent of the system workspace may hold no
+# tool that pushes, runs a shell, sends data outside (any can_exfiltrate grant,
+# built in or MCP), or delegates to another agent that might. Without such a
+# tool in the set, an approval request for a push cannot even arise.
+#
+# Unlike the combination rules below, this one is not subject to
+# capability_override, grandfathering or CAPABILITY_GUARD=off: the guard
+# functions in agents/capability_guard.py check it before any of those.
+
+SYSTEM_WORKSPACE_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({
+    # Pushing and shells, by name: git_push is not a catalog tool today, and is
+    # listed so it can never become one silently.
+    "git_publish", "git_push", "run_shell",
+    # Arbitrary code with the host's network unless container isolated.
+    "run_code",
+    # Runs a project's own install and start commands (tools/project_deploy.py).
+    "deploy_project",
+    # Every tool in the grant table that can send data outside.
+    "fetch_url", "browser_open", "browser_read", "browser_act", "browser_screenshot",
+    "notify_user", "schedule_notification", "view_serve", "schedule_management",
+    # Delegation reaches other agents' tools, which this rule cannot see.
+    "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
+    "run_team_tool", "run_loop_tool", "run_scenario_tool",
+})
+
+SYSTEM_WORKSPACE_RULE_ID = "system_workspace_no_push"
+
+
+def system_workspace_offenders(tool_ids: Iterable[str]) -> List[str]:
+    """Tool ids a system workspace agent may not hold: the named set plus
+    anything whose grant (built in, alias or MCP) includes can_exfiltrate."""
+    out: List[str] = []
+    for tid in tool_ids or []:
+        tid = str(tid)
+        if tid in out:
+            continue
+        if tid in SYSTEM_WORKSPACE_FORBIDDEN_TOOLS or CAN_EXFILTRATE in grants_of(tid):
+            out.append(tid)
+    return out
+
+
+def check_system_workspace_tools(tool_ids: Iterable[str]) -> Optional["Violation"]:
+    """The blocking violation a system workspace agent's tool set forms, or None."""
+    offenders = system_workspace_offenders(tool_ids)
+    if not offenders:
+        return None
+    return Violation(
+        rule_id=SYSTEM_WORKSPACE_RULE_ID,
+        title="System workspace: no way out",
+        explanation=(
+            "Agents of the system workspace work on a copy of this repository and "
+            "must never push, run a shell, delegate, or send anything outside. A "
+            "human fetches their branches and pushes them. Remove these tools."
+        ),
+        capabilities=frozenset({CAN_EXFILTRATE}),
+        sources={CAN_EXFILTRATE: offenders},
+        severity="block",
+    )
 
 
 # ── Blocked combinations ──────────────────────────────────────────────────────
@@ -332,6 +1052,8 @@ def grants_of(tool_id: str) -> FrozenSet[str]:
     nothing — but is logged, because silently granting nothing to a typo'd or
     newly-added tool is how a guard fails open.
     """
+    if tool_id == "run_code":
+        return run_code_grants()
     if tool_id in CAPABILITY_GRANTS:
         return CAPABILITY_GRANTS[tool_id]
     if tool_id in CAPABILITY_GRANTS_EXTRA:
@@ -340,6 +1062,14 @@ def grants_of(tool_id: str) -> FrozenSet[str]:
         return ALIAS_GRANTS[tool_id]
     if tool_id in REVIEWED_NO_GRANT:
         return frozenset()
+    if tool_id.startswith(SECRET_GRANT_PREFIX):
+        return frozenset({READS_PRIVATE})
+    # An MCP tool is classified by its server's configuration rather than by a
+    # table in this file — see ``mcp_grants``. Checked before the unknown-tool
+    # warning below, which would otherwise fire for every external tool.
+    external = mcp_grants(tool_id)
+    if external is not None:
+        return external
     if not _is_known_tool(tool_id):
         log.warning(
             "capability model: unknown tool id %r — treating as granting nothing. "
@@ -389,6 +1119,21 @@ def capability_sources(
     return sources
 
 
+def _matching_rule(caps: Set[str]) -> Optional[Rule]:
+    """The blocked combination a capability set forms, or None.
+
+    A blocking rule always wins over a warning one, so a set that forms both
+    the trifecta and the pair reports the trifecta. Shared by
+    ``check_combination`` and ``check_effective_combination`` so the two rule
+    checks — over a raw tool list and over a delegation-expanded set — can
+    never drift apart.
+    """
+    matched = [r for r in BLOCKED_COMBINATIONS if r.capabilities <= caps]
+    if not matched:
+        return None
+    return next((r for r in matched if r.severity == "block"), matched[0])
+
+
 def check_combination(
     tool_ids: Iterable[str],
     extra_capabilities: Optional[Dict[str, str]] = None,
@@ -401,12 +1146,9 @@ def check_combination(
     """
     tool_ids = list(tool_ids or [])
     caps = capabilities_of(tool_ids) | set(extra_capabilities or {})
-    matched = [r for r in BLOCKED_COMBINATIONS if r.capabilities <= caps]
-    if not matched:
+    rule = _matching_rule(caps)
+    if rule is None:
         return None
-    # A blocking rule always wins over a warning one, so a tool set that forms
-    # both the trifecta and the pair reports the trifecta.
-    rule = next((r for r in matched if r.severity == "block"), matched[0])
     all_sources = capability_sources(tool_ids, extra_capabilities)
     return Violation(
         rule_id=rule.id,
@@ -432,9 +1174,16 @@ def explain(tool_ids: Iterable[str]) -> Dict[str, object]:
 __all__ = [
     "INGESTS_UNTRUSTED", "READS_PRIVATE", "CAN_EXFILTRATE", "CAPABILITIES",
     "CAPABILITY_LABELS", "CAPABILITY_GRANTS", "CAPABILITY_GRANTS_EXTRA",
-    "REVIEWED_NO_GRANT", "ALIAS_GRANTS",
+    "REVIEWED_NO_GRANT", "ALIAS_GRANTS", "DELEGATING_TOOLS",
+    "MCP_TOOL_PREFIX", "MCP_ALIAS_PREFIX", "mcp_grants",
     "UNTRUSTED_CHANNELS", "channel_capabilities",
     "BLOCKED_COMBINATIONS", "Rule", "Violation",
     "grants_of", "capabilities_of", "capability_sources",
     "check_combination", "explain",
+    "effective_capabilities", "effective_capability_sources",
+    "check_effective_combination",
+    "SECRET_GRANT_PREFIX", "secret_grant_ids",
+    "run_code_grants",
+    "SYSTEM_WORKSPACE_FORBIDDEN_TOOLS", "SYSTEM_WORKSPACE_RULE_ID",
+    "system_workspace_offenders", "check_system_workspace_tools",
 ]

@@ -2,8 +2,10 @@
 
 One function that reports whether the moving parts are alive: database
 reachability and the row counts of the core stores, the liveness of every
-background service, on-disk state sizes, provider readiness, and the agent
-build cache.
+background service, on-disk state sizes, provider readiness, the agent
+build cache, and a summary of every flow/loop/team/scenario run by kind
+(common/entity_runs.py); the individual active runs are the deployment
+map's job (dashboard/backend/routes/deployment.py), this is just the count.
 
 It lives here rather than in the route so both callers can use it: the
 ``GET /api/health`` endpoint and the Service Agent's ``service_health`` tool.
@@ -14,11 +16,14 @@ that errors out tells an operator less than one that says which part is down.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from common import db
 from common.paths import AGENTS_HUB_ROOT, DB_FILE
+
+log = logging.getLogger(__name__)
 
 # Core stores whose row counts say how much state has accumulated.
 _COUNTED_TABLES = (
@@ -34,15 +39,16 @@ def _dir_size(path: Path) -> int:
             if f.is_file():
                 try:
                     total += f.stat().st_size
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - a health probe must never raise
+                    log.debug("stat failed for %s", f, exc_info=True)
     return total
 
 
 def _file_size(path: Path) -> int:
     try:
         return path.stat().st_size if path.exists() else 0
-    except Exception:
+    except Exception:  # noqa: BLE001 - a health probe must never raise
+        log.debug("stat failed for %s", path, exc_info=True)
         return 0
 
 
@@ -53,13 +59,15 @@ def _database() -> tuple[Dict[str, Any], bool]:
         for table in _COUNTED_TABLES:
             try:
                 counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            except Exception:
+            except Exception:  # noqa: BLE001 - a health probe must never raise
+                log.debug("row count failed for table %s", table, exc_info=True)
                 counts[table] = None
         running_runs = conn.execute(
             "SELECT COUNT(*) FROM runs WHERE status IN ('running','stop')"
         ).fetchone()[0]
         return {"reachable": True, "counts": counts, "running_runs": running_runs}, True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("database probe failed", exc_info=True)
         return {"reachable": False, "error": str(e)}, False
 
 
@@ -73,18 +81,27 @@ def _services(app_state: Any = None) -> Dict[str, Optional[bool]]:
     try:
         from plans.scheduler import scheduler
         services["plan_scheduler"] = scheduler.is_running()
-    except Exception:
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("plan_scheduler liveness check failed", exc_info=True)
         services["plan_scheduler"] = None
     try:
         from managers.run_watchdog import watchdog
         services["run_watchdog"] = watchdog.is_running()
-    except Exception:
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("run_watchdog liveness check failed", exc_info=True)
         services["run_watchdog"] = None
     try:
         from connectors.telegram.telegram_runner import service as tg
         services["telegram_poller"] = tg.is_running()
-    except Exception:
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("telegram_poller liveness check failed", exc_info=True)
         services["telegram_poller"] = None
+    try:
+        from common.singletons import supervisor
+        services["singleton_supervisor"] = supervisor.is_running()
+    except Exception:  # noqa: BLE001 - module may not be importable; "could not tell"
+        log.debug("singleton_supervisor liveness check failed", exc_info=True)
+        services["singleton_supervisor"] = None
     # The external-state publisher is an asyncio task on the app, so it is only
     # observable when a running app hands us its state.
     pub = getattr(app_state, "external_publisher", None) if app_state is not None else None
@@ -92,11 +109,26 @@ def _services(app_state: Any = None) -> Dict[str, Optional[bool]]:
     return services
 
 
+def _database_bytes() -> tuple[int, int]:
+    """(database size, WAL size). On Postgres the server reports the first and
+    there is no WAL file of ours to measure."""
+    if db.is_postgres():
+        try:
+            row = db.get_conn().execute(
+                "SELECT pg_database_size(current_database())").fetchone()
+            return int(row[0] or 0), 0
+        except Exception:  # noqa: BLE001 - a health probe must never raise
+            log.debug("pg_database_size query failed", exc_info=True)
+            return 0, 0
+    return _file_size(DB_FILE), _file_size(Path(str(DB_FILE) + "-wal"))
+
+
 def _storage() -> Dict[str, int]:
     logs_dir = AGENTS_HUB_ROOT / "run_logs"
+    db_bytes, wal_bytes = _database_bytes()
     return {
-        "db_bytes": _file_size(DB_FILE),
-        "db_wal_bytes": _file_size(Path(str(DB_FILE) + "-wal")),
+        "db_bytes": db_bytes,
+        "db_wal_bytes": wal_bytes,
         "run_logs_bytes": _dir_size(logs_dir),
         "run_logs_files": sum(1 for _ in logs_dir.glob("*.log")) if logs_dir.is_dir() else 0,
         "agents_hub_bytes": _dir_size(AGENTS_HUB_ROOT),
@@ -111,7 +143,21 @@ def _providers() -> Dict[str, Any]:
         "anthropic_key_set": bool(settings.anthropic_api_key),
         "google_key_set": bool(settings.google_api_key),
         "api_auth_enabled": bool(settings.api_token),
+        # The posture in force, resolved (a configured token alone still means
+        # token mode). Reported so a configuration problem can be read off the
+        # health snapshot rather than inferred from a 401. See docs/identity.md.
+        "auth_mode": _auth_mode(),
     }
+
+
+def _auth_mode() -> str:
+    """The effective AUTH_MODE, or "unknown" if identity cannot be imported."""
+    try:
+        from common.identity import current_mode
+        return current_mode()
+    except Exception:  # noqa: BLE001 - a health probe must never raise
+        log.debug("auth mode lookup failed", exc_info=True)
+        return "unknown"
 
 
 def _blender() -> Dict[str, Any]:
@@ -135,8 +181,27 @@ def _blender() -> Dict[str, Any]:
             "max_daemons": int(cfg.get("max_daemons") or 0),
             "reason": state.get("reason", ""),
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("blender probe failed", exc_info=True)
         return {"available": None, "error": str(e)}
+
+
+def _entity_runs() -> Dict[str, Any]:
+    """Counts of every flow, loop, team and scenario run, by kind and by kind
+    in an active status: the one table every kind's run lives in now
+    (common/entity_runs.py). A summary only: the individual active runs (with
+    their host and heartbeat age) are the deployment map's job
+    (dashboard/backend/routes/deployment.py), not this snapshot's."""
+    try:
+        from common import entity_runs
+        from common.run_status import ACTIVE_STATUSES
+        return {
+            "total_by_kind": entity_runs.counts_by_kind(),
+            "active_by_kind": entity_runs.counts_by_kind(statuses=ACTIVE_STATUSES),
+        }
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("entity run counts failed", exc_info=True)
+        return {"total_by_kind": {}, "active_by_kind": {}, "error": str(e)}
 
 
 def _agent_cache() -> Dict[str, Any]:
@@ -144,8 +209,38 @@ def _agent_cache() -> Dict[str, Any]:
         from common.config import settings
         from agents.agent_cache import cache_stats
         return {"enabled": bool(settings.agent_cache_enabled), **cache_stats()}
-    except Exception:
+    except Exception:  # noqa: BLE001 - a health probe must never raise
+        log.debug("agent cache stats failed", exc_info=True)
         return {"enabled": None}
+
+
+def _cluster() -> Dict[str, Any]:
+    """This process's role, who holds which singleton role, the launch queue
+    and the outbox: the parts that only exist once a deployment has more
+    than one process (docs/workers.md, docs/scaling.md)."""
+    out: Dict[str, Any] = {}
+    try:
+        from common.config import hub_role
+        from common import leases
+        out["role"] = hub_role()
+        out["instance"] = leases.owner_id()
+        out["leases"] = leases.all_leases()
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("leases probe failed", exc_info=True)
+        out["leases_error"] = str(e)
+    try:
+        from common import run_queue
+        out["queue"] = run_queue.stats()
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("queue probe failed", exc_info=True)
+        out["queue_error"] = str(e)
+    try:
+        from notify import outbound
+        out["outbox"] = outbound.stats()
+    except Exception as e:  # noqa: BLE001 - a health probe must never raise
+        log.debug("outbox probe failed", exc_info=True)
+        out["outbox_error"] = str(e)
+    return out
 
 
 def snapshot(app_state: Any = None) -> Dict[str, Any]:
@@ -164,4 +259,6 @@ def snapshot(app_state: Any = None) -> Dict[str, Any]:
         "providers": _providers(),
         "blender": _blender(),
         "agent_cache": _agent_cache(),
+        "cluster": _cluster(),
+        "entity_runs": _entity_runs(),
     }

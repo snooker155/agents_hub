@@ -8,21 +8,27 @@ one tied to the task for finalization purposes.
 
 Public API:
 - start_flow_run(task_id, flow_id, params) -> (run_id, session_id)
+
+Like a task run (agents/agent_launcher.py), a flow launch is a database half
+and a process half. ``start_flow_run`` and ``resume_flow_run`` do the first
+and, in the default role, the second right away; in the ``api`` role they put
+a launch spec on the queue (``common/run_queue.py``) and a worker calls
+:func:`launch_prepared` with it. The process half is the envelope every
+entity kind shares (runtime/entity_launch.py). See docs/workers.md.
 """
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
 
-from common.paths import AGENTS_HUB_ROOT
+from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT  # noqa: F401 - PROJECT_ROOT re-exported
 from managers.run_manager import _utc_now_iso
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+#: The agent id a ``human_interrupt`` node parks its task under. A flow node is
+#: not an agent, so this names the *kind* of pause rather than something the
+#: registry can re-run: the answer resumes the flow process, it does not start
+#: an agent. The task route keys its flow branch off this.
+INTERRUPT_AGENT_ID = "human_interrupt"
 
 
 def _set_flow_running(flow_id: str, running: bool) -> None:
@@ -37,11 +43,17 @@ def start_flow_run(
     task_id: str,
     flow_id: str,
     params: Optional[Dict[str, Any]] = None,
+    *,
+    parent_run_id: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Launch a flow run subprocess and return (run_id, session_id).
 
     Creates a shared session for the whole flow, a meta run record to track
     overall status, and spawns runtime/flow_run.py which creates per-node run records.
+
+    ``parent_run_id`` is the run this one executes inside (a ``run_flow``
+    node of another flow, see flow/entities/containers/), so a recursive stop
+    and the cost of the run tree reach it.
     """
     from tasks import service as _ts
     from common.session_service import get_or_create_task_session
@@ -89,13 +101,29 @@ def start_flow_run(
         run_id, flow_id,
         task_id=str(task_id), session_id=session_id, workspace=ws_name,
         title=task.title, log_file=str(log_file), status="pending",
+        parent_run_id=parent_run_id,
     )
 
-    env = _build_env(ws_name, session_id, str(log_file))
+    # Audit trail (common/audit.py). No HTTP request is in flight here (a flow
+    # may be re-queued by a worker or fired by a schedule), so the actor comes
+    # from the current-user contextvar, "local" when nobody is signed in.
+    try:
+        from common import audit
+        from common.auth import LOCAL_OPERATOR_ID
+        from common.identity import current_user_id
+        _actor_id = current_user_id()
+        audit.record(
+            "flow.launch",
+            actor={"actor_id": _actor_id,
+                   "actor_kind": "local" if _actor_id == LOCAL_OPERATOR_ID else "user",
+                   "actor_name": None},
+            workspace=ws_name, object_type="run", object_id=run_id,
+            details={"flow_id": flow_id, "task_id": str(task_id)},
+        )
+    except Exception:
+        pass
 
-    args = [
-        sys.executable,
-        str(PROJECT_ROOT / "runtime" / "flow_run.py"),
+    cli_args = [
         "--flow-id", flow_id,
         "--workspace", str(ws_path),
         "--task-id", str(task_id),
@@ -105,46 +133,163 @@ def start_flow_run(
 
     desc = params.get("description") or ""
     if desc:
-        args += ["--desc", desc]
+        cli_args += ["--desc", desc]
 
     # Optional structured seed state (scheduled/webhook triggers), passed as JSON
     # and merged into the flow's initial state by runtime/flow_run.py.
     seed = params.get("seed")
     if isinstance(seed, dict) and seed:
         import json as _json
-        args += ["--seed", _json.dumps(seed)]
+        cli_args += ["--seed", _json.dumps(seed)]
 
-    with open(log_file, "w", encoding="utf-8") as lf:
-        lf.write(
-            f"--- Flow run started at {_utc_now_iso()} ---\n"
-            f"Flow ID : {flow_id}\n"
-            f"Command : {args}\n\n"
-        )
-        lf.flush()
-
-        creationflags = 0
-        start_new_session = False
-        if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        else:
-            start_new_session = True
-
-
-        proc = subprocess.Popen(
-            args,
-            start_new_session=start_new_session,
-            creationflags=creationflags,
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            stdout=lf,
-            stderr=subprocess.STDOUT,
-        )
-
-    # Record the orchestrator pid on the flow-run record so a stop request can
-    # terminate this specific instance, and flip the flow's coarse running marker.
-    run_store.mark_running(run_id, proc.pid)
-    _set_flow_running(flow_id, True)
+    _dispatch({
+        "kind": QUEUE_KIND, "run_id": run_id, "entity_id": flow_id, "flow_id": flow_id,
+        "entrypoint": "flow_run", "cli_args": cli_args, "task_id": str(task_id),
+        "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
+        "log_file": str(log_file), "header": "Flow run started", "mode": "w",
+        "execution_mode": "local", "resume": False,
+    })
     return run_id, session_id
+
+
+#: What a flow launch is called on the queue.
+QUEUE_KIND = "flow"
+
+
+def _dispatch(spec: Dict[str, Any]) -> None:
+    """Spawn here, or hand the spec to a worker, by this process's role
+    (runtime/entity_launch.py)."""
+    from runtime.entity_launch import dispatch
+    dispatch(spec, launch_prepared)
+
+
+def launch_prepared(spec: Dict[str, Any]) -> None:
+    """The process half of a flow launch: spawn ``runtime/flow_run.py`` on
+    this host from a spec :func:`start_flow_run` or :func:`resume_flow_run`
+    prepared (the shared envelope records the pid and the host), then flip
+    the flow's coarse running marker and, on a resume, put the task back to
+    work."""
+    from runtime.entity_launch import launch_prepared as _launch
+
+    flow_id = str(spec.get("flow_id") or spec.get("entity_id") or "")
+    spec.setdefault("execution_mode", "local")
+    _launch(spec)
+    _set_flow_running(flow_id, True)
+    if spec.get("resume"):
+        try:
+            from tasks import service as _ts
+            from uuid import UUID
+            task_id = str(spec.get("task_id") or "")
+            if task_id:
+                _ts.update_task(UUID(task_id), status=_ts.TaskStatus.in_progress, pending_question=None)
+        except Exception:
+            pass
+
+
+class FlowResumeError(Exception):
+    """A flow run cannot be resumed (unknown run, or no checkpoint to resume from)."""
+
+
+def resume_flow_run(
+    flow_run_id: str,
+    answer: Optional[str] = None,
+    *,
+    auto: bool = False,
+) -> Dict[str, Any]:
+    """Continue a flow run from its checkpoint, in a fresh subprocess.
+
+    The run keeps its own id, task and session: a resume is the same execution
+    carrying on, not a new one, so the history tab, the task and the per-node
+    runs all stay where they were. ``runtime/flow_run.py`` is relaunched with
+    ``--resume-from``, replays the nodes the checkpoint records as done and runs
+    the rest.
+
+    ``answer`` is the person's reply to a ``human_interrupt`` node: it is written
+    into the checkpoint's state under the key that node declared, and the node
+    is marked done, so the resumed run continues past it with the answer in
+    state. ``auto`` marks a resume the watchdog performed rather than a person,
+    and is what its ``resume_attempts`` cap counts.
+    """
+    from tasks import service as _ts
+    from workspace import as_param_dict, resolve_task_workspace
+    from flow import store as flow_store
+    from flow import run_store
+
+    rec = run_store.get_flow_run(flow_run_id)
+    if not rec:
+        raise FlowResumeError(f"Flow run not found: {flow_run_id}")
+
+    checkpoint = dict(rec.get("checkpoint") or {})
+    if not checkpoint:
+        raise FlowResumeError(
+            f"Flow run {flow_run_id} has no checkpoint to resume from"
+        )
+
+    flow_id = str(rec.get("flow_id") or "")
+    task_id = str(rec.get("task_id") or "")
+    session_id = str(rec.get("session_id") or "")
+    if not flow_store.get_flow(flow_id):
+        raise FlowResumeError(f"Flow not found: {flow_id}")
+    task = _ts.get_task(task_id) if task_id else None
+    if task is None:
+        raise FlowResumeError(f"Task not found for flow run {flow_run_id}")
+
+    # Fold the answer into the checkpoint: the interrupt node becomes a node
+    # that is done, and its answer is in state where successors read it.
+    interrupt = dict(checkpoint.get("interrupt") or {})
+    if answer is not None and interrupt:
+        key = str(interrupt.get("output_key") or "answer")
+        node_id = str(interrupt.get("node_id") or "")
+        state = dict(checkpoint.get("state") or {})
+        state[key] = answer
+        checkpoint["state"] = state
+        done = [d for d in (checkpoint.get("done") or []) if d.get("node_id") != node_id]
+        if node_id:
+            done.append({"node_id": node_id, "output": answer, "ok": True})
+        checkpoint["done"] = done
+    checkpoint.pop("interrupt", None)
+
+    ws_name, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": rec.get("workspace")}))
+
+    log_file = rec.get("log_file")
+    if not log_file:
+        log_dir = AGENTS_HUB_ROOT / "run_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = str(log_dir / f"flow_run_{flow_run_id}.log")
+
+    attempts = int(rec.get("resume_attempts") or 0) + (1 if auto else 0)
+    run_store.update_flow_run(flow_run_id, {
+        "checkpoint": checkpoint,
+        "status": "running",
+        "resume_attempts": attempts,
+        "resumed_at": _utc_now_iso(),
+        "heartbeat_at": _utc_now_iso(),
+        "finished_at": None,
+        "exit_code": None,
+        "error": None,
+    })
+
+    cli_args = [
+        "--flow-id", flow_id,
+        "--workspace", str(ws_path),
+        "--task-id", task_id,
+        "--run-id", flow_run_id,
+        "--session-id", session_id,
+        "--resume-from", flow_run_id,
+    ]
+    _dispatch({
+        "kind": QUEUE_KIND, "run_id": flow_run_id, "entity_id": flow_id, "flow_id": flow_id,
+        "entrypoint": "flow_run", "cli_args": cli_args, "task_id": task_id,
+        "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
+        "log_file": str(log_file), "header": "Flow run resumed", "mode": "a",
+        "execution_mode": "local", "resume": True,
+    })
+    rec = run_store.get_flow_run(flow_run_id) or {}
+    return {
+        "flow_run_id": flow_run_id, "flow_id": flow_id, "task_id": task_id,
+        "session_id": session_id, "pid": rec.get("pid"), "resume_attempts": attempts,
+        "resumed_nodes": len(checkpoint.get("done") or []),
+    }
 
 
 class FlowNotFoundError(Exception):
@@ -244,11 +389,14 @@ def trigger_flow(
     }
 
 
-def _build_env(ws_name: str, session_id: str, log_file: str) -> Dict[str, str]:
+def _build_env(ws_name: str, session_id: str, log_file: str, *,
+               flow_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, str]:
+    # Kept for callers outside this module; the launch itself builds its
+    # environment in runtime/entity_launch.py.
     # base env + run metadata. No flow-wide model override: each node resolves its
     # own model via create_agent's cascade (agent definition → workspace override →
     # workspace settings → global), matching the single-agent path (agent_run.py).
     from common.subprocess_env import base_subprocess_env, add_run_env
-    env = base_subprocess_env(ws_name)
+    env = base_subprocess_env(ws_name, flow_id=flow_id, user_id=user_id)
     add_run_env(env, session_id=session_id, log_file=log_file)
     return env

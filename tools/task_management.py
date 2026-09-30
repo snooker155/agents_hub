@@ -5,11 +5,11 @@ Provides tools for creating, updating, and managing tasks in the system.
 """
 from __future__ import annotations
 
-import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from langchain_core.tools import tool
 from common.entity_sink import record_entity
 from common.workspace_context import (
@@ -20,8 +20,10 @@ from common.workspace_context import (
     filter_tasks_for_project,
 )
 
+from tasks.models import Actor, is_overdue
 from tasks.service import (
     CreatedBy,
+    IllegalTransition,
     Task,
     TaskStatus,
     create_task as svc_create_task,
@@ -37,6 +39,7 @@ from tasks.service import (
     get_task_result as svc_get_task_result,
 )
 from tasks.keys import looks_like_key
+from tools._json import json_err, json_ok
 from workspace import create_workspace_folder as ws_create_workspace_folder
 
 # -------------------- helpers --------------------
@@ -70,13 +73,19 @@ def _uuid_from_str(value: Optional[str]) -> Optional[UUID]:
 
 def _task_to_dict(t: Task) -> Dict[str, Any]:
     """Convert Task to dict with normalized enums and UUIDs."""
-    data = t.model_dump() if hasattr(t, "model_dump") else t.dict()
-    
+    data = t.model_dump()
+
+    # Overdue is derived from due_at + status, so compute it before either is
+    # touched below (still real datetime/TaskStatus objects at this point).
+    data["overdue"] = is_overdue(t.due_at, t.status)
+
     # Normalize enums
     if isinstance(data.get("status"), TaskStatus):
         data["status"] = data["status"].value
     if isinstance(data.get("created_by"), CreatedBy):
         data["created_by"] = data["created_by"].value
+    if hasattr(data.get("priority"), "value"):
+        data["priority"] = data["priority"].value
 
     # UUID to str
     for key in ("id", "parent_id"):
@@ -84,15 +93,15 @@ def _task_to_dict(t: Task) -> Dict[str, Any]:
             data[key] = str(data[key])
     if data.get("depends"):
         data["depends"] = [str(d) for d in data["depends"]]
-    
+
     # Datetime to ISO
-    for ts in ("created_at", "updated_at"):
+    for ts in ("created_at", "updated_at", "due_at"):
         if data.get(ts) is not None:
             try:
                 data[ts] = data[ts].isoformat()
             except Exception:
                 pass
-    
+
     return data
 
 
@@ -107,15 +116,10 @@ def _record_task(task: Optional[Task], action: str) -> None:
     record_entity("task", str(task.id), action, (task.title or "").strip())
 
 
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request", extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+# Shared JSON envelope (tools/_json.py); kept under these names here since this
+# module's tools were already calling them.
+_json_ok = json_ok
+_json_err = json_err
 
 
 def _active_workspace(explicit: Optional[str] = None) -> Optional[str]:
@@ -165,14 +169,19 @@ class CreateTaskInput(BaseModel):
         None,
         description="Task IDs or keys (e.g. DEMO-12) that must be completed before this task can run",
     )
+    due_at: Optional[datetime] = Field(
+        None, description="Optional deadline, ISO 8601 (e.g. 2026-01-31T17:00:00Z). Assumed UTC if no timezone."
+    )
 
-    @validator("parent_id")
+    @field_validator("parent_id")
+    @classmethod
     def _validate_parent(cls, v):
         if v is None or v == "":
             return None
         return str(_uuid_from_str(v))
 
-    @validator("depends")
+    @field_validator("depends")
+    @classmethod
     def _validate_depends(cls, v):
         if v is None:
             return None
@@ -188,6 +197,7 @@ def create_task(
     status: TaskStatus = TaskStatus.todo,
     workspace: Optional[str] = None,
     depends: Optional[List[str]] = None,
+    due_at: Optional[datetime] = None,
 ) -> str:
     """Create a new task in the shared task tracker. Returns JSON with the created task.
 
@@ -197,6 +207,7 @@ def create_task(
 
     Pass `depends` (task IDs or keys) when this task must wait for other tasks:
     it is created blocked and released back to todo once they are all done.
+    Pass `due_at` to set a deadline.
     """
     try:
         ws_name = workspace
@@ -220,6 +231,7 @@ def create_task(
             project=proj_name,
             project_id=proj_id,
             depends=[_uuid_from_str(d) for d in depends] if depends else None,
+            due_at=due_at,
         )
         _record_task(task, "created")
         return _json_ok({"task": _task_to_dict(task)})
@@ -236,11 +248,13 @@ class AddSubtaskInput(BaseModel):
         description="Task IDs or keys of subtasks that must be completed before this one",
     )
 
-    @validator("parent_id")
+    @field_validator("parent_id")
+    @classmethod
     def _valid_uuid(cls, v):
         return str(_uuid_from_str(v))
 
-    @validator("depends")
+    @field_validator("depends")
+    @classmethod
     def _validate_depends(cls, v):
         if v is None:
             return None
@@ -272,7 +286,8 @@ def add_subtask(parent_id: str, title: str, description: str = "", depends: Opti
 class IdInput(BaseModel):
     id: str = Field(..., description="UUID or key (e.g. DEMO-12) of the task")
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_uuid(cls, v):
         return str(_uuid_from_str(v))
 
@@ -373,18 +388,24 @@ class UpdateTaskInput(BaseModel):
         None,
         description="Replace the task's dependency list with these task IDs or keys (empty list clears it)",
     )
+    due_at: Optional[datetime] = Field(
+        None, description="Deadline, ISO 8601 (e.g. 2026-01-31T17:00:00Z). Assumed UTC if no timezone."
+    )
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_id(cls, v):
         return str(_uuid_from_str(v))
 
-    @validator("parent_id")
+    @field_validator("parent_id")
+    @classmethod
     def _valid_parent(cls, v):
         if v is None:
             return v
         return str(_uuid_from_str(v))
 
-    @validator("depends")
+    @field_validator("depends")
+    @classmethod
     def _valid_depends(cls, v):
         if v is None:
             return None
@@ -403,6 +424,7 @@ class UpdateTaskInput(BaseModel):
             self.created_by,
             self.workspace,
             self.depends,
+            self.due_at,
         ]
         if all(v is None for v in fields):
             raise ValueError("No fields to update provided")
@@ -422,12 +444,19 @@ def update_task(
     created_by: Optional[CreatedBy] = None,
     workspace: Optional[str] = None,
     depends: Optional[List[str]] = None,
+    due_at: Optional[datetime] = None,
 ) -> str:
     """Update task fields. Returns JSON with the updated task.
 
     Setting `depends` replaces the task's dependency list; the task is blocked
     while any dependency is not yet done and released back to todo when all
     dependencies are done.
+
+    An agent may only move a task: todo -> ready, todo/ready -> in_progress
+    (picking up its own work), in_progress -> resolved, in_progress -> blocked
+    (give a reason), and blocked -> in_progress. Other statuses (done,
+    reviewed, reviewing, awaiting_input, awaiting_approval, stopped, pending)
+    are set by the system, not by an agent's update_task call.
     """
     try:
         tid = _uuid_from_str(id)
@@ -468,12 +497,16 @@ def update_task(
                 return _json_err(f"Failed to set workspace '{workspace}': {e}")
         if depends is not None:
             fields["depends"] = [_uuid_from_str(d) for d in depends]
+        if due_at is not None:
+            fields["due_at"] = due_at
 
-        updated = svc_update_task(tid, **fields)
+        updated = svc_update_task(tid, actor=Actor.agent, **fields)
         if not updated:
             return _json_err("Task not found", code="not_found", extra={"id": id})
         _record_task(updated, "updated")
         return _json_ok({"task": _task_to_dict(updated)})
+    except IllegalTransition as e:
+        return _json_err(str(e), code="illegal_transition")
     except Exception as e:
         return _json_err(f"Failed to update task: {e}")
 
@@ -481,7 +514,8 @@ def update_task(
 class StopTaskInput(BaseModel):
     id: str
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_id(cls, v):
         return str(_uuid_from_str(v))
 
@@ -513,7 +547,8 @@ class BlockTaskInput(BaseModel):
     id: str
     reason: str = Field(..., min_length=1)
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_id(cls, v):
         return str(_uuid_from_str(v))
 
@@ -547,11 +582,13 @@ class SetDependenciesInput(BaseModel):
         ..., description="Task IDs or keys this task must wait for (empty list clears all dependencies)"
     )
 
-    @validator("id")
+    @field_validator("id")
+    @classmethod
     def _valid_id(cls, v):
         return str(_uuid_from_str(v))
 
-    @validator("depends")
+    @field_validator("depends")
+    @classmethod
     def _valid_depends(cls, v):
         return [str(_uuid_from_str(s)) for s in v]
 
@@ -587,11 +624,12 @@ def set_task_dependencies(id: str, depends: List[str]) -> str:
 
 
 class CreateSequenceInput(BaseModel):
-    task_ids: List[str] = Field(..., min_items=1, description="List of UUIDs")
+    task_ids: List[str] = Field(..., min_length=1, description="List of UUIDs")
     sequence_id: Optional[str] = None
     start_order: int = Field(1, ge=0)
 
-    @validator("task_ids")
+    @field_validator("task_ids")
+    @classmethod
     def _validate_ids(cls, v):
         if not v:
             raise ValueError("task_ids must not be empty")

@@ -9,7 +9,20 @@ running state and orchestrator pid cannot live on the flow definition.
 
 Records are keyed by ``flow_run_id`` (the id flow/launcher generates and passes
 to runtime/flow_run.py as --run-id; the per-node agent runs carry it as flow_run_id).
-The file format and locking mirror managers.run_manager's agent-run store.
+
+Storage is the ``entity_runs`` table shared with loop, team and scenario runs
+(``common.entity_runs``, kind ``flow``), which replaced first a
+``flow_runs.json`` file guarded by a FileLock and then a ``flow_runs`` table
+of its own. A flow run is written from at least three processes at once — the
+launcher, the orchestrator subprocess and the backend's stop route — and every
+write is one merge inside a transaction, so none of them drops another's
+field. Existing files are imported on first open, see
+``common.db_migrate.migrate_flow_runs``.
+
+A record is a plain dict and the table keeps it whole in ``doc``: callers store
+keys of their own on a run (a resume token, say) and read them back unchanged.
+The common columns beside ``doc`` are an indexed mirror of the fields queries
+filter on; the checkpoint has a column of its own.
 """
 from __future__ import annotations
 
@@ -19,12 +32,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from filelock import FileLock
-
+from common.entity_runs import EntityRunStore
+from common.run_status import RunStatus
 from common.paths import AGENTS_HUB_ROOT
-
-FLOW_RUNS_FILE = AGENTS_HUB_ROOT / "flow_runs.json"
-FLOW_RUNS_LOCK = AGENTS_HUB_ROOT / "flow_runs.json.lock"
 
 FLOW_LOGS_DIR = AGENTS_HUB_ROOT / "flow_logs"
 
@@ -102,17 +112,46 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
     flow_logs/<flow_id>.json (older runs), then sorts by timestamp so the merged
     stream stays chronological. Per-run separation is preserved by each event's
     run_group tag, which the dashboard groups on.
+
+    A per-run file this host does not have locally (its run finished on a
+    different worker or backend replica, common/blobs.py) is fetched from the
+    blob store instead of silently skipped: the store is listed by the
+    ``flow_logs/<flow_id>/`` prefix and any file not already found on disk is
+    downloaded before it is read.
     """
+    from common import blobs
+
     events: List[Dict[str, Any]] = []
     run_dir = FLOW_LOGS_DIR / str(flow_id)
+    local_names = set()
     if run_dir.is_dir():
         for f in run_dir.glob("*.json"):
+            local_names.add(f.name)
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 if isinstance(data, list):
                     events.extend(data)
             except Exception:
                 continue
+
+    try:
+        remote_keys = blobs.list(f"flow_logs/{flow_id}/")
+    except Exception:
+        remote_keys = []
+    for key in remote_keys:
+        name = key.rsplit("/", 1)[-1]
+        if not name.endswith(".json") or name in local_names:
+            continue
+        path = blobs.ensure_local(key)
+        if path is None:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                events.extend(data)
+        except Exception:
+            continue
+
     legacy = FLOW_LOGS_DIR / f"{flow_id}.json"
     if legacy.exists():
         try:
@@ -125,78 +164,59 @@ def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
     return events
 
 
-def _load(timeout: float = 10.0) -> List[Dict[str, Any]]:
-    if not FLOW_RUNS_FILE.exists():
-        return []
-    with FileLock(str(FLOW_RUNS_LOCK), timeout=timeout):
-        try:
-            txt = FLOW_RUNS_FILE.read_text(encoding="utf-8")
-            return json.loads(txt) if txt.strip() else []
-        except Exception:
-            return []
+# -------------------- Run records --------------------
+# The record handling (merge, whole-record document, mirrored columns, the
+# ``flow_runs.changed`` notice) is the shared implementation in
+# common/entity_runs.py; this module only says what a flow run looks like.
 
-
-def _save(runs: List[Dict[str, Any]], timeout: float = 10.0) -> None:
-    FLOW_RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(runs, ensure_ascii=False, indent=2)
-    with FileLock(str(FLOW_RUNS_LOCK), timeout=timeout):
-        tmp = FLOW_RUNS_FILE.with_suffix(FLOW_RUNS_FILE.suffix + ".tmp")
-        tmp.write_text(payload, encoding="utf-8")
-        os.replace(tmp, FLOW_RUNS_FILE)
+#: Flow-run records, kind ``flow`` of the shared table. Oldest first, a run
+#: that has not started yet counting as oldest.
+RUNS: EntityRunStore[Dict[str, Any]] = EntityRunStore(
+    "flow",
+    order_by="COALESCE(started_at, ''), run_id",
+    live_statuses=(RunStatus.running.value, RunStatus.pending.value,
+                   RunStatus.stopping.value),
+)
+_RUNS = RUNS
 
 
 # -------------------- Public API --------------------
 
 def load_flow_runs(timeout: float = 10.0) -> List[Dict[str, Any]]:
-    """Return all flow-run records."""
-    return _load(timeout)
+    """Return all flow-run records, oldest first.
+
+    ``timeout`` is the old file-lock wait and is accepted but unused: SQLite
+    does its own waiting (``PRAGMA busy_timeout``). The parameter stays because
+    callers pass it positionally.
+    """
+    return _RUNS.list()
 
 
 def _notify_flow_runs(flow_id: Optional[str] = None) -> None:
-    try:
-        from common.session_broker import notify_change
-        notify_change("flow_runs", flow_id=flow_id)
-    except Exception:
-        pass
+    _RUNS.notify(flow_id=flow_id)
 
 
 def upsert_flow_run(rec: Dict[str, Any]) -> None:
-    """Insert or update a flow-run record by ``flow_run_id``."""
-    runs = _load()
-    for i, r in enumerate(runs):
-        if r.get("flow_run_id") == rec.get("flow_run_id"):
-            runs[i] = {**r, **rec}
-            _save(runs)
-            _notify_flow_runs(rec.get("flow_id") or r.get("flow_id"))
-            return
-    runs.append(rec)
-    _save(runs)
-    _notify_flow_runs(rec.get("flow_id"))
+    """Insert or update a flow-run record by ``flow_run_id``.
+
+    An existing record is merged into, not replaced, so a field this caller did
+    not mention survives. The same semantics the JSON store had.
+    """
+    _RUNS.upsert(rec)
 
 
 def update_flow_run(flow_run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Apply partial updates to a flow-run record and return the merged record."""
-    runs = _load()
-    for i, r in enumerate(runs):
-        if r.get("flow_run_id") == flow_run_id:
-            newr = {**r, **updates}
-            runs[i] = newr
-            _save(runs)
-            try:
-                from common.session_broker import notify_change
-                notify_change("flow_runs", flow_run_id=flow_run_id, flow_id=newr.get("flow_id"))
-            except Exception:
-                pass
-            return newr
-    return None
+    """Apply partial updates to a flow-run record and return the merged record.
+
+    The merge happens inside one transaction, so two processes checkpointing
+    different keys on the same run cannot drop each other's write.
+    """
+    return _RUNS.update(flow_run_id, updates)
 
 
 def get_flow_run(flow_run_id: str) -> Optional[Dict[str, Any]]:
     """Return a flow-run record by id, or None."""
-    for r in _load():
-        if r.get("flow_run_id") == flow_run_id:
-            return r
-    return None
+    return _RUNS.get(flow_run_id)
 
 
 def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
@@ -215,9 +235,7 @@ def get_active_flow_runs(flow_id: str) -> List[Dict[str, Any]]:
     """
     active: List[Dict[str, Any]] = []
     reaped = False
-    for r in _load():
-        if r.get("flow_id") != flow_id or r.get("status") not in {"running", "pending"}:
-            continue
+    for r in _RUNS.active({"flow_id": str(flow_id)}):
         # Only reap once a pid has been recorded (status == running); a pending run
         # hasn't been handed a pid yet and is legitimately not-yet-started.
         pid = r.get("pid")
@@ -258,8 +276,12 @@ def open_flow_run(
     log_file: Optional[str] = None,
     pid: Optional[int] = None,
     status: str = "pending",
+    parent_run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Create (or reset) a flow-run record at launch and return it."""
+    """Create (or reset) a flow-run record at launch and return it.
+
+    ``parent_run_id`` is set when the run executes inside another run (a
+    ``run_flow`` node); left out, a reset keeps whatever parent it had."""
     rec: Dict[str, Any] = {
         "flow_run_id": flow_run_id,
         "flow_id": flow_id,
@@ -276,8 +298,36 @@ def open_flow_run(
         "exit_code": None,
         "error": None,
     }
+    if parent_run_id:
+        rec["parent_run_id"] = str(parent_run_id)
     upsert_flow_run(rec)
     return rec
+
+
+def add_flow_run_child(flow_run_id: str, node_id: str, child_run_id: str) -> Optional[Dict[str, Any]]:
+    """Record that node ``node_id`` of this flow run launched ``child_run_id``.
+
+    ``children`` on the record maps node id to child run id. ``update_flow_run``
+    merges top level keys only, so the map is read and rewritten inside one
+    transaction: two container nodes running in parallel both keep their entry.
+    Returns the merged record, or None when there is no such flow run.
+    """
+    from common import db
+
+    with db.transaction():
+        rec = _RUNS.read(flow_run_id)
+        if rec is None:
+            return None
+        children = dict(rec.get("children") or {})
+        children[str(node_id)] = str(child_run_id)
+        return _RUNS.update(flow_run_id, {"children": children})
+
+
+def flow_run_child(flow_run_id: str, node_id: str) -> Optional[str]:
+    """The child run id node ``node_id`` of this flow run launched, if any."""
+    rec = _RUNS.read(flow_run_id) if flow_run_id else None
+    value = ((rec or {}).get("children") or {}).get(str(node_id))
+    return str(value) if value else None
 
 
 def mark_running(flow_run_id: str, pid: int) -> None:
@@ -296,10 +346,22 @@ def close_flow_run(
     exit_code: int = 0,
     error: Optional[str] = None,
 ) -> None:
-    """Finalize a flow-run record (completed / failed / stopped)."""
-    update_flow_run(flow_run_id, {
+    """Finalize a flow-run record (completed / failed / stopped).
+
+    Also mirrors the run's log file (best-effort), so a backend replica or
+    worker on another host can serve it once the run is done, even though it
+    never ran the orchestrator subprocess itself (common/blobs.py).
+    """
+    rec = update_flow_run(flow_run_id, {
         "status": status,
         "exit_code": exit_code,
         "error": error,
         "finished_at": _utc_now_iso(),
     })
+    log_file = rec.get("log_file") if rec else None
+    if log_file:
+        try:
+            from common import blobs
+            blobs.mirror(blobs.rel(log_file))
+        except Exception:
+            pass

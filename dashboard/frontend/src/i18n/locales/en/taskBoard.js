@@ -42,6 +42,7 @@ export default {
   created: 'Created',
   actions: 'Actions',
   external: 'External',
+  overdue: 'Overdue',
   yes: 'Yes',
   no: 'No',
   openDetails: 'Open details',

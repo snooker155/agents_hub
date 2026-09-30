@@ -14,6 +14,14 @@ Each node execution:
 
 When the DAG finishes, the task is finalized directly via finalize_flow_task,
 which sets the task status to resolved (single mode) or in_progress (continuous).
+
+Two endings are not "finished":
+
+* ``--resume-from <flow_run_id>`` starts from the checkpoint the engine wrote
+  after the last node that completed, replays those nodes and runs the rest.
+* a ``human_interrupt`` node parks the task in ``awaiting_input`` and exits with
+  :data:`EXIT_AWAITING_INPUT`, so the caller can tell "waiting for a person"
+  from "failed". Answering resumes the run through ``flow.launcher.resume_flow_run``.
 """
 from __future__ import annotations
 
@@ -37,10 +45,18 @@ if _REPO_ROOT not in sys.path:
 # First-party imports. Kept at module top (after the sys.path shim above) rather
 # than inside main(): this module already pulls the heavy agents.* / langchain
 # graph transitively, so deferring these saves no startup cost.
+from common.logging_config import marker_logger
 from managers.run_manager import finalize_flow_task
 from tasks.context import persist_task_result, build_task_instruction
-from flow.launcher import _set_flow_running
+from flow.launcher import INTERRUPT_AGENT_ID, _set_flow_running
 from flow import run_store
+
+# The marker lines below (``[flow_start]``, ``[flow_done]``, ``[flow_resume]``,
+# ``[flow_interrupt]``, ...) are what agents.agent_launcher pipes into the run's
+# log file and what dashboard/backend/routes/sessions.py and several tests grep
+# back out of it, so they go through a logger configured to emit the message
+# only, on stdout, at INFO regardless of ORCH_LOG_LEVEL.
+log = marker_logger(__name__)
 
 # The DAG walk lives in flow.engine; the task-surface driver (node execution,
 # run records, flow-log writes, stop check) lives in flow.task_driver. run.py is
@@ -54,8 +70,78 @@ from flow.task_driver import (
 from tasks import service as _ts
 
 
+#: Exit status for a run parked on a human_interrupt node. Distinct from 0
+#: (finished) and 1 (failed or stopped) so a supervisor can tell a run that is
+#: waiting for a person from one that ended.
+EXIT_AWAITING_INPUT = 2
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _park_on_interrupt(
+    *, flow: Dict, flow_id: str, run_id: str, task_id: str, session_id: str,
+    interrupt: Dict, checkpoint: Dict,
+) -> None:
+    """Park the flow on a human_interrupt node and end this process.
+
+    The task goes to ``awaiting_input`` with the question on it, exactly as an
+    agent's ``ask_user`` does, so the existing inbox, bell and task page work
+    unchanged. ``park_task_awaiting_input`` finds the task through a run record,
+    so the interrupt node opens (and immediately closes) one of its own: it is
+    the node that is waiting, and this way it is visible as such in the run list
+    instead of being invisible until someone answers.
+    """
+    from uuid import uuid4
+    from managers.run_manager import open_run, close_run, update_run, park_task_awaiting_input
+
+    node_id = str(interrupt.get("node_id") or "")
+    question = str(interrupt.get("question") or "")
+    node_run_id = str(uuid4())
+    try:
+        open_run(
+            node_run_id, INTERRUPT_AGENT_ID, pid=os.getpid(),
+            task_id=task_id, session_id=session_id, session_type="task",
+            channel="flow", flow_id=flow_id, flow_run_id=run_id,
+            flow_node_id=node_id, flow_node_label="Human Interrupt",
+            link_to_session=True,
+        )
+        update_run(node_run_id, {"input": question})
+        # Closed straight away: an open run with this process's pid would be
+        # reaped as a crash the moment this process exits.
+        close_run(node_run_id, status="awaiting_input", exit_code=0, output=question)
+    except Exception as e:  # noqa: BLE001
+        log.info(f"[flow_interrupt] could not record the interrupt run: {e}")
+
+    # The checkpoint is what the answer resumes from; the interrupt rides with
+    # it so the resume knows which key the answer belongs under.
+    run_store.update_flow_run(run_id, {
+        "checkpoint": {**checkpoint, "interrupt": interrupt},
+        "status": "awaiting_input",
+        "heartbeat_at": _utc_now_iso(),
+    })
+    try:
+        park_task_awaiting_input(
+            node_run_id,
+            {"question": question, "choices": list(interrupt.get("choices") or []),
+             "node": node_id},
+            agent_id=INTERRUPT_AGENT_ID,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.info(f"[flow_interrupt] could not park the task: {e}")
+
+    log_flow(flow_id, run_id, {
+        "timestamp": _utc_now_iso(),
+        "type": "flow_interrupt",
+        "node_id": node_id,
+        "content": f"Waiting for a person: {question}",
+        "status": "awaiting_input",
+        "question": question,
+        "choices": list(interrupt.get("choices") or []),
+    })
+    _set_flow_running(flow_id, False)
+    log.info(f"[flow_interrupt] flow_run={run_id} node={node_id} parked awaiting input")
 
 
 # ── Preflight ───────────────────────────────────────────────────────────────
@@ -72,7 +158,7 @@ def _fail_preflight(flow_id: str, run_id: str, task_id: str, stage: str, detail:
         "content": msg,
         "status": "failed",
     })
-    print(f"[flow_error] {msg}", file=sys.stderr)
+    log.error(f"[flow_error] {msg}")
     sys.exit(1)
 
 
@@ -87,6 +173,7 @@ def main() -> None:
     parser.add_argument("--session-id", required=True, help="Shared session ID for all node runs")
     parser.add_argument("--desc", default="", help="Shared context / description override")
     parser.add_argument("--seed", default="", help="JSON seed state merged into the flow's initial state (scheduled/webhook triggers)")
+    parser.add_argument("--resume-from", default="", help="Flow run id whose checkpoint this run continues")
     args = parser.parse_args()
 
     # No load_dotenv() here: like runtime/agent_run.py, this subprocess inherits
@@ -99,6 +186,7 @@ def main() -> None:
 
     flow_id = args.flow_id
     run_id = args.run_id or str(uuid4())
+    task_id = args.task_id
 
     from flow import store as flow_store
     flow = flow_store.get_flow(flow_id)
@@ -107,7 +195,7 @@ def main() -> None:
         run_store.close_flow_run(run_id, status="failed", exit_code=1, error=msg)
         _set_flow_running(flow_id, False)
         finalize_flow_task(task_id, "failed", 1, error=msg)
-        print(f"[flow_error] {msg}", file=sys.stderr)
+        log.error(f"[flow_error] {msg}")
         sys.exit(1)
 
     # A flow is not an agent run, so it has no run record of its own — the per-node
@@ -128,14 +216,14 @@ def main() -> None:
 
     try:
         validate_flow(flow)
-        print(f"[preflight] validation OK ({len(nodes)} nodes, {len(edges)} edges)")
+        log.info(f"[preflight] validation OK ({len(nodes)} nodes, {len(edges)} edges)")
     except FlowValidationError as e:
         _fail_preflight(flow_id, run_id, task_id, "validation", "; ".join(e.errors))
 
     try:
         node_entities = resolve_entities(nodes)
         _cats = sorted({s.category for s in node_entities.values()})
-        print(f"[preflight] resolved {len(node_entities)} entities from registry (categories: {_cats})")
+        log.info(f"[preflight] resolved {len(node_entities)} entities from registry (categories: {_cats})")
     except FlowValidationError as e:
         _fail_preflight(flow_id, run_id, task_id, "entity resolution", "; ".join(e.errors))
 
@@ -151,9 +239,10 @@ def main() -> None:
     run_desc = (args.desc or "").strip()
     parts = [flow_desc] + ([run_desc] if run_desc and run_desc != flow_desc else [])
     shared_context = "\n\n".join(p for p in parts if p)
-    task_id = args.task_id
     if task_id:
-        shared_context = build_task_instruction(task_id, shared_context)
+        # --workspace is the flow's working directory: the task's workspace
+        # files are copied into it (task_files/) and named in the context.
+        shared_context = build_task_instruction(task_id, shared_context, work_dir=args.workspace)
 
     _task = _ts.get_task(task_id) if task_id else None
     task_title = (getattr(_task, "title", "") or "").strip()
@@ -161,8 +250,8 @@ def main() -> None:
     session_id = args.session_id
     _port = int(os.environ.get("DASHBOARD_PORT", "8000"))
 
-    print(f"[flow_start] flow_id={flow_id} nodes={len(nodes)} edges={len(edges)}")
-    print(f"Running flow with context: {shared_context}")
+    log.info(f"[flow_start] flow_id={flow_id} nodes={len(nodes)} edges={len(edges)}")
+    log.info(f"Running flow with context: {shared_context}")
 
     # The engine owns the DAG walk; the task driver supplies the subprocess sinks
     # (node execution, run records, flow-log writes, stop check). See flow.task_driver.
@@ -171,6 +260,24 @@ def main() -> None:
         session_id=session_id, task_title=task_title, node_run_ids=node_run_ids,
         port=_port,
     )
+
+    # Resume: the checkpoint written after the last node that finished. Its
+    # nodes are replayed (outputs into node_outputs, values into FlowState) and
+    # the run continues with what is left.
+    resume_cp = None
+    if (args.resume_from or "").strip():
+        _rec = run_store.get_flow_run(args.resume_from) or {}
+        resume_cp = _rec.get("checkpoint") or None
+        if resume_cp:
+            _done = len(resume_cp.get("done") or [])
+            log.info(f"[flow_resume] resuming {args.resume_from} from checkpoint ({_done} node(s) already done)")
+            log_flow(flow_id, run_id, {
+                "timestamp": _utc_now_iso(), "type": "flow_resume",
+                "content": f"Resuming from checkpoint ({_done} node(s) already done)",
+                "status": "running",
+            })
+        else:
+            log.info(f"[flow_resume] {args.resume_from} has no checkpoint — running from the start")
 
     # Seed state (scheduled/webhook triggers): a JSON object merged into the
     # flow's initial state so external callers can parameterize a run.
@@ -182,13 +289,13 @@ def main() -> None:
             if isinstance(parsed, dict):
                 seed_state = parsed
             else:
-                print(f"[flow_seed] ignoring non-object seed: {type(parsed).__name__}")
+                log.info(f"[flow_seed] ignoring non-object seed: {type(parsed).__name__}")
         except Exception as e:
-            print(f"[flow_seed] failed to parse --seed JSON: {e}")
+            log.info(f"[flow_seed] failed to parse --seed JSON: {e}")
 
     async def _drive() -> dict:
         final: dict = {}
-        async for ev in run_flow_engine(flow, flow_id=flow_id, shared_context=shared_context, driver=driver, seed_state=seed_state):
+        async for ev in run_flow_engine(flow, flow_id=flow_id, shared_context=shared_context, driver=driver, seed_state=seed_state, resume=resume_cp):
             if ev["type"] == "flow_finish":
                 final = ev
         return final
@@ -198,8 +305,18 @@ def main() -> None:
     # A user stop between nodes halts the engine with stopped=True; the stop
     # endpoint already logged flow_stopped + killed the pid, so just exit.
     if final.get("stopped"):
-        print(f"[flow_stopped] flow_run={run_id} — stop requested, halting")
+        log.info(f"[flow_stopped] flow_run={run_id} — stop requested, halting")
         sys.exit(1)
+
+    # A human_interrupt node parked the run: the task waits for an answer and
+    # this process ends without finalizing anything.
+    if final.get("interrupt"):
+        _park_on_interrupt(
+            flow=flow, flow_id=flow_id, run_id=run_id, task_id=task_id,
+            session_id=session_id, interrupt=final["interrupt"],
+            checkpoint=final.get("checkpoint") or {},
+        )
+        sys.exit(EXIT_AWAITING_INPUT)
 
     any_node_failed = bool(final.get("any_failure"))
     combined_output = final.get("combined_output") or ""
@@ -227,8 +344,8 @@ def main() -> None:
     run_store.close_flow_run(args.run_id, status=fr_status, exit_code=fr_exit)
     _set_flow_running(args.flow_id, False)
     finalize_flow_task(args.task_id, "completed" if not any_node_failed else "failed", fr_exit)
-    print(f"[flow_done] flow_id={args.flow_id} nodes_completed={len(node_outputs)}"
-          f" nodes_failed={sum(1 for n in nodes if n.get('id') not in node_outputs and _resolve_agent_id(n))}")
+    log.info(f"[flow_done] flow_id={args.flow_id} nodes_completed={len(node_outputs)}"
+             f" nodes_failed={sum(1 for n in nodes if n.get('id') not in node_outputs and _resolve_agent_id(n))}")
 
 
 if __name__ == "__main__":

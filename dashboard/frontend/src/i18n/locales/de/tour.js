@@ -1,0 +1,44 @@
+export default {
+  next: 'Weiter',
+  previous: 'Zurück',
+  done: 'Fertig',
+  progress: '{{current}} von {{total}}',
+  steps: {
+    chat: {
+      title: 'Chat',
+      description: 'Sprechen Sie von hier aus mit jedem Agenten, Flow oder Team. Die Kopfzeile zeigt den Workspace, das Projekt und das Modell, das die nächste Nachricht verwendet.',
+    },
+    agents: {
+      title: 'Agenten',
+      description: 'Jeder Agent ist ein Ordner mit geschichteten Anweisungen, Werkzeuge werden namentlich vergeben. Jede Karte zeigt, was er hat und was er gerade ausführt.',
+    },
+    tasks: {
+      title: 'Aufgaben',
+      description: 'Arbeit, die ein Gespräch überdauert: Teilaufgaben, Abhängigkeiten, der zuständige Agent und das Ergebnis. Wechseln Sie zwischen Liste und Board.',
+    },
+    flows: {
+      title: 'Flows',
+      description: 'Ein Graph aus Agenten, der als eine Pipeline läuft. Öffnen Sie einen Flow, um ihn auf der Leinwand zu bearbeiten und für eine Aufgabe auszuführen.',
+    },
+    teams: {
+      title: 'Teams',
+      description: 'Eine Gruppe von Agenten, die über ein gemeinsames Nachrichtenboard arbeiten. Das Board ist die Arbeit und zugleich ihr Protokoll.',
+    },
+    playground: {
+      title: 'Playground',
+      description: 'Agenten handeln Schritt für Schritt in einer simulierten Welt, mit dem Gedanken hinter jedem Zug und dem Zustand, den er verändert hat.',
+    },
+    views: {
+      title: 'Ansichten',
+      description: 'Diagramme, Graphen, 3D Szenen, Tabellen und Dokumente, die Agenten als Antwort gebaut haben. Öffnen Sie eine, um sie im Gespräch weiter zu bearbeiten.',
+    },
+    health: {
+      title: 'Status',
+      description: 'Ob der Dienst, die Modelle und die optionalen Teile laufen, mit einem Lösungsvorschlag für alles, was nicht läuft.',
+    },
+    docs: {
+      title: 'Dokumentation',
+      description: 'Die vollständige Dokumentation, derselbe Text, den die Agenten lesen. Von hier aus können Sie diese Tour jederzeit wiederholen.',
+    },
+  },
+};

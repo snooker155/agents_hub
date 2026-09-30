@@ -9,7 +9,7 @@ export default {
   loadMore_other: 'Load {{count}} more',
   empty: {
     title: 'No instances yet',
-    hint: 'A copy appears here the moment an agent starts working — from a task, a chat, a node or a flow.',
+    hint: 'A copy appears here the moment an agent starts working, from a task, a chat, a resident instance or a flow.',
   },
   states: {
     starting: 'starting',
@@ -27,13 +27,16 @@ export default {
     failed: 'failed',
   },
   kinds: {
-    node: 'Node',
+    runner: 'Runner',
+    resident: 'Resident instance',
+    node: 'Node (migrated)',
     container: 'Container',
     task: 'Task',
     chat: 'Chat',
     flow_node: 'Flow node',
     team_member: 'Team seat',
   },
+  replicaOf: 'replica of {{service}}',
   columns: {
     instance: 'Instance',
     agent: 'Agent',
@@ -56,6 +59,8 @@ export default {
   },
   carrier: {
     local: 'local process',
+    container: 'container',
+    published: 'Published',
   },
   time: {
     justNow: 'just now',

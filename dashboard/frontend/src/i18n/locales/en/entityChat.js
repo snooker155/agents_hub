@@ -1,5 +1,6 @@
 export default {
   title: 'Chat',
+  hide: 'Hide the chat',
   clear: 'New chat',
   clearChat: 'Start a new chat. This one stays in the history',
   history: 'History',

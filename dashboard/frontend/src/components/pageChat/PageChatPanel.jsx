@@ -158,6 +158,7 @@ export default function PageChatPanel() {
         stopChat={entityChat ? entityChat.stopChat : stopPage}
         onEvent={entityChat?.onEvent || null}
         registerSend={entityChat?.registerSend || null}
+        registerComposer={entityChat?.registerComposer || null}
         header={false}
         clearTarget={clearSlot}
         inline={false}

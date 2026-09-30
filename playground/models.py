@@ -16,6 +16,15 @@ SYNCHRONOUS = "synchronous"
 TRIGGERED = "triggered"
 ACTIVATIONS = (SYNCHRONOUS, TRIGGERED)
 
+#: Who plays a role. ``personas``: the role is a bare chat model with no
+#: tools, given only the environment's action API, the original and default
+#: behaviour. ``agents``: the role is played by the real agent behind
+#: ``role.agent_id``, with a small, environment-declared tool allowlist on
+#: top of the action API. See ``playground.runner.decide``.
+PERSONAS = "personas"
+AGENTS = "agents"
+MODES = (PERSONAS, AGENTS)
+
 #: Why an agent was woken, recorded on its decision so the log answers "why did
 #: this one act and the others not".
 TRIGGER_MESSAGE = "message"       # a colleague (or the outside) addressed it
@@ -31,6 +40,13 @@ def _activation(value: Any) -> str:
     """Normalise an activation mode; anything unknown runs synchronously."""
     mode = str(value or SYNCHRONOUS).strip().lower()
     return mode if mode in ACTIVATIONS else SYNCHRONOUS
+
+
+def _mode(value: Any) -> str:
+    """Normalise a scenario mode; anything unknown falls back to personas,
+    the original, tool-free behaviour."""
+    mode = str(value or PERSONAS).strip().lower()
+    return mode if mode in MODES else PERSONAS
 
 
 def utc_iso() -> str:
@@ -155,6 +171,30 @@ class Scenario:
     env_params: Dict[str, Any] = field(default_factory=dict)
     roles: List[Role] = field(default_factory=list)
 
+    # Who plays a role: ``personas`` (default, a bare model, no tools) or
+    # ``agents`` (the real agent behind role.agent_id, with the environment's
+    # tool allowlist). See playground.runner.decide and docs/playground.md.
+    mode: str = PERSONAS
+    # How many tool calls one agents-mode decision may make in a single tick
+    # before it is cut off and recorded with an error. Ignored in personas
+    # mode, which has no tools to call.
+    max_tool_calls_per_tick: int = 8
+    # The task this scenario's runs work on, when it has one — passed into
+    # every SimRun and finalized the way a flow, a team or a loop finalizes
+    # its task (managers.runs.task_finalize.finalize_task).
+    task_id: Optional[str] = None
+    # Reference material injected into every role's system prompt, under a
+    # "Documents" section. Each entry is either {"name", "text"} or a plain
+    # string naming a workspace-relative file, resolved when a decision's
+    # prompt is built. Kept small on purpose: see playground.runner's
+    # document-clipping constants.
+    documents: List[Any] = field(default_factory=list)
+    # A team whose members play this scenario when ``roles`` is empty: at run
+    # time (and in the estimate) each member becomes a role, see
+    # ``playground.runner.roles_from_team``. Roles written on the scenario
+    # win, so a team is a way to cast a world, not a second cast beside it.
+    team_id: Optional[str] = None
+
     # How agents are activated. ``synchronous``: everybody acts every tick,
     # simultaneous resolution — the original loop. ``triggered``: an agent acts
     # only when something reached it (a message, an interaction, its own
@@ -201,6 +241,9 @@ class Scenario:
             "workspace": self.workspace,
             "environment": self.environment, "env_params": dict(self.env_params),
             "roles": [r.to_dict() for r in self.roles],
+            "mode": self.mode, "max_tool_calls_per_tick": self.max_tool_calls_per_tick,
+            "task_id": self.task_id, "documents": list(self.documents),
+            "team_id": self.team_id,
             "activation": self.activation,
             "max_ticks": self.max_ticks, "stall_timeout": self.stall_timeout,
             "max_turn_seconds": self.max_turn_seconds,
@@ -224,6 +267,11 @@ class Scenario:
             environment=str(d.get("environment") or "market"),
             env_params=dict(d.get("env_params") or {}),
             roles=[Role.from_dict(r) for r in (d.get("roles") or [])],
+            mode=_mode(d.get("mode")),
+            max_tool_calls_per_tick=int(d.get("max_tool_calls_per_tick", 8) or 8),
+            task_id=d.get("task_id"),
+            documents=list(d.get("documents") or []),
+            team_id=(str(d.get("team_id")).strip() or None) if d.get("team_id") else None,
             activation=_activation(d.get("activation")),
             max_ticks=int(d.get("max_ticks", 20)),
             # ``tick_timeout`` is the pre-rename spelling: same knob, and it
@@ -344,12 +392,17 @@ class SimRun:
     sim_run_id: str = field(default_factory=lambda: new_id("sim"))
     scenario_id: str = ""
     workspace: Optional[str] = None
-    # A run is born "starting": the row is written before the first model call,
-    # and the first tick — which is as slow as the slowest agent in it — is what
-    # promotes it to "running".
-    status: str = "starting"       # starting | running | stopping | completed | stopped | failed
+    # A run is born "pending" (the shared spelling of "no process yet",
+    # common/run_status.py): the row is written before the first model call,
+    # and the first tick — which is as slow as the slowest agent in it — is
+    # what promotes it to "running".
+    status: str = "pending"        # pending | running | stopping | completed | stopped | failed
     environment: str = ""
     activation: str = SYNCHRONOUS
+    # The task this run works on and the run it executes inside, if any.
+    task_id: Optional[str] = None
+    session_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
     # Why the run ended: stopped | max_ticks | idle | terminal | wall_clock |
     # cost_ceiling | budget | error. The status alone cannot tell "the world
     # went quiet" from "the tick cap was reached".
@@ -368,6 +421,14 @@ class SimRun:
     # scenario.
     config: Dict[str, Any] = field(default_factory=dict)
     final_state: Dict[str, Any] = field(default_factory=dict)
+    # Where and whether it runs: written by the launcher and the runner's
+    # heartbeat, read by the watchdog (common/entity_runs.py).
+    pid: Optional[int] = None
+    host: Optional[str] = None
+    heartbeat_at: Optional[str] = None
+    resume_attempts: int = 0
+    log_file: Optional[str] = None
+    created_at: str = field(default_factory=utc_iso)
     started_at: str = field(default_factory=utc_iso)
     finished_at: Optional[str] = None
 
@@ -376,16 +437,22 @@ class SimRun:
             "sim_run_id": self.sim_run_id, "scenario_id": self.scenario_id,
             "workspace": self.workspace, "status": self.status,
             "environment": self.environment, "activation": self.activation,
+            "task_id": self.task_id, "session_id": self.session_id,
+            "parent_run_id": self.parent_run_id,
             "stop_reason": self.stop_reason, "ticks_done": self.ticks_done,
             "total_cost": self.total_cost, "error": self.error,
             "scores": dict(self.scores), "final_state": dict(self.final_state),
             "config": dict(self.config),
+            "pid": self.pid, "host": self.host, "heartbeat_at": self.heartbeat_at,
+            "resume_attempts": self.resume_attempts, "log_file": self.log_file,
+            "created_at": self.created_at,
             "started_at": self.started_at, "finished_at": self.finished_at,
         }
 
 
 __all__ = [
     "SIM_CHANNEL", "SYNCHRONOUS", "TRIGGERED", "ACTIVATIONS",
+    "PERSONAS", "AGENTS", "MODES",
     "TRIGGER_MESSAGE", "TRIGGER_INTERACTION", "TRIGGER_EXTERNAL",
     "TRIGGER_HEARTBEAT", "TRIGGER_OPENING", "TRIGGER_SYNC",
     "Role", "Scenario", "ActionResult", "AgentDecision",

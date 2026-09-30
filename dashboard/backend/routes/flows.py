@@ -7,11 +7,11 @@ import asyncio
 import os
 import signal
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -20,6 +20,9 @@ from managers import run_manager
 from agents import agent_launcher
 from flow import launcher as flow_launcher
 from flow import store as flow_store
+from flow.engine import ON_ERROR_POLICIES
+from flow.estimate import estimate_flow_cost
+from models import FlowListItem, FlowDetail, FlowPage
 from workspace import (
     create_workspace_folder,
     get_workspace_metadata,
@@ -31,7 +34,7 @@ router = APIRouter(prefix="/api/flows", tags=["flows"])
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-# Flows are persisted as per-flow YAML(logic)+JSON(visual) pairs via flow_store.
+# Flows are persisted in the database via flow_store (the `flows` document store).
 # These thin wrappers keep the existing list-oriented CRUD logic unchanged.
 
 def _load() -> List[Dict]:
@@ -83,6 +86,14 @@ class FlowUpdate(BaseModel):
     mutability: Optional[bool] = None
     recordability: Optional[str] = None
     state: Optional[Dict[str, Any]] = None
+    # Execution policy (see flow.engine): how many nodes may run at once, and
+    # what a failed node does to the rest of the graph. Both have engine
+    # defaults, so a flow that never sets them behaves as it always did.
+    max_parallel: Optional[int] = None
+    on_error: Optional[str] = None
+    # Write-only: the shared secret POST /{flow_id}/trigger requires a signature
+    # against. Sending "" clears it; the flow is never read back with it.
+    webhook_secret: Optional[str] = None
 
 
 class FlowImport(BaseModel):
@@ -106,6 +117,15 @@ class FlowRunNode(BaseModel):
     description: Optional[str] = None
 
 
+class FlowResume(BaseModel):
+    """Body of POST /runs/{flow_run_id}/resume.
+
+    ``answer`` is the person's reply when the run is parked on a
+    ``human_interrupt`` node; a run that merely died has nothing to answer.
+    """
+    answer: Optional[str] = None
+
+
 class FlowTrigger(BaseModel):
     """External trigger payload for POST /{flow_id}/trigger.
 
@@ -119,22 +139,68 @@ class FlowTrigger(BaseModel):
     max_concurrent: int = 1
 
 
+def _public_flow(flow: Dict[str, Any]) -> Dict[str, Any]:
+    """A flow record safe to hand to the dashboard.
+
+    The webhook secret is write-only: the trigger route compares against it, and
+    the page only ever needs to know whether one is set.
+    """
+    if not isinstance(flow, dict):
+        return flow
+    public = {k: v for k, v in flow.items() if k != "webhook_secret"}
+    public["webhook_secret_configured"] = bool(flow.get("webhook_secret"))
+    return public
+
+
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
-@router.get("")
-async def list_flows(workspace: Optional[str] = None):
-    flows = _load()
-    if workspace:
-        # When a workspace declares an explicit ``allowed_flows`` allowlist it is
-        # authoritative; otherwise fall back to workspace-ownership visibility
-        # (global flows + flows owned by this workspace). Keeps the flow picker
-        # in sync with the run_flow authorization check.
-        allowed = get_workspace_metadata(workspace).get("allowed_flows")
-        if allowed is not None:
-            flows = [f for f in flows if f.get("id") in allowed]
-        else:
-            flows = [f for f in flows if not f.get("workspace") or f.get("workspace") == workspace]
-    return flows
+def _paginate(items: list, limit: Optional[int], offset: Optional[int]) -> list:
+    if limit is None and offset is None:
+        return items
+    start = offset or 0
+    return items[start: start + limit] if limit is not None else items[start:]
+
+
+@router.get("", response_model=Union[List[FlowListItem], FlowPage])
+async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = None,
+                     offset: Optional[int] = None):
+    """The flow list. With no ``limit``/``offset`` this is the full list, exactly
+    as before; with either, it is one page: ``{items, total, limit, offset}``.
+
+    Flows are file-backed (one YAML+JSON pair per flow via ``flow_store``), not
+    a queryable store. Visibility filtering happens on the cheapest field that
+    can answer it before anything is parsed off disk, and ``_public_flow`` (the
+    only per-item work here) runs on the resulting page, not the whole catalog:
+
+    - An explicit ``allowed_flows`` allowlist *is* the filter, metadata already
+      in hand, so only the ids that land on the requested page get read.
+    - Otherwise, ownership ("global flows + flows owned by this workspace") is
+      a property of each flow's own record, so every flow still has to be
+      parsed once to know it: flow_store keeps no index for that.
+    - With no workspace at all, ``flow_store`` pages the file list itself and
+      parses only those files.
+    """
+    allowed = get_workspace_metadata(workspace).get("allowed_flows") if workspace else None
+
+    if allowed is not None:
+        flow_ids = sorted(str(fid) for fid in allowed)
+        total = len(flow_ids)
+        page_ids = _paginate(flow_ids, limit, offset)
+        flows = [f for f in (flow_store.get_flow(fid) for fid in page_ids) if f]
+    elif workspace:
+        # Keeps the flow picker in sync with the run_flow authorization check.
+        visible = [f for f in _load()
+                  if not f.get("workspace") or f.get("workspace") == workspace]
+        total = len(visible)
+        flows = _paginate(visible, limit, offset)
+    else:
+        total = flow_store.count_flows()
+        flows = flow_store.list_flows(limit=limit, offset=offset)
+
+    page = [_public_flow(f) for f in flows]
+    if limit is None and offset is None:
+        return page
+    return {"items": page, "total": total, "limit": limit, "offset": offset}
 
 
 @router.post("")
@@ -156,7 +222,7 @@ async def create_flow(data: FlowCreate):
     return flow
 
 
-@router.get("/{flow_id}")
+@router.get("/{flow_id}", response_model=FlowDetail)
 async def get_flow(flow_id: str):
     try:
         flow = flow_store.get_flow(flow_id)
@@ -165,7 +231,7 @@ async def get_flow(flow_id: str):
         raise HTTPException(status_code=422, detail=str(e))
     if flow is None:
         raise HTTPException(status_code=404, detail="Flow not found")
-    return flow
+    return _public_flow(flow)
 
 
 @router.put("/{flow_id}")
@@ -174,6 +240,22 @@ async def update_flow(flow_id: str, data: FlowUpdate):
     for i, f in enumerate(flows):
         if f["id"] == flow_id:
             patch = {k: v for k, v in data.model_dump().items() if v is not None}
+            if "on_error" in patch and patch["on_error"] not in ON_ERROR_POLICIES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"on_error must be one of {', '.join(ON_ERROR_POLICIES)}",
+                )
+            if "max_parallel" in patch and int(patch["max_parallel"]) < 1:
+                raise HTTPException(status_code=400, detail="max_parallel must be at least 1")
+            if "webhook_secret" in patch:
+                # An empty string is how the UI clears the secret: drop the key
+                # rather than storing "", which the trigger would read as falsy
+                # anyway but which would keep reporting the flow as configured.
+                secret = str(patch.pop("webhook_secret") or "").strip()
+                if secret:
+                    patch["webhook_secret"] = secret
+                else:
+                    f = {k: v for k, v in f.items() if k != "webhook_secret"}
             patch["updated_at"] = _now()
             flows[i] = {**f, **patch}
             _save(flows)
@@ -181,7 +263,7 @@ async def update_flow(flow_id: str, data: FlowUpdate):
             ws_name = patch.get("workspace")
             if ws_name:
                 _authorize_flow_in_workspace(ws_name, flow_id)
-            return flows[i]
+            return _public_flow(flows[i])
     raise HTTPException(status_code=404, detail="Flow not found")
 
 
@@ -345,21 +427,87 @@ async def run_flow(flow_id: str, req: FlowRun):
             "run_id": run_id,
             "session_id": session_id,
             "workspace": ws_name,
+            # What this run is expected to cost, from the same catalog prices
+            # the cost page uses. Returned with the launch so the figure is in
+            # front of whoever pressed Run, not only on the estimate endpoint.
+            "estimated_cost": _safe_estimate(flow),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _safe_estimate(flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Price a flow, or return None. An estimate must never block a run."""
+    try:
+        return estimate_flow_cost(flow)
+    except Exception:
+        return None
+
+
+@router.get("/{flow_id}/estimate")
+async def estimate_flow(flow_id: str):
+    """What one run of this flow is expected to cost, before starting it.
+
+    One call per agent node, priced from the Models page catalog. Nodes are
+    listed individually because a graph whose cost is one expensive node is a
+    different decision from one that spreads it evenly.
+    """
+    flow = next((f for f in _load() if f["id"] == flow_id), None)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    return estimate_flow_cost(flow)
+
+
+@router.post("/runs/{flow_run_id}/resume")
+async def resume_flow_run(flow_run_id: str, req: Optional[FlowResume] = None):
+    """Continue a flow run from its checkpoint.
+
+    Two runs need this: one parked on a ``human_interrupt`` node, which resumes
+    with the person's ``answer`` written into flow state, and one whose process
+    died, which resumes with the nodes it had already finished replayed rather
+    than re-run. Declared above ``/{flow_id}`` variants with the same shape so
+    "runs" is never read as a flow id.
+    """
+    answer = (req.answer if req else None)
+    try:
+        return flow_launcher.resume_flow_run(flow_run_id, answer)
+    except flow_launcher.FlowResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/{flow_id}/trigger")
-async def trigger_flow_webhook(flow_id: str, req: Optional[FlowTrigger] = None):
+async def trigger_flow_webhook(flow_id: str, request: Request, req: Optional[FlowTrigger] = None):
     """Webhook entry point: start a flow run from an external caller with an
     optional JSON ``seed``, guarded by a per-flow concurrency cap.
 
     Auth: when ``AGENTS_HUB_API_TOKEN`` is configured, the global middleware
-    already requires it on this ``/api`` route — no extra check here. Returns
-    429 when the concurrency cap is hit, 403 when the flow isn't allowed in the
-    workspace, 404 for an unknown flow.
+    already requires it on this ``/api`` route — no extra check here. When the
+    flow's own record carries a ``webhook_secret``, the caller must also sign
+    the request the same way ``notify.outbound`` signs what this hub sends out
+    (see docs/notifications.md); a flow with no secret configured keeps
+    today's behaviour unchanged. Returns 429 when the concurrency cap is hit,
+    403 when the flow isn't allowed in the workspace, 404 for an unknown flow,
+    401 for a missing/invalid signature and 409 for a replayed delivery.
     """
+    flow = flow_store.get_flow(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    secret = flow.get("webhook_secret")
+    if secret:
+        from notify.inbound import seen_delivery, verify_signature
+
+        raw_body = await request.body()
+        signature = request.headers.get("X-AgentsHub-Signature", "")
+        timestamp = request.headers.get("X-AgentsHub-Timestamp", "")
+        delivery_id = request.headers.get("X-AgentsHub-Delivery", "")
+        if not verify_signature(secret, raw_body, signature, timestamp):
+            raise HTTPException(status_code=401, detail="Invalid or missing signature")
+        if delivery_id and seen_delivery(delivery_id):
+            raise HTTPException(status_code=409, detail="Delivery already processed")
+
     req = req or FlowTrigger()
     try:
         result = flow_launcher.trigger_flow(
@@ -439,8 +587,6 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
     flow-run record is marked stopped, its orchestrator process is killed, its
     in-flight node runs are stopped, and its task is stopped.
     """
-    from managers import run_manager
-    from common.paths import AGENTS_HUB_ROOT
     from flow.launcher import _set_flow_running
     from flow import run_store
     from datetime import datetime, timezone
@@ -450,7 +596,8 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
         # Per-run log file keyed by the entry's run_group (the flow_run_id).
         run_store.append_flow_log(flow_id, entry.get("run_group") or "", entry)
 
-    now = lambda: datetime.now(timezone.utc).isoformat()
+    def now() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
     active = run_store.get_active_flow_runs(flow_id)
     if flow_run_id:

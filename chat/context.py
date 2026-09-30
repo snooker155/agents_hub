@@ -1,12 +1,19 @@
 """
 Chat prompt-context builders.
 
-Pure functions that turn a :class:`ChatRequest` into the prompt text the agent
-runs against: bounded conversation history, attachment blocks, and workspace
-resolution. Shared by both the single-agent and flow chat pipelines.
+Pure functions that turn a :class:`ChatRequest` into what the agent runs
+against: the conversation as bounded messages, this turn's text with its
+attachment and reference blocks, and the resolved workspace. Shared by both the
+single-agent and flow chat pipelines.
+
+History used to be rendered into the prompt string as ``User:`` / ``Assistant:``
+lines. It now travels as messages (:func:`build_history_messages`), which is
+both what the model reads best and what keeps the prompt prefix stable enough
+for a provider cache to recognise. The text rendering stays for the callers that
+do not build a prompt for an agent executor, and for reading back sessions that
+were recorded the old way.
 """
 import re
-from pathlib import Path
 
 from chat.models import ChatRequest
 from chat.references import build_reference_lines
@@ -27,9 +34,10 @@ _TURN_RE = re.compile(r"^(User|Assistant):\s?")
 def split_embedded_history(prompt: str) -> tuple[list[dict], str]:
     """Recover the structured history turns folded into a chat prompt.
 
-    ``build_chat_context`` embeds prior session turns as a "Conversation
-    history:" block of ``User:``/``Assistant:`` lines followed by a "Latest user
-    message:" section. This splits that text back into ``[{role, content}]``
+    Sessions recorded before history became structured messages — and any caller
+    that still asks ``build_chat_context`` to embed it — carry prior turns as a
+    "Conversation history:" block of ``User:``/``Assistant:`` lines followed by a
+    "Latest user message:" section. This splits that text back into ``[{role, content}]``
     turns plus the real latest message, so the stored run input-context holds one
     dedicated history block per prior session message — rather than the whole
     blob, or the agent's own intra-run loop output. Returns ``([], prompt)`` when
@@ -66,26 +74,102 @@ def split_embedded_history(prompt: str) -> tuple[list[dict], str]:
     return history, latest.rstrip()
 
 
-def build_history_lines(history: list) -> list[str]:
+#: Bounds on the conversation a turn carries. The last 40 messages, each
+#: truncated to 4k chars, up to 60k chars in total.
+HISTORY_MAX_MESSAGES = 40
+HISTORY_MAX_MESSAGE_CHARS = 4000
+HISTORY_CHAR_BUDGET = 60_000
+
+_ROLE_LABELS = {"user": "User", "assistant": "Assistant"}
+
+
+def bounded_history(history: list, *, budget_chars: float | None = None) -> list[tuple[str, str]]:
+    """The tail of a conversation that fits the prompt bounds, oldest first.
+
+    Returns ``(role, content)`` pairs with ``role`` one of ``user`` /
+    ``assistant``. One definition behind both renderings, text lines and
+    structured messages, so a turn that reaches the model as a message is
+    exactly the turn that used to reach it as a line, truncation included.
+
+    ``budget_chars`` overrides the flat :data:`HISTORY_CHAR_BUDGET` (the
+    default, used when it is None). A caller that folds oversized history
+    itself, such as ``chat.compaction``, passes ``float('inf')`` here to skip
+    this cut entirely and let its own budget decide what survives; the
+    per-message and per-turn-count caps below still apply either way.
+    """
+    turns: list[tuple[str, str]] = []
+    budget = HISTORY_CHAR_BUDGET if budget_chars is None else budget_chars
+    for msg in reversed(history[-HISTORY_MAX_MESSAGES:]):
+        role = "user" if str(msg.role) == "user" else "assistant"
+        content = str(msg.content or "")
+        if len(content) > HISTORY_MAX_MESSAGE_CHARS:
+            content = content[:HISTORY_MAX_MESSAGE_CHARS] + "\n...[truncated]"
+        # The budget is spent on the rendered line, label included, which is what
+        # it has always been measured against.
+        cost = len(f"{_ROLE_LABELS[role]}: {content}")
+        if budget - cost < 0:
+            break
+        budget -= cost
+        turns.insert(0, (role, content))
+    return turns
+
+
+def _history_budget(provider: str, model: str, budget_chars: float | None) -> float | None:
+    """Resolve the bound for :func:`bounded_history` from either an explicit
+    override or a known (provider, model) pair.
+
+    An explicit ``budget_chars`` wins outright (it is how a caller opts out of
+    the cut entirely with ``float('inf')``). Otherwise, when a provider or
+    model is given, the bound is that model's own share of its context window
+    (``chat.compaction.history_budget_chars``, the same number compaction
+    folds against) rather than the flat fallback, so a large-window model is
+    not truncated at the size of a small one. With neither, None defers to
+    :data:`HISTORY_CHAR_BUDGET` inside ``bounded_history``.
+    """
+    if budget_chars is not None:
+        return budget_chars
+    if not provider and not model:
+        return None
+    from chat.compaction import history_budget_chars
+    return history_budget_chars(provider, model)
+
+
+def build_history_lines(history: list, *, provider: str = "", model: str = "",
+                        budget_chars: float | None = None) -> list[str]:
     """Bounded conversation history as ``Role: content`` lines (oldest first).
 
-    Keeps the last 40 messages, truncates each to 4k chars, and stops once a
-    60k total-character budget is exhausted. Shared by the agent-chat and
-    flow-chat prompt builders.
+    The text rendering, kept for the prompts that are not built for a
+    ``StandardAgent`` executor: the team goal (handed to ``teams.runner``) and
+    the flow nodes' text blocks. Agent chat sends
+    :func:`build_history_messages` instead.
     """
-    history_lines: list[str] = []
-    budget = 60_000
-    for msg in reversed(history[-40:]):
-        role = "User" if str(msg.role) == "user" else "Assistant"
-        content = str(msg.content or "")
-        if len(content) > 4000:
-            content = content[:4000] + "\n...[truncated]"
-        line = f"{role}: {content}"
-        if budget - len(line) < 0:
-            break
-        budget -= len(line)
-        history_lines.insert(0, line)
-    return history_lines
+    budget = _history_budget(provider, model, budget_chars)
+    return [f"{_ROLE_LABELS[role]}: {content}"
+            for role, content in bounded_history(history, budget_chars=budget)]
+
+
+def build_history_messages(history: list, *, provider: str = "", model: str = "",
+                           budget_chars: float | None = None) -> list:
+    """Bounded conversation history as LangChain messages (oldest first).
+
+    ``HumanMessage`` / ``AIMessage`` only: a tool call belongs to the run that
+    made it and is never replayed into a later turn. Same bounds as
+    :func:`build_history_lines`. The agent prompt takes these through its
+    ``chat_history`` placeholder, which is what lets the model read the
+    conversation as a conversation and lets a provider prompt cache recognise
+    the prefix it saw last turn.
+
+    ``provider``/``model`` size the bound to that model's real context window
+    instead of the flat fallback; ``budget_chars`` overrides both (a chat
+    pipeline that runs compaction on this same list passes ``float('inf')`` so
+    compaction, not this flat cut, decides what survives).
+    """
+    from langchain_core.messages import AIMessage, HumanMessage
+    budget = _history_budget(provider, model, budget_chars)
+    return [
+        HumanMessage(content=content) if role == "user" else AIMessage(content=content)
+        for role, content in bounded_history(history, budget_chars=budget)
+    ]
 
 
 def history_block_lines(history_lines: list[str]) -> list[str]:
@@ -217,9 +301,15 @@ def context_block_lines(request: ChatRequest) -> list[str]:
     return blocks
 
 
-def build_chat_context(request: ChatRequest) -> tuple[str, str | None]:
-    """The full single-agent prompt + resolved workspace path: bounded history,
-    the latest user message, then attachment blocks."""
+def build_chat_context(request: ChatRequest, *, embed_history: bool = False) -> tuple[str, str | None]:
+    """The single-agent human message + resolved workspace path.
+
+    The project-scope note, the latest user message, then the attached-entity and
+    attachment blocks. History is *not* part of it: it travels as structured
+    messages (:func:`build_history_messages`) so the text of this turn stays the
+    text of this turn. ``embed_history=True`` restores the old single-blob prompt
+    for a caller that cannot send messages.
+    """
     workspace_abs = resolve_workspace_abs(request)
 
     lines: list[str] = []
@@ -230,7 +320,8 @@ def build_chat_context(request: ChatRequest) -> tuple[str, str | None]:
     # The "Latest user message:" marker pairs with the "Conversation history:"
     # block (split_embedded_history reads them back together), so it is gated on
     # history presence only — not on the optional project note above.
-    history_lines = history_block_lines(build_history_lines(request.history))
+    history_lines = (history_block_lines(build_history_lines(request.history))
+                     if embed_history else [])
     lines.extend(history_lines)
     if history_lines:
         lines.append("Latest user message:")

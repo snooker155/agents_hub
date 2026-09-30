@@ -21,7 +21,6 @@ backend surface as :class:`BackendError`.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any, List, Optional
 
 
@@ -186,6 +185,13 @@ class DirectBackend:
             })
         return items
 
+    def index_workspace_files(self, name: str) -> dict:
+        from files import service as files_service
+        try:
+            return files_service.index_workspace(name)
+        except files_service.FileError as e:
+            raise BackendError(str(e))
+
     # The three workspace writes announce themselves the way their routes do.
     # The notification cannot live in the storage layer instead: almost every
     # request calls create_workspace_folder just to ensure the directory, so
@@ -245,28 +251,215 @@ class DirectBackend:
         from dashboard.backend.routes.projects import git_status as _git_status
         return _run_coroutine(_git_status(project_id))
 
-    # ---- nodes ----
+    # ---- instances ----
+    # A resident instance (instances/carrier.py) is what a node used to be:
+    # the copy of an agent the agent page's Run started. The route functions
+    # are called directly, request=None, the same way decompose_task and
+    # attach_project are above; identity.request_principal(None) and
+    # _enrich's request=None both read as the local operator with no
+    # external_url, which is exactly right for a call with no HTTP request.
 
-    def list_nodes(self, workspace: Optional[str] = None) -> List[dict]:
-        from dashboard.backend.routes.nodes import list_nodes as _list
-        return _run_coroutine(_list(workspace))
+    def list_instances(self, workspace: Optional[str] = None) -> List[dict]:
+        from dashboard.backend.routes.instances import list_instances as _list
+        page = _run_coroutine(_list(None, workspace=workspace, kind="resident"))
+        return page["items"]
 
-    def start_node(self, body: dict) -> dict:
-        from dashboard.backend.routes.nodes import start_node as _start
-        from dashboard.backend.routes.nodes import NodeCreate
-        return _run_coroutine(_start(NodeCreate(**body)))
+    def start_instance(self, body: dict) -> dict:
+        from dashboard.backend.routes.instances import InstanceStart
+        from dashboard.backend.routes.instances import start_instance as _start
+        return _run_coroutine(_start(InstanceStart(**body), None))
 
-    def stop_node(self, node_id: str) -> dict:
-        from dashboard.backend.routes.nodes import stop_node as _stop
-        return _run_coroutine(_stop(node_id))
+    def stop_instance(self, instance_id: str) -> dict:
+        from dashboard.backend.routes.instances import stop_instance as _stop
+        return _run_coroutine(_stop(instance_id))
+
+    def restart_instance(self, instance_id: str) -> dict:
+        from dashboard.backend.routes.instances import restart_instance as _restart
+        return _run_coroutine(_restart(instance_id, None))
+
+    def instance_logs(self, instance_id: str) -> dict:
+        from dashboard.backend.routes.instances import get_instance_logs as _logs
+        return _run_coroutine(_logs(instance_id))
+
+    def send_instance_message(self, instance_id: str, message: str,
+                              conversation_id: Optional[str] = None) -> dict:
+        from dashboard.backend.routes.instances import InstanceMessage
+        from dashboard.backend.routes.instances import message_instance as _msg
+        body = InstanceMessage(message=message, conversation_id=conversation_id)
+        return _run_coroutine(_msg(instance_id, body, None))
+
+    def get_instance_message(self, instance_id: str, msg_id: str) -> dict:
+        from dashboard.backend.routes.instances import get_instance_message as _get
+        return _run_coroutine(_get(instance_id, msg_id))
+
+    # ---- services ----
+    # Agents kept running as replicas (docs/services.md); same direct-call
+    # shape as the instances above.
+
+    def list_services(self, workspace: Optional[str] = None) -> List[dict]:
+        from dashboard.backend.routes.services import list_services as _list
+        return _run_coroutine(_list(None, workspace=workspace))["items"]
+
+    def get_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import get_service as _get
+        return _run_coroutine(_get(service_id, None))
+
+    def create_service(self, body: dict) -> dict:
+        from dashboard.backend.routes.services import ServiceCreate
+        from dashboard.backend.routes.services import create_service as _create
+        return _run_coroutine(_create(ServiceCreate(**body), None))
+
+    def update_service(self, service_id: str, body: dict) -> dict:
+        from dashboard.backend.routes.services import ServiceUpdate
+        from dashboard.backend.routes.services import update_service as _update
+        return _run_coroutine(_update(service_id, ServiceUpdate(**body), None))
+
+    def pause_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import pause_service as _pause
+        return _run_coroutine(_pause(service_id, None))
+
+    def resume_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import resume_service as _resume
+        return _run_coroutine(_resume(service_id, None))
+
+    def delete_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import delete_service as _delete
+        return _run_coroutine(_delete(service_id))
+
+    def publish_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import publish_service as _publish
+        return _run_coroutine(_publish(service_id, None))
+
+    def unpublish_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import unpublish_service as _unpublish
+        return _run_coroutine(_unpublish(service_id, None))
+
+    def list_service_replicas(self, service_id: str) -> List[dict]:
+        from dashboard.backend.routes.services import list_replicas as _replicas
+        return _run_coroutine(_replicas(service_id))["items"]
+
+    def service_events(self, service_id: str) -> List[dict]:
+        from dashboard.backend.routes.services import service_events as _events
+        return _run_coroutine(_events(service_id))["items"]
 
     # ---- settings ----
+
+    def version(self) -> dict:
+        from dashboard.backend.routes.system import system_version
+        return _run_coroutine(system_version())
+
+    def doctor(self) -> dict:
+        """The doctor's checks (common/doctor.py), run in this process."""
+        from common.doctor import run_doctor
+        return run_doctor()
 
     def get_settings(self) -> dict:
         from dashboard.backend.routes.settings import get_settings as _get
         result = _run_coroutine(_get())
         dump = getattr(result, "model_dump", None)
         return dump(mode="json") if dump else dict(result)
+
+    # ---- auth: whoami and personal API keys ----
+    # Direct mode has no request and no session: it *is* the local operator
+    # (common.auth.LOCAL_OPERATOR_ID), whatever AUTH_MODE the configured
+    # database happens to be running under. Personal keys act as a named
+    # user, so they need one: either AGENTS_HUB_URL (a real request, a real
+    # principal, see HttpBackend below) or an explicit --user, which is an
+    # administrator operation run straight against the local database.
+
+    NO_USER_MESSAGE = (
+        "Personal keys act as a named user. Direct mode has none: it is the "
+        "local operator, the same in every AUTH_MODE. Either set AGENTS_HUB_URL "
+        "(and AGENTS_HUB_API_KEY or a session) to manage your own keys over "
+        "REST, or pass --user <username> to manage that account's keys "
+        "directly against the local database, as an administrator would."
+    )
+
+    def whoami(self) -> dict:
+        from common.auth import LOCAL_OPERATOR_ID, ROLE_ADMIN
+        from common import identity
+        return {"id": LOCAL_OPERATOR_ID, "username": LOCAL_OPERATOR_ID,
+                "role": ROLE_ADMIN, "kind": "local", "via": "local",
+                "mode": identity.current_mode()}
+
+    def _resolve_user(self, username: Optional[str]) -> str:
+        if not username:
+            raise BackendError(self.NO_USER_MESSAGE)
+        from common import identity
+        user = identity.get_user_by_username(username)
+        if user is None:
+            raise BackendError(f"no such user: {username}")
+        return user["id"]
+
+    def list_api_keys(self, username: Optional[str] = None) -> List[dict]:
+        from common import api_keys
+        return api_keys.list_keys(self._resolve_user(username))
+
+    def create_api_key(self, username: Optional[str] = None, name: str = "",
+                       workspaces: Optional[List[str]] = None,
+                       expires_in_days: Optional[int] = None) -> dict:
+        from common import api_keys
+        user_id = self._resolve_user(username)
+        try:
+            key, record = api_keys.create_key(
+                user_id, name=name, workspaces=workspaces,
+                expires_in_days=expires_in_days)
+        except ValueError as e:
+            raise BackendError(str(e))
+        return {**record, "key": key}
+
+    def revoke_api_key(self, key_id: str, username: Optional[str] = None) -> dict:
+        from common import api_keys
+        user_id = self._resolve_user(username)
+        if not api_keys.revoke_key(key_id, user_id=user_id):
+            raise BackendError(f"no such key for {username}: {key_id}")
+        return {"revoked": True}
+
+    # ---- generic transport (cli/openapi.py, the entity groups that reuse it) ----
+    # Every command written against a hand-picked method above needs both
+    # backends touched to add one route. This one method covers the rest: the
+    # OpenAPI-generated commands and the hand-written flow/loop/team/eval/mcp/
+    # user groups all call it instead of growing DirectBackend one route at a
+    # time. It is imported here only when called, not at module load, so a
+    # plain `ah agent list` still pays nothing for it.
+
+    def request(self, method: str, path: str, *, params: Optional[dict] = None,
+               json: Optional[dict] = None) -> Any:
+        """Drive the FastAPI app in-process, over its real ASGI request cycle.
+
+        Deliberately not entered as a ``with TestClient(app) as client:``
+        block: that form also runs the app's lifespan (the singleton
+        supervisor, the plan scheduler, the run watchdog, the deployment
+        heartbeat), which is slow to start and stop for one CLI call and is
+        not needed for ordinary request/response routes. The limitation this
+        leaves: a route whose behaviour depends on something only the
+        lifespan starts will not work through this path. None of the
+        generated or hand-written entity commands do; see docs/cli.md.
+
+        Authenticates as the service credential
+        (``common.identity.service_token``), the same principal the hub's own
+        subprocess relays act as. In ``AUTH_MODE=single`` it is not read at
+        all (every request is the local operator regardless); in ``token`` and
+        ``multi`` it resolves to an admin principal, so a generic command run
+        locally acts as the operator running it rather than as nobody.
+        """
+        from fastapi.testclient import TestClient
+        from dashboard.backend.main import app
+        from common import identity
+
+        client = TestClient(app)
+        headers = {"Authorization": f"Bearer {identity.service_token()}"}
+        try:
+            r = client.request(method, path, params=params, json=json, headers=headers)
+        except Exception as e:
+            raise _fail(e)
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("detail", r.text)
+            except Exception:
+                detail = r.text
+            raise BackendError(f"{r.status_code}: {detail}")
+        return r.json() if r.content else None
 
 
 def _notify_workspaces() -> None:
@@ -327,10 +520,11 @@ class HttpBackend:
 
     def _request(self, method: str, path: str, *, params=None, json=None, timeout=None):
         import requests
+        from common.auth import auth_headers
         try:
             r = requests.request(
                 method, f"{self.base_url}{path}",
-                params=params, json=json,
+                params=params, json=json, headers=auth_headers(),
                 timeout=self.API_TIMEOUT if timeout is None else timeout,
             )
             r.raise_for_status()
@@ -399,6 +593,9 @@ class HttpBackend:
     def create_workspace(self, name):
         return self._request("POST", "/api/workspaces", json={"name": name})
 
+    def index_workspace_files(self, name):
+        return self._request("POST", "/api/files/index", params={"workspace": name}, timeout=300)
+
     def attach_workspace(self, path, name=None):
         body = {"path": path}
         if name:
@@ -419,21 +616,114 @@ class HttpBackend:
     def project_git_status(self, project_id):
         return self._request("GET", f"/api/projects/{project_id}/git-status")
 
-    # ---- nodes ----
+    # ---- instances ----
 
-    def list_nodes(self, workspace=None):
-        return self._request("GET", "/api/nodes", params={"workspace": workspace} if workspace else None)
+    def list_instances(self, workspace=None):
+        params = {"kind": "resident"}
+        if workspace:
+            params["workspace"] = workspace
+        result = self._request("GET", "/api/instances", params=params)
+        return result.get("items", []) if isinstance(result, dict) else result
 
-    def start_node(self, body):
-        return self._request("POST", "/api/nodes", json=body)
+    def start_instance(self, body):
+        return self._request("POST", "/api/instances", json=body)
 
-    def stop_node(self, node_id):
-        return self._request("POST", f"/api/nodes/{node_id}/stop", json={})
+    def stop_instance(self, instance_id):
+        return self._request("POST", f"/api/instances/{instance_id}/stop", json={})
+
+    def restart_instance(self, instance_id):
+        return self._request("POST", f"/api/instances/{instance_id}/restart", json={})
+
+    def instance_logs(self, instance_id):
+        return self._request("GET", f"/api/instances/{instance_id}/logs")
+
+    def send_instance_message(self, instance_id, message, conversation_id=None):
+        payload = {"message": message}
+        if conversation_id:
+            payload["conversation_id"] = conversation_id
+        return self._request("POST", f"/api/instances/{instance_id}/message", json=payload)
+
+    def get_instance_message(self, instance_id, msg_id):
+        return self._request("GET", f"/api/instances/{instance_id}/messages/{msg_id}")
+
+    # ---- services ----
+
+    def list_services(self, workspace=None):
+        params = {"workspace": workspace} if workspace else {}
+        result = self._request("GET", "/api/services", params=params)
+        return result.get("items", []) if isinstance(result, dict) else result
+
+    def get_service(self, service_id):
+        return self._request("GET", f"/api/services/{service_id}")
+
+    def create_service(self, body):
+        return self._request("POST", "/api/services", json=body)
+
+    def update_service(self, service_id, body):
+        return self._request("PATCH", f"/api/services/{service_id}", json=body)
+
+    def pause_service(self, service_id):
+        return self._request("POST", f"/api/services/{service_id}/pause", json={})
+
+    def resume_service(self, service_id):
+        return self._request("POST", f"/api/services/{service_id}/resume", json={})
+
+    def delete_service(self, service_id):
+        return self._request("DELETE", f"/api/services/{service_id}")
+
+    def publish_service(self, service_id):
+        return self._request("POST", f"/api/services/{service_id}/publish", json={})
+
+    def unpublish_service(self, service_id):
+        return self._request("DELETE", f"/api/services/{service_id}/publish")
+
+    def list_service_replicas(self, service_id):
+        result = self._request("GET", f"/api/services/{service_id}/replicas")
+        return result.get("items", []) if isinstance(result, dict) else result
+
+    def service_events(self, service_id):
+        result = self._request("GET", f"/api/services/{service_id}/events")
+        return result.get("items", []) if isinstance(result, dict) else result
 
     # ---- settings ----
 
     def get_settings(self):
         return self._request("GET", "/api/settings")
+
+    # ---- auth: whoami and personal API keys ----
+    # A request over REST carries whatever common.auth.auth_headers() finds
+    # in the environment (AGENTS_HUB_API_KEY first among the personal-key
+    # credentials); the key acts as its owner, so ``username`` here names
+    # nobody but the caller and is accepted only for symmetry with
+    # DirectBackend's signature — see cli/main.py, which warns when it is set.
+
+    def version(self):
+        return self._request("GET", "/api/system/version")
+
+    def doctor(self):
+        # Some checks probe the network with their own timeouts; allow for
+        # all of them in a row.
+        return self._request("GET", "/api/health/doctor", timeout=90)
+
+    def whoami(self):
+        return self._request("GET", "/api/auth/me")
+
+    def list_api_keys(self, username=None):
+        return self._request("GET", "/api/auth/keys")
+
+    def create_api_key(self, username=None, name="", workspaces=None, expires_in_days=None):
+        body = {"name": name, "workspaces": workspaces, "expires_in_days": expires_in_days}
+        return self._request("POST", "/api/auth/keys", json=body)
+
+    def revoke_api_key(self, key_id, username=None):
+        self._request("DELETE", f"/api/auth/keys/{key_id}")
+        return {"revoked": True}
+
+    # ---- generic transport: see DirectBackend.request ----
+
+    def request(self, method: str, path: str, *, params: Optional[dict] = None,
+               json: Optional[dict] = None) -> Any:
+        return self._request(method, path, params=params, json=json)
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +764,7 @@ def _ensure_importable() -> None:
     models by bare name (``from models import ...``).
     """
     import sys
-    root = Path(__file__).resolve().parent
-    for entry in (root, root / "dashboard" / "backend"):
+    from common.paths import PROJECT_ROOT
+    for entry in (PROJECT_ROOT, PROJECT_ROOT / "dashboard" / "backend"):
         if str(entry) not in sys.path:
             sys.path.insert(0, str(entry))

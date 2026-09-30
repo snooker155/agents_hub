@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { autoGrowTextarea } from '../../lib/autoGrow';
 import { createPortal } from 'react-dom';
 import { ListTodo, Brain, Trash2, Square, MessageSquare, PanelRightClose, Send } from 'lucide-react';
 import { FeedItem } from './ChatFeed';
@@ -111,12 +112,10 @@ function PlannerChat({ projectId, onGenerated, onClose, toolbarTarget }) {
     run(m);
   }, [input, run]);
 
-  const resizeTextarea = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
-  }, []);
+  // Up to ten lines, then it scrolls (lib/autoGrow.js); follows the text
+  // so a box emptied after a send shrinks back too.
+  const resizeTextarea = useCallback(() => autoGrowTextarea(textareaRef.current), []);
+  useEffect(() => { resizeTextarea(); }, [input, resizeTextarea]);
 
   const stop = useCallback(async () => {
     if (!busy || stopping) return;

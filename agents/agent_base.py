@@ -9,11 +9,13 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, SerializeAsAny
 
+from langchain_core.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain.agents import AgentExecutor
 
 from agents.agent_utils import build_chat_model
 from agents.agent_response import AgentResponse
+from providers.adapters import cacheable_content
 
 
 class ToolResult(BaseModel):
@@ -35,11 +37,23 @@ class AgentResult(BaseModel):
     # on the task and surfaces it to the user; ``agent_output`` holds the question
     # text so plain surfaces still show something.
     pending_question: Optional[Dict[str, Any]] = None
+    # Set when ``status == "awaiting_approval"``: what the run is parked on.
+    # A gated tool call has the shape documented on ``tasks.models.Task``; a run
+    # that reached its money cap (agents.callbacks.guards.RunBudgetGuard) carries
+    # ``{"kind": "budget", "spent_usd", "limit_usd", "reason", ...}``. The runner
+    # hands it to ``park_task_awaiting_approval``.
+    pending_approval: Optional[Dict[str, Any]] = None
     # Optional structured response (buttons, Telegram inline keyboard, …) parsed
     # from a <<<ui>>> block in the agent's output. ``agent_output`` always holds
     # the plain-text fallback, so surfaces that ignore this keep working.
     # SerializeAsAny preserves subclass fields when AgentResult is serialized.
     response: SerializeAsAny[Optional[AgentResponse]] = None
+    # What the agent loop recorded beyond the tool trail
+    # (agents.agent_loop.LoopState.summary): the model that answered each
+    # call, compactions, steering messages, loaded tools, guardrail checks,
+    # structured-output validation. Empty on a plain run; stored on the run
+    # record as ``loop`` by managers.runs.lifecycle.close_run_from_result.
+    loop: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentBase(ABC):
@@ -63,8 +77,14 @@ class AgentBase(ABC):
         think_gate: Optional[Any] = None,
         thinking_level: Optional[str] = None,
         max_iterations: int = 60,
+        spec: Any = None,
     ):
         self.agent_id = agent_id
+        # The registry record this agent was built from: the live one, or a
+        # stored version when the build was pinned (agents/versions.py). The
+        # loop extensions and guardrails read their per-agent settings from it
+        # rather than from the registry, so a pinned run keeps its version's.
+        self.spec = spec
         self.name = name
         self.system_prompt = system_prompt
         self._tools = tools
@@ -91,10 +111,45 @@ class AgentBase(ABC):
         # higher ceiling than the default.
         self.max_iterations = max_iterations
         self._executor: Optional[Any] = None
+        # The chat model behind the executor, kept so the effective provider can
+        # be read back when the agent was configured to inherit it.
+        self._llm: Optional[Any] = None
+        # Loop extensions active for this build (agents/agent_loop.py).
+        self._loop_extensions: List[Any] = []
     
+    def effective_provider(self, llm: Any = None) -> str:
+        """The provider actually behind this agent's model, lowercased.
+
+        ``self.provider`` may be empty or ``inherit`` (the global default is
+        resolved inside ``build_chat_model``), so when a built model is at hand
+        its class name settles the question.
+        """
+        provider = (self.provider or "").strip().lower()
+        if provider and provider != "inherit":
+            return provider
+        llm = llm if llm is not None else self._llm
+        name = type(llm).__name__.lower() if llm is not None else ""
+        for known in ("anthropic", "openai", "google", "ollama"):
+            if known in name:
+                return known
+        return provider
+
+    def _system_message(self, llm: Any) -> Any:
+        """The prompt's leading system message.
+
+        A concrete ``SystemMessage`` rather than a template string: the system
+        prompt carries literal ``{`` / ``}`` (JSON examples, slot names, note
+        titles injected from memory) that a template would read as variables,
+        and a fixed message also lets the content be a block list, which is how
+        Anthropic is told the prefix is worth caching.
+        """
+        text = self.system_prompt or ""
+        content = cacheable_content(self.effective_provider(llm), text)
+        return SystemMessage(content=content)
+
     def build_executor(self) -> Any:
         """Build and return the LangChain AgentExecutor."""
-        
+
         llm = build_chat_model(
             provider=self.provider,
             model=self.model,
@@ -105,18 +160,33 @@ class AgentBase(ABC):
             streaming=self.streaming,
             thinking_level=self.thinking_level,
         )
-        
-        # The system prompt may contain literal `{` / `}` (e.g. JSON examples,
-        # slot names, note titles injected from memory). Escape them so
-        # ChatPromptTemplate doesn't try to interpret them as variables.
-        safe_system = (self.system_prompt or "").replace("{", "{{").replace("}", "}}")
+        self._llm = llm
+
+        # The loop's own policies (steering, compaction, tool search, strict
+        # tool schemas, fallback models; see agents/agent_loop.py). Loaded
+        # before the prompt and the executor are built, because an extension
+        # may add to what they are built from: tool search adds its
+        # ``search_tools`` tool to ``self._tools``, structured output adds the
+        # answer schema to ``self.system_prompt``.
+        from agents.agent_loop import build_agent_runnable, load_extensions
+        self._loop_extensions = load_extensions(self)
+
         prompt = ChatPromptTemplate.from_messages([
-            ("system", safe_system),
+            self._system_message(llm),
+            # Prior turns travel as real messages rather than as text folded into
+            # the human turn: the model reads them as a conversation, and the
+            # prefix stays byte-identical from turn to turn, which is what a
+            # provider prompt cache keys on. Optional, so a caller that passes no
+            # history (task runs, evals, delegation) invokes exactly as before.
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
             ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
         
-        agent = create_tool_calling_agent(llm, self._tools, prompt)
+        # LangChain's tool-calling chain, rebuilt with the loop's hooks between
+        # its stages. With no extension active it is the same chain
+        # create_tool_calling_agent builds.
+        agent = build_agent_runnable(llm, self._tools, prompt, self._loop_extensions)
 
         executor = AgentExecutor(
             agent=agent,

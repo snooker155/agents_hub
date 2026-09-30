@@ -1,0 +1,121 @@
+# Publishes a release when a vX.Y.Z tag is pushed (scripts/release.py cuts
+# the tag; docs/deployment.md "Releases" is the whole procedure):
+#
+#   1. the tag must match the version in every versioned file and have a
+#      CHANGELOG section (scripts/release.py check --tag),
+#   2. the full CI suite runs against the tagged commit,
+#   3. the images are built and pushed to GHCR, tagged X.Y.Z and X.Y, and
+#      `latest` unless the version is a prerelease (X.Y.Z-rc.1),
+#   4. a GitHub release is created with that version's CHANGELOG section.
+#
+# Nothing is pushed for a tag that fails steps 1 or 2.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Tag matches the versioned files and the CHANGELOG
+        run: python scripts/release.py check --tag "${GITHUB_REF_NAME}"
+      - id: v
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
+  tests:
+    needs: check
+    uses: ./.github/workflows/ci.yml
+
+  images:
+    needs: [check, tests]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: backend
+            context: .
+            file: Dockerfile
+            target: backend
+          - name: frontend
+            context: dashboard/frontend
+            file: dashboard/frontend/Dockerfile
+            target: nginx
+          - name: agents
+            context: .
+            file: Dockerfile.agents
+            target: ""
+          - name: models
+            context: .
+            file: deploy/models/Dockerfile
+            target: ""
+          - name: browser
+            context: .
+            file: deploy/browser/Dockerfile
+            target: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/agents-hub-${{ matrix.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.check.outputs.prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ needs.check.outputs.prerelease == 'false' }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            AGENTS_HUB_VERSION=${{ needs.check.outputs.version }}
+            AGENTS_HUB_GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  github-release:
+    needs: [check, images]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Notes from the CHANGELOG
+        run: python scripts/release.py notes "${{ needs.check.outputs.version }}" > notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          if [ "${{ needs.check.outputs.prerelease }}" = "true" ]; then flags="--prerelease"; fi
+          gh release create "${GITHUB_REF_NAME}" --title "Agents Hub ${{ needs.check.outputs.version }}" \
+            --notes-file notes.md --verify-tag $flags

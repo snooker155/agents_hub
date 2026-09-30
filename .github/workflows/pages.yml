@@ -11,6 +11,9 @@ on:
     paths:
       - 'site/**'
       - 'docs/**'
+      # Published as guide/changelog (docs/index.json names it by path).
+      - 'CHANGELOG.md'
+      - 'dashboard/frontend/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -37,7 +40,9 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: site/package-lock.json
+          cache-dependency-path: |
+            site/package-lock.json
+            dashboard/frontend/package-lock.json
 
       - uses: actions/configure-pages@v5
         with:
@@ -45,13 +50,19 @@ jobs:
           # so a fresh clone or a fork does not have to enable it by hand first.
           enablement: true
 
+      - name: Install the dashboard
+        # The site ships the dashboard as a recorded demo under /demo/
+        # (site/scripts/build-demo.mjs), so its dependencies are needed too.
+        working-directory: dashboard/frontend
+        run: npm ci
+
       - name: Install
         working-directory: site
         run: npm ci
 
       - name: Build
-        # Also copies docs/*.md into site/guide/ and fails if the corpus and
-        # docs/index.json disagree.
+        # Also copies docs/*.md into site/guide/, builds the recorded demo into
+        # site/public/demo/, and fails if the corpus and docs/index.json disagree.
         working-directory: site
         run: npm run build
 

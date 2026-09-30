@@ -25,4 +25,9 @@ export default {
   workedExampleAfter: ' und wird unter Dokumentation → Agenten importieren erklärt.',
   cancel: 'Abbrechen',
   httpsGithubComOwnerMy: 'https://github.com/owner/my-agent  (oder ein absoluter lokaler Pfad)',
+  sourceUrl: 'Repository- oder Agent-Card-URL',
+  sourceUrlHint: 'Eine Repository-URL oder die URL einer A2A-Agent-Card (endet auf /.well-known/agent-card.json). Eine Card braucht keinen Klon: Der Hub liest Endpunkt und Skills des Agenten daraus.',
+  bundledPresets: 'Mitgelieferte Agenten, importbereit',
+  usingPreset: 'Das mitgelieferte Beispiel {{name}} wird importiert. Kein Repository nötig.',
+  useRepositoryInstead: 'Stattdessen ein Repository verwenden',
 };

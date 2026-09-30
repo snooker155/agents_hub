@@ -33,9 +33,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import Field
 from langchain_core.tools import tool
 
-from common.agent_context import current_view_id
 from common.entity_sink import record_entity
-from common.workspace_context import workspace_name_from_path
 from connectors.blender import history, pool
 from connectors.blender.daemon import CommandError, DaemonError
 from views.store import append_ops as _append_ops, get_view as _get_view, view_dir as _view_dir

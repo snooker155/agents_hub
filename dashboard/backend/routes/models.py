@@ -5,7 +5,8 @@ Two concerns live here:
 
 1. **Catalog** — a curated, persisted list of models per provider (which ones
    are "available", the default per provider, and per-model pricing in USD per
-   1M tokens). Stored in ``models.json``. Models can be auto-discovered from each
+   1M tokens). Stored via ``providers.catalog`` (database-backed, formerly
+   ``models.json``). Models can be auto-discovered from each
    provider's live API (reusing the Settings test-provider probe) and then
    curated by the user.
 2. **Usage** — token / run / cost aggregation derived from recorded agent runs
@@ -14,15 +15,12 @@ Two concerns live here:
 """
 from __future__ import annotations
 
-import json
-import os
 import re
 from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from common.paths import MODELS_FILE, ensure_agents_hub_root
 from common.pricing import default_cached_price
 from managers import run_manager
 
@@ -36,6 +34,7 @@ from routes.settings import (
 )
 
 from providers import all_provider_ids as _all_provider_ids, list_backends as _list_backends
+from providers.catalog import load_catalog_raw as _load_catalog_raw, save_catalog_raw as _save_catalog_raw
 from providers.context_windows import fallback_context_window as _fallback_ctx
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -239,23 +238,22 @@ def _seed_custom_defaults(catalog: dict) -> None:
 
 
 def _load_catalog() -> dict:
-    if MODELS_FILE.exists():
-        try:
-            data = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                # Ensure every known provider key exists (built-ins + custom backends)
-                base = _empty_catalog()
-                for p in _providers():
-                    if isinstance(data.get(p), dict):
-                        base[p] = {
-                            "default": data[p].get("default", "") or "",
-                            "models": _sort_models(
-                                [_norm_model(m) for m in data[p].get("models", []) if isinstance(m, dict)]),
-                        }
-                _seed_custom_defaults(base)
-                return base
-        except Exception:
-            pass
+    try:
+        data = _load_catalog_raw()
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        # Ensure every known provider key exists (built-ins + custom backends)
+        base = _empty_catalog()
+        for p in _providers():
+            if isinstance(data.get(p), dict):
+                base[p] = {
+                    "default": data[p].get("default", "") or "",
+                    "models": _sort_models(
+                        [_norm_model(m) for m in data[p].get("models", []) if isinstance(m, dict)]),
+                }
+        _seed_custom_defaults(base)
+        return base
     catalog = _seed_catalog()
     _seed_custom_defaults(catalog)
     return catalog
@@ -312,10 +310,7 @@ def _seed_catalog() -> dict:
 
 
 def _save_catalog(catalog: dict) -> None:
-    ensure_agents_hub_root()
-    tmp = MODELS_FILE.with_suffix(MODELS_FILE.suffix + ".tmp")
-    tmp.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, MODELS_FILE)
+    _save_catalog_raw(catalog)
 
 
 def _global_default() -> dict:
@@ -342,8 +337,14 @@ async def get_catalog():
     target for workspaces. The per-provider ``default`` (starred) is catalog
     metadata used to pre-select a provider's model; it no longer touches .env.
     """
+    try:
+        stored = _load_catalog_raw()
+    except Exception:
+        stored = None
     catalog = _load_catalog()
-    if not MODELS_FILE.exists():
+    if stored is None:
+        # Nothing saved yet: persist the freshly-seeded catalog so later reads
+        # (and a run container's snapshot) see it too, not just this response.
         _save_catalog(catalog)
     return {"providers": catalog, "global_default": _global_default()}
 

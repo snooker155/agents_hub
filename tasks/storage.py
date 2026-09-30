@@ -4,26 +4,54 @@ import json
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 from uuid import UUID
 
 from pydantic import BaseModel
 from .models import Task, TaskStatus, CreatedBy
-from memory.models import SharedMemory
 from memory.store import MemoryStore  # noqa: F401 — re-exported for backward compatibility
-from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE, AGENTS_HUB_ROOT
+from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
 from common import db
 
-# Try to import pydantic v1 encoder; provide fallback for v2 or missing
-try:  # pydantic v1
-    from pydantic.json import pydantic_encoder as _pydantic_encoder  # type: ignore
-except Exception:  # pydantic v2 or other
-    _pydantic_encoder = None  # type: ignore
+from pydantic_core import to_jsonable_python as _pydantic_encoder
 
 def _model_to_dict(obj: BaseModel) -> dict:
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    return obj.dict()  # type: ignore[attr-defined]
+    return obj.model_dump()
+
+def _sync_executor(data: dict) -> None:
+    """Keep ``executor`` and ``assigned_agent_type`` in agreement, on every read.
+
+    ``executor`` (tasks.models.Executor) is the source of truth going forward;
+    ``assigned_agent_type`` is kept as a plain string alongside it purely so
+    every reader written before this field existed keeps working unmodified.
+    Two directions, checked in this order:
+
+    - ``executor`` present (a dict with both ``kind`` and ``id``):
+      ``assigned_agent_type`` is *recomputed* from it — the agent id for kind
+      "agent", ``"{kind}:{id}"`` otherwise — so a write that only touched
+      ``executor`` (``tasks.service.assign_executor``) is reflected in the
+      compatibility field too, and a stale ``assigned_agent_type`` from before
+      the write can never linger.
+    - ``executor`` absent but ``assigned_agent_type`` set: this is either a
+      task written by the previous build (only ``assigned_agent_type`` ever
+      existed), or the atomic "claim" marker ``tasks.service`` writes on a
+      subtask before the full assignment (``TaskStore.claim`` with
+      ``assigned_agent_type="orchestrator"``) — either way, an agent executor
+      is synthesized from it.
+
+    Otherwise both stay unset. Mutates ``data`` in place; called from
+    ``_parse_task``, so every read and every read-modify-write covers it.
+    """
+    executor = data.get("executor")
+    if isinstance(executor, dict) and executor.get("kind") and executor.get("id"):
+        kind = str(executor["kind"])
+        eid = str(executor["id"])
+        data["assigned_agent_type"] = eid if kind == "agent" else f"{kind}:{eid}"
+    elif data.get("assigned_agent_type"):
+        data["executor"] = {"kind": "agent", "id": str(data["assigned_agent_type"])}
+    else:
+        data.setdefault("executor", None)
+
 
 def _parse_task(data: dict) -> Task:
     # Remove legacy persisted field; agent_state is now derived at runtime
@@ -36,6 +64,7 @@ def _parse_task(data: dict) -> Task:
     data.setdefault("assigned_agent_type", None)
     data.setdefault("assigned_agent_params", None)
     data.setdefault("assigned_agent_run_id", None)
+    _sync_executor(data)
     # Backward compatibility: migrate legacy 'project_folder' to 'workspace'
     if "workspace" not in data and "project_folder" in data:
         data["workspace"] = data.get("project_folder")
@@ -50,17 +79,13 @@ def _parse_task(data: dict) -> Task:
     if not isinstance(data.get("depends"), list):
         data["depends"] = []
 
-    if hasattr(Task, "model_validate"):
-        return Task.model_validate(data)  # type: ignore[attr-defined]
-    return Task.parse_obj(data)  # type: ignore[attr-defined]
+    return Task.model_validate(data)
 
 def _json_default(o):
-    # Prefer pydantic v1 encoder if available
-    if _pydantic_encoder is not None:
-        try:
-            return _pydantic_encoder(o)
-        except Exception:
-            pass
+    try:
+        return _pydantic_encoder(o)
+    except Exception:
+        pass
     # Fallbacks
     if isinstance(o, Enum):
         return o.value
@@ -85,15 +110,31 @@ def _doc_to_task(doc: str) -> Optional[Task]:
     return None
 
 
+def _creating_user_id() -> str:
+    """Who is filing the task being created right now.
+
+    Lazy import: the identity module reads the settings and opens the database,
+    and this store is imported by agent subprocesses that only read tasks.
+    """
+    from common.identity import current_user_id
+    return current_user_id()
+
+
+# Creation order, on both backends (SQLite's rowid has no Postgres counterpart).
+_INSERTION_ORDER = "created_at, id"
+
+
 def _write_task_row(conn, task: Task) -> None:
     d = _model_to_dict(task)
     conn.execute(
-        "INSERT OR REPLACE INTO tasks (id, key, parent_id, status, workspace, "
-        "project_id, created_at, updated_at, doc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        db.upsert_sql("tasks", ("id", "key", "parent_id", "status", "workspace",
+                                "project_id", "created_by_user", "created_at",
+                                "updated_at", "doc"), ("id",)),
         (str(task.id), task.key,
          str(task.parent_id) if task.parent_id else None,
          str(d.get("status") or ""), task.workspace,
          str(task.project_id) if task.project_id else None,
+         task.created_by_user or "local",
          task.created_at.isoformat() if task.created_at else "",
          task.updated_at.isoformat() if task.updated_at else "",
          _task_doc(task)),
@@ -143,7 +184,7 @@ class TaskStore:
     # ------------- internals -------------
     @staticmethod
     def _load_all(conn) -> List[Task]:
-        rows = conn.execute("SELECT doc FROM tasks ORDER BY rowid").fetchall()
+        rows = conn.execute(f"SELECT doc FROM tasks ORDER BY {_INSERTION_ORDER}").fetchall()
         out: List[Task] = []
         for r in rows:
             t = _doc_to_task(r["doc"])
@@ -162,8 +203,32 @@ class TaskStore:
             for t in tasks:
                 _write_task_row(conn, t)
 
-    def list(self, timeout: float = 10.0) -> List[Task]:
-        return self.load(timeout=timeout)
+    def list(self, timeout: float = 10.0, *, limit: Optional[int] = None,
+             offset: Optional[int] = None) -> List[Task]:
+        """Every task, or one page of them.
+
+        ``limit``/``offset`` push the page into the query itself
+        (``db.NO_LIMIT()`` is "no cap, but still skip ``offset`` rows") rather
+        than loading every row and slicing in Python — the point of a
+        SQL-backed store over the JSON ones, where slicing after load is the
+        only option.
+        """
+        if limit is None and offset is None:
+            return self.load(timeout=timeout)
+        rows = db.get_conn().execute(
+            f"SELECT doc FROM tasks ORDER BY {_INSERTION_ORDER} LIMIT ? OFFSET ?",
+            (limit if limit is not None else db.NO_LIMIT(), offset or 0),
+        ).fetchall()
+        out: List[Task] = []
+        for r in rows:
+            t = _doc_to_task(r["doc"])
+            if t is not None:
+                out.append(t)
+        return out
+
+    def count(self) -> int:
+        row = db.get_conn().execute("SELECT COUNT(*) AS c FROM tasks").fetchone()
+        return int(row["c"]) if row is not None else 0
 
     def get(self, task_id: UUID | str, timeout: float = 10.0) -> Optional[Task]:
         row = db.get_conn().execute(
@@ -216,6 +281,15 @@ class TaskStore:
         should_decompose: bool = False,
         external_source: Optional[dict] = None,
         depends: Optional[Sequence[UUID]] = None,
+        due_at: Optional[datetime] = None,
+        budget_usd: Optional[float] = None,
+        environment_id: Optional[str] = None,
+        agent_version: Optional[int] = None,
+        outcome: Optional[dict] = None,
+        file_ids: Optional[Sequence[str]] = None,
+        secrets: Optional[Sequence[str]] = None,
+        memory_pool_ids: Optional[Sequence[str]] = None,
+        memory_access: str = "write",
         timeout: float = 10.0,
     ) -> Task:
         # Key computation and insert happen in the same transaction so two
@@ -232,6 +306,9 @@ class TaskStore:
                 title=title,
                 description=description,
                 created_by=created_by,
+                # Read off the contextvar the auth middleware sets, so no
+                # caller of create_task has to learn about identity.
+                created_by_user=_creating_user_id(),
                 parent_id=parent_id,
                 sequence_id=sequence_id,
                 order=order,
@@ -243,6 +320,15 @@ class TaskStore:
                 should_decompose=should_decompose,
                 external_source=external_source,
                 depends=list(depends or []),
+                due_at=due_at,
+                budget_usd=budget_usd,
+                environment_id=environment_id,
+                agent_version=agent_version,
+                outcome=outcome,
+                file_ids=list(file_ids or []),
+                secrets=list(secrets or []),
+                memory_pool_ids=list(memory_pool_ids or []),
+                memory_access=memory_access or "write",
             )
             _write_task_row(conn, task)
         return task
@@ -269,11 +355,14 @@ class TaskStore:
     def claim(self, task_id: UUID | str, *, waiting_statuses: Sequence[str], **fields) -> Optional[Task]:
         """Atomically apply ``fields`` only if the task is still unclaimed.
 
-        A task is claimable when it has no ``assigned_agent_type`` and its status
-        is one of ``waiting_statuses``. The check and the write happen in one
+        A task is claimable when it has no ``executor`` and its status is one
+        of ``waiting_statuses``. The check and the write happen in one
         transaction, so when several processes race to dispatch the same runnable
         subtask exactly one wins (the others get ``None``). This is what makes
-        parallel subtask dispatch safe against double-dispatch.
+        parallel subtask dispatch safe against double-dispatch. ``assigned_agent_type``
+        is also checked, raw, alongside ``executor``: a doc from before ``executor``
+        existed carries only that field, and this guard runs on the raw stored
+        JSON, before ``_sync_executor`` would backfill one from the other.
         """
         tid_str = str(task_id)
         with db.transaction() as conn:
@@ -284,7 +373,7 @@ class TaskStore:
                 data = json.loads(row["doc"])
             except Exception:
                 return None
-            if data.get("assigned_agent_type"):
+            if data.get("executor") or data.get("assigned_agent_type"):
                 return None
             if str(data.get("status") or "") not in set(waiting_statuses):
                 return None

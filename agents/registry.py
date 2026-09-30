@@ -1,8 +1,9 @@
 """
 Agent registry loader.
 
-Loads and validates available agents from the shared `.agents_hub/agents.json`
-module and exposes a small API:
+Loads and validates the agent registry (the ``agents`` document collection
+in the database, common/docstore.py; an existing ``.agents_hub/agents.json``
+is imported once and renamed ``.migrated``) and exposes a small API:
 - list_agents() -> list[AgentSpec]
 - get_agent(agent_id: str) -> AgentSpec | None
 
@@ -20,16 +21,25 @@ Validation rules:
 - Agent IDs must be unique
 - entrypoint must be in the form "module.sub:attr" (importable)
 
-The loader caches results and will auto-reload if the file mtime changes.
+The loader caches results and reloads when the store's signature changes.
+Inside a run container (``AGENTS_HUB_SNAPSHOT_DIR`` set, see
+common/snapshot.py) it reads the snapshot the launcher wrote and refuses
+writes.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import json
+import logging
+from common import review as review_mod
+from common import snapshot
+from common.docstore import DocStore
 from common.paths import AGENTS_FILE
+
+log = logging.getLogger(__name__)
 
 
 # -------------------- Data models --------------------
@@ -160,6 +170,55 @@ class AgentSpec:
     # settings.capability_override_requires_container the override is only
     # honoured at build time for container-isolated, no-network runs.
     capability_override: bool = False
+    # Per-agent tweaks to the tool-approval gate (tools/approval.py). Both are
+    # empty by default, so the agent follows the shared NEEDS_APPROVAL list:
+    # ``approval_tools`` adds tool ids that this agent may not call unapproved,
+    # ``approval_exempt`` removes ones it may, and the exemption wins.
+    approval_tools: List[str] = field(default_factory=list)
+    approval_exempt: List[str] = field(default_factory=list)
+    # Workspace secrets (common/secrets.py) this agent may receive, by name.
+    # Empty by default, and empty means none: a run is handed only the names
+    # listed here, as environment variables. A non-empty list counts as
+    # reading private data for the capability guard (tools/capabilities.py).
+    secrets: List[str] = field(default_factory=list)
+    # Whose GitHub identity a declared ``GITHUB_TOKEN`` falls back to when no
+    # explicit secret holds one (connectors/git/github_app.py): "app" (the
+    # default) hands out the installation token of the workspace's GitHub App,
+    # so pull requests come from the app's bot; "user" hands out the token of
+    # the person who launched the run, when they connected their account.
+    github_identity: str = "app"
+    # ── Loop policies (agents/agent_loop.py, fourth-cycle stage 2) ──────────
+    # Per-tool permission policy (tools/permission_policy.py): tool id, or
+    # "*" for this agent's default, mapped to "always_allow", "always_ask" or
+    # "auto" (a small model decides run / deny / ask per call). Empty means
+    # the workspace policy and the approval list decide, as before.
+    tool_policy: Dict[str, str] = field(default_factory=dict)
+    # Models tried in order when the agent's own model refuses, is rate
+    # limited or fails with a server error, as catalog ids "provider/model"
+    # (agents/loop_ext/fallback.py). Empty means no fallback.
+    fallback_models: List[str] = field(default_factory=list)
+    # JSON Schema the agent's final answer must match (agents/loop_ext/
+    # structured.py): validated, repaired by a retry, the run fails when it
+    # still does not match. None means free text.
+    output_schema: Optional[Dict[str, Any]] = None
+    # Guardrail ids (guardrails/) applied to this agent's runs on top of the
+    # workspace-wide ones.
+    guardrails: List[str] = field(default_factory=list)
+    # Tool search (agents/loop_ext/tool_search.py): None = automatic above
+    # the tool-count threshold, True = always, False = never.
+    tool_search: Optional[bool] = None
+    # In-loop compaction of old tool results (agents/loop_ext/compaction.py):
+    # None = the workspace/global default, True = on, False = off.
+    compaction: Optional[bool] = None
+    # ── Conversation handoff (chat/handoff.py, tools/handoff.py) ────────────
+    # Agent ids this agent may hand the conversation to in a chat. Empty means
+    # no handoff tool at all; unlike ``delegates`` an empty list is not "any
+    # agent", because a handoff gives the user away rather than asking for help.
+    handoffs: List[str] = field(default_factory=list)
+    # What of the conversation the receiving agent sees by default: "full",
+    # "summary", "last_n:<N>" or "none" (normalize_handoff_history). A single
+    # handoff may only narrow it.
+    handoff_history: str = "full"
     # External-agent descriptor — empty for built-in agents. When ``type`` is
     # "remote" this holds everything needed to reach the agent over HTTP
     # (``url``/``run_path``/``health_path``/``timeout``/``auth_*``), the
@@ -167,6 +226,21 @@ class AgentSpec:
     # and the last readiness report (``readiness``). Written by
     # ``agents.importer``, consumed by ``agents.remote_agent.RemoteAgent``.
     remote: Dict[str, Any] = field(default_factory=dict)
+    # ── Registry: owner and review status (fourth cycle, stage 4) ───────────
+    # The user id that created this agent (set once, at creation; None for
+    # agents that predate the field, or created outside a request such as
+    # bootstrap). Purely informational — it does not gate anything here.
+    owner_user: Optional[str] = None
+    # draft: not published. in_review: shared, waiting on an admin. approved:
+    # listed on the marketplace when AGENTS_HUB_REGISTRY_REQUIRE_REVIEW is on.
+    # rejected: an admin turned it down; the owner may edit and resubmit.
+    # A record loaded with no stored value defaults to "approved" when shared
+    # (so an install upgrading into this feature keeps every agent it already
+    # listed) and "draft" otherwise. See _validate_agent_dict.
+    review_status: str = "draft"
+    review_note: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[str] = None
 
     def is_remote(self) -> bool:
         """Whether this record is an externally hosted (HTTP) agent.
@@ -295,13 +369,52 @@ class AgentSpec:
         # Only write delegates when restricted, to keep unrestricted records clean.
         if self.delegates:
             d["delegates"] = list(self.delegates)
+        # Only write the approval overrides when set, to keep default records clean.
+        if self.approval_tools:
+            d["approval_tools"] = list(self.approval_tools)
+        if self.approval_exempt:
+            d["approval_exempt"] = list(self.approval_exempt)
+        if self.secrets:
+            d["secrets"] = list(self.secrets)
+        if self.github_identity and self.github_identity != "app":
+            d["github_identity"] = self.github_identity
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
+        # Loop policies: only written when set, so default records stay clean.
+        if self.tool_policy:
+            d["tool_policy"] = dict(self.tool_policy)
+        if self.fallback_models:
+            d["fallback_models"] = list(self.fallback_models)
+        if self.output_schema:
+            d["output_schema"] = dict(self.output_schema)
+        if self.guardrails:
+            d["guardrails"] = list(self.guardrails)
+        if self.tool_search is not None:
+            d["tool_search"] = self.tool_search
+        if self.compaction is not None:
+            d["compaction"] = self.compaction
+        # Handoff: only written when set, like the loop policies above.
+        if self.handoffs:
+            d["handoffs"] = list(self.handoffs)
+        if self.handoff_history and self.handoff_history != "full":
+            d["handoff_history"] = self.handoff_history
         # Only write the external-agent descriptor when the record has one, so
         # built-in agents keep a clean JSON shape.
         if self.remote:
             d["remote"] = dict(self.remote)
+        # Registry: written always (not only when non-default), because the
+        # default itself depends on `shared` at load time (see
+        # _validate_agent_dict) and must not be re-derived on every save.
+        if self.owner_user:
+            d["owner_user"] = self.owner_user
+        d["review_status"] = self.review_status
+        if self.review_note:
+            d["review_note"] = self.review_note
+        if self.reviewed_by:
+            d["reviewed_by"] = self.reviewed_by
+        if self.reviewed_at:
+            d["reviewed_at"] = self.reviewed_at
         return d
 
     def load_callable(self) -> Callable[..., Any]:
@@ -336,7 +449,82 @@ _REGISTRY_CACHE: dict[str, Any] = {
 
 
 def _config_path() -> Path:
+    """The legacy registry file (``agents.json``). The registry itself lives in
+    the database now; the file is imported once on first use and renamed
+    ``.migrated``. Kept for callers that still name it."""
     return AGENTS_FILE
+
+
+# The registry: one document per agent, keyed by id, insertion order kept.
+# add_agent/remove_agent run from the dashboard process as well as agent
+# subprocesses (create_agent_tool / modify_agent_tool in
+# tools/langchain_tools.py); the store's transaction serializes them across
+# processes and hosts.
+_agents_store = DocStore("agents")
+_legacy_checked_for: Optional[int] = None
+
+
+def _record_key(rec: Any) -> Optional[str]:
+    return str(rec["id"]) if isinstance(rec, dict) and rec.get("id") else None
+
+
+def _ensure_legacy_imported() -> None:
+    """Import ``agents.json`` (``{"agents": [...]}``) once, keyed by id."""
+    global _legacy_checked_for
+    from common import db
+    db.get_conn()
+    if _legacy_checked_for == db._generation:
+        return
+    _legacy_checked_for = db._generation
+    path = _config_path()
+    if not path.exists():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("agents.json is unreadable and was left in place: %s", exc)
+        return
+    items = raw.get("agents") if isinstance(raw, dict) else raw
+    docs: Dict[str, Any] = {}
+    for rec in (items or []):
+        key = _record_key(rec)
+        if key:
+            docs[key] = rec
+    _agents_store.import_legacy(docs, path)
+
+
+def load_all_raw() -> List[Dict[str, Any]]:
+    """Every agent record as stored (dicts, registry order). In a run
+    container this is the snapshot the launcher wrote (common/snapshot.py)."""
+    snap = snapshot.read_snapshot(snapshot.AGENTS_SNAPSHOT)
+    if snap is not None:
+        items = snap.get("agents") if isinstance(snap, dict) else snap
+        return [rec for rec in (items or []) if isinstance(rec, dict)]
+    _ensure_legacy_imported()
+    return [rec for rec in _agents_store.values() if isinstance(rec, dict)]
+
+
+def replace_all_raw(records: List[Dict[str, Any]]) -> None:
+    """Make the registry exactly ``records`` (dicts with an ``id``), in that
+    order. Bootstrap and tests use it; the API goes through add/remove."""
+    if snapshot.in_snapshot_mode():
+        snapshot.refuse_write("the agent registry")
+    _ensure_legacy_imported()
+    _agents_store.replace_all({str(r["id"]): r for r in records if isinstance(r, dict) and r.get("id")})
+    _REGISTRY_CACHE["mtime"] = None
+
+
+def export_snapshot() -> Dict[str, Any]:
+    """The registry as the snapshot file for a run container holds it: the
+    same ``{"agents": [...]}`` shape agents.json had."""
+    return {"agents": load_all_raw()}
+
+
+def _registry_signature() -> str:
+    if snapshot.in_snapshot_mode():
+        return "snapshot"
+    _ensure_legacy_imported()
+    return _agents_store.signature()
 
 
 def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
@@ -355,6 +543,56 @@ def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
 
 
 essential_fields = ("id", "name", "type", "entrypoint")
+
+#: Modes of a per-tool permission policy (``AgentSpec.tool_policy``, see
+#: tools/permission_policy.py).
+TOOL_POLICY_MODES = ("always_allow", "always_ask", "auto")
+
+#: Valid values of ``AgentSpec.review_status`` (docs/registry.md). The single
+#: source is ``common.review``, shared with flows and skills; re-exported here
+#: under its historical name since every call site in this module already
+#: uses it.
+REVIEW_STATUSES = review_mod.STATUSES
+
+#: History filters of a conversation handoff (``AgentSpec.handoff_history``,
+#: applied by chat/handoff.py), widest first. ``last_n`` takes a count:
+#: ``last_n:<N>`` with N between 1 and HANDOFF_LAST_N_MAX.
+HANDOFF_HISTORY_KINDS = ("full", "summary", "last_n", "none")
+HANDOFF_LAST_N_MAX = 200
+
+
+def parse_handoff_history(raw: Any) -> Optional[tuple]:
+    """``(kind, n)`` for a handoff history filter, or None when it is not one.
+
+    ``n`` is the message count for ``last_n`` and 0 for the other kinds. The
+    parser lives here rather than in chat/handoff.py so the registry can
+    validate a record without importing the chat package (which imports the
+    agent factory, which imports this module).
+    """
+    text = str(raw or "").strip().lower()
+    if text in ("full", "summary", "none"):
+        return text, 0
+    if text.startswith("last_n:"):
+        try:
+            n = int(text.split(":", 1)[1].strip())
+        except ValueError:
+            return None
+        if 1 <= n <= HANDOFF_LAST_N_MAX:
+            return "last_n", n
+    return None
+
+
+def normalize_handoff_history(raw: Any, default: str = "full") -> str:
+    """The canonical spelling of a handoff history filter (``last_n:6``), or
+    *default* when *raw* is empty or not a filter. Loading is lenient on
+    purpose, like the other registry fields: a stored typo falls back to the
+    default instead of taking the whole registry down; the API validates
+    strictly before anything is stored."""
+    parsed = parse_handoff_history(raw)
+    if parsed is None:
+        return default
+    kind, n = parsed
+    return f"last_n:{n}" if kind == "last_n" else kind
 
 
 def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
@@ -449,6 +687,55 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
             if did and did not in delegates:
                 delegates.append(did)
 
+    def _id_list(raw: Any) -> List[str]:
+        """A clean, de-duplicated list of tool ids from whatever JSON holds."""
+        out: List[str] = []
+        if isinstance(raw, (list, tuple)):
+            for item in raw:
+                value = str(item).strip()
+                if value and value not in out:
+                    out.append(value)
+        return out
+
+    approval_tools = _id_list(ad.get("approval_tools"))
+    approval_exempt = _id_list(ad.get("approval_exempt"))
+    secrets = _id_list(ad.get("secrets"))
+    github_identity = str(ad.get("github_identity") or "app").strip().lower()
+    if github_identity not in ("app", "user"):
+        github_identity = "app"
+
+    raw_policy = ad.get("tool_policy") or {}
+    tool_policy: Dict[str, str] = {}
+    if isinstance(raw_policy, dict):
+        for key, mode in raw_policy.items():
+            k, m = str(key).strip(), str(mode or "").strip().lower()
+            if k and m in TOOL_POLICY_MODES:
+                tool_policy[k] = m
+    fallback_models = _id_list(ad.get("fallback_models"))
+    output_schema = ad.get("output_schema") or None
+    if not isinstance(output_schema, dict):
+        output_schema = None
+    guardrails = _id_list(ad.get("guardrails"))
+    _raw_ts = ad.get("tool_search")
+    tool_search = bool(_raw_ts) if _raw_ts is not None else None
+    _raw_cp = ad.get("compaction")
+    compaction = bool(_raw_cp) if _raw_cp is not None else None
+    # An agent never hands the conversation to itself: the handoff would end
+    # its turn only to start the same agent again.
+    own_id = str(ad.get("id") or "").strip()
+    handoffs = [h for h in _id_list(ad.get("handoffs")) if h != own_id]
+    handoff_history = normalize_handoff_history(ad.get("handoff_history"))
+
+    owner_user = ad.get("owner_user") or None
+    # common.review.default_status: a legacy record with no stored value
+    # loads as "approved" when already shared, "draft" otherwise, so an
+    # upgrade never drops something already on the marketplace out of the
+    # listing. Shared with flows and skills.
+    review_status = review_mod.default_status(ad.get("review_status"), shared)
+    review_note = ad.get("review_note") or None
+    reviewed_by = ad.get("reviewed_by") or None
+    reviewed_at = ad.get("reviewed_at") or None
+
     # Validate entrypoint shape early
     _split_entrypoint(ad["entrypoint"])  # raises if malformed
 
@@ -495,72 +782,82 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         allow_self_delegation=allow_self_delegation,
         capability_override=capability_override,
         delegates=delegates,
+        approval_tools=approval_tools,
+        approval_exempt=approval_exempt,
+        secrets=secrets,
+        github_identity=github_identity,
+        tool_policy=tool_policy,
+        fallback_models=fallback_models,
+        output_schema=output_schema,
+        guardrails=guardrails,
+        tool_search=tool_search,
+        compaction=compaction,
+        handoffs=handoffs,
+        handoff_history=handoff_history,
         remote=remote,
+        owner_user=owner_user,
+        review_status=review_status,
+        review_note=review_note,
+        reviewed_by=reviewed_by,
+        reviewed_at=reviewed_at,
     )
 
 
-def _load_file_raw(path: Path) -> Dict[str, Any]:
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(
-            f"Agents config not found at {path}. Ensure 'agents.json' exists."
-        ) from e
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in agents config at {path}: {e}") from e
-
-
-def _load_agents_from_disk() -> List[AgentSpec]:
-    path = _config_path()
-    data = _load_file_raw(path)
-
-    if not isinstance(data, dict):
-        raise ValueError(f"Agents config root must be an object: {path}")
-
-    raw_agents = data.get("agents")
-    if not isinstance(raw_agents, list):
-        raise ValueError(f"Agents config must contain a list under 'agents': {path}")
-
+def _load_agents_from_store() -> List[AgentSpec]:
     specs: List[AgentSpec] = []
     seen: set[str] = set()
-    for idx, item in enumerate(raw_agents):
+    for idx, item in enumerate(load_all_raw()):
         if not isinstance(item, dict):
             raise ValueError(f"Agent entry at index {idx} must be an object, got {type(item).__name__}")
         spec = _validate_agent_dict(item)
         if spec.id in seen:
-            raise ValueError(f"Duplicate agent id '{spec.id}' in agents config")
+            raise ValueError(f"Duplicate agent id '{spec.id}' in the agent registry")
         seen.add(spec.id)
         specs.append(spec)
-
     return specs
 
 
 def _maybe_reload() -> List[AgentSpec]:
-    path = _config_path()
-    try:
-        mtime = path.stat().st_mtime
-    except FileNotFoundError:
-        # Trigger downstream error on actual load
-        mtime = None
-
-    cached_mtime = _REGISTRY_CACHE.get("mtime")
+    """The validated registry, rebuilt only when the store changed. The cache
+    key is the store's signature (row count and latest write); ``mtime`` is
+    the historical name of that slot and setting it to None still forces a
+    reload, which callers and tests rely on."""
+    key = _registry_signature()
+    cached_key = _REGISTRY_CACHE.get("mtime")
     agents = _REGISTRY_CACHE.get("agents")
-
-    if agents is not None and mtime == cached_mtime:
+    if agents is not None and key == cached_key:
         return agents  # type: ignore[return-value]
 
-    specs = _load_agents_from_disk()
-    _REGISTRY_CACHE["mtime"] = mtime
+    specs = _load_agents_from_store()
+    _REGISTRY_CACHE["mtime"] = key
     _REGISTRY_CACHE["agents"] = specs
     return specs
 
 
 # -------------------- Public API --------------------
 
-def list_agents() -> List[AgentSpec]:
-    """Return the list of available AgentSpec objects (validated)."""
-    return list(_maybe_reload())
+def list_agents(limit: Optional[int] = None, offset: Optional[int] = None) -> List[AgentSpec]:
+    """Return the list of available AgentSpec objects (validated).
+
+    ``limit``/``offset`` page over the cached spec list already held in
+    memory (the mtime-cached result of ``_maybe_reload``), so a page costs a
+    slice, not a re-read of agents.json. With neither given, the full list is
+    returned exactly as before. A caller that must filter before paging (e.g.
+    the ``/api/agents`` route's workspace visibility rules) pages the filtered
+    result itself instead; this is for a caller that wants a page of the raw
+    registry.
+    """
+    specs = list(_maybe_reload())
+    if limit is None and offset is None:
+        return specs
+    start = offset or 0
+    return specs[start: start + limit] if limit is not None else specs[start:]
+
+
+def count_agents() -> int:
+    """Total number of registry agents, for a caller paging with
+    :func:`list_agents` that needs ``total`` without holding the whole list."""
+    return len(_maybe_reload())
 
 
 def get_agent(agent_id: str) -> Optional[AgentSpec]:
@@ -588,8 +885,58 @@ def system_agent_ids() -> List[str]:
     return [spec.id for spec in specs if spec.system]
 
 
-def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
-    """Persist a new agent spec to agents.json.
+def registry_review_required() -> bool:
+    """Whether publishing an agent must wait on an admin's approval.
+
+    Thin wrapper over ``common.review.required()``, kept under this name
+    since every call site (routes/marketplace.py, routes/agents.py,
+    routes/registry.py) already uses it. Flows and skills call the shared
+    function directly.
+    """
+    return review_mod.required()
+
+
+def set_review_status(
+    agent_id: str,
+    status: str,
+    *,
+    note: Optional[str] = None,
+    reviewed_by: Optional[str] = None,
+) -> AgentSpec:
+    """Record an admin's (or the system's) decision on a published agent.
+
+    Goes through :func:`add_agent` like any other edit, so it is still subject
+    to the capability guard and still snapshots version history — a review
+    decision never touches tools or the definition, so neither ever fires in
+    practice, but the record shows the same discipline as a manual edit
+    either way. Raises ``ValueError`` for an unknown agent or status.
+    """
+    if status not in REVIEW_STATUSES:
+        raise ValueError(f"'{status}' is not a valid review status")
+    spec = get_agent(agent_id)
+    if spec is None:
+        raise ValueError(f"Agent '{agent_id}' not found in registry")
+    from datetime import datetime, timezone
+    reviewed_at = datetime.now(timezone.utc).isoformat() if status in ("approved", "rejected") else spec.reviewed_at
+    new_spec = replace(
+        spec,
+        review_status=status,
+        review_note=note if note is not None else spec.review_note,
+        reviewed_by=reviewed_by if status in ("approved", "rejected") else spec.reviewed_by,
+        reviewed_at=reviewed_at,
+    )
+    add_agent(new_spec)
+    return new_spec
+
+
+def add_agent(
+    spec: AgentSpec,
+    *,
+    user_edit: bool = True,
+    actor: Optional[str] = None,
+    note: Optional[str] = None,
+) -> None:
+    """Persist a new agent spec to the registry.
 
     Save time is the capability guard's chokepoint: every write path (dashboard
     routes, ``create_agent_tool`` / ``modify_agent_tool``, bootstrap) lands here,
@@ -597,15 +944,33 @@ def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
     Raises ``CapabilityViolation`` (a ``ValueError``) when it does — the routes'
     existing ValueError handlers turn that into a 400 with the offending
     capabilities named.
+
+    ``actor``/``note`` are attributed to the version-history snapshot this call
+    may take (see below); both are optional and go unused when nothing needs
+    snapshotting.
     """
     from agents.capability_guard import enforce_agent_tools
 
     _prev = get_agent(spec.id)
+    from tools.capabilities import secret_grant_ids
+
+    # Declared secrets ride along as pseudo tool ids (``secrets:<NAME>``) that
+    # grant reads_private, so holding a token closes the trifecta like any
+    # private-data tool would.
     enforce_agent_tools(
         spec.id,
-        list(spec.tools or []),
-        previous_tools=list(_prev.tools or []) if _prev else None,
+        list(spec.tools or []) + secret_grant_ids(spec.secrets),
+        previous_tools=(list(_prev.tools or []) + secret_grant_ids(_prev.secrets)) if _prev else None,
         override=bool(spec.capability_override),
+        # The workspace the record is owned by, so a brand new agent of the
+        # system workspace meets the no push rule at save time, not only at
+        # build time (agents.capability_guard.is_system_workspace_agent).
+        workspace=getattr(spec, "owner_workspace", None),
+        # The spec being saved, not the (possibly stale-or-absent) registry
+        # record: a brand-new agent, or one whose delegates list is being
+        # narrowed in this very call, must be judged on the allowlist it is
+        # about to have. See agents.capability_guard.check_agent_tools.
+        delegates=list(spec.delegates or []),
     )
 
     # A system agent the operator edits stops tracking the seed: bootstrap's
@@ -615,28 +980,36 @@ def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
         import dataclasses as _dc
         spec = _dc.replace(spec, user_modified=True)
 
-    path = _config_path()
-    try:
-        data = _load_file_raw(path)
-    except FileNotFoundError:
-        data = {"agents": []}
+    # Registry review gate (common.review, shared with flows and skills).
+    # Publishing — going from not-shared to shared — is the moment an agent
+    # becomes somebody else's business; when the hub requires review it is
+    # held at in_review instead of appearing on the marketplace immediately.
+    # Any other save (a tool added, a description edited, an admin decision
+    # recorded through set_review_status) leaves review_status exactly as the
+    # caller set it, so this never fights an explicit approve/reject.
+    was_shared = bool(_prev.shared) if _prev is not None else False
+    gated = review_mod.gate_on_publish(was_shared, spec.shared, spec.review_status)
+    if gated is not None:
+        spec = replace(spec, review_status=gated, reviewed_by=None,
+                       reviewed_at=None, review_note=None)
 
-    if not isinstance(data, dict) or "agents" not in data:
-        data = {"agents": []}
+    # Snapshot whatever is currently stored into version history before this
+    # call replaces it, so history never has a gap. Only fires when the agent
+    # already exists and its stored definition differs from the last snapshot
+    # on file; best-effort, never blocks a legitimate write (see
+    # agents.versions.snapshot_if_changed).
+    if _prev is not None:
+        try:
+            from agents.versions import snapshot_if_changed
+            snapshot_if_changed(spec.id, next_spec=spec, actor=actor, note=note)
+        except Exception:
+            log.warning("could not snapshot version history for '%s'", spec.id, exc_info=True)
 
-    # Check for duplicates (update if exists)
-    found = False
-    for i, a in enumerate(data["agents"]):
-        if a.get("id") == spec.id:
-            data["agents"][i] = spec.to_dict()
-            found = True
-            break
-
-    if not found:
-        data["agents"].append(spec.to_dict())
-
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    if snapshot.in_snapshot_mode():
+        snapshot.refuse_write("the agent registry")
+    _ensure_legacy_imported()
+    with _agents_store.transaction():
+        _agents_store.put(spec.id, spec.to_dict())
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
@@ -644,24 +1017,12 @@ def add_agent(spec: AgentSpec, *, user_edit: bool = True) -> None:
 
 
 def remove_agent(agent_id: str) -> bool:
-    """Remove an agent from agents.json by id. Returns True if found and removed."""
-    path = _config_path()
-    try:
-        data = _load_file_raw(path)
-    except FileNotFoundError:
+    """Remove an agent from the registry by id. Returns True if found and removed."""
+    if snapshot.in_snapshot_mode():
+        snapshot.refuse_write("the agent registry")
+    _ensure_legacy_imported()
+    if not _agents_store.delete(str(agent_id)):
         return False
-
-    if not isinstance(data, dict) or "agents" not in data:
-        return False
-
-    original_len = len(data["agents"])
-    data["agents"] = [a for a in data["agents"] if a.get("id") != agent_id]
-
-    if len(data["agents"]) == original_len:
-        return False  # not found
-
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
 
     # Force reload on next access
     _REGISTRY_CACHE["mtime"] = None
@@ -671,8 +1032,8 @@ def remove_agent(agent_id: str) -> bool:
 
 def _notify_agents_changed(agent_id: str | None = None) -> None:
     # Drop any cached build for the changed agent immediately. The build cache
-    # also fingerprints agents.json's mtime, so this is belt-and-braces against
-    # coarse filesystem timestamps — an edit takes effect on the very next run.
+    # also fingerprints the registry store's signature, so this is belt-and-
+    # braces — an edit takes effect on the very next run.
     try:
         from agents.agent_cache import invalidate
         invalidate(agent_id)
@@ -687,9 +1048,9 @@ def _notify_agents_changed(agent_id: str | None = None) -> None:
 
 def set_default_chat_agent(agent_id: str) -> None:
     """Deprecated: default chat agent is stored per workspace metadata."""
-    raise ValueError("Default chat agent is stored in workspace metadata (workspaces.json), not agents.json")
+    raise ValueError("Default chat agent is stored in workspace metadata, not in the agent registry")
 
 
 def clear_default_chat_agent() -> None:
     """Deprecated: default chat agent is stored per workspace metadata."""
-    raise ValueError("Default chat agent is stored in workspace metadata (workspaces.json), not agents.json")
+    raise ValueError("Default chat agent is stored in workspace metadata, not in the agent registry")

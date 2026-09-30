@@ -50,8 +50,14 @@ def effective_memory(spec, workspace: Optional[str] = None) -> Tuple[str, Any]:
 
 
 def effective_memory_pools(spec, workspace: Optional[str] = None,
-                           pool_override: Optional[Any] = None) -> list:
+                           pool_override: Optional[Any] = None,
+                           personal_pool: Optional[str] = None) -> list:
     """Shared memory pool ids (primary first) effective in this workspace.
+
+    ``personal_pool`` is the user's personal pool (memory/personal.py), put
+    after the agent's own pools: with none of its own it is the only one and
+    so the primary; next to them it is searched too and written to on
+    request (``remember(personal=True)``, memory/tool.py).
 
     ``pool_override`` pins the assignment for one build, ignoring both the
     record and the workspace. It exists for surfaces where the pool is part of
@@ -63,6 +69,25 @@ def effective_memory_pools(spec, workspace: Optional[str] = None,
     """
     from agents.registry import normalize_memory_pools
     if pool_override:
-        return normalize_memory_pools("shared", pool_override)
-    memory_type, memory_data = effective_memory(spec, workspace)
-    return normalize_memory_pools(memory_type, memory_data)
+        pools = normalize_memory_pools("shared", pool_override)
+    else:
+        memory_type, memory_data = effective_memory(spec, workspace)
+        pools = normalize_memory_pools(memory_type, memory_data)
+    personal_pool = str(personal_pool or "").strip()
+    if personal_pool and personal_pool not in pools:
+        pools.append(personal_pool)
+    return pools
+
+
+#: The memory tools that change a pool. A run whose task binds pools read-only
+#: (``Task.memory_access == "read"``, set by a deployment) is built without
+#: them; everything else of the memory tool set stays (memory/tool.py,
+#: memory/knowledge_extract.py).
+MEMORY_WRITE_TOOLS = frozenset({
+    "write_memory", "write_structured_memory", "append_journal",
+    "memory_block_replace", "memory_block_append",
+    "remember", "forget", "record_episode", "link",
+    "save_extraction",
+})
+
+MEMORY_ACCESS_MODES = ("read", "write")

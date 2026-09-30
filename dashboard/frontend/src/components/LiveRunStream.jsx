@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Radio, ChevronDown, ChevronRight, Brain, Wrench, AlertCircle } from 'lucide-react';
+import { Radio, ChevronDown, ChevronRight, Brain, Wrench, AlertCircle, Globe, MessageSquarePlus, Send } from 'lucide-react';
 import { useChannel } from './stream';
+import { autoGrowTextarea } from '../lib/autoGrow';
 import { useI18n } from '../i18n';
+import { getRunBrowserSession, setBrowserControl } from '../api/browser';
+import { listRunSteering, steerRun } from '../api/steering';
+import { BrowserToolbar, BrowserViewport, useBrowserSession } from './browser';
+import { steerCaption } from './chat/steering';
 
 /*
  * Live view of agent runs happening on one session channel.
@@ -17,6 +22,17 @@ import { useI18n } from '../i18n';
  * Token events only arrive when agent streaming is enabled in Settings; with it
  * off the same block still fills in with tool calls, thinking and the final
  * answer, just in steps rather than continuously.
+ *
+ * A run that uses the browser tools gets a Browser panel under its tools: the
+ * page its session is on, live, with a Take control toggle (docs/browser.md).
+ * `browserSession` asks for that lookup before any browser tool shows up, for
+ * a page that already knows the run was handed a session.
+ *
+ * A running run also gets a small box to talk to it (docs/steering.md):
+ * "Steer" puts the message in front of the model before its next step,
+ * "Interrupt" stops the run and, for a task, starts it again with the
+ * message in its instruction. What was sent shows under the box with where
+ * each message is.
  */
 
 // Keep a bounded amount of streamed text per run: a long agent run can emit
@@ -179,9 +195,261 @@ function ToolRow({ tool }) {
   );
 }
 
-function RunBlock({ run }) {
+const isBrowserTool = (name) => typeof name === 'string' && name.startsWith('browser_');
+
+/**
+ * The browser session a run is using, looked up once the run has used a
+ * browser tool (or at once, when the page already knows there is one). A 404
+ * is asked again on the next browser_* call, since a run's first
+ * browser_open is what creates its session.
+ */
+function useRunBrowserSession(runId, browserCalls, forced) {
+  const [found, setFound] = useState(null);
+  const asked = useRef(-1);
+  const mounted = useRef(true);
+  const wanted = forced || browserCalls > 0;
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    if (!runId || !wanted || found || asked.current === browserCalls) return;
+    asked.current = browserCalls;
+    getRunBrowserSession(runId)
+      .then(({ data }) => { if (mounted.current && data?.session_id) setFound(data); })
+      .catch(() => {});
+  }, [runId, wanted, found, browserCalls]);
+  return found;
+}
+
+/**
+ * The page a run's browser is on, under its tools. Polls while the run is
+ * going and the panel is open; a finished run shows the frame it left once.
+ * "Take control" turns the picture into an input surface on the same session
+ * the agent's browser_act works in, so a person can get past a login or a
+ * consent banner and hand the page back.
+ */
+function RunBrowserPanel({ session, done }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(true);
+  const [controlling, setControlling] = useState(false);
+  const live = open && !done;
+  const { frame, loading, send, navigate, inputError, error, status } =
+    useBrowserSession(open ? session.session_id : null, { active: live });
+  const gone = status === 404;
+  // Taking control is told to the service, so the agent's next browser step
+  // waits instead of fighting the person for the page; releasing, or leaving
+  // the page, hands it back (a hold also lapses on its own when nobody
+  // watches).
+  const toggleControl = () => {
+    const next = !controlling;
+    setControlling(next);
+    setBrowserControl(session.session_id, next).catch(() => {});
+  };
+  useEffect(() => () => {
+    if (controlling) setBrowserControl(session.session_id, false).catch(() => {});
+  }, [controlling, session.session_id]);
+  return (
+    <div className="rounded-md border border-gray-200 bg-white" data-testid="run-browser-panel">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs text-gray-600 hover:text-gray-800"
+      >
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <Globe className="h-3 w-3 text-indigo-500" />
+        <span className="font-medium">{t('browser.panelTitle')}</span>
+        <span className="min-w-0 truncate font-mono text-[10px] text-gray-400">{frame?.url || session.url}</span>
+      </button>
+      {open && (
+        <div className="space-y-2 px-2 pb-2">
+          {gone ? (
+            <p className="text-xs italic text-gray-400">{t('browser.sessionClosed')}</p>
+          ) : (
+            <>
+              <BrowserToolbar
+                url={frame?.url || session.url || ''}
+                title={frame?.title || session.title || ''}
+                sessionId={session.session_id}
+                controlling={controlling}
+                onToggleControl={done ? undefined : toggleControl}
+                onBack={controlling ? () => send({ kind: 'back' }) : undefined}
+                onReload={controlling ? () => send({ kind: 'reload' }) : undefined}
+                onNavigate={controlling ? navigate : undefined}
+              />
+              <BrowserViewport
+                frame={frame}
+                loading={loading}
+                controllable={controlling && !done}
+                onInput={send}
+              />
+              {(inputError || (error && !frame)) && (
+                <p className="text-xs text-red-600">{inputError || error}</p>
+              )}
+              {controlling && !done && (
+                <p className="text-xs text-gray-400">{t('browser.agentWaits')}</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// How often a run's steering messages are re-read while one of them still
+// waits for the next model step.
+const STEER_POLL_MS = 3000;
+
+function useRunSteering(runId, done) {
+  const [messages, setMessages] = useState([]);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const refresh = useCallback(() => {
+    if (!runId) return Promise.resolve();
+    return listRunSteering(runId)
+      .then(({ data }) => { if (mounted.current) setMessages(data?.messages || []); })
+      .catch(() => {});
+  }, [runId]);
+  useEffect(() => { refresh(); }, [refresh, done]);
+  const waiting = messages.some((m) => m.status === 'pending');
+  useEffect(() => {
+    if (done || !waiting) return undefined;
+    const id = setInterval(refresh, STEER_POLL_MS);
+    return () => clearInterval(id);
+  }, [done, waiting, refresh]);
+  return { messages, refresh };
+}
+
+const RUN_STEER_MODES = ['inject', 'interrupt'];
+
+function RunSteer({ runId, done }) {
+  const { t } = useI18n();
+  const { messages, refresh } = useRunSteering(runId, done);
+  const [text, setText] = useState('');
+  const steerRef = useRef(null);
+  // Up to ten lines, then it scrolls (lib/autoGrow.js).
+  useEffect(() => { autoGrowTextarea(steerRef.current); }, [text]);
+  const [mode, setMode] = useState('inject');
+  const [sending, setSending] = useState(false);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  if (done && messages.length === 0 && !note) return null;
+
+  const send = async () => {
+    const body = text.trim();
+    if (!body || sending) return;
+    setSending(true);
+    setError('');
+    setNote('');
+    try {
+      // An interrupted chat turn is carried on by the server: this page does
+      // not own the conversation, so it cannot send the next turn itself.
+      const { data } = await steerRun(runId, body, mode, { send: mode === 'interrupt' });
+      setText('');
+      if (data?.next === 'relaunched') {
+        setNote(t('steering.relaunched', { run: String(data.next_run_id || '').slice(0, 8) }));
+      } else if (data?.next === 'sent') {
+        setNote(t('steering.sentAsNextTurn'));
+      } else if (data?.next === 'send') {
+        setNote(t('steering.sendFromChat'));
+      } else if (data?.next === 'none') {
+        setNote(t('steering.stoppedOnly'));
+      }
+      refresh();
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      if (err?.response?.status === 409 && detail?.status) {
+        setError(t('steering.notRunning', { status: detail.status }));
+      } else {
+        setError(t('steering.failed', { error: detail?.message || detail || err?.message || '' }));
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="space-y-1.5" data-testid="run-steer">
+      {messages.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[10px] uppercase tracking-wide text-gray-400">{t('steering.history')}</div>
+          {messages.map((m) => {
+            const caption = steerCaption({ state: m.status, after_step: m.delivered_step });
+            return (
+              <div key={m.msg_id} className="rounded-md bg-indigo-50 px-2 py-1 text-xs text-indigo-900">
+                <div className="whitespace-pre-wrap break-words">{m.body}</div>
+                <div className="mt-0.5 flex flex-wrap gap-2 text-[10px] text-indigo-500">
+                  {m.mode === 'interrupt' && <span className="font-semibold">{t('steering.interruptTag')}</span>}
+                  {caption && <span>{t(caption.key, caption.values)}</span>}
+                  {m.author_name && <span>{t('steering.by', { name: m.author_name })}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!done && (
+        <div className="rounded-md border border-gray-200 bg-white p-2 space-y-1.5">
+          <div className="flex items-center gap-2 text-[11px] text-gray-500">
+            <MessageSquarePlus className="h-3 w-3 text-indigo-500" />
+            <span className="font-medium">{t('steering.runTitle')}</span>
+            <div className="ml-auto inline-flex rounded-full border border-gray-200 bg-gray-50 p-0.5" role="radiogroup">
+              {RUN_STEER_MODES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === m}
+                  onClick={() => setMode(m)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                    mode === m ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {t(`steering.modes.${m}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={steerRef}
+              rows={1}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+              }}
+              placeholder={t('steering.inputPlaceholder')}
+              className="flex-1 resize-none rounded border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:border-indigo-400"
+            />
+            <button
+              type="button"
+              onClick={send}
+              disabled={!text.trim() || sending}
+              title={t(`steering.modeHints.${mode}`)}
+              className="flex h-7 items-center gap-1 rounded-full bg-indigo-600 px-2.5 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+            >
+              <Send className="h-3 w-3" />
+              {t(`steering.modes.${mode}`)}
+            </button>
+          </div>
+        </div>
+      )}
+      {note && <p className="text-[11px] text-gray-500">{note}</p>}
+      {error && <p className="text-[11px] text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function RunBlock({ run, browserSession = false }) {
   const { t } = useI18n();
   const [showThinking, setShowThinking] = useState(false);
+  const browserCalls = run.tools.filter((tool) => isBrowserTool(tool.tool)).length;
+  const session = useRunBrowserSession(run.run_id, browserCalls, !!browserSession);
   return (
     <div className={`rounded-lg border p-3 space-y-2 ${run.done ? 'border-gray-200 bg-white' : 'border-indigo-200 bg-indigo-50/40'}`}>
       <div className="flex items-center gap-2 text-xs">
@@ -220,6 +488,8 @@ function RunBlock({ run }) {
         </div>
       )}
 
+      {session && <RunBrowserPanel session={session} done={run.done} />}
+
       {run.errors.map((e, i) => (
         <div key={i} className="flex items-start gap-1.5 text-xs text-red-600">
           <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
@@ -236,6 +506,8 @@ function RunBlock({ run }) {
       {!run.text && !run.done && run.tools.length === 0 && run.thinking.length === 0 && (
         <p className="text-xs text-gray-400 italic">{t('liveRunStream.waitingForTheModel')}</p>
       )}
+
+      <RunSteer runId={run.run_id} done={run.done} />
     </div>
   );
 }
@@ -246,7 +518,7 @@ function RunBlock({ run }) {
  * empty box on pages where nothing is running.
  */
 export default function LiveRunStream({ sessionId, runId = null, seed = null,
-                                       title, className = '' }) {
+                                       title, className = '', browserSession = false }) {
   const { t } = useI18n();
   const { runs, activeCount } = useLiveRunStream(sessionId, { runId, seed });
   const heading = title ?? t('liveRunStream.liveOutput');
@@ -272,7 +544,7 @@ export default function LiveRunStream({ sessionId, runId = null, seed = null,
         )}
       </div>
       <div className="space-y-2 max-h-[28rem] overflow-y-auto">
-        {runs.map((r) => <RunBlock key={r.run_id} run={r} />)}
+        {runs.map((r) => <RunBlock key={r.run_id} run={r} browserSession={browserSession} />)}
         <div ref={endRef} />
       </div>
     </div>

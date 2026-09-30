@@ -1,0 +1,33 @@
+export default {
+  poolHistory: 'Pool-Verlauf',
+  historyOf: 'Verlauf: {{item}}',
+  viewHistory: 'Verlauf ansehen',
+  noHistoryYet: 'Noch kein Verlauf.',
+  versionN: 'Version {{n}}',
+  kinds: {
+    block: 'Block',
+    note: 'Notiz',
+    slot: 'Slot',
+  },
+  ops: {
+    create: 'Erstellt',
+    update: 'Geändert',
+    delete: 'Gelöscht',
+    restore: 'Wiederhergestellt',
+    redact: 'Geschwärzt',
+  },
+  restore: 'Wiederherstellen',
+  redact: 'Schwärzen',
+  alsoCurrent: 'Diesen Text auch aus dem aktuellen Wert entfernen',
+  confirmRestore: 'Version {{version}} wiederherstellen? Der aktuelle Wert wird durch den damaligen ersetzt.',
+  confirmRedact: 'Version {{version}} schwärzen? Der gespeicherte Inhalt wird durch eine Markierung ersetzt, das kann nicht rückgängig gemacht werden.',
+  restored: 'Wiederhergestellt.',
+  redactedDone: 'Geschwärzt.',
+  redactedMarker: 'Diese Version wurde geschwärzt, ihr Inhalt wird nicht mehr aufbewahrt.',
+  system: 'System',
+  errors: {
+    load: 'Der Verlauf konnte nicht geladen werden',
+    restore: 'Diese Version konnte nicht wiederhergestellt werden',
+    redact: 'Diese Version konnte nicht geschwärzt werden',
+  },
+};

@@ -1,9 +1,10 @@
 """
 Task-related API routes.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-from typing import Optional
+from pydantic import BaseModel
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 import json
 import threading
@@ -13,17 +14,19 @@ from pathlib import Path
 
 from tasks import service as tasks_service
 from agents import registry
+from flow import launcher as flow_launcher
 from managers import run_manager
 from agents import agent_launcher
-from tasks import AgentState, CreatedBy, TaskStatus
+from tasks import Actor, AgentState, CreatedBy, TaskStatus
 from workspace import create_workspace_folder, resolve_project_root, project_folder_name, resolve_task_project_name
 from workspace import get_workspace_metadata
 from agents.agent_factory import create_agent
-from tasks.assign import assign_agent_to_task, AssignError
+from tasks.assign import assign_agent_to_task, assign_executor_to_task, AssignError
 from tasks.serialize import task_to_dict
-from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate, TaskAnswer
+from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate, TaskAnswer, TaskListItem, TaskDetail, TaskPage
 from common.session_service import add_event_to_session
 from common.paths import PROJECTS_FILE
+from common import access, audit, identity
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -45,16 +48,44 @@ def _resolve_task_ref(ref: str) -> UUID:
 
 
 
-@router.get("")
-async def list_tasks(workspace: Optional[str] = None):
-    all_tasks = tasks_service.list_tasks()
-    
-    if workspace:
-        tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
-    else:
-        tasks = all_tasks
+def _visible_tasks(request: Request, tasks: List) -> List:
+    """Narrow a task list to the workspaces the caller can see.
 
-    return [task_to_dict(t) for t in tasks]
+    A request naming no workspace is otherwise open to any signed-in account
+    (common/auth.py authorize()); this additionally filters to what the
+    caller is a member of, a no-op outside ``multi`` mode. ``created_by_user``
+    is informational only (docs/identity.md) and is never gated on here — the
+    workspace is the unit of visibility, the same as everywhere else in
+    common/access.py.
+    """
+    principal = identity.request_principal(request)
+    visible = access.visible_workspaces(principal)
+    if visible is None:
+        return tasks
+    return [t for t in tasks if access.can_see_workspace(principal, t.workspace)]
+
+
+@router.get("", response_model=Union[List[TaskListItem], TaskPage])
+async def list_tasks(request: Request, workspace: Optional[str] = None,
+                     limit: Optional[int] = None, offset: Optional[int] = None):
+    """The task list. With no ``limit``/``offset`` this is the full list, exactly
+    as before; with either, it is one page: ``{items, total, limit, offset}``."""
+    if limit is None and offset is None:
+        all_tasks = tasks_service.list_tasks()
+        if workspace:
+            tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
+        else:
+            tasks = all_tasks
+        tasks = _visible_tasks(request, tasks)
+        return [task_to_dict(t) for t in tasks]
+
+    page, total = tasks_service.list_tasks_page(workspace=workspace, limit=limit, offset=offset)
+    # Paged in SQL, so filtering after the fact can only shrink the page, not
+    # ``total`` — a caller who is not a member of every workspace in view may
+    # see fewer items than ``total`` claims. See common/access.py.
+    page = _visible_tasks(request, page)
+    return {"items": [task_to_dict(t) for t in page], "total": total,
+            "limit": limit, "offset": offset}
 
 
 @router.post("")
@@ -113,6 +144,12 @@ async def create_task(task: TaskCreate):
     if task.depends:
         depends_uuids = [_resolve_task_ref(d) for d in task.depends]
 
+    # An outcome is validated and given its defaults here, like on its own
+    # route (routes/outcomes.py), so a task never stores a rubric the grader
+    # cannot use.
+    outcome = _normalized_outcome(task.outcome)
+    file_ids = _validated_file_ids(task.file_ids, ws_name)
+
     # Set project_id before creation so the Jira-style key uses the project prefix
     try:
         t = tasks_service.create_task(
@@ -124,6 +161,14 @@ async def create_task(task: TaskCreate):
             should_decompose=task.should_decompose,
             parent_id=parent_uuid,
             depends=depends_uuids,
+            due_at=task.due_at,
+            # No agent is assigned at creation, so there is nothing yet to
+            # validate the pin against (tasks_service.validate_agent_version
+            # is a no-op without an agent id) — validation happens once an
+            # agent is assigned, on the /assign and PATCH routes.
+            agent_version=task.agent_version,
+            outcome=outcome,
+            file_ids=file_ids,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -133,17 +178,53 @@ async def create_task(task: TaskCreate):
     if task.priority:
         extra["priority"] = task.priority
     if extra:
-        tasks_service.update_task(t.id, **extra)
+        tasks_service.update_task(t.id, actor=Actor.user, **extra)
         t = tasks_service.get_task(t.id) or t
 
     return task_to_dict(t)
 
 
-@router.get("/{task_id}")
-async def get_task(task_id: UUID):
+def _validated_file_ids(raw, workspace):
+    """Workspace file ids for a task, de-duplicated in order; 400 when one is
+    unknown, deleted, or belongs to another workspace than the task's."""
+    if not raw:
+        return []
+    from files import service as files_service
+    out: List[str] = []
+    for fid in raw:
+        fid = str(fid or "").strip()
+        if not fid or fid in out:
+            continue
+        record = files_service.get_file(fid)
+        if record is None:
+            raise HTTPException(status_code=400, detail=f"Workspace file '{fid}' not found")
+        if record["workspace"] != (workspace or ""):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workspace file '{fid}' belongs to workspace '{record['workspace']}', "
+                       f"not to this task's workspace")
+        out.append(fid)
+    return out
+
+
+def _normalized_outcome(raw):
+    """A task outcome in its stored shape (tasks/outcome.py), None to clear,
+    400 when the grader could not use it."""
+    if raw is None:
+        return None
+    from tasks.outcome import OutcomeError, normalize_outcome
+    try:
+        return normalize_outcome(raw)
+    except OutcomeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{task_id}", response_model=TaskDetail)
+async def get_task(task_id: UUID, request: Request):
     t = tasks_service.get_task(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
+    access.require_visible(identity.request_principal(request), t.workspace)
 
     # Also fetch subtasks
     all_tasks = tasks_service.list_tasks()
@@ -170,6 +251,15 @@ async def update_task(task_id: UUID, update: TaskUpdate):
         raise HTTPException(status_code=400, detail=f"Invalid priority: {fields['priority']}")
     if "depends" in fields and fields["depends"] is not None:
         fields["depends"] = [_resolve_task_ref(d) for d in fields["depends"]]
+    if "agent_version" in fields:
+        try:
+            tasks_service.validate_agent_version(t.assigned_agent_type, fields["agent_version"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    if "outcome" in fields:
+        fields["outcome"] = _normalized_outcome(fields["outcome"])
+    if "file_ids" in fields:
+        fields["file_ids"] = _validated_file_ids(fields["file_ids"], t.workspace)
 
     # If task is being moved back to an unassigned state, clear the assignment
     # and delete any pre-start run record (awaiting_approval or node-queued assigned).
@@ -184,7 +274,7 @@ async def update_task(task_id: UUID, update: TaskUpdate):
             run_manager.delete_assigned_run(str(task_id))
 
     try:
-        updated = tasks_service.update_task(task_id, **fields)
+        updated = tasks_service.update_task(task_id, actor=Actor.user, **fields)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not updated:
@@ -407,13 +497,27 @@ async def get_task_file_raw(task_id: UUID, path: str):
 
 @router.post("/{task_id}/assign")
 async def assign_agent(task_id: UUID, assign: AgentAssign):
-    """Assign an agent to a task and start it.
+    """Assign an executor to a task and start it.
 
-    The policy and the launch live in :func:`tasks.assign.assign_agent_to_task`,
-    so the terminal client assigns on exactly the same terms; this maps its
-    refusals onto HTTP.
+    The policy and the launch live in :func:`tasks.assign.assign_executor_to_task`
+    (an agent's own path, :func:`tasks.assign.assign_agent_to_task`, is
+    unchanged), so the terminal client assigns on exactly the same terms;
+    this maps its refusals onto HTTP. The body may name an executor
+    explicitly (``{"executor": {"kind": ..., "id": ...}, "params": {...}}``,
+    any of the four kinds) or, for backward compatibility, just an
+    ``agent_id`` as before — the two original callers of this route (the
+    dashboard, the terminal client) still send exactly that.
     """
     try:
+        if assign.executor is not None:
+            return assign_executor_to_task(
+                task_id,
+                assign.executor.model_dump(),
+                assign.params,
+                task_to_dict=task_to_dict,
+            )
+        if not assign.agent_id:
+            raise HTTPException(status_code=400, detail="agent_id or executor is required")
         return assign_agent_to_task(
             task_id,
             assign.agent_id,
@@ -422,6 +526,8 @@ async def assign_agent(task_id: UUID, assign: AgentAssign):
         )
     except AssignError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -589,6 +695,23 @@ async def answer_task(task_id: UUID, payload: TaskAnswer):
         raise HTTPException(status_code=400, detail="Task is not awaiting input")
 
     pending = getattr(t, "pending_question", None) or {}
+
+    # A flow parked on a human_interrupt node is *resumed*, not re-run: the flow
+    # process comes back at its checkpoint with the answer written into flow
+    # state. There is no agent to re-run here, because no agent asked — the
+    # graph did. Everything below is the agent path and is untouched.
+    if (pending.get("agent_id") or "") == flow_launcher.INTERRUPT_AGENT_ID:
+        answer = (payload.answer or "").strip()
+        if not answer:
+            raise HTTPException(status_code=400, detail="Answer must not be empty")
+        node_run = run_manager.get_run_by_id(str(pending.get("run_id") or "")) or {}
+        flow_run_id = str(node_run.get("flow_run_id") or "")
+        try:
+            resumed = flow_launcher.resume_flow_run(flow_run_id, answer)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"task": task_to_dict(tasks_service.get_task(task_id)), **resumed}
+
     agent_id = pending.get("agent_id") or t.assigned_agent_type
     if not agent_id:
         raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
@@ -651,6 +774,185 @@ async def answer_task(task_id: UUID, payload: TaskAnswer):
         return {"task": task_to_dict(updated), "run_id": run_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class TaskApproval(BaseModel):
+    """The operator's decision on a tool call a task is parked on.
+
+    Lives here rather than in dashboard/backend/models.py because it is the only
+    route that speaks it, and a request body of two fields does not earn a place
+    in the shared model module.
+    """
+    approved: bool = True
+    note: str = ""
+    # Only for a run parked at its money cap (pending kind "budget"): the new
+    # cap in USD, which must exceed what the task has already spent.
+    budget_usd: Optional[float] = None
+
+
+@router.post("/{task_id}/approve")
+async def approve_task_call(request: Request, task_id: UUID, payload: TaskApproval):
+    """Approve or deny the tool call a task is parked on, and resume it.
+
+    Mirrors ``/answer``: the agent that stopped is re-run with a resume
+    instruction, the session continuation is re-pointed at the new run, and the
+    decision is recorded on the session. The difference is what approval *does*
+    to the next run: the approved call is recorded on the task by fingerprint
+    (tool + arguments), and the gate spends that entry when the agent repeats
+    exactly that call. Telling the agent it may proceed is not enough on its
+    own — the gate would stop it again — and an approval that covered the whole
+    tool would let the resumed run do more than the operator agreed to.
+    """
+    t = tasks_service.get_task(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if t.status != TaskStatus.awaiting_approval:
+        raise HTTPException(status_code=400, detail="Task is not awaiting approval")
+
+    pending = getattr(t, "pending_approval", None) or {}
+    agent_id = pending.get("agent_id") or t.assigned_agent_type
+    # A run parked at its money cap: stopping it needs no agent, so this is
+    # answered before the agent checks below (the approving branch makes them).
+    if str(pending.get("kind") or "") == "budget":
+        return _answer_budget_pause(request, task_id, t, pending, agent_id, payload)
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    tool = str(pending.get("tool") or "")
+    note = (payload.note or "").strip()
+    call_text = json.dumps(pending.get("input"), ensure_ascii=False, default=str)
+
+    fingerprint = ""
+    if payload.approved:
+        from tools.approval import call_fingerprint
+        fingerprint = str(pending.get("fingerprint") or "") or call_fingerprint(tool, pending.get("input"))
+        resume_desc = (
+            f"You stopped this task to ask for approval to call `{tool}` with:\n{call_text}\n\n"
+            "The user approved it. Make that exact call now, with the same "
+            "arguments, then continue the task."
+            + (f'\nThe user added: "{note}"' if note else "")
+        )
+    else:
+        resume_desc = (
+            f"You stopped this task to ask for approval to call `{tool}` with:\n{call_text}\n\n"
+            "The user refused it"
+            + (f' and said: "{note}"' if note else "")
+            + ". Do not make that call. Continue the task another way, or explain "
+            "why it cannot be finished without it and stop."
+        )
+
+    params = {"description": resume_desc}
+    try:
+        run_id, session_id = agent_launcher.start_run(str(task_id), agent_id, params)
+        # Only once the resumed run exists: an approval recorded for a launch
+        # that failed would sit on the task waiting to be spent by some later run.
+        if payload.approved:
+            tasks_service.approve_tool_call(task_id, tool, fingerprint, note=note)
+        tasks_service.assign_agent(task_id, agent_id, params, run_id=run_id)
+        tasks_service.update_task(task_id, status=TaskStatus.in_progress, pending_approval=None)
+        # Audit trail (common/audit.py): the operator's decision on the call,
+        # by fingerprint when it was approved (that is what the gate spends),
+        # by tool name alone when it was refused (there is nothing to spend).
+        audit.record(
+            "tool.approve" if payload.approved else "tool.reject",
+            principal=identity.request_principal(request), object_type="task",
+            object_id=str(task_id), ip=identity.client_ip(request),
+            details={"tool": tool, "fingerprint": fingerprint, "note": note},
+        )
+        # The task resumes under a fresh run; re-point any run-bound session
+        # continuation at it so it still fires when the resumed run finishes.
+        try:
+            from common.session_service import rebind_continuations_to_run
+            rebind_continuations_to_run(str(task_id), run_id)
+        except Exception:
+            pass
+        if session_id:
+            try:
+                add_event_to_session(session_id, {
+                    "type": "tool_approval",
+                    "agent_id": agent_id,
+                    "timestamp": run_manager.utc_now_iso(),
+                    "description": (
+                        f"User {'approved' if payload.approved else 'denied'} the call to {tool}"
+                        + (f": {note}" if note else "")
+                    ),
+                })
+            except Exception:
+                pass
+        updated = tasks_service.get_task(task_id)
+        return {"task": task_to_dict(updated), "run_id": run_id, "approved": payload.approved}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _answer_budget_pause(request: Request, task_id: UUID, t: Any, pending: Dict[str, Any],
+                         agent_id: str, payload: TaskApproval) -> Dict[str, Any]:
+    """The approve route's answer for a run parked at its money cap.
+
+    There is no call to approve here, so nothing goes through
+    ``approve_tool_call``: approving means a new, higher cap stored on the task
+    (the launcher hands it to the resumed run, which also starts from the
+    task's spend so far, see common/run_budget.py); refusing ends the task
+    blocked with "stopped at budget cap" instead of resuming it.
+    """
+    spent = float(pending.get("spent_usd") or 0.0)
+    note = (payload.note or "").strip()
+    principal = identity.request_principal(request)
+    ip = identity.client_ip(request)
+
+    if not payload.approved:
+        tasks_service.resolve_budget_pause(task_id, approved=False)
+        audit.record("budget.stop", principal=principal, object_type="task",
+                     object_id=str(task_id), ip=ip, workspace=getattr(t, "workspace", None),
+                     details={"spent_usd": spent, "limit_usd": pending.get("limit_usd"), "note": note})
+        return {"task": task_to_dict(tasks_service.get_task(task_id)), "run_id": None, "approved": False}
+
+    new_cap = payload.budget_usd
+    if new_cap is None or float(new_cap) <= spent:
+        raise HTTPException(
+            status_code=400,
+            detail=f"budget_usd must be greater than what the task already spent (${spent:.2f})",
+        )
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="No agent recorded for this task to resume")
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    new_cap = float(new_cap)
+    tasks_service.resolve_budget_pause(task_id, approved=True, budget_usd=new_cap)
+    resume_desc = (
+        "Your task was paused because it reached its money cap; the operator raised it "
+        f"to ${new_cap:.2f}. Continue the task from where you stopped."
+        + (f'\nThe operator added: "{note}"' if note else "")
+    )
+    params = {"description": resume_desc}
+    try:
+        run_id, session_id = agent_launcher.start_run(str(task_id), agent_id, params)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    tasks_service.assign_agent(task_id, agent_id, params, run_id=run_id)
+    tasks_service.update_task(task_id, status=TaskStatus.in_progress, pending_approval=None)
+    audit.record("budget.raise", principal=principal, object_type="task",
+                 object_id=str(task_id), ip=ip, workspace=getattr(t, "workspace", None),
+                 details={"spent_usd": spent, "limit_usd": pending.get("limit_usd"),
+                          "budget_usd": new_cap, "note": note})
+    try:
+        from common.session_service import rebind_continuations_to_run
+        rebind_continuations_to_run(str(task_id), run_id)
+    except Exception:
+        pass
+    if session_id:
+        try:
+            add_event_to_session(session_id, {
+                "type": "budget_raise",
+                "agent_id": agent_id,
+                "timestamp": run_manager.utc_now_iso(),
+                "description": f"Money cap raised to ${new_cap:.2f}" + (f": {note}" if note else ""),
+            })
+        except Exception:
+            pass
+    return {"task": task_to_dict(tasks_service.get_task(task_id)), "run_id": run_id, "approved": True}
 
 
 @router.get("/{task_id}/agent-status")
@@ -762,8 +1064,50 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
     except Exception:
         pass
 
+    prompt = (
+        "Decompose the following high-level task into concrete, small, and verifiable subtasks. "
+        f"Create subtasks ONLY using the add_subtask tool with parent_id={task_id}. "
+        "Do not create other high-level tasks. When a subtask must wait for others, "
+        "pass their IDs in the depends parameter of add_subtask so execution order is enforced.\n\n"
+        f"Task Data:\nID: {task_id}\nTITLE: {t.title}\nDESCRIPTION: {t.description or ''}\n\n"
+        "Provide a brief summary of the created subtasks at the end."
+    )
+    build_overrides = {k: v for k, v in (
+        ("model", payload.model if payload and payload.model else None),
+        ("temperature", payload.temperature if payload and payload.temperature is not None else None),
+        ("max_tokens", payload.max_tokens if payload and payload.max_tokens else None),
+        ("verbose", payload.verbose if payload and payload.verbose is not None else True),
+    ) if v is not None}
+
+    # The decomposer runs on a runner replica (docs/services.md): an
+    # ``invoke`` job, not waited for, writing its log where the thread below
+    # would have.
+    from services import jobs as _jobs
+    if _jobs.enabled():
+        try:
+            with log_file.open("w", encoding="utf-8") as fh:
+                fh.write("[decomposer] start\n")
+            _jobs.submit(t.workspace or root.name, "invoke", {
+                "agent_id": "decomposer", "workspace": str(root),
+                "workspace_name": t.workspace or root.name, "overrides": build_overrides,
+                "prompt": prompt, "run_id": run_id, "log_file": str(log_file),
+            }, label=f"decompose {task_id}")
+        except _jobs.JobError as e:
+            raise HTTPException(status_code=e.status, detail=str(e))
+        return {"run_id": run_id}
+
+    # The worker is a plain thread, which inherits no context: the secret
+    # scope (and who asked) are captured here and re-entered inside it.
+    from common import secrets as _secrets
+    from common.identity import current_user_id as _current_user_id
+    launched_by = _current_user_id()
+
     # Background worker to run decomposer and write logs
     def _worker():
+        with _secrets.activate(t.workspace or root.name, "decomposer", launched_by):
+            _worker_body()
+
+    def _worker_body():
         try:
             with log_file.open("w", encoding="utf-8") as fh:
                 fh.write("[decomposer] start\n")
@@ -777,15 +1121,6 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
                         temperature=(payload.temperature if payload and payload.temperature is not None else None),
                         max_tokens=(payload.max_tokens if payload and payload.max_tokens else None),
                         verbose=(payload.verbose if payload and payload.verbose is not None else True)
-                    )
-
-                    prompt = (
-                        "Decompose the following high-level task into concrete, small, and verifiable subtasks. "
-                        f"Create subtasks ONLY using the add_subtask tool with parent_id={task_id}. "
-                        "Do not create other high-level tasks. When a subtask must wait for others, "
-                        "pass their IDs in the depends parameter of add_subtask so execution order is enforced.\n\n"
-                        f"Task Data:\nID: {task_id}\nTITLE: {t.title}\nDESCRIPTION: {t.description or ''}\n\n"
-                        "Provide a brief summary of the created subtasks at the end."
                     )
 
                     result = agent.run(prompt, run_id)

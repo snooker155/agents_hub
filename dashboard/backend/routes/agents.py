@@ -5,14 +5,12 @@ Includes the agent's own definition chat (``/{agent_id}/definition/chat``),
 where the Agent Creator edits an agent's instructions, capabilities and usage in
 place while the user watches the files change beside the conversation.
 """
-import asyncio
 import json
 import re
 import dataclasses
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-from typing import Any, Dict, List, Optional
+from fastapi import APIRouter, HTTPException, Request
+from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 from pydantic import BaseModel
 
@@ -20,10 +18,16 @@ from agents import registry
 from managers import run_manager
 from agents.agent_factory import get_factory
 from agents import prompt_assembly
+from agents import versions as agent_versions
 from tools.registry import get_all_tools
-from agents.capability_guard import CapabilityViolation
-from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate
+from agents.capability_guard import (
+    CapabilityViolation, capability_warning, guard_mode, is_system_workspace_agent,
+    override_honoured_at_build, override_requires_container,
+)
+from models import AgentCreateCustom, AgentCloneToWorkspace, AgentMemoryUpdate, AgentToolsUpdate, AgentDelegatesUpdate, AgentHandoffsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentPersonalMemoryUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentCapabilityOverrideUpdate, AgentSkillCreate, AgentSharingUpdate, AgentDescriptionUpdate, AgentListItem, AgentDetail, AgentPage
 from workspace import system_agent_ids, get_workspace_metadata, update_workspace_metadata, create_workspace_folder
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -40,8 +44,11 @@ def _get_workspace_default_chat_agent(workspace: Optional[str]) -> Optional[str]
 
 
 def _set_workspace_default_chat_agent(workspace: Optional[str], agent_id: Optional[str]) -> None:
+    from memory import personal
     ws_name = _workspace_for_chat_default(workspace)
     create_workspace_folder(ws_name)
+    # A new main agent gets personal memory on; the old one keeps what it had.
+    personal.main_agent_changed(ws_name, personal.main_agent(ws_name), agent_id or None)
     update_workspace_metadata(ws_name, {"default_chat_agent": agent_id or None})
 
 
@@ -89,9 +96,39 @@ def _workspace_memory_overrides(workspace: str) -> dict:
     return get_workspace_metadata(workspace).get("agent_memory_overrides") or {}
 
 
-@router.get("")
-async def list_agents(workspace: Optional[str] = None):
-    """List all available agents from registry and factory definitions."""
+def _light_registry_dict(spec) -> Dict[str, Any]:
+    """Just the fields workspace-visibility filtering reads.
+
+    Filtering runs over every agent (visibility has to, to compute ``total``
+    correctly); the full ``spec.to_dict()`` (tools, commands, remote
+    descriptor, everything) does not, so it is deferred to the page slice.
+    """
+    return {
+        "id": spec.id,
+        "system": spec.system,
+        "shared": spec.shared,
+        "owner_workspace": spec.owner_workspace,
+        "default_workspace_only": spec.default_workspace_only,
+    }
+
+
+@router.get("", response_model=Union[List[AgentListItem], AgentPage])
+async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = None,
+                      offset: Optional[int] = None):
+    """List all available agents from registry and factory definitions.
+
+    Agents are assembled in memory from the registry and factory definitions
+    (not a queryable store), so ``limit``/``offset`` slice the assembled list
+    rather than being pushed into a query. With neither given, the response is
+    the full list exactly as before; with either, it is one page:
+    ``{items, total, limit, offset}``.
+
+    Visibility filtering (workspace ownership, ``allowed_agents``,
+    ``default_workspace_only``) runs over cheap fields for every candidate, since
+    it decides ``total``; building the full agent dict and annotating it with
+    live node status and the workspace's memory overrides only happens for the
+    agents in the requested page.
+    """
     # Get agents from existing registry
     registry_agents = registry.list_agents()
     reg_ids = {a.id for a in registry_agents}
@@ -100,54 +137,82 @@ async def list_agents(workspace: Optional[str] = None):
     factory = get_factory()
     factory_agents = factory.list_available_agents()
 
-    # Combine into single array for backward compatibility with frontend
-    # Registry agents come first, then factory agents (if not already in registry)
-    all_agents = [a.to_dict() for a in registry_agents]
-    for fa in factory_agents:
-        if fa["id"] not in reg_ids:
-            all_agents.append(fa)
-
-    # Filter by workspace
     _SYS_IDS = system_agent_ids()
-
-    # Workspace-ownership visibility: a workspace-owned agent that is not shared
-    # only appears in its owning workspace. Applies to every workspace,
-    # including 'default'. System agents are always visible.
-    all_agents = [a for a in all_agents if _agent_visible_in_workspace(a, workspace)]
-
+    allowed = None
     if workspace and workspace != "default":
         from workspace import get_workspace_metadata
-        metadata = get_workspace_metadata(workspace)
-        allowed = metadata.get("allowed_agents")
-        if allowed is not None:
-            all_agents = [
-                a for a in all_agents
-                if a["id"] in allowed
-                or a["id"] in _SYS_IDS
-                # An agent owned by this workspace is always available here even
-                # if it was never explicitly added to allowed_agents.
-                or a.get("owner_workspace") == workspace
-            ]
-        # Always hide default-workspace-only agents from non-default workspaces
-        # (system agents are never default_workspace_only).
-        all_agents = [a for a in all_agents if not a.get("default_workspace_only", False)]
+        allowed = get_workspace_metadata(workspace).get("allowed_agents")
 
-    # Annotate each agent with whether it has a running node in the requested workspace
-    # and flag system agents that cannot be removed. Memory assignments are
-    # per-workspace, so patch them to the requesting workspace's view.
-    from managers.node_manager import get_running_nodes_for_agent
+    def _visible(light: Dict[str, Any]) -> bool:
+        # Workspace-ownership visibility: a workspace-owned agent that is not
+        # shared only appears in its owning workspace. Applies to every
+        # workspace, including 'default'. System agents are always visible.
+        if not _agent_visible_in_workspace(light, workspace):
+            return False
+        if workspace and workspace != "default":
+            if allowed is not None and not (
+                light["id"] in allowed
+                or light["id"] in _SYS_IDS
+                # An agent owned by this workspace is always available here
+                # even if it was never explicitly added to allowed_agents.
+                or light.get("owner_workspace") == workspace
+            ):
+                return False
+            # Always hide default-workspace-only agents from non-default
+            # workspaces (system agents are never default_workspace_only).
+            if light.get("default_workspace_only", False):
+                return False
+        return True
+
+    # Registry entries first, factory-only entries next: same order as before.
+    # ``item`` is either the AgentSpec (full dict deferred) or the factory dict
+    # (already the cheap shape, nothing further to defer).
+    visible: List[Any] = [
+        spec for spec in registry_agents if _visible(_light_registry_dict(spec))
+    ]
+    visible.extend(
+        fa for fa in factory_agents
+        if fa["id"] not in reg_ids and _visible(fa)
+    )
+
+    total = len(visible)
+    if limit is None and offset is None:
+        page_items = visible
+    else:
+        start = offset or 0
+        page_items = visible[start: start + limit] if limit is not None else visible[start:]
+
+    # Annotate each agent with whether it has a running resident instance in
+    # the requested workspace and flag system agents that cannot be removed.
+    # Memory assignments are per-workspace, so patch them to the requesting
+    # workspace's view. Only the page pays for any of this.
+    from instances.carrier import list_resident
     _ws = (workspace or "default").strip() or "default"
     _mem_overrides = _workspace_memory_overrides(_ws)
-    for agent in all_agents:
-        _apply_workspace_memory(agent, _ws, _mem_overrides)
-        running_nodes = get_running_nodes_for_agent(agent["id"])
-        if workspace and workspace != "default":
-            running_nodes = [n for n in running_nodes if n.get("workspace") == workspace]
-        agent["has_running_node"] = len(running_nodes) > 0
-        agent["system"] = agent["id"] in _SYS_IDS
-        agent["is_default_chat_agent"] = agent["id"] == _get_workspace_default_chat_agent(workspace)
+    _default_chat_agent = _get_workspace_default_chat_agent(workspace)
+    # One pass over every resident instance instead of one list_resident()
+    # call per agent — list_resident() re-syncs every instance's live status
+    # (a process check each), so calling it once per agent turned this into
+    # an O(agents * instances) liveness scan.
+    _running_by_agent: Dict[str, List[Dict[str, Any]]] = {}
+    for instance in list_resident(live=True):
+        _running_by_agent.setdefault(instance.get("agent_id"), []).append(instance)
 
-    return all_agents
+    page: List[Dict[str, Any]] = []
+    for item in page_items:
+        agent = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        _apply_workspace_memory(agent, _ws, _mem_overrides)
+        running_instances = _running_by_agent.get(agent["id"], [])
+        if workspace and workspace != "default":
+            running_instances = [i for i in running_instances if i.get("workspace") == workspace]
+        agent["has_running_node"] = len(running_instances) > 0
+        agent["system"] = agent["id"] in _SYS_IDS
+        agent["is_default_chat_agent"] = agent["id"] == _default_chat_agent
+        page.append(agent)
+
+    if limit is None and offset is None:
+        return page
+    return {"items": page, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/tools")
@@ -179,6 +244,29 @@ async def list_tools():
     }
 
 
+def _workspace_capacity_overrides() -> Dict[str, Dict[str, Any]]:
+    """``{agent_id: {workspace: capacity}}`` over every workspace but default,
+    read in one pass over the workspace metadata."""
+    from workspace import list_workspace_folders
+    result: Dict[str, Dict[str, Any]] = {}
+    for ws_path in list_workspace_folders():
+        ws_name = ws_path.name
+        if ws_name == "default":
+            continue
+        overrides = get_workspace_metadata(ws_name).get("agent_capacity_overrides") or {}
+        for agent_id, capacity in overrides.items():
+            result.setdefault(agent_id, {})[ws_name] = capacity
+    return result
+
+
+@router.get("/workspace-capacities")
+async def get_all_workspace_capacities():
+    """Every agent's workspace capacity overrides at once, for the agents list:
+    one request for the page instead of one per agent card. Declared before
+    the ``/{agent_id}`` routes, which would otherwise take the path."""
+    return _workspace_capacity_overrides()
+
+
 @router.post("/capability-check")
 async def capability_check(data: AgentToolsUpdate):
     """Classify a tool set and report any blocked capability combination.
@@ -194,7 +282,7 @@ async def capability_check(data: AgentToolsUpdate):
     return result
 
 
-@router.get("/{agent_id}")
+@router.get("/{agent_id}", response_model=AgentDetail)
 async def get_agent_details(agent_id: str, workspace: Optional[str] = None):
     from workspace import is_system_agent
     spec = registry.get_agent(agent_id)
@@ -270,6 +358,32 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
     # definition with others, the change applies to all of them (expected).
     def_id = spec.def_id()
 
+    prev_instructions = prompt_assembly.read_instructions(def_id, definitions_dir=defs_dir)
+    prev_capabilities = prompt_assembly.read_capabilities(def_id, definitions_dir=defs_dir)
+    prev_usage = prompt_assembly.read_usage(def_id, definitions_dir=defs_dir)
+    next_instructions = data.instructions if data.instructions is not None else prev_instructions
+    next_capabilities = data.capabilities if data.capabilities is not None else prev_capabilities
+    next_usage = data.usage if data.usage is not None else prev_usage
+    content_changed = (next_instructions != prev_instructions
+                       or next_capabilities != prev_capabilities
+                       or next_usage != prev_usage)
+
+    # Capture the state this edit is about to replace, the same way
+    # registry.add_agent does for a structured-field edit — this route never
+    # calls add_agent (it only touches the markdown files), so it has to
+    # snapshot on its own before writing. Passing the prospective content
+    # (unset fields fall back to what is on disk now) lets the snapshot skip
+    # a no-op save instead of padding history with an unchanged entry.
+    agent_versions.snapshot_if_changed(
+        agent_id,
+        next_definition={
+            "instructions": next_instructions,
+            "capabilities": next_capabilities,
+            "usage": next_usage,
+        },
+        actor="dashboard", note="definition edit",
+    )
+
     if data.instructions is not None:
         if data.instructions.strip():
             prompt_assembly.write_instructions(def_id, data.instructions, definitions_dir=defs_dir)
@@ -288,7 +402,187 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
         elif path.exists():
             path.unlink()
 
+    # A published, approved agent's definition changing is exactly the case
+    # the review gate exists for: whatever passed review before may not
+    # describe what the agent does now. Re-review is automatic, not an
+    # accusation — the note says why, not that anything is wrong.
+    if (content_changed and spec.shared and spec.review_status == "approved"
+            and registry.registry_review_required()):
+        try:
+            registry.set_review_status(agent_id, "in_review", note="definition changed")
+        except ValueError:
+            pass
+
     return await get_agent_definition(agent_id)
+
+
+@router.get("/{agent_id}/versions")
+async def list_agent_versions(agent_id: str):
+    """Version history: one entry per stored snapshot, oldest first, each
+    with a summary of what changed relative to the entry before it."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"agent_id": agent_id, "versions": agent_versions.list_versions(agent_id)}
+
+
+@router.get("/{agent_id}/versions/{version}/diff")
+async def diff_agent_version(agent_id: str, version: int, against: str = "current"):
+    """Unified diff (per part: spec / instructions / capabilities / usage)
+    between a stored version and either the current live state or another
+    stored version (``against=current`` or ``against=<version number>``)."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    from_entry = agent_versions.get_version_row(agent_id, version)
+    if from_entry is None:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+
+    if against == "current":
+        to_entry = agent_versions.current_snapshot(agent_id)
+    else:
+        try:
+            to_version = int(against)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="against must be 'current' or a version number")
+        to_entry = agent_versions.get_version_row(agent_id, to_version)
+        if to_entry is None:
+            raise HTTPException(status_code=404, detail=f"Version {to_version} not found")
+
+    return {
+        "agent_id": agent_id,
+        "from": version,
+        "against": against,
+        "diff": agent_versions.diff_entries(from_entry, to_entry),
+    }
+
+
+@router.post("/{agent_id}/versions/{version}/rollback")
+async def rollback_agent_version(agent_id: str, version: int):
+    """Restore a historical version as the agent's current state.
+
+    Goes through ``registry.add_agent`` (via ``agent_versions.rollback_to``),
+    so a tool combination the capability guard would now block is refused the
+    same way a normal edit is.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        restored = agent_versions.rollback_to(agent_id, version, actor="dashboard")
+    except CapabilityViolation as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"agent_id": agent_id, "restored_to": version, "agent": restored}
+
+
+# ── A/B experiments between stored versions (evals/experiments.py) ──────────
+
+class ExperimentArm(BaseModel):
+    # A version number from the history, or "current" for the live
+    # definition (snapshotted into history when it is not there yet).
+    version: Union[int, str]
+    share: float
+
+
+class ExperimentUpdate(BaseModel):
+    enabled: bool = True
+    arms: List[ExperimentArm]
+    note: Optional[str] = None
+
+
+@router.get("/{agent_id}/experiment")
+async def get_agent_experiment(agent_id: str):
+    """The agent's open experiment, or the last ended one (``active`` says
+    which), or ``experiment: null`` when it never had one."""
+    from evals import experiments
+
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    exp = experiments.get_latest(agent_id)
+    return {"agent_id": agent_id, "experiment": exp,
+            "active": bool(exp and not exp.get("ended_at"))}
+
+
+@router.put("/{agent_id}/experiment")
+async def put_agent_experiment(agent_id: str, data: ExperimentUpdate):
+    """Start, pause, resume or change the agent's experiment. Arms reference
+    stored versions and their shares must sum to 1; changing the arms ends
+    the open experiment and starts a new one."""
+    from evals import experiments
+
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    arms = []
+    for arm in data.arms:
+        version = arm.version
+        if isinstance(version, str):
+            if version.strip().lower() == "current":
+                version = agent_versions.ensure_current_version(agent_id, actor="dashboard")
+                if version is None:
+                    raise HTTPException(status_code=400, detail="Could not snapshot the current definition")
+            else:
+                try:
+                    version = int(version)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="version must be a number or 'current'")
+        arms.append({"version": version, "share": arm.share})
+    try:
+        exp = experiments.put_experiment(agent_id, enabled=data.enabled, arms=arms,
+                                         note=data.note or "", actor="dashboard")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"agent_id": agent_id, "experiment": exp, "active": True}
+
+
+@router.delete("/{agent_id}/experiment")
+async def end_agent_experiment(agent_id: str):
+    """End the open experiment. Its assignments and report stay readable."""
+    from evals import experiments
+
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    exp = experiments.end_experiment(agent_id)
+    if exp is None:
+        raise HTTPException(status_code=404, detail="No experiment is running")
+    return {"agent_id": agent_id, "experiment": exp, "active": False}
+
+
+@router.get("/{agent_id}/experiment/report")
+async def agent_experiment_report(agent_id: str, experiment_id: Optional[str] = None):
+    """Per arm: runs, completed and failed, mean cost, tokens and duration,
+    and the online eval score of the arm's runs. Reads the open experiment,
+    else the last ended one, else the one named by ``experiment_id``."""
+    from evals import experiments
+
+    if not registry.get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    exp = (experiments.get_experiment(experiment_id) if experiment_id
+           else experiments.get_latest(agent_id))
+    if exp is None or exp.get("agent_id") != agent_id:
+        raise HTTPException(status_code=404, detail="No experiment for this agent")
+    return {"agent_id": agent_id, **experiments.report(exp)}
+
+
+# ── Online evals (evals/online.py) ──────────────────────────────────────────
+
+@router.get("/{agent_id}/online-evals")
+async def list_agent_online_evals(agent_id: str, limit: int = 50):
+    """The agent's most recent online eval results, newest first."""
+    from evals import online
+
+    return {"agent_id": agent_id, "results": online.recent_results(agent_id, limit)}
+
+
+@router.get("/{agent_id}/online-evals/summary")
+async def agent_online_evals_summary(agent_id: str):
+    """Count, mean score and pass rate, overall, by definition version and
+    by rule."""
+    from evals import online
+
+    return online.summary(agent_id)
 
 
 @router.put("/{agent_id}/description")
@@ -305,29 +599,16 @@ async def update_agent_description(agent_id: str, data: AgentDescriptionUpdate):
 @router.get("/{agent_id}/workspace-capacities")
 async def get_agent_workspace_capacities(agent_id: str):
     """Return workspace-specific capacity overrides for this agent (excludes 'default')."""
-    from workspace import list_workspace_folders, get_workspace_metadata
-    result = {}
-    for ws_path in list_workspace_folders():
-        ws_name = ws_path.name
-        if ws_name == "default":
-            continue
-        meta = get_workspace_metadata(ws_name)
-        overrides = meta.get("agent_capacity_overrides", {})
-        if agent_id in overrides:
-            result[ws_name] = overrides[agent_id]
-    return result
+    return _workspace_capacity_overrides().get(agent_id, {})
 
 
 @router.get("/{agent_id}/history")
-async def get_agent_history(agent_id: str, workspace: Optional[str] = None):
-    runs = run_manager.load_runs()
-    agent_runs = [r for r in runs if r.get("agent_id") == agent_id]
+async def get_agent_history(agent_id: str, workspace: Optional[str] = None, limit: int = 200):
+    """This agent's newest runs, paged in SQL like /api/messages."""
     # Scope to the active workspace; the default workspace sees every workspace.
-    if workspace and workspace != "default":
-        agent_runs = [r for r in agent_runs if r.get("workspace") == workspace]
-    # Sort by started_at desc
-    agent_runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-    return agent_runs
+    ws = workspace if workspace and workspace != "default" else None
+    page = run_manager.query_runs(agent_id=agent_id, workspace=ws, limit=max(1, min(int(limit), 500)))
+    return page["items"]
 
 
 @router.get("/{agent_id}/logs")
@@ -337,39 +618,41 @@ async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: in
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    from managers import node_manager
+    from instances.carrier import list_resident
 
     # Scope to the active workspace; the default workspace sees every workspace.
     ws_scoped = bool(workspace and workspace != "default")
 
-    runs = run_manager.load_runs()
-    agent_runs = [r for r in runs if r.get("agent_id") == agent_id]
-    if ws_scoped:
-        agent_runs = [r for r in agent_runs if r.get("workspace") == workspace]
-    if node_id:
-        agent_runs = [r for r in agent_runs if str(r.get("node_id") or "") == str(node_id)]
-    agent_runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-    if limit > 0:
-        agent_runs = agent_runs[: max(1, min(int(limit), 500))]
+    # Paged in SQL: loading every run ever recorded to keep this agent's
+    # newest few is a full scan on each open of the agent page.
+    agent_runs = run_manager.query_runs(
+        agent_id=agent_id,
+        workspace=workspace if ws_scoped else None,
+        node_id=node_id or None,
+        limit=max(1, min(int(limit), 500)) if limit > 0 else 500,
+    )["items"]
 
     for r in agent_runs:
         lp = r.get("log_file")
         r["log_exists"] = bool(lp and Path(lp).exists())
 
-    nodes = [n for n in node_manager.list_nodes() if n.get("agent_id") == agent_id]
+    # ``node_id`` keeps its name on the query string for callers still passing
+    # the id of a migrated node; store.get_by_node resolves it to the instance
+    # it became, so it is matched by instance_id here.
+    instances = [i for i in list_resident() if i.get("agent_id") == agent_id]
     if ws_scoped:
-        nodes = [n for n in nodes if n.get("workspace") == workspace]
+        instances = [i for i in instances if i.get("workspace") == workspace]
     if node_id:
-        nodes = [n for n in nodes if str(n.get("node_id") or "") == str(node_id)]
-    nodes.sort(key=lambda n: n.get("started_at") or "", reverse=True)
-    for n in nodes:
-        lp = n.get("log_file")
-        n["log_exists"] = bool(lp and Path(lp).exists())
+        instances = [i for i in instances if str(i.get("instance_id") or "") == str(node_id)]
+    instances.sort(key=lambda i: i.get("started_at") or "", reverse=True)
+    for i in instances:
+        lp = i.get("carrier_log_file")
+        i["log_exists"] = bool(lp and Path(lp).exists())
 
     return {
         "agent_id": agent_id,
         "runs": agent_runs,
-        "nodes": nodes,
+        "nodes": instances,
     }
 
 
@@ -488,35 +771,11 @@ async def update_agent_skills_config(agent_id: str, data: AgentSkillsConfigUpdat
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        definition_id=spec.definition_id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        skills_enabled=data.skills_enabled,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        response_format=spec.response_format,
-        clarify_gate=spec.clarify_gate,
-        allow_self_delegation=spec.allow_self_delegation,
-    )
+    # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
+    # every field added to AgentSpec after it was written (delegates, handoffs,
+    # the loop policies, secrets, ...), the bug routes/agents.py's tools route
+    # already fixed the same way.
+    new_spec = dataclasses.replace(spec, skills_enabled=data.skills_enabled)
     registry.add_agent(new_spec)
     return new_spec.to_dict()
 
@@ -557,6 +816,49 @@ async def update_agent_episodic_config(agent_id: str, data: AgentEpisodicConfigU
         "effective": resolve_episodic_write(new_spec.episodic_write_enabled, provider),
         "provider": provider,
     }
+
+
+def _personal_memory_config(spec, workspace: Optional[str]) -> dict:
+    from memory import personal
+    from memory.binding import effective_memory_pools
+    settings = personal.agent_settings(workspace)
+    own = settings["agents"].get(spec.id, False)
+    return {
+        "workspace": settings["workspace"],
+        # This agent's switch, and whether the workspace has personal memory
+        # at all: off there, the switch is shown off and cannot be changed.
+        "enabled": own,
+        "workspace_enabled": settings["enabled"],
+        "is_main_agent": settings["main_agent"] == spec.id,
+        "effective": settings["enabled"] and own,
+        # Whether a pool of the agent's own is attached too: the agent then
+        # has both, its own as the primary one (memory/personal.py).
+        "has_own_pool": bool(effective_memory_pools(spec, workspace)),
+    }
+
+
+@router.get("/{agent_id}/personal-memory")
+async def get_agent_personal_memory(agent_id: str, workspace: Optional[str] = None):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _personal_memory_config(spec, workspace)
+
+
+@router.post("/{agent_id}/personal-memory")
+async def update_agent_personal_memory(agent_id: str, data: AgentPersonalMemoryUpdate,
+                                       workspace: Optional[str] = None):
+    """Turn personal memory (memory/personal.py) on or off for this agent in
+    one workspace. Refused while the workspace has personal memory off."""
+    from memory import personal
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        personal.set_agent(agent_id, workspace, data.enabled)
+    except personal.PersonalMemoryDisabled as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _personal_memory_config(spec, workspace)
 
 
 @router.get("/{agent_id}/response-format")
@@ -639,25 +941,12 @@ async def update_agent_self_delegation(agent_id: str, data: AgentSelfDelegationU
 async def list_agent_skills(agent_id: str, workspace: str):
     """List all skills for this agent in the given workspace."""
     from memory.procedural import ProcedureStore
+    # The skills page's shape (version, pin, origin state, repo location),
+    # so both pages read one record.
+    from routes.skills import _to_dict as skill_to_dict
     store = ProcedureStore(workspace)
     procedures = [p for p in store.load() if p.agent_id == agent_id]
-    return [
-        {
-            "id": str(p.id),
-            "name": p.name,
-            "description": p.description,
-            "steps": p.steps,
-            "tags": p.tags,
-            "source": p.source,
-            "shared": bool(p.shared),
-            "origin_skill_id": p.origin_skill_id,
-            "success_rate": p.success_rate,
-            "use_count": p.use_count,
-            "created_at": p.created_at.isoformat(),
-            "updated_at": p.updated_at.isoformat(),
-        }
-        for p in procedures
-    ]
+    return [skill_to_dict(p) for p in procedures]
 
 
 @router.post("/{agent_id}/skills")
@@ -709,6 +998,98 @@ async def delete_agent_skill(agent_id: str, skill_id: str, workspace: str):
     return {"ok": True}
 
 
+def _capability_conflict(e: CapabilityViolation) -> HTTPException:
+    """409, not 400: the request is well-formed, the resulting *state* is
+    refused. Carries the structured violation so the editor can name the
+    offending capabilities and the tools (or delegation hops) that granted
+    them, plus the two switches that would let the save through."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "error": "capability_violation",
+            "guard_mode": guard_mode(),
+            **e.violation.to_dict(),
+        },
+    )
+
+
+def _capability_warning_dict(spec) -> Optional[Dict[str, Any]]:
+    """The combination a just-saved record still forms, for the response.
+
+    A save that went through on the per-agent override, in warn mode or by
+    grandfathering has not made the exposure go away; the editor shows it as
+    an amber banner. Delegation paths cannot be evaluated client-side (the
+    delegates' tool lists are not in the page), so this is the only place the
+    delegation card learns about them."""
+    from tools.capabilities import secret_grant_ids
+    v = capability_warning(
+        spec.id,
+        list(spec.tools or []) + secret_grant_ids(spec.secrets),
+        delegates=list(spec.delegates or []),
+        workspace=getattr(spec, "owner_workspace", None),
+    )
+    return v.to_dict() if v is not None else None
+
+
+def _capability_override_state(spec) -> Dict[str, Any]:
+    return {
+        "capability_override": bool(spec.capability_override),
+        "guard_mode": guard_mode(),
+        "override_requires_container": override_requires_container(),
+        # Whether the override, once on, actually lifts the block when the
+        # agent is built: not in block mode with the container requirement on
+        # and a local execution mode. Shown next to the switch.
+        "honoured_at_build": override_honoured_at_build(spec.id),
+        "capability_warning": _capability_warning_dict(spec),
+    }
+
+
+@router.get("/{agent_id}/auto-tools")
+async def get_agent_auto_tools(agent_id: str, workspace: Optional[str] = None):
+    """The tools the factory adds to this agent at build time on top of its
+    record (agents/auto_tools.py), each with the setting that brings it, so
+    the Tools tab can list everything a run will hold."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    from agents.auto_tools import auto_injected_tools
+    ws = workspace or getattr(spec, "owner_workspace", None) or None
+    return {"agent_id": agent_id, "workspace": ws, "tools": auto_injected_tools(spec, ws)}
+
+
+@router.get("/{agent_id}/capability-override")
+async def get_agent_capability_override(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _capability_override_state(spec)
+
+
+@router.post("/{agent_id}/capability-override")
+async def update_agent_capability_override(agent_id: str, data: AgentCapabilityOverrideUpdate):
+    """Accept, for this one agent, a tool combination the capability guard
+    would otherwise refuse (tools/capabilities.py, the lethal trifecta).
+
+    With the override on, a blocked combination is saved and reported as a
+    warning instead of refused, whether it comes from the agent's own tools
+    or from an agent it may delegate to. Turning the override back off never
+    fails: the record keeps the combination it already holds (grandfathered)
+    and the next tool or delegate that would widen it is refused again.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if data.capability_override and is_system_workspace_agent(agent_id, spec.owner_workspace):
+        # The system workspace rule is never softened (docs/system-workspace.md).
+        raise HTTPException(status_code=400, detail="A system workspace agent cannot carry a capability override")
+    new_spec = dataclasses.replace(spec, capability_override=bool(data.capability_override))
+    try:
+        registry.add_agent(new_spec)
+    except CapabilityViolation as e:
+        raise _capability_conflict(e)
+    return _capability_override_state(new_spec)
+
+
 @router.post("/{agent_id}/tools")
 async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
     spec = registry.get_agent(agent_id)
@@ -723,14 +1104,8 @@ async def update_agent_tools(agent_id: str, data: AgentToolsUpdate):
     try:
         registry.add_agent(new_spec)
     except CapabilityViolation as e:
-        # 409, not 400: the request is well-formed, the resulting *state* is
-        # refused. Carries the structured violation so the editor can name the
-        # offending capabilities and the tools that granted them.
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "capability_violation", **e.violation.to_dict()},
-        )
-    return new_spec.to_dict()
+        raise _capability_conflict(e)
+    return {**new_spec.to_dict(), "capability_warning": _capability_warning_dict(new_spec)}
 
 
 @router.get("/{agent_id}/delegates")
@@ -753,8 +1128,86 @@ async def update_agent_delegates(agent_id: str, data: AgentDelegatesUpdate):
         if did and did not in cleaned:
             cleaned.append(did)
     new_spec = dataclasses.replace(spec, delegates=cleaned)
-    registry.add_agent(new_spec)
-    return new_spec.to_dict()
+    try:
+        # The guard walks the delegation graph, so a delegate that brings the
+        # missing third of the trifecta is refused here exactly like a tool.
+        registry.add_agent(new_spec)
+    except CapabilityViolation as e:
+        raise _capability_conflict(e)
+    return {**new_spec.to_dict(), "capability_warning": _capability_warning_dict(new_spec)}
+
+
+def _validated_handoffs(agent_id: str, ids: List[str]) -> List[str]:
+    """Handoff targets, stripped and de-duplicated; 400 for the agent itself
+    or an id the registry does not know. Whether a target is usable in a
+    workspace is checked when the handoff happens, since one agent record
+    serves every workspace it is visible in."""
+    cleaned: List[str] = []
+    for raw in ids or []:
+        hid = str(raw or "").strip()
+        if not hid or hid in cleaned:
+            continue
+        if hid == agent_id:
+            raise HTTPException(status_code=400, detail="An agent cannot hand the conversation to itself")
+        if registry.get_agent(hid) is None:
+            raise HTTPException(status_code=400, detail=f"Agent '{hid}' does not exist")
+        cleaned.append(hid)
+    return cleaned
+
+
+def _validated_handoff_history(value: Any) -> str:
+    """The canonical history filter, or 400 naming the allowed values."""
+    if registry.parse_handoff_history(value) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"handoff_history must be full, summary, none or last_n:<N> "
+                    f"(N from 1 to {registry.HANDOFF_LAST_N_MAX}), not '{value}'"),
+        )
+    return registry.normalize_handoff_history(value)
+
+
+def _handoffs_dict(spec: Any) -> Dict[str, Any]:
+    return {"handoffs": list(spec.handoffs or []), "handoff_history": spec.handoff_history or "full"}
+
+
+@router.get("/{agent_id}/handoffs")
+async def get_agent_handoffs(agent_id: str):
+    """The agents this one may hand the conversation to, and the history the
+    receiver sees by default (docs/handoffs.md)."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _handoffs_dict(spec)
+
+
+@router.post("/{agent_id}/handoffs")
+async def update_agent_handoffs(agent_id: str, data: AgentHandoffsUpdate, request: Request):
+    """Set the handoff targets and/or the default history filter. A field left
+    out (null) keeps its value; an empty list removes the handoff tool."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    changes: Dict[str, Any] = {}
+    if data.handoffs is not None:
+        changes["handoffs"] = _validated_handoffs(agent_id, data.handoffs)
+    if data.handoff_history is not None:
+        changes["handoff_history"] = _validated_handoff_history(data.handoff_history)
+    new_spec = dataclasses.replace(spec, **changes) if changes else spec
+    try:
+        registry.add_agent(new_spec)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        from common import audit, identity
+        audit.record("agent.handoffs", principal=identity.request_principal(request),
+                     object_type="agent", object_id=agent_id,
+                     workspace=getattr(new_spec, "owner_workspace", None),
+                     ip=identity.client_ip(request), details=changes)
+    except Exception:  # noqa: BLE001 - an audit failure must not undo the save
+        import logging
+        logging.getLogger(__name__).warning(
+            "could not record the handoffs audit entry for %s", agent_id, exc_info=True)
+    return _handoffs_dict(new_spec)
 
 
 @router.get("/{agent_id}/reasoning")
@@ -784,41 +1237,11 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
     if data.plan_format is not None:
         current["plan_format"] = data.plan_format
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        definition_id=spec.definition_id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        http_expose=spec.http_expose,
-        http_port=spec.http_port,
-        http_host_port=spec.http_host_port,
-        node_type=spec.node_type,
-        is_default_chat_agent=spec.is_default_chat_agent,
-        skills_enabled=spec.skills_enabled,
-        reasoning=current,
-        response_format=spec.response_format,
-        clarify_gate=spec.clarify_gate,
-        allow_self_delegation=spec.allow_self_delegation,
-    )
+    # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
+    # every field added to AgentSpec after it was written (delegates, handoffs,
+    # the loop policies, secrets, ...), the bug routes/agents.py's tools route
+    # already fixed the same way.
+    new_spec = dataclasses.replace(spec, reasoning=current)
     registry.add_agent(new_spec)
     from reasoning import resolve_reasoning
     return resolve_reasoning(current, spec.tools)
@@ -886,33 +1309,18 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
     elif data.max_tokens is not None:
         new_max_tokens = data.max_tokens
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        definition_id=spec.definition_id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=spec.shared,
+    # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
+    # every field added to AgentSpec after it was written (delegates, handoffs,
+    # the loop policies, secrets, ...), the bug routes/agents.py's tools route
+    # already fixed the same way.
+    new_spec = dataclasses.replace(
+        spec,
         provider=new_provider,
         model=new_model,
         base_url=new_base_url,
         temperature=new_temperature,
         max_tokens=new_max_tokens,
         api_key=new_api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        response_format=spec.response_format,
-        clarify_gate=spec.clarify_gate,
-        allow_self_delegation=spec.allow_self_delegation,
     )
     registry.add_agent(new_spec)
     return {
@@ -967,10 +1375,13 @@ async def clear_default_chat_agent(agent_id: str, workspace: Optional[str] = Non
 
 
 @router.post("/create")
-async def create_custom_agent(data: AgentCreateCustom):
+async def create_custom_agent(data: AgentCreateCustom, request: Request):
     """Create a new agent: register structured fields and write instructions.md."""
     if registry.get_agent(data.id) is not None:
         raise HTTPException(status_code=400, detail=f"Agent '{data.id}' already exists")
+    # Checked before anything is written, so a bad target leaves no folder behind.
+    handoffs = _validated_handoffs(data.id, data.handoffs)
+    handoff_history = _validated_handoff_history(data.handoff_history or "full")
 
     factory = get_factory()
 
@@ -996,6 +1407,9 @@ async def create_custom_agent(data: AgentCreateCustom):
     if owner_workspace == "default":
         owner_workspace = None
 
+    from common import identity
+    owner_user = getattr(identity.request_principal(request), "id", None)
+
     spec = registry.AgentSpec(
         id=data.id,
         definition_id=definition_id,
@@ -1007,6 +1421,9 @@ async def create_custom_agent(data: AgentCreateCustom):
         tools=data.tools,
         capacity=data.capacity,
         owner_workspace=owner_workspace,
+        handoffs=handoffs,
+        handoff_history=handoff_history,
+        owner_user=owner_user,
     )
     try:
         registry.add_agent(spec)
@@ -1109,41 +1526,11 @@ async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    new_spec = registry.AgentSpec(
-        id=spec.id,
-        definition_id=spec.definition_id,
-        name=spec.name,
-        type=spec.type,
-        entrypoint=spec.entrypoint,
-        description=spec.description,
-        domain=spec.domain,
-        tools=spec.tools,
-        commands=spec.commands,
-        capacity=spec.capacity,
-        memory_type=spec.memory_type,
-        memory_data=spec.memory_data,
-        default_workspace_only=spec.default_workspace_only,
-        owner_workspace=spec.owner_workspace,
-        shared=data.shared,
-        provider=spec.provider,
-        model=spec.model,
-        base_url=spec.base_url,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        api_key=spec.api_key,
-        verbose=spec.verbose,
-        streaming=spec.streaming,
-        http_expose=spec.http_expose,
-        http_port=spec.http_port,
-        http_host_port=spec.http_host_port,
-        node_type=spec.node_type,
-        is_default_chat_agent=spec.is_default_chat_agent,
-        skills_enabled=spec.skills_enabled,
-        reasoning=spec.reasoning,
-        response_format=spec.response_format,
-        clarify_gate=spec.clarify_gate,
-        allow_self_delegation=spec.allow_self_delegation,
-    )
+    # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
+    # every field added to AgentSpec after it was written (delegates, handoffs,
+    # the loop policies, secrets, ...), the bug routes/agents.py's tools route
+    # already fixed the same way.
+    new_spec = dataclasses.replace(spec, shared=data.shared)
     registry.add_agent(new_spec)
     return new_spec.to_dict()
 
@@ -1158,10 +1545,6 @@ async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
 
 DEFINITION_AGENT_ID = "agent_creator"
 DEFINITION_CHAT_KIND = "agentdef"
-
-
-class DefinitionChatIn(BaseModel):
-    message: str = ""
 
 
 def _definition_state(agent_id: str) -> Dict[str, Any]:
@@ -1257,65 +1640,35 @@ def _definition_chat_prompt(agent_id: str, history: List[dict], user_message: st
     return "\n".join(parts)
 
 
-@router.get("/{agent_id}/definition/chat")
-async def get_definition_chat(agent_id: str):
-    """The definition chat for one agent: transcript plus the rich replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_definition_chat(request):
+    """Path param only: the agent under edit, 404 when it does not exist."""
+    from types import SimpleNamespace
 
-    if registry.get_agent(agent_id) is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(DEFINITION_CHAT_KIND, agent_id),
-        "trace": chat_store.get_trace(DEFINITION_CHAT_KIND, agent_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": DEFINITION_CHAT_KIND, "id": agent_id},
-    }
-
-
-@router.delete("/{agent_id}/definition/chat")
-async def clear_definition_chat(agent_id: str):
-    """Clear the transcript and start a fresh session. The agent is untouched."""
-    from common.entity_chat_store import entity_chat_store
-
-    if registry.get_agent(agent_id) is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    epoch = entity_chat_store().clear(DEFINITION_CHAT_KIND, agent_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/{agent_id}/definition/chat")
-async def chat_definition(agent_id: str, payload: DefinitionChatIn,
-                          workspace: Optional[str] = None):
-    """Run one turn of the agent definition chat (SSE).
-
-    Streams the editor's ``tool_*`` / ``thinking`` / ``token`` events, then an
-    ``agentdef`` event carrying the definition as it stands after the turn, the
-    final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
-    from common.bootstrap import ensure_system_agent
-
+    agent_id = request.path_params["agent_id"]
     spec = registry.get_agent(agent_id)
     if spec is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    return SimpleNamespace(entity_id=agent_id, workspace=None, agent_spec=spec)
+
+
+def _load_definition_send(request, body):
+    from common.bootstrap import ensure_system_agent
+
+    ctx = _load_definition_chat(request)
     if not ensure_system_agent(DEFINITION_AGENT_ID):
         raise HTTPException(status_code=503,
                             detail=f"The '{DEFINITION_AGENT_ID}' agent is not registered")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    ctx.workspace = request.query_params.get("workspace")
+    ctx.before = _definition_state(ctx.entity_id)
+    return ctx
 
-    before = _definition_state(agent_id)
 
+def _definition_summarize(ctx):
     def _summarize() -> str:
-        after = _definition_state(agent_id)
+        after = _definition_state(ctx.entity_id)
         if not after:
             return "The agent is gone."
+        before = ctx.before
         if after == before:
             return ""
         bits = []
@@ -1333,47 +1686,32 @@ async def chat_definition(agent_id: str, payload: DefinitionChatIn,
         if after["description"] != before["description"]:
             bits.append("rewrote its description")
         return ("Done — " + ", ".join(bits) + ".") if bits else "Done — the agent was updated."
+    return _summarize
 
-    chat_spec = EntityChatSpec(
-        kind=DEFINITION_CHAT_KIND,
-        agent_id=DEFINITION_AGENT_ID,
-        title=f"{spec.name} · definition",
-        workspace=workspace,
-    )
 
-    async def run_turn(queue: asyncio.Queue):
+def _definition_context_setup(ctx):
+    if ctx.workspace:
         from common.workspace_context import _workspace_ctx
-
-        if workspace:
-            _workspace_ctx.set(workspace)
-
-        await run_entity_chat_turn(
-            queue, chat_spec, agent_id, user_message,
-            lambda history: _definition_chat_prompt(agent_id, history, user_message),
-            summarize=_summarize,
-        )
-        after = registry.get_agent(agent_id)
-        if after:
-            await queue.put({"type": "agentdef", "agent": _definition_state(agent_id)})
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": DEFINITION_CHAT_KIND, "id": agent_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+        _workspace_ctx.set(ctx.workspace)
 
 
-@router.post("/{agent_id}/definition/chat/stop")
-async def stop_definition_chat(agent_id: str):
-    """Stop the in-flight definition edit for this agent."""
-    from chat.entity_chat import cancel_entity_runs
+async def _definition_post_turn(queue, ctx):
+    after = registry.get_agent(ctx.entity_id)
+    if after:
+        await queue.put({"type": "agentdef", "agent": _definition_state(ctx.entity_id)})
 
-    if registry.get_agent(agent_id) is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    cancelled = cancel_entity_runs(DEFINITION_CHAT_KIND, agent_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=DEFINITION_CHAT_KIND,
+    path="/{agent_id}/definition/chat",
+    load=_load_definition_chat,
+    load_for_send=_load_definition_send,
+    prompt=lambda ctx, history, msg: _definition_chat_prompt(ctx.entity_id, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=DEFINITION_CHAT_KIND, agent_id=DEFINITION_AGENT_ID,
+        title=f"{ctx.agent_spec.name} · definition", workspace=ctx.workspace,
+    ),
+    summarize=_definition_summarize,
+    context_setup=_definition_context_setup,
+    post_turn=_definition_post_turn,
+)))

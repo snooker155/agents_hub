@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from managers import run_manager
@@ -23,6 +23,7 @@ from tasks import service as tasks_service
 from common.pricing import (EVALUATION_CHANNELS, load_price_map, run_cached_tokens,
                             run_cost_usd, run_tokens)
 from common import budget as budget_mod
+from common import audit, identity
 from common.workspace_context import normalize_workspace_name
 
 router = APIRouter(prefix="/api/costs", tags=["costs"])
@@ -34,6 +35,22 @@ def _in_range(ts: str, since: Optional[str], until: Optional[str]) -> bool:
     if until and ts and ts > until:
         return False
     return True
+
+
+def _run_cost(run: dict, prices) -> float:
+    """A run's spend: its own reported cost when it has one, catalog pricing
+    otherwise.
+
+    A remote agent (``agents.remote_agent``) may credit ``reported_cost_usd``
+    onto the run record when the service it wraps prices its own call: a CLI
+    such as Claude Code prints ``total_cost_usd`` and that figure is exact,
+    where pricing token counts against this hub's catalog is an estimate and
+    reads as zero for a model the catalog does not list at all.
+    """
+    reported = run.get("reported_cost_usd")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+        return float(reported)
+    return run_cost_usd(run, prices)
 
 
 @router.get("")
@@ -105,7 +122,7 @@ async def get_costs(
 
         inbound, outbound = run_tokens(r)
         cached = max(0, min(run_cached_tokens(r), inbound))
-        cost = run_cost_usd(r, prices)
+        cost = _run_cost(r, prices)
 
         agent_id = (r.get("agent_id") or "").strip() or "(unknown)"
         model = (r.get("model") or "").strip() or "(untracked)"
@@ -145,6 +162,13 @@ class BudgetSettings(BaseModel):
     hard_limit_usd: float = 0.0
     soft_limit_usd: float = 0.0
     period: str = "monthly"  # total | daily | monthly
+    # Default money cap of a single task's runs (0 = off). A task's own
+    # budget_usd overrides it; enforced in the child by RunBudgetGuard.
+    run_limit_usd: float = 0.0
+    # Off by default (fails open, see common.budget). When set, a lookup or
+    # pricing failure while checking the budget refuses the run instead of
+    # letting it start unchecked.
+    fail_closed: bool = False
 
 
 @router.get("/budget")
@@ -155,11 +179,14 @@ async def get_budget(workspace: Optional[str] = None):
 
 
 @router.post("/budget")
-async def set_budget(settings: BudgetSettings, workspace: Optional[str] = None):
+async def set_budget(request: Request, settings: BudgetSettings, workspace: Optional[str] = None):
     """Persist a workspace's budget caps and return the fresh status."""
     ws = normalize_workspace_name(workspace) or "default"
     try:
         budget_mod.set_budget(ws, settings.model_dump())
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Workspace '{ws}' does not exist")
+    audit.record("workspace.budget", principal=identity.request_principal(request),
+                 object_type="workspace", object_id=ws, workspace=ws,
+                 ip=identity.client_ip(request), details=settings.model_dump())
     return budget_mod.budget_status(ws)

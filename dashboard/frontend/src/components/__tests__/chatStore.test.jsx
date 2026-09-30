@@ -97,7 +97,7 @@ describe('useConversationStore', () => {
     vi.useRealTimers();
   });
 
-  it('strips the live-turn fields that belong to the run record', async () => {
+  it('strips the live-turn fields and keeps the trail, clipped', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useConversationStore(null));
     await act(async () => {});
@@ -107,14 +107,23 @@ describe('useConversationStore', () => {
         ...CONV,
         messages: [{
           id: 'm1', role: 'agent', content: 'hi',
-          timeline: [{ step: 1 }], running_tool: 'shell', thinking_live: 'thinking…',
+          timeline: [
+            { type: 'text', text: 'Let me look.' },
+            { type: 'tool', tool: 'read_file', input: 'a.txt', output: 'x'.repeat(5000), running: true },
+          ],
+          running_tool: 'shell', thinking_live: 'thinking…',
         }],
       }]);
     });
     await settle();
 
     const [stored] = saveChat.mock.calls[0];
-    expect(stored.messages[0]).toEqual({ id: 'm1', role: 'agent', content: 'hi' });
+    const [text, tool] = stored.messages[0].timeline;
+    expect(stored.messages[0]).not.toHaveProperty('running_tool');
+    expect(stored.messages[0]).not.toHaveProperty('thinking_live');
+    expect(text).toEqual({ type: 'text', text: 'Let me look.' });
+    expect(tool).not.toHaveProperty('running');
+    expect(tool.output.length).toBeLessThan(2100);
     vi.useRealTimers();
   });
 

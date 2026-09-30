@@ -19,6 +19,7 @@ import {
 import { getMarketplaceAgent, addAgentToWorkspace } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import PageLoader from '../components/PageLoader';
 import { useI18n } from '../i18n';
 const formatCategory = (c) => (c || 'other').replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
 
@@ -59,7 +60,7 @@ const MarketplaceAgent = () => {
     }
   };
 
-  if (loading) return <div className="text-center py-10">{t('marketplaceAgent.loadingAgent')}</div>;
+  if (loading) return <PageLoader size="lg" label={t('marketplaceAgent.loadingAgent')} />;
   if (notFound || !agent) {
     return (
       <PageContainer>
@@ -99,9 +100,6 @@ const MarketplaceAgent = () => {
         backTo="/marketplace"
         backLabel={t('marketplaceAgent.backToMarketplace')}
         badges={<>
-          <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded uppercase font-semibold">
-            {agent.domain || 'general'}
-          </span>
           <span className="inline-flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded uppercase font-semibold">
             <Store className="w-3 h-3" /> {t('marketplaceAgent.marketplace')}
           </span>

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { WORKSPACE_EVENT } from './theme';
 import { WorkspaceContext } from './workspace';
 import { setActiveWorkspace as apiSetActiveWorkspace } from '../api';
 
@@ -23,6 +24,13 @@ export const WorkspaceProvider = ({ children }) => {
     }
     // Keep backend in sync so agent tools can read the active workspace
     pushWorkspaceToBackend(selectedWorkspace || null);
+    // ThemeProvider sits above this provider and re-resolves the palette
+    // (a workspace may carry a default one) when it hears this.
+    try {
+      window.dispatchEvent(new CustomEvent(WORKSPACE_EVENT, { detail: selectedWorkspace || '' }));
+    } catch {
+      // A test DOM without CustomEvent: nothing listens there anyway.
+    }
   }, [selectedWorkspace]);
 
   const toggleLiveUpdates = () => {

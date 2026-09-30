@@ -1,0 +1,120 @@
+{
+  "demo_task_run_rename": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_task_run_rename",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_rename",
+        "text": "[demo] demo_writer renaming Rucksack 32 -> Trailpack 32L"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_rename",
+        "text": "[demo] updated src/app.py, docs/notes.md, data/sales.csv"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_task_run_rename",
+        "text": "[demo] done"
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_task_run_rename"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_task_run_rename",
+        "status": "completed",
+        "output": "Renamed across src/app.py, docs/notes.md and data/sales.csv."
+      }
+    }
+  ],
+  "demo_chat_2_run": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_chat_2_run",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_2_run",
+        "text": "[demo] demo_analyst answering: How did August sales break down by category?"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_2_run",
+        "text": "[demo] demo_analyst replied."
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_chat_2_run"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_chat_2_run",
+        "status": "completed",
+        "output": "Backpacks led at $1,780, ahead of Bottles at $1,200 and Maps at $645. I put together a chart of it."
+      }
+    }
+  ],
+  "demo_chat_1_run": [
+    {
+      "event": "tool_start",
+      "data": {
+        "run_id": "demo_chat_1_run",
+        "line": 0
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_1_run",
+        "text": "[demo] demo_writer answering: What does the Fernweh & Co. sample shop actually sell?"
+      }
+    },
+    {
+      "event": "token",
+      "data": {
+        "run_id": "demo_chat_1_run",
+        "text": "[demo] demo_writer replied."
+      }
+    },
+    {
+      "event": "tool_end",
+      "data": {
+        "run_id": "demo_chat_1_run"
+      }
+    },
+    {
+      "event": "done",
+      "data": {
+        "run_id": "demo_chat_1_run",
+        "status": "completed",
+        "output": "It sells three things: the Trailpack 32L backpack, the Summit Bottle and the Ridge Map Pack. Here's the storefront's product list:\n\n```python\nPRODUCTS = [\n    {\"slug\": \"trailpack-32\", \"name\": \"Trailpack 32L\", \"price\": 89.00, \"category\": \"Backpacks\"},\n    {\"slug\": \"summit-bottle\", \"name\": \"Summit Bottle 1L\", \"price\": 24.00, \"category\": \"Bottles\"},\n    {\"slug\": \"ridge-map-pack\", \"name\": \"Ridge Map Pack\", \"price\": 15.00, \"category\": \"Maps\"},\n]\n```\n\nBackpacks bring in the most revenue this month even though Bottles sell in higher volume, since the Trailpack costs more per unit."
+      }
+    }
+  ]
+}

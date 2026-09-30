@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import {
-  getProjects, createProject, deleteProject, getWorkspaces,
+  getProjects, createProject, getWorkspaces,
   getProjectRegistryChat, clearProjectRegistryChat, stopProjectRegistryChat,
   projectRegistryChatUrl,
 } from '../api';
@@ -14,7 +14,6 @@ import {
   FolderGit2,
   Folder,
   Plus,
-  Trash2,
   Tag,
   Globe,
   Server,
@@ -53,8 +52,6 @@ const REPO_ICONS = {
 const DEFAULT_FORM = {
   name: '', description: '', type: 'general', workspace: '',
   repo_type: 'none', repo_url: '', repo_branch: 'main',
-  has_frontend: false, frontend_port: '', frontend_dev_command: '',
-  has_backend: false, backend_port: '', backend_swagger_path: '/docs',
   tags: '',
 };
 
@@ -96,6 +93,7 @@ function useRegistryChatDescriptor(workspace, onProjectsChanged) {
 
 export default function ProjectManager() {
   const { t } = useI18n();
+  const navigate = useNavigate();
   const { selectedWorkspace } = useWorkspace();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -168,16 +166,6 @@ export default function ProjectManager() {
           url: form.repo_url || null,
           branch: form.repo_branch || 'main',
         } : undefined,
-        frontend: form.has_frontend ? {
-          enabled: true,
-          port: form.frontend_port ? parseInt(form.frontend_port) : null,
-          dev_command: form.frontend_dev_command || null,
-        } : undefined,
-        backend: form.has_backend ? {
-          enabled: true,
-          port: form.backend_port ? parseInt(form.backend_port) : null,
-          swagger_path: form.backend_swagger_path || '/docs',
-        } : undefined,
       };
       await createProject(payload);
       setShowCreate(false);
@@ -187,16 +175,6 @@ export default function ProjectManager() {
       console.error(e);
     } finally {
       setCreating(false);
-    }
-  };
-
-  const handleDelete = async (id, name) => {
-    if (!confirm(`Delete project "${name}"?`)) return;
-    try {
-      await deleteProject(id);
-      setProjects(prev => prev.filter(p => p.id !== id));
-    } catch (e) {
-      console.error(e);
     }
   };
 
@@ -286,14 +264,21 @@ export default function ProjectManager() {
            instead. A fixed track does neither: the card is always 17rem, and
            opening the chat only changes how many fit on a row. The row is
            left-aligned, so the leftover strip on the right is simply empty. */
-        <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,17rem)] gap-4 items-start">
+        <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(22rem,1fr))] gap-4 items-stretch">
           {filtered.map(project => {
             const typeConf = TYPE_CONFIG[project.type] || TYPE_CONFIG.general;
             const statusConf = STATUS_CONFIG[project.status] || STATUS_CONFIG.active;
             const TypeIcon = typeConf.icon;
             const RepoIcon = REPO_ICONS[project.repo?.type] || GitBranch;
             return (
-              <div key={project.id} className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow flex flex-col">
+              <div
+                key={project.id}
+                role="link"
+                tabIndex={0}
+                onClick={() => navigate(`/projects/${project.id}`)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) navigate(`/projects/${project.id}`); }}
+                className="group bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-indigo-400 hover:ring-4 hover:ring-indigo-100 transition-all duration-200 ease-out flex flex-col h-full cursor-pointer focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200"
+              >
                 <div className="p-5 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
@@ -301,12 +286,7 @@ export default function ProjectManager() {
                         <TypeIcon className="w-4 h-4" />
                       </div>
                       <div className="min-w-0">
-                        <Link
-                          to={`/projects/${project.id}`}
-                          className="font-semibold text-gray-900 hover:text-indigo-600 transition-colors truncate block"
-                        >
-                          {project.name}
-                        </Link>
+                        <h3 className="font-semibold text-gray-900 truncate group-hover:text-indigo-700 transition-colors">{project.name}</h3>
                         <span className="text-xs text-gray-400">{project.workspace}</span>
                       </div>
                     </div>
@@ -314,19 +294,14 @@ export default function ProjectManager() {
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusConf.color}`}>
                         {statusConf.label}
                       </span>
-                      <button
-                        onClick={() => handleDelete(project.id, project.name)}
-                        className="p-1 text-gray-300 hover:text-red-500 rounded transition-colors"
-                        title={t('projectManager.deleteProject')}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
                     </div>
                   </div>
 
-                  {project.description && (
-                    <p className="text-sm text-gray-500 mt-3 line-clamp-2">{project.description}</p>
-                  )}
+                  {/* Always three lines tall, so every card is the same height whether or
+                      not it has a description, and a long one is clamped rather than grown. */}
+                  <p className="text-sm text-gray-500 mt-3 line-clamp-3 min-h-[3.75rem] leading-5">
+                    {project.description || ''}
+                  </p>
 
                   {/* Indicators */}
                   <div className="flex items-center gap-2 mt-3 flex-wrap">
@@ -334,16 +309,6 @@ export default function ProjectManager() {
                       <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                         <RepoIcon className="w-3 h-3" />
                         {project.repo.type}
-                      </span>
-                    )}
-                    {project.frontend?.enabled && (
-                      <span className="flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
-                        <Globe className="w-3 h-3" /> {t('projectManager.frontend')}
-                      </span>
-                    )}
-                    {project.backend?.enabled && (
-                      <span className="flex items-center gap-1 text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">
-                        <Server className="w-3 h-3" /> {t('projectManager.backend')}
                       </span>
                     )}
                     {project.tasks_count > 0 && (
@@ -494,79 +459,6 @@ export default function ProjectManager() {
                 </div>
               </div>}
 
-              {/* Frontend — code only */}
-              {form.type === 'code' && <div className="border border-gray-200 rounded-xl p-4 space-y-3">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.has_frontend}
-                    onChange={e => setForm(f => ({ ...f, has_frontend: e.target.checked }))}
-                    className="rounded"
-                  />
-                  <Globe className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-semibold text-gray-700">{t('projectManager.hasFrontend')}</span>
-                </label>
-                {form.has_frontend && (
-                  <div className="grid grid-cols-2 gap-3 pt-1">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.devPort')}</label>
-                      <input
-                        type="number"
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                        placeholder="5173"
-                        value={form.frontend_port}
-                        onChange={e => setForm(f => ({ ...f, frontend_port: e.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.devCommand')}</label>
-                      <input
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                        placeholder="npm run dev"
-                        value={form.frontend_dev_command}
-                        onChange={e => setForm(f => ({ ...f, frontend_dev_command: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>}
-
-              {/* Backend — code only */}
-              {form.type === 'code' && <div className="border border-gray-200 rounded-xl p-4 space-y-3">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.has_backend}
-                    onChange={e => setForm(f => ({ ...f, has_backend: e.target.checked }))}
-                    className="rounded"
-                  />
-                  <Server className="w-4 h-4 text-green-600" />
-                  <span className="text-sm font-semibold text-gray-700">{t('projectManager.hasBackend')}</span>
-                </label>
-                {form.has_backend && (
-                  <div className="grid grid-cols-2 gap-3 pt-1">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.port')}</label>
-                      <input
-                        type="number"
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                        placeholder="8000"
-                        value={form.backend_port}
-                        onChange={e => setForm(f => ({ ...f, backend_port: e.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">{t('projectManager.swaggerPath')}</label>
-                      <input
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                        placeholder="/docs"
-                        value={form.backend_swagger_path}
-                        onChange={e => setForm(f => ({ ...f, backend_swagger_path: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>}
             </div>
             <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
               <button

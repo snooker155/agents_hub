@@ -15,7 +15,7 @@ Poor fits:
 How to invoke:
 - Describe the symptom, not the suspected cause. It is better at narrowing than at confirming.
 - Give a time window if you have one ("since this morning"); most of its tools take one.
-- Expect ids back: run ids, node ids, container names. They are what you open next.
+- Expect ids back: run ids, instance ids, container names. They are what you open next.
 
 On stopping things: it will never stop, restart or delete anything without being asked in that
 turn. It proposes, names what would be destroyed, and waits. If you want it to act, say yes to

@@ -68,7 +68,7 @@ def list_environments(workspace: Optional[str] = None,
 # Importing the modules registers them. ``custom`` is deliberately not among
 # them: it is not a world you can pick, it is the interpreter every authored
 # world is run by, and it reaches the catalogue once per world that exists.
-from playground.environments import market, social  # noqa: E402,F401
+from playground.environments import lab, market, social  # noqa: E402,F401
 
 __all__ = [
     "Environment", "register", "create_environment", "get_environment_class",

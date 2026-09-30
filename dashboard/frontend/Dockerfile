@@ -59,6 +59,12 @@ RUN npm run build
 # ---------- runtime ----------
 FROM nginx:1.27-alpine AS nginx
 
+ARG AGENTS_HUB_VERSION=""
+ARG AGENTS_HUB_GIT_SHA=""
+LABEL org.opencontainers.image.title="agents-hub-frontend" \
+      org.opencontainers.image.version=$AGENTS_HUB_VERSION \
+      org.opencontainers.image.revision=$AGENTS_HUB_GIT_SHA
+
 # Where the SPA is served from; nginx.conf points its root here.
 COPY --from=build /app/dist /usr/share/nginx/html
 

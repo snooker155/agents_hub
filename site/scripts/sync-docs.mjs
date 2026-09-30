@@ -8,6 +8,10 @@
  * so a .vitepress folder or an extra index.md next to it would break the build
  * of the product itself. Hence: copy out, never write back.
  *
+ * An index entry may name a `path` from the repository root instead of living
+ * in docs/ (the changelog is CHANGELOG.md at the root); it is published as
+ * guide/<id>.md like the rest.
+ *
  * Each page gets frontmatter derived from the index, which is what fills the
  * <title> and the meta description of the published page.
  *
@@ -18,7 +22,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SITE = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CORPUS = join(SITE, '..', 'docs');
+const ROOT = join(SITE, '..');
+const CORPUS = join(ROOT, 'docs');
 const OUT = join(SITE, 'guide');
 
 /** Markdown to plain text, for a meta description that is not full of syntax. */
@@ -34,7 +39,8 @@ const index = JSON.parse(readFileSync(join(CORPUS, 'index.json'), 'utf8')).docs 
 const onDisk = new Set(
   readdirSync(CORPUS).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)),
 );
-const indexed = new Set(index.map((e) => e.id));
+// Entries with a `path` live outside docs/, so only the rest must match it.
+const indexed = new Set(index.filter((e) => !e.path).map((e) => e.id));
 
 const missing = [...indexed].filter((id) => !onDisk.has(id));
 const unlisted = [...onDisk].filter((id) => !indexed.has(id));
@@ -50,7 +56,8 @@ rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
 for (const entry of index) {
-  const body = readFileSync(join(CORPUS, `${entry.id}.md`), 'utf8');
+  const source = entry.path ? join(ROOT, entry.path) : join(CORPUS, `${entry.id}.md`);
+  const body = readFileSync(source, 'utf8');
   const frontmatter = [
     '---',
     `title: ${JSON.stringify(entry.title)}`,

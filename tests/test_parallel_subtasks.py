@@ -1,5 +1,4 @@
 """Parallel sibling-subtask execution (opt-in) + atomic claim safety."""
-import pytest
 
 from tasks import service as ts
 from tasks.models import TaskStatus

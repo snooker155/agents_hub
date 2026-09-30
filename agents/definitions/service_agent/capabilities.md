@@ -6,8 +6,9 @@ Health:
 
 Processes:
 - `list_containers` / `container_logs`: managed Docker containers and their output.
-- `list_nodes` / `node_logs`: the worker processes that consume tasks.
-- `list_instances` / `instance_timeline`: live agent copies and what they have been doing.
+- `list_instances`: live agent copies with their state; `resident_only` narrows to the ones started with Run, each a process of its own.
+- `instance_logs`: a resident instance's carrier log.
+- `instance_timeline`: what a live agent copy has been doing.
 
 Work:
 - `list_sessions`: conversations and the runs attached to them.
@@ -20,7 +21,7 @@ Outside calls and spend:
 - `costs_summary`: tokens and estimated spend by agent and by model.
 
 Stopping things, each refusing without `user_approved`:
-- `stop_run`, `stop_node`, `restart_node`, `stop_container`, `prune_run_logs`.
+- `stop_run`, `stop_instance`, `restart_instance`, `stop_container`, `prune_run_logs`.
 
 What this agent does NOT do:
 - Reach the web, write files, or send notifications

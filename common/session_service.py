@@ -16,11 +16,14 @@ pending_continuations.json files are migrated in on first open.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from common import db
+
+log = logging.getLogger(__name__)
 
 
 def _utc_now_iso() -> str:
@@ -36,9 +39,8 @@ def _write_ctx(conn, ctx: Dict[str, Any]) -> None:
     """Persist a context: the full document plus the columns the list queries
     filter and order by (kept in sync with the doc on every write)."""
     conn.execute(
-        "INSERT OR REPLACE INTO sessions "
-        "(session_id, conversation_id, task_id, workspace, created_at, is_flow, doc) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        db.upsert_sql("sessions", ("session_id", "conversation_id", "task_id", "workspace",
+                                   "created_at", "is_flow", "doc"), ("session_id",)),
         (str(ctx.get("session_id")), ctx.get("conversation_id"),
          str(ctx["task_id"]) if ctx.get("task_id") else None,
          ctx.get("workspace"), ctx.get("created_at"),
@@ -50,12 +52,13 @@ def _notify() -> None:
     try:
         from common.session_broker import notify_change
         notify_change("sessions")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - best-effort UI notification, must not break the write
+        log.debug("session change notify failed", exc_info=True)
 
 
 def load_contexts(timeout: float = 10.0) -> List[Dict[str, Any]]:
-    rows = db.get_conn().execute("SELECT doc FROM sessions ORDER BY rowid").fetchall()
+    rows = db.get_conn().execute(
+        "SELECT doc FROM sessions ORDER BY COALESCE(created_at, ''), session_id").fetchall()
     return [c for c in (_row_to_ctx(r) for r in rows) if c is not None]
 
 
@@ -66,6 +69,7 @@ def query_contexts(
     is_flow: Optional[bool] = None,
     task_id: Optional[str] = None,
     session_ids: Optional[List[str]] = None,
+    agent_id: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     limit: int = 100,
@@ -80,6 +84,8 @@ def query_contexts(
 
     ``session_ids`` narrows to a pre-computed set — used by the status filter,
     which is derived from a session's runs and so cannot live in this table.
+    ``agent_id`` keeps the sessions that agent ran in, through a subquery on
+    the runs table (``idx_runs_agent``) rather than a list of ids.
     """
     clauses: List[str] = []
     params: List[Any] = []
@@ -95,6 +101,9 @@ def query_contexts(
     if task_id:
         clauses.append("task_id = ?")
         params.append(str(task_id))
+    if agent_id:
+        clauses.append("session_id IN (SELECT session_id FROM runs WHERE agent_id = ? AND session_id IS NOT NULL)")
+        params.append(str(agent_id))
     if is_flow is not None:
         clauses.append("COALESCE(is_flow, 0) = ?")
         params.append(1 if is_flow else 0)
@@ -206,7 +215,8 @@ def get_or_create_task_session(
     }
     with db.transaction() as conn:
         if task_id is not None:
-            row = conn.execute("SELECT doc FROM sessions WHERE task_id = ? ORDER BY rowid LIMIT 1",
+            row = conn.execute("SELECT doc FROM sessions WHERE task_id = ? "
+                               "ORDER BY COALESCE(created_at, ''), session_id LIMIT 1",
                                (str(task_id),)).fetchone()
             existing = _row_to_ctx(row) if row is not None else None
             if existing and existing.get("session_id"):
@@ -242,7 +252,7 @@ def get_or_create_chat_session(
     with db.transaction() as conn:
         row = conn.execute(
             "SELECT doc FROM sessions WHERE conversation_id = ? OR session_id = ? "
-            "ORDER BY rowid LIMIT 1",
+            "ORDER BY COALESCE(created_at, ''), session_id LIMIT 1",
             (str(conversation_id), str(conversation_id))).fetchone()
         existing = _row_to_ctx(row) if row is not None else None
         if existing:
@@ -254,6 +264,49 @@ def get_or_create_chat_session(
         _write_ctx(conn, ctx)
     _notify()
     return session_id
+
+
+# ── Conversation summary (history compaction) ─────────────────────────────────
+# A long chat is folded by ``chat.compaction``: its older turns become one
+# summary, and only the recent tail is sent verbatim. The summary belongs to the
+# conversation rather than to any one run, so it lives on the session context —
+# the next turn reads it back and extends it instead of paying to summarise the
+# same material again.
+
+def get_session_summary(session_id: Optional[str]) -> Dict[str, Any]:
+    """The stored summary: ``{text, covers_until, anchor, updated_at}``.
+
+    ``covers_until`` is how many of the conversation's history messages the
+    summary speaks for, counted from the start, and ``anchor`` fingerprints the
+    last of them so the count can be re-found once the surface's history window
+    has slid. Returns ``{}`` when the session has none (or does not exist), which
+    reads as "nothing folded yet".
+    """
+    if not session_id:
+        return {}
+    ctx = get_context_by_id(str(session_id)) or {}
+    summary = ctx.get("summary")
+    return dict(summary) if isinstance(summary, dict) else {}
+
+
+def set_session_summary(session_id: str, text: str, covers_until: int,
+                        anchor: str = "") -> None:
+    """Store (or replace) a session's conversation summary."""
+    if not session_id:
+        return
+    with db.transaction() as conn:
+        row = conn.execute("SELECT doc FROM sessions WHERE session_id = ?",
+                           (str(session_id),)).fetchone()
+        ctx = _row_to_ctx(row) if row is not None else None
+        if ctx is None:
+            return
+        _write_ctx(conn, {**ctx, "summary": {
+            "text": str(text or ""),
+            "covers_until": max(0, int(covers_until or 0)),
+            "anchor": str(anchor or ""),
+            "updated_at": _utc_now_iso(),
+        }, "updated_at": _utc_now_iso()})
+    _notify()
 
 
 def add_run_to_session(session_id: str, run_id: str) -> None:

@@ -12,20 +12,17 @@ agent behind them lives under /api/instances.
 Session contexts are stored in the ``sessions`` table (``common.db``).
 """
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 from datetime import datetime, timezone
-import asyncio
 import json
 import os
 import re
-import time
 import yaml
 
 from common.config import settings as _global_settings
+from common import access, identity
 
-from uuid import uuid4
 
 from agents import registry
 from providers.context_windows import get_model_context_window
@@ -36,12 +33,9 @@ from common.session_service import (
     query_contexts as _session_service_query,
     session_ids_without_runs as _session_ids_without_runs,
     delete_context as _delete_context,
-    upsert_context as _upsert_context,
     get_context_by_id as _get_context_by_id,
-    get_or_create_chat_session,
-    add_run_to_session,
-    add_event_to_session,
 )
+from models import SessionPage
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -269,16 +263,24 @@ def _enrich_context(ctx: Dict[str, Any], stats: Dict[str, Dict[str, Any]]) -> Di
     }
 
 
+def _require_session_visible(request: Request, ctx: Dict[str, Any]) -> None:
+    """403 unless the caller may see the workspace this session belongs to."""
+    principal = identity.request_principal(request)
+    access.require_visible(principal, ctx.get("workspace"))
+
+
 # -------------------- Endpoints --------------------
 
-@router.get("")
+@router.get("", response_model=SessionPage)
 async def list_sessions(
+    request: Request,
     workspace: Optional[str] = None,
     status: Optional[str] = None,
     is_flow: Optional[bool] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     conversation_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
 ):
@@ -288,6 +290,12 @@ async def list_sessions(
     enriched, and its status/participants come from one grouped query over the
     runs table — the list used to parse every session document and every run
     record in the database on each refresh.
+
+    A request naming no workspace is otherwise open to any signed-in account
+    (common/auth.py authorize()); the page is additionally narrowed here to
+    the sessions whose own workspace the caller can see, a no-op outside
+    ``multi`` mode. Filtered after the SQL page is fetched, so ``total`` still
+    counts the unfiltered page — see common/access.py's filter_by_workspace.
     """
     # A session's status is derived from its runs, so it cannot be a column on
     # the sessions table. Rank the whole set first, then let SQL page the
@@ -304,6 +312,7 @@ async def list_sessions(
     page = _session_service_query(
         workspace=workspace,
         conversation_id=conversation_id,
+        agent_id=agent_id,
         is_flow=is_flow,
         from_date=from_date,
         to_date=to_date,
@@ -311,16 +320,19 @@ async def list_sessions(
         limit=max(1, min(int(limit), 500)),
         offset=max(0, int(offset)),
     )
-    stats = run_manager.session_run_stats([c.get("session_id") for c in page["items"]])
-    return {**page, "items": [_enrich_context(c, stats) for c in page["items"]]}
+    principal = identity.request_principal(request)
+    items = access.filter_by_workspace(principal, page["items"])
+    stats = run_manager.session_run_stats([c.get("session_id") for c in items])
+    return {**page, "items": [_enrich_context(c, stats) for c in items]}
 
 
 @router.get("/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str, request: Request):
     """Get a session context by ID."""
     ctx = _get_context_by_id(session_id)
     if not ctx:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_session_visible(request, ctx)
 
     stats = run_manager.session_run_stats([session_id])
     enriched = _enrich_context(ctx, stats)
@@ -329,11 +341,12 @@ async def get_session(session_id: str):
 
 
 @router.get("/{session_id}/messages")
-async def get_session_messages(session_id: str):
+async def get_session_messages(session_id: str, request: Request):
     """List all messages (agent runs) belonging to this session."""
     ctx = _get_context_by_id(session_id)
     if not ctx:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_session_visible(request, ctx)
 
     message_ids = ctx.get("message_ids") or []
     runs_by_id = run_manager.get_runs_by_ids(message_ids)
@@ -348,11 +361,12 @@ async def get_session_messages(session_id: str):
 
 
 @router.post("/{session_id}/stop")
-async def stop_session(session_id: str):
+async def stop_session(session_id: str, request: Request):
     """Stop all running messages in a session."""
     ctx = _get_context_by_id(session_id)
     if not ctx:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_session_visible(request, ctx)
 
     message_ids = ctx.get("message_ids") or []
     attempted_count = 0
@@ -390,11 +404,12 @@ async def stop_session(session_id: str):
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: str, delete_messages: bool = False):
+async def delete_session(session_id: str, request: Request, delete_messages: bool = False):
     """Delete a session context. Optionally also delete its message runs."""
     ctx = _get_context_by_id(session_id)
     if not ctx:
         raise HTTPException(status_code=404, detail="Session not found")
+    _require_session_visible(request, ctx)
 
     # Check no running messages
     message_ids = ctx.get("message_ids") or []

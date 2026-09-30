@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   Rocket,
@@ -15,7 +15,6 @@ import {
   CheckSquare,
   Users,
   Network,
-  Server,
   Radio,
   Factory,
   Database,
@@ -39,8 +38,28 @@ import {
   BookOpen,
   HardDriveDownload,
   Webhook,
+  ShieldCheck,
+  Compass,
+  ScrollText,
+  Loader2,
+  FileText,
+  ClipboardCheck,
+  Gauge,
+  Navigation,
+  Plug,
+  Target,
+  History,
+  Server,
+  Layers,
+  Cpu,
+  Activity,
+  ServerCog,
+  KeyRound,
+  MessageSquareCode,
+  Share2,
 } from 'lucide-react';
 import OnboardingChecklist from '../components/docs/OnboardingChecklist';
+import { useWelcomeTour } from '../components/docs/WelcomeTour';
 import {
   SyntheticChat,
   WorkspaceModelExample,
@@ -52,12 +71,14 @@ import {
   FlowDiagramExample,
   ToolExample,
   MemoryExample,
-  NodeSessionExample,
   OrchestratorExample,
   ProviderExample,
 } from '../components/docs/ExampleWidgets';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { getDoc } from '../api';
 import { useI18n } from '../i18n';
 // ---------------------------------------------------------------------------
 // Docs — an in-app documentation hub with its own left-hand section nav.
@@ -185,6 +206,26 @@ function Walkthrough({ title, steps }) {
 
 // ---- section content -------------------------------------------------------
 
+// Next to the checklist rather than inside the FAQ answer that mentions it:
+// the answer says where the tour lives, this is the thing itself.
+function ReplayTour() {
+  const { t } = useI18n();
+  const tour = useWelcomeTour();
+  return (
+    <div className="my-4 flex flex-wrap items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+      <button
+        type="button"
+        onClick={() => tour.start()}
+        className="flex items-center gap-1.5 shrink-0 text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+      >
+        <Compass className="w-4 h-4" />
+        {t('docs.start.replayTour')}
+      </button>
+      <span className="text-sm text-gray-600">{t('docs.start.replayTourHint')}</span>
+    </div>
+  );
+}
+
 function GettingStarted() {
   const { t } = useI18n();
   return (
@@ -194,6 +235,7 @@ function GettingStarted() {
       <div className="my-4">
         <OnboardingChecklist />
       </div>
+      <ReplayTour />
 
       <Walkthrough
         title={t('docs.start.firstRun')}
@@ -290,11 +332,6 @@ function Concepts() {
       <P><Rich>{t('docs.conceptsDoc.agents')}</Rich></P>
       <Callout><Rich>{t('docs.conceptsDoc.agentsCallout')}</Rich></Callout>
 
-      <H3><Network className="inline w-4 h-4 text-indigo-500 mr-1" /> {t('docs.nodesRuns')}</H3>
-      <P>
-        <strong>{t('docs.node')}</strong> {t('docs.isALongRunningAgent')} <strong>{t('docs.run')}</strong> {t('docs.runCapturesASingleExecution')}
-      </P>
-
       <H3><Radio className="inline w-4 h-4 text-indigo-500 mr-1" /> {t('docs.instancesDoc.title')}</H3>
       <P>{t('docs.instancesDoc.lead')}</P>
       <P>{t('docs.instancesDoc.points2')}</P>
@@ -358,9 +395,6 @@ function Features() {
         </FeatureCard>
         <FeatureCard icon={Radio} title={t('docs.instancesDoc.title')} to="/instances">
           {t('docs.instancesDoc.points0')}
-        </FeatureCard>
-        <FeatureCard icon={Server} title={t('docs.nodes')} to="/nodes">
-          {t('docs.manageLongRunningAgentProcesses')}
         </FeatureCard>
         <FeatureCard icon={Network} title={t('docs.orchestrator')} to="/orchestrator">
           {t('docs.configureRoutingSoTasksAre')}
@@ -508,7 +542,7 @@ function CliApi() {
       <div className="flex flex-wrap gap-1.5 my-3">
         {['agents', 'agent-import', 'marketplace', 'tasks', 'plan', 'flows', 'flow-entities', 'loops',
           'teams', 'stats', 'models', 'costs', 'evals', 'playground', 'shared-memory', 'skills',
-          'web-logs', 'workspaces', 'tools', 'sessions', 'messages', 'chat', 'nodes', 'external',
+          'web-logs', 'workspaces', 'tools', 'sessions', 'messages', 'chat', 'instances', 'external',
           'projects', 'containers', 'settings', 'telegram', 'git', 'views', 'stream', 'health'].map((r) => (
           <span key={r} className="text-xs font-mono px-2 py-1 rounded-md bg-gray-100 text-gray-700">/{r}</span>
         ))}
@@ -535,6 +569,140 @@ curl http://localhost:8000/api/health # DB reachability, row counts, background 
     </div>
   );
 }
+
+// Corpus documents (docs/*.md and CHANGELOG.md, GET /api/docs/<id>) are the
+// text the agents read with read_doc. They are rendered with this page's own
+// headings and paragraphs, and without the chat's line breaks: the files are
+// wrapped at 80 columns, a newline there is a space.
+const CORPUS_COMPONENTS = {
+  h1: ({ children }) => <H2>{children}</H2>,
+  h2: ({ children }) => <H2>{children}</H2>,
+  h3: ({ children }) => <H3>{children}</H3>,
+  p: ({ children }) => <P>{children}</P>,
+  ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-2 text-sm text-gray-600 leading-relaxed">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-2 text-sm text-gray-600 leading-relaxed">{children}</ol>,
+  code: ({ children }) => <code className="px-1 py-0.5 rounded bg-gray-100 text-[12px] text-gray-800">{children}</code>,
+  a: ({ href, children }) => {
+    // Corpus files link each other as `instances.md#anchor`. Inside the app that
+    // is the section showing that document, or plain text when none does.
+    const corpus = /^([a-z0-9-]+)\.md(#.*)?$/.exec(href || '');
+    if (corpus) {
+      const section = sectionForCorpus(corpus[1]);
+      return section
+        ? <Link to={`/docs/${section}`} className="text-indigo-600 hover:underline">{children}</Link>
+        : <span>{children}</span>;
+    }
+    return <a href={href} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">{children}</a>;
+  },
+};
+
+// The changelog is not written here: it is CHANGELOG.md from the corpus, so
+// this page, read_doc and the site all show the same text. It is kept in English.
+function ChangelogDoc() {
+  const { t } = useI18n();
+  const [doc, setDoc] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let live = true;
+    getDoc('changelog')
+      .then(({ data }) => { if (live) setDoc(data); })
+      .catch((e) => { if (live) setError(e?.response?.data?.detail || e?.message || 'error'); });
+    return () => { live = false; };
+  }, []);
+  if (error) return <Callout tone="warn">{t('docs.changelogError', { error })}</Callout>;
+  if (!doc) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-gray-500">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        {t('docs.changelogLoading')}
+      </p>
+    );
+  }
+  return (
+    <div>
+      <P>{t('docs.changelogIntro')}</P>
+      <Markdown remarkPlugins={[remarkGfm]} components={CORPUS_COMPONENTS}>{doc.content}</Markdown>
+    </div>
+  );
+}
+
+// "Full reference": a corpus document under a guide section, fetched the first
+// time it is opened. The guide above it is translated; the reference is the
+// English text the agents answer from, so the two never disagree on facts.
+function CorpusRef({ id }) {
+  const { t } = useI18n();
+  const [doc, setDoc] = useState(null);
+  const [error, setError] = useState(null);
+  const load = (e) => {
+    if (!e.currentTarget.open || doc || error) return;
+    getDoc(id)
+      .then(({ data }) => setDoc(data))
+      .catch((err) => setError(err?.response?.data?.detail || err?.message || 'error'));
+  };
+  return (
+    <details onToggle={load} className="group border border-gray-200 rounded-xl bg-white my-2">
+      <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-gray-800 flex items-center justify-between">
+        <span className="flex items-center gap-2"><BookOpen className="w-4 h-4 text-gray-400" />{t('docs.fullReference')}: <code className="font-normal text-gray-500">docs/{id}.md</code></span>
+        <ArrowRight className="w-4 h-4 text-gray-300 group-open:rotate-90 transition-transform" />
+      </summary>
+      <div className="px-4 pb-4">
+        {error && <Callout tone="warn">{t('docs.fullReferenceError', { error })}</Callout>}
+        {!error && !doc && (
+          <p className="flex items-center gap-2 text-sm text-gray-500">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {t('docs.fullReferenceLoading')}
+          </p>
+        )}
+        {doc && <Markdown remarkPlugins={[remarkGfm]} components={CORPUS_COMPONENTS}>{doc.content}</Markdown>}
+      </div>
+    </details>
+  );
+}
+
+// A guide section written as data in the docsGuide namespace:
+//   docsGuide.<k>.title / .lead / .s0 … .s5 ({ h, p?, points? }) / .callout?
+// Subsections are read until the first missing one, so a section grows by
+// adding keys in the three locale files, not by editing this component.
+function GuideDoc({ k, refs = [] }) {
+  const { t } = useI18n();
+  const opt = (key) => t(`docsGuide.${k}.${key}`, { defaultValue: '' });
+  const parts = [];
+  for (let i = 0; i < 10; i += 1) {
+    const h = opt(`s${i}.h`);
+    if (!h) break;
+    const points = t(`docsGuide.${k}.s${i}.points`, { defaultValue: [] });
+    parts.push({ h, p: opt(`s${i}.p`), points: Array.isArray(points) ? points : [] });
+  }
+  const callout = opt('callout');
+  return (
+    <div>
+      <H2>{t(`docsGuide.${k}.title`)}</H2>
+      <P><Rich>{t(`docsGuide.${k}.lead`)}</Rich></P>
+      {parts.map((part, i) => (
+        <div key={i}>
+          <H3>{part.h}</H3>
+          {part.p && <P><Rich>{part.p}</Rich></P>}
+          {part.points.length > 0 && (
+            <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
+              {part.points.map((pt, j) => <li key={j}><Rich>{pt}</Rich></li>)}
+            </ul>
+          )}
+        </div>
+      ))}
+      {callout && <Callout tone="warn"><Rich>{callout}</Rich></Callout>}
+      {refs.length > 0 && (
+        <div className="mt-6">
+          {refs.map((id) => <CorpusRef key={id} id={id} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Registry entry for a GuideDoc section: its label is docsGuide.<k>.nav.
+const guide = (id, k, icon, refs) => ({
+  id, navKey: `docsGuide.${k}.nav`, icon, refs, render: () => <GuideDoc k={k} refs={refs} />,
+});
 
 function Faq() {
   const { t } = useI18n();
@@ -1070,6 +1238,54 @@ function ToolboxDoc() {
   );
 }
 
+function HooksDoc() {
+  const { t } = useI18n();
+  return (
+    <div>
+      <H2>{t('docs.nav.hooks')}</H2>
+      <P><Rich>{t('docs.hooksDoc.lead')}</Rich></P>
+
+      <H3>{t('docs.hooksDoc.configTitle')}</H3>
+      <P><Rich>{t('docs.hooksDoc.configBody')}</Rich></P>
+      <CodeBlock label=".hooks.json">{`{
+  "PreToolUse": [
+    {"matcher": "run_shell|delete_file", "type": "command",
+     "command": "./scripts/check_tool_call.py", "timeout": 10},
+    {"matcher": "apply_unified_diff", "type": "http",
+     "url": "http://localhost:9000/review", "fail_closed": true}
+  ],
+  "PostToolUse": [
+    {"matcher": ".*", "type": "command", "command": "./scripts/audit.sh"}
+  ]
+}`}</CodeBlock>
+      <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
+        <li><Rich>{t('docs.hooksDoc.matcher')}</Rich></li>
+        <li><Rich>{t('docs.hooksDoc.type')}</Rich></li>
+        <li><Rich>{t('docs.hooksDoc.exempt')}</Rich></li>
+      </ul>
+
+      <H3>{t('docs.hooksDoc.payloadTitle')}</H3>
+      <P><Rich>{t('docs.hooksDoc.payloadBody')}</Rich></P>
+
+      <H3>{t('docs.hooksDoc.exitTitle')}</H3>
+      <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
+        <li><Rich>{t('docs.hooksDoc.exit0')}</Rich></li>
+        <li><Rich>{t('docs.hooksDoc.exit2')}</Rich></li>
+        <li><Rich>{t('docs.hooksDoc.exitOther')}</Rich></li>
+      </ul>
+      <P><Rich>{t('docs.hooksDoc.httpBody')}</Rich></P>
+      <Callout tone="warn"><Rich>{t('docs.hooksDoc.securityCallout')}</Rich></Callout>
+
+      <H3>{t('docs.hooksDoc.gateTitle')}</H3>
+      <P><Rich>{t('docs.hooksDoc.gateBody')}</Rich></P>
+      <CodeBlock label={t('docs.hooksDoc.gateSettingsLabel')}>{`{"settings": {"require_tool_approval": true}}`}</CodeBlock>
+      <P><Rich>{t('docs.hooksDoc.gateTools')}</Rich></P>
+      <P><Rich>{t('docs.hooksDoc.gateTask')}</Rich></P>
+      <Callout tone="tip"><Rich>{t('docs.hooksDoc.advisoryTip')}</Rich></Callout>
+    </div>
+  );
+}
+
 function MemoryDoc() {
   const { t } = useI18n();
   return (
@@ -1104,21 +1320,6 @@ function InstancesDoc() {
         {' — '}{t('docs.instancesDoc.openHint')}
       </P>
       <Callout tone="tip">{t('docs.instancesDoc.tip')}</Callout>
-    </div>
-  );
-}
-
-function NodesDoc() {
-  const { t } = useI18n();
-  return (
-    <div>
-      <H2>{t('docs.nodesDoc.title')}</H2>
-      <P><Rich>{t('docs.nodesDoc.lead')}</Rich></P>
-      <P><Rich>{t('docs.nodesDoc.sessions')}</Rich></P>
-      <Callout tone="tip">{t('docs.interactiveExampleBelowIllustrativeSample')}</Callout>
-      <div className="my-4">
-        <NodeSessionExample />
-      </div>
     </div>
   );
 }
@@ -1241,7 +1442,7 @@ ah chat main-agent
 ah task create "Build a REST API" --decompose
 ah task list --status todo
 ah workspace list
-ah node list
+ah instance list
 ah config`}</CodeBlock>
       <P><Rich>{t('docs.cliGuide.commandsBody')}</Rich></P>
 
@@ -1299,6 +1500,7 @@ const GROUPS = [
       { id: 'installation', key: 'installation', icon: HardDriveDownload, render: Installation },
       { id: 'concepts', key: 'concepts', icon: Boxes, render: Concepts },
       { id: 'features', key: 'overview', icon: Sparkles, render: Features },
+      { id: 'changelog', key: 'changelog', icon: ScrollText, render: ChangelogDoc },
     ],
   },
   {
@@ -1307,6 +1509,8 @@ const GROUPS = [
       { id: 'chat', key: 'chat', icon: MessageCircle, render: TryIt },
       { id: 'workspaces', key: 'workspaces', icon: Folder, render: WorkspacesDoc },
       { id: 'projects', key: 'projects', icon: FolderGit2, render: ProjectsDoc },
+      guide('project-deployments', 'projectDeployments', Rocket, ['project-deployments']),
+      guide('files', 'files', FileText, ['files']),
       { id: 'tasks', key: 'tasks', icon: CheckSquare, render: TasksDoc },
       { id: 'plan', key: 'plan', icon: CalendarClock, render: PlanDoc },
       { id: 'views', key: 'views', icon: Images, render: ViewsDoc },
@@ -1321,6 +1525,9 @@ const GROUPS = [
       { id: 'skills', key: 'skills', icon: GraduationCap, render: SkillsDoc },
       { id: 'orchestrator', key: 'orchestrator', icon: Network, render: OrchestratorDoc },
       { id: 'teams', key: 'teams', icon: UsersRound, render: TeamsDoc },
+      guide('registry', 'registry', ClipboardCheck, ['registry']),
+      guide('agent-loop', 'agentLoop', Gauge, ['agent-loop', 'tool-policy', 'guardrails']),
+      guide('steering', 'steering', Navigation, ['steering', 'handoffs', 'page-chat']),
     ],
   },
   {
@@ -1329,9 +1536,14 @@ const GROUPS = [
       { id: 'flows', key: 'flows', icon: Factory, render: FlowsDoc },
       { id: 'loops', key: 'loops', icon: Repeat, render: LoopsDoc },
       { id: 'tools', key: 'tools', icon: Wrench, render: ToolboxDoc },
+      guide('mcp', 'mcp', Plug, ['mcp']),
+      guide('browser', 'browser', Globe, ['browser']),
+      { id: 'hooks', key: 'hooks', icon: ShieldCheck, render: HooksDoc },
       { id: 'memory', key: 'memory', icon: Database, render: MemoryDoc },
       { id: 'web-logs', key: 'webLogs', icon: Globe, render: WebLogsDoc },
       { id: 'evals', key: 'evals', icon: FlaskConical, render: EvalsDoc },
+      guide('outcomes', 'outcomes', Target, ['outcomes', 'experiments']),
+      guide('sessions-runs', 'sessionsRuns', History, ['sessions-and-runs']),
       { id: 'playground', key: 'playground', icon: Gamepad2, render: PlaygroundDoc },
     ],
   },
@@ -1339,12 +1551,24 @@ const GROUPS = [
     key: 'operations',
     items: [
       { id: 'instances', key: 'instances', icon: Radio, render: InstancesDoc },
-      { id: 'nodes', key: 'nodes', icon: Server, render: NodesDoc },
+      guide('services', 'services', Server, ['services']),
+      guide('deployments', 'deployments', Layers, ['deployments', 'environments', 'sandboxes']),
       { id: 'containers', key: 'containers', icon: Box, render: ContainersDoc },
       { id: 'models', key: 'models', icon: Brain, render: ModelsDoc },
+      guide('local-models', 'localModels', Cpu, ['local-models', 'hub-as-provider', 'model-structure']),
       { id: 'costs', key: 'costs', icon: DollarSign, render: CostsDoc },
       { id: 'providers', key: 'providers', icon: SettingsIcon, render: ProvidersDoc },
       { id: 'connectors', key: 'connectors', icon: Send, render: ConnectorsDoc },
+      guide('health', 'health', Activity, ['service-health', 'runbook', 'slo', 'system-workspace']),
+      guide('production', 'production', ServerCog, ['deployment', 'scaling', 'workers', 'storage', 'backup']),
+    ],
+  },
+  {
+    key: 'access',
+    items: [
+      guide('accounts', 'accounts', KeyRound, ['identity', 'sso', 'scim', 'api-keys', 'secrets', 'audit']),
+      guide('widget', 'widget', MessageSquareCode, ['widget']),
+      guide('integrations', 'integrations', Share2, ['notifications', 'telegram', 'github-app', 'a2a', 'connections']),
     ],
   },
   {
@@ -1359,6 +1583,24 @@ const GROUPS = [
 ];
 
 const SECTIONS = GROUPS.flatMap((g) => g.items);
+
+// Corpus id -> the section that shows it: a guide section listing it as a
+// reference, a hand-written section covering it under another id, else a
+// section of the same id.
+const CORPUS_SECTION = new Map([
+  ['overview', 'features'],
+  ['tools-and-capabilities', 'tools'],
+  ['imported-agents', 'importing-agents'],
+  ['scheduling', 'plan'],
+  ['troubleshooting', 'faq'],
+  ['system-agents', 'orchestrator'],
+]);
+SECTIONS.forEach((s) => (s.refs || []).forEach((id) => {
+  if (!CORPUS_SECTION.has(id)) CORPUS_SECTION.set(id, s.id);
+}));
+function sectionForCorpus(id) {
+  return CORPUS_SECTION.get(id) || (SECTIONS.some((s) => s.id === id) ? id : null);
+}
 
 export default function Docs() {
   const { t } = useI18n();
@@ -1401,7 +1643,7 @@ export default function Docs() {
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    {t(`docs.nav.${s.key}`)}
+                    {t(s.navKey || `docs.nav.${s.key}`)}
                   </Link>
                 );
               })}
@@ -1423,7 +1665,7 @@ export default function Docs() {
               {GROUPS.map((g) => (
                 <optgroup key={g.key} label={t(`docs.nav.groups.${g.key}`)}>
                   {g.items.map((s) => (
-                    <option key={s.id} value={s.id}>{t(`docs.nav.${s.key}`)}</option>
+                    <option key={s.id} value={s.id}>{t(s.navKey || `docs.nav.${s.key}`)}</option>
                   ))}
                 </optgroup>
               ))}

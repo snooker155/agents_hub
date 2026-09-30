@@ -6,6 +6,8 @@ import {
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
+import { useLiveRefetch } from '../stream';
+import PageLoader from '../PageLoader';
 
 // Moved out of the Settings page, which is where nobody looked for it: a
 // connector is something you *attach*, so it belongs with the other things you
@@ -64,11 +66,13 @@ export default function BlenderConnector() {
   }, []);
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
-  useEffect(() => {
-    loadDaemons();
-    const timer = setInterval(loadDaemons, 5000);
-    return () => clearInterval(timer);
-  }, [loadDaemons]);
+  // The daemon registry is cross-process, so an engine another process
+  // started or stopped needs a live update rather than a fixed refresh point.
+  // The backend publishes `blender_daemons.changed` on the app channel for
+  // exactly this; the buttons on this card also reload it themselves, so an
+  // action's own result is immediate either way.
+  useEffect(() => { loadDaemons(); }, [loadDaemons]);
+  useLiveRefetch(loadDaemons, { type: 'blender_daemons.changed' });
 
   const save = async (patch) => {
     setBusy('save');
@@ -121,9 +125,7 @@ export default function BlenderConnector() {
 
   if (!config) {
     return (
-      <div className="flex items-center justify-center py-10">
-        <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
-      </div>
+      <PageLoader size="sm" />
     );
   }
 

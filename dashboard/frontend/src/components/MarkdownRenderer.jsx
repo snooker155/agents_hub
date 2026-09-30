@@ -1,4 +1,4 @@
-import React from 'react';
+import CodeBlock from './CodeBlock';
 
 // ---------------------------------------------------------------------------
 // Lightweight, dependency-free Markdown renderer.
@@ -87,18 +87,7 @@ function MarkdownRenderer({ content = '', className = '' }) {
         i++;
       }
       i++; // skip closing fence
-      blocks.push(
-        <div key={key++} className="my-3">
-          {lang && (
-            <div className="bg-gray-800 text-gray-400 text-xs px-4 py-1.5 rounded-t-lg border-b border-gray-700">
-              {lang}
-            </div>
-          )}
-          <pre className={`bg-gray-900 text-gray-100 text-xs p-4 overflow-x-auto ${lang ? 'rounded-b-lg' : 'rounded-lg'} whitespace-pre`}>
-            {codeLines.join('\n')}
-          </pre>
-        </div>
-      );
+      blocks.push(<CodeBlock key={key++} language={lang} code={codeLines.join('\n')} />);
       continue;
     }
 

@@ -3,10 +3,16 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useWorkspace } from './workspace';
 import { useTheme } from './theme';
 import { useStream, useLiveRefetch } from './stream';
+import { useFeatures } from './features';
+import { MULTI, isAdmin, useAuth } from './auth';
 import { getWorkspaces, getWorkspaceModel, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
 import {
+  Waypoints,
   LayoutDashboard,
   CheckSquare,
+  LogOut,
+  UserCog,
+  KeyRound,
   Folder,
   Database,
   Factory,
@@ -17,7 +23,6 @@ import {
   MessageCircle,
   MessageSquare,
   ScrollText,
-  Server,
   Settings,
   Sun,
   Moon,
@@ -48,6 +53,14 @@ import {
   Globe,
   Share2,
   Link2,
+  Plug,
+  Layers,
+  Container,
+  Rocket,
+  ShieldCheck,
+  BadgeCheck,
+  MessageSquareCode,
+  FileStack,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -57,6 +70,8 @@ import { routeTitleKey } from './routeTitles';
 import PageChatPanel from './pageChat/PageChatPanel';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
+// The project mark, also the browser tab icon (index.html); served from public/.
+const LOGO_URL = `${import.meta.env.BASE_URL}logo.svg`;
 
 const PROVIDER_CONFIG = {
   openai:    { label: 'OpenAI',    color: 'text-green-700 bg-green-50 border-green-200' },
@@ -79,6 +94,10 @@ const Layout = ({ children }) => {
   const navigate = useNavigate();
   const { selectedWorkspace, setSelectedWorkspace, liveUpdates, toggleLiveUpdates } = useWorkspace();
   const { theme, setTheme } = useTheme();
+  // Optional features the backend reports at /api/health; a feature that is
+  // switched off has no sidebar row and no route (see App.jsx).
+  const { playground: playgroundEnabled } = useFeatures();
+  const auth = useAuth();
   const { t } = useI18n();
   const [workspaces, setWorkspaces] = useState([]);
   // workspaceModel: full model state returned by GET /api/workspaces/{name}/model
@@ -289,7 +308,13 @@ const Layout = ({ children }) => {
         { name: t('nav.projects'), path: '/projects', icon: FolderGit2 },
         { name: t('nav.tasks'), path: '/tasks', icon: CheckSquare },
         { name: t('nav.plan'), path: '/plan', icon: CalendarClock },
+        { name: t('nav.deployments'), path: '/deployments', icon: Rocket },
+        // An agent embedded on another site through one script tag.
+        { name: t('nav.widgets'), path: '/widgets', icon: MessageSquareCode },
+        // Files the workspace keeps by id: chat, memory, tasks and evals reuse them.
+        { name: t('nav.files'), path: '/files', icon: FileStack },
         { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle },
+        { name: t('nav.runGroups'), path: '/run-groups', icon: Layers },
         { name: t('nav.messages'), path: '/messages', icon: ScrollText },
         { name: t('nav.views'), path: '/views', icon: Images },
         { name: t('nav.studio'), path: '/studio', icon: Shapes },
@@ -307,20 +332,31 @@ const Layout = ({ children }) => {
         // reports in, or this service reaches out to a system you use.
         { name: t('nav.connections'), path: '/connections', icon: Share2 },
         { name: t('nav.connectors'), path: '/connectors', icon: Link2 },
+        // A third way in, and the one that is not an integration this product
+        // wrote: an MCP server hands over tools nobody here has seen, which is
+        // why attaching one asks for a capability declaration. See docs/mcp.md.
+        { name: t('nav.mcp'), path: '/mcp', icon: Plug },
       ],
     },
     {
       label: t('nav.groups.infrastructure'),
       items: [
         { name: t('nav.agents'), path: '/agents', icon: Users },
-        // Live copies of agents, across every carrier. Nodes and Containers
-        // below show the carriers themselves.
+        // Live copies of agents, across every carrier. Containers below shows
+        // the carriers themselves; a resident instance's own carrier is on
+        // its own page.
         { name: t('nav.instances'), path: '/instances', icon: Activity },
+        // Agents kept running as replicas, and the runner every chat turn goes
+        // to (docs/services.md).
+        { name: t('nav.services'), path: '/services', icon: Cpu },
         { name: t('nav.marketplace'), path: '/marketplace', icon: Store },
         { name: t('nav.orchestrator'), path: '/orchestrator', icon: Network },
         { name: t('nav.teams'), path: '/teams', icon: UsersRound },
-        { name: t('nav.nodes'), path: '/nodes', icon: Server },
+        { name: t('nav.environments'), path: '/environments', icon: Container },
+        { name: t('nav.guardrails'), path: '/guardrails', icon: ShieldCheck },
         { name: t('nav.containers'), path: '/containers', icon: Box },
+        // The agent's browser on screen, and free browsing on the same service.
+        { name: t('nav.browser'), path: '/browser', icon: Globe },
       ],
     },
     {
@@ -334,8 +370,8 @@ const Layout = ({ children }) => {
         { name: t('nav.memory'), path: '/memory', icon: Database },
         { name: t('nav.webLogs'), path: '/web-logs', icon: Globe },
         { name: t('nav.evals'), path: '/evals', icon: FlaskConical },
-        { name: t('nav.playground'), path: '/playground', icon: Gamepad2 },
-      ],
+        playgroundEnabled && { name: t('nav.playground'), path: '/playground', icon: Gamepad2 },
+      ].filter(Boolean),
     },
     {
       label: t('nav.groups.system'),
@@ -343,11 +379,23 @@ const Layout = ({ children }) => {
         // The service looking at itself: the snapshot, and the agent that can
         // follow a symptom down from it.
         { name: t('nav.health'), path: '/health', icon: Activity },
+        // Where everything runs once there is more than one process: members,
+        // leases, the launch queue, runs and instances by host.
+        { name: t('nav.cluster'), path: '/cluster', icon: Waypoints },
         { name: t('nav.models'), path: '/models', icon: Brain },
         { name: t('nav.costs'), path: '/costs', icon: DollarSign },
+        // Who owns each agent and MCP server, and whether it is approved.
+        { name: t('nav.agentRegistry'), path: '/agent-registry', icon: BadgeCheck },
         { name: t('nav.docs'), path: '/docs', icon: BookOpen },
         { name: t('nav.settings'), path: '/settings', icon: Settings },
-      ],
+        // Accounts exist only under AUTH_MODE=multi, and only an administrator
+        // manages them. In the single-operator modes there is nothing to show.
+        isAdmin(auth) && { name: t('nav.users'), path: '/users', icon: UserCog },
+        // Who did what: outside single mode there is somebody to answer to.
+        auth.features?.audit && { name: t('nav.audit'), path: '/audit', icon: ScrollText },
+        // The viewer's own sessions and API keys.
+        auth.mode === MULTI && auth.user && { name: t('nav.account'), path: '/account', icon: KeyRound },
+      ].filter(Boolean),
     },
   ];
 
@@ -378,16 +426,13 @@ const Layout = ({ children }) => {
           sidebarCollapsed ? 'w-16' : 'w-64'
         } bg-white shadow-md border-r border-gray-200 h-screen overflow-y-auto overflow-x-hidden flex flex-col transition-[width] duration-200`}
       >
-        <div className={`flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-6'} py-6`}>
-          {!sidebarCollapsed && <h1 className="text-2xl font-bold text-indigo-600 truncate">{t('layout.serviceName')}</h1>}
-          <button
-            onClick={toggleSidebar}
-            title={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
-            aria-label={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
-            className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors shrink-0"
-          >
-            {sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
-          </button>
+        {/* The mark and the name, centred; folded, the mark alone. The fold
+            button itself is in the top bar, left of the workspace. */}
+        <div className={`flex items-center gap-2 py-6 ${sidebarCollapsed ? 'justify-center px-2' : 'px-6'}`}>
+          <img src={LOGO_URL} alt={sidebarCollapsed ? t('layout.serviceName') : ''} className={`${sidebarCollapsed ? 'w-9 h-9' : 'w-8 h-8'} shrink-0`} />
+          {!sidebarCollapsed && (
+            <h1 className="text-2xl font-bold leading-none text-indigo-600 truncate min-w-0">{t('layout.serviceName')}</h1>
+          )}
         </div>
         <nav className="mt-2 flex-1 pb-6">
           {menuGroups.map((group, gi) => (
@@ -449,6 +494,14 @@ const Layout = ({ children }) => {
         {/* Top Navbar */}
         <header className="bg-white shadow-sm border-b border-gray-200 h-16 shrink-0 flex items-center justify-between px-6 z-10">
           <div className="flex items-center space-x-4">
+            <button
+              onClick={toggleSidebar}
+              title={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
+              aria-label={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
+              className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors shrink-0"
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
+            </button>
             <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">{t('layout.workspaceLabel')}</span>
             <select
               className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
@@ -578,9 +631,28 @@ const Layout = ({ children }) => {
             </button>
             {/* Interface language */}
             <LanguageSwitcher />
-            <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs">
-              JD
-            </div>
+            {/* Who is signed in, and the way out. Only under AUTH_MODE=multi:
+                in the single-operator modes there is nobody to be signed in
+                as and nothing to sign out of. */}
+            {auth.mode === MULTI && auth.user && (
+              <div className="flex items-center gap-2">
+                <span
+                  title={auth.user.username}
+                  className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs uppercase"
+                >
+                  {String(auth.user.username || '?').slice(0, 2)}
+                </span>
+                <button
+                  type="button"
+                  onClick={auth.logout}
+                  title={t('auth.logout')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>{t('auth.logout')}</span>
+                </button>
+              </div>
+            )}
           </div>
         </header>
         <main className="flex-1 min-h-0 overflow-y-auto">{children}</main>

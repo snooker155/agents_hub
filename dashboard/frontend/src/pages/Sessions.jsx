@@ -9,46 +9,16 @@ import {
   getWorkspaces,
 } from '../api';
 import {
-  Square,
-  RefreshCw,
-  X,
-  CheckCircle,
-  XCircle,
-  Clock,
-  AlertCircle,
-  Loader,
-  Trash2,
-  Workflow,
-  MessageSquare,
-  PlayCircle,
+  Square, RefreshCw, X, Clock, Loader, Trash2, Workflow, MessageSquare, PlayCircle,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import RunStatusBadge from '../components/RunStatusBadge';
 import { useI18n, statusLabel } from '../i18n';
 import DateInput from '../components/DateInput';
+import PageLoader from '../components/PageLoader';
 // ---- helpers ----------------------------------------------------------------
 
-const STATUS_STYLES = {
-  running:   { bg: 'bg-blue-100',   text: 'text-blue-700',   icon: Loader },
-  completed: { bg: 'bg-green-100',  text: 'text-green-700',  icon: CheckCircle },
-  failed:    { bg: 'bg-red-100',    text: 'text-red-700',    icon: XCircle },
-  error:     { bg: 'bg-red-100',    text: 'text-red-700',    icon: XCircle },
-  stopped:   { bg: 'bg-gray-100',   text: 'text-gray-600',   icon: Square },
-  stop:      { bg: 'bg-orange-100', text: 'text-orange-700', icon: Square },
-  pending:   { bg: 'bg-gray-100',   text: 'text-gray-500',   icon: Clock },
-};
-
-function StatusBadge({ status }) {
-  const { t } = useI18n();
-  const s = STATUS_STYLES[status] || { bg: 'bg-gray-100', text: 'text-gray-500', icon: AlertCircle };
-  const Icon = s.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
-      <Icon className={`w-3 h-3 ${status === 'running' ? 'animate-spin' : ''}`} />
-      {statusLabel(status, t)}
-    </span>
-  );
-}
 
 function duration(started, finished) {
   if (!started) return '—';
@@ -103,6 +73,7 @@ export default function Sessions() {
 
   // The backend filters, orders and pages in SQL and answers {items, total, ...};
   // the page asks for one window and grows it on demand.
+  const [refreshing, setRefreshing] = useState(false);
   const fetchSessions = useCallback(async (nextOffset = 0, append = false) => {
     try {
       const params = { limit: PAGE_SIZE, offset: nextOffset };
@@ -235,10 +206,11 @@ export default function Sessions() {
             {t('sessions.deleteSelected')}
           </button>
           <button
-            onClick={fetchSessions}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+            onClick={() => { setRefreshing(true); fetchSessions(0, false).finally(() => setRefreshing(false)); }}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-60"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             {t('sessions.refresh')}
           </button>
         </>}
@@ -322,9 +294,7 @@ export default function Sessions() {
       {/* Sessions list */}
       <div className="space-y-4">
         {loading ? (
-          <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-            <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-          </div>
+          <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
         ) : sessions.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
             <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
@@ -384,7 +354,7 @@ export default function Sessions() {
                   </div>
 
                   <div className="md:self-center md:flex md:justify-center">
-                    <StatusBadge status={session.status} />
+                    <RunStatusBadge status={session.status} />
                   </div>
 
                   {isDefaultWorkspace && (

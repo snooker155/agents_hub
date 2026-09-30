@@ -4,18 +4,21 @@ user notification inbox.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from plans import JobKind, JobStatus, Recurrence
 from plans import service as plan_service
-from plans.service import NOTIFICATIONS_CHANNEL, job_to_dict, notification_to_dict
+from plans.service import (
+    NOTIFICATIONS_CHANNEL,
+    fire_to_dict,
+    job_to_dict,
+    notification_to_dict,
+)
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])
 
@@ -30,6 +33,13 @@ class JobCreate(BaseModel):
     run_at: Optional[datetime] = None
     delay_minutes: Optional[int] = Field(None, ge=1)
     recurrence: Recurrence = Recurrence.none
+    cron: Optional[str] = Field(None, description="Cron expression, required when recurrence='cron'")
+    timezone: Optional[str] = Field(None, description="IANA timezone name, e.g. 'Europe/Berlin'. Defaults to UTC.")
+    catch_up: bool = Field(
+        False,
+        description="When more than one occurrence was missed, advance one slot per "
+                    "firing instead of jumping straight to the next future one.",
+    )
     workspace: Optional[str] = None
     agent_id: Optional[str] = None
     # flow jobs: which flow to trigger, an optional JSON seed, and a concurrency cap.
@@ -37,6 +47,22 @@ class JobCreate(BaseModel):
     seed: Optional[Dict[str, Any]] = None
     max_concurrent: int = 1
     channels: Optional[List[str]] = None
+    # Environment (environments/) and per-task money cap copied onto every
+    # task this job creates; auto_pause_after (0 = off) is the run of
+    # consecutive firing failures that pauses a recurring job on its own.
+    environment_id: Optional[str] = None
+    budget_usd: Optional[float] = None
+    # Agent version pin (agents/versions.py) copied onto every task this job
+    # creates; only meaningful together with agent_id (validated as such by
+    # plans.service.create_job).
+    agent_version: Optional[int] = None
+    auto_pause_after: int = 3
+    # agent_task only: the deployment's resources (plans.service._validate_resources).
+    project_id: Optional[str] = None
+    file_ids: Optional[List[str]] = None
+    secrets: Optional[List[str]] = None
+    memory_pool_ids: Optional[List[str]] = None
+    memory_access: Optional[str] = None
 
     @model_validator(mode="after")
     def _check_when(self):
@@ -57,36 +83,73 @@ class JobUpdate(BaseModel):
     message: Optional[str] = None
     run_at: Optional[datetime] = None
     recurrence: Optional[Recurrence] = None
+    cron: Optional[str] = None
+    timezone: Optional[str] = None
+    catch_up: Optional[bool] = None
     agent_id: Optional[str] = None
     channels: Optional[List[str]] = None
+    environment_id: Optional[str] = None
+    budget_usd: Optional[float] = None
+    agent_version: Optional[int] = None
+    auto_pause_after: Optional[int] = None
+    project_id: Optional[str] = None
+    file_ids: Optional[List[str]] = None
+    secrets: Optional[List[str]] = None
+    memory_pool_ids: Optional[List[str]] = None
+    memory_access: Optional[str] = None
 
 
 # -------------------- jobs --------------------
 
 @router.get("/jobs")
-async def list_jobs(workspace: Optional[str] = None, status: Optional[str] = None):
+async def list_jobs(
+    workspace: Optional[str] = None,
+    status: Optional[str] = None,
+    kinds: Optional[str] = None,
+):
+    """``kinds`` is a comma list (e.g. ``agent_task,flow,loop``) so the
+    Deployments page can list only the job kinds it treats as deployments,
+    excluding plain ``notification`` reminders."""
     jobs = plan_service.list_jobs(workspace=workspace)
     if status:
         jobs = [j for j in jobs if j.status.value == status]
+    if kinds:
+        wanted = {k.strip() for k in kinds.split(",") if k.strip()}
+        jobs = [j for j in jobs if j.kind.value in wanted]
     return [job_to_dict(j) for j in jobs]
 
 
 @router.post("/jobs")
 async def create_job(payload: JobCreate):
-    job = plan_service.create_job(
-        kind=payload.kind,
-        title=payload.title,
-        message=payload.message,
-        run_at=payload.resolved_run_at(),
-        recurrence=payload.recurrence,
-        workspace=payload.workspace,
-        created_by="user",
-        agent_id=payload.agent_id,
-        flow_id=payload.flow_id,
-        seed=payload.seed,
-        max_concurrent=payload.max_concurrent,
-        channels=payload.channels,
-    )
+    try:
+        job = plan_service.create_job(
+            kind=payload.kind,
+            title=payload.title,
+            message=payload.message,
+            run_at=payload.resolved_run_at(),
+            recurrence=payload.recurrence,
+            cron=payload.cron,
+            timezone=payload.timezone,
+            catch_up=payload.catch_up,
+            workspace=payload.workspace,
+            created_by="user",
+            agent_id=payload.agent_id,
+            flow_id=payload.flow_id,
+            seed=payload.seed,
+            max_concurrent=payload.max_concurrent,
+            channels=payload.channels,
+            environment_id=payload.environment_id,
+            budget_usd=payload.budget_usd,
+            agent_version=payload.agent_version,
+            auto_pause_after=payload.auto_pause_after,
+            project_id=payload.project_id,
+            file_ids=payload.file_ids,
+            secrets=payload.secrets,
+            memory_pool_ids=payload.memory_pool_ids,
+            memory_access=payload.memory_access,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return job_to_dict(job)
 
 
@@ -108,7 +171,10 @@ async def update_job(job_id: UUID, payload: JobUpdate):
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
-    updated = plan_service.update_job(job_id, **fields)
+    try:
+        updated = plan_service.update_job(job_id, **fields)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return job_to_dict(updated)
 
 
@@ -154,15 +220,42 @@ async def cancel_job(job_id: UUID):
 
 @router.post("/jobs/{job_id}/run-now")
 async def run_job_now(job_id: UUID):
-    """Fire a scheduled/paused job immediately, bypassing its run_at."""
+    """Fire a scheduled/paused job immediately, bypassing its run_at.
+
+    Claims the job first (same lease as the automatic tick) so a manual fire
+    can never race an in-flight automatic one on the same job. Allowed while
+    paused (manually or auto-paused after errors), so an operator can retest
+    a fix without resuming the job first; the resulting journal row is
+    recorded with ``trigger="manual"``.
+    """
     job = plan_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status not in (JobStatus.scheduled, JobStatus.paused):
         raise HTTPException(status_code=400, detail=f"Cannot run a job in status '{job.status.value}'")
-    result = plan_service.fire_job(job)
+    claimed = plan_service.claim_job_now(job_id)
+    if not claimed:
+        raise HTTPException(status_code=409, detail="Job is currently being fired elsewhere; try again shortly")
+    result = plan_service.fire_job(claimed, trigger="manual")
     updated = plan_service.get_job(job_id)
     return {"result": result, "job": job_to_dict(updated) if updated else None}
+
+
+@router.get("/jobs/{job_id}/fires")
+async def list_job_fires(job_id: UUID, limit: int = 50, only_errors: bool = False):
+    """The firing journal for one job, newest first."""
+    job = plan_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    items = plan_service.list_job_fires(job_id, only_errors=only_errors, limit=limit)
+    return [fire_to_dict(f) for f in items]
+
+
+@router.get("/fires")
+async def list_fires(workspace: Optional[str] = None, only_errors: bool = False, limit: int = 100):
+    """The firing journal across every job, newest first."""
+    items = plan_service.list_fires(workspace=workspace, only_errors=only_errors, limit=limit)
+    return [fire_to_dict(f) for f in items]
 
 
 # -------------------- notifications --------------------

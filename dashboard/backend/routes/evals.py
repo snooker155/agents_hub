@@ -3,11 +3,12 @@ Eval harness API — datasets, sweeps, score matrices.
 
 ``GET|POST /api/evals``                       list / create eval sets
 ``GET|PUT|DELETE /api/evals/{id}``            read / update / delete a set
-``POST /api/evals/{id}/cases``                add a case (optionally from a run)
+``POST /api/evals/{id}/cases``                add a case (from a run or a task)
 ``DELETE /api/evals/{id}/cases/{case_id}``    remove a case
 ``POST /api/evals/{id}/estimate``             projected spend before a sweep
 ``POST /api/evals/{id}/run``                  run the sweep (blocking, billable)
 ``GET /api/evals/{id}/runs``                  history for a set
+``GET /api/evals/runs/{a}/diff/{b}``          compare two runs cell by cell
 ``GET /api/eval-runs/{run_id}``               one run + its score matrix
 
 Sweeps are real, slow, billable LLM calls, so the run handler is a plain ``def``
@@ -16,17 +17,17 @@ same shape ``routes/replay.py`` uses.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from evals import store
 from evals.models import Case, EvalSet, GraderSpec, RunConfig
-from evals.runner import case_from_run, project_cost, run_eval
+from evals.runner import case_from_run, diff_runs, project_cost, run_eval
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 router = APIRouter(prefix="/api", tags=["evals"])
 
@@ -46,23 +47,51 @@ class CaseIn(BaseModel):
     # When set, the case is seeded from this run: its recorded user message
     # becomes the input and its output becomes `expected` unless overridden.
     from_run_id: Optional[str] = None
+    # When set, the case carries a snapshot of this task (evals.snapshot):
+    # its description, context, documents and a capped slice of its project
+    # files, and runs in an isolated directory holding those files.
+    from_task_id: Optional[str] = None
+    # A snapshot given directly, in the same shape snapshot_task returns.
+    artifact: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = {}
+    # Workspace files (files/service.py) the case runs with: copied into its
+    # isolated directory and named in its input (evals.runner.prepare_work_dir).
+    file_ids: List[str] = []
+
+
+class TargetIn(BaseModel):
+    kind: str = "agent"   # agent | flow | team | loop | scenario
+    id: str = ""
 
 
 class EvalSetIn(BaseModel):
     name: str = ""
     description: str = ""
     workspace: Optional[str] = None
+    # The default target (the baseline column). ``agent_id`` is the
+    # compatibility alias: set alone it means an agent target.
+    target: Optional[TargetIn] = None
     agent_id: Optional[str] = None
     cases: List[CaseIn] = []
     graders: List[GraderIn] = []
+    # A finished sweep on an agent target that leaves failed cases builds a
+    # prompt suggestion on its own (evals/prompt_suggest.py). Off by default.
+    suggest_on_failure: bool = False
 
 
 class ConfigIn(BaseModel):
-    agent_id: str
+    target: Optional[TargetIn] = None
+    # Compatibility alias for an agent target.
+    agent_id: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
     label: str = ""
+    # Runs each case this many times under this config (capped in RunConfig)
+    # so sampling variance shows up as a spread instead of one lucky draw.
+    repeats: int = 1
+    # Per kind overrides: max_rounds, max_iterations, max_ticks,
+    # trigger_agent (see evals/targets.py for which kind reads which).
+    settings: Dict[str, Any] = {}
 
 
 class RunEvalIn(BaseModel):
@@ -70,26 +99,73 @@ class RunEvalIn(BaseModel):
     workspace: Optional[str] = None
     # Stops the sweep once accumulated spend crosses this (USD).
     cost_ceiling: Optional[float] = None
+    # "live" runs every cell now; "batch" sends agent cells and judge calls
+    # through the provider batch APIs at half price (evals/batch.py).
+    mode: str = "live"
 
 
-def _case_from_in(c: CaseIn) -> Case:
+def _artifact_from_in(c: CaseIn) -> Optional[Dict[str, Any]]:
+    if c.from_task_id:
+        from evals.snapshot import snapshot_task
+        return snapshot_task(c.from_task_id)
+    return dict(c.artifact) if c.artifact else None
+
+
+def _case_file_ids(raw: List[str], workspace: Optional[str]) -> List[str]:
+    """A case's workspace files, de-duplicated in order. ValueError (a 400 at
+    the callers) for an id that is unknown, deleted, or of another workspace
+    than the set's: a case must never copy another workspace's file into its
+    run."""
+    from files import service as files_service
+    out: List[str] = []
+    for fid in raw or []:
+        fid = str(fid or "").strip()
+        if not fid or fid in out:
+            continue
+        record = files_service.get_file(fid)
+        if record is None:
+            raise ValueError(f"Workspace file '{fid}' not found")
+        if record["workspace"] != (workspace or "default"):
+            raise ValueError(f"Workspace file '{fid}' belongs to another workspace than this eval set")
+        out.append(fid)
+    return out
+
+
+def _case_from_in(c: CaseIn, workspace: Optional[str] = None) -> Case:
+    artifact = _artifact_from_in(c)
+    file_ids = _case_file_ids(c.file_ids, workspace)
     if c.from_run_id:
         case = case_from_run(c.from_run_id, expected=c.expected, rubric=c.rubric)
         if c.input.strip():
             case.input = c.input
         case.metadata.update(c.metadata or {})
+        case.artifact = artifact
+        case.file_ids = file_ids
         return case
+    metadata = dict(c.metadata or {})
+    if c.from_task_id:
+        metadata.setdefault("task_id", c.from_task_id)
     return Case(
         input=c.input, expected=c.expected, rubric=c.rubric,
-        metadata=dict(c.metadata or {}),
+        metadata=metadata, artifact=artifact, file_ids=file_ids,
     )
 
 
+def _target_of(target: Optional[TargetIn]) -> Optional[Dict[str, str]]:
+    return target.model_dump() if target is not None and target.id else None
+
+
 def _configs_from_in(items: List[ConfigIn]) -> List[RunConfig]:
-    return [
-        RunConfig(agent_id=c.agent_id, provider=c.provider, model=c.model, label=c.label)
-        for c in items
-    ]
+    out = []
+    for c in items:
+        target = _target_of(c.target)
+        if not target and not c.agent_id:
+            raise ValueError("each config needs a target (or an agent_id)")
+        out.append(RunConfig(
+            agent_id=c.agent_id or "", target=target or {}, provider=c.provider,
+            model=c.model, label=c.label, repeats=c.repeats, settings=dict(c.settings or {}),
+        ))
+    return out
 
 
 # ── Eval sets ─────────────────────────────────────────────────────────────────
@@ -104,17 +180,22 @@ async def create_eval(data: EvalSetIn):
     if not data.name.strip():
         raise HTTPException(status_code=400, detail="name is required")
     try:
-        cases = [_case_from_in(c) for c in data.cases]
+        cases = [_case_from_in(c, data.workspace) for c in data.cases]
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    evalset = EvalSet(
-        name=data.name.strip(),
-        description=data.description,
-        workspace=data.workspace,
-        agent_id=data.agent_id,
-        cases=cases,
-        graders=[GraderSpec(kind=g.kind, params=g.params, weight=g.weight) for g in data.graders],
-    )
+    try:
+        evalset = EvalSet(
+            name=data.name.strip(),
+            description=data.description,
+            workspace=data.workspace,
+            agent_id=data.agent_id,
+            target=_target_of(data.target),
+            cases=cases,
+            graders=[GraderSpec(kind=g.kind, params=g.params, weight=g.weight) for g in data.graders],
+            suggest_on_failure=data.suggest_on_failure,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return store.save_eval_set(evalset).to_dict()
 
 
@@ -128,10 +209,6 @@ async def create_eval(data: EvalSetIn):
 
 EVAL_AGENT_ID = "eval_agent"
 EVAL_CHAT_KIND = "evals"
-
-
-class EvalChatIn(BaseModel):
-    message: str = ""
 
 
 def _eval_chat_id(workspace: Optional[str]) -> str:
@@ -148,6 +225,7 @@ def _eval_state(workspace: str) -> Dict[str, Any]:
             "name": d.get("name"),
             "description": d.get("description"),
             "agent_id": d.get("agent_id"),
+            "target": d.get("target"),
             "cases": len(d.get("cases") or []),
             "graders": [g.get("kind") for g in (d.get("graders") or [])],
         })
@@ -194,58 +272,28 @@ def _eval_chat_prompt(workspace: str, history: List[dict], user_message: str) ->
     return "\n".join(parts)
 
 
-@router.get("/evals/chat")
-async def get_eval_chat(workspace: Optional[str] = Query(None)):
-    """The Eval Agent's transcript for this workspace, plus the replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_eval_chat(request):
+    from types import SimpleNamespace
 
-    chat_store = entity_chat_store()
-    chat_id = _eval_chat_id(workspace)
-    return {
-        "messages": chat_store.get_messages(EVAL_CHAT_KIND, chat_id),
-        "trace": chat_store.get_trace(EVAL_CHAT_KIND, chat_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": EVAL_CHAT_KIND, "id": chat_id},
-    }
+    ws = _eval_chat_id(request.query_params.get("workspace"))
+    return SimpleNamespace(entity_id=ws, workspace=ws)
 
 
-@router.delete("/evals/chat")
-async def clear_eval_chat(workspace: Optional[str] = Query(None)):
-    """Clear the transcript and start a fresh session. No set is touched."""
-    from common.entity_chat_store import entity_chat_store
-
-    epoch = entity_chat_store().clear(EVAL_CHAT_KIND, _eval_chat_id(workspace),
-                                      new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/evals/chat")
-async def chat_evals(payload: EvalChatIn, workspace: Optional[str] = Query(None)):
-    """Run one turn of the Eval Agent chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then an
-    ``evals`` event carrying the sets and runs as they stand after the turn, the
-    final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
+def _load_eval_send(request, body):
     from common.bootstrap import ensure_system_agent
 
     if not ensure_system_agent(EVAL_AGENT_ID):
         raise HTTPException(status_code=503,
                             detail=f"The '{EVAL_AGENT_ID}' agent is not registered")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    ctx = _load_eval_chat(request)
+    ctx.before = _eval_state(ctx.workspace)
+    return ctx
 
-    ws = _eval_chat_id(workspace)
-    before = _eval_state(ws)
 
+def _eval_summarize(ctx):
     def _summarize() -> str:
-        after = _eval_state(ws)
+        after = _eval_state(ctx.workspace)
+        before = ctx.before
         if after == before:
             return ""
         was = {e["eval_set_id"] for e in before["eval_sets"]}
@@ -258,50 +306,40 @@ async def chat_evals(payload: EvalChatIn, workspace: Optional[str] = Query(None)
         if not bits:
             bits.append("updated a set")
         return "Done — " + ", ".join(bits) + "."
+    return _summarize
 
-    spec = EntityChatSpec(
-        kind=EVAL_CHAT_KIND,
-        agent_id=EVAL_AGENT_ID,
-        title=f"{ws} · evals",
-        workspace=ws,
+
+def _eval_context_setup(ctx):
+    from common.workspace_context import _workspace_ctx
+
+    # The eval tools resolve the workspace from this ContextVar, so a set
+    # lands where the user is looking.
+    _workspace_ctx.set(ctx.workspace)
+
+
+async def _eval_post_turn(queue, ctx):
+    await queue.put({"type": "evals", **_eval_state(ctx.workspace)})
+
+
+# Declared before the ``/evals/{eval_set_id}`` routes below — "chat" is a
+# literal path, and a catch-all declared first would read it as a set id.
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=EVAL_CHAT_KIND,
+    path="/evals/chat",
+    load=_load_eval_chat,
+    load_for_send=_load_eval_send,
+    prompt=lambda ctx, history, msg: _eval_chat_prompt(ctx.workspace, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=EVAL_CHAT_KIND, agent_id=EVAL_AGENT_ID,
+        title=f"{ctx.workspace} · evals", workspace=ctx.workspace,
         # A sweep runs to completion inside the turn, so the ceiling has to
         # allow for a long single tool call rather than many short ones.
         max_iterations=60,
-    )
-
-    async def run_turn(queue: asyncio.Queue):
-        from common.workspace_context import _workspace_ctx
-
-        # The eval tools resolve the workspace from this ContextVar, so a set
-        # lands where the user is looking.
-        _workspace_ctx.set(ws)
-
-        await run_entity_chat_turn(
-            queue, spec, ws, user_message,
-            lambda history: _eval_chat_prompt(ws, history, user_message),
-            summarize=_summarize,
-        )
-        await queue.put({"type": "evals", **_eval_state(ws)})
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": EVAL_CHAT_KIND, "id": ws})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
-
-
-@router.post("/evals/chat/stop")
-async def stop_eval_chat(workspace: Optional[str] = Query(None)):
-    """Stop the in-flight Eval Agent turn for this workspace."""
-    from chat.entity_chat import cancel_entity_runs
-
-    cancelled = cancel_entity_runs(EVAL_CHAT_KIND, _eval_chat_id(workspace))
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+    ),
+    summarize=_eval_summarize,
+    context_setup=_eval_context_setup,
+    post_turn=_eval_post_turn,
+)))
 
 
 @router.get("/evals/{eval_set_id}")
@@ -320,8 +358,14 @@ async def update_eval(eval_set_id: str, data: EvalSetIn):
     if data.name.strip():
         evalset.name = data.name.strip()
     evalset.description = data.description
-    if data.agent_id is not None:
-        evalset.agent_id = data.agent_id
+    evalset.suggest_on_failure = data.suggest_on_failure
+    try:
+        if data.target is not None:
+            evalset.set_target(_target_of(data.target))
+        elif data.agent_id is not None:
+            evalset.set_target(None, data.agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if data.graders:
         evalset.graders = [
             GraderSpec(kind=g.kind, params=g.params, weight=g.weight) for g in data.graders
@@ -330,7 +374,7 @@ async def update_eval(eval_set_id: str, data: EvalSetIn):
     # them edits the set's metadata rather than silently emptying the dataset.
     if data.cases:
         try:
-            evalset.cases = [_case_from_in(c) for c in data.cases]
+            evalset.cases = [_case_from_in(c, evalset.workspace) for c in data.cases]
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     return store.save_eval_set(evalset).to_dict()
@@ -348,9 +392,14 @@ async def delete_eval(eval_set_id: str):
 @router.post("/evals/{eval_set_id}/cases")
 async def add_eval_case(eval_set_id: str, data: CaseIn):
     """Add a case. With ``from_run_id`` this is the "save this run as an eval
-    case" button — the cheapest way to seed a dataset from real traffic."""
+    case" button, the cheapest way to seed a dataset from real traffic. With
+    ``from_task_id`` the case carries a snapshot of that task (see
+    evals/snapshot.py for what is copied and what never is)."""
+    existing = store.get_eval_set(eval_set_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Eval set not found")
     try:
-        case = _case_from_in(data)
+        case = _case_from_in(data, existing.workspace)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     evalset = store.add_case(eval_set_id, case)
@@ -367,6 +416,43 @@ async def delete_eval_case(eval_set_id: str, case_id: str):
     return evalset.to_dict()
 
 
+@router.get("/evals/for-run/{run_id}")
+async def eval_sets_for_run(run_id: str):
+    """What the "To eval case" dialog needs for one run: what kind of run it
+    is (agent, flow, team, loop or scenario — whichever store the id belongs
+    to), every eval set whose target fits it (so the dialog can offer them
+    plus "new set" without the user picking a target by hand), and a preview
+    of the case ``case_from_run`` would build, to seed the dialog's editable
+    fields."""
+    from evals.runner import _run_target_info, case_from_run
+
+    info = _run_target_info(run_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    from common.run_status import is_terminal
+    fitting = [
+        e.to_dict() for e in store.list_eval_sets(info["workspace"])
+        if e.target_kind == info["target_kind"]
+    ]
+    preview, preview_error = None, None
+    try:
+        case = case_from_run(run_id)
+        preview = {"input": case.input, "expected": case.expected, "metadata": case.metadata}
+    except ValueError as e:
+        preview_error = str(e)
+    return {
+        "run": {
+            "run_id": run_id, "target_kind": info["target_kind"], "target_id": info["target_id"],
+            "workspace": info["workspace"], "status": info["status"],
+            "failed": info["status"] in ("failed", "error"),
+            "finished": is_terminal(info["status"]),
+        },
+        "eval_sets": fitting,
+        "preview": preview,
+        "preview_error": preview_error,
+    }
+
+
 # ── Running ───────────────────────────────────────────────────────────────────
 
 @router.post("/evals/{eval_set_id}/estimate")
@@ -375,12 +461,16 @@ async def estimate_eval(eval_set_id: str, data: RunEvalIn):
     evalset = store.get_eval_set(eval_set_id)
     if not evalset:
         raise HTTPException(status_code=404, detail="Eval set not found")
-    configs = _configs_from_in(data.configs)
-    if not configs and evalset.agent_id:
-        configs = [RunConfig(agent_id=evalset.agent_id, label="baseline")]
+    try:
+        configs = _configs_from_in(data.configs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not configs:
-        raise HTTPException(status_code=400, detail="No configs and no default agent_id on the set")
-    return project_cost(evalset, configs)
+        baseline = evalset.default_config()
+        configs = [baseline] if baseline else []
+    if not configs:
+        raise HTTPException(status_code=400, detail="No configs and no default target on the set")
+    return project_cost(evalset, configs, mode=data.mode)
 
 
 @router.post("/evals/{eval_set_id}/run")
@@ -392,17 +482,36 @@ def start_eval_run(eval_set_id: str, data: Optional[RunEvalIn] = None):
             _configs_from_in(data.configs),
             workspace=data.workspace,
             cost_ceiling=data.cost_ceiling,
+            mode=data.mode,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Eval run failed: {e}")
-    return {**run.to_dict(), "matrix": store.build_matrix(run.eval_run_id)}
+    out = {**run.to_dict(), "matrix": store.build_matrix(run.eval_run_id)}
+    if run.mode == "batch":
+        from evals.batch import progress
+        out["batch"] = progress(run.eval_run_id)
+    return out
 
 
 @router.get("/evals/{eval_set_id}/runs")
 async def list_eval_runs_for_set(eval_set_id: str, limit: int = 50):
     return {"eval_runs": [r.to_dict() for r in store.list_eval_runs(eval_set_id, limit)]}
+
+
+@router.get("/evals/runs/{run_a_id}/diff/{run_b_id}")
+async def diff_eval_runs(run_a_id: str, run_b_id: str):
+    """Compare two eval runs cell by cell: which cases got fixed, which regressed.
+
+    Matches by (case id, config label) using each run's own recorded results,
+    so it works across two runs of the same set even if their config lists
+    differ, and regardless of whether either run used repeats.
+    """
+    try:
+        return diff_runs(run_a_id, run_b_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/eval-runs/{eval_run_id}")
@@ -418,7 +527,89 @@ async def get_eval_run_details(eval_run_id: str):
         "cases": [c.to_dict() for c in (evalset.cases if evalset else [])],
         "eval_set_name": evalset.name if evalset else "",
         "matrix": store.build_matrix(eval_run_id),
+        **({"batch": _batch_progress(eval_run_id)} if run.mode == "batch" else {}),
     }
+
+
+def _batch_progress(eval_run_id: str) -> Dict[str, Any]:
+    from evals.batch import progress
+    return progress(eval_run_id)
+
+
+@router.post("/eval-runs/{eval_run_id}/cancel")
+def cancel_eval_run(eval_run_id: str):
+    """Cancel a batch run's open provider batches. Answers the provider already
+    produced are still collected; the rest of the cells are recorded as stopped."""
+    from evals.batch import cancel_run
+    try:
+        run = cancel_run(eval_run_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**run.to_dict(), "batch": _batch_progress(eval_run_id)}
+
+
+@router.post("/eval-runs/{eval_run_id}/poll")
+def poll_eval_run(eval_run_id: str):
+    """Check this run's provider batches now instead of at the next scheduler
+    tick, and process any that ended."""
+    from evals.batch import poll_pending
+    run = store.get_eval_run(eval_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    poll_pending(force=True, background=False)
+    run = store.get_eval_run(eval_run_id)
+    return {**run.to_dict(), "batch": _batch_progress(eval_run_id),
+            "matrix": store.build_matrix(eval_run_id)}
+
+
+# ── Prompt suggestions ────────────────────────────────────────────────────────
+#
+# A revised instructions.md proposed from an eval run's failed cases
+# (evals/prompt_suggest.py). Suggesting is a model call (billable, recorded as
+# its own run); applying and dismissing are free.
+
+class ApplySuggestionIn(BaseModel):
+    # Also starts the same eval set again once the new instructions.md is
+    # written, so the before/after can be compared with the existing diff route.
+    rerun: bool = False
+
+
+@router.post("/eval-runs/{eval_run_id}/suggest-prompt")
+def suggest_prompt(eval_run_id: str):
+    """Build a prompt suggestion from this eval run's failed cases. A plain
+    ``def`` like ``start_eval_run``: it is one real model call, not free."""
+    from evals.prompt_suggest import SuggestionError, build_suggestion
+    try:
+        suggestion = build_suggestion(eval_run_id)
+    except SuggestionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return suggestion.to_dict()
+
+
+@router.get("/eval-runs/{eval_run_id}/suggestions")
+async def list_suggestions(eval_run_id: str):
+    return {"suggestions": [s.to_dict() for s in store.list_prompt_suggestions(eval_run_id)]}
+
+
+@router.post("/prompt-suggestions/{suggestion_id}/apply")
+def apply_suggestion_route(suggestion_id: str, data: Optional[ApplySuggestionIn] = None):
+    """Write the suggestion's instructions.md (through the definition editor's
+    own path, so it is snapshotted), and optionally re-run the eval set — a
+    plain ``def`` since a rerun is a real sweep, not free."""
+    from evals.prompt_suggest import SuggestionError, apply_suggestion
+    try:
+        return apply_suggestion(suggestion_id, rerun=bool(data and data.rerun))
+    except SuggestionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/prompt-suggestions/{suggestion_id}/dismiss")
+async def dismiss_suggestion_route(suggestion_id: str):
+    from evals.prompt_suggest import SuggestionError, dismiss_suggestion
+    try:
+        return dismiss_suggestion(suggestion_id).to_dict()
+    except SuggestionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/eval-graders")

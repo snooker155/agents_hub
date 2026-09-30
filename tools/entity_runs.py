@@ -25,7 +25,6 @@ Three rules hold across all three kinds:
 """
 from __future__ import annotations
 
-import json
 import threading
 import time
 from typing import Any, Callable, Dict, Optional
@@ -38,22 +37,17 @@ from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
 )
+from tools._json import json_err, json_ok
 
 
-def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2)
-
-
-def _json_err(message: str, *, code: str = "bad_request",
-              extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2)
+# Shared JSON envelope (tools/_json.py); kept under these names here since this
+# module's tools were already calling them.
+_json_ok = json_ok
+_json_err = json_err
 
 
 #: Statuses that mean "this run is still spending money".
-LIVE_STATUSES = ("starting", "running", "stopping")
+LIVE_STATUSES = ("pending", "running", "stopping")
 
 
 def _approval_required(kind: str, entity_id: str, list_tool: str, run_tool: str,
@@ -176,7 +170,7 @@ def run_scenario_tool(scenario_id: str, user_approved: bool = False,
     """
     try:
         from playground import store
-        from playground.runner import estimate_cost, run_simulation
+        from playground.runner import estimate_cost
 
         scenario = store.get_scenario(scenario_id)
         if not scenario:
@@ -204,27 +198,16 @@ def run_scenario_tool(scenario_id: str, user_approved: bool = False,
             return conflict
 
         run_ws = scenario.workspace or active_ws
-        started: Dict[str, Any] = {}
 
-        def _worker(mark_ready: Callable[[], None]) -> None:
-            def _on_start(run) -> None:
-                started["run"] = run.to_dict()
-                mark_ready()
-
-            run_simulation(scenario_id, workspace=run_ws, on_start=_on_start)
-
-        record, error = _start_background_run(
-            _worker, lambda: started.get("run"), thread_name=f"sim-{scenario_id}")
-
-        if record is None:
-            if error:
-                return _json_err(f"Failed to start the simulation: {error}",
-                                 code="start_failed", extra={"scenario_id": scenario_id})
-            return _json_ok({
-                "message": (f"Scenario '{scenario.name}' is starting. Check back with "
-                            "get_scenario_run_tool."),
-                "scenario_id": scenario_id, "status": "starting",
-            })
+        # The launch is the shared envelope (playground/launcher.py): the
+        # record is written and the process spawned or queued before this
+        # returns, so the id is known at once.
+        from playground.launcher import start_scenario_run
+        try:
+            record = start_scenario_run(scenario_id, workspace=run_ws).to_dict()
+        except Exception as e:  # noqa: BLE001 - reported to the caller, not raised
+            return _json_err(f"Failed to start the simulation: {type(e).__name__}: {e}",
+                             code="start_failed", extra={"scenario_id": scenario_id})
 
         record_entity("scenario", scenario_id, "viewed", scenario.name)
         payload = _started("scenario", scenario.name, record, "sim_run_id", "get_scenario_run_tool")
@@ -344,7 +327,7 @@ def run_team_tool(team_id: str, goal: str = "", user_approved: bool = False,
     """
     try:
         from teams import store
-        from teams.runner import estimate_cost, run_team
+        from teams.runner import estimate_cost
 
         team = store.get_team(team_id)
         if not team:
@@ -379,26 +362,14 @@ def run_team_tool(team_id: str, goal: str = "", user_approved: bool = False,
 
         run_ws = team.workspace or active_ws
 
-        def _worker(mark_ready: Callable[[], None]) -> None:
-            run_team(team_id, request, workspace=run_ws,
-                     on_message=lambda _m: mark_ready())
-
-        def _poll() -> Optional[Dict[str, Any]]:
-            runs = store.list_runs(team_id, limit=1)
-            return runs[0].to_dict() if runs else None
-
-        record, error = _start_background_run(
-            _worker, _poll, thread_name=f"team-{team_id}")
-
-        if record is None:
-            if error:
-                return _json_err(f"Failed to start the team run: {error}",
-                                 code="start_failed", extra={"team_id": team_id})
-            return _json_ok({
-                "message": (f"Team '{team.name}' is starting. Check back with "
-                            "get_team_run_tool."),
-                "team_id": team_id, "status": "starting",
-            })
+        # The launch is the shared envelope (teams/launcher.py): the record is
+        # written and the process spawned or queued before this returns.
+        from teams.launcher import start_team_run
+        try:
+            record = start_team_run(team_id, request, workspace=run_ws).to_dict()
+        except Exception as e:  # noqa: BLE001 - reported to the caller, not raised
+            return _json_err(f"Failed to start the team run: {type(e).__name__}: {e}",
+                             code="start_failed", extra={"team_id": team_id})
 
         record_entity("team", team_id, "viewed", team.name)
         payload = _started("team", team.name, record, "team_run_id", "get_team_run_tool")
@@ -518,7 +489,7 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
     """
     try:
         from loops import store
-        from loops.runner import estimate_cost, run_loop
+        from loops.runner import estimate_cost
 
         loop = store.get_loop(loop_id)
         if not loop:
@@ -557,26 +528,14 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
 
         run_ws = loop.workspace or active_ws
 
-        def _worker(mark_ready: Callable[[], None]) -> None:
-            run_loop(loop_id, goal=request, workspace=run_ws,
-                     on_iteration=lambda _i: mark_ready())
-
-        def _poll() -> Optional[Dict[str, Any]]:
-            runs = store.list_runs(loop_id, limit=1)
-            return runs[0].to_dict() if runs else None
-
-        record, error = _start_background_run(
-            _worker, _poll, thread_name=f"loop-{loop_id}")
-
-        if record is None:
-            if error:
-                return _json_err(f"Failed to start the loop run: {error}",
-                                 code="start_failed", extra={"loop_id": loop_id})
-            return _json_ok({
-                "message": (f"Loop '{loop.name}' is starting. Check back with "
-                            "get_loop_run_tool."),
-                "loop_id": loop_id, "status": "starting",
-            })
+        # The launch is the shared envelope (loops/launcher.py): the record is
+        # written and the process spawned or queued before this returns.
+        from loops.launcher import start_loop_run
+        try:
+            record = start_loop_run(loop_id, request, workspace=run_ws).to_dict()
+        except Exception as e:  # noqa: BLE001 - reported to the caller, not raised
+            return _json_err(f"Failed to start the loop run: {type(e).__name__}: {e}",
+                             code="start_failed", extra={"loop_id": loop_id})
 
         record_entity("loop", loop_id, "viewed", loop.name)
         payload = _started("loop", loop.name, record, "loop_run_id", "get_loop_run_tool")

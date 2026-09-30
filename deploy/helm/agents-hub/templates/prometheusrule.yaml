@@ -1,0 +1,42 @@
+{{- if .Values.prometheusRule.enabled }}
+# Requires the Prometheus Operator's CRDs (monitoring.coreos.com/v1) already
+# installed in the cluster; off by default (prometheusRule.enabled: false)
+# since most installs of this chart bring their own Prometheus and would
+# rather load deploy/prometheus/alerts.yml directly, which these two rules
+# mirror. See docs/slo.md.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "agents-hub.fullname" . }}-slo
+  labels:
+    {{- include "agents-hub.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: agents-hub-slo
+      rules:
+        - alert: AgentsHubRunStartSLOBreach
+          expr: agents_hub_slo_breach{objective="start_p95"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Agents Hub: run start time p95 is over its SLO"
+            description: >-
+              agents_hub_run_start_seconds (p95) has been over
+              AGENTS_HUB_SLO_START_P95_SECONDS for at least 5 minutes. See
+              docs/runbook.md and docs/slo.md.
+        - alert: AgentsHubErrorRateSLOBreach
+          expr: agents_hub_slo_breach{objective="error_rate"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Agents Hub: run error rate is over its SLO"
+            description: >-
+              The share of finished runs that failed has been over
+              AGENTS_HUB_SLO_ERROR_RATE for at least 5 minutes. See
+              docs/runbook.md and docs/slo.md.
+{{- end }}

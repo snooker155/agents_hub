@@ -18,7 +18,6 @@ result is meant to seed an editable canvas, not replace one.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -486,7 +485,6 @@ def layered_layout(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], *,
         return nodes
     ids = [n["id"] for n in nodes]
     id_set = set(ids)
-    node_by_id = {n["id"]: n for n in nodes}
     adj: Dict[str, List[str]] = {i: [] for i in ids}
     radj: Dict[str, List[str]] = {i: [] for i in ids}
     for e in edges:
@@ -1066,6 +1064,18 @@ def generate_graph_via_llm(project, view: str, root: Optional[Path],
     text = None
     if _ensure_architect_agent():
         try:
+            from services import jobs as _jobs
+            if _jobs.enabled():
+                # On a runner replica (docs/services.md), same agent, same prompt.
+                res = _jobs.InvokeResult(_jobs.invoke_sync(getattr(project, "workspace", None), {
+                    "agent_id": _ARCHITECT_AGENT_ID,
+                    "workspace": agent_workspace_path(project, root),
+                    "workspace_name": getattr(project, "workspace", None),
+                    "project_id": str(getattr(project, "id", "") or "") or None,
+                    "build": {"max_tool_repeats": 0}, "prompt": prompt,
+                }))
+                return finalize_generated_output(res.agent_output if res.ok else None,
+                                                 project, view, root, tasks)
             from agents.agent_factory import create_agent
             from agents.agent_invoke import invoke_agent
 

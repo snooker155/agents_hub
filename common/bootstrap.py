@@ -8,7 +8,7 @@ agent_creator, decomposer).
 
 Operator state is never overwritten. Bootstrap is per-entity additive, with one
 deliberate exception (the last bullet):
-- `.agents_hub/agents.json` is copied from `bootstrap/agents.json` only when
+- the agent registry is seeded from `bootstrap/agents.json` only when
   it does not exist.
 - `.agents_hub/workspaces/default/` is created from
   `bootstrap/workspaces/default/` only when it does not exist.
@@ -21,8 +21,8 @@ deliberate exception (the last bullet):
 """
 from __future__ import annotations
 
+import logging
 import shutil
-from pathlib import Path
 
 from common.paths import (
     AGENTS_FILE,
@@ -33,19 +33,47 @@ from common.paths import (
 )
 
 
+log = logging.getLogger(__name__)
+
 BOOTSTRAP_ROOT = PROJECT_ROOT / "bootstrap"
 BOOTSTRAP_AGENTS_FILE = BOOTSTRAP_ROOT / "agents.json"
 BOOTSTRAP_WORKSPACES_ROOT = BOOTSTRAP_ROOT / "workspaces"
 
 
 def _seed_agents_file() -> bool:
-    if AGENTS_FILE.exists():
-        return False
+    """Seed the registry from ``bootstrap/agents.json`` when it is empty.
+
+    An install that still has a legacy ``agents.json`` is not empty: the
+    registry imports that file on first use, before this check runs, so the
+    seed only ever lands on a genuinely fresh state directory."""
     if not BOOTSTRAP_AGENTS_FILE.is_file():
         return False
+    from agents.registry import load_all_raw, replace_all_raw
+    if load_all_raw():
+        return False
+    try:
+        import json
+        raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    records = [a for a in (raw.get("agents") or []) if isinstance(a, dict) and a.get("id")]
+    if not records:
+        return False
     ensure_agents_hub_root()
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
+    replace_all_raw(records)
     return True
+
+
+def seed_registry_from_bootstrap() -> int:
+    """Replace the registry with the shipped seed, whatever it holds now.
+    For tests and for a deliberate reset; ``ensure_initial_state`` only seeds
+    an empty registry. Returns the number of records loaded."""
+    import json
+    from agents.registry import replace_all_raw
+    raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
+    records = [a for a in (raw.get("agents") or []) if isinstance(a, dict) and a.get("id")]
+    replace_all_raw(records)
+    return len(records)
 
 
 def _seed_default_workspace() -> bool:
@@ -76,7 +104,7 @@ def _ensure_system_agents() -> list[str]:
         import json
         from agents.registry import get_agent, add_agent, _validate_agent_dict
         raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         return []
 
     added: list[str] = []
@@ -89,8 +117,8 @@ def _ensure_system_agents() -> list[str]:
         try:
             add_agent(_validate_agent_dict(ad), user_edit=False)
             added.append(aid)
-        except Exception:
-            continue
+        except Exception:  # noqa: BLE001 - one bad seed record must not stop the rest from being added
+            log.debug("could not add system agent %r from the seed", aid, exc_info=True)
     return added
 
 
@@ -108,10 +136,11 @@ def ensure_system_agent(agent_id: str) -> bool:
         from agents.registry import get_agent
         if get_agent(agent_id) is not None:
             return True
-    except Exception:
-        # A missing or unreadable agents.json is a broken install, not a crash
+    except Exception:  # noqa: BLE001 - an unreadable registry must report "unavailable", not 500
+        # An unreadable registry is a broken install, not a crash
         # for the caller: a surface that needs this agent should report it as
         # unavailable rather than 500 on the lookup itself.
+        log.debug("registry lookup failed for %s", agent_id, exc_info=True)
         return False
     if not BOOTSTRAP_AGENTS_FILE.is_file():
         return False
@@ -125,7 +154,8 @@ def ensure_system_agent(agent_id: str) -> bool:
             return False
         add_agent(_validate_agent_dict(spec), user_edit=False)
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 - on-demand seed must report "unavailable", not 500
+        log.debug("could not seed system agent %s on demand", agent_id, exc_info=True)
         return False
 
 
@@ -167,18 +197,20 @@ def _sync_system_agents() -> list[str]:
     Returns the ids that changed.
     """
     import json
-    import logging
-    import shutil
-    from common.paths import AGENTS_FILE
+    from agents.registry import load_all_raw, replace_all_raw
 
-    log = logging.getLogger(__name__)
-    if not (AGENTS_FILE.is_file() and BOOTSTRAP_AGENTS_FILE.is_file()):
+    if not BOOTSTRAP_AGENTS_FILE.is_file():
         return []
     try:
         seed_raw = json.loads(BOOTSTRAP_AGENTS_FILE.read_text(encoding="utf-8"))
-        live_raw = json.loads(AGENTS_FILE.read_text(encoding="utf-8"))
-    except Exception:
+        live_raw = {"agents": load_all_raw()}
+    except Exception:  # noqa: BLE001 - startup must not raise; the seed's field sync just skips this run
+        log.debug("system agent sync: could not read the seed or the registry", exc_info=True)
         return []
+    if not live_raw["agents"]:
+        return []
+    import copy
+    before = copy.deepcopy(live_raw["agents"])
 
     seed_by_id = {
         a["id"]: a for a in (seed_raw.get("agents") or [])
@@ -189,7 +221,7 @@ def _sync_system_agents() -> list[str]:
 
     try:
         from tools.capabilities import check_combination
-    except Exception:
+    except ImportError:
         check_combination = None  # type: ignore[assignment]
 
     changed: list[str] = []
@@ -291,26 +323,22 @@ def _sync_system_agents() -> list[str]:
     if not changed:
         return []
 
-    # One-time safety net: the pre-sync registry, kept next to the live one.
+    # One-time safety net: the pre-sync registry, written out as a file next
+    # to where agents.json used to live. A backup is an export, not state.
     backup = AGENTS_FILE.with_suffix(".json.pre-sync-backup")
     if not backup.exists():
         try:
-            shutil.copyfile(AGENTS_FILE, backup)
+            ensure_agents_hub_root()
+            backup.write_text(json.dumps({"agents": before}, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
             log.warning(
                 "system agent sync: wrote a one-time registry backup to %s "
                 "before updating %d agent(s) from the seed.", backup, len(changed),
             )
         except Exception:
-            pass
+            log.exception("system agent sync: could not write the pre-sync backup to %s", backup)
 
-    AGENTS_FILE.write_text(
-        json.dumps(live_raw, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    try:
-        from agents.registry import _REGISTRY_CACHE
-        _REGISTRY_CACHE["mtime"] = None
-    except Exception:
-        pass
+    replace_all_raw(live_raw["agents"])
     return changed
 
 
@@ -329,17 +357,13 @@ def _grandfather_capability_violations() -> list[str]:
     violates, is left alone. New violations still hard-block — the override is
     only granted to combinations that were already on disk.
     """
-    import json
-    import logging
-    from common.paths import AGENTS_FILE
+    from agents.registry import load_all_raw, replace_all_raw
 
-    log = logging.getLogger(__name__)
-    if not AGENTS_FILE.is_file():
-        return []
     try:
         from tools.capabilities import check_combination
-        raw = json.loads(AGENTS_FILE.read_text(encoding="utf-8"))
-    except Exception:
+        raw = {"agents": load_all_raw()}
+    except Exception:  # noqa: BLE001 - startup must not raise; grandfathering just skips this run
+        log.debug("capability grandfathering: could not read the registry", exc_info=True)
         return []
 
     stamped: list[str] = []
@@ -358,14 +382,7 @@ def _grandfather_capability_violations() -> list[str]:
         )
 
     if stamped:
-        AGENTS_FILE.write_text(
-            json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        try:
-            from agents.registry import _REGISTRY_CACHE
-            _REGISTRY_CACHE["mtime"] = None
-        except Exception:
-            pass
+        replace_all_raw(raw["agents"])
     return stamped
 
 
@@ -378,4 +395,35 @@ def ensure_initial_state() -> dict[str, bool]:
     result["system_agents_added"] = bool(_ensure_system_agents())
     result["system_agents_synced"] = bool(_sync_system_agents())
     result["capabilities_grandfathered"] = bool(_grandfather_capability_violations())
+    result["system_workspace"] = _seed_system_workspace()
+    result["demo_workspace"] = _seed_demo_workspace()
     return result
+
+
+def _seed_system_workspace() -> bool:
+    """Seed the system workspace (common/system_workspace.py) when the setting
+    is on. Additive and never raising: a failure here must not stop the
+    service from starting, it is reported by the doctor instead."""
+    try:
+        from common.config import settings
+        if not bool(getattr(settings, "system_workspace", True)):
+            return False
+        from common.system_workspace import ensure_system_workspace
+        return bool(ensure_system_workspace())
+    except Exception:  # noqa: BLE001 - startup must not raise; the doctor reports a missing system workspace
+        log.debug("system workspace seed skipped", exc_info=True)
+        return False
+
+
+def _seed_demo_workspace() -> bool:
+    """Seed the demo workspace (common/demo_workspace.py) when the setting is
+    on. Additive and never raising, like the system workspace."""
+    try:
+        from common.config import settings
+        if not bool(getattr(settings, "demo_workspace", False)):
+            return False
+        from common.demo_workspace import ensure_demo_workspace
+        return bool(ensure_demo_workspace())
+    except Exception:  # noqa: BLE001 - startup must not raise; a missing demo is only a missing demo
+        log.debug("demo workspace seed skipped", exc_info=True)
+        return False

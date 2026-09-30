@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import {
   Shapes, Undo2, Plus, Layers, Sparkles, X, Circle, Bookmark,
@@ -7,7 +7,6 @@ import {
 import {
   getView, getViewOps, createStudioView, applyViewOps, revertView, setViewState,
   getViewCheckpoints, saveViewCheckpoint, revertViewToCheckpoint,
-  getViewChat, clearViewChat, stopViewChat, viewChatUrl,
 } from '../api';
 import { useWorkspace } from '../components/workspace';
 import { useChannel } from '../components/stream';
@@ -16,6 +15,7 @@ import ViewRenderer from '../views/ViewRenderer';
 import ControlsPanel from '../views/ControlsPanel';
 import EntityChat from '../components/EntityChat';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
+import useViewChatDescriptor from '../views/useViewChatDescriptor';
 
 import { AppBar } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -196,44 +196,6 @@ function NewViewPicker({ onCreate }) {
       </div>
     </div>
   );
-}
-
-// ── studio chat (the Visualizer, pinned to this view) ────────────────────────
-
-/**
- * The open view's build chat.
- *
- * The same entity chat every other builder page has: the transcript lives on
- * the server under `view:<id>`, so a reload resumes the session and the
- * floating page-chat panel can host the very conversation this column shows
- * rather than opening a second one about the same view.
- *
- * `registerSend` is what makes the view's own buttons — a control the agent
- * authored, a `sendToAgent` bridge inside an html view — post into this chat.
- *
- * The callbacks are memoised on the view id because EntityChat loads its
- * transcript in an effect keyed on them; fresh closures each render would
- * refetch the conversation continuously.
- */
-function useViewChatDescriptor(viewId, registerSend) {
-  const { t } = useI18n();
-
-  const loadChat = useCallback(() => getViewChat(viewId), [viewId]);
-  const clearChat = useCallback(() => clearViewChat(viewId), [viewId]);
-  const stopChat = useCallback(() => stopViewChat(viewId), [viewId]);
-
-  return useMemo(() => (viewId ? {
-    scope: `view:${viewId}`,
-    path: viewChatUrl(viewId),
-    loadChat, clearChat, stopChat, registerSend,
-    title: t('studio.visualizer'),
-    emptyHint: t('studio.chatEmptyHint'),
-    suggestions: [
-      t('studio.suggestBuild'),
-      t('studio.suggestControls'),
-      t('studio.suggestExplain'),
-    ],
-  } : null), [viewId, loadChat, clearChat, stopChat, registerSend, t]);
 }
 
 // ── the Studio page ──────────────────────────────────────────────────────────

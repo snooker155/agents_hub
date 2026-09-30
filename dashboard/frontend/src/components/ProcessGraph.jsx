@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ChevronDown, ChevronUp, Zap, Bot } from 'lucide-react';
-import { SKILL_TOOL, shortText, fmtDurationMs, preview } from './processUtils';
+import { ArrowUpRight, ChevronDown, ChevronUp, FlaskConical, Repeat, Zap, Bot } from 'lucide-react';
+import { SKILL_TOOL, shortText, fmtDurationMs, plainMarkdown, preview } from './processUtils';
 import { toolInline } from './toolFormatters';
 import ProcessNode from './ProcessNode';
+import StepText from './StepText';
+import SaveAsEvalCaseDialog from './evals/SaveAsEvalCaseDialog';
+import { getMessageInsights } from '../api';
 import { useI18n } from '../i18n';
 
 // Shared agent-process flow renderer. Originally built for the Chat page's
@@ -19,7 +22,7 @@ import { useI18n } from '../i18n';
 export function TokenPill({ label, value, title = '' }) {
   return (
     <span
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] font-medium"
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] font-medium whitespace-nowrap"
       title={title || undefined}
     >
       {label}: {value ?? 0}
@@ -35,6 +38,116 @@ function fmtTimestamp(ts) {
   return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
 }
 
+// The tools that run another agent and return its result. Their call is shown as
+// the delegated run itself, with that run's own steps inside, rather than as one
+// more tool with a JSON blob for output.
+const DELEGATION_TOOLS = new Set(['run_agent_tool', 'delegate_task_tool']);
+
+// The run log keeps only the head of a long tool result, so the fields are read
+// with a pattern when the JSON no longer parses. The input is logged as a
+// Python dict, hence either quote.
+function field(text, name) {
+  const m = new RegExp(`['"]${name}['"]\\s*:\\s*['"]([^'"]+)['"]`).exec(String(text || ''));
+  return m ? m[1] : '';
+}
+
+function parseDelegation(tc) {
+  let data = null;
+  try { data = JSON.parse(String(tc.output || '')); } catch { /* truncated in the log */ }
+  const out = data && typeof data === 'object' ? data : {};
+  return {
+    runId: out.run_id || field(tc.output, 'run_id'),
+    agent: out.agent?.name || out.agent_id || field(tc.input, 'agent_id') || field(tc.output, 'agent_id'),
+    output: typeof out.output === 'string' ? out.output : '',
+    failed: out.ok === false || /^\s*\{\s*"ok"\s*:\s*false/.test(String(tc.output || '')),
+  };
+}
+
+// A run still in progress carries the worker's steps as they happen
+// (chat/processLive.js): drawn as a run row of its own, without a fetch.
+function liveRun(d) {
+  return {
+    message_id: d.run_id,
+    run_id: d.run_id,
+    agent_id: d.agent_name || d.agent_id,
+    input: d.input,
+    output: d.output,
+    tools: d.tools || [],
+    reasoning: d.reasoning || [],
+    tool_calls: (d.tools || []).length,
+    duration_ms: d.duration_ms,
+    status: d.running ? 'running' : d.ok === false ? 'failed' : 'completed',
+    error: d.error || '',
+  };
+}
+
+// A delegated run inside the run that asked for it: fetched when opened, and
+// drawn with the same graph, so a delegation nested in it opens the same way.
+// While the turn is live it is open and grows with each step the worker takes.
+function DelegatedRunNode({ tc }) {
+  const { t } = useI18n();
+  const live = tc.delegation || null;
+  const [open, setOpen] = useState(Boolean(live?.running));
+  const [runs, setRuns] = useState(null);
+  const [error, setError] = useState('');
+  const parsed = parseDelegation(tc);
+  const runId = parsed.runId || live?.run_id || '';
+  const agentName = parsed.agent || live?.agent_name || live?.agent_id;
+  const output = parsed.output || live?.output || '';
+  const failed = parsed.failed || live?.ok === false;
+  useEffect(() => {
+    if (!open || !runId || runs || live) return undefined;
+    let cancelled = false;
+    getMessageInsights(runId)
+      .then((r) => { if (!cancelled) setRuns(r.data?.message_runs || []); })
+      .catch((e) => { if (!cancelled) setError(e?.response?.data?.detail || t('processGraph.delegatedRunUnavailable')); });
+    return () => { cancelled = true; };
+  }, [open, runId, runs, live, t]);
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50/40">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-2.5 py-2 text-left"
+      >
+        {open ? <ChevronUp className="w-3.5 h-3.5 text-gray-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
+        <Repeat className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+        <span className="text-[11px] font-semibold text-indigo-700 shrink-0">
+          {t('processGraph.delegatedTo', { agent: agentName || '…' })}
+        </span>
+        {live?.running && (
+          <span className="flex gap-1 shrink-0">
+            {[0, 150, 300].map((d) => (
+              <span key={d} className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+            ))}
+          </span>
+        )}
+        {failed && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-100 text-red-700">{t('processGraph.failed')}</span>
+        )}
+        {!open && (
+          <span className="text-[11px] text-gray-500 truncate">{preview(output || tc.input)}</span>
+        )}
+      </button>
+      {open && (
+        <div className="px-2.5 pb-2.5 space-y-1.5">
+          {live ? (
+            <ProcessGraph messageRuns={[liveRun(live)]} titleByAgent nested />
+          ) : !runId ? (
+            <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">{tc.output || tc.input}</div>
+          ) : error ? (
+            <div className="text-[11px] text-red-600">{error}</div>
+          ) : runs === null ? (
+            <div className="text-[11px] text-gray-400 italic">{t('processGraph.loadingDelegatedRun')}</div>
+          ) : (
+            <ProcessGraph messageRuns={runs} titleByAgent nested />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const RUN_STATUS_CLS = {
   running: 'bg-blue-100 text-blue-700',
   completed: 'bg-green-100 text-green-700',
@@ -43,8 +156,17 @@ const RUN_STATUS_CLS = {
   stopped: 'bg-gray-100 text-gray-500',
 };
 
-export default function ProcessGraph({ messageRuns = [], showDetailsLink = true, titleByAgent = false }) {
+// `nested`: the graph of a delegated run, drawn inside its parent's step. Its
+// runs hang off that step, not off a timeline of their own, so they have no
+// timeline dot or connector.
+export default function ProcessGraph({
+  messageRuns = [], showDetailsLink = true, titleByAgent = false, evalCaseWorkspace = undefined, nested = false,
+}) {
   const { t } = useI18n();
+  // "To eval case" is offered where the host passes a workspace for it (the
+  // Chat page's process panel); `null` is a valid "no workspace" choice.
+  const showEvalCase = evalCaseWorkspace !== undefined;
+  const [caseRunId, setCaseRunId] = useState(null);
   const [expandedNodes, setExpandedNodes] = useState(() => new Set(messageRuns.map((_, idx) => idx)));
   const lastNodeRef = useRef(null);
   const prevLengthRef = useRef(null);
@@ -67,11 +189,11 @@ export default function ProcessGraph({ messageRuns = [], showDetailsLink = true,
   }, []);
 
   useEffect(() => {
-    if (!messageRuns.length) return;
+    if (!messageRuns.length || nested) return;
     const isFirst = prevLengthRef.current === null;
     prevLengthRef.current = messageRuns.length;
     lastNodeRef.current?.scrollIntoView({ behavior: isFirst ? 'instant' : 'smooth', block: 'nearest' });
-  }, [messageRuns.length]);
+  }, [messageRuns.length, nested]);
 
   if (!messageRuns.length) {
     return <p className="text-xs text-gray-500 italic">{t('processGraph.noProcessMessageDataYet')}</p>;
@@ -112,10 +234,10 @@ export default function ProcessGraph({ messageRuns = [], showDetailsLink = true,
           <div
             key={key}
             ref={idx === messageRuns.length - 1 ? lastNodeRef : null}
-            className="relative pl-4"
+            className={nested ? 'relative' : 'relative pl-4'}
           >
-            {hasNext && <div className="absolute left-[7px] top-4 bottom-[-16px] w-px bg-gray-200" />}
-            <div className="absolute left-0 top-2 w-3 h-3 rounded-full bg-indigo-500" />
+            {hasNext && !nested && <div className="absolute left-[7px] top-4 bottom-[-16px] w-px bg-gray-200" />}
+            {!nested && <div className="absolute left-0 top-2 w-3 h-3 rounded-full bg-indigo-500" />}
             <div
               role="button"
               tabIndex={0}
@@ -172,8 +294,8 @@ export default function ProcessGraph({ messageRuns = [], showDetailsLink = true,
                 )}
                 <span>
                   {titleByAgent
-                    ? shortText(mr.output || t('processGraph.noResponseYet'), 120)
-                    : (mr.output || t('processGraph.noResponseYet'))}
+                    ? shortText(plainMarkdown(mr.output) || t('processGraph.noResponseYet'), 120)
+                    : (plainMarkdown(mr.output) || t('processGraph.noResponseYet'))}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 mb-2 min-h-[18px] flex-wrap">
@@ -212,33 +334,56 @@ export default function ProcessGraph({ messageRuns = [], showDetailsLink = true,
                   );
                 })()}
               </div>
-              <div className="flex items-end justify-between gap-2">
-                <div className="flex flex-wrap gap-1">
-                  <TokenPill label={t('processGraph.in')} value={mr.inbound_tokens} />
-                  <TokenPill label={t('processGraph.out')} value={mr.outbound_tokens} />
-                  <TokenPill label={t('processGraph.total')} value={mr.total_tokens} />
+              {/* Two rows: the tokens, then tool calls and time. The second row's
+                  pills never wrap apart; the links go under them when the
+                  panel is too narrow for both. */}
+              <div className="flex flex-wrap gap-1 mb-1" data-testid="run-stats-tokens">
+                <TokenPill label={t('processGraph.in')} value={mr.inbound_tokens} />
+                <TokenPill label={t('processGraph.out')} value={mr.outbound_tokens} />
+                <TokenPill label={t('processGraph.total')} value={mr.total_tokens} />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                <div className="flex shrink-0 gap-1" data-testid="run-stats-run">
                   <TokenPill label={t('processGraph.tools2')} value={toolCount} />
                   <TokenPill label={t('processGraph.duration')} value={fmtDurationMs(mr.duration_ms)} />
                 </div>
-                {showDetailsLink && mr.run_id && (
-                  <a
-                    href={`/messages/${mr.run_id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="shrink-0 whitespace-nowrap text-sm font-semibold text-gray-400 transition hover:text-indigo-600"
-                  >
-                    {t('processGraph.viewFullDetails')}
-                  </a>
+                {mr.run_id && (showDetailsLink || showEvalCase) && (
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                    {showEvalCase && mr.status !== 'running' && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setCaseRunId(mr.run_id); }}
+                        title={t('messageDetails.toEvalCaseHint')}
+                        className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-indigo-500 hover:text-indigo-700"
+                      >
+                        <FlaskConical className="w-3 h-3" /> {t('messageDetails.toEvalCase')}
+                      </button>
+                    )}
+                    {showDetailsLink && (
+                      <a
+                        href={`/messages/${mr.run_id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-indigo-500 hover:text-indigo-700"
+                      >
+                        <ArrowUpRight className="w-3 h-3" /> {t('processGraph.viewFullDetails')}
+                      </a>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
             {isExpanded && (
               <div className="ml-5 mt-2 space-y-2">
-                <div className="rounded-lg border border-blue-200 bg-blue-50 p-2.5">
-                  <div className="text-[11px] font-semibold text-blue-700 mb-1.5">{t('processGraph.input')}</div>
+                <ProcessNode
+                  label={t('processGraph.input')}
+                  labelColor="text-blue-700"
+                  borderColor="border-blue-200"
+                  bgColor="bg-blue-50"
+                >
                   <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words">
                     {mr.input || '(empty)'}
                   </div>
-                </div>
+                </ProcessNode>
                 {/* Thoughts and tool calls share one step counter (ChatStreamCallback._step),
                     so merging by step renders them in true execution order. Entries without
                     a step (older runs) sink to the end, keeping their original order. Thoughts
@@ -269,6 +414,9 @@ export default function ProcessGraph({ messageRuns = [], showDetailsLink = true,
                       );
                     }
                     const tc = entry.item;
+                    if (DELEGATION_TOOLS.has(tc.tool)) {
+                      return <DelegatedRunNode key={entry.key} tc={tc} />;
+                    }
                     if (tc.tool === SKILL_TOOL) {
                       return (
                         <ProcessNode
@@ -278,6 +426,7 @@ export default function ProcessGraph({ messageRuns = [], showDetailsLink = true,
                           borderColor="border-violet-300"
                           bgColor="bg-violet-50"
                           hint={preview(tc.input || tc.output)}
+                          tool={tc}
                         >
                           {tc.input && (
                             <div className="text-[11px] text-violet-700 whitespace-pre-wrap break-all">
@@ -303,6 +452,7 @@ export default function ProcessGraph({ messageRuns = [], showDetailsLink = true,
                         borderColor="border-amber-200"
                         bgColor="bg-amber-50"
                         hint={toolInline(tc.tool, tc.input)}
+                        tool={tc}
                       >
                         {!isReasoningTool && tc.input && (
                           <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
@@ -318,25 +468,38 @@ export default function ProcessGraph({ messageRuns = [], showDetailsLink = true,
                     );
                   });
                 })()}
-                <div className="rounded-lg border border-green-200 bg-green-50 p-2.5">
-                  <div className="text-[11px] font-semibold text-green-700 mb-1.5">{t('processGraph.output')}</div>
-                  <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words">
-                    {mr.output || '(empty)'}
-                  </div>
-                </div>
+                <ProcessNode
+                  label={t('processGraph.output')}
+                  labelColor="text-green-700"
+                  borderColor="border-green-200"
+                  bgColor="bg-green-50"
+                >
+                  <StepText text={mr.output} />
+                </ProcessNode>
                 {mr.error && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 p-2.5">
-                    <div className="text-[11px] font-semibold text-red-700 mb-1.5">{t('processGraph.error')}</div>
+                  <ProcessNode
+                    label={t('processGraph.error')}
+                    labelColor="text-red-700"
+                    borderColor="border-red-200"
+                    bgColor="bg-red-50"
+                  >
                     <div className="text-[11px] text-red-700 whitespace-pre-wrap break-words">
                       {mr.error}
                     </div>
-                  </div>
+                  </ProcessNode>
                 )}
               </div>
             )}
           </div>
         );
       })}
+      {caseRunId && (
+        <SaveAsEvalCaseDialog
+          runId={caseRunId}
+          workspace={evalCaseWorkspace || undefined}
+          onClose={() => setCaseRunId(null)}
+        />
+      )}
     </div>
   );
 }

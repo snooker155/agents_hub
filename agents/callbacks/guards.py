@@ -9,17 +9,31 @@ runner catches the exception and turns it into the appropriate AgentResult.
   same tool is called too many times in a row.
 - ``AskUserGuard`` (+ ``AskUserSignal``) — pauses a run when the agent calls
   the ``ask_user`` tool.
+- ``ApprovalSignal`` — pauses a run when a tool call needs a human's approval
+  before it may happen (raised by the gate in ``agents/hooks.py``, not by a
+  callback).
 - ``ContextWindowGuard`` (+ ``ContextWindowExceededError``) — stops a run once
   its prompt exceeds the model's context window.
+- ``RunBudgetGuard`` (+ ``RunBudgetExceeded``, ``RunBudgetUnpriced``) — pauses a
+  run once the task's runs have spent its money cap, or (fail_closed only) once
+  a call cannot be priced at all (see ``common/run_budget.py``).
 """
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+import os
+import threading
+from typing import Any, Dict, Optional, Set, Tuple
+
+from contextvars import ContextVar
 
 from langchain_core.callbacks import BaseCallbackHandler
 
-from agents.callbacks.run_statistics import extract_token_usage, normalize_usage
+from agents.callbacks.run_statistics import (
+    cached_input_tokens,
+    extract_token_usage,
+    normalize_usage,
+)
 
 # Reasoning scratchpad tools are exempt from the tool-repetition guard: calling
 # them repeatedly is the agent reasoning more, not looping. Kept in sync with
@@ -130,6 +144,37 @@ class AskUserGuard(BaseCallbackHandler):
             )
 
 
+class ApprovalSignal(RuntimeError):
+    """Raised to pause a run when a tool call needs the user's approval.
+
+    Modelled on ``AskUserSignal``: the run ends cleanly carrying what the user
+    has to decide about, so the runner can park the task, show the call, and
+    resume once answered. Unlike AskUserSignal it is raised from *inside the
+    tool wrapper* rather than from a callback, because the decision has to
+    happen before the call runs, not after it produced output.
+
+    ``payload`` is the pending-approval record the task stores:
+    ``{tool, input, reason, run_id, agent_id, hook, fingerprint}``.
+    """
+
+    def __init__(self, payload: dict) -> None:
+        tool = str((payload or {}).get("tool") or "tool")
+        super().__init__(f"Approval required before calling `{tool}`")
+        self.payload = dict(payload or {})
+
+    @property
+    def tool(self) -> str:
+        return str(self.payload.get("tool") or "")
+
+    @property
+    def tool_input(self) -> Any:
+        return self.payload.get("input")
+
+    @property
+    def reason(self) -> str:
+        return str(self.payload.get("reason") or "")
+
+
 class ContextWindowExceededError(RuntimeError):
     """Raised when a run's prompt no longer fits the model's context window."""
 
@@ -146,7 +191,18 @@ class ContextWindowGuard(BaseCallbackHandler):
 
     ``raise_error = True`` is required so LangChain does not swallow the
     exception in its callback dispatch loop.
+
+    When the run's loop compacts its context (agents/loop_ext/compaction.py),
+    an overflow is first handed to compaction instead: the guard asks for a
+    forced pass on the next model call (clear old tool results, fold the
+    oldest steps) and lets the run go on. Only when that happens
+    ``OVERFLOW_RETRIES`` times in a row, so compaction had its chance and the
+    prompt still does not fit, is the run stopped as before.
     """
+
+    #: Consecutive overflows handed to compaction before the run is stopped.
+    #: One constant with agents.loop_ext.compaction.OVERFLOW_RETRIES.
+    OVERFLOW_RETRIES = 2
 
     def __init__(self, context_window: int, model_name: str = "") -> None:
         super().__init__()
@@ -154,18 +210,46 @@ class ContextWindowGuard(BaseCallbackHandler):
         self.context_window = int(context_window)
         self.model_name = model_name or "unknown"
 
+    @classmethod
+    def _compaction(cls) -> Optional[Dict[str, Any]]:
+        """The compaction record of the running loop, when compaction is on.
+
+        Read from the loop state of the run in this context (the state lives
+        in a context variable the executor carries into its callbacks), so a
+        guard that runs outside the agent loop, or on an agent without the
+        extension, sees None and behaves as it always did.
+        """
+        try:
+            from agents.agent_loop import current_state
+            state = current_state()
+        except ImportError:
+            return None
+        record = state.scratch.get("compaction") if state is not None else None
+        return record if isinstance(record, dict) and record.get("active") else None
+
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         if self.context_window <= 0:
             return
         p, _c, _t = normalize_usage(extract_token_usage(response))
-        if p > self.context_window:
-            raise ContextWindowExceededError(
-                f"Context window exceeded: the last prompt was {p} tokens but model "
-                f"'{self.model_name}' accepts at most {self.context_window}. The run was "
-                f"aborted because the accumulated history no longer fits the model. "
-                f"Split the task into smaller pieces or use a model with a larger "
-                f"context window."
-            )
+        compaction = self._compaction()
+        if p <= self.context_window:
+            if compaction is not None and p > 0:
+                compaction["overflows"] = 0
+            return
+        if compaction is not None:
+            tries = int(compaction.get("overflows") or 0)
+            if tries < self.OVERFLOW_RETRIES:
+                compaction["overflows"] = tries + 1
+                compaction["force"] = True
+                compaction["overflow_tokens"] = int(p)
+                return
+        raise ContextWindowExceededError(
+            f"Context window exceeded: the last prompt was {p} tokens but model "
+            f"'{self.model_name}' accepts at most {self.context_window}. The run was "
+            f"aborted because the accumulated history no longer fits the model. "
+            f"Split the task into smaller pieces or use a model with a larger "
+            f"context window."
+        )
 
 
 class ToolRepetitionError(RuntimeError):
@@ -245,3 +329,406 @@ class ToolRepetitionGuard(BaseCallbackHandler):
                 f"Tool '{self._last_tool}' was called {self._consecutive} times in a row "
                 f"(limit={self.max_repeats}). Stopping agent to prevent infinite loop."
             )
+
+
+# -------------------- Money cap --------------------
+
+# Kept in step with common.run_budget (the launcher side); duplicated rather
+# than imported so a run container needs nothing from ``common`` to read them.
+RUN_BUDGET_ENV_LIMIT = "AGENTS_HUB_RUN_BUDGET_USD"
+RUN_BUDGET_ENV_SPENT = "AGENTS_HUB_RUN_BUDGET_SPENT_USD"
+RUN_BUDGET_ENV_PRICES = "AGENTS_HUB_RUN_PRICES"
+RUN_BUDGET_ENV_FAIL_CLOSED = "AGENTS_HUB_RUN_BUDGET_FAIL_CLOSED"
+
+
+class RunBudgetExceeded(RuntimeError):
+    """Raised to pause a run that reached its task's money cap.
+
+    Like ``AskUserSignal`` it is a pause, not a failure: the agent runner turns
+    it into an ``awaiting_approval`` result with a ``kind: "budget"`` pending
+    record, and the operator raises the cap or stops the task.
+    """
+
+    def __init__(self, spent_usd: float, limit_usd: float) -> None:
+        self.spent_usd = float(spent_usd)
+        self.limit_usd = float(limit_usd)
+        super().__init__(
+            f"The run reached its money cap of ${self.limit_usd:.2f} "
+            f"(spent ${self.spent_usd:.2f})."
+        )
+
+    def pending(self, *, agent_id: str = "", run_id: str = "") -> Dict[str, Any]:
+        """The pending-approval record a task parks with."""
+        return {
+            "kind": "budget",
+            "spent_usd": round(self.spent_usd, 6),
+            "limit_usd": round(self.limit_usd, 6),
+            "tool": "",
+            "input": {},
+            "reason": (
+                f"The run reached its money cap of ${self.limit_usd:.2f} "
+                f"(spent ${self.spent_usd:.2f}). Raise the cap to continue or stop the task."
+            ),
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "fingerprint": "",
+            "hook": "",
+        }
+
+
+class RunBudgetUnpriced(RunBudgetExceeded):
+    """Raised instead of :class:`RunBudgetExceeded` when a call's model has no
+    known price and the workspace requires fail-closed enforcement.
+
+    ``RunBudgetGuard`` normally counts an unpriced call as free (see its class
+    docstring): the cap fails open rather than guessing. A workspace that opted
+    into ``fail_closed`` (``common.budget``, carried here via
+    ``AGENTS_HUB_RUN_BUDGET_FAIL_CLOSED``) would rather stop the run than let an
+    unpriced model spend past a cap that can never see it coming, so this
+    blocks the call before it runs instead of pricing it as ``$0``.
+    """
+
+    def __init__(self, spent_usd: float, limit_usd: float, model: str) -> None:
+        self.model = model or "unknown"
+        # Deliberately skip RunBudgetExceeded.__init__: its "reached its money
+        # cap" message does not fit here, the cap was not necessarily met, the
+        # call's cost just cannot be trusted.
+        self.spent_usd = float(spent_usd)
+        self.limit_usd = float(limit_usd)
+        RuntimeError.__init__(
+            self,
+            f"Model '{self.model}' has no known price and this workspace requires "
+            f"fail-closed budget enforcement, so the call was blocked before it ran "
+            f"(spent ${self.spent_usd:.2f} of ${self.limit_usd:.2f})."
+        )
+
+    def pending(self, *, agent_id: str = "", run_id: str = "") -> Dict[str, Any]:
+        return {
+            "kind": "budget",
+            "spent_usd": round(self.spent_usd, 6),
+            "limit_usd": round(self.limit_usd, 6),
+            "tool": "",
+            "input": {},
+            "reason": (
+                f"Model '{self.model}' has no known price and this workspace requires "
+                f"fail-closed budget enforcement. The call was blocked before it ran. "
+                f"Price the model, raise the cap, or stop the task."
+            ),
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "fingerprint": "",
+            "hook": "",
+        }
+
+
+# What this process has spent on LLM calls, shared by every guard in it. A run
+# process serves one task, but its agent may delegate to others in the same
+# process (run_agent_tool), each building its own guard; sharing the total means
+# a sub-agent's calls count against the task too, and deduplicating by the LLM
+# call's run id keeps a call seen by two guards (callbacks inherited by a nested
+# executor) from being charged twice.
+_SPEND_LOCK = threading.Lock()
+_PROCESS_SPEND: Dict[str, Any] = {"usd": 0.0, "seen": set()}
+
+# A cap bound to the current *context* rather than to the process: what a
+# service replica answering several turns at once needs (chat/turns.py,
+# runtime/jobs.py), since one process there serves many runs with caps of
+# their own. ``set_turn_cap`` binds the cap and a ledger of its own to the
+# context; every guard built inside it (the turn's agent and the agents it
+# delegates to, which run in copies of the context) charges that ledger, and
+# ``from_env`` prefers it over the process environment. The process-wide
+# ledger above stays what a task's own process uses.
+_TURN_CAP: ContextVar[Optional[Dict[str, Any]]] = ContextVar("run_budget_turn_cap", default=None)
+
+
+def set_turn_cap(limit_usd: float, prices: Optional[Dict[Tuple[str, str], Tuple[float, float, float]]] = None,
+                 *, fail_closed: bool = False, prior_usd: float = 0.0):
+    """Bind a money cap to the current context. Returns the token for
+    :func:`reset_turn_cap`."""
+    cap = {
+        "limit_usd": float(limit_usd),
+        "prices": dict(prices or {}),
+        "fail_closed": bool(fail_closed),
+        "prior_usd": max(0.0, float(prior_usd or 0.0)),
+        # ``calls`` and ``last`` are the ledger's own trace: how many model
+        # calls it priced and what the last one looked like, for the run
+        # record (chat/turns.py) when a cap does not behave as expected.
+        "ledger": {"usd": 0.0, "seen": set(), "calls": 0, "last": {}},
+    }
+    return _TURN_CAP.set(cap)
+
+
+def reset_turn_cap(token) -> None:
+    _TURN_CAP.reset(token)
+
+
+def turn_cap() -> Optional[Dict[str, Any]]:
+    """The cap bound to the current context, or None."""
+    return _TURN_CAP.get()
+
+
+def turn_spend_usd() -> float:
+    """What the current context's cap has seen spent so far (0 without one)."""
+    cap = _TURN_CAP.get()
+    if not cap:
+        return 0.0
+    with _SPEND_LOCK:
+        return float(cap["ledger"]["usd"])
+
+
+def turn_ledger_trace() -> Dict[str, Any]:
+    """``{calls, last}`` of the current context's cap: how many model calls it
+    priced and the model, tokens and cost of the last one. Empty without a cap."""
+    cap = _TURN_CAP.get()
+    if not cap:
+        return {}
+    with _SPEND_LOCK:
+        return {"calls": int(cap["ledger"].get("calls") or 0), "last": dict(cap["ledger"].get("last") or {})}
+
+
+def reset_run_budget_spend() -> None:
+    """Forget what this process has spent (tests, and a process reused for a
+    new run)."""
+    with _SPEND_LOCK:
+        _PROCESS_SPEND["usd"] = 0.0
+        _PROCESS_SPEND["seen"] = set()
+
+
+def _parse_prices(raw: str) -> Dict[Tuple[str, str], Tuple[float, float, float]]:
+    prices: Dict[Tuple[str, str], Tuple[float, float, float]] = {}
+    try:
+        rows = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return prices
+    if not isinstance(rows, list):
+        return prices
+    for row in rows:
+        try:
+            provider, model, i, o, c = row
+            prices[(str(provider), str(model))] = (float(i or 0), float(o or 0), float(c or 0))
+        except (TypeError, ValueError):
+            continue
+    return prices
+
+
+def _response_model(response: Any) -> str:
+    """The model name the provider reported for this call, if any."""
+    try:
+        out = getattr(response, "llm_output", None) or {}
+        name = out.get("model_name") or out.get("model")
+        if name:
+            return str(name)
+    except Exception:
+        pass
+    try:
+        for grp in (getattr(response, "generations", []) or []):
+            for g in grp:
+                md = getattr(getattr(g, "message", None), "response_metadata", None) or {}
+                name = md.get("model_name") or md.get("model")
+                if name:
+                    return str(name)
+    except Exception:
+        pass
+    return ""
+
+
+def charge_aux_spend(provider: str, model: str, prompt: int, completion: int,
+                     cached: int = 0) -> float:
+    """Add a call made beside the agent's own loop (common/aux_usage.py) to
+    this process's spend, priced like any other call. Returns the cost added;
+    0 when the run has no cap (nothing checks the spend then).
+
+    The next check of the run's guard sees it, so a policy that calls a model
+    on every tool call is stopped by the same cap as the agent.
+    """
+    guard = RunBudgetGuard.from_env(provider=provider or "", model=model or "")
+    if guard is None:
+        return 0.0
+    in_price, out_price, cached_price = guard._price(model or "")
+    cached = max(0, min(int(cached or 0), int(prompt or 0)))
+    cost = (
+        (int(prompt or 0) - cached) / 1_000_000 * in_price
+        + cached / 1_000_000 * cached_price
+        + int(completion or 0) / 1_000_000 * out_price
+    )
+    ledger = guard._ledger if guard._ledger is not None else _PROCESS_SPEND
+    with _SPEND_LOCK:
+        ledger["usd"] = float(ledger["usd"]) + cost
+    return cost
+
+
+class RunBudgetGuard(BaseCallbackHandler):
+    """Pause a run once the task's runs have spent its money cap.
+
+    Built from three environment variables the launcher sets
+    (``common.run_budget.launch_env``): the cap, what the task's earlier runs
+    already spent, and the catalog prices. Each finished LLM call is priced with
+    the same formula as ``common.pricing.run_cost_usd`` (fresh input, cached
+    input and output at their own rates) from the usage the provider reported.
+
+    Two checkpoints:
+
+    - ``on_llm_end`` raises when the call that just finished crossed the cap, so
+      the run stops before acting on (and paying for the follow-up of) it.
+    - ``on_llm_start`` / ``on_chat_model_start`` raise when the cap is already
+      met, so a run launched over its cap parks before its first paid call.
+
+    A model with no known price counts as free by default: the cap fails open
+    rather than guessing. A workspace with ``fail_closed`` set changes that (see
+    :class:`RunBudgetUnpriced`): an unpriced call blocks instead, since counting
+    it as free would let the cap it is meant to enforce silently never trip.
+    ``raise_error = True`` makes LangChain propagate the exception; put this
+    guard last in the callback list so the stats callback records the call's
+    tokens before it raises.
+    """
+
+    def __init__(
+        self,
+        limit_usd: float,
+        prior_usd: float = 0.0,
+        prices: Optional[Dict[Tuple[str, str], Tuple[float, float, float]]] = None,
+        provider: str = "",
+        model: str = "",
+        fail_closed: bool = False,
+        ledger: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__()
+        self.raise_error = True
+        self.limit_usd = float(limit_usd)
+        self.prior_usd = max(0.0, float(prior_usd or 0.0))
+        self.prices = dict(prices or {})
+        self.provider = provider or ""
+        self.model = model or ""
+        self.fail_closed = bool(fail_closed)
+        # The spend this guard charges and reads: a turn's own ledger
+        # (set_turn_cap) or, without one, the process-wide total.
+        self._ledger = ledger
+
+    @classmethod
+    def from_env(cls, provider: str = "", model: str = "") -> Optional["RunBudgetGuard"]:
+        """A guard for this process's run, or None when the run has no cap.
+
+        A cap bound to the current context (:func:`set_turn_cap`) wins over
+        the process environment: it is how one process serves several capped
+        turns at once."""
+        cap = _TURN_CAP.get()
+        if cap is not None:
+            if float(cap.get("limit_usd") or 0.0) <= 0:
+                return None
+            return cls(cap["limit_usd"], cap.get("prior_usd", 0.0), cap.get("prices"),
+                       provider=provider, model=model, fail_closed=bool(cap.get("fail_closed")),
+                       ledger=cap["ledger"])
+        try:
+            limit = float(os.environ.get(RUN_BUDGET_ENV_LIMIT) or 0.0)
+        except ValueError:
+            return None
+        if limit <= 0:
+            return None
+        try:
+            prior = float(os.environ.get(RUN_BUDGET_ENV_SPENT) or 0.0)
+        except ValueError:
+            prior = 0.0
+        prices = _parse_prices(os.environ.get(RUN_BUDGET_ENV_PRICES) or "")
+        fail_closed = os.environ.get(RUN_BUDGET_ENV_FAIL_CLOSED) not in (None, "", "0")
+        return cls(limit, prior, prices, provider=provider, model=model, fail_closed=fail_closed)
+
+    @property
+    def spent_usd(self) -> float:
+        """What the task has spent: earlier runs plus this process (or this
+        turn, under a context cap) so far."""
+        ledger = self._ledger if self._ledger is not None else _PROCESS_SPEND
+        with _SPEND_LOCK:
+            return self.prior_usd + float(ledger["usd"])
+
+    def _price(self, model: str) -> Tuple[float, float, float]:
+        for key in ((self.provider, model), (self.provider, self.model)):
+            if key[1] and key in self.prices:
+                return self.prices[key]
+        # The provider reported a model under a name the agent's provider does
+        # not list (a gateway, a dated alias): match by model id alone.
+        for name in (model, self.model):
+            if not name:
+                continue
+            for (_prov, mid), price in self.prices.items():
+                if mid == name:
+                    return price
+        return (0.0, 0.0, 0.0)
+
+    def _has_price(self, model: str) -> bool:
+        """Whether ``model`` (or the guard's own configured model) matches a
+        catalog entry, using the same lookup order as :meth:`_price`.
+
+        Kept separate from ``_price`` because its ``(0.0, 0.0, 0.0)`` return
+        means both "not found" and "found, and it really is free" (the catalog
+        allows an explicit zero price) — ``fail_closed`` needs to tell those
+        apart, which the returned tuple alone cannot.
+        """
+        for key in ((self.provider, model), (self.provider, self.model)):
+            if key[1] and key in self.prices:
+                return True
+        for name in (model, self.model):
+            if not name:
+                continue
+            if any(mid == name for _prov, mid in self.prices):
+                return True
+        return False
+
+    def cost_of(self, response: Any) -> float:
+        """USD cost of one LLM response, 0 when unpriced or unreported."""
+        usage = extract_token_usage(response)
+        prompt, completion, _total = normalize_usage(usage)
+        cached = max(0, min(cached_input_tokens(usage), prompt))
+        in_price, out_price, cached_price = self._price(_response_model(response))
+        return (
+            (prompt - cached) / 1_000_000 * in_price
+            + cached / 1_000_000 * cached_price
+            + completion / 1_000_000 * out_price
+        )
+
+    def _check(self) -> None:
+        # Under fail_closed, a call about to run through a model this guard
+        # cannot price is stopped here, before it happens: the "stop before it"
+        # side of the same trade-off on_llm_end applies after the fact for a
+        # call whose model only revealed itself in the response.
+        if self.fail_closed and self.model and not self._has_price(self.model):
+            raise RunBudgetUnpriced(self.spent_usd, self.limit_usd, self.model)
+        spent = self.spent_usd
+        if spent >= self.limit_usd:
+            raise RunBudgetExceeded(spent, self.limit_usd)
+
+    def on_llm_start(self, serialized: Any, prompts: Any, **kwargs: Any) -> None:
+        self._check()
+
+    def on_chat_model_start(self, serialized: Any, messages: Any, **kwargs: Any) -> None:
+        self._check()
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        call_id = str(kwargs.get("run_id") or "")
+        model = ""
+        usage_seen: Dict[str, Any] = {}
+        try:
+            model = _response_model(response)
+            cost = self.cost_of(response)
+            usage_seen = extract_token_usage(response) or {}
+        except Exception:  # noqa: BLE001 - an unreadable response counts as free (fail open)
+            cost = 0.0
+        ledger = self._ledger if self._ledger is not None else _PROCESS_SPEND
+        with _SPEND_LOCK:
+            seen: Set[str] = ledger["seen"]
+            if not call_id or call_id not in seen:
+                if call_id:
+                    seen.add(call_id)
+                ledger["usd"] = float(ledger["usd"]) + cost
+            if "calls" in ledger:
+                ledger["calls"] = int(ledger.get("calls") or 0) + 1
+                prompt, completion, _total = normalize_usage(usage_seen) if usage_seen else (0, 0, 0)
+                ledger["last"] = {"model": model or self.model, "prompt": prompt,
+                                  "completion": completion, "cost": round(cost, 6),
+                                  "priced": self._has_price(model or self.model)}
+        # The response can report a model this guard never saw before the call
+        # (a gateway or dated alias _price/_has_price still cannot match): the
+        # call already happened, but fail_closed still blocks the next one
+        # rather than let every following call price as free too.
+        if self.fail_closed and not self._has_price(model or self.model):
+            raise RunBudgetUnpriced(self.spent_usd, self.limit_usd, model or self.model)
+        self._check()

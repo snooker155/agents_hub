@@ -1,0 +1,22 @@
+{{- if .Values.persistence.enabled }}
+# Shared across every backend and worker pod (README.md's storage-class
+# caveat): ReadWriteMany so pods on different nodes can all mount it at
+# env.AGENTS_HUB_ROOT. Not needed once AGENTS_HUB_BLOB_URL takes .agents_hub/
+# files off local disk entirely, but left on by default since that migration
+# is opt-in.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agents-hub.fullname" . }}-state
+  labels:
+    {{- include "agents-hub.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

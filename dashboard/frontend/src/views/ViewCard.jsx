@@ -92,8 +92,9 @@ function Modal({ children, onClose, title, fill = false }) {
 
 // `actions` — extra header buttons (rendered before snapshot/expand) so hosts
 // like the Views gallery don't have to overlay their own controls on the card.
-// `compact` — caps the body height for dense grid layouts.
-export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false }) {
+// `compact` — a fixed body height for dense grid layouts, so cards line up.
+// `className` — extra classes on the root (a grid cell passes `flex-1 min-h-0`).
+export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, className = '' }) {
   const { t } = useI18n();
   const viewId = viewRef?.view_id;
   const { view, error, loading, setView } = useView(viewId);
@@ -105,6 +106,7 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
   const kind = view?.kind || viewRef?.view_kind;
 
   const bodyRef = useRef(null);
+  const fillBody = Boolean(view) && FILL_KINDS.has(view.kind);
 
   // Interactive control/param changes: optimistic local apply + persist as a
   // user op (echoed on the view channel for any Studio watching the same view).
@@ -127,20 +129,30 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
   }, [t, viewId]);
 
   return (
-    <div className={embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''}>
+    <div className={`${embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''} ${className}`}>
       <div className="flex items-start justify-between gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-start gap-2 min-w-0">
           <KindIcon kind={kind} className="w-4 h-4 mt-0.5 text-indigo-600 flex-shrink-0" />
           <div className="min-w-0">
-            {viewId ? (
-              <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
-                className="block text-sm font-medium text-gray-900 dark:text-gray-100 truncate no-underline hover:text-indigo-600 transition-colors">
-                {title}
-              </Link>
-            ) : (
-              <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{title}</div>
+            <div className="flex items-center gap-2 min-w-0">
+              {viewId ? (
+                <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
+                  className="block text-sm font-medium text-gray-900 dark:text-gray-100 truncate no-underline hover:text-indigo-600 transition-colors">
+                  {title}
+                </Link>
+              ) : (
+                <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{title}</div>
+              )}
+              {kind && (
+                <span className="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
+                  {kind}
+                </span>
+              )}
+            </div>
+            {/* A summary that only repeats the title says nothing: left out. */}
+            {summary && summary.trim().toLowerCase() !== String(title || '').trim().toLowerCase() && (
+              <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">{summary}</div>
             )}
-            {summary && <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">{summary}</div>}
           </div>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -167,14 +179,23 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
         </div>
       </div>
 
-      <div className={compact ? 'p-3 max-h-72 overflow-auto' : 'p-3'} ref={bodyRef}>
+      {/* No padding: the preview is the card. A fill kind (html, a scene, a
+          chart) takes the whole body, however tall the row stretched it, so
+          nothing sits under the frame; a content kind scrolls inside the
+          fixed body a compact card has. */}
+      <div
+        ref={bodyRef}
+        className={`view-card-body ${fillBody
+          ? `flex-1 min-h-0 flex flex-col overflow-hidden ${compact ? 'min-h-[360px]' : ''}`
+          : (compact ? 'h-72 overflow-auto flex-1' : '')}`}
+      >
         {loading && <div className="text-sm text-gray-400 py-4 text-center">{t('viewViewCard.loadingView')}</div>}
         {error && (
           <div className="flex items-center gap-2 text-sm text-gray-500 py-3">
             <AlertCircle className="w-4 h-4 text-amber-500" /> {error}
           </div>
         )}
-        {view && <ViewRenderer view={view} onOp={onOp} />}
+        {view && <ViewRenderer view={view} onOp={onOp} className={fillBody ? 'flex-1 min-h-0' : ''} />}
       </div>
 
       {expanded && view && (

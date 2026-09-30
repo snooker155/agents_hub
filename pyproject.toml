@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agents-hub"
-version = "0.1.0"
+version = "0.7.0"
 description = "Agents Hub — agents, tasks and workspaces, from a terminal or a dashboard"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 # Only what the terminal client itself needs. Direct mode (the default) also
 # needs the service's own dependencies, which are extras below rather than
@@ -46,3 +46,68 @@ packages = ["agents_hub"]
 backend = { file = ["dashboard/backend/requirements.txt"] }
 agents = { file = ["requirements-agents.txt"] }
 rag = { file = ["requirements-rag.txt"] }
+# Postgres driver, for AGENTS_HUB_DATABASE_URL=postgresql://... (docs/scaling.md).
+postgres = { file = ["requirements-postgres.txt"] }
+# S3 client, for AGENTS_HUB_BLOB_URL=s3://... (common/blobs.py, docs/storage.md).
+blobs = { file = ["requirements-blobs.txt"] }
+# The playground (simulation worlds/scenarios) needs nothing beyond backend/
+# agents already installs; this extra is a marker, not a dependency source —
+# PLAYGROUND_ENABLED is what actually makes the feature optional at runtime.
+# See requirements-playground.txt and docs/playground.md.
+playground = { file = ["requirements-playground.txt"] }
+
+[tool.ruff]
+target-version = "py311"
+# Generated/vendored/build output, and the frontend (its own ESLint config
+# covers it) — none of this is code we lint with ruff.
+exclude = ["node_modules", "chroma_db", "site", "dashboard/frontend", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "BLE001", "S110"]
+ignore = [
+    # E402 (module-import-not-at-top): a large share of the hits are entrypoints
+    # and scripts that deliberately manipulate sys.path before importing local
+    # modules. Baseline ignore for now; revisit once those entrypoints are
+    # restructured to not need it.
+    "E402",
+    # E741 (ambiguous variable name, e.g. `l`/`I`/`O`): pre-existing short names
+    # throughout the codebase, mostly loop variables and math-y code. Baseline
+    # ignore for now; revisit as a separate rename pass.
+    "E741",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# BLE001 (blind except Exception) and S110 (try/except/pass with no logging):
+# common/, managers/, notify/, a2a/, mcp_client/ and workspace/ are clean of
+# both and enforce them as errors. Every other top-level package still has
+# unreviewed blind excepts, so both rules stay ignored there until someone
+# does the same narrowing pass for that package; remove a line here once its
+# package is clean, and the rules start applying to it too.
+"agents/**" = ["BLE001", "S110"]
+"chat/**" = ["BLE001", "S110"]
+"cli/**" = ["BLE001", "S110"]
+"clients/**" = ["BLE001", "S110"]
+"connections/**" = ["BLE001", "S110"]
+"connectors/**" = ["BLE001", "S110"]
+"dashboard/**" = ["BLE001", "S110"]
+"deploy/**" = ["BLE001", "S110"]
+"evals/**" = ["BLE001", "S110"]
+"examples/**" = ["BLE001", "S110"]
+"flow/**" = ["BLE001", "S110"]
+"instances/**" = ["BLE001", "S110"]
+"loops/**" = ["BLE001", "S110"]
+"memory/**" = ["BLE001", "S110"]
+"plans/**" = ["BLE001", "S110"]
+"playground/**" = ["BLE001", "S110"]
+"projects/**" = ["BLE001", "S110"]
+"providers/**" = ["BLE001", "S110"]
+"reasoning/**" = ["BLE001", "S110"]
+"runtime/**" = ["BLE001", "S110"]
+"tasks/**" = ["BLE001", "S110"]
+"teams/**" = ["BLE001", "S110"]
+"tools/**" = ["BLE001", "S110"]
+"views/**" = ["BLE001", "S110"]
+# Tests exercise failure paths deliberately (forcing an exception to confirm
+# a caller handles it), so a blind except or a swallowed one there is not the
+# same code smell it is in application code. Both rules stay ignored here.
+"tests/**" = ["BLE001", "S110"]

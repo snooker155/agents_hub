@@ -245,8 +245,13 @@ def build_prompt_struct(messages: List[Any]) -> Dict[str, Any]:
     system_parts = [it["content"] for it in items if it["role"] == "system"]
     non_system = [it for it in items if it["role"] != "system"]
 
+    # A message a person sent while the run worked (agents/loop_ext/
+    # steering.py) sits in the trail as a user turn; it is not the turn's own
+    # request, so it is never picked as ``user_message``.
+    from agents.loop_ext.steering import is_steering_text
     last_user_idx = next(
-        (i for i in range(len(non_system) - 1, -1, -1) if non_system[i]["role"] == "user"),
+        (i for i in range(len(non_system) - 1, -1, -1)
+         if non_system[i]["role"] == "user" and not is_steering_text(non_system[i]["content"])),
         None,
     )
     if last_user_idx is None:

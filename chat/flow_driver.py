@@ -14,6 +14,7 @@ and returns ``(driver, state)`` — ``state`` exposes the per-node bookkeeping
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
@@ -31,10 +32,9 @@ from managers.run_manager import (
     open_run as register_run,
     update_run as _update_run,
 )
-from common import artifact_sink, entity_sink as entity_sink_mod
+from common import artifact_sink, citation_sink as citation_sink_mod, entity_sink as entity_sink_mod
 
 from chat.models import ChatRequest
-from chat.context import history_block_lines
 from chat.runs import utc_iso
 from chat.streaming import StreamDriveResult, drive_streaming_run
 
@@ -50,6 +50,9 @@ class ChatFlowState:
     run id (used as the final ``done`` event's run_id)."""
     node_meta: Dict[str, dict] = field(default_factory=dict)
     last_run_id: Optional[str] = None
+    #: node_id → the conversation messages that node runs with. Only a root node
+    #: has one: downstream nodes answer their predecessor, not the user.
+    node_history: Dict[str, list] = field(default_factory=dict)
 
 
 def build_chat_driver(
@@ -61,7 +64,7 @@ def build_chat_driver(
     flow_name: str,
     session_title: str,
     workspace_abs: Optional[str],
-    history_lines: list,
+    history_messages: list,
     context_lines: list,
     user_message: str,
     log_flow: Callable[[dict], None],
@@ -78,10 +81,9 @@ def build_chat_driver(
     node_meta = state.node_meta
 
     def _chat_prompt(shared, node, node_id, predecessors, node_outputs, flow_state, node_task):
-        """Root nodes get history + latest user message + the attached context
-        blocks (entities and files); downstream nodes get the engine's
-        predecessor/state block. Preserves the prior chat prompt layout while
-        letting FlowState slices flow through."""
+        """Root nodes get the latest user message + the attached context blocks
+        (entities and files), with the conversation itself carried alongside as
+        messages; downstream nodes get the engine's predecessor/state block."""
         has_pred = any(pid in node_outputs for pid in predecessors.get(node_id, []))
         # Project scope preamble leads every node prompt (root and downstream) so
         # each agent knows its file/task tools are confined to the project.
@@ -90,8 +92,10 @@ def build_chat_driver(
             base = build_agent_input(shared, node, node_id, predecessors, node_outputs, flow_state, node_task)
             parts.append(base)
         else:
-            parts += list(history_block_lines(history_lines))
-            parts += ["Latest user message:", user_message]
+            # A root node answers the user, so it gets the conversation — as
+            # messages, next to this turn's text, not folded into it.
+            state.node_history[node_id] = list(history_messages)
+            parts += [user_message]
             # Still surface any declared input-state slice for root nodes.
             state_block = build_agent_input("", node, node_id, predecessors, {}, flow_state, "")
             if state_block.strip():
@@ -155,6 +159,16 @@ def build_chat_driver(
             "agent_id": yaml_agent_id, "agent_name": label, "tag": node_domain,
             "content": f"Running {label}", "status": "running", "input": prompt,
         })
+        # A message sent to a node of this turn that finished without taking
+        # it goes to the node starting now (common/steering.py), so a person
+        # steering a flow is heard by whichever agent runs next.
+        try:
+            from common import steering
+            steering.retarget_pending(
+                [m.get("run_id") for m in node_meta.values() if m.get("run_id")], run_id)
+        except Exception:  # noqa: BLE001 - an unmoved message is settled with the turn instead
+            logging.getLogger(__name__).debug("steering: could not move messages to %s", run_id,
+                                              exc_info=True)
         node_meta[node_id] = {
             "run_id": run_id, "label": label, "agent_id": yaml_agent_id,
             "domain": node_domain, "log_file": log_file, "log_lines": log_lines,
@@ -195,7 +209,11 @@ def build_chat_driver(
                 create_agent, yaml_agent_id, workspace=workspace_abs, streaming=True
             )
             callback.bind_model(agent.provider or "", agent.model or "")
-            return await agent.arun(prompt, callbacks=[callback])
+            # The node's run id reaches its loop so a message sent to this
+            # node while it works is read before its next step.
+            from chat.pipelines import _run_id_kwargs
+            return await agent.arun(prompt, history=state.node_history.get(node_id),
+                                    callbacks=[callback], **_run_id_kwargs(agent, run_id))
 
         # Per-node artifact recorder so each node's file changes are attributed to
         # its own run. create_task copies the context, so set→create→reset here.
@@ -204,9 +222,14 @@ def build_chat_driver(
         # files this node's tools touched are linked from that node's reply.
         node_entities = entity_sink_mod.EntitySink()
         _node_entity_token = entity_sink_mod.set_sink(node_entities)
+        # And a per-node citation sink: the passages this node's memory search
+        # showed its model, numbered for that node's own [n] references.
+        node_citations = citation_sink_mod.CitationSink()
+        _node_citation_token = citation_sink_mod.set_sink(node_citations)
         task = asyncio.create_task(_run_node_agent())
         artifact_sink.reset_recorder(_node_artifact_token)
         entity_sink_mod.reset_sink(_node_entity_token)
+        citation_sink_mod.reset_sink(_node_citation_token)
 
         drive = StreamDriveResult()
         try:
@@ -214,6 +237,7 @@ def build_chat_driver(
                 task=task, queue=queue, callback=callback, run_id=run_id,
                 full_prompt=prompt, started_ts=node_started_ts, result=drive,
                 entity_sink=node_entities,
+                citation_sink=node_citations,
             ):
                 yield event
         except asyncio.CancelledError:
@@ -244,6 +268,9 @@ def build_chat_driver(
         # Links to the service entities this node touched; the pipeline attaches
         # them to the node's done event so its bubble can show them.
         meta["entities"] = drive.entities
+        # The sources the node's reply cites as [n] (common/citation_sink.py);
+        # already on the node's run record as ``process.citations``.
+        meta["citations"] = drive.citations
         summary_line = (
             f"[message_summary] id={node_msg_id} "
             f"inbound_tokens={callback.prompt_tokens} "
@@ -350,5 +377,15 @@ def build_chat_driver(
         on_node_start=_on_node_start,
         on_flow_start=_on_flow_start,
         on_node_done=_on_node_done,
+        # No stop_agent_node override: unlike the task surface's synchronous,
+        # worker-thread invocation (flow.task_driver, which needs an explicit
+        # stop_event + in-loop guard to actually reach it), this node runs on
+        # the event loop the whole way (agent.arun as an asyncio.Task). When
+        # the engine's timeout fires, asyncio.wait_for cancels the coroutine
+        # that is awaiting this generator, which throws CancelledError in here
+        # at the current `async for event in drive_streaming_run(...)` — the
+        # `except asyncio.CancelledError` block below cancels the underlying
+        # agent task and closes the run record as stopped. The default no-op
+        # stop_agent_node is correct as-is: there is nothing left for it to do.
     )
     return driver, state

@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from tools.docs_tool import DOCS_DIR, INDEX_FILE, _index, _stem, read_doc, search_docs
+from tools.docs_tool import DOCS_DIR, _index, _stem, read_doc, search_docs
 
 
 def _call(tool, **kwargs) -> dict:
@@ -24,7 +24,7 @@ def test_index_and_files_agree():
     """A doc listed but missing reads as a broken link; a file present but
     unlisted is invisible to search, which is worse — it looks like the
     documentation simply does not cover the subject."""
-    indexed = {e["id"] for e in _index()}
+    indexed = {e["id"] for e in _index() if not e.get("path")}
     on_disk = {p.stem for p in DOCS_DIR.glob("*.md")}
     assert indexed == on_disk, (
         f"only in index: {sorted(indexed - on_disk)}; "
@@ -78,6 +78,8 @@ def test_the_corpus_covers_every_system_agent_surface():
     ("attach a skill to an agent", "skills"),
     ("import an agent from a git repository", "imported-agents"),
     ("what did an agent fetch from the web", "web-logs"),
+    ("what is new in the latest release", "changelog"),
+    ("recently added features and changes", "changelog"),
 ])
 def test_search_puts_the_right_doc_first(query, expected):
     result = _call(search_docs, query=query, limit=3)
@@ -133,6 +135,49 @@ def test_read_doc_returns_the_file():
     assert result["truncated"] is False
 
 
+def test_read_doc_serves_an_entry_by_path():
+    """CHANGELOG.md lives at the repository root, not in docs/; the index entry
+    names its path so "what's new" is answerable from the corpus."""
+    result = _call(read_doc, doc_id="changelog")
+    assert result["ok"] is True
+    assert result["content"].startswith("# Changelog")
+    assert "## [Unreleased]" in result["content"]
+
+
+def _corpus_copy(tmp_path, monkeypatch, entries):
+    import tools.docs_tool as docs_tool
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    index = docs / "index.json"
+    index.write_text(json.dumps({"docs": entries}), encoding="utf-8")
+    monkeypatch.setattr(docs_tool, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(docs_tool, "DOCS_DIR", docs)
+    monkeypatch.setattr(docs_tool, "INDEX_FILE", index)
+    return docs
+
+
+def test_read_doc_sees_an_edit_without_a_restart(tmp_path, monkeypatch):
+    """A runner replica lives for hours; CHANGELOG.md changes under it."""
+    import os
+    entry = {"id": "changelog", "path": "CHANGELOG.md", "title": "Changelog", "summary": "s"}
+    _corpus_copy(tmp_path, monkeypatch, [entry])
+    log = tmp_path / "CHANGELOG.md"
+    log.write_text("# Changelog\n\nold\n", encoding="utf-8")
+    assert "old" in _call(read_doc, doc_id="changelog")["content"]
+    log.write_text("# Changelog\n\nnew line\n", encoding="utf-8")
+    os.utime(log, (log.stat().st_atime, log.stat().st_mtime + 5))
+    assert "new line" in _call(read_doc, doc_id="changelog")["content"]
+
+
+def test_read_doc_reports_a_missing_file_instead_of_empty_content(tmp_path, monkeypatch):
+    entry = {"id": "changelog", "path": "CHANGELOG.md", "title": "Changelog", "summary": "s"}
+    _corpus_copy(tmp_path, monkeypatch, [entry])
+    result = _call(read_doc, doc_id="changelog")
+    assert result["ok"] is False
+    assert result["code"] == "unreadable"
+    assert "CHANGELOG.md" in result["error"]
+
+
 def test_read_doc_tolerates_the_extension():
     assert _call(read_doc, doc_id="loops.md")["ok"] is True
 
@@ -165,15 +210,10 @@ def test_every_system_agent_can_reach_the_corpus():
 @pytest.fixture
 def live_registry():
     """A registry mirroring the shipped seed, in the suite's throwaway root."""
-    import shutil
 
-    from agents.registry import _REGISTRY_CACHE
-    from common.bootstrap import BOOTSTRAP_AGENTS_FILE
-    from common.paths import AGENTS_FILE
+    from common.bootstrap import seed_registry_from_bootstrap
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
-    _REGISTRY_CACHE["mtime"] = None
+    seed_registry_from_bootstrap()
     yield
 
 
@@ -198,3 +238,15 @@ def test_the_help_block_is_gated_on_the_tool(live_registry):
     finally:
         from agents.registry import remove_agent
         remove_agent("docsless_probe")
+
+
+def test_docs_route_serves_the_changelog_and_404s_an_unknown_id():
+    """The in-app Docs page reads the changelog from the corpus, not a copy."""
+    from fastapi import HTTPException
+    from routes import docs as docs_routes
+
+    doc = docs_routes.get_doc("changelog")
+    assert doc["content"].startswith("# Changelog")
+    with pytest.raises(HTTPException) as err:
+        docs_routes.get_doc("no-such-doc")
+    assert err.value.status_code == 404

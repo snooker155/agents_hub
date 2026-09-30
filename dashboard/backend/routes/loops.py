@@ -17,18 +17,17 @@ rows, so watching live and reviewing afterwards look identical.
 """
 from __future__ import annotations
 
-import asyncio
 import json
-import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from loops import store
 from loops.models import EVALUATOR_MODES, Loop
-from loops.runner import estimate_cost, run_loop
+from loops.runner import LoopResumeError, estimate_cost
+from chat.entity_chat import EntityChatSpec
+from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 router = APIRouter(prefix="/api/loops", tags=["loops"])
 
@@ -49,6 +48,12 @@ class LoopIn(BaseModel):
     evaluator_agent_id: Optional[str] = None
     evaluator_provider: Optional[str] = None
     evaluator_model: Optional[str] = None
+    # A markdown rubric graded per criterion (loops/evaluator.evaluate_with_rubric);
+    # when set it replaces the evaluator. grader: "provider/model" or
+    # {provider, model}; None falls back to the evaluator model, then the
+    # outcome grader default.
+    rubric: str = ""
+    grader: Optional[Union[str, Dict[str, Any]]] = None
 
 
 class RunIn(BaseModel):
@@ -97,6 +102,12 @@ def _validate(data: LoopIn) -> None:
             status_code=400,
             detail="evaluator_mode 'agent' needs evaluator_agent_id",
         )
+    if data.grader not in (None, "", {}):
+        from tasks.outcome import OutcomeError, parse_grader_ref
+        try:
+            parse_grader_ref(data.grader)
+        except OutcomeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if data.min_iterations > data.max_iterations:
         raise HTTPException(
             status_code=400, detail="min_iterations cannot exceed max_iterations",
@@ -120,6 +131,17 @@ def _enrich(loop: Loop) -> Dict[str, Any]:
     flow = _load_flow(loop.flow_id)
     out["flow_name"] = (flow or {}).get("name") or loop.flow_id
     out["flow_exists"] = flow is not None
+    if (loop.rubric or "").strip():
+        # A rubric replaces the evaluator: an independent model grades each
+        # criterion, so there is no judging agent to name.
+        from loops.evaluator import rubric_grader
+        from tasks.outcome import parse_rubric
+        out["resolved_evaluator"] = {
+            "mode": "rubric", "agent_id": None,
+            "grader": rubric_grader(loop, loop.workspace),
+            "criteria": parse_rubric(loop.rubric),
+        }
+        return out
     mode, agent_id = resolve_evaluator(loop, flow or {})
     out["resolved_evaluator"] = {"mode": mode, "agent_id": agent_id}
     return out
@@ -178,11 +200,30 @@ async def get_iterations(loop_run_id: str, since: int = 0):
     }
 
 
+@router.post("/runs/{loop_run_id}/resume")
+async def resume_run(loop_run_id: str):
+    """Continue a loop run from the iteration after its last completed one.
+
+    Every finished iteration is a whole flow's worth of work, and the run's
+    stored position is what makes picking it up cheaper than starting over.
+    The run is relaunched as its own process (loops/launcher.py), under the
+    same id; 400 when there is nothing to resume.
+    """
+    from loops.launcher import resume_loop_run as _resume
+    if not store.get_run(loop_run_id):
+        raise HTTPException(status_code=404, detail="Loop run not found")
+    try:
+        return _resume(loop_run_id).to_dict()
+    except LoopResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/runs/{loop_run_id}/stop")
 async def stop_run(loop_run_id: str):
     """Ask a running loop to stop. It is checked between nodes and between
     iterations, so the flow is never left half-applied."""
-    if not store.request_stop(loop_run_id):
+    from loops.launcher import stop_loop_run
+    if not stop_loop_run(loop_run_id):
         raise HTTPException(status_code=400, detail="Run is not running")
     return {"ok": True}
 
@@ -227,50 +268,29 @@ async def estimate(loop_id: str):
 
 @router.post("/{loop_id}/run")
 async def start_run(loop_id: str, data: RunIn):
-    """Start a loop run on a background thread and return its record.
+    """Start a loop run as its own process and return its record.
 
-    The client needs a run id to follow, and only ``run_loop`` mints one, so we
-    wait for the row to appear rather than duplicating the id logic here. The
-    loop keeps running regardless of when this returns.
+    The record is written and the process spawned (or queued for a worker in
+    the ``api`` role) before this returns, so the client has an id to follow
+    at once (loops/launcher.py).
     """
+    from loops.launcher import start_loop_run
     loop = store.get_loop(loop_id)
     if not loop:
         raise HTTPException(status_code=404, detail="Loop not found")
-
     if not _load_flow(loop.flow_id):
         raise HTTPException(
             status_code=400,
             detail=f"Loop references a flow that is missing or unreadable: {loop.flow_id}",
         )
-
-    ready = threading.Event()
-    failure: Dict[str, Any] = {}
-
-    def _worker():
-        try:
-            run_loop(
-                loop_id, goal=data.goal, workspace=data.workspace or loop.workspace,
-                task_id=data.task_id, seed=dict(data.seed or {}),
-                on_iteration=lambda _it: ready.set(),
-            )
-        except Exception as e:  # noqa: BLE001
-            failure["error"] = f"{type(e).__name__}: {e}"
-        finally:
-            ready.set()
-
-    threading.Thread(target=_worker, name=f"loop-{loop_id}", daemon=True).start()
-
-    for _ in range(60):
-        runs = store.list_runs(loop_id, limit=1)
-        if runs:
-            return runs[0].to_dict()
-        if failure:
-            raise HTTPException(status_code=400, detail=failure["error"])
-        ready.wait(timeout=0.05)
-
-    if failure:
-        raise HTTPException(status_code=400, detail=failure["error"])
-    return {"loop_id": loop_id, "status": "starting"}
+    try:
+        run = start_loop_run(
+            loop_id, data.goal or "", workspace=data.workspace or loop.workspace,
+            task_id=data.task_id, seed=dict(data.seed or {}),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return run.to_dict()
 
 
 # ── Loop build chat ───────────────────────────────────────────────────────────
@@ -286,10 +306,6 @@ async def start_run(loop_id: str, data: RunIn):
 
 LOOP_AGENT_ID = "loop_creator"
 LOOP_CHAT_KIND = "loop"
-
-
-class LoopChatIn(BaseModel):
-    message: str = ""
 
 
 def _flow_catalog(workspace: Optional[str]) -> List[Dict[str, Any]]:
@@ -382,61 +398,29 @@ def _loop_chat_prompt(loop: Loop, history: List[dict], user_message: str) -> str
     return "\n".join(parts)
 
 
-@router.get("/{loop_id}/chat")
-async def get_loop_chat(loop_id: str):
-    """The build chat for one loop: the transcript plus the rich replay trace."""
-    from common.entity_chat_store import entity_chat_store
+def _load_loop_chat(request):
+    from types import SimpleNamespace
 
-    if not store.get_loop(loop_id):
-        raise HTTPException(status_code=404, detail="Loop not found")
-    chat_store = entity_chat_store()
-    return {
-        "messages": chat_store.get_messages(LOOP_CHAT_KIND, loop_id),
-        "trace": chat_store.get_trace(LOOP_CHAT_KIND, loop_id),
-        # What the session picker needs to reach this chat's history
-        # (routes/entity_chats.py); the browser never builds the key itself.
-        "chat_ref": {"kind": LOOP_CHAT_KIND, "id": loop_id},
-    }
-
-
-@router.delete("/{loop_id}/chat")
-async def clear_loop_chat(loop_id: str):
-    """Clear the transcript and start a fresh chat session. The loop is untouched."""
-    from common.entity_chat_store import entity_chat_store
-
-    if not store.get_loop(loop_id):
-        raise HTTPException(status_code=404, detail="Loop not found")
-    epoch = entity_chat_store().clear(LOOP_CHAT_KIND, loop_id, new_session=True)
-    return {"cleared": True, "session_epoch": epoch}
-
-
-@router.post("/{loop_id}/chat")
-async def chat_loop(loop_id: str, payload: LoopChatIn):
-    """Run one turn of the loop build chat (SSE).
-
-    Streams the agent's ``tool_*`` / ``thinking`` / ``token`` events, then a
-    ``loop`` event carrying the definition as it stands after the turn, the
-    final ``message`` and ``done``.
-    """
-    from chat.entity_chat import (
-        EntityChatSpec, RecordingQueue, SSE_HEADERS, guarded, relay_queue,
-        run_entity_chat_turn, spawn_detached, sse,
-    )
-
+    loop_id = request.path_params["loop_id"]
     loop = store.get_loop(loop_id)
     if not loop:
         raise HTTPException(status_code=404, detail="Loop not found")
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Empty message")
+    return SimpleNamespace(entity_id=loop_id, workspace=loop.workspace, loop=loop)
 
-    before = _loop_state(loop)
 
+def _load_loop_send(request, body):
+    ctx = _load_loop_chat(request)
+    ctx.before = _loop_state(ctx.loop)
+    return ctx
+
+
+def _loop_summarize(ctx):
     def _summarize() -> str:
-        after_loop = store.get_loop(loop_id)
+        after_loop = store.get_loop(ctx.entity_id)
         if not after_loop:
             return "The loop is gone."
         after = _loop_state(after_loop)
+        before = ctx.before
         if after == before:
             return ""
         bits = []
@@ -451,54 +435,35 @@ async def chat_loop(loop_id: str, payload: LoopChatIn):
         if after["evaluator"] != before["evaluator"]:
             bits.append("changed who judges each pass")
         return ("Done — " + ", ".join(bits) + ".") if bits else "Done — the loop was updated."
+    return _summarize
 
-    spec = EntityChatSpec(
-        kind=LOOP_CHAT_KIND,
-        agent_id=LOOP_AGENT_ID,
-        title=f"{loop.name} · loop",
-        workspace=loop.workspace,
-    )
 
-    async def run_turn(queue: asyncio.Queue):
+def _loop_context_setup(ctx):
+    # The builder's tools resolve the workspace from this ContextVar, so the
+    # edit lands in the loop's own workspace, not the UI's current one.
+    if ctx.loop.workspace:
         from common.workspace_context import _workspace_ctx
-
-        # The builder's tools resolve the workspace from this ContextVar, so the
-        # edit lands in the loop's own workspace, not the UI's current one.
-        if loop.workspace:
-            _workspace_ctx.set(loop.workspace)
-
-        await run_entity_chat_turn(
-            queue, spec, loop_id, user_message,
-            lambda history: _loop_chat_prompt(store.get_loop(loop_id) or loop,
-                                              history, user_message),
-            summarize=_summarize,
-        )
-        after = store.get_loop(loop_id)
-        if after:
-            await queue.put({"type": "loop", "loop": _enrich(after)})
-
-    async def event_stream():
-        queue = RecordingQueue()
-        yield sse({"type": "meta", "kind": LOOP_CHAT_KIND, "id": loop_id})
-        worker = spawn_detached(guarded(run_turn, queue))
-        async for frame in relay_queue(queue):
-            yield frame
-        await worker
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+        _workspace_ctx.set(ctx.loop.workspace)
 
 
-@router.post("/{loop_id}/chat/stop")
-async def stop_loop_chat(loop_id: str):
-    """Stop the in-flight build run for this loop.
+async def _loop_post_turn(queue, ctx):
+    after = store.get_loop(ctx.entity_id)
+    if after:
+        await queue.put({"type": "loop", "loop": _enrich(after)})
 
-    The agent runs detached from the SSE connection, so aborting the browser
-    request cannot stop it — this cancels the underlying task.
-    """
-    from chat.entity_chat import cancel_entity_runs
 
-    if not store.get_loop(loop_id):
-        raise HTTPException(status_code=404, detail="Loop not found")
-    cancelled = cancel_entity_runs(LOOP_CHAT_KIND, loop_id)
-    return {"stopped": cancelled > 0, "cancelled": cancelled}
+router.include_router(build_entity_chat_router(EntityChatRoute(
+    kind=LOOP_CHAT_KIND,
+    path="/{loop_id}/chat",
+    load=_load_loop_chat,
+    load_for_send=_load_loop_send,
+    prompt=lambda ctx, history, msg: _loop_chat_prompt(
+        store.get_loop(ctx.entity_id) or ctx.loop, history, msg),
+    spec=lambda ctx: EntityChatSpec(
+        kind=LOOP_CHAT_KIND, agent_id=LOOP_AGENT_ID,
+        title=f"{ctx.loop.name} · loop", workspace=ctx.loop.workspace,
+    ),
+    summarize=_loop_summarize,
+    context_setup=_loop_context_setup,
+    post_turn=_loop_post_turn,
+)))

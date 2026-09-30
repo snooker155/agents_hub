@@ -13,6 +13,7 @@ import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { isLiveRun } from './playground/status';
 import PlaygroundSwitch from './playground/nav';
+import { TemplateMenu, TemplateModal } from './playground/template-modal';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n, statusLabel } from '../i18n';
@@ -20,6 +21,7 @@ import { useI18n, statusLabel } from '../i18n';
 // The card shows its scenario's last run, because a scenario has no status of
 // its own — "is this one running right now" is a fact about that run.
 const RUN_STATUS_STYLES = {
+  pending: 'bg-blue-100 text-blue-700',
   starting: 'bg-blue-100 text-blue-700',
   running: 'bg-blue-100 text-blue-700',
   stopping: 'bg-amber-100 text-amber-700',
@@ -70,6 +72,8 @@ export default function Playground() {
   const [message, setMessage] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
+  // The template being cast, once one is picked from "New from template".
+  const [template, setTemplate] = useState(null);
 
   // Workspace-aware: the catalogue includes the worlds this workspace has
   // built, and a scenario can be cast in one of those exactly as in a shipped
@@ -144,6 +148,9 @@ export default function Playground() {
             >
               <Sparkles className="w-4 h-4 mr-1.5" /> {t('playground.generateWithAi')}
             </button>
+            {/* A template is a scenario that is already right except for who
+                plays it: the quickest path of the three, for the cases it covers. */}
+            <TemplateMenu onPick={setTemplate} />
             <button
               onClick={() => setShowNew(true)}
               className="inline-flex items-center px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
@@ -242,6 +249,15 @@ export default function Playground() {
           workspace={selectedWorkspace}
           onClose={() => setShowNew(false)}
           onCreated={(s) => { setShowNew(false); navigate(`/playground/${s.scenario_id}`); }}
+        />
+      )}
+
+      {template && (
+        <TemplateModal
+          template={template}
+          workspace={selectedWorkspace}
+          onClose={() => setTemplate(null)}
+          onCreated={(s) => { setTemplate(null); navigate(`/playground/${s.scenario_id}`); }}
         />
       )}
 

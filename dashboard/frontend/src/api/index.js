@@ -10,6 +10,255 @@ const api = axios.create({
   baseURL: `${API_ORIGIN}/api`,
 });
 
+// Optional operator token (see common/auth.py). Off by default: an unconfigured
+// backend accepts every request and this stays a no-op. Settings → System →
+// API access sets it through setApiToken below, or it can be set directly with
+// `localStorage.setItem('agents_hub_api_token', '<token>')`, or baked into the
+// build with VITE_API_TOKEN when the same token should ship with every build.
+// localStorage wins so a token can be set (or rotated) without a rebuild.
+export const getApiToken = () => {
+  try {
+    const stored = window.localStorage.getItem('agents_hub_api_token');
+    if (stored) return stored;
+  } catch {
+    // Privacy mode or no localStorage: fall through to the build-time value.
+  }
+  return import.meta.env.VITE_API_TOKEN ?? '';
+};
+
+// Sets or clears this browser's token. An empty value removes the localStorage
+// key rather than storing a blank one, so getApiToken then falls back to
+// VITE_API_TOKEN (if any) instead of an empty override.
+export const setApiToken = (token) => {
+  try {
+    if (token) window.localStorage.setItem('agents_hub_api_token', token);
+    else window.localStorage.removeItem('agents_hub_api_token');
+  } catch {
+    // Privacy mode or no localStorage: nothing to persist.
+  }
+};
+
+// The session token of a logged-in user (AUTH_MODE=multi, see
+// docs/identity.md). A separate key from the operator token above because they
+// are separate things: one is a shared credential the operator pastes in, the
+// other is issued by the backend to this browser and revoked on logout. When a
+// session exists it wins, so a browser that once held an operator token does
+// not keep presenting it after somebody logs in.
+const SESSION_KEY = 'agents_hub_session_token';
+
+export const getSessionToken = () => {
+  try {
+    return window.localStorage.getItem(SESSION_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
+export const setSessionToken = (token) => {
+  try {
+    if (token) window.localStorage.setItem(SESSION_KEY, token);
+    else window.localStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Privacy mode or no localStorage: nothing to persist.
+  }
+};
+
+/**
+ * Whichever credential this browser currently has, session first.
+ *
+ * Exported because the SSE stream cannot ride the axios instance: EventSource
+ * opens its own connection and cannot set headers, so `StreamContext` has to
+ * put this in the query string itself.
+ */
+export const getAuthToken = () => getSessionToken() || getApiToken();
+const activeToken = getAuthToken;
+
+/**
+ * A one-time, minute-long ticket (POST /api/auth/ticket) for a connection
+ * that cannot set a header: the SSE stream, the browser frame WebSocket, a
+ * full page navigation. Under AUTH_MODE=multi it is the only credential the
+ * backend accepts in a query string, so the session token never lands in a
+ * URL (docs/identity.md, "Tickets for streams"). Resolves to the ticket
+ * string; rejects when the call fails.
+ */
+export const mintAuthTicket = async () => {
+  const { data } = await api.post('/auth/ticket');
+  return data.ticket;
+};
+
+/**
+ * `url` with a credential in its query: `ticket=` when the backend can mint
+ * one, else (a backend older than tickets answers 404, or the call fails
+ * outright) the previous `token=` form. No credential at all when this
+ * browser holds none, which is the single-operator case.
+ */
+export const withAuthTicket = async (url) => {
+  const token = getAuthToken();
+  if (!token) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  try {
+    const ticket = await mintAuthTicket();
+    return `${url}${sep}ticket=${encodeURIComponent(ticket)}`;
+  } catch {
+    return `${url}${sep}token=${encodeURIComponent(token)}`;
+  }
+};
+
+// Mint a ticket, then leave for `url`: for links that must authenticate a
+// full navigation (the GitHub connect flow, an audit export download).
+export const navigateWithAuthTicket = async (url) => {
+  window.location.assign(await withAuthTicket(url));
+};
+
+// Headers a fetch() call outside the `api` instance needs to authenticate.
+// Every streaming endpoint below opens its own fetch (a long-lived response
+// body axios cannot hand back incrementally), so each has to attach this
+// itself rather than riding the interceptor below.
+const authFetchHeaders = () => {
+  const token = activeToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+// Identical GETs already on the wire share one request. StrictMode mounts
+// every effect twice in development, and several components load the same
+// list at the same moment, so without this each page load fires its reads
+// in pairs. The key includes the credential, so a login mid-flight never
+// hands one person's answer to another. A call with an AbortSignal is left
+// alone: aborting a shared request would cancel it for everybody. Each
+// joiner gets its own copy of `data`, so a caller that sorts or edits its
+// result in place cannot change what another caller sees.
+const inflightGets = new Map();
+const sendGet = api.get.bind(api);
+
+const copyResponse = (response) => {
+  try {
+    return { ...response, data: structuredClone(response.data) };
+  } catch {
+    return response;
+  }
+};
+
+api.get = (url, config = {}) => {
+  if (config.signal) return sendGet(url, config);
+  let key;
+  try {
+    key = JSON.stringify([
+      url, config.params ?? null, config.headers ?? null, config.responseType ?? null, activeToken(),
+    ]);
+  } catch {
+    return sendGet(url, config);
+  }
+  const shared = inflightGets.get(key);
+  if (shared) return shared.then(copyResponse);
+  const request = sendGet(url, config).finally(() => inflightGets.delete(key));
+  inflightGets.set(key, request);
+  return request;
+};
+
+api.interceptors.request.use((config) => {
+  const token = activeToken();
+  if (token) {
+    config.headers = { ...config.headers, Authorization: `Bearer ${token}` };
+  }
+  return config;
+});
+
+// A 401 means the session this browser holds is gone: expired, logged out
+// elsewhere, or revoked with a password reset. Drop it and send the app back
+// to the login screen, rather than leaving every page showing its own error.
+// Only sessions are handled here: an operator token that stops working is a
+// configuration problem the Settings page reports, not a login to redo, and
+// the auth routes themselves answer 401 as part of their normal contract.
+const LOGIN_PATH = '/login';
+const isAuthRoute = (url = '') => String(url).includes('/auth/');
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    if (status === 401 && getSessionToken() && !isAuthRoute(error?.config?.url)) {
+      setSessionToken('');
+      if (window.location.pathname !== LOGIN_PATH) {
+        window.location.assign(LOGIN_PATH);
+      }
+    }
+    return Promise.reject(error);
+  },
+);
+
+// Identity API (see docs/identity.md and dashboard/backend/routes/auth.py).
+// `getAuthMode` is public in every mode and is what the frontend renders from.
+export const getAuthMode = () => api.get('/auth/mode');
+export const authBootstrap = (data) => api.post('/auth/bootstrap', data);
+export const authLogin = (data) => api.post('/auth/login', data);
+export const authLogout = () => api.post('/auth/logout');
+export const getMe = () => api.get('/auth/me');
+export const getUsers = () => api.get('/auth/users');
+export const createUser = (data) => api.post('/auth/users', data);
+export const updateUser = (id, data) => api.patch(`/auth/users/${id}`, data);
+export const deleteUser = (id) => api.delete(`/auth/users/${id}`);
+export const resetUserPassword = (id, password) =>
+  api.post(`/auth/users/${id}/password`, { password });
+
+// Workspace membership: who may read, write or administer one workspace.
+export const getWorkspaceMembers = (name) => api.get(`/workspaces/${name}/members`);
+
+// ── Stage 3 identity (docs/identity.md) ──────────────────────────────────────
+// Single sign-on: the browser is sent to /api/auth/oidc/start (a redirect to
+// the provider) and comes back at /login/oidc with the session in the URL
+// fragment; see pages/OidcCallback.jsx.
+export const oidcStartUrl = (next = '') =>
+  `${API_ORIGIN}/api/auth/oidc/start${next ? `?next=${encodeURIComponent(next)}` : ''}`;
+
+// The viewer's own account: sessions and personal API keys (routes/account.py).
+export const getMySessions = () => api.get('/auth/sessions');
+export const revokeMySession = (id) => api.delete(`/auth/sessions/${id}`);
+export const revokeOtherSessions = () => api.post('/auth/sessions/revoke-others');
+export const changeMyPassword = (current_password, password) =>
+  api.post('/auth/password', { current_password, password });
+export const getMyApiKeys = () => api.get('/auth/keys');
+export const createMyApiKey = (data) => api.post('/auth/keys', data);
+export const revokeMyApiKey = (id) => api.delete(`/auth/keys/${id}`);
+// Administrators: every key of one account.
+export const getUserApiKeys = (userId) => api.get(`/auth/users/${userId}/keys`);
+export const revokeUserApiKey = (userId, keyId) => api.delete(`/auth/users/${userId}/keys/${keyId}`);
+
+// Groups and the rules that turn a group into a role (routes/groups.py).
+export const getGroups = () => api.get('/auth/groups');
+export const createGroup = (data) => api.post('/auth/groups', data);
+export const deleteGroup = (id) => api.delete(`/auth/groups/${id}`);
+export const getGroupMembers = (id) => api.get(`/auth/groups/${id}/members`);
+export const setGroupMembers = (id, user_ids) => api.put(`/auth/groups/${id}/members`, { user_ids });
+export const getGroupMappings = () => api.get('/auth/group-mappings');
+export const createGroupMapping = (data) => api.post('/auth/group-mappings', data);
+export const deleteGroupMapping = (id) => api.delete(`/auth/group-mappings/${id}`);
+
+// The audit trail (routes/audit.py). `params`: actor, action, workspace,
+// object_type, object_id, since, until, text, result, limit, offset.
+export const getAuditLog = (params) => api.get('/audit', { params });
+export const getAuditActions = () => api.get('/audit/actions');
+// The export URL carries no credential: the page downloads it through
+// navigateWithAuthTicket, which adds a one-time ticket (the response is an
+// attachment, so the page stays where it is).
+export const auditExportUrl = (params, format = 'csv') => {
+  const query = new URLSearchParams({ ...(params || {}), format });
+  return `${API_ORIGIN}/api/audit/export?${query.toString()}`;
+};
+
+// Workspace secrets (routes/secrets.py): names and hints only, never values.
+export const getWorkspaceSecrets = (name) => api.get(`/workspaces/${name}/secrets`);
+export const setWorkspaceSecret = (name, secret, data) =>
+  api.put(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, data);
+export const deleteWorkspaceSecret = (name, secret, params) =>
+  api.delete(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}`, { params });
+// An agent's allowlist: the secret names a run of it may receive.
+export const getAgentSecrets = (id) => api.get(`/agents/${id}/secrets`);
+export const updateAgentSecrets = (id, secrets, extra = {}) =>
+  api.put(`/agents/${id}/secrets`, { secrets, ...extra });
+export const setWorkspaceMember = (name, data) => api.put(`/workspaces/${name}/members`, data);
+export const removeWorkspaceMember = (name, userId) =>
+  api.delete(`/workspaces/${name}/members/${userId}`);
+
 // System health snapshot: DB reachability + store counts, background-service
 // liveness, on-disk state sizes, and agent build-cache hit/miss stats.
 //
@@ -19,6 +268,10 @@ const api = axios.create({
 // own — behind a proxy that forwards just `/api`, or against a stale CORS
 // config — and produce a browser CORS error nothing else in the app would hit.
 export const getSystemHealth = () => api.get('/health');
+
+// One document of the documentation corpus the agents read (docs/index.json),
+// e.g. 'changelog'. Returns { id, title, content, truncated }.
+export const getDoc = (id) => api.get(`/docs/${id}`);
 
 /**
  * Drain one `text/event-stream` response, calling `onEvent` per `data:` frame.
@@ -64,7 +317,7 @@ const consumeSSE = async (response, onEvent) => {
 export const streamChat = async ({ body, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
     body: JSON.stringify(body),
   });
@@ -130,6 +383,14 @@ export const getAgentHistory = (id, workspace) => api.get(`/agents/${id}/history
 export const getAgentLogs = (id, params) => api.get(`/agents/${id}/logs`, { params });
 // Service health, and the Service Agent's chat about it.
 export const getHealth = () => api.get('/health');
+// The cluster map: members (replicas and workers), leases, the launch
+// queue and where runs, instances and containers live (docs/deployment.md).
+// `/api/deployment` still answers the same document as an alias.
+export const getCluster = () => api.get('/cluster');
+export const getMemberLogs = (memberId, tail = 500) =>
+  api.get(`/cluster/members/${encodeURIComponent(memberId)}/logs`, { params: { tail } });
+export const forgetMember = (memberId) =>
+  api.delete(`/cluster/members/${encodeURIComponent(memberId)}`);
 export const getServiceChat = () => api.get('/health/chat');
 export const clearServiceChat = () => api.delete('/health/chat');
 export const stopServiceChat = () => api.post('/health/chat/stop');
@@ -144,6 +405,14 @@ export const stopAgentDefinitionChat = (id) => api.post(`/agents/${id}/definitio
 export const agentDefinitionChatUrl = (id, workspace) =>
   `/agents/${id}/definition/chat` + (workspace ? `?workspace=${encodeURIComponent(workspace)}` : '');
 export const updateAgentDescription = (id, description) => api.put(`/agents/${id}/description`, { description });
+
+// Registry version history: one row per snapshot, a diff against the current
+// state or another version, and a rollback that goes back through add_agent
+// (so the capability guard still runs).
+export const getAgentVersions = (id) => api.get(`/agents/${id}/versions`);
+export const getAgentVersionDiff = (id, version, against = 'current') =>
+  api.get(`/agents/${id}/versions/${version}/diff`, { params: { against } });
+export const rollbackAgentVersion = (id, version) => api.post(`/agents/${id}/versions/${version}/rollback`);
 export const disconnectAgent = (id) => api.delete(`/agents/${id}`);
 export const updateAgentMemory = (id, data) => api.post(`/agents/${id}/memory`, data);
 export const eraseAgentMemory = (id, workspace) => api.delete(`/agents/${id}/memory`, { params: workspace ? { workspace } : {} });
@@ -157,12 +426,24 @@ export const getAgentDelegates = (id) => api.get(`/agents/${id}/delegates`);
 export const updateAgentDelegates = (id, delegates) => api.post(`/agents/${id}/delegates`, { delegates });
 export const getAgentEpisodicConfig = (id) => api.get(`/agents/${id}/episodic-config`);
 export const updateAgentEpisodicConfig = (id, episodic_write_enabled) => api.post(`/agents/${id}/episodic-config`, { episodic_write_enabled });
+export const getAgentPersonalMemory = (id, workspace) => api.get(`/agents/${id}/personal-memory`, { params: workspace ? { workspace } : {} });
+export const updateAgentPersonalMemory = (id, enabled, workspace) => api.post(`/agents/${id}/personal-memory`, { enabled }, { params: workspace ? { workspace } : {} });
+// Personal memory in a workspace: its switch and each agent's (memory/personal.py).
+export const getWorkspacePersonalMemory = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/personal-memory`);
+export const updateWorkspacePersonalMemory = (name, enabled) => api.put(`/workspaces/${encodeURIComponent(name)}/personal-memory`, { enabled });
 export const getAgentReasoning = (id) => api.get(`/agents/${id}/reasoning`);
 export const updateAgentReasoning = (id, data) => api.post(`/agents/${id}/reasoning`, data);
 export const updateAgentResponseFormat = (id, response_format) => api.post(`/agents/${id}/response-format`, { response_format });
 export const updateAgentClarifyGate = (id, clarify_gate) => api.post(`/agents/${id}/clarify-gate`, { clarify_gate });
 export const getAgentSelfDelegation = (id) => api.get(`/agents/${id}/self-delegation`);
 export const updateAgentSelfDelegation = (id, allow_self_delegation) => api.post(`/agents/${id}/self-delegation`, { allow_self_delegation });
+// Capability guard escape hatch for one agent (agents/capability_guard.py):
+// with the override on, a blocked tool combination, own or reached by
+// delegation, is saved and reported as a warning instead of refused.
+export const getAgentCapabilityOverride = (id) => api.get(`/agents/${id}/capability-override`);
+// Tools the factory adds at build time on top of the record (agents/auto_tools.py).
+export const getAgentAutoTools = (id, workspace) => api.get(`/agents/${id}/auto-tools`, workspace ? { params: { workspace } } : {});
+export const updateAgentCapabilityOverride = (id, capability_override) => api.post(`/agents/${id}/capability-override`, { capability_override });
 export const getAgentModel = (id) => api.get(`/agents/${id}/model`);
 export const updateAgentModel = (id, data) => api.post(`/agents/${id}/model`, data);
 export const testLocalModel = (provider, base_url) => api.post('/settings/test-local-model', { provider, base_url });
@@ -221,14 +502,63 @@ export const pruneConnection = (id, workspace) =>
 export const answerConnectionRun = (id, runId, data, workspace) =>
   api.post(`/connections/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/answer`,
            data, inWorkspace(workspace));
+
+// ── MCP servers: tool collections somebody else runs ─────────────────────────
+// Configured per workspace, so every call carries one. Credentials in headers
+// and env arrive masked (last four characters) and may be sent straight back:
+// the backend reads the masked form as "unchanged" rather than overwriting the
+// stored value, which is what lets a form be saved without holding the secret.
+// Only testMcpServer and listMcpServerTools actually connect to a server.
+export const listMcpServers = (workspace) => api.get('/mcp/servers', inWorkspace(workspace));
+export const createMcpServer = (data, workspace) =>
+  api.post('/mcp/servers', data, inWorkspace(workspace));
+export const updateMcpServer = (id, data, workspace) =>
+  api.patch(`/mcp/servers/${encodeURIComponent(id)}`, data, inWorkspace(workspace));
+export const deleteMcpServer = (id, workspace) =>
+  api.delete(`/mcp/servers/${encodeURIComponent(id)}`, inWorkspace(workspace));
+// Connect now and report every tool the server offers, including the ones the
+// allowlist would filter out: the point of the button is to help write it.
+export const testMcpServer = (id, workspace) =>
+  api.post(`/mcp/servers/${encodeURIComponent(id)}/test`, null, inWorkspace(workspace));
+export const listMcpServerTools = (id, workspace, refresh = false) =>
+  api.get(`/mcp/servers/${encodeURIComponent(id)}/tools`,
+          { params: { ...(workspace ? { workspace } : {}), ...(refresh ? { refresh: true } : {}) } });
+
+// ── Notifications: outbound endpoints + alert rules ──────────────────────────
+// Same masking convention as MCP servers: a webhook's secret comes back as its
+// last four characters, and sending that back unchanged keeps the stored value.
+export const listNotifyEndpoints = (workspace) => api.get('/notify/endpoints', inWorkspace(workspace));
+export const createNotifyEndpoint = (data, workspace) =>
+  api.post('/notify/endpoints', data, inWorkspace(workspace));
+export const updateNotifyEndpoint = (id, data, workspace) =>
+  api.patch(`/notify/endpoints/${encodeURIComponent(id)}`, data, inWorkspace(workspace));
+export const deleteNotifyEndpoint = (id, workspace) =>
+  api.delete(`/notify/endpoints/${encodeURIComponent(id)}`, inWorkspace(workspace));
+export const testNotifyEndpoint = (id, workspace) =>
+  api.post(`/notify/endpoints/${encodeURIComponent(id)}/test`, null, inWorkspace(workspace));
+
+export const listNotifyRules = (workspace) => api.get('/notify/rules', inWorkspace(workspace));
+export const createNotifyRule = (data, workspace) =>
+  api.post('/notify/rules', data, inWorkspace(workspace));
+export const updateNotifyRule = (id, data, workspace) =>
+  api.patch(`/notify/rules/${encodeURIComponent(id)}`, data, inWorkspace(workspace));
+export const deleteNotifyRule = (id, workspace) =>
+  api.delete(`/notify/rules/${encodeURIComponent(id)}`, inWorkspace(workspace));
 export const updateTask = (taskId, data) => api.patch(`/tasks/${taskId}`, data);
 export const assignAgent = (taskId, data) => api.post(`/tasks/${taskId}/assign`, data);
 export const approveAssignment = (taskId) => api.post(`/tasks/${taskId}/approve-assignment`);
 export const rejectAssignment = (taskId) => api.post(`/tasks/${taskId}/reject-assignment`);
 export const stopAgent = (taskId) => api.post(`/tasks/${taskId}/stop-agent`);
 export const answerTask = (taskId, answer) => api.post(`/tasks/${taskId}/answer`, { answer });
+// The decision on a tool call a task is parked on (status awaiting_approval).
+// `budget_usd` is only meaningful when `pending_approval.kind === 'budget'`:
+// the new cap to resume with on approval (see TaskDetails' budget pause card).
+export const approveTaskCall = (taskId, approved, note = '', budget_usd) =>
+  api.post(`/tasks/${taskId}/approve`, { approved, note, ...(budget_usd !== undefined ? { budget_usd } : {}) });
 export const getAgentStatus = (taskId) => api.get(`/tasks/${taskId}/agent-status`);
 export const getAgentWorkspaceCapacities = (agentId) => api.get(`/agents/${encodeURIComponent(agentId)}/workspace-capacities`);
+// Every agent's overrides in one response ({agent_id: {workspace: capacity}}).
+export const getAllWorkspaceCapacities = () => api.get('/agents/workspace-capacities');
 export const setDefaultChatAgent = (agentId, workspace) =>
   api.post(`/agents/${encodeURIComponent(agentId)}/set-default-chat`, null, { params: workspace ? { workspace } : {} });
 export const clearDefaultChatAgent = (agentId, workspace) =>
@@ -283,10 +613,10 @@ export const updateOrchestratorSettings = (data, workspace) =>
 export const getOrchestratorRoutingLog = (workspace) =>
   api.get('/orchestrator/routing-log', { params: workspace ? { workspace } : {} });
 
-// Stats & Manifests
+// Stats
 export const getStats = (workspace) => api.get('/stats', { params: { workspace } });
-export const applyAgentManifest = (data) => api.post('/agents/apply', data);
-export const getTools = () => api.get('/tools');
+// With a workspace the MCP servers attached to it are listed as well.
+export const getTools = (workspace) => api.get('/tools', inWorkspace(workspace));
 export const getToolSource = (toolId) => api.get(`/tools/${encodeURIComponent(toolId)}/source`);
 export const updateToolSource = (toolId, data) => api.put(`/tools/${encodeURIComponent(toolId)}/source`, data);
 export const getRuns = (workspace) => api.get('/runs', { params: workspace ? { workspace } : {} });
@@ -315,6 +645,14 @@ export const setWorkspaceAgentCapacity = (wsName, agentId, capacity) => api.put(
 export const removeWorkspaceAgentCapacity = (wsName, agentId) => api.delete(`/workspaces/${encodeURIComponent(wsName)}/agents/${encodeURIComponent(agentId)}/capacity`);
 export const getWorkspaceSettingsOverrides = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/settings-overrides`);
 export const updateWorkspaceSettingsOverrides = (name, overrides) => api.put(`/workspaces/${encodeURIComponent(name)}/settings-overrides`, { overrides });
+// The workspace's tool policy: the approval gate and the PreToolUse/PostToolUse
+// hooks (see tools/approval.py and agents/hooks.py).
+export const getWorkspacePolicy = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/policy`);
+// The workspace's web domain policy (tools/web.py): its own allow and deny
+// lists and switch, which replace the global ones for runs in the workspace.
+export const getWorkspaceWebPolicy = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/web-policy`);
+export const updateWorkspaceWebPolicy = (name, policy) => api.put(`/workspaces/${encodeURIComponent(name)}/web-policy`, policy);
+export const updateWorkspacePolicy = (name, policy) => api.put(`/workspaces/${encodeURIComponent(name)}/policy`, policy);
 export const getWorkspaceModel = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/model`);
 export const updateWorkspaceModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/model`, data);
 export const updateWorkspaceDefaultModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/default-model`, data);
@@ -348,7 +686,15 @@ export const memoryChatUrl = (workspace, memoryId) => {
   const qs = new URLSearchParams(memoryChatParams(workspace, memoryId)).toString();
   return '/shared-memory/chat' + (qs ? `?${qs}` : '');
 };
+// Core memory blocks — always-in-context text rendered into the agent's prompt.
+export const listMemoryBlocks = (id) => api.get(`/shared-memory/${id}/blocks`);
+export const upsertMemoryBlock = (id, name, data) =>
+  api.put(`/shared-memory/${id}/blocks/${encodeURIComponent(name)}`, data);
+export const deleteMemoryBlock = (id, name) =>
+  api.delete(`/shared-memory/${id}/blocks/${encodeURIComponent(name)}`);
 export const addMemoryNote = (id, data) => api.post(`/shared-memory/${id}/notes`, data);
+// A note in the caller's own personal pool, created on first use.
+export const addPersonalMemoryNote = (data) => api.post('/shared-memory/personal/notes', data);
 export const updateMemoryNote = (id, noteId, data) => api.put(`/shared-memory/${id}/notes/${noteId}`, data);
 export const deleteMemoryNote = (id, noteId) => api.delete(`/shared-memory/${id}/notes/${noteId}`);
 export const upsertMemoryStructuredSlot = (id, slot, data) => api.put(`/shared-memory/${id}/structured/${encodeURIComponent(slot)}`, data);
@@ -385,6 +731,11 @@ export const getSession = (sessionId) => api.get(`/sessions/${sessionId}`);
 export const getSessionMessages = (sessionId) => api.get(`/sessions/${sessionId}/messages`);
 export const stopSession = (sessionId) => api.post(`/sessions/${sessionId}/stop`);
 export const deleteSession = (sessionId, params) => api.delete(`/sessions/${sessionId}`, { params });
+
+// Run groups API — one view over flow/loop/team runs and task containers.
+export const listRunGroups = (params) => api.get('/runs/groups', { params });
+export const getRunGroup = (kind, id) => api.get(`/runs/groups/${kind}/${id}`);
+export const stopRunGroup = (kind, id) => api.post(`/runs/groups/${kind}/${id}/stop`);
 
 // Instances API — the live copies of agents. A run is what a copy did; an
 // instance is the copy itself, and unlike a run it can still be written to
@@ -423,18 +774,79 @@ export const deleteMessage = (runId, params) => api.delete(`/messages/${runId}`,
 // and diff outputs. Long-running (a real LLM call).
 export const replayRun = (runId, data) => api.post(`/runs/${runId}/replay`, data || {}, { timeout: 300000 });
 
-// Nodes API
-export const getNodes = (workspace) => api.get('/nodes', { params: workspace ? { workspace } : {} });
-export const startNode = (data) => api.post('/nodes', data);
-export const getNodeById = (nodeId) => api.get(`/nodes/${nodeId}`);
-export const getNodeLogs = (nodeId) => api.get(`/nodes/${nodeId}/logs`);
-export const stopNode = (nodeId) => api.post(`/nodes/${nodeId}/stop`);
-export const restartNode = (nodeId) => api.post(`/nodes/${nodeId}/restart`);
-export const deleteNode = (nodeId) => api.delete(`/nodes/${nodeId}`);
-export const exposeNode = (nodeId) => api.post(`/nodes/${nodeId}/expose`);
-export const unexposeNode = (nodeId) => api.delete(`/nodes/${nodeId}/expose`);
-export const getNodeConnections = (nodeId) => api.get(`/nodes/${nodeId}/connections`);
-export const getNodeRuns = (nodeId, limit = 50) => api.get(`/nodes/${nodeId}/runs`, { params: { limit } });
+// Resident instance actions — starting, stopping and steering the carrier
+// process behind an instance (instances/carrier.py). A resident instance is
+// what the agent page's Run button starts; everything here targets one by id.
+export const startInstance = (data) => api.post('/instances', data);
+export const restartInstance = (instanceId) => api.post(`/instances/${instanceId}/restart`);
+export const interruptInstance = (instanceId) => api.post(`/instances/${instanceId}/interrupt`);
+export const publishInstance = (instanceId) => api.post(`/instances/${instanceId}/publish`);
+export const unpublishInstance = (instanceId) => api.delete(`/instances/${instanceId}/publish`);
+// Inbound signing for a published instance. Write-only: an instance reports
+// only `inbound_secret_configured`, never the value.
+export const setInstanceInboundSecret = (instanceId, secret) => api.put(`/instances/${instanceId}/inbound-secret`, { secret });
+export const clearInstanceInboundSecret = (instanceId) => api.delete(`/instances/${instanceId}/inbound-secret`);
+export const getInstanceConnections = (instanceId) => api.get(`/instances/${instanceId}/connections`);
+export const getInstanceCarriers = (instanceId) => api.get(`/instances/${instanceId}/carriers`);
+export const updateInstanceInputs = (instanceId, data) => api.patch(`/instances/${instanceId}/inputs`, data);
+export const getInstanceConversations = (instanceId) => api.get(`/instances/${instanceId}/conversations`);
+export const getInstanceMessage = (instanceId, msgId) => api.get(`/instances/${instanceId}/messages/${msgId}`);
+
+// Services API — agents kept running as replicas, and the runner every chat
+// turn goes to (docs/services.md). A service is the desired state; its
+// replicas are resident instances carrying its id.
+export const getServices = (params) => api.get('/services', { params });
+// Where a chat turn for the agent (or any agent, without one) in the
+// workspace would run, and whether it can: the warning beside the agent
+// picker and on the Services page.
+export const getChatRoute = (params) => api.get('/services/chat-route', { params });
+export const getService = (serviceId) => api.get(`/services/${serviceId}`);
+export const createService = (data) => api.post('/services', data);
+export const updateService = (serviceId, data) => api.patch(`/services/${serviceId}`, data);
+export const pauseService = (serviceId) => api.post(`/services/${serviceId}/pause`);
+export const resumeService = (serviceId) => api.post(`/services/${serviceId}/resume`);
+export const deleteService = (serviceId) => api.delete(`/services/${serviceId}`);
+export const getServiceReplicas = (serviceId, params) => api.get(`/services/${serviceId}/replicas`, { params });
+export const addServiceReplica = (serviceId) => api.post(`/services/${serviceId}/replicas`);
+export const getServiceEvents = (serviceId, params) => api.get(`/services/${serviceId}/events`, { params });
+export const getServiceConversations = (serviceId) => api.get(`/services/${serviceId}/conversations`);
+export const messageService = (serviceId, data) => api.post(`/services/${serviceId}/message`, data);
+export const getServiceMessage = (serviceId, msgId) => api.get(`/services/${serviceId}/messages/${msgId}`);
+export const publishService = (serviceId) => api.post(`/services/${serviceId}/publish`);
+export const unpublishService = (serviceId) => api.delete(`/services/${serviceId}/publish`);
+export const setServiceInboundSecret = (serviceId, secret) => api.put(`/services/${serviceId}/inbound-secret`, { secret });
+export const clearServiceInboundSecret = (serviceId) => api.delete(`/services/${serviceId}/inbound-secret`);
+export const getServiceConnections = (serviceId) => api.get(`/services/${serviceId}/connections`);
+
+// Environments API (routes/environments.py) — reusable execution profiles (local
+// vs. docker, network policy, resource limits) a task or node can run in.
+// `workspace` scopes the listing to the global environments plus that
+// workspace's own; a node or job that names no environment falls back to the
+// workspace's default (see environments/service.py resolve_for).
+export const getEnvironments = (workspace, includeArchived = false) =>
+  api.get('/environments', { params: {
+    ...(workspace ? { workspace } : {}),
+    ...(includeArchived ? { include_archived: true } : {}),
+  } });
+export const createEnvironment = (data) => api.post('/environments', data);
+export const getEnvironment = (id) => api.get(`/environments/${encodeURIComponent(id)}`);
+export const updateEnvironment = (id, data) => api.patch(`/environments/${encodeURIComponent(id)}`, data);
+export const archiveEnvironment = (id) => api.post(`/environments/${encodeURIComponent(id)}/archive`);
+export const deleteEnvironment = (id) => api.delete(`/environments/${encodeURIComponent(id)}`);
+export const setDefaultEnvironment = (id) => api.post(`/environments/${encodeURIComponent(id)}/default`);
+export const getEnvironmentUsage = (id) => api.get(`/environments/${encodeURIComponent(id)}/usage`);
+// Docker mode only: builds the derived image (base + pip packages) now,
+// instead of waiting for the first run that needs it.
+export const buildEnvironmentImage = (id) => api.post(`/environments/${encodeURIComponent(id)}/build`);
+export const resolveEnvironment = (workspace, environmentId) =>
+  api.get('/environments/resolve', { params: {
+    ...(workspace ? { workspace } : {}),
+    ...(environmentId ? { environment_id: environmentId } : {}),
+  } });
+// sandbox/registry.py's providers (docker, local, e2b, modal): whether each
+// one can run something right now, and why not — the environment form's
+// provider picker.
+export const getSandboxProviders = () => api.get('/environments/sandbox/providers');
 
 // Legacy Factory API
 export const getFactoryGraph = () => api.get('/factory/graph');
@@ -484,6 +896,13 @@ export const getFlowLogs = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/logs`, { params: { workspace } });
 export const getFlowRuns = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/runs`, { params: { workspace } });
+// One record per execution (status, checkpoint, timing), unlike /runs which
+// groups the log. A failed or parked run with a checkpoint can be resumed.
+export const getFlowInstances = (flowId, activeOnly = false) =>
+  api.get(`/flows/${encodeURIComponent(flowId)}/instances`, { params: { active_only: activeOnly } });
+export const estimateFlowCost = (flowId) => api.get(`/flows/${encodeURIComponent(flowId)}/estimate`);
+export const resumeFlowRun = (flowRunId, answer) =>
+  api.post(`/flows/runs/${encodeURIComponent(flowRunId)}/resume`, answer ? { answer } : {});
 
 // Flow entity registry — federated catalog of flow-usable nodes (agents,
 // processors, conditions, transforms, ...). Backs the Registry menu.
@@ -513,14 +932,38 @@ export const projectRegistryChatUrl = (workspace) =>
 export const cloneProjectRepo = (id) => api.post(`/projects/${id}/clone-repo`);
 export const getProjectGitStatus = (id) => api.get(`/projects/${id}/git-status`);
 export const pullProjectRepo = (id) => api.post(`/projects/${id}/git-pull`);
+// Commit, push a branch and open a PR/MR: the same path the git_publish tool takes.
+export const publishProjectBranch = (id, data) => api.post(`/projects/${id}/git/publish`, data);
 export const getProjectSwaggerSpec = (id, baseUrl) => api.get(`/projects/${id}/swagger-spec`, { params: baseUrl ? { base_url: baseUrl } : {} });
 export const getProjectSpecFromCode = (id) => api.get(`/projects/${id}/spec-from-code`);
 export const proxyProjectApiRequest = (id, data) => api.post(`/projects/${id}/api-request`, data);
+// Project deployments (docs/project-deployments.md): run the project's
+// frontend and backend from inside the hub, watch them, share the link.
+export const getProjectDeployment = (id, refresh = true) =>
+  api.get(`/projects/${id}/deployment`, { params: { refresh } });
+export const updateProjectDeployment = (id, data) => api.put(`/projects/${id}/deployment`, data);
+export const detectProjectDeployment = (id) => api.post(`/projects/${id}/deployment/detect`);
+export const deployProject = (id, build = true) =>
+  api.post(`/projects/${id}/deployment/deploy`, null, { params: { build } });
+export const restartProjectDeployment = (id) => api.post(`/projects/${id}/deployment/restart`);
+export const stopProjectDeployment = (id) => api.post(`/projects/${id}/deployment/stop`);
+export const removeProjectDeployment = (id) => api.delete(`/projects/${id}/deployment`);
+export const getProjectDeploymentLogs = (id, service, tail = 200) =>
+  api.get(`/projects/${id}/deployment/logs`, { params: { ...(service ? { service } : {}), tail } });
+export const getProjectDeploymentEvents = (id, limit = 100) =>
+  api.get(`/projects/${id}/deployment/events`, { params: { limit } });
+export const setProjectDeploymentVisibility = (id, visibility) =>
+  api.put(`/projects/${id}/deployment/visibility`, { visibility });
+export const resetProjectDeploymentLink = (id) => api.post(`/projects/${id}/deployment/link/reset`);
+export const listDeployedApps = (workspace) =>
+  api.get('/deployments/apps', { params: workspace ? { workspace } : {} });
 // Rich views (charts, tables, diagrams, …) produced by agents.
 export const listViews = (params = {}) => api.get('/views', { params });
 export const getView = (viewId) => api.get(`/views/${viewId}`);
 export const setViewState = (viewId, state) => api.patch(`/views/${viewId}/state`, { state });
 export const deleteView = (viewId) => api.delete(`/views/${viewId}`);
+// A slides view as a .pptx (views/slides_pptx.py), as a Blob through the authenticated client.
+export const exportViewPptx = (viewId) => api.get(`/views/${viewId}/export/pptx`, { responseType: 'blob' });
 export const viewAssetUrl = (viewId, path) =>
   `${api.defaults.baseURL}/views/${viewId}/assets/${String(path).split('/').map(encodeURIComponent).join('/')}`;
 // Visualization Studio: live views built by the visualizer agent via ops.
@@ -559,7 +1002,7 @@ export const stopProjectGraphChat = (id) => api.post(`/projects/${id}/graph/chat
 export const streamProjectGraphChat = async ({ projectId, view, message, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api/projects/${projectId}/graph/chat?view=${encodeURIComponent(view)}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
     body: JSON.stringify({ message }),
   });
@@ -589,7 +1032,7 @@ export const streamProjectGraphChat = async ({ projectId, view, message, onEvent
 export const streamEntityChat = async ({ path, message, body = null, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
     body: JSON.stringify({ ...(body || {}), message }),
   });
@@ -632,7 +1075,7 @@ export const clearProjectTasksChat = (id) => api.delete(`/projects/${id}/tasks/c
 export const streamProjectTasksGenerate = async ({ projectId, message, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api/projects/${projectId}/tasks/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     body: JSON.stringify({ message: message || null }),
     signal,
   });
@@ -675,8 +1118,15 @@ export const ensureDockerNetwork = () => api.post('/containers/network/ensure');
 export const getAgentsBuildStatus = () => api.get('/containers/agents-status');
 
 // Plan API — scheduled jobs (future notifications / agent tasks)
-export const getPlanJobs = (workspace, status) =>
-  api.get('/plan/jobs', { params: { ...(workspace ? { workspace } : {}), ...(status ? { status } : {}) } });
+// `kinds` narrows the listing to a comma list ('agent_task,flow,loop', or an
+// array the same set of values) — what the Deployments page uses to leave
+// plain notifications out of its table.
+export const getPlanJobs = (workspace, status, kinds) =>
+  api.get('/plan/jobs', { params: {
+    ...(workspace ? { workspace } : {}),
+    ...(status ? { status } : {}),
+    ...(kinds ? { kinds: Array.isArray(kinds) ? kinds.join(',') : kinds } : {}),
+  } });
 export const createPlanJob = (data) => api.post('/plan/jobs', data);
 export const getPlanJob = (id) => api.get(`/plan/jobs/${id}`);
 export const updatePlanJob = (id, data) => api.patch(`/plan/jobs/${id}`, data);
@@ -685,6 +1135,11 @@ export const pausePlanJob = (id) => api.post(`/plan/jobs/${id}/pause`);
 export const resumePlanJob = (id) => api.post(`/plan/jobs/${id}/resume`);
 export const cancelPlanJob = (id) => api.post(`/plan/jobs/${id}/cancel`);
 export const runPlanJobNow = (id) => api.post(`/plan/jobs/${id}/run-now`);
+// The firing journal: one record per attempt, newest first. Per job, or across
+// every job in a workspace (the Deployments detail drawer and a future
+// cross-job view respectively).
+export const getJobFires = (id, params) => api.get(`/plan/jobs/${id}/fires`, { params });
+export const getFires = (params) => api.get('/plan/fires', { params });
 
 // Notifications API — user inbox fed by the plan scheduler
 export const getNotifications = (params) => api.get('/plan/notifications', { params });
@@ -732,7 +1187,21 @@ export const estimateEvalRun = (id, data) => api.post(`/evals/${id}/estimate`, d
 export const runEvalSet = (id, data) => api.post(`/evals/${id}/run`, data, { timeout: 0 });
 export const getEvalRuns = (id) => api.get(`/evals/${id}/runs`);
 export const getEvalRun = (runId) => api.get(`/eval-runs/${runId}`);
+export const getEvalRunDiff = (runAId, runBId) =>
+  api.get(`/evals/runs/${runAId}/diff/${runBId}`);
 export const getEvalGraders = () => api.get('/eval-graders');
+// "To eval case" on any run: which eval sets fit it (same target kind), plus
+// what kind of run it is and whether it failed.
+export const getEvalSetsForRun = (runId) => api.get(`/evals/for-run/${runId}`);
+// Prompt suggestion from an eval run's failed cases (evals/prompt_suggest.py).
+// Suggesting is a real model call, billable; apply/dismiss are free, except
+// applying with rerun: true, which sweeps the set again.
+export const suggestPromptFix = (evalRunId) =>
+  api.post(`/eval-runs/${evalRunId}/suggest-prompt`, null, { timeout: 0 });
+export const getPromptSuggestions = (evalRunId) => api.get(`/eval-runs/${evalRunId}/suggestions`);
+export const applyPromptSuggestion = (id, data) =>
+  api.post(`/prompt-suggestions/${id}/apply`, data, { timeout: 0 });
+export const dismissPromptSuggestion = (id) => api.post(`/prompt-suggestions/${id}/dismiss`);
 
 // Playground API — multi-agent simulation (see playground/ and routes/playground.py)
 // The catalogue is workspace-aware because authored worlds are in it: a
@@ -788,7 +1257,7 @@ export const generateScenario = (data) => api.post('/playground/scenarios/genera
 export const streamGenerateScenario = async ({ body, onEvent, signal }) => {
   const response = await fetch(`${API_ORIGIN}/api/playground/scenarios/generate/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
     signal,
     body: JSON.stringify(body),
   });
@@ -821,6 +1290,7 @@ export const getSimRun = (runId) => api.get(`/playground/runs/${runId}`);
 export const getSimTicks = (runId, since = -1) =>
   api.get(`/playground/runs/${runId}/ticks`, { params: { since } });
 export const stopSimulation = (runId) => api.post(`/playground/runs/${runId}/stop`);
+export const resumeSimulation = (runId) => api.post(`/playground/runs/${runId}/resume`);
 // Poke one agent in a running simulation from outside the world. In triggered
 // mode this is what wakes them; in synchronous mode it is a message like any
 // other, delivered on the next tick.
@@ -856,6 +1326,7 @@ export const getLoopRun = (runId) => api.get(`/loops/runs/${runId}`);
 export const getLoopIterations = (runId, since = 0) =>
   api.get(`/loops/runs/${runId}/iterations`, { params: { since } });
 export const stopLoopRun = (runId) => api.post(`/loops/runs/${runId}/stop`);
+export const resumeLoopRun = (runId) => api.post(`/loops/runs/${runId}/resume`);
 
 // Teams API — a bounded roster of agents that know each other and talk
 // (see teams/ and routes/teams.py).
@@ -881,5 +1352,44 @@ export const getTeamRun = (runId) => api.get(`/teams/runs/${runId}`);
 export const getTeamMessages = (runId, since = 0) =>
   api.get(`/teams/runs/${runId}/messages`, { params: { since } });
 export const stopTeamRun = (runId) => api.post(`/teams/runs/${runId}/stop`);
+export const resumeTeamRun = (runId) => api.post(`/teams/runs/${runId}/resume`);
+
+// The GitHub App (routes/github_app.py, docs/github-app.md): installations and
+// their workspace binding for the Git connector page, and a person's own
+// GitHub account for the Account page.
+export const getGitHubApp = () => api.get('/git/github-app');
+export const syncGitHubApp = () => api.post('/git/github-app/sync');
+export const setWorkspaceGitHubInstallation = (workspace, installationId) =>
+  api.put(`/workspaces/${encodeURIComponent(workspace)}/github-installation`,
+    { installation_id: installationId ?? null });
+export const getMyGitHub = () => api.get('/auth/github');
+export const disconnectMyGitHub = () => api.delete('/auth/github');
+// A plain link (the browser leaves for github.com), so the credential rides
+// in the query the way auditExportUrl does. githubConnectUrl is the legacy
+// ?token= form, refused under AUTH_MODE=multi; connectGitHub mints a
+// one-time ticket first and navigates, which works in every mode.
+export const githubConnectUrl = () => {
+  const token = activeToken();
+  return `${API_ORIGIN}/api/auth/github/connect${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+};
+export const connectGitHub = () =>
+  navigateWithAuthTicket(`${API_ORIGIN}/api/auth/github/connect`);
+
+// Bundled agent-import presets (examples/imported-agents/): Claude Code and
+// Codex behind the hub's HTTP contract, ready to import with no repository
+// URL. inspectAgentRepo/registerImportedAgent (above) already carry a
+// { preset } field through unchanged, so importing one reuses the same two
+// calls the import dialog already makes for a repository.
+export const getAgentImportPresets = () => api.get('/agent-import/presets');
 
 export default api;
+
+// Online evals and A/B experiments of an agent (routes/agents.py,
+// docs/evals.md "Online evals", docs/experiments.md).
+export const getAgentOnlineEvals = (id, limit = 20) =>
+  api.get(`/agents/${id}/online-evals`, { params: { limit } });
+export const getAgentOnlineEvalSummary = (id) => api.get(`/agents/${id}/online-evals/summary`);
+export const getAgentExperiment = (id) => api.get(`/agents/${id}/experiment`);
+export const putAgentExperiment = (id, data) => api.put(`/agents/${id}/experiment`, data);
+export const endAgentExperiment = (id) => api.delete(`/agents/${id}/experiment`);
+export const getAgentExperimentReport = (id) => api.get(`/agents/${id}/experiment/report`);

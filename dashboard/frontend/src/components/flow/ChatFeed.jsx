@@ -38,7 +38,7 @@ function ThoughtStep({ text }) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-1.5 text-left text-[11px] text-gray-400 hover:text-gray-600"
+        className="w-full flex items-center gap-1.5 text-left text-xs text-gray-400 hover:text-gray-600"
       >
         <Brain className="w-3.5 h-3.5 text-amber-400 shrink-0" />
         <span className="font-medium shrink-0">{t('flowChatFeed.thought')}</span>
@@ -48,7 +48,7 @@ function ThoughtStep({ text }) {
           : <ChevronDown className="w-3 h-3 shrink-0" />}
       </button>
       {open && (
-        <div className="mt-1 text-[11px] text-gray-400 italic whitespace-pre-wrap break-words">
+        <div className="mt-1 text-xs text-gray-400 italic whitespace-pre-wrap break-words">
           {body}
         </div>
       )}
@@ -64,7 +64,7 @@ export function FeedItem({ e }) {
   if (e.k === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-lg rounded-br-sm bg-indigo-600 text-white text-xs px-3 py-2 whitespace-pre-wrap">{trimBubbleText(e.text)}</div>
+        <div className="max-w-[85%] rounded-lg rounded-br-sm bg-indigo-600 text-white text-sm leading-relaxed px-3 py-2 whitespace-pre-wrap">{trimBubbleText(e.text)}</div>
       </div>
     );
   }
@@ -74,7 +74,7 @@ export function FeedItem({ e }) {
   if (e.k === 'assistant') {
     return (
       <div className="flex justify-start">
-        <div className="max-w-[92%] rounded-lg rounded-bl-sm bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-xs px-3 py-2 whitespace-pre-wrap">
+        <div className="max-w-[92%] rounded-lg rounded-bl-sm bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm leading-relaxed px-3 py-2 whitespace-pre-wrap">
           {trimBubbleText(e.text)}
           {e.live ? <span className="inline-block w-1.5 h-3 ml-0.5 -mb-0.5 bg-violet-400 animate-pulse" /> : null}
         </div>
@@ -83,7 +83,7 @@ export function FeedItem({ e }) {
   }
   if (e.k === 'node') {
     return (
-      <div className="flex items-center gap-1.5 text-[11px] text-green-600">
+      <div className="flex items-center gap-1.5 text-xs text-green-600">
         <PlusCircle className="w-3.5 h-3.5 shrink-0" /> {t('flowChatFeed.added')} <span className="font-medium">{e.label}</span>
         {e.edge ? <span className="text-gray-400">· {e.edge}</span> : null}
       </div>
@@ -97,14 +97,14 @@ export function FeedItem({ e }) {
     const Icon = style.icon;
     if (e.action === 'more') {
       return (
-        <div className="flex items-center gap-1.5 text-[11px] text-gray-400">
+        <div className="flex items-center gap-1.5 text-xs text-gray-400">
           <Icon className="w-3.5 h-3.5 shrink-0" /> {t('flowChatFeed.moreChanges', { count: Number(e.label) || 0 })}
         </div>
       );
     }
     const kind = e.kind ? t(`flowChatFeed.kinds.${e.kind}`, { defaultValue: e.kind }) : '';
     return (
-      <div className={`flex items-start gap-1.5 text-[11px] ${style.className}`}>
+      <div className={`flex items-start gap-1.5 text-xs ${style.className}`}>
         <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" />
         <div className="min-w-0">
           {t(`flowChatFeed.change.${e.action}`, { defaultValue: e.action })}
@@ -121,7 +121,7 @@ export function FeedItem({ e }) {
     const inline = e.input ? toolInline(e.tool, e.input, 60) : '';
     const failed = e.status === 'error';
     return (
-      <div className={`flex items-start gap-1.5 text-[11px] ${failed ? 'text-red-600' : 'text-gray-500'}`}>
+      <div className={`flex items-start gap-1.5 text-xs ${failed ? 'text-red-600' : 'text-gray-500'}`}>
         {failed
           ? <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           : e.status === 'done'
@@ -139,7 +139,7 @@ export function FeedItem({ e }) {
   if (e.k === 'thinking') return <ThoughtStep text={e.text} />;
   if (e.k === 'error') {
     return (
-      <div className="flex items-start gap-1.5 text-[11px] text-red-600">
+      <div className="flex items-start gap-1.5 text-xs text-red-600">
         <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {e.text}
       </div>
     );

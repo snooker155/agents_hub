@@ -15,7 +15,10 @@ so all diff/formatting policy lives in one place (the chat route).
 from __future__ import annotations
 
 import contextvars
+import logging
 from typing import Callable, Optional
+
+log = logging.getLogger(__name__)
 
 # A callable(op: str, path: str, before: str | None, after: str | None) -> None.
 # ``before``/``after`` are the file's full text content before and after the op;
@@ -36,7 +39,7 @@ def reset_recorder(token) -> None:
     """Restore the previous recorder using a token from :func:`set_recorder`."""
     try:
         _artifact_recorder.reset(token)
-    except Exception:
+    except (ValueError, RuntimeError):
         pass
 
 
@@ -47,9 +50,8 @@ def record_artifact(op: str, path: str, before: Optional[str], after: Optional[s
         return
     try:
         recorder(op, path, before, after)
-    except Exception:
-        # Artifact reporting is best-effort; never let it break a tool call.
-        pass
+    except Exception:  # noqa: BLE001 - artifact reporting is best-effort; never let it break a tool call
+        log.debug("artifact_sink: record failed for %s %s", op, path, exc_info=True)
 
 
 __all__ = ["ArtifactRecorder", "set_recorder", "reset_recorder", "record_artifact"]

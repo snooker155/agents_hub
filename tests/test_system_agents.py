@@ -28,15 +28,12 @@ def live_registry():
     agents.json would leak into the next one. Also clears the sync's one-time
     backup, whose whole contract is that it is written once.
     """
-    import shutil
 
-    from agents.registry import _REGISTRY_CACHE
+    from common.bootstrap import seed_registry_from_bootstrap
     from common.paths import AGENTS_FILE
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
+    seed_registry_from_bootstrap()
     AGENTS_FILE.with_suffix(".json.pre-sync-backup").unlink(missing_ok=True)
-    _REGISTRY_CACHE["mtime"] = None
     yield
 
 
@@ -150,6 +147,52 @@ def test_capabilities_doc_matches_granted_tools(agent):
     )
 
 
+def _known_tool_ids() -> set[str]:
+    """Every id the runtime accepts in a `tools` list: catalog tools plus the
+    legacy group aliases `agents.agent_factory` expands (see its `alias_groups`)."""
+    from tools.registry import get_all_tools
+
+    aliases = {
+        "filesystem", "task_management", "agent_coordination", "agent_management",
+        "agent_flows", "flow_management", "scenario_management", "world_management",
+        "team_management", "loop_management", "project_management", "entity_runs",
+        "schedule_management", "service_ops", "docs", "geometry", "evals",
+    }
+    return {t.id for t in get_all_tools()} | aliases
+
+
+def _backticked_tools_in_instructions(agent_id: str) -> set[str]:
+    """Tool ids named between backticks in an agent's instructions.md.
+
+    instructions.md is prose, not a tool list, so it is scanned only for
+    identifiers the author explicitly marked as code (backticked) — an
+    unmarked word that happens to collide with a tool id (a parameter name,
+    an example) is not a promise the runtime has to keep.
+    """
+    import re
+
+    path = DEFINITIONS_DIR / agent_id / "instructions.md"
+    if not path.is_file():
+        return set()
+
+    known = _known_tool_ids()
+    backticked = set(re.findall(r"`([a-z_][a-z0-9_]*)`", path.read_text(encoding="utf-8")))
+    return backticked & known
+
+
+@pytest.mark.parametrize("agent", [a["id"] for a in _seed_system_agents()])
+def test_instructions_doc_matches_granted_tools(agent):
+    """Same contract as capabilities.md, for the main prompt: a tool the
+    instructions tell the agent to call by name must be one it actually holds,
+    or the model calls it and gets a hard failure."""
+    ad = next(a for a in _seed_agents() if a["id"] == agent)
+    promised_but_missing = _backticked_tools_in_instructions(agent) - _granted_tools(ad)
+    assert not promised_but_missing, (
+        f"{agent}: instructions.md names tools the agent does not have: "
+        f"{sorted(promised_but_missing)}"
+    )
+
+
 @pytest.mark.parametrize("agent", [a["id"] for a in _seed_system_agents()])
 def test_system_agents_have_a_definition(agent):
     """The prompt is assembled from the definition folder, so a system agent
@@ -227,18 +270,15 @@ def test_existing_workspace_is_backfilled_but_keeps_an_explicit_choice():
 # ── the bootstrap sync ───────────────────────────────────────────────────────
 
 def _write_registry(agents: list[dict]) -> None:
-    from common.paths import AGENTS_FILE
-    from agents.registry import _REGISTRY_CACHE
+    from agents.registry import replace_all_raw
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    AGENTS_FILE.write_text(json.dumps({"agents": agents}, ensure_ascii=False, indent=2))
-    _REGISTRY_CACHE["mtime"] = None
+    replace_all_raw(agents)
 
 
 def _read_registry() -> dict[str, dict]:
-    from common.paths import AGENTS_FILE
+    from agents.registry import load_all_raw
 
-    return {a["id"]: a for a in json.loads(AGENTS_FILE.read_text())["agents"]}
+    return {a["id"]: a for a in load_all_raw()}
 
 
 @pytest.fixture
@@ -340,11 +380,19 @@ def test_sync_leaves_operator_fields_alone(seeded_system_agent):
 def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
     """Safety outranks preservation. Merging a local grant with the seed can
     form a blocked capability combination — reading private data alongside web
-    access is the case this exists for. The seed wins and the extra is dropped."""
+    access is the case this exists for. The seed wins and the extra is dropped.
+
+    Uses swe_agent rather than researcher_agent: researcher_agent's seed now
+    carries ``capability_override`` (its own tools read private data and it
+    delegates to the web searcher, a reviewed, deliberate combination — see
+    agents/definitions/researcher_agent/capabilities.md), which would skip the
+    very check this test is pinning down. swe_agent has no override and reads
+    private data (read_file, list_files, search_text) the same way."""
     from common.bootstrap import _sync_system_agents
     from tools.capabilities import check_combination
 
-    seed = next(a for a in _seed_system_agents() if a["id"] == "researcher_agent")
+    seed = next(a for a in _seed_system_agents() if a["id"] == "swe_agent")
+    assert not seed.get("capability_override"), "precondition: this agent is not overridden"
     live = dict(seed)
     live["tools"] = list(seed["tools"]) + ["web_search", "fetch_url"]
     assert check_combination(live["tools"]).blocking, "precondition: the merge is blocked"
@@ -352,7 +400,7 @@ def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
 
     _sync_system_agents()
 
-    after = _read_registry()["researcher_agent"]["tools"]
+    after = _read_registry()["swe_agent"]["tools"]
     assert set(after) == set(seed["tools"])
     assert check_combination(after) is None or not check_combination(after).blocking
 
@@ -419,7 +467,6 @@ def test_editing_a_system_agent_marks_it_user_modified():
 def test_bootstrap_writes_are_not_user_edits():
     """Bootstrap registers missing system agents itself; those records must not
     come out pre-marked, or they would never track the seed again."""
-    import dataclasses
 
     from agents.registry import add_agent, get_agent
 

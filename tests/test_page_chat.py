@@ -82,16 +82,12 @@ def test_the_answering_agent_is_named_and_fixed(client):
 
 def test_the_page_chat_agent_ships_with_the_product():
     """A panel pointed at an agent the install does not have is a dead button."""
-    import shutil
 
-    from agents.registry import _REGISTRY_CACHE, get_agent
-    from common.bootstrap import BOOTSTRAP_AGENTS_FILE
-    from common.paths import AGENTS_FILE
+    from agents.registry import get_agent
+    from common.bootstrap import seed_registry_from_bootstrap
     from routes.page_chat import PAGE_CHAT_AGENT_ID
 
-    AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(BOOTSTRAP_AGENTS_FILE, AGENTS_FILE)
-    _REGISTRY_CACHE["mtime"] = None
+    seed_registry_from_bootstrap()
 
     spec = get_agent(PAGE_CHAT_AGENT_ID)
     assert spec is not None and spec.system is True

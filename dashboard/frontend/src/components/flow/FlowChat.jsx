@@ -4,6 +4,7 @@ import { stopMessage, startChatOverSSE } from '../../api';
 import { useStream } from '../stream';
 import { useI18n } from '../../i18n';
 import { useInlineChatOpen } from '../pageChat/pageChat';
+import { autoGrowTextarea } from '../../lib/autoGrow';
 
 // ---------------------------------------------------------------------------
 // Slim flow chat — embedded version of the Chat page scoped to a single flow.
@@ -168,12 +169,10 @@ export default function FlowChat({
     [resumeConversationId, flowId, chatNonce]
   );
 
-  const resizeTextarea = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
-  }, []);
+  // Up to ten lines, then it scrolls (lib/autoGrow.js); follows the text
+  // so a box emptied after a send shrinks back too.
+  const resizeTextarea = useCallback(() => autoGrowTextarea(textareaRef.current), []);
+  useEffect(() => { resizeTextarea(); }, [input, resizeTextarea]);
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();

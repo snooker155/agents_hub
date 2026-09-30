@@ -128,6 +128,11 @@ ALLOW_SHELL=python,pytest,ruff,black
 
 # CORS origins for the frontend
 ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+
+# Require a token on every /api request (unset means unauthenticated, fine on
+# localhost only). Restart the backend after setting it, and give the same
+# token to the browser under Settings → System → API access.
+# AGENTS_HUB_API_TOKEN=change-me
 ```
 
 ---
@@ -330,7 +335,7 @@ docker compose logs -f backend    # tail backend logs
 Once both services are up:
 
 1. Visit `http://localhost:5173` (Path A) or `http://localhost:8080` (Docker Compose).
-2. Open the **Agent Manager** page — you should see the built-in agents listed (`orchestrator`, `swe_agent`, `pm_agent`, `qa_agent`, `devops_agent`, …). Each agent's prompt is assembled from its `agents/definitions/<agent_id>/instructions.md` (plus optional `capabilities.md` and `usage.md`).
+2. Open the **Agent Manager** page — you should see the built-in agents listed (`orchestrator`, `swe_agent`, `code_reviewer`, `researcher_agent`, …, the full seed roster is `bootstrap/agents.json`). Each agent's prompt is assembled from its `agents/definitions/<agent_id>/instructions.md` (plus optional `capabilities.md` and `usage.md`).
 3. Create a **workspace** from the Workspaces page.
 4. Open the **Chat** page, pick an agent, send a test message ("hello, who are you?"). A successful reply confirms the provider key, model, and registry are all wired up correctly.
 5. Open **Memory Manager** to confirm shared memory pools (notes / structured slots / journal) are reachable. Episodes and the knowledge graph are populated as agents run.
@@ -343,15 +348,13 @@ After the first run, the repo root will contain a runtime directory:
 
 ```text
 .agents_hub/
-├── agents.json                 # AgentSpec registry
-├── projects.json
-├── tasks.json
-├── procedures.json             # procedural memory (skills) — single file, records carry agent_id + workspace
-├── shared_memory.json          # notes, structured slots, RAG file metadata
-├── episodes/<pool_id>.json     # episodic events
-├── graphs/<pool_id>.json       # knowledge graph nodes + edges
+├── agents_hub.db               # SQLite: agents, models, flows, runs, tasks, sessions, memory, plans, settings, ...
+├── run_logs/, node_logs/       # generated logs
+├── run_snapshots/              # registry copies handed to agent containers, pruned after the run
 └── workspaces/<ws>/            # per-workspace files
 ```
+
+Every record the service keeps (the agent registry, the model catalog, flows, runs, tasks, sessions, memory pools, episodes, the knowledge graph, procedures, scheduled jobs, workspace settings, connector configuration) is in the database; only logs, workspace folders and generated assets are files. That is the SQLite file by default; set `AGENTS_HUB_DATABASE_URL` to a `postgresql://` URL to keep it in Postgres instead (see `docs/scaling.md`, and `ah db migrate` to move an existing one). Older JSON files the database replaced are left behind as `*.migrated` after the first start.
 
 You can delete `.agents_hub/` to fully reset state — it will be regenerated on the next backend start. Back it up if you want to preserve memory or task history.
 

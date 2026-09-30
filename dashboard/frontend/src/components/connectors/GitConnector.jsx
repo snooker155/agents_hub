@@ -4,7 +4,9 @@ import {
   getGitConfig, updateGitConfig, testGitConnection,
 } from '../../api';
 import { SectionCard, inputCls } from '../settingsUi';
+import GitHubAppCard from './GitHubAppCard';
 import { useI18n } from '../../i18n';
+import PageLoader from '../PageLoader';
 
 // Moved out of the Settings page, which is where nobody looked for it: a
 // connector is something you *attach*, so it belongs with the other things you
@@ -157,9 +159,7 @@ export default function GitConnector() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-10">
-        <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
-      </div>
+      <PageLoader size="sm" />
     );
   }
 
@@ -173,6 +173,7 @@ export default function GitConnector() {
         config={config.github || {}}
         onSaved={setConfig}
       />
+      <GitHubAppCard />
       <GitProviderSection
         provider="gitlab"
         label={t('settings.gitlab')}

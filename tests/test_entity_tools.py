@@ -29,8 +29,7 @@ from tools.scenario_management import (
     validate_scenario_tool,
 )
 from tools.team_management import (
-    create_team_tool, delete_team_tool, get_team_tool, list_teams_tool,
-    modify_team_tool,
+    create_team_tool, delete_team_tool, get_team_tool, modify_team_tool,
 )
 
 

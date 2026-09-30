@@ -17,7 +17,7 @@ export default {
     remember: {
       q: 'Merke dir: unser Deploy-Ziel ist staging-eu.',
       tool: 'remember',
-      a: 'Im gemeinsamen Speicher unter dem Slot **deploy = { target: "staging-eu" }** gespeichert. Ich rufe es bei künftigen Aufgaben in diesem Workspace ab.',
+      a: 'Im Speicher unter dem Slot **deploy = { target: "staging-eu" }** gespeichert. Ich rufe es bei künftigen Aufgaben in diesem Workspace ab.',
     },
   },
   howWorkspacesNest: 'wie Workspaces verschachtelt sind',

@@ -16,8 +16,8 @@ export default {
     ragIndexedFiles: 'файлов в RAG-индексе: {{count}}',
     flows: 'Потоки',
     customPipelines: 'пользовательские пайплайны',
-    nodes: 'Узлы',
-    nodesRunning: 'запущено: {{count}}',
+    instances: 'Инстансы',
+    instancesLive: 'активно: {{count}}',
     noneRunning: 'нет запущенных',
   },
   features: {
@@ -34,7 +34,7 @@ export default {
     modelsDesc: 'Провайдеры, свои бэкенды и цены',
     marketplace: 'Маркетплейс',
     marketplaceDesc: 'Поиск и установка агентов',
-    memory: 'Общая память',
+    memory: 'Память',
     memoryDesc: 'Базы знаний, из которых агенты берут контекст',
     settings: 'Настройки',
     settingsDesc: 'API-ключи, RAG и наблюдаемость',
@@ -46,7 +46,7 @@ export default {
     capacity: 'Загрузка',
   },
   memory: {
-    heading: 'Общая память и RAG',
+    heading: 'Память и RAG',
     manage: 'Управление',
     pools: 'Пулы',
     files: 'Файлы',

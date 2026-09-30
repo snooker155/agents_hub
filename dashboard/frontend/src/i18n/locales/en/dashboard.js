@@ -16,8 +16,8 @@ export default {
     ragIndexedFiles: '{{count}} RAG-indexed files',
     flows: 'Flows',
     customPipelines: 'custom pipelines',
-    nodes: 'Nodes',
-    nodesRunning: '{{count}} running',
+    instances: 'Instances',
+    instancesLive: '{{count}} live',
     noneRunning: 'none running',
   },
   features: {
@@ -34,7 +34,7 @@ export default {
     modelsDesc: 'Providers, custom backends & pricing',
     marketplace: 'Marketplace',
     marketplaceDesc: 'Discover & install agents',
-    memory: 'Shared Memory',
+    memory: 'Memory',
     memoryDesc: 'Knowledge pools agents recall from',
     settings: 'Settings',
     settingsDesc: 'API keys, RAG & observability',
@@ -46,7 +46,7 @@ export default {
     capacity: 'Capacity',
   },
   memory: {
-    heading: 'Shared Memory & RAG',
+    heading: 'Memory & RAG',
     manage: 'Manage',
     pools: 'Pools',
     files: 'Files',

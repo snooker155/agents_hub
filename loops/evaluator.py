@@ -253,7 +253,13 @@ def evaluate(
 ) -> Tuple[Verdict, float]:
     """Judge one iteration. Returns ``(verdict, cost_usd)``. Never raises: a
     failed evaluation is a "continue" with the error recorded, because a broken
-    judge must not silently end a loop as if the work were accepted."""
+    judge must not silently end a loop as if the work were accepted.
+
+    A loop with a ``rubric`` is graded per criterion instead
+    (:func:`evaluate_with_rubric`); without one the evaluator path below is
+    what it always was."""
+    if str(getattr(loop, "rubric", "") or "").strip():
+        return evaluate_with_rubric(loop, goal=goal, output=output, workspace=workspace)
     mode, agent_id = resolve_evaluator(loop, flow)
     prompt = build_evaluation_prompt(
         criterion=getattr(loop, "exit_criterion", "") or "",
@@ -339,7 +345,113 @@ def _evaluate_with_model(
     return verdict, cost
 
 
+# ── Grading against a rubric ─────────────────────────────────────────────────
+
+def rubric_grader(loop: Any, workspace: Optional[str]) -> Dict[str, str]:
+    """The rubric grader of a loop: its ``grader``, else the evaluator model
+    it names, else the outcome grader default (tasks.outcome.resolve_grader)."""
+    from tasks.outcome import resolve_grader
+
+    grader = getattr(loop, "grader", None)
+    if not grader and getattr(loop, "evaluator_model", None):
+        grader = {"provider": getattr(loop, "evaluator_provider", None) or "",
+                  "model": loop.evaluator_model}
+    # The runner passes the workspace's folder; the model lookup wants its name.
+    name = getattr(loop, "workspace", None)
+    if not name and workspace:
+        try:
+            from common.workspace_context import workspace_name_from_path
+            name = workspace_name_from_path(workspace) or workspace
+        except Exception:  # noqa: BLE001 - an unresolvable path means no workspace opinion on the model
+            name = None
+    return resolve_grader(grader, name)
+
+
+def _rubric_feedback(criteria: List[Dict[str, Any]], overall: str) -> str:
+    """What the next pass is told: every unmet criterion with its feedback."""
+    lines = []
+    for c in criteria:
+        if c.get("passed"):
+            continue
+        fb = str(c.get("feedback") or "").strip()
+        lines.append(f"- {c.get('name')}" + (f": {fb}" if fb else ": not met"))
+    if overall.strip():
+        lines.append(f"Overall: {overall.strip()}")
+    return "\n".join(lines)
+
+
+def evaluate_with_rubric(
+    loop: Any, *, goal: str, output: str, workspace: Optional[str] = None,
+) -> Tuple[Verdict, float]:
+    """Grade one pass against the loop's rubric and express it as a Verdict.
+
+    One grader for loops and task outcomes (evals.graders.grade_rubric): a
+    fresh model call per pass, blind to the flow's own conversation. Passed
+    means ``stop``; the mean criterion score becomes the 0-100 score, so the
+    trajectory chart and ``target_score`` read it like any other judge's; the
+    unmet criteria with their feedback become the next pass's feedback. The
+    whole grading is kept in ``raw`` as JSON so the per-criterion rows survive
+    on the iteration record. A grader that failed is a ``continue`` with the
+    error recorded, never an acceptance.
+    """
+    from types import SimpleNamespace
+
+    from evals.graders import grade_rubric
+
+    grader = rubric_grader(loop, workspace)
+    # The loop's target score is the rubric's pass threshold, so the verdict
+    # and the runner's own target check (loops.runner._check_convergence)
+    # agree on when a pass is good enough.
+    threshold = None
+    if getattr(loop, "target_score", None) is not None:
+        threshold = max(0.0, min(float(loop.target_score) / 100.0, 1.0))
+    criterion = str(getattr(loop, "exit_criterion", "") or "").strip()
+    context = (goal or "").strip()
+    if criterion:
+        context = f"{context}\n\nExit criterion: {criterion}".strip()
+
+    try:
+        result = grade_rubric(
+            output or "",
+            SimpleNamespace(input=context, rubric=loop.rubric, expected=None),
+            {"rubric": loop.rubric, "grader": grader if grader.get("model") else None,
+             "threshold": threshold, "context": context},
+            None,
+        )
+    except Exception as e:  # noqa: BLE001 - the grader contract is never raise; guard it anyway so a loop keeps going
+        v = Verdict(verdict="continue", error=f"{type(e).__name__}: {e}")
+        v.reason = "the rubric grader could not be run"
+        return v, 0.0
+
+    extra = result.extra or {}
+    criteria = list(extra.get("criteria") or [])
+    overall = str(extra.get("feedback") or "")
+    model = (extra.get("grader") or grader or {}).get("model") or "default"
+    verdict = Verdict(
+        score=round(float(result.score) * 100.0, 2),
+        verdict="stop" if result.passed else "continue",
+        reason=str(result.detail or ""),
+        feedback="" if result.passed else _rubric_feedback(criteria, overall),
+        raw=json.dumps({
+            "kind": "rubric", "passed": bool(result.passed), "score": result.score,
+            "criteria": criteria, "feedback": overall, "grader": extra.get("grader"),
+            "threshold": threshold, "tokens": extra.get("tokens"),
+            "raw": str(extra.get("raw") or "")[:2000],
+        }, ensure_ascii=False, default=str),
+        agent=f"rubric:{model}",
+        error=str(extra.get("error") or ""),
+    )
+    if verdict.error:
+        verdict.verdict = "continue"
+        verdict.score = None
+        verdict.feedback = (
+            "The grader could not assess this pass. Make sure the result states "
+            "plainly how each criterion of the rubric is met."
+        )
+    return verdict, float(extra.get("cost_usd") or 0.0)
+
+
 __all__ = [
-    "build_evaluation_prompt", "parse_verdict", "evaluate",
-    "resolve_evaluator", "resolve_final_agent",
+    "build_evaluation_prompt", "parse_verdict", "evaluate", "evaluate_with_rubric",
+    "rubric_grader", "resolve_evaluator", "resolve_final_agent",
 ]

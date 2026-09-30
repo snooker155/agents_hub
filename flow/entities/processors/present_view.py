@@ -8,7 +8,7 @@ Discovered by the flow registry via the module-level ``SPEC``.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from flow.registry import FlowEntitySpec
 

@@ -1,7 +1,8 @@
 """
 Pydantic models for API request/response validation.
 """
-from pydantic import BaseModel, model_validator
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, model_validator
 from typing import List, Optional, Dict, Any
 
 
@@ -17,6 +18,15 @@ class TaskCreate(BaseModel):
     project_id: Optional[str] = None
     # Task IDs or keys (e.g. DEMO-12) that must complete before this task runs
     depends: Optional[List[str]] = None
+    # Optional deadline, ISO 8601. Naive values are assumed UTC.
+    due_at: Optional[datetime] = None
+    # Stored agent version the task's runs are built from (None = live).
+    agent_version: Optional[int] = None
+    # Outcome rubric: {"rubric", "max_iterations", "grader", "threshold"}
+    # (tasks/outcome.py). None = no outcome check.
+    outcome: Optional[Dict[str, Any]] = None
+    # Workspace files (files/service.py) the task works from, by id.
+    file_ids: Optional[List[str]] = None
 
 
 class TaskWorkspaceUpdate(BaseModel):
@@ -33,6 +43,14 @@ class TaskUpdate(BaseModel):
     project: Optional[str] = None
     # Replace the task's dependency list (task IDs or keys); [] clears it
     depends: Optional[List[str]] = None
+    # Optional deadline, ISO 8601. Naive values are assumed UTC. Send null to clear it.
+    due_at: Optional[datetime] = None
+    # Pin the task's runs to a stored agent version; null clears the pin.
+    agent_version: Optional[int] = None
+    # Outcome rubric (see TaskCreate); null clears it.
+    outcome: Optional[Dict[str, Any]] = None
+    # Replace the task's workspace files (ids); [] or null clears them.
+    file_ids: Optional[List[str]] = None
 
 
 class AgentCreateCustom(BaseModel):
@@ -49,6 +67,10 @@ class AgentCreateCustom(BaseModel):
     # When set, reuse an existing definition folder instead of authoring a new
     # one. system_prompt is then ignored and write_instructions is skipped.
     definition_id: Optional[str] = None
+    # Agents this one may hand the conversation to, and the history filter the
+    # receiver sees by default (chat/handoff.py; see AgentHandoffsUpdate).
+    handoffs: List[str] = []
+    handoff_history: str = "full"
 
 
 class AgentCloneToWorkspace(BaseModel):
@@ -84,6 +106,16 @@ class AgentEpisodicConfigUpdate(BaseModel):
     episodic_write_enabled: Optional[bool] = None
 
 
+class AgentPersonalMemoryUpdate(BaseModel):
+    # This agent's personal memory in one workspace (memory/personal.py).
+    enabled: bool
+
+
+class WorkspacePersonalMemoryUpdate(BaseModel):
+    # Whether personal memory exists in the workspace at all.
+    enabled: bool
+
+
 class AgentResponseFormatUpdate(BaseModel):
     # Structured response the agent may emit: "none" | "buttons" | "telegram".
     response_format: str = "none"
@@ -101,6 +133,13 @@ class AgentSelfDelegationUpdate(BaseModel):
     allow_self_delegation: bool = False
 
 
+class AgentCapabilityOverrideUpdate(BaseModel):
+    # When True, the capability guard reports a blocked tool combination on
+    # this agent (own tools or reached by delegation) as a warning instead of
+    # refusing the save. See agents/capability_guard.py.
+    capability_override: bool = False
+
+
 class AgentSkillCreate(BaseModel):
     workspace: str
     name: str
@@ -115,7 +154,9 @@ class SkillCreate(BaseModel):
     workspace: str
     name: str
     description: str
-    steps: List[str]
+    # Steps, Markdown instructions (``body``), or both; at least one is required.
+    steps: List[str] = []
+    body: str = ""
     tags: List[str] = []
     # Empty means a catalog entry: it lives in the workspace but is not attached
     # to any agent, so nothing injects it until it is installed onto one.
@@ -126,7 +167,29 @@ class SkillUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     steps: Optional[List[str]] = None
+    body: Optional[str] = None
     tags: Optional[List[str]] = None
+    # Why this edit was made; kept on the version it creates.
+    note: Optional[str] = None
+
+
+class SkillPin(BaseModel):
+    # The version an attached skill serves to its agent; None follows the latest.
+    version: Optional[int] = None
+
+
+class SkillSync(BaseModel):
+    # Scan this workspace's .claude/skills folders (workspace folder, project
+    # repositories, project folders); only one project's when project_id is set.
+    workspace: str
+    project_id: Optional[str] = None
+
+
+class SkillImportMarkdown(BaseModel):
+    # A SKILL.md pasted or uploaded as text: frontmatter (name, description) + body.
+    workspace: str
+    content: str
+    agent_id: str = ""
 
 
 class SkillSharingUpdate(BaseModel):
@@ -149,6 +212,15 @@ class AgentDelegatesUpdate(BaseModel):
     delegates: List[str] = []
 
 
+class AgentHandoffsUpdate(BaseModel):
+    # Agents this agent may hand the conversation to (chat/handoff.py). Empty
+    # list = no handoff tool. None leaves the list as it is.
+    handoffs: Optional[List[str]] = None
+    # Default history filter: "full", "summary", "last_n:<N>" or "none".
+    # None leaves it as it is.
+    handoff_history: Optional[str] = None
+
+
 class AgentReasoningUpdate(BaseModel):
     think_enabled: Optional[bool] = None  # add the think scratchpad tool
     think_mode: Optional[str] = None      # standard | deep | analytical (tool prompt)
@@ -169,10 +241,26 @@ class AgentModelUpdate(BaseModel):
     clear_api_key: bool = False           # explicitly remove api_key override
 
 
+class ExecutorSpec(BaseModel):
+    """What to assign a task to: an agent, a flow, a team or a loop.
+
+    Mirrors tasks.models.Executor as a plain request body shape (``kind`` is
+    left a plain str here rather than the Literal that module uses, so an
+    unrecognised kind reaches tasks.assign.assign_executor_to_task's own
+    validation as a 400 rather than FastAPI's generic 422).
+    """
+    kind: str
+    id: str
+
+
 class AgentAssign(BaseModel):
-    agent_id: str
+    # agent_id is the original, still-default shape: assign this agent.
+    # executor is the newer, kind-agnostic shape (agent/flow/team/loop); when
+    # given, it takes precedence and agent_id/require_approval are ignored.
+    agent_id: Optional[str] = None
     params: Optional[Dict[str, Any]] = None
     require_approval: bool = False
+    executor: Optional[ExecutorSpec] = None
 
 
 class TaskAnswer(BaseModel):
@@ -385,3 +473,188 @@ class ProjectGraphChat(BaseModel):
 class ProjectTasksChat(BaseModel):
     """One planner-chat turn. Empty message = the default 'generate from graphs'."""
     message: Optional[str] = None
+
+
+# ── Response models ────────────────────────────────────────────────────────
+#
+# These document the shape of the big list/detail endpoints for the OpenAPI
+# schema without narrowing what the routes are actually free to return: every
+# one of them carries ``extra="allow"``, so a field the frontend reads that
+# isn't declared here still passes through untouched rather than being
+# dropped by response-model filtering. Only the fields the frontend (see
+# dashboard/frontend/src/api/index.js and the pages that consume it) actually
+# reads are declared as real fields.
+
+
+class AgentListItem(BaseModel):
+    """One row of ``GET /api/agents`` — see ``AgentSpec.to_dict()``."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str = ""
+    type: Optional[str] = None
+    description: str = ""
+    domain: str = ""
+    tools: List[str] = []
+    capacity: int = 1
+    memory_type: Optional[str] = None
+    system: bool = False
+    shared: bool = False
+    owner_workspace: Optional[str] = None
+    definition_id: Optional[str] = None
+    skills_enabled: bool = True
+    # A remote (agent-hub HTTP contract) agent's connection config — absent for
+    # an in-process one.
+    remote: Optional[Dict[str, Any]] = None
+    # Annotated onto every row by the route (not part of AgentSpec.to_dict()).
+    has_running_node: bool = False
+    is_default_chat_agent: bool = False
+
+
+class AgentDetail(AgentListItem):
+    """``GET /api/agents/{id}`` — an ``AgentListItem`` plus its execution config."""
+    model_config = ConfigDict(extra="allow")
+
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    response_format: Optional[str] = None
+    clarify_gate: Optional[bool] = None
+    allow_self_delegation: Optional[bool] = None
+    delegates: Optional[List[str]] = None
+    handoffs: Optional[List[str]] = None
+    handoff_history: Optional[str] = None
+    episodic_write_enabled: Optional[bool] = None
+
+
+class AgentPage(BaseModel):
+    """``GET /api/agents`` with ``limit``/``offset``."""
+    model_config = ConfigDict(extra="allow")
+
+    items: List[AgentListItem]
+    total: int
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+
+
+class TaskListItem(BaseModel):
+    """One row of ``GET /api/tasks`` — see ``tasks.serialize.task_to_dict``."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    key: Optional[str] = None
+    title: str
+    description: str = ""
+    status: str
+    priority: Optional[str] = None
+    workspace: Optional[str] = None
+    project: Optional[str] = None
+    project_id: Optional[str] = None
+    parent_id: Optional[str] = None
+    depends: List[str] = []
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    due_at: Optional[datetime] = None
+    blocked_reason: Optional[str] = None
+    should_decompose: bool = False
+    executor: Optional[Dict[str, Any]] = None
+    assigned_agent_type: Optional[str] = None
+    assigned_agent_params: Optional[Dict[str, Any]] = None
+    assigned_agent_run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    external_source: Optional[Dict[str, Any]] = None
+    pending_question: Optional[Dict[str, Any]] = None
+    pending_approval: Optional[Dict[str, Any]] = None
+    agent_state: str = "none"
+    overdue: bool = False
+
+
+class TaskDetail(TaskListItem):
+    """``GET /api/tasks/{id}`` — a ``TaskListItem`` plus its subtasks."""
+    model_config = ConfigDict(extra="allow")
+
+    subtasks: List[TaskListItem] = []
+
+
+class TaskPage(BaseModel):
+    """``GET /api/tasks`` with ``limit``/``offset``."""
+    model_config = ConfigDict(extra="allow")
+
+    items: List[TaskListItem]
+    total: int
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+
+
+class FlowListItem(BaseModel):
+    """One row of ``GET /api/flows`` — a combined flow dict (logic + visual)."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str = ""
+    description: str = ""
+    workspace: Optional[str] = None
+    task_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    entry_point: Optional[str] = None
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+
+
+class FlowDetail(FlowListItem):
+    """``GET /api/flows/{id}`` — same shape as a list row, one flow's worth."""
+    model_config = ConfigDict(extra="allow")
+
+
+class FlowPage(BaseModel):
+    """``GET /api/flows`` with ``limit``/``offset``."""
+    model_config = ConfigDict(extra="allow")
+
+    items: List[FlowListItem]
+    total: int
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+
+
+class SessionListItem(BaseModel):
+    """One row of ``GET /api/sessions`` — see ``routes.sessions._enrich_context``."""
+    model_config = ConfigDict(extra="allow")
+
+    session_id: str
+    title: Optional[str] = None
+    description: str = ""
+    workspace: Optional[str] = None
+    agent_id: Optional[str] = None
+    is_flow: bool = False
+    status: str = "pending"
+    created_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    agents: List[str] = []
+    message_count: int = 0
+    event_count: int = 0
+
+
+class SessionPage(BaseModel):
+    """``GET /api/sessions`` — always the paginated shape."""
+    model_config = ConfigDict(extra="allow")
+
+    items: List[SessionListItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class WorkspaceListItem(BaseModel):
+    """One row of ``GET /api/workspaces``."""
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    path: str
+    tasks_count: int = 0
+    attached: bool = False
+    target: Optional[str] = None

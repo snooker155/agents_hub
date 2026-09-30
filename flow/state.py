@@ -5,6 +5,11 @@ A flow run carries a single mutable ``FlowState`` object. Nodes read the slice
 of state declared in their ``input`` keys and write results back to their
 ``output`` keys. Edges carry control flow; state carries data.
 
+Concurrency: the engine runs independent nodes at the same time, so a single
+``FlowState`` has several writers. Every read and write takes one re-entrant
+lock, which keeps the mutability rule below an atomic check-then-set rather
+than a race two parallel nodes could both win.
+
 Mutability rule (from the flow meta ``mutability`` field):
 - ``mutability: true``  → nodes may overwrite existing keys freely.
 - ``mutability: false`` → existing keys are write-once. Adding a NEW key is
@@ -24,6 +29,7 @@ where NodeResult is one of:
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -38,6 +44,12 @@ class FlowState:
 
     data: Dict[str, Any] = field(default_factory=dict)
     mutable: bool = True
+    #: Guards every read and write. Re-entrant because ``apply`` calls ``set``
+    #: while holding it. Not part of the value of the state, so it is excluded
+    #: from comparison and repr.
+    _lock: threading.RLock = field(
+        default_factory=threading.RLock, repr=False, compare=False,
+    )
 
     @classmethod
     def from_flow(cls, flow: Dict[str, Any], *, seed: Optional[Dict[str, Any]] = None) -> "FlowState":
@@ -57,25 +69,34 @@ class FlowState:
     # -- reads --
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.data.get(key, default)
+        with self._lock:
+            return self.data.get(key, default)
 
     def slice(self, keys: Iterable[str]) -> Dict[str, Any]:
         """Return only the requested keys that currently exist in state."""
-        return {k: self.data[k] for k in keys if k in self.data}
+        with self._lock:
+            return {k: self.data[k] for k in keys if k in self.data}
 
     def __contains__(self, key: str) -> bool:  # enables `key in state`
-        return key in self.data
+        with self._lock:
+            return key in self.data
 
     # -- writes --
 
     def set(self, key: str, value: Any) -> None:
-        """Set one key, enforcing the mutability policy."""
-        if not self.mutable and key in self.data:
-            raise StateMutationError(
-                f"State key '{key}' already exists and the flow is immutable "
-                f"(mutability=false); only new keys may be added."
-            )
-        self.data[key] = value
+        """Set one key, enforcing the mutability policy.
+
+        The policy check and the write happen under one lock, so two parallel
+        nodes writing the same key on an immutable flow cannot both pass the
+        check: exactly one wins and the other gets ``StateMutationError``.
+        """
+        with self._lock:
+            if not self.mutable and key in self.data:
+                raise StateMutationError(
+                    f"State key '{key}' already exists and the flow is immutable "
+                    f"(mutability=false); only new keys may be added."
+                )
+            self.data[key] = value
 
     def apply(self, output_keys: List[str], result: Any) -> Dict[str, Any]:
         """Write a node's result into state under its declared ``output_keys``.
@@ -96,22 +117,37 @@ class FlowState:
             return {}
 
         written: Dict[str, Any] = {}
-        if isinstance(result, dict):
-            matched = {k: result[k] for k in output_keys if k in result}
-            if not matched and len(output_keys) == 1:
-                # Result dict didn't name the output key — store it whole.
-                matched = {output_keys[0]: result}
-            for k, v in matched.items():
-                self.set(k, v)
-                written[k] = v
-        elif result is not None and len(output_keys) == 1:
-            self.set(output_keys[0], result)
-            written[output_keys[0]] = result
+        with self._lock:
+            if isinstance(result, dict):
+                matched = {k: result[k] for k in output_keys if k in result}
+                if not matched and len(output_keys) == 1:
+                    # Result dict didn't name the output key — store it whole.
+                    matched = {output_keys[0]: result}
+                for k, v in matched.items():
+                    self.set(k, v)
+                    written[k] = v
+            elif result is not None and len(output_keys) == 1:
+                self.set(output_keys[0], result)
+                written[output_keys[0]] = result
         return written
 
     def snapshot(self) -> Dict[str, Any]:
         """A shallow copy of current state (for recordability / logging)."""
-        return dict(self.data)
+        with self._lock:
+            return dict(self.data)
+
+    def merge(self, values: Optional[Dict[str, Any]]) -> None:
+        """Load values straight into state, bypassing the mutability policy.
+
+        Only the engine uses this, and only to replay a checkpoint: the keys
+        being restored were already written once by the nodes that produced
+        them, so re-applying them through ``set`` would fail an immutable flow
+        on its own history.
+        """
+        if not values:
+            return
+        with self._lock:
+            self.data.update(values)
 
 
 @dataclass

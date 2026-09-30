@@ -23,6 +23,7 @@ from typing import Any, Optional
 import httpx
 
 from agents import registry
+from common.session_broker import notify_change
 from connectors.telegram import telegram_store
 
 
@@ -44,6 +45,20 @@ _CONNECTOR_FEATURES = "structured-responses(buttons/telegram-keyboard), callback
 
 def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _chat_id_from_update(update: dict[str, Any]) -> Optional[int]:
+    """Best-effort chat id extraction from a message or a callback_query update.
+
+    Used to gate on the allowlist before either kind of update is dispatched,
+    so the check has one place to live instead of one per update kind.
+    """
+    message = update.get("message") or (update.get("callback_query") or {}).get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    try:
+        return int(chat_id) if chat_id is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 # ── Telegram Bot API client ──────────────────────────────────────────────────
@@ -159,11 +174,11 @@ def _split_for_telegram(text: str, limit: int = 4000) -> list[str]:
 _HELP_TEXT = (
     "Agents Hub bot\n"
     "\n"
-    "Setup order: pick a workspace, then pick an agent OR a flow allowed in "
-    "that workspace.\n"
+    "Setup order: an operator binds this chat to a workspace from the "
+    "dashboard, then you pick an agent OR a flow allowed in that workspace.\n"
     "\n"
     "Commands:\n"
-    "/workspace [name] — show or set this chat's workspace\n"
+    "/workspace — show this chat's workspace (set by the operator, not here)\n"
     "/workspaces — list available workspaces\n"
     "/agent [id] — bind this chat to an agent in the current workspace\n"
     "/agents — list agents allowed in the current workspace\n"
@@ -276,13 +291,11 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
                 "Send a message, or /help for commands.",
             )
             return True
-        workspaces = _workspace_names()
-        preview = ", ".join(workspaces[:10]) or "(no workspaces)"
         await _send_text(
             api, chat_id,
-            "Welcome! First pick a workspace with /workspace <name>, then pick an "
-            "agent with /agent <id> or a flow with /flow <id>.\n"
-            f"Workspaces: {preview}\n"
+            f"Welcome! This chat isn't bound to a workspace yet. Ask the operator to bind "
+            f"chat `{chat_id}` to one from the dashboard, then come back and pick an agent "
+            "with /agent <id> or a flow with /flow <id>.\n"
             "See /help for the full list of commands.",
         )
         return True
@@ -300,71 +313,21 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
         return True
 
     if cmd == "/workspace":
+        # Binding a chat to a workspace is an operator decision made from the
+        # dashboard (POST /api/telegram/bindings), not something a Telegram
+        # command can do — otherwise anyone who reaches the bot could grant
+        # themselves access to a workspace. This command is read-only: it shows
+        # the current binding and, if there is none or the caller asks to
+        # change it, points them at the operator instead of touching state.
         if not args:
             current = binding.get("workspace") or "(not set)"
-            await _send_text(api, chat_id, f"Current workspace: {current}. Use /workspace <name> to change it.")
+            await _send_text(api, chat_id, f"Current workspace: {current}. Ask the operator to change it.")
             return True
-        workspaces = _workspace_names()
-        if args not in workspaces:
-            await _send_text(
-                api, chat_id,
-                f"Unknown workspace `{args}`. Available: {', '.join(workspaces) or '(none)'}",
-            )
-            return True
-        # Setting (or changing) the workspace invalidates the previous target
-        # (agent or flow) if the new workspace doesn't authorise/contain it.
-        was_changed = bool(binding.get("workspace")) and binding.get("workspace") != args
-        new_agent = binding.get("agent_id")
-        new_flow = binding.get("flow_id")
-        if was_changed:
-            allowed = _allowed_agent_ids_for(args)
-            if allowed is not None and new_agent not in allowed:
-                new_agent = None
-            if new_flow and not any(f.get("id") == new_flow for f in _flows_visible_in(args)):
-                new_flow = None
-        telegram_store.upsert_binding(
-            chat_id=chat_id,
-            agent_id=new_agent or "",
-            flow_id=new_flow,
-            workspace=args,
-            conversation_id=binding.get("conversation_id") or str(uuid.uuid4()),
-            title=_chat_title(message),
+        await _send_text(
+            api, chat_id,
+            f"This chat's workspace is set by the operator, not by chat. Ask them to bind "
+            f"chat `{chat_id}` to workspace `{args}` from the dashboard.",
         )
-        if new_flow:
-            flow = _get_flow(new_flow)
-            flow_name = (flow or {}).get("name") or new_flow
-            await _send_text(
-                api, chat_id,
-                f"Workspace set to `{args}`.\nFlow stays as `{flow_name}`. "
-                "Send a message to run it, or /agent <id> / /flow <id> to change.",
-            )
-            return True
-        visible = _agents_visible_in(args)
-        flows_here = _flows_visible_in(args)
-        flow_hint = (
-            f"\nFlows available: {', '.join((f.get('name') or f.get('id')) for f in flows_here[:15])} (/flow <id>)"
-            if flows_here else ""
-        )
-        if not visible:
-            await _send_text(
-                api, chat_id,
-                f"Workspace `{args}` set. No agents are authorised in this workspace yet."
-                + flow_hint,
-            )
-        else:
-            preview = ", ".join(a.id for a in visible[:15])
-            extra_lines = (
-                ["The previous agent isn't authorised here — pick another with /agent <id>."]
-                if was_changed and not new_agent else
-                [f"Agent stays as `{new_agent}`. Send a message to start, or /agent <id> to change."]
-                if new_agent else
-                ["Now pick an agent with /agent <id>, or a flow with /flow <id>."]
-            )
-            await _send_text(
-                api, chat_id,
-                f"Workspace set to `{args}`.\nAvailable agents: {preview}{flow_hint}\n"
-                + "\n".join(extra_lines),
-            )
         return True
 
     if cmd == "/agents":
@@ -412,6 +375,7 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
             conversation_id=binding.get("conversation_id") or str(uuid.uuid4()),
             title=_chat_title(message),
         )
+        notify_change("telegram", chat_id=chat_id)
         await _send_text(
             api, chat_id,
             f"Bound to agent `{args}` in workspace `{workspace}`. Send a message to start.",
@@ -481,6 +445,7 @@ async def _handle_command(api: TelegramAPI, message: dict[str, Any], text: str) 
             conversation_id=binding.get("conversation_id") or str(uuid.uuid4()),
             title=_chat_title(message),
         )
+        notify_change("telegram", chat_id=chat_id)
         await _send_text(
             api, chat_id,
             f"Bound to flow `{match.get('name') or match['id']}` in workspace `{workspace}`. "
@@ -683,6 +648,16 @@ def _format_flow_reply(responses: list[dict[str, Any]]) -> str:
     )
 
 
+def _format_handoff(event: dict[str, Any]) -> str:
+    """The handing agent's reply and where the conversation went, as one
+    Telegram message sent before the receiving agent's answer."""
+    reply = str(event.get("from_response") or "").strip()
+    name = event.get("to_agent_name") or event.get("to_agent_id") or "another agent"
+    reason = str(event.get("reason") or "").strip()
+    marker = f"(handed over to {name}" + (f": {reason})" if reason else ")")
+    return f"{reply}\n\n{marker}" if reply and reply != reason else marker
+
+
 async def _run_agent_for_telegram(
     api: TelegramAPI, chat_id: int, binding: dict[str, Any],
     text: str, attachments: list[dict[str, Any]],
@@ -711,6 +686,7 @@ async def _run_agent_for_telegram(
             workspace=workspace,
             conversation_id=conv_id, title=binding.get("title"),
         )
+        notify_change("telegram", chat_id=chat_id)
 
     # Telegram has no client-side transcript to send, so rebuild the prior turns
     # from this conversation's completed runs — otherwise every message would run
@@ -744,7 +720,21 @@ async def _run_agent_for_telegram(
         async for event in pipeline:
             if event.get("type") == "node_done":
                 final_entities.extend(event.get("entities") or [])
+            if event.get("type") == "handoff":
+                # The agent gave the conversation to another one (chat/handoff.py):
+                # its own reply goes out now, the receiving agent's answer
+                # follows as the turn's reply below.
+                await _send_text(api, chat_id, _format_handoff(event))
+                await api.send_chat_action(chat_id, "typing")
+                continue
             if event.get("type") == "done":
+                if event.get("handoff") and event.get("agent_id") and not is_flow:
+                    # The chat stays with the agent that answered.
+                    telegram_store.upsert_binding(
+                        chat_id=chat_id, agent_id=str(event["agent_id"]),
+                        workspace=workspace, conversation_id=conv_id,
+                    )
+                    notify_change("telegram", chat_id=chat_id)
                 final_entities.extend(event.get("entities") or [])
                 final_ok = bool(event.get("ok"))
                 final_error = event.get("error")
@@ -860,6 +850,9 @@ class TelegramService:
         }
         self._chat_locks: dict[int, asyncio.Lock] = {}
         self._media_groups = _MediaGroupBuffer()
+        # Chat ids we've already logged as disallowed, so a chat that keeps
+        # writing to an unlisted bot doesn't spam the log on every message.
+        self._logged_disallowed_chats: set[int] = set()
 
     @property
     def status(self) -> dict[str, Any]:
@@ -874,6 +867,21 @@ class TelegramService:
             lock = asyncio.Lock()
             self._chat_locks[chat_id] = lock
         return lock
+
+    def _chat_allowed(self, chat_id: int) -> bool:
+        """Gate every inbound update on the configured chat allowlist.
+
+        Without this, any Telegram user who finds the bot could talk to it
+        (and, before the /workspace change above, bind themselves into a
+        workspace). Disallowed chats are silently dropped, logged once per
+        chat id rather than once per message.
+        """
+        if telegram_store.is_chat_allowed(chat_id):
+            return True
+        if chat_id not in self._logged_disallowed_chats:
+            self._logged_disallowed_chats.add(chat_id)
+            log.info("telegram update dropped: chat_id=%s is not on the allowlist", chat_id)
+        return False
 
     async def start(self) -> None:
         if self.is_running():
@@ -966,6 +974,10 @@ class TelegramService:
 
     async def _dispatch_update(self, api: TelegramAPI, update: dict[str, Any]) -> None:
         try:
+            chat_id = _chat_id_from_update(update)
+            if chat_id is not None and not self._chat_allowed(chat_id):
+                return
+
             callback_query = update.get("callback_query")
             if callback_query:
                 await self._handle_callback_query(api, callback_query)

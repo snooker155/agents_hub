@@ -1,0 +1,50 @@
+{
+  "schema": "agents-hub/agent-manifest@1",
+  "id": "claude-code",
+  "name": "Claude Code",
+  "description": "Anthropic's own coding agent CLI, wrapped behind the Agents Hub HTTP contract. Edits files in a local git repository, runs shell commands, and reports its own token usage and dollar cost on every run.",
+  "domain": "Software Engineering",
+  "runtime": {
+    "kind": "http",
+    "port": 8430,
+    "run_path": "/run",
+    "stream_path": "/run/stream",
+    "health_path": "/health",
+    "timeout": 1800,
+    "docker": {
+      "dockerfile": "Dockerfile.agenthub",
+      "context": "."
+    },
+    "env": [
+      {
+        "name": "ANTHROPIC_API_KEY",
+        "required": true,
+        "description": "Model key Claude Code uses for its own completions. Read by the CLI itself, not by the hub."
+      },
+      {
+        "name": "CLAUDE_MODEL",
+        "required": false,
+        "description": "Model passed to claude --model, e.g. claude-sonnet-4-6. Defaults to whatever the installed CLI picks."
+      },
+      {
+        "name": "ANTHROPIC_BASE_URL",
+        "required": false,
+        "description": "Override the Anthropic API base URL, for a proxy or a compatible gateway. Read by the CLI itself."
+      },
+      {
+        "name": "CLAUDE_WORKDIR",
+        "required": false,
+        "description": "Git repository Claude Code edits when a run does not name a workspace. Defaults to /work."
+      }
+    ]
+  },
+  "capabilities": {
+    "tools": [
+      "edit_files",
+      "run_shell_commands",
+      "read_files",
+      "git_commit"
+    ]
+  },
+  "docs": "README.md"
+}

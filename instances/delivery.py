@@ -3,8 +3,10 @@ Delivering a message to an instance.
 
 Three cases, one entry point:
 
-- the copy is **alive with a loop of its own** (a node or a container) — the
-  message goes into its mailbox and its poll loop answers it, in its process;
+- the copy is **resident** (started with Run, instances/carrier.py): the
+  message goes into its mailbox, the carrier is woken and answers it in its own
+  process. A resident copy whose carrier is stopped is started again rather
+  than answered here, so the backend never runs its agent;
 - the copy is **idle** (finished, stopped, or a carrier-less standby) — there is
   nothing to hand it to, so we revive it: rebuild its history from its journal
   and run one chat turn recorded against the same instance;
@@ -25,7 +27,7 @@ from instances.history import build_instance_history
 
 # Instances that run their own loop drain their own mailbox; delivering to them
 # from here would answer in the wrong process, with the wrong tools mounted.
-CARRIER_KINDS = ("node", "container")
+CARRIER_KINDS = store.CARRIER_KINDS
 
 _PUMP_TASKS: Set[asyncio.Task] = set()
 
@@ -68,9 +70,61 @@ def can_deliver_directly(instance: Dict[str, Any]) -> bool:
     return instance.get("state") != "active"
 
 
+def steer_running_task(instance: Dict[str, Any], body: str, inbox_msg_id: str) -> Optional[str]:
+    """Also hand a message for a busy copy to the task run it is working on.
+
+    The copy's agent loop reads it before its next model call (common/
+    steering.py) instead of after the whole run. It stays in the mailbox as
+    well: the loop takes it from there when it takes the steering message,
+    and if the run ends first the mailbox delivers it as before. Only a
+    running task run of a standard agent qualifies: a chat turn hands its
+    unread messages back to its own client, and a remote agent has no loop to
+    read one. Returns the run id, or None when the message only waits.
+    """
+    if instance.get("kind") in CARRIER_KINDS or instance.get("state") != "active":
+        return None
+    run_id = str(instance.get("current_run_id") or "")
+    if not run_id:
+        return None
+    try:
+        from agents.registry import get_agent
+        from common import steering
+        from managers.run_manager import get_run_by_id
+
+        run = get_run_by_id(run_id) or {}
+        if str(run.get("status") or "") != "running" or not run.get("task_id"):
+            return None
+        spec = get_agent(str(run.get("agent_id") or ""))
+        if spec is None or spec.is_remote():
+            return None
+        steering.post(run_id, body, author={
+            "id": f"{steering.INBOX_AUTHOR_PREFIX}{inbox_msg_id}", "name": "mailbox"})
+        return run_id
+    except Exception:  # noqa: BLE001 - the message still waits in the mailbox
+        return None
+
+
+def wake_resident(instance: Dict[str, Any]) -> bool:
+    """Start a stopped resident copy again so it can answer its mailbox.
+
+    Synchronous (it may spawn a process); returns True when a carrier was
+    started. A live carrier is left alone: the mailbox wake-up reaches it.
+    """
+    from instances import carrier
+
+    current = carrier.sync(store.get(str(instance["instance_id"]))) or instance
+    if current.get("state") in store.LIVE_STATES:
+        return False
+    try:
+        return carrier.restart(str(current["instance_id"])) is not None
+    except Exception:  # noqa: BLE001 - the message stays queued; the page shows the failure
+        return False
+
+
 async def deliver(instance: Dict[str, Any], body: str, *,
                   client_id: Optional[str] = None,
-                  msg_id: Optional[str] = None) -> Dict[str, Any]:
+                  msg_id: Optional[str] = None,
+                  conversation_id: Optional[str] = None) -> Dict[str, Any]:
     """Deliver one message, choosing mailbox or direct revival.
 
     Returns ``{mode, instance_id, channel?, msg_id?}``. ``mode`` is ``queued``
@@ -78,8 +132,20 @@ async def deliver(instance: Dict[str, Any], body: str, *,
     """
     instance_id = str(instance["instance_id"])
 
+    if instance.get("kind") in CARRIER_KINDS:
+        queued = msg_id or inbox.enqueue(instance_id, body, conversation_id=conversation_id)
+        started = await asyncio.to_thread(wake_resident, instance)
+        return {"mode": "queued", "instance_id": instance_id, "msg_id": queued,
+                "channel": channel_for(instance_id), "started": started,
+                "conversation_id": inbox.public_conversation(
+                    inbox.normalize_conversation(conversation_id))}
+
     if not can_deliver_directly(instance):
         queued = msg_id or inbox.enqueue(instance_id, body)
+        steered = steer_running_task(instance, body, queued)
+        if steered:
+            return {"mode": "steered", "instance_id": instance_id, "msg_id": queued,
+                    "run_id": steered}
         return {"mode": "queued", "instance_id": instance_id, "msg_id": queued}
 
     channel = channel_for(instance_id)

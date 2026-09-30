@@ -1,17 +1,27 @@
 """
-Awaiting-input escalation sweep.
+Awaiting-input / awaiting-approval escalation sweep.
 
-Tasks parked by ``ask_user`` (status ``awaiting_input`` with a ``pending_question``)
-otherwise wait forever for a human. This periodic sweep, ticked by the plan
-scheduler, does two opt-in things:
+Two kinds of task park waiting for a human and otherwise wait forever:
+
+* ``awaiting_input`` — paused by ``ask_user``, with a ``pending_question``.
+* ``awaiting_approval`` — paused by the tool-call approval gate (see
+  ``tools/approval.py``, ``agents/hooks.py``), with a ``pending_approval``.
+
+This periodic sweep, ticked by the plan scheduler, does two opt-in things:
 
 1. **Reminders** — once a parked task is older than ``awaiting_input_reminder_hours``
    it emits an inbox notification, then re-reminds at the same cadence (tracked
-   via ``last_reminded_at`` on the pending question so it never spams every tick).
-2. **Auto-answer** — when ``awaiting_input_auto_answer`` is enabled and a task has
-   waited past ``awaiting_input_auto_answer_hours``, it resumes the task with the
-   configured default answer. Deliberately conservative: it skips questions that
-   look destructive, and it is off by default.
+   via ``last_reminded_at`` on the pending record so it never spams every tick).
+   Both kinds of park share this one threshold and cadence; only the
+   notification's title/body and which field carries ``last_reminded_at``
+   differ.
+2. **Auto-answer** — when ``awaiting_input_auto_answer`` is enabled and an
+   ``awaiting_input`` task has waited past ``awaiting_input_auto_answer_hours``,
+   it resumes the task with the configured default answer. Deliberately
+   conservative: it skips questions that look destructive, and it is off by
+   default. There is no equivalent for ``awaiting_approval`` — a tool call
+   nobody explicitly approved is never made on the operator's behalf, no
+   matter how long it waits; those tasks only ever get reminded.
 
 Everything is gated on config (all thresholds default to disabled) and fails
 soft — a bad task must never wedge the sweep for the others.
@@ -60,6 +70,25 @@ def _emit_reminder(task, pending: Dict[str, Any], age_hours: float) -> None:
         title="A task is still waiting for your input",
         body=(q or "The agent is waiting for your answer.")
         + f"\n\n(Waiting {age_hours:.0f}h — task {getattr(task, 'key', '') or str(task.id)}.)",
+        severity="warning",
+        source={"origin": "escalation", "task_id": str(task.id)},
+        workspace=str(getattr(task, "workspace", "") or "") or None,
+        channels=["dashboard"],
+    )
+
+
+def _emit_approval_reminder(task, pending: Dict[str, Any], age_hours: float) -> None:
+    from plans import service as _plan_service
+
+    tool = str(pending.get("tool") or "a tool call").strip() or "a tool call"
+    reason = str(pending.get("reason") or "").strip()
+    body = f"The agent is waiting for your approval to call `{tool}`."
+    if reason:
+        body += f" {reason}"
+    body += f"\n\n(Waiting {age_hours:.0f}h — task {getattr(task, 'key', '') or str(task.id)}.)"
+    _plan_service.create_notification(
+        title="A tool call is still waiting for your approval",
+        body=body,
         severity="warning",
         source={"origin": "escalation", "task_id": str(task.id)},
         workspace=str(getattr(task, "workspace", "") or "") or None,
@@ -118,9 +147,17 @@ def _auto_answer(task, pending: Dict[str, Any], answer: str) -> bool:
 
 
 def sweep_awaiting_input() -> Dict[str, int]:
-    """One escalation pass over all ``awaiting_input`` tasks. Returns a summary
-    ``{reminded, auto_answered}``. No-ops (``{"skipped": 1}``) when nothing is
-    enabled in config."""
+    """One escalation pass over all ``awaiting_input`` and ``awaiting_approval``
+    tasks. Returns a summary ``{reminded, auto_answered, approval_reminded}``.
+    No-ops (``{"skipped": 1}``) when nothing is enabled in config.
+
+    Both parked states share the one ``awaiting_input_reminder_hours``
+    threshold and cadence — an approval nobody has looked at is exactly as
+    stuck as a question nobody has answered. Auto-answer only ever applies to
+    ``awaiting_input``: an unapproved tool call is never made automatically,
+    however long it waits, so an ``awaiting_approval`` task is only ever
+    reminded, never resolved by this sweep.
+    """
     from common.config import settings
 
     reminder_hours = int(getattr(settings, "awaiting_input_reminder_hours", 0) or 0)
@@ -137,6 +174,7 @@ def sweep_awaiting_input() -> Dict[str, int]:
     now = _now()
     reminded = 0
     auto_answered = 0
+    approval_reminded = 0
 
     try:
         tasks = ts.list_tasks()
@@ -145,7 +183,33 @@ def sweep_awaiting_input() -> Dict[str, int]:
 
     for task in tasks:
         try:
-            if str(getattr(task, "status", "")) != str(ts.TaskStatus.awaiting_input):
+            status = str(getattr(task, "status", ""))
+
+            if status == str(ts.TaskStatus.awaiting_approval):
+                if reminder_hours <= 0:
+                    continue
+                pending = getattr(task, "pending_approval", None) or {}
+                asked_at = _parse(pending.get("asked_at"))
+                if not asked_at:
+                    continue
+                age_hours = (now - asked_at).total_seconds() / 3600.0
+                if age_hours < reminder_hours:
+                    continue
+                last_reminded = _parse(pending.get("last_reminded_at"))
+                since_last = (now - last_reminded).total_seconds() / 3600.0 if last_reminded else None
+                if since_last is None or since_last >= reminder_hours:
+                    _emit_approval_reminder(task, pending, age_hours)
+                    updated = dict(pending)
+                    updated["last_reminded_at"] = now.isoformat()
+                    updated["reminder_count"] = int(pending.get("reminder_count") or 0) + 1
+                    # Never auto-answer here: only the reminder cadence is
+                    # shared with awaiting_input, the pending record itself
+                    # (pending_approval) and its resume path are untouched.
+                    ts.update_task(task.id, pending_approval=updated)
+                    approval_reminded += 1
+                continue
+
+            if status != str(ts.TaskStatus.awaiting_input):
                 continue
             pending = getattr(task, "pending_question", None) or {}
             asked_at = _parse(pending.get("asked_at"))
@@ -176,9 +240,12 @@ def sweep_awaiting_input() -> Dict[str, int]:
             log.exception("escalation sweep failed for a task")
             continue
 
-    if reminded or auto_answered:
-        log.info("awaiting-input sweep: reminded %d, auto-answered %d", reminded, auto_answered)
-    return {"reminded": reminded, "auto_answered": auto_answered}
+    if reminded or auto_answered or approval_reminded:
+        log.info(
+            "awaiting-input sweep: reminded %d, auto-answered %d, approval-reminded %d",
+            reminded, auto_answered, approval_reminded,
+        )
+    return {"reminded": reminded, "auto_answered": auto_answered, "approval_reminded": approval_reminded}
 
 
 __all__ = ["sweep_awaiting_input"]

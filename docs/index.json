@@ -8,6 +8,7 @@
       "summary": "An agent is a definition, not a process: a prompt, a set of tools, a model, and optionally memory. Running it produces a [run](sessions-and-runs.md).",
       "surface": "Agents",
       "related": [
+        "a2a",
         "chat",
         "imported-agents",
         "instances",
@@ -15,12 +16,18 @@
         "memory",
         "sessions-and-runs",
         "system-agents",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "agent-loop",
+        "tasks",
+        "guardrails"
       ],
       "headings": [
         "What an agent is made of",
         "Where agents come from",
+        "The example roster",
         "System vs. custom",
+        "Versions",
+        "Versions and pinning",
         "Delegation",
         "Gotchas"
       ]
@@ -34,14 +41,20 @@
         "agents",
         "flows",
         "teams",
-        "telegram"
+        "telegram",
+        "costs",
+        "services"
       ],
       "headings": [
         "What you can point it at",
         "What the agent sees",
+        "Compaction",
+        "Prompt caching",
         "Attachments and references",
         "Slash commands",
+        "Code panel",
         "Delegation from chat",
+        "Handoffs",
         "Costs and approvals",
         "Telegram"
       ]
@@ -49,14 +62,21 @@
     {
       "id": "cli",
       "title": "The CLI",
-      "summary": "`ah` drives the service from a terminal: the same operations as the dashboard, either in this process or over REST against a backend elsewhere.",
+      "summary": "`ah` drives the service from a terminal: the same operations as the dashboard, either in this process or over REST against a backend elsewhere. Command groups for every entity, commands generated from the OpenAPI schema, `ah api` as the raw escape hatch, and a single-file binary for REST mode.",
       "surface": "Terminal",
       "related": [
         "installation",
         "workspaces",
         "projects",
         "tasks",
-        "nodes"
+        "instances",
+        "workers",
+        "backup",
+        "flows",
+        "loops",
+        "teams",
+        "evals",
+        "mcp"
       ],
       "headings": [
         "Two ways it reaches the service",
@@ -75,11 +95,12 @@
       "surface": "Connections",
       "summary": "An agent that already runs in production, on its own triggers, reporting what it does into this hub. The hub starts nothing and only watches.",
       "related": [
-        "imported-agents",
-        "sessions-and-runs",
-        "costs",
+        "a2a",
         "agents",
-        "connectors"
+        "connectors",
+        "costs",
+        "imported-agents",
+        "sessions-and-runs"
       ],
       "headings": [
         "Where it lives",
@@ -103,7 +124,9 @@
         "telegram",
         "projects",
         "views",
-        "settings"
+        "settings",
+        "mcp",
+        "notifications"
       ],
       "headings": [
         "Telegram",
@@ -118,14 +141,18 @@
       "summary": "Agents can run in-process or in Docker. Container mode isolates a run: its own filesystem view, its own network posture, its own lifetime.",
       "surface": "Containers",
       "related": [
-        "nodes",
+        "instances",
         "settings",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "workers",
+        "environments"
       ],
       "headings": [
         "Execution modes",
         "Images",
+        "Environments: image, limits, network",
         "The Containers page",
+        "Preview through the hub",
         "Why it matters beyond isolation",
         "Gotchas"
       ]
@@ -139,31 +166,112 @@
         "loops",
         "models",
         "playground",
-        "workspaces"
+        "workspaces",
+        "notifications",
+        "tasks",
+        "deployments",
+        "agent-loop",
+        "tool-policy",
+        "guardrails",
+        "outcomes"
       ],
       "headings": [
         "Where the numbers come from",
         "Budgets",
+        "Per-run limit",
         "What actually costs money",
         "Reducing it"
       ]
     },
     {
+      "id": "deployments",
+      "title": "Deployments",
+      "summary": "Scheduled agent_task, flow and loop jobs shown as production deployments: a per-run money cap, an environment, and a firing journal that shows whether each firing actually worked.",
+      "surface": "Deployments",
+      "related": [
+        "costs",
+        "environments",
+        "project-deployments",
+        "scheduling",
+        "tasks"
+      ],
+      "headings": [
+        "What a deployment is",
+        "The firing journal",
+        "Auto pause",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "environments",
+      "title": "Environments",
+      "summary": "A named execution profile: mode, image, packages, network policy, limits and plain variables a task, node or scheduled job runs in.",
+      "surface": "Environments",
+      "related": [
+        "containers",
+        "instances",
+        "deployments",
+        "scheduling",
+        "service-health"
+      ],
+      "headings": [
+        "Scope and defaults",
+        "Mode, image and packages",
+        "Sandbox provider",
+        "Limits",
+        "Network",
+        "Plain variables",
+        "Archiving and deletion",
+        "Where it applies",
+        "The Environments page",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "evals",
       "title": "Evals",
-      "summary": "Eval sets, graders and model sweeps: measure whether a prompt change helped instead of guessing.",
+      "summary": "Eval sets, graders and model sweeps: measure whether a prompt change helped instead of guessing. Online evals grade a sample of production runs by alert rule. Any run becomes a case with one button, and a sweep's failed cases can propose a revised prompt to apply as a new agent version.",
       "surface": "Evals",
       "related": [
         "agents",
         "costs",
-        "tools-and-capabilities"
+        "tools-and-capabilities",
+        "experiments",
+        "notifications"
       ],
       "headings": [
         "The pieces",
+        "Targets",
+        "Cases from tasks",
+        "Cases with files",
+        "Cases from a run",
         "Graders, cheapest first",
+        "Trajectory graders",
         "Cost",
+        "Batch mode",
+        "Repeats and variance",
+        "Diff of two runs",
+        "Prompt suggestions from failed cases",
         "The injection audit",
+        "Online evals",
         "Why bother"
+      ]
+    },
+    {
+      "id": "experiments",
+      "title": "Experiments",
+      "summary": "A/B experiments between stored versions of an agent's definition: traffic shares, deterministic routing per run or conversation, and a per-arm report of outcomes, cost and online eval scores.",
+      "surface": "Agents",
+      "related": [
+        "evals",
+        "agents",
+        "notifications"
+      ],
+      "headings": [
+        "What an experiment is",
+        "How routing works",
+        "Reading the report",
+        "Rollback and new versions during an experiment"
       ]
     },
     {
@@ -184,17 +292,38 @@
       ]
     },
     {
+      "id": "hooks",
+      "title": "Hooks and tool approval",
+      "summary": "Two ways to put a human, or the operator's own code, in front of a single tool call: hooks run around every call, and the approval gate holds a call until a person says yes.",
+      "surface": "Agents",
+      "related": [
+        "agents",
+        "tasks",
+        "tools-and-capabilities",
+        "workspaces",
+        "tool-policy"
+      ],
+      "headings": [
+        "In the dashboard",
+        "Hooks",
+        "The approval gate",
+        "What stays advisory",
+        "Tool policy"
+      ]
+    },
+    {
       "id": "imported-agents",
       "title": "Imported agents",
       "surface": "Agents",
       "summary": "An agent that already exists, already works and has its own dependencies does not need rebuilding here. Import it from its git repository: the hub clones it, checks whether it can run, and adds it to the agent list either way.",
       "related": [
+        "a2a",
         "agents",
-        "marketplace",
+        "connections",
         "containers",
-        "tools-and-capabilities",
         "flows",
-        "connections"
+        "marketplace",
+        "tools-and-capabilities"
       ],
       "headings": [
         "Where it runs",
@@ -202,6 +331,8 @@
         "The shape of an agent",
         "Pausing to ask",
         "The import flow",
+        "Claude Code and Codex",
+        "Importing an A2A agent",
         "What you give up",
         "Gotchas"
       ]
@@ -217,7 +348,10 @@
         "models",
         "service-health",
         "settings",
-        "troubleshooting"
+        "troubleshooting",
+        "deployment",
+        "backup",
+        "demo"
       ],
       "headings": [
         "Prerequisites",
@@ -234,18 +368,52 @@
     {
       "id": "instances",
       "title": "Instances",
-      "summary": "An instance is a live copy of an agent: its own state, its own label, its own history. Where an [agent](agents.md) is a definition and a [node](nodes.md) is a process, an instance is the thing actually doing work.",
+      "summary": "An instance is a live copy of an agent: its own state, its own label, its own history. A resident instance is the one Run on an agent's page starts: a process or container of its own that answers its mailbox in several conversations, can take the agent's tasks, and can be published at a public address through the hub. Nodes were folded into instances.",
       "surface": "Instances",
       "related": [
         "agents",
-        "nodes",
+        "sessions-and-runs",
+        "containers",
+        "environments",
         "service-health",
-        "sessions-and-runs"
+        "steering",
+        "services"
       ],
       "headings": [
         "States",
+        "Resident instances",
+        "Starting one",
+        "The carrier",
+        "Inputs",
+        "Conversations",
+        "Publishing",
+        "Live output",
         "The timeline",
-        "The inbox"
+        "The mailbox",
+        "From nodes to instances"
+      ]
+    },
+    {
+      "id": "services",
+      "title": "Services",
+      "summary": "An agent kept running as replicas: the desired state (agent, workspace, environment, replicas min and max, concurrency, idle stop, budget, version) a supervisor keeps, and the runner every chat, /v1, widget and Telegram turn goes to so the backend runs no agent.",
+      "surface": "Services",
+      "related": [
+        "instances",
+        "chat",
+        "hub-as-provider",
+        "environments",
+        "deployment",
+        "agents"
+      ],
+      "headings": [
+        "Where a chat turn runs",
+        "The desired state",
+        "The supervisor",
+        "Replicas",
+        "Writing to one directly",
+        "Jobs",
+        "API and CLI"
       ]
     },
     {
@@ -255,12 +423,16 @@
       "surface": "Loops",
       "related": [
         "costs",
-        "flows"
+        "flows",
+        "system-workspace",
+        "outcomes"
       ],
       "headings": [
         "The exit criterion",
         "The bounds that stop it",
         "Running",
+        "Checkpoint and resume",
+        "Rubric",
         "Gotchas"
       ]
     },
@@ -274,7 +446,8 @@
         "skills",
         "flows",
         "imported-agents",
-        "system-agents"
+        "system-agents",
+        "registry"
       ],
       "headings": [
         "Publishing an agent, a flow or a skill",
@@ -284,9 +457,54 @@
       ]
     },
     {
+      "id": "registry",
+      "title": "Agent registry",
+      "summary": "Which agents, flows, skills and MCP servers the hub has across workspaces, who owns each and whether an administrator approved it. With AGENTS_HUB_REGISTRY_REQUIRE_REVIEW on, publishing to the marketplace waits in review until an admin approves, and an approved item whose definition changes goes back to review; with AGENTS_HUB_MCP_ALLOWLIST_ONLY on, a workspace can attach only MCP servers that match an approved entry of the hub-wide catalog, and attached servers that do not match load no tools. The Agent registry page, GET /api/registry and ah mcp catalog.",
+      "surface": "Marketplace",
+      "related": [
+        "marketplace",
+        "mcp",
+        "agents",
+        "audit",
+        "identity"
+      ],
+      "headings": [
+        "Agents: owner and review status",
+        "MCP: the hub-wide allowlist",
+        "The page",
+        "API",
+        "CLI"
+      ]
+    },
+    {
+      "id": "mcp",
+      "title": "MCP servers",
+      "surface": "MCP servers",
+      "summary": "Attach an external Model Context Protocol server as a group of tools: per workspace, classified by the capabilities its operator declares, and gated by the same hooks and approvals the built-in tools use.",
+      "related": [
+        "connectors",
+        "connections",
+        "tools-and-capabilities",
+        "hooks",
+        "agents",
+        "workspaces",
+        "registry"
+      ],
+      "headings": [
+        "In the dashboard",
+        "Attaching one",
+        "The id scheme",
+        "Capabilities",
+        "Approval",
+        "Security notes",
+        "How it behaves at runtime",
+        "Gotchas"
+      ]
+    },
+    {
       "id": "memory",
       "title": "Memory",
-      "summary": "Agents have five complementary memory layers, bound to a pool. The pool is assigned per workspace, so the same agent can carry different knowledge in different workspaces.",
+      "summary": "Agents have several complementary memory layers, bound to a pool. Core memory blocks are always in the prompt; the rest are ranked and fetched with tools. The pool is assigned per workspace, so the same agent can carry different knowledge in different workspaces.",
       "surface": "Memory",
       "related": [
         "skills",
@@ -295,8 +513,13 @@
       ],
       "headings": [
         "The layers",
+        "Core memory blocks",
         "How agents use it",
+        "Ranking",
+        "Episodes",
         "Getting knowledge in",
+        "RAG",
+        "Version history",
         "Gotchas"
       ]
     },
@@ -307,6 +530,8 @@
       "surface": "Models",
       "related": [
         "costs",
+        "hub-as-provider",
+        "local-models",
         "settings"
       ],
       "headings": [
@@ -314,25 +539,8 @@
         "Defaults and overrides",
         "Pricing",
         "Context window",
-        "Providers"
-      ]
-    },
-    {
-      "id": "nodes",
-      "title": "Nodes",
-      "summary": "A node is a long-running agent process. It polls for work and executes it, which is what lets a task run without a chat window open.",
-      "surface": "Nodes",
-      "related": [
-        "containers",
-        "instances",
-        "service-health",
-        "sessions-and-runs"
-      ],
-      "headings": [
-        "Two node types",
-        "Starting and stopping",
-        "Reading a node's state",
-        "Exposure"
+        "Providers",
+        "Local models"
       ]
     },
     {
@@ -385,6 +593,7 @@
       "headings": [
         "How a run works",
         "Designing one",
+        "The lab environment",
         "Gotchas"
       ]
     },
@@ -395,30 +604,63 @@
       "surface": "Projects",
       "related": [
         "agents",
+        "project-deployments",
         "tasks",
         "workspaces"
       ],
       "headings": [
         "What a project adds over a bare workspace",
         "The usual sequence",
+        "Preview",
+        "Deploy",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "project-deployments",
+      "title": "Project deployments",
+      "summary": "A project's frontend and backend run from inside the hub: deployed, watched, restarted, shown in the dashboard, shared through /apps/<slug>/ and opened by the agent's own browser.",
+      "surface": "Projects",
+      "related": [
+        "projects",
+        "containers",
+        "browser",
+        "environments",
+        "deployments",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "What a deployment is",
+        "Detecting the services",
+        "Deploying and watching",
+        "Seeing the app",
+        "The agent's tools",
+        "API",
+        "Settings",
         "Gotchas"
       ]
     },
     {
       "id": "scheduling",
       "title": "Scheduling and the Plan page",
-      "summary": "Future work: notifications, agent tasks and flow triggers, plus the inbox showing what fired.",
+      "summary": "Future work: notifications, agent tasks, flow and loop triggers, plus the inbox showing what fired.",
       "surface": "Plan",
       "related": [
         "service-health",
         "tasks",
-        "telegram"
+        "telegram",
+        "notifications",
+        "deployments",
+        "environments"
       ],
       "headings": [
         "Job kinds",
         "Recurrence",
         "Scheduling from a conversation",
         "The scheduler itself",
+        "Lease and idempotency",
+        "The firing journal",
+        "Auto pause",
         "Gotchas"
       ]
     },
@@ -430,36 +672,92 @@
       "related": [
         "containers",
         "installation",
-        "nodes",
+        "instances",
         "sessions-and-runs",
         "system-agents",
         "tools-and-capabilities",
         "troubleshooting",
-        "web-logs"
+        "web-logs",
+        "workers",
+        "system-workspace",
+        "runbook",
+        "slo"
       ],
       "headings": [
         "The snapshot",
         "Reading it correctly",
+        "Probes and metrics",
+        "Exporting runs as spans",
         "The usual diagnoses",
+        "Doctor",
         "The Service Agent"
+      ]
+    },
+    {
+      "id": "runbook",
+      "title": "Runbook: typical failures",
+      "summary": "Symptom, how to confirm it and the fix for the failures operators hit most: an invalid or rate limited provider key, a model not enabled, no docker daemon, no worker so runs stay pending, a locked SQLite or unreachable Postgres, migrations failing at start or a database written by a newer release, a disk full of run logs, a budget refusal, a stuck lease, an MCP handshake failure, SSE buffered by a proxy and a widget CORS refusal; plus ah support-bundle, the zip of version, doctor, health, migrations, masked config, recent errors, log tails and SLO status with every secret scrubbed.",
+      "surface": "Health",
+      "related": [
+        "troubleshooting",
+        "service-health",
+        "slo",
+        "deployment",
+        "backup"
+      ],
+      "headings": [
+        "Provider key invalid or rate limited",
+        "Model not enabled",
+        "Docker daemon missing",
+        "Worker not running: runs stay pending",
+        "Database locked or Postgres unreachable",
+        "Migrations failed at start",
+        "Disk full from run logs",
+        "Budget refusal",
+        "Stuck lease",
+        "MCP server failing handshake",
+        "SSE buffered by a proxy",
+        "Widget CORS refusal",
+        "Support bundle"
+      ]
+    },
+    {
+      "id": "slo",
+      "title": "SLO: run start time and error rate",
+      "summary": "Two service level objectives over a rolling hour: run start p95 (recorded to started, agent and entity runs) under AGENTS_HUB_SLO_START_P95_SECONDS (30 s) and the share of finished runs that failed under AGENTS_HUB_SLO_ERROR_RATE (5%, at least 20 runs). GET /api/support/slo and the Health page card show them; /metrics exports agents_hub_run_start_seconds and agents_hub_slo_breach; deploy/prometheus/alerts.yml and an optional Helm PrometheusRule alert on them; notification rules slo_start_latency and slo_error_rate fire once on a breach and once on recovery.",
+      "surface": "Health",
+      "related": [
+        "service-health",
+        "runbook",
+        "notifications",
+        "deployment"
+      ],
+      "headings": [
+        "The two objectives",
+        "Reading it",
+        "Alerts inside the hub"
       ]
     },
     {
       "id": "sessions-and-runs",
       "title": "Sessions and runs",
-      "summary": "These two records are how everything in the product becomes observable.",
+      "summary": "These two records are how everything in the product becomes observable. Why a run failed: its status, error and log, and what a stale run means.",
       "surface": "Sessions",
       "related": [
         "costs",
         "instances",
-        "service-health"
+        "service-health",
+        "workers",
+        "agent-loop"
       ],
       "headings": [
         "Run",
+        "Entity runs",
         "Session",
+        "Run group",
         "Reading a failure",
         "Stale runs",
-        "Gotchas"
+        "Live updates"
       ]
     },
     {
@@ -468,10 +766,11 @@
       "summary": "Credentials and connection details. What models are offered and which is default lives on the [models](models.md) page, not here.",
       "surface": "Settings",
       "related": [
+        "connectors",
+        "identity",
         "models",
         "service-health",
-        "workspaces",
-        "connectors"
+        "workspaces"
       ],
       "headings": [
         "What is here",
@@ -482,17 +781,23 @@
     {
       "id": "skills",
       "title": "Skills",
-      "summary": "A skill is a reusable procedure an agent can follow: written once, surfaced when it is relevant to the task at hand.",
+      "summary": "Reusable procedures agents follow: steps or Markdown instructions, attached per agent, versioned with history, restore and pinning, installed copies that know when their original moved on, skills synced from a project's .claude/skills folders, SKILL.md import and export.",
       "surface": "Skills Catalog",
       "related": [
         "agents",
         "marketplace",
-        "memory"
+        "memory",
+        "projects"
       ],
       "headings": [
         "The part that trips everyone up",
         "How they surface",
-        "Writing one"
+        "Writing one",
+        "Versions",
+        "Installed copies and their original",
+        "Skills from a repository",
+        "SKILL.md in and out",
+        "API"
       ]
     },
     {
@@ -522,13 +827,22 @@
       "related": [
         "agents",
         "chat",
+        "hooks",
         "projects",
-        "sessions-and-runs"
+        "sessions-and-runs",
+        "notifications",
+        "costs",
+        "outcomes"
       ],
       "headings": [
-        "Lifecycle",
+        "Status",
+        "Budget pause",
+        "Priority and deadlines",
         "Subtasks and decomposition",
         "Results",
+        "Files",
+        "Outcome",
+        "Agent version",
         "Gotchas"
       ]
     },
@@ -540,7 +854,8 @@
       "related": [
         "agents",
         "costs",
-        "flows"
+        "flows",
+        "steering"
       ],
       "headings": [
         "Modes",
@@ -569,18 +884,24 @@
     {
       "id": "tools-and-capabilities",
       "title": "Tools and capabilities",
-      "summary": "Tools are granted to an agent by name. Nothing is granted by default, including the calculator.",
+      "summary": "Tools are granted to an agent by name. Nothing is granted by default, including the calculator. The browser tools (Playwright in its own container, browser_open, browser_read, browser_act, browser_screenshot) and run_code (a sandboxed code interpreter in a throwaway container) live here too.",
       "surface": "Agents",
       "related": [
         "agents",
+        "hooks",
         "service-health",
         "system-agents",
-        "web-logs"
+        "web-logs",
+        "mcp",
+        "browser"
       ],
       "headings": [
         "The capability model",
         "Why capabilities and not tool names",
         "Consequences you will actually hit",
+        "Delegation counts as holding the capability",
+        "The browser tools",
+        "run_code",
         "Group aliases",
         "Approval gates, which are a different thing"
       ]
@@ -597,7 +918,8 @@
         "models",
         "instances",
         "containers",
-        "cli"
+        "cli",
+        "runbook"
       ],
       "headings": [
         "Nothing runs",
@@ -610,7 +932,7 @@
     {
       "id": "views",
       "title": "Views and Studio",
-      "summary": "A view is something an agent built to be looked at: a chart, a graph, a table, a 3D scene, a simulation, a slide deck or a document.",
+      "summary": "A view is something an agent built to be looked at: a chart, a graph, a table, a 3D scene, a simulation, a slide deck (with layouts, themes, PDF and PowerPoint export) or a document.",
       "surface": "Views & Studio",
       "related": [
         "agents",
@@ -620,6 +942,7 @@
         "Getting one",
         "Studio",
         "What views can do",
+        "Slides",
         "Gotchas"
       ]
     },
@@ -652,14 +975,684 @@
         "agents",
         "cli",
         "costs",
+        "identity",
         "memory",
-        "projects"
+        "projects",
+        "system-workspace",
+        "demo"
       ],
       "headings": [
         "What a workspace holds",
         "Per-workspace memory",
         "The default workspace",
+        "The system workspace",
         "Gotchas"
+      ]
+    },
+    {
+      "id": "notifications",
+      "title": "Notifications",
+      "surface": "Connectors",
+      "summary": "Outbound webhooks and Slack endpoints, alert rules for a failed run, spend past a threshold or a low online eval score, and the signed, idempotent inbound webhooks (the node runner, a flow trigger, and filing a task from outside).",
+      "related": [
+        "connectors",
+        "scheduling",
+        "costs",
+        "tasks",
+        "instances",
+        "flows",
+        "evals"
+      ],
+      "headings": [
+        "Outbound: webhooks and Slack",
+        "Alert rules",
+        "Inbound: signing and idempotency",
+        "Filing a task from outside",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "scaling",
+      "title": "Running more than one backend",
+      "surface": "Installation",
+      "summary": "docker compose --scale backend=N needs the cross-replica broker bridge (AGENTS_HUB_BROKER_URL, a Redis Stream that also lets a browser reconnecting to another replica catch up by Last-Event-ID) or SSE clients pinned to another replica stop seeing live updates; AGENTS_HUB_DATABASE_URL puts the database in Postgres (ah db migrate moves an existing one); AGENTS_HUB_ROLE=api plus ah worker runs agents on other hosts (workers.md); the default single replica on SQLite needs none of this.",
+      "related": [
+        "installation",
+        "service-health",
+        "sessions-and-runs",
+        "notifications",
+        "scheduling",
+        "cli",
+        "containers",
+        "workers",
+        "storage",
+        "deployment",
+        "backup"
+      ],
+      "headings": [
+        "Per replica vs. shared",
+        "The broker bridge",
+        "Running it",
+        "Postgres",
+        "Workers on other hosts",
+        "Limits",
+        "Staying on one replica (the default)"
+      ]
+    },
+    {
+      "id": "identity",
+      "title": "Identity",
+      "summary": "Who is using this hub and what they may do. Three modes set with `AUTH_MODE`: a single operator (the default, no login at all), a shared API token, or named users with passwords, roles and per-workspace membership.",
+      "surface": "Settings",
+      "related": [
+        "settings",
+        "workspaces",
+        "installation",
+        "service-health"
+      ],
+      "headings": [
+        "The three modes",
+        "First run in multi mode",
+        "Roles and what each may do",
+        "What a record remembers",
+        "The service credential",
+        "How passwords and sessions are stored",
+        "Picking a mode",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "a2a",
+      "title": "A2A (Agent2Agent)",
+      "surface": "Agents",
+      "summary": "A2A is the open protocol for one agent to call another across products: a JSON Agent Card at a well-known URL, and JSON-RPC 2.0 over HTTP. The hub speaks it both ways, serving a card for every agent and importing an agent from nothing but its card URL.",
+      "related": [
+        "imported-agents",
+        "agents",
+        "connections",
+        "tasks",
+        "sessions-and-runs"
+      ],
+      "headings": [
+        "Agent cards",
+        "The JSON-RPC endpoint",
+        "Streaming",
+        "State mapping",
+        "Importing an A2A agent",
+        "What is not implemented"
+      ]
+    },
+    {
+      "id": "workers",
+      "title": "Roles, workers and the launch queue",
+      "surface": "Installation",
+      "summary": "AGENTS_HUB_ROLE splits one process into an api backend that queues launches and ah worker processes that spawn them on any host; runs report a heartbeat instead of a pid, write a checkpoint after every tool call and are resumed from it, and singletons (scheduler, watchdog, Telegram, outbox) run under database leases.",
+      "related": [
+        "scaling",
+        "service-health",
+        "sessions-and-runs",
+        "containers",
+        "notifications",
+        "scheduling",
+        "cli",
+        "storage",
+        "deployment"
+      ],
+      "headings": [
+        "Roles",
+        "The queue",
+        "Heartbeats instead of pids",
+        "Checkpoint and resume",
+        "Singletons under leases",
+        "Outbox",
+        "Containers across hosts",
+        "What still needs one host"
+      ]
+    },
+    {
+      "id": "storage",
+      "title": "Files and the object store",
+      "summary": "AGENTS_HUB_BLOB_URL (an s3://bucket/prefix, optionally with AGENTS_HUB_BLOB_ENDPOINT for MinIO) mirrors run logs, node logs, flow logs and view assets into an object store via common/blobs.py, so a backend replica or worker on another host can read a file it did not write; empty (default) keeps every read and write local, exactly as before.",
+      "surface": "Installation",
+      "related": [
+        "scaling",
+        "workers"
+      ],
+      "headings": [
+        "What lives where",
+        "The setting",
+        "What is mirrored, and when",
+        "What still needs a shared mount"
+      ]
+    },
+    {
+      "id": "deployment",
+      "title": "Deploying for high availability",
+      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store. The Cluster page (GET /api/cluster) and ah deployment show the map: members with their heartbeat, load and leases, the queue, and runs, loops, resident instances and containers by host, with each process's own log. Releases are one semver version across pyproject, the dashboard, the Helm chart, the images and a vX.Y.Z tag: scripts/release.py cuts them, the release workflow publishes images to GHCR, and a rollback over a release with migrations restores the pre-migrate archive a SQLite database takes by itself before it migrates.",
+      "surface": "Installation",
+      "related": [
+        "scaling",
+        "workers",
+        "installation",
+        "storage",
+        "service-health",
+        "backup",
+        "services"
+      ],
+      "headings": [
+        "The compose ha profile",
+        "The Helm chart",
+        "The cluster map",
+        "The shared-files caveat",
+        "Releases",
+        "Upgrading",
+        "Rolling back"
+      ]
+    },
+    {
+      "id": "backup",
+      "title": "Backup and recovery",
+      "surface": "Installation",
+      "summary": "ah db backup writes one archive (a self-contained SQLite file plus, by default, the state directories beside it); ah db restore loads it back; ah db verify checks it without touching the live database.",
+      "related": [
+        "scaling",
+        "workers",
+        "installation",
+        "cli"
+      ],
+      "headings": [
+        "What the archive holds",
+        "The three commands",
+        "Losing the host",
+        "How often"
+      ]
+    },
+    {
+      "id": "scim",
+      "title": "SCIM provisioning",
+      "summary": "The channel an identity provider drives itself: /scim/v2 implements SCIM 2.0 Users and Groups (filtering, paging, PATCH) so Entra ID, Okta or Keycloak can create, rename and deactivate accounts here directly, gated by AUTH_SCIM_TOKEN.",
+      "surface": "Accounts",
+      "related": [
+        "identity",
+        "sso",
+        "audit"
+      ],
+      "headings": [
+        "Turning it on",
+        "Pointing a provider at it",
+        "What maps to what",
+        "Deactivation is immediate",
+        "Groups become hub groups, and mappings give them meaning",
+        "Filtering, paging, PATCH",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "sso",
+      "title": "Single sign-on",
+      "summary": "Sign in with Keycloak, Microsoft Entra ID, Google Workspace or any OpenID Connect provider (Authorization Code with PKCE). Groups from the id token become global roles and workspace memberships through mapping rules on the Accounts page.",
+      "surface": "Accounts",
+      "related": [
+        "identity",
+        "scim",
+        "audit",
+        "settings",
+        "installation"
+      ],
+      "headings": [
+        "How it works",
+        "Configuration",
+        "Keycloak",
+        "Microsoft Entra ID",
+        "Google Workspace",
+        "Groups and mappings",
+        "Passwords and the emergency door",
+        "Sessions",
+        "Linking accounts by email",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "secrets",
+      "title": "Secrets",
+      "summary": "Encrypted per-workspace values, optionally scoped to one agent or one user, handed to a run as environment variables only under the names its agent declares.",
+      "surface": "Workspace, Agents tab, Secrets card",
+      "related": [
+        "identity",
+        "tools-and-capabilities",
+        "workspaces",
+        "settings",
+        "containers",
+        "cli",
+        "github-app"
+      ],
+      "headings": [
+        "Why this exists",
+        "The key",
+        "Scopes and precedence",
+        "The agent's allowlist",
+        "How a run receives them",
+        "Managing them",
+        "Vault",
+        "Agent identity in external systems",
+        "Gotchas",
+        "Related"
+      ]
+    },
+    {
+      "id": "audit",
+      "title": "Audit trail",
+      "summary": "Who did what, when, to which object: the append-only trail (token and multi mode) written by the write-request middleware and by key points across the hub (login, run launch, tool approval, workspace policy, env and budget), readable by an administrator in full or by anyone else for their own actions and the workspaces they own, exportable as CSV or JSONL, and offered to audit-subscribed webhooks.",
+      "surface": "Audit",
+      "related": [
+        "identity",
+        "notifications",
+        "workspaces",
+        "settings",
+        "sso",
+        "scim",
+        "api-keys",
+        "secrets",
+        "guardrails"
+      ],
+      "headings": [
+        "What is recorded",
+        "Who can read what",
+        "Retention",
+        "Export",
+        "The audit webhook event",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "api-keys",
+      "title": "Personal API keys",
+      "summary": "A key one person cuts for themselves under AUTH_MODE=multi: acts as its owner, never wider, optionally scoped to workspaces and an expiry. Used by the CLI over AGENTS_HUB_URL, an A2A client talking to another hub, and CI. Managed on the Account page.",
+      "surface": "Account",
+      "related": [
+        "identity",
+        "cli",
+        "a2a",
+        "audit",
+        "settings"
+      ],
+      "headings": [
+        "What a key is",
+        "Scope and expiry",
+        "Where it is used",
+        "How it differs from AGENTS_HUB_API_TOKEN",
+        "The Account page",
+        "Revocation",
+        "The login throttle",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "github-app",
+      "title": "GitHub App",
+      "summary": "The hub holds a GitHub App and issues GitHub tokens itself: an installation token for the workspace an installation is bound to (pull requests come from the app's bot) and a user token for each person who connected their GitHub account (pull requests come from them), handed to runs whose agent declares GITHUB_TOKEN when no explicit secret supplies one.",
+      "surface": "Connectors, Git, GitHub App card; Account, Connected accounts",
+      "related": [
+        "secrets",
+        "identity",
+        "sso",
+        "settings",
+        "audit"
+      ],
+      "headings": [
+        "Why an app",
+        "Creating the app",
+        "Configuration",
+        "Installing and binding to a workspace",
+        "Connecting your own account",
+        "The agent side",
+        "Token lifetimes",
+        "GitHub Enterprise Server",
+        "Gotchas",
+        "Related"
+      ]
+    },
+    {
+      "id": "system-workspace",
+      "title": "The system workspace",
+      "summary": "A workspace where the service looks after itself: a git copy of this repository under the state directory, a doctor agent that files [system] tasks and an engineer agent that proposes fixes as system/ branches of the copy. A scheduled maintenance loop, paused by default, never pushes; a human fetches and pushes.",
+      "surface": "Health",
+      "related": [
+        "service-health",
+        "loops",
+        "workspaces",
+        "tools-and-capabilities"
+      ],
+      "headings": [
+        "The copy",
+        "The two agents",
+        "The flow and the loop",
+        "The schedule",
+        "The git rule",
+        "Taking a branch out",
+        "When the service runs in docker",
+        "Tests",
+        "Pruning",
+        "What the doctor checks",
+        "Routes",
+        "Deferred"
+      ]
+    },
+    {
+      "id": "demo",
+      "title": "The demo workspace",
+      "summary": "A workspace called demo, seeded end to end: a small sample web shop, three custom agents, a flow, a team, a scenario, views, tasks in every status and a couple of recorded chats. Turned on with --with-demo or a Settings toggle.",
+      "surface": "Settings",
+      "related": [
+        "installation",
+        "workspaces",
+        "agents",
+        "tools-and-capabilities",
+        "playground",
+        "views"
+      ],
+      "headings": [
+        "What it holds",
+        "Turning it on",
+        "The site's interactive demo"
+      ]
+    },
+    {
+      "id": "local-models",
+      "title": "Local models",
+      "summary": "Managing local model servers from the hub: an external Ollama (pull, list, delete, disk size) and the hub's own runtime under deploy/models (llama.cpp server, downloads from Hugging Face, load and unload, memory), registered as the provider hub-local.",
+      "surface": "Models",
+      "related": [
+        "models",
+        "settings",
+        "containers",
+        "hub-as-provider",
+        "model-structure"
+      ],
+      "headings": [
+        "Ollama from the UI",
+        "The hub runtime",
+        "Downloads from Hugging Face",
+        "Load and unload and memory",
+        "The provider hub-local",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "hub-as-provider",
+      "title": "The hub as a provider",
+      "summary": "The hub serves an OpenAI-compatible /v1 (models, chat completions with streaming) so external clients can call any model the catalog enables through one address, authorised by personal API keys, with tokens counted and every call in the audit log.",
+      "surface": "Models",
+      "related": [
+        "api-keys",
+        "models",
+        "audit",
+        "local-models",
+        "services"
+      ],
+      "headings": [
+        "What it serves",
+        "Model names",
+        "Authentication",
+        "Streaming and tools",
+        "Agents as models",
+        "Token accounting",
+        "Tokens per day",
+        "Audit",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "model-structure",
+      "title": "Model structure",
+      "summary": "A read-only view of a local model's structure from its GGUF or safetensors header without loading the weights: architecture, layers, tensors and memory, drawn as a 2D block diagram or a 3D stack, and a card for API models.",
+      "surface": "Models",
+      "related": [
+        "local-models",
+        "models"
+      ],
+      "headings": [
+        "What is read",
+        "GGUF",
+        "safetensors",
+        "Ollama models",
+        "The block graph",
+        "Memory",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "browser",
+      "title": "The browser",
+      "summary": "The agent's browser on screen: a live view of a run's browser session with the option to take control, and a free browsing page whose session can be handed to an agent. Built on the same browser service the browser tools use, under the same domain policy.",
+      "surface": "Chat",
+      "related": [
+        "tools-and-capabilities",
+        "sessions-and-runs",
+        "containers"
+      ],
+      "headings": [
+        "Watching a run's browser",
+        "Taking control",
+        "The Browser page",
+        "Handing a page to an agent",
+        "Access",
+        "API"
+      ]
+    },
+    {
+      "id": "tool-policy",
+      "title": "Tool policy",
+      "summary": "Three modes decide what an agent's tool call can do: always_allow runs it, always_ask holds it for approval, and auto sends it to a small model to classify.",
+      "surface": "Tool policy",
+      "related": [
+        "agents",
+        "hooks",
+        "tasks",
+        "workspaces",
+        "guardrails"
+      ],
+      "headings": [
+        "Setting a policy",
+        "What each mode does",
+        "What happens to a denied call",
+        "Where decisions are visible",
+        "Never gated",
+        "Cost"
+      ]
+    },
+    {
+      "id": "outcomes",
+      "title": "Outcomes",
+      "summary": "A task can have an outcome: a markdown rubric that defines done, with max attempts, an optional grader model and an optional pass threshold.",
+      "surface": "Outcomes",
+      "related": [
+        "tasks",
+        "loops",
+        "evals"
+      ],
+      "headings": [
+        "The rubric format",
+        "Grading",
+        "Attempts",
+        "Choosing a grader model",
+        "Grade now",
+        "What the agent is told",
+        "Blocking",
+        "API and audit",
+        "In loops",
+        "Cost"
+      ]
+    },
+    {
+      "id": "steering",
+      "title": "Steering",
+      "summary": "Send a message to a running run while it is still working, either injected into the conversation stream or interrupting it to restart on a new task.",
+      "surface": "Steering",
+      "related": [
+        "tasks",
+        "sessions-and-runs",
+        "containers"
+      ],
+      "headings": [
+        "The API",
+        "Inject",
+        "Interrupt",
+        "In the chat composer",
+        "On pages",
+        "Access and audit",
+        "Containers and remote agents"
+      ]
+    },
+    {
+      "id": "agent-loop",
+      "title": "Agent loop",
+      "summary": "What happens between a run's model calls and the policies inside it: steering, compaction, tool search, structured output and fallback models, with guardrails and the tool policy around them, their agent and workspace settings, and the loop block a run records.",
+      "surface": "Agent loop",
+      "related": [
+        "agents",
+        "tool-policy",
+        "guardrails",
+        "steering",
+        "sessions-and-runs",
+        "costs"
+      ],
+      "headings": [
+        "Where the settings live",
+        "Steering",
+        "Compaction",
+        "Tool search",
+        "Structured output",
+        "Fallback models",
+        "Guardrails and the tool policy",
+        "What the run records"
+      ]
+    },
+    {
+      "id": "guardrails",
+      "title": "Guardrails",
+      "summary": "Workspace or global checks on a run's input and final answer, by a rule (regex, keywords, PII, length) or a judge model, that block the run or warn, with an event log and audit records.",
+      "surface": "Guardrails",
+      "related": [
+        "agent-loop",
+        "tool-policy",
+        "audit",
+        "agents"
+      ],
+      "headings": [
+        "What a guardrail is",
+        "Rule kinds",
+        "Judge guardrails",
+        "When checks run",
+        "Findings and audit",
+        "Managing guardrails"
+      ]
+    },
+    {
+      "id": "widget",
+      "title": "Chat widget",
+      "summary": "A chat bubble for your own website: one script tag talking to one agent of a workspace, with conversations kept on the hub, streamed replies and attachments, guarded by a publishable key, an origin allowlist, signed visitor tokens and per-widget limits.",
+      "surface": "Widgets",
+      "related": [
+        "hub-as-provider",
+        "chat",
+        "api-keys",
+        "audit"
+      ],
+      "headings": [
+        "The snippet",
+        "What a widget is",
+        "Security model",
+        "What the visitor sees, and what they do not",
+        "Threads, for the owner",
+        "The live preview",
+        "Routes",
+        "Gotchas"
+      ]
+    },
+    {
+      "id": "handoffs",
+      "title": "Handoffs",
+      "summary": "Give a chat conversation to another agent: targets, history filters (full, summary, last_n, none), limits, events, and handoff versus delegation.",
+      "surface": "Agents",
+      "related": [
+        "chat",
+        "agents",
+        "agent-loop",
+        "telegram",
+        "widget"
+      ],
+      "headings": [
+        "Handoff or delegation",
+        "Setting it up",
+        "History filters",
+        "Limits",
+        "What happens in a turn",
+        "Events",
+        "Surfaces"
+      ]
+    },
+    {
+      "id": "sandboxes",
+      "title": "Sandboxes",
+      "summary": "Where run_code and the Chat code panel run snippets: docker, local, e2b or modal, chosen per environment or by CODE_RUNNER_PROVIDER, with each provider's network policy and the enforced docker network that has no route out except the egress proxy.",
+      "surface": "Environments",
+      "related": [
+        "environments",
+        "containers",
+        "tools-and-capabilities",
+        "service-health"
+      ],
+      "headings": [
+        "Choosing a provider",
+        "The providers",
+        "Network policy per provider",
+        "Setup",
+        "The `run_code` tool and the code view",
+        "Doctor"
+      ]
+    },
+    {
+      "id": "files",
+      "title": "Workspace files",
+      "summary": "Files uploaded once and referenced by id in chat, memory, tasks and evals, plus numbered RAG citations in answers.",
+      "surface": "Files",
+      "related": [
+        "chat",
+        "memory",
+        "tasks",
+        "evals"
+      ],
+      "headings": [
+        "The object",
+        "Limits",
+        "Text for a model",
+        "Where it is used",
+        "Citations",
+        "API"
+      ]
+    },
+    {
+      "id": "changelog",
+      "path": "CHANGELOG.md",
+      "title": "Changelog: what's new in each release",
+      "summary": "What changed in every release, newest first: features added, behaviour changed, bugs fixed, security notes and upgrade notes. The place to find the latest, recent and new functionality of the service.",
+      "surface": "Product",
+      "related": [
+        "overview",
+        "installation",
+        "deployment"
+      ],
+      "headings": [
+        "Unreleased",
+        "Added",
+        "Changed",
+        "Fixed",
+        "Security",
+        "Upgrade notes"
       ]
     }
   ]

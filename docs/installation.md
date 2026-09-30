@@ -8,7 +8,7 @@ shape.
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Python | 3.10+ (3.11 recommended) | Backend, CLI, agent runners |
+| Python | 3.11+ | Backend, CLI, agent runners |
 | Node.js + npm | 22+ | The dashboard |
 | Docker + Compose | any recent | Only for Path C, or Docker agent execution |
 | A provider key | | OpenAI, Anthropic, Google, or a local Ollama / LM Studio |
@@ -30,6 +30,8 @@ in place rather than appended again.
 Flags: `--no-frontend` (the service without the dashboard's npm packages),
 `--cli-only` (client only, for use with `AGENTS_HUB_URL`, and no dashboard
 either), `--with-rag` (adds the RAG extras, which pull in torch),
+`--with-demo` (turns on `DEMO_WORKSPACE` in `.env`, so the demo workspace is
+seeded the first time the service starts, see [demo](demo.md)),
 `--no-venv`, `--no-shell`, `--venv PATH`, `--python PATH`.
 
 Then, in a new terminal:
@@ -50,6 +52,11 @@ cd dashboard/frontend && npm install && cd ../..
 `pip install -e .` alone installs only the terminal client and its three
 dependencies. The extras are read from the requirement files in the repository,
 so `[backend]`, `[agents]` and `[rag]` stay in step with them.
+
+`requirements.lock` pins the exact resolution of those requirement files (minus
+`rag` and `postgres`) for Python 3.11 and 3.12; it is what the backend Docker
+image and CI install from, and `pip install -r requirements.lock` reproduces
+the same environment by hand.
 
 Editable is deliberate: the command follows the checkout, `git pull` included,
 instead of freezing a copy. What lands in site-packages is one package,
@@ -118,9 +125,13 @@ catalog and the run pipeline all work. If the run fails instead,
 ## Where state lives
 
 Everything the service writes goes under `.agents_hub/` in the checkout:
-`agents_hub.db` (SQLite, WAL), `agents.json`, `models.json`, the workspace
-folders, memory pools, run logs and generated views. Deleting that folder resets
-the installation; it is also the folder to back up. Agent prompts are the
+`agents_hub.db` (SQLite, WAL: the agent registry, the model catalog, flows,
+runs, tasks, sessions, memory pools and every other record), the workspace
+folders, run logs and generated views. Deleting that folder resets
+the installation; it is also the folder to back up. With
+`AGENTS_HUB_DATABASE_URL` set the database lives in Postgres instead of the
+file (docs/scaling.md, `ah db migrate` to move an existing one); the rest of
+the folder stays where it is. Agent prompts are the
 exception: they live in `agents/definitions/<id>/` in the repository, because
 they are source rather than state.
 

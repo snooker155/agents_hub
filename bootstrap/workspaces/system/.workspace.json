@@ -1,0 +1,25 @@
+{
+  "name": "system",
+  "description": "The service's own maintenance workspace: a git clone of this repository under the state directory, the doctor, and a scheduled loop that proposes fixes as system/ branches of the copy. Nothing here pushes.",
+  "system": true,
+  "allowed_agents": [
+    "service_agent",
+    "swe_agent",
+    "code_reviewer",
+    "system_doctor",
+    "system_engineer"
+  ],
+  "orchestrator": {
+    "enabled": false,
+    "assignment_mode": "manual",
+    "followup_mode": "single",
+    "wait_for_completion": false
+  },
+  "budget": {
+    "hard_limit_usd": 20.0,
+    "soft_limit_usd": 10.0,
+    "period": "monthly"
+  },
+  "settings": {},
+  "env_vars": {}
+}

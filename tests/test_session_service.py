@@ -118,6 +118,23 @@ def test_sessions_with_no_runs_are_found_by_anti_join():
     assert empty in idle and busy not in idle
 
 
+def test_query_contexts_filters_by_the_agent_that_ran_in_them():
+    """The agent page's Sessions tab: the sessions an agent took part in."""
+    mine = _session(task_id="T-mine")
+    theirs = _session(task_id="T-theirs")
+    _session(task_id="T-none")
+
+    from managers import run_manager as rm
+    rm.open_run(rm.new_unique_run_id(), "scout", session_id=mine, session_type="task", link_to_session=False)
+    rm.open_run(rm.new_unique_run_id(), "scout", session_id=mine, session_type="task", link_to_session=False)
+    rm.open_run(rm.new_unique_run_id(), "writer", session_id=theirs, session_type="task", link_to_session=False)
+
+    page = ss.query_contexts(agent_id="scout")
+    assert [c["session_id"] for c in page["items"]] == [mine]
+    assert page["total"] == 1
+    assert ss.query_contexts(agent_id="nobody")["total"] == 0
+
+
 def test_lookup_columns_track_the_document():
     sid = _session(workspace="ws", task_id="T-sync")
     ctx = ss.get_context_by_id(sid)

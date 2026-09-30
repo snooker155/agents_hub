@@ -1,9 +1,10 @@
 """
 Model pricing lookup shared by cost/usage aggregation and budget enforcement.
 
-Reads the curated catalog persisted at ``MODELS_FILE`` (``.agents_hub/models.json``)
-and exposes a flat ``(provider, model_id) -> (input, output, cached_input)`` map
-plus a per-run cost helper. Prices are USD per 1M tokens, matching the Models page.
+Reads the curated catalog persisted by ``providers.catalog`` (the database
+document that used to be ``.agents_hub/models.json``) and exposes a flat
+``(provider, model_id) -> (input, output, cached_input)`` map plus a per-run
+cost helper. Prices are USD per 1M tokens, matching the Models page.
 
 Cached input is its own price because it is its own line on the provider's bill.
 An agent loop re-sends the whole conversation on every step, so a 37-step run
@@ -19,10 +20,12 @@ backend. It only *reads* the catalog; curation/discovery stays in
 """
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, Tuple
+import logging
+from typing import Any, Dict, Optional, Tuple
 
-from common.paths import MODELS_FILE
+from providers.catalog import load_catalog_raw
+
+log = logging.getLogger(__name__)
 
 # (input, output, cached_input) USD per 1M tokens.
 PriceMap = Dict[Tuple[str, str], Tuple[float, float, float]]
@@ -48,10 +51,9 @@ def load_price_map() -> PriceMap:
     models as zero-cost). Never raises."""
     prices: PriceMap = {}
     try:
-        if not MODELS_FILE.exists():
-            return prices
-        data = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
-    except Exception:
+        data = load_catalog_raw()
+    except Exception:  # noqa: BLE001 - never raises (see docstring): a missing/corrupt catalog is an empty map
+        log.debug("could not load the price catalog", exc_info=True)
         return prices
     if not isinstance(data, dict):
         return prices
@@ -112,19 +114,96 @@ def run_cached_tokens(run: Dict[str, Any]) -> int:
 EVALUATION_CHANNELS = frozenset({"replay", "eval"})
 
 
-def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
-    """Estimated USD cost of a single run from catalog pricing. Unknown
-    (provider, model) pairs are treated as zero-cost (fail open, never wedge)."""
-    provider = (run.get("provider") or "").strip()
-    model = (run.get("model") or "").strip()
+def _tokens_cost(prices: PriceMap, provider: str, model: str,
+                 inbound: int, outbound: int, cached: int) -> float:
     in_price, out_price, cached_price = prices.get((provider, model), (0.0, 0.0, 0.0))
-    inbound, outbound = run_tokens(run)
     # Providers report cached tokens as a subset of the inbound count, never in
     # addition to it. Clamping keeps a malformed record from billing negatively.
-    cached = max(0, min(run_cached_tokens(run), inbound))
-    fresh = inbound - cached
+    cached = max(0, min(cached, inbound))
     return (
-        fresh / 1_000_000 * in_price
+        (inbound - cached) / 1_000_000 * in_price
         + cached / 1_000_000 * cached_price
         + outbound / 1_000_000 * out_price
     )
+
+
+def serving_cost_usd(provider: str, model: str, prompt_tokens: int,
+                     completion_tokens: int, *, prices: Optional[PriceMap] = None) -> float:
+    """USD cost of one served completion (``common/serving.py``) at catalog
+    price. No cache split: ``serving_usage`` tracks a plain prompt/completion
+    pair, not a cached-token count. Unknown models cost 0.0, the same
+    fail-open rule :func:`run_cost_usd` follows."""
+    table = prices if prices is not None else load_price_map()
+    return round(_tokens_cost(table, str(provider or ""), str(model or ""),
+                              max(0, int(prompt_tokens or 0)), max(0, int(completion_tokens or 0)), 0), 6)
+
+
+def _fallback_calls(run: Dict[str, Any]) -> list:
+    """The calls of a run that a fallback model answered, each with its own
+    tokens (agents/loop_ext/fallback.py records them on ``loop.answered_by``)."""
+    loop = run.get("loop")
+    if not isinstance(loop, dict) or not loop.get("fallback_used"):
+        return []
+    return [a for a in (loop.get("answered_by") or [])
+            if isinstance(a, dict) and a.get("fallback") and "input_tokens" in a]
+
+
+def _aux_cost(run: Dict[str, Any], prices: PriceMap) -> float:
+    """Calls made on the run's behalf beside its own loop (a policy
+    classifier, a guardrail judge, a schema repair, the outcome grader;
+    common/aux_usage.py). They are not in the run's token totals, so they are
+    added, each at its own model."""
+    loop = run.get("loop")
+    if not isinstance(loop, dict):
+        return 0.0
+    total = 0.0
+    for call in loop.get("aux_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        try:
+            total += _tokens_cost(prices, str(call.get("provider") or ""), str(call.get("model") or ""),
+                                  int(call.get("input_tokens") or 0), int(call.get("output_tokens") or 0),
+                                  int(call.get("cached_tokens") or 0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def run_cost_usd(run: Dict[str, Any], prices: PriceMap) -> float:
+    """Estimated USD cost of a single run from catalog pricing. Unknown
+    (provider, model) pairs are treated as zero-cost (fail open, never wedge).
+
+    A run's tokens are priced at its own model, except the calls a fallback
+    model answered: those are priced at the fallback's rate and taken out of
+    the run's totals first. Model calls made on the run's behalf (loop
+    ``aux_calls``) are added at their own models."""
+    provider = (run.get("provider") or "").strip()
+    model = (run.get("model") or "").strip()
+    inbound, outbound = run_tokens(run)
+    cached = run_cached_tokens(run)
+    extra = 0.0
+    for call in _fallback_calls(run):
+        try:
+            c_in = int(call.get("input_tokens") or 0)
+            c_out = int(call.get("output_tokens") or 0)
+            c_cached = int(call.get("cached_tokens") or 0)
+        except (TypeError, ValueError):
+            continue
+        extra += _tokens_cost(prices, str(call.get("provider") or provider),
+                              str(call.get("price_model") or call.get("model") or ""),
+                              c_in, c_out, c_cached)
+        inbound, outbound = max(0, inbound - c_in), max(0, outbound - c_out)
+        cached = max(0, cached - c_cached)
+    own = (_tokens_cost(prices, provider, model, inbound, outbound, cached) + extra) * _price_factor(run)
+    return own + _aux_cost(run, prices)
+
+
+def _price_factor(run: Dict[str, Any]) -> float:
+    """The share of the catalog price a run's own calls bill at: 0.5 for a
+    call that went through a provider batch API (an eval cell of a batch run,
+    evals/batch.py), 1 otherwise."""
+    try:
+        factor = float(run.get("price_factor") or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return factor if 0.0 < factor <= 1.0 else 1.0

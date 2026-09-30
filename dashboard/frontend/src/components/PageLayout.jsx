@@ -125,7 +125,7 @@ export const PageHeader = ({
   return (
   // The default bottom margin steps aside when the caller sets its own, so a
   // header dropped into a `gap-*` flex column does not stack two gaps.
-  <header className={`${/(^|\s)mb-/.test(className) ? '' : 'mb-6'} shrink-0 ${className}`}>
+  <header className={`${/(^|\s)mb-/.test(className) ? '' : 'mb-4'} shrink-0 ${className}`}>
     {/* Now that the description hides behind the ⓘ, the heading is a single
         line: the icon tile and the hint centre on it instead of hanging from
         the top the way they did next to a two-line title block. The way back

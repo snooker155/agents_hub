@@ -51,6 +51,9 @@ class DispatchResult:
     output: str = ""           # raw agent output (distinct from the log `text`)
     run_id: str = ""           # per-node run record id, when one was opened
     duration_ms: int = 0
+    # A node that parks the run until a human answers (see InterruptEntity):
+    # {"question", "choices", "output_key"}. None for every other node.
+    interrupt: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.written is None:
@@ -145,6 +148,48 @@ class FlowEntity:
         )
 
 
+@register_category("interrupt")
+class InterruptEntity(FlowEntity):
+    """A node that stops the run to ask a person something.
+
+    Its callable returns ``{"question", "choices"}`` and writes nothing: the
+    node's declared output key is reserved for the *answer*, which only exists
+    once a human has given one. The result carries an ``interrupt`` payload,
+    and that is what the engine acts on — on a surface that can park a run (the
+    task subprocess) the flow checkpoints and ends, and the answer arrives
+    through a resume; on a surface that cannot park (flow chat) the engine
+    ignores the payload and the question is simply the node's output.
+
+    The first declared output key is where the answer lands on resume, and
+    defaults to ``answer``.
+    """
+
+    def run(self, node: Dict[str, Any], state: FlowState, ctx: RunContext) -> DispatchResult:
+        _inputs, outputs, config = EntityNode(self.spec)._resolve_io(node)
+        try:
+            fn = self.spec.load_callable()
+        except Exception as e:  # noqa: BLE001
+            return DispatchResult(ok=False, error=f"entity '{self.id}' not callable: {e}")
+        try:
+            payload = fn(state, config, ctx)
+        except Exception as e:  # noqa: BLE001
+            return DispatchResult(ok=False, error=f"{type(e).__name__}: {e}")
+
+        if isinstance(payload, NodeResult):
+            payload = payload.outputs
+        payload = payload if isinstance(payload, dict) else {"question": str(payload or "")}
+        question = str(payload.get("question") or "").strip()
+        if not question:
+            return DispatchResult(ok=False, error="interrupt node asks no question")
+        raw_choices = payload.get("choices") or []
+        choices = [str(c) for c in raw_choices] if isinstance(raw_choices, (list, tuple)) else []
+        output_key = (list(outputs) or ["answer"])[0]
+        return DispatchResult(
+            ok=True, text=question, output=question,
+            interrupt={"question": question, "choices": choices, "output_key": output_key},
+        )
+
+
 @register_category("agent")
 class AgentEntity(FlowEntity):
     """An agent node. Executed in-process by the flow runner, not here."""
@@ -233,6 +278,55 @@ class EntityNode(FlowEntity):
                 text = _preview(payload)
         return DispatchResult(ok=True, text=text, written=written, goto=goto)
 
+
+
+@register_category("container")
+class ContainerEntity(EntityNode):
+    """A node that runs a whole team, loop or flow as a nested run.
+
+    The callable (flow/entities/containers/) launches the child with the flow
+    run as its parent, waits for it to finish and returns ``{"result",
+    "child_run_id", "child_kind"}``. The result lands under the node's first
+    declared output key; the child's id and kind are reported beside it in
+    ``written`` so the flow log names the run the node started, without
+    putting them into flow state where two container nodes would collide.
+
+    The node's ``timeout_seconds`` is handed to the callable as
+    ``_timeout_seconds``: the engine's own timeout cannot interrupt the
+    waiting thread, so the callable enforces it itself and stops the child.
+    """
+
+    def run(self, node: Dict[str, Any], state: FlowState, ctx: RunContext) -> DispatchResult:
+        _inputs, outputs, config = self._resolve_io(node)
+        timeout = node_field(node, "timeout_seconds")
+        if timeout not in (None, ""):
+            config["_timeout_seconds"] = timeout
+        try:
+            fn = self.spec.load_callable()
+        except Exception as e:  # noqa: BLE001
+            return DispatchResult(ok=False, error=f"entity '{self.id}' not callable: {e}")
+        try:
+            payload = fn(state, config, ctx)
+        except Exception as e:  # noqa: BLE001 - a child that fails fails the node
+            return DispatchResult(ok=False, error=str(e) or type(e).__name__)
+        if isinstance(payload, NodeResult):
+            payload = payload.outputs
+        payload = payload if isinstance(payload, dict) else {"result": payload}
+        result = payload.get("result")
+        output_key = (list(outputs) or ["result"])[0]
+        try:
+            written = state.apply([output_key], {output_key: result})
+        except Exception as e:  # StateMutationError or similar
+            return DispatchResult(ok=False, error=str(e))
+        child_id = str(payload.get("child_run_id") or "")
+        child_kind = str(payload.get("child_kind") or "")
+        written["child_run_id"] = child_id
+        written["child_kind"] = child_kind
+        text = result if isinstance(result, str) else _preview(result)
+        return DispatchResult(
+            ok=True, text=f"{child_kind} run {child_id}: {_preview(text)}",
+            output=text, written=written,
+        )
 
 # -------------------- backward-compatible module API --------------------
 # These wrappers preserve the original function names used by runtime.flow_run and

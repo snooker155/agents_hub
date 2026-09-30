@@ -30,11 +30,38 @@ The run goes to the background and returns its id; iterations appear on the page
 as they complete. `get_loop_run_tool` reports progress, `stop_loop_run_tool`
 ends it.
 
+## Checkpoint and resume
+
+A loop runs as a process of its own, launched through the same envelope as a flow, a team and a scenario: `POST /api/loops/{id}/run` writes a `pending` record and spawns `runtime/loop_run.py` right there, or queues it for a worker in the `api` role, so a loop keeps running whatever happens to the backend that started it. The iterations run the flow engine inside that process. The run beats a heartbeat every 15 seconds and again as each flow node finishes.
+After every iteration the run records its position (a checkpoint) with how many
+passes are done, the last output, the reviewer's last verdict, the best score,
+the patience counter and spend.
+
+`POST /api/loops/runs/{id}/resume` relaunches a `stopped` or `failed` run from
+its checkpoint (400 when there is nothing to resume). The watchdog resumes a run
+whose heartbeat has gone quiet by itself, up to 2 times. Iterations already done
+keep their rows and their scores: a resume continues the trajectory rather than
+starting a new one.
+
+A loop run claims its task as executor kind `loop`. Retry and review now apply:
+the workspace's orchestrator retries a failed loop up to `orchestrator.max_retries`
+times, and review starts on every resolve when the code_reviewer agent is available.
+
+## Rubric
+
+A loop can use an outcome rubric instead of the exit criterion and evaluator. Set an optional `rubric` and `grader` (UI on the Loops page, and the Loop Creator's `create_loop_tool` / `modify_loop_tool`). With a rubric, each pass is graded per criterion instead of by the evaluator. The loop stops when the rubric passes, the loop's `target_score` divided by 100 is the pass threshold on the mean score, and the unmet criteria with their feedback are what the next pass is told to fix. See [outcomes](outcomes.md).
+
 ## Gotchas
 
 - The judge sees the result, not the conversation. If the criterion depends on
   context the flow did not produce, it cannot be judged.
 - Feeding back "the reviewer's complaints" only helps if the flow's first node
   actually reads them.
+- A resumed loop counts its ceilings from the position it restored, so the
+  iteration cap and the cost ceiling still mean what they said. The wall clock
+  restarts with the process: it bounds one sitting, not the whole run.
 
-Related: [flows](flows.md), [costs](costs.md).
+The [system workspace](system-workspace.md) ships one loop of its own,
+`system_loop`, scheduled through a job of kind `loop` that starts paused.
+
+Related: [flows](flows.md), [outcomes](outcomes.md), [costs](costs.md), [system-workspace](system-workspace.md).

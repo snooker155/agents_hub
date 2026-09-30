@@ -39,6 +39,9 @@ const blank = (fields = {}) => ({
   agentId: null,
   source: 'chat',
   startedAt: Date.now(),
+  // Handoffs made so far this turn (chat/handoff.py): each handing agent's
+  // reply stays on screen above the agent now answering.
+  handoffs: [],
   ...fields,
 });
 
@@ -55,6 +58,7 @@ export function fromSnapshot(snapshot) {
     status: snapshot.status || 'running',
     agentId: snapshot.agent_id || null,
     source: snapshot.source || 'chat',
+    handoffs: snapshot.handoffs || [],
     startedAt: snapshot.started_at ? snapshot.started_at * 1000 : Date.now(),
   });
 }
@@ -86,6 +90,29 @@ export function reduceLiveTurn(turn, event) {
   switch (type) {
     case 'meta':
       return { ...t, runId: event.run_id || t.runId, agentId: event.agent_id || t.agentId };
+    // The conversation changed hands: what streams next is the receiving
+    // agent's answer, on its own run.
+    case 'handoff':
+      return {
+        ...t,
+        runId: event.next_run_id || t.runId,
+        agentId: event.to_agent_id || t.agentId,
+        text: '',
+        thinking: [],
+        thinkingLive: '',
+        tools: [],
+        handoffs: [...(t.handoffs || []), {
+          from_agent_id: event.from_agent_id,
+          from_agent_name: event.from_agent_name,
+          to_agent_id: event.to_agent_id,
+          to_agent_name: event.to_agent_name,
+          reason: event.reason,
+          history_filter: event.history_filter,
+          run_id: event.run_id,
+          next_run_id: event.next_run_id,
+          from_response: event.from_response || '',
+        }],
+      };
     case 'token':
       return { ...t, text: clip(t.text + (event.token || '')), thinkingLive: '' };
     case 'think':

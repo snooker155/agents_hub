@@ -1,0 +1,16 @@
+{
+  "name": "demo",
+  "allowed_agents": [
+    "demo_writer",
+    "demo_analyst",
+    "demo_reviewer"
+  ],
+  "orchestrator": {
+    "enabled": false,
+    "assignment_mode": "manual",
+    "followup_mode": "single",
+    "wait_for_completion": false
+  },
+  "settings": {},
+  "env_vars": {}
+}

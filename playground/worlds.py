@@ -40,7 +40,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 #: Value types a global or a stat may take. Deliberately small: a world
 #: parameter is something an action compares and changes, not a data structure.

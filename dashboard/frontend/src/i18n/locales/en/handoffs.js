@@ -1,0 +1,40 @@
+// Conversation handoff (chat/handoff.py, docs/handoffs.md): the agent page's
+// card that picks the targets and the default history filter, the chat's
+// divider between the handing and the receiving agent, and the run page's links.
+export default {
+  title: 'Handoffs',
+  intro: 'Agents this agent may give the conversation to in a chat. The agent it names answers the user directly and keeps the conversation afterwards. With no agent selected, this agent has no handoff tool.',
+  save: 'Save',
+  saved: 'Handoff settings saved.',
+  saveFailed: 'Could not save the handoff settings.',
+  loadFailed: 'Could not load the handoff settings.',
+  targetsTitle: 'May hand over to',
+  targetsCount_one: '{{count}} agent selected.',
+  targetsCount_other: '{{count}} agents selected.',
+  noTargets: 'No agent selected: this agent keeps every conversation.',
+  noAgents: 'No other agents are available in this workspace.',
+  notInWorkspace: 'Not available in this workspace',
+  allowTarget: 'Allow handing over to {{agent}}',
+  historyTitle: 'History the receiving agent sees',
+  historyIntro: 'The default for every handoff. The agent may choose less for one handoff, never more.',
+  filters: {
+    full: 'The whole conversation',
+    summary: 'A summary',
+    last_n: 'The last messages',
+    none: 'Only the latest message',
+  },
+  filterHints: {
+    full: 'Every earlier turn, plus what the agents before it said in this turn.',
+    summary: 'One summary of the conversation, written by this agent\'s model and charged to its run.',
+    last_n: 'Only the most recent messages of the conversation.',
+    none: 'Nothing but the user\'s latest message and the handoff note.',
+  },
+  lastNLabel: 'Number of messages',
+  lastNUnit: 'messages',
+  lastNInvalid: 'Enter a number of messages from 1 to {{max}}.',
+  divider: 'Handed over to {{agent}}: {{reason}}',
+  dividerNoReason: 'Handed over to {{agent}}',
+  openRun: 'Open the run',
+  runHandedOffTo: 'Handed over to',
+  runReceivedFrom: 'Received by handoff from',
+};

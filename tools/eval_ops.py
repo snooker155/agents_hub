@@ -23,25 +23,25 @@ model's opinion.
 """
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from common.workspace_context import resolve_active_workspace
+from tools._json import json_err, json_ok
 
 
+# Shared JSON envelope (tools/_json.py), the ``default=str`` variant: payloads
+# here can carry datetimes (eval run timestamps) that json.dumps cannot
+# serialize on its own.
 def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2, default=str)
+    return json_ok(payload, default=str)
 
 
 def _json_err(message: str, *, code: str = "bad_request",
               extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2, default=str)
+    return json_err(message, code=code, extra=extra, default=str)
 
 
 def _summary(evalset) -> Dict[str, Any]:
@@ -53,6 +53,7 @@ def _summary(evalset) -> Dict[str, Any]:
         "description": d.get("description"),
         "workspace": d.get("workspace"),
         "agent_id": d.get("agent_id"),
+        "target": d.get("target"),
         "cases": len(d.get("cases") or []),
         "graders": [g.get("kind") for g in (d.get("graders") or [])],
     }
@@ -121,7 +122,10 @@ def list_graders_tool() -> str:
 class CreateEvalInput(BaseModel):
     name: str = Field(..., min_length=1, description="What this set measures")
     description: str = Field("", description="What a passing score would mean")
-    agent_id: Optional[str] = Field(None, description="Default agent under test")
+    agent_id: Optional[str] = Field(None, description="Default agent under test (same as target kind agent)")
+    target: Optional[Dict[str, Any]] = Field(
+        None, description='Default target under test: {"kind": "agent"|"flow"|"team"|"loop"|'
+        '"scenario", "id": "..."}. Wins over agent_id when both are given.')
     workspace: Optional[str] = Field(None, description="Workspace to create it in")
     graders: Optional[List[Dict[str, Any]]] = Field(
         None, description='Grader specs, e.g. [{"kind": "substring"}, {"kind": "json_valid"}]')
@@ -129,9 +133,13 @@ class CreateEvalInput(BaseModel):
 
 @tool("create_eval_tool", args_schema=CreateEvalInput)
 def create_eval_tool(name: str, description: str = "", agent_id: Optional[str] = None,
+                     target: Optional[Dict[str, Any]] = None,
                      workspace: Optional[str] = None,
                      graders: Optional[List[Dict[str, Any]]] = None) -> str:
     """Create an eval set: a named dataset plus the graders that score it.
+
+    The target is what gets measured: an agent, or a flow, team, loop or
+    scenario, whose output is the container's own result.
 
     Creating one costs nothing and runs nothing. Add cases with add_eval_case_tool,
     then run it once the user has approved the cost.
@@ -145,11 +153,14 @@ def create_eval_tool(name: str, description: str = "", agent_id: Optional[str] =
             description=description or "",
             workspace=workspace or resolve_active_workspace(),
             agent_id=agent_id or None,
+            target=target or None,
             graders=[GraderSpec.from_dict(g) for g in (graders or [])],
         )
         saved = store.save_eval_set(evalset)
         return _json_ok({"eval_set": _summary(saved),
                          "next": "Add cases with add_eval_case_tool."})
+    except ValueError as e:
+        return _json_err(str(e), code="invalid")
     except Exception as e:
         return _json_err(f"Failed to create the eval set: {e}", code="internal")
 
@@ -159,6 +170,8 @@ class ModifyEvalInput(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     agent_id: Optional[str] = Field(None, description="Default agent under test")
+    target: Optional[Dict[str, Any]] = Field(
+        None, description='Default target: {"kind": "agent"|"flow"|"team"|"loop"|"scenario", "id": "..."}')
     graders: Optional[List[Dict[str, Any]]] = Field(
         None, description="Replaces the grader list when given")
 
@@ -166,8 +179,9 @@ class ModifyEvalInput(BaseModel):
 @tool("modify_eval_tool", args_schema=ModifyEvalInput)
 def modify_eval_tool(eval_set_id: str, name: Optional[str] = None,
                      description: Optional[str] = None, agent_id: Optional[str] = None,
+                     target: Optional[Dict[str, Any]] = None,
                      graders: Optional[List[Dict[str, Any]]] = None) -> str:
-    """Change an eval set's name, description, default agent or graders.
+    """Change an eval set's name, description, default target or graders.
 
     Changing the graders changes what past runs mean, so scores from before the
     change are not comparable with scores after it. Say that when you do it.
@@ -183,11 +197,15 @@ def modify_eval_tool(eval_set_id: str, name: Optional[str] = None,
             evalset.name = name.strip()
         if description is not None:
             evalset.description = description
-        if agent_id is not None:
-            evalset.agent_id = agent_id or None
+        if target is not None:
+            evalset.set_target(target or None)
+        elif agent_id is not None:
+            evalset.set_target(None, agent_id or None)
         if graders is not None:
             evalset.graders = [GraderSpec.from_dict(g) for g in graders]
         return _json_ok({"eval_set": _summary(store.save_eval_set(evalset))})
+    except ValueError as e:
+        return _json_err(str(e), code="invalid")
     except Exception as e:
         return _json_err(f"Failed to modify the eval set: {e}", code="internal")
 
@@ -198,12 +216,17 @@ class AddCaseInput(BaseModel):
     expected: Optional[str] = Field(None, description="Reference answer, for deterministic graders")
     rubric: Optional[str] = Field(None, description="Instruction for an LLM judge")
     source_run_id: Optional[str] = Field(None, description="The real run this case came from")
+    from_task_id: Optional[str] = Field(
+        None, description="Snapshot this task into the case: its description, context and a "
+        "capped slice of its text files (never secrets, connections or settings). The case then "
+        "runs in an isolated directory holding those files.")
 
 
 @tool("add_eval_case_tool", args_schema=AddCaseInput)
 def add_eval_case_tool(eval_set_id: str, input: str, expected: Optional[str] = None,
                        rubric: Optional[str] = None,
-                       source_run_id: Optional[str] = None) -> str:
+                       source_run_id: Optional[str] = None,
+                       from_task_id: Optional[str] = None) -> str:
     """Add one case to an eval set.
 
     A case needs whatever its graders read: `expected` for the match graders, a
@@ -215,12 +238,19 @@ def add_eval_case_tool(eval_set_id: str, input: str, expected: Optional[str] = N
         from evals import store
         from evals.models import Case
 
+        artifact = None
+        if from_task_id:
+            from evals.snapshot import snapshot_task
+            artifact = snapshot_task(from_task_id)
         case = Case(input=input, expected=expected, rubric=rubric,
-                    source_run_id=source_run_id)
+                    source_run_id=source_run_id, artifact=artifact,
+                    metadata={"task_id": from_task_id} if from_task_id else {})
         evalset = store.add_case(eval_set_id, case)
         if not evalset:
             return _json_err(f"Eval set '{eval_set_id}' not found", code="not_found")
         return _json_ok({"case_id": case.case_id, "eval_set": _summary(evalset)})
+    except ValueError as e:
+        return _json_err(str(e), code="invalid")
     except Exception as e:
         return _json_err(f"Failed to add the case: {e}", code="internal")
 
@@ -249,15 +279,20 @@ def _configs(raw: Optional[List[Dict[str, Any]]], evalset):
     from evals.models import RunConfig
 
     configs = [RunConfig.from_dict(c) for c in (raw or [])]
-    if not configs and evalset.agent_id:
-        configs = [RunConfig(agent_id=evalset.agent_id, label="baseline")]
+    if not configs:
+        baseline = evalset.default_config()
+        configs = [baseline] if baseline else []
     return configs
 
 
 class EstimateEvalInput(BaseModel):
     eval_set_id: str = Field(..., description="Eval set to price")
     configs: Optional[List[Dict[str, Any]]] = Field(
-        None, description='Columns to sweep, e.g. [{"agent_id": "x", "model": "gpt-4o"}]')
+        None, description='Columns to sweep, e.g. [{"target": {"kind": "agent", "id": "x"}, '
+        '"model": "gpt-4o", "repeats": 3}] or [{"target": {"kind": "team", "id": "t"}}]. '
+        '"agent_id": "x" still means an agent target. `repeats` (default 1, max 10) reruns '
+        'every case that many times under that config, to measure variance instead of one '
+        'draw. `settings` carries per kind overrides such as {"max_ticks": 5} for a scenario.')
 
 
 @tool("estimate_eval_tool", args_schema=EstimateEvalInput)
@@ -266,8 +301,8 @@ def estimate_eval_tool(eval_set_id: str,
     """Project what a sweep will cost before running it.
 
     Show this to the user before asking them to approve a run. The number is an
-    order-of-magnitude estimate, not a quote: cases times configs, plus a judge
-    call per cell when the graders include one.
+    order-of-magnitude estimate, not a quote: cases times configs times each
+    config's `repeats`, plus a judge call per cell when the graders include one.
     """
     try:
         from evals import store
@@ -279,8 +314,8 @@ def estimate_eval_tool(eval_set_id: str,
         resolved = _configs(configs, evalset)
         if not resolved:
             return _json_err(
-                "No configs given and the set has no default agent_id. Say which "
-                "agent should be measured.", code="invalid")
+                "No configs given and the set has no default target. Say which "
+                "agent, flow, team, loop or scenario should be measured.", code="invalid")
         return _json_ok({"estimate": project_cost(evalset, resolved)})
     except Exception as e:
         return _json_err(f"Failed to estimate the sweep: {e}", code="internal")
@@ -289,32 +324,42 @@ def estimate_eval_tool(eval_set_id: str,
 class RunEvalInput(BaseModel):
     eval_set_id: str = Field(..., description="Eval set to run")
     configs: Optional[List[Dict[str, Any]]] = Field(
-        None, description="Columns to sweep; omit for the set's default agent")
+        None, description='Columns to sweep; omit for the set\'s default agent. Each '
+        'config may set "repeats" (default 1, max 10) to rerun every case that many '
+        'times under it, so sampling variance shows up as a spread, not one draw.')
     cost_ceiling: Optional[float] = Field(
         None, gt=0, description="Stop the sweep when accumulated spend crosses this (USD)")
     user_approved: bool = Field(
         False, description="Set only after the user has approved the projected cost")
+    compare_with_previous: bool = Field(
+        False, description="Also diff this run against the set's previous run, "
+        "if one exists, and return which cases got fixed or regressed")
 
 
 @tool("run_eval_tool", args_schema=RunEvalInput)
 def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = None,
                   cost_ceiling: Optional[float] = None,
-                  user_approved: bool = False) -> str:
+                  user_approved: bool = False,
+                  compare_with_previous: bool = False) -> str:
     """Run an eval set and return the score matrix. Refuses until approved.
 
-    A sweep is every case against every config, so the call count is their
-    product — plus one judge call per cell when the graders include an LLM judge.
-    The refusal carries the projection so the user approves with the number in
-    front of them.
+    A sweep is every case against every config (times each config's `repeats`,
+    default 1), so the call count is their product, plus one judge call per
+    cell when the graders include an LLM judge. The refusal carries the
+    projection so the user approves with the number in front of them.
 
     Unlike a scenario or a loop, this runs to completion before answering: an
     eval is a measurement, and half of one is not useful. Set `cost_ceiling` on
     anything large; the workspace budget is re-checked per cell as well, so a
     sweep cannot walk past a hard cap one call at a time.
+
+    Set `compare_with_previous=True` to also get a diff against the set's most
+    recent prior run: "did the change help" answered in the same call, instead
+    of a second round trip through list_eval_runs_tool/get_eval_run_tool.
     """
     try:
         from evals import store
-        from evals.runner import project_cost, run_eval
+        from evals.runner import diff_runs, project_cost, run_eval
 
         evalset = store.get_eval_set(eval_set_id)
         if not evalset:
@@ -326,8 +371,8 @@ def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = No
         resolved = _configs(configs, evalset)
         if not resolved:
             return _json_err(
-                "No configs given and the set has no default agent_id. Say which "
-                "agent should be measured.", code="invalid")
+                "No configs given and the set has no default target. Say which "
+                "agent, flow, team, loop or scenario should be measured.", code="invalid")
 
         if not user_approved:
             return _json_err(
@@ -340,10 +385,24 @@ def run_eval_tool(eval_set_id: str, configs: Optional[List[Dict[str, Any]]] = No
                        "configs": [c.resolved_label() for c in resolved]},
             )
 
+        # The previous run has to be found before this sweep is recorded, or
+        # "previous" would be the run we are about to create.
+        previous_run_id = None
+        if compare_with_previous:
+            history = store.list_eval_runs(eval_set_id, limit=1)
+            previous_run_id = history[0].eval_run_id if history else None
+
         run = run_eval(eval_set_id, resolved,
                        workspace=evalset.workspace, cost_ceiling=cost_ceiling)
-        return _json_ok({"eval_run": run.to_dict(),
-                         "matrix": store.build_matrix(run.eval_run_id)})
+        payload: Dict[str, Any] = {"eval_run": run.to_dict(),
+                                   "matrix": store.build_matrix(run.eval_run_id)}
+        if compare_with_previous:
+            if previous_run_id:
+                payload["diff"] = diff_runs(previous_run_id, run.eval_run_id)
+            else:
+                payload["diff"] = None
+                payload["diff_note"] = "No previous run on this set to compare against."
+        return _json_ok(payload)
     except ValueError as e:
         return _json_err(str(e), code="invalid")
     except Exception as e:

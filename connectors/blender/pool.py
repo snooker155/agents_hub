@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from filelock import FileLock, Timeout
 
+from common.session_broker import notify_change
 from connectors.blender import store
 from connectors.blender.daemon import BlenderDaemon, DaemonError, _pid_alive, _safe
 
@@ -202,6 +203,10 @@ def acquire(key: str, *, start: bool = True) -> BlenderDaemon:
         _write_record(daemon)
         with _LOCK:
             _LOCAL[key] = daemon
+        # A daemon can be registered by any agent's process, not just the
+        # dashboard's, so the connector page's live-update event fires here
+        # rather than only from the dashboard's own routes.
+        notify_change("blender_daemons", key=key)
         return daemon
     finally:
         guard.release()
@@ -242,6 +247,7 @@ def stop(key: str) -> bool:
     if daemon is not None:
         daemon.stop()
         _drop_record(key)
+        notify_change("blender_daemons", key=key)
         return True
 
     record = _read_record(key)
@@ -258,6 +264,7 @@ def stop(key: str) -> bool:
                 break
             time.sleep(0.01)
     _drop_record(key)
+    notify_change("blender_daemons", key=key)
     return True
 
 
@@ -266,10 +273,14 @@ def stop_all() -> int:
     for record in _all_records():
         if stop(str(record["key"])):
             stopped += 1
+    leftover = False
     with _LOCK:
         for key, daemon in list(_LOCAL.items()):
             daemon.stop()
             _LOCAL.pop(key, None)
+            leftover = True
+    if leftover:
+        notify_change("blender_daemons")
     return stopped
 
 
@@ -284,6 +295,8 @@ def reap() -> int:
         for key, daemon in list(_LOCAL.items()):
             if not daemon.is_alive():
                 _LOCAL.pop(key, None)
+    if dropped:
+        notify_change("blender_daemons")
     return dropped
 
 

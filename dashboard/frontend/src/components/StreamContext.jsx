@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { StreamContext } from './stream';
-import { API_ORIGIN } from '../api';
+import { API_ORIGIN, getAuthToken, mintAuthTicket } from '../api';
 
 /*
  * Single multiplexed SSE connection for the whole dashboard.
@@ -11,14 +11,27 @@ import { API_ORIGIN } from '../api';
  * channel interest (logs, a specific node/container, an active chat session) on
  * the existing connection — no reconnect.
  *
+ * Reconnecting: the browser's EventSource retries on its own and remembers the
+ * last `id:` line it saw (sent back as Last-Event-ID). This provider also sends
+ * back its previous client id (`?client=`), so the backend can resume the same
+ * client and replay whatever it missed instead of starting over. When the
+ * backend cannot resume (`ready` with `resumed: false`) or says events were
+ * dropped for being too slow to keep up with (a `lagged` meta event), the
+ * stream itself has a gap that replay cannot fill, so every page with live
+ * data needs to refetch. `onRefetch` lets pages register for that.
+ *
  * The hooks that read this provider live in ./stream.js.
  */
 
 function postChannels(clientId, add, remove) {
   if (!clientId) return;
+  const token = getAuthToken();
   fetch(`${API_ORIGIN}/api/stream/${clientId}/channels`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ add, remove }),
   }).catch(() => {});
 }
@@ -29,10 +42,23 @@ export function StreamProvider({ children }) {
   // this one connection by passing the id to the server.
   const [clientId, setClientId] = useState(null);
   const clientIdRef = useRef(null);
+  // The last numbered event id seen (from the SSE frame's `id:` line, surfaced
+  // by the browser as MessageEvent.lastEventId). Carried into the next
+  // reconnect's URL so the backend can replay what was missed — EventSource
+  // cannot set a Last-Event-ID header itself, only the browser's own silent
+  // retries do that, and this provider manages reconnects manually (see below).
+  const lastEventIdRef = useRef(null);
+  // Set right before a reconnect attempt, so the `ready` that follows can tell
+  // "just opened" (nothing to refetch) from "was reconnecting" (refetch unless
+  // the backend actually resumed and replayed what was missed).
+  const reconnectingRef = useRef(false);
   // channel → Set<handler>
   const listenersRef = useRef(new Map());
   // dynamic channel → refcount (extra interest beyond server defaults)
   const channelsRef = useRef(new Map());
+  // Callbacks pages register to reload their own data after a gap the stream
+  // itself cannot fill in (a failed resume, or events dropped for lagging).
+  const refetchersRef = useRef(new Set());
 
   const dispatch = useCallback((event) => {
     const handlers = listenersRef.current.get(event.channel);
@@ -49,34 +75,107 @@ export function StreamProvider({ children }) {
     });
   }, []);
 
+  const refetchAll = useCallback(() => {
+    refetchersRef.current.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.error('Stream refetch callback threw:', e);
+      }
+    });
+  }, []);
+
+  const onRefetch = useCallback((fn) => {
+    refetchersRef.current.add(fn);
+    return () => refetchersRef.current.delete(fn);
+  }, []);
+
   useEffect(() => {
     let closed = false;
     let retry = null;
     let es = null;
 
+    // EventSource cannot set request headers, so the credential has to
+    // travel in the query string. What goes there is a one-time ticket
+    // minted just before each (re)connect (POST /api/auth/ticket), never
+    // the session itself: under AUTH_MODE=multi a ticket is the only query
+    // credential the backend accepts, and a spent one would be refused, so
+    // a reconnect always mints afresh. A backend too old to mint (404) or a
+    // failed mint falls back to the legacy `token=` form, which token mode
+    // still accepts. See docs/identity.md, "Tickets for streams".
+    const credentialParam = async (token) => {
+      try {
+        return `ticket=${encodeURIComponent(await mintAuthTicket())}`;
+      } catch {
+        return `token=${encodeURIComponent(token)}`;
+      }
+    };
+
+    // With no credential at all (the single-operator case) there is nothing
+    // to mint and the connection opens at once.
     const connect = () => {
       if (closed) return;
-      es = new EventSource(`${API_ORIGIN}/api/stream`);
+      const token = getAuthToken();
+      if (!token) { open(null); return; }
+      credentialParam(token).then((credential) => { if (!closed) open(credential); });
+    };
+
+    const open = (credential) => {
+      // The same limitation is why the last event id travels as `since`
+      // rather than a real Last-Event-ID header: only the browser's own
+      // silent retry can set that, and this provider replaces the
+      // connection itself instead.
+      //
+      // `channels` carries the current dynamic channel set on every (re)connect
+      // too: with the cross-replica broker bridge on, a client id this replica
+      // does not recognise can still be caught up from the shared Redis stream
+      // (see docs/scaling.md), but only for the channels this tab actually
+      // wants, and only this provider knows what those are right now.
+      const params = [];
+      if (credential) params.push(credential);
+      if (clientIdRef.current) params.push(`client=${encodeURIComponent(clientIdRef.current)}`);
+      if (lastEventIdRef.current != null) params.push(`since=${encodeURIComponent(lastEventIdRef.current)}`);
+      const dynamicChannels = [...channelsRef.current.keys()];
+      if (dynamicChannels.length) params.push(`channels=${encodeURIComponent(dynamicChannels.join(','))}`);
+      const url = `${API_ORIGIN}/api/stream${params.length ? `?${params.join('&')}` : ''}`;
+      es = new EventSource(url);
       es.onmessage = (e) => {
         let ev;
         try { ev = JSON.parse(e.data); } catch { return; }
+        // The id is a plain counter with the bridge off, or a Redis stream id
+        // ("1695400000000-0") with it on — kept as the string EventSource
+        // itself hands back rather than coerced with Number(), which would
+        // silently turn every stream id into NaN and break catch-up.
+        if (e.lastEventId) lastEventIdRef.current = e.lastEventId;
         if (ev.channel === '_meta') {
           if (ev.type === 'ready') {
             clientIdRef.current = ev.client_id;
             setClientId(ev.client_id);
             setConnected(true);
-            // Re-register dynamic channels after a (re)connect.
+            // Re-register dynamic channels after a (re)connect. Harmless when
+            // resumed: the backend already kept the same channel set.
             const chans = [...channelsRef.current.keys()];
             if (chans.length) postChannels(ev.client_id, chans, []);
+            // A reconnect that could not be resumed, or one that starts fresh
+            // with no prior history, has a gap the replay cannot fill.
+            if (!ev.resumed) {
+              lastEventIdRef.current = null;
+              if (reconnectingRef.current) refetchAll();
+            }
+            reconnectingRef.current = false;
+          } else if (ev.type === 'lagged') {
+            // The backend had to drop events for this connection because it
+            // fell behind; whatever a page built from the stream since may be
+            // incomplete.
+            refetchAll();
           }
-          return; // heartbeats and meta are not dispatched
+          return; // heartbeats and meta are not dispatched further
         }
         dispatch(ev);
       };
       es.onerror = () => {
         setConnected(false);
-        clientIdRef.current = null;
-        setClientId(null);
+        reconnectingRef.current = true;
         es?.close();
         retry = setTimeout(connect, 3000);
       };
@@ -88,7 +187,7 @@ export function StreamProvider({ children }) {
       es?.close();
       if (retry) clearTimeout(retry);
     };
-  }, [dispatch]);
+  }, [dispatch, refetchAll]);
 
   const on = useCallback((channel, handler) => {
     let set = listenersRef.current.get(channel);
@@ -117,7 +216,7 @@ export function StreamProvider({ children }) {
   }, []);
 
   return (
-    <StreamContext.Provider value={{ connected, clientId, on, acquireChannel }}>
+    <StreamContext.Provider value={{ connected, clientId, on, acquireChannel, onRefetch }}>
       {children}
     </StreamContext.Provider>
   );

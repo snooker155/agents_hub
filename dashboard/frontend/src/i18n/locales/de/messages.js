@@ -34,6 +34,7 @@ export default {
   bulkDeletePartial: 'Einige Löschungen sind fehlgeschlagen ({{count}}). Beispiel: {{id}} ({{reason}})',
   channels: {
     local: 'Lokal',
+    instance: 'Instanz',
     node: 'Knoten',
     continuation: 'Fortsetzung',
     chat: 'Chat',

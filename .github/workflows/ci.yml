@@ -2,33 +2,50 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
+  # The release workflow runs this whole suite before it builds any image.
+  workflow_call:
 
 jobs:
-  test:
+  # One Python version: 3.11, the one every backend image runs
+  # (python:3.11-slim) and the floor pyproject.toml declares.
+  python:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Backend + agent deps carry the store/runtime libraries the tests import.
-          pip install -r dashboard/backend/requirements.txt
-          pip install -r requirements-agents.txt
-          # The CLI's own deps: tests/test_cli_*.py import typer's CliRunner and
-          # go through cli.main, which reaches for rich and requests as well.
-          pip install -r requirements-cli.txt
-          pip install pytest
+          # requirements.lock is the pinned resolution of requirements-agents.txt,
+          # dashboard/backend/requirements.txt and requirements-cli.txt (backend +
+          # agent deps carry the store/runtime libraries the tests import; the
+          # CLI's own deps because tests/test_cli_*.py import typer's CliRunner
+          # and go through cli.main, which reaches for rich and requests too).
+          # It is universal, so it installs the same on any supported version.
+          pip install -r requirements.lock
+          pip install pytest ruff
+
+      - name: Blind excepts (no new ones beyond the baseline)
+        # --isolated so the per-file-ignores in pyproject.toml do not hide the
+        # packages that are not clean yet: this compares what remains against
+        # scripts/ci/ruff_baseline.txt and fails only on growth, per file and
+        # rule code. See CONTRIBUTING.md.
+        run: python scripts/ci/ruff_baseline.py check
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: One version everywhere
+        # pyproject.toml, the frontend's package.json and the Helm chart name
+        # the same release (scripts/release.py, docs/deployment.md "Releases").
+        run: python scripts/release.py check
 
       - name: Run tests
         # AGENTS_HUB_ROOT is also set to a throwaway dir by tests/conftest.py; this
@@ -36,3 +53,254 @@ jobs:
         env:
           AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_ci
         run: python -m pytest tests/ -q
+
+  # The same suite against Postgres (common/db.py's second backend). Tests
+  # marked sqlite_only are skipped (tests/conftest.py).
+  python-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ah
+          POSTGRES_PASSWORD: ah
+          POSTGRES_DB: agents_hub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ah -d agents_hub_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -r requirements-postgres.txt
+          pip install pytest
+
+      - name: Run tests on Postgres
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_ci_pg
+          AGENTS_HUB_TEST_DATABASE_URL: postgresql://ah:ah@localhost:5432/agents_hub_test
+        run: python -m pytest tests/ -q
+
+  # docs/backup.md: `ah db backup` / `restore` end to end, on a real install
+  # (the `ah` console script, not `python -m cli.main`) so a regression in the
+  # packaging — not just the Python — would show up here.
+  backup-restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r dashboard/backend/requirements.txt
+          pip install -r requirements-agents.txt
+          pip install -r requirements-cli.txt
+          pip install -e .
+
+      - name: Seed a state root
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_backup_src
+        run: |
+          python - <<'PY'
+          from tasks.service import create_task
+          from managers import run_manager as rm
+          from common.paths import AGENTS_HUB_ROOT
+
+          create_task("backup smoke test")
+          rm.upsert_run({"run_id": "backup-smoke", "agent_id": "a", "status": "completed"})
+
+          log_dir = AGENTS_HUB_ROOT / "run_logs"
+          log_dir.mkdir(parents=True, exist_ok=True)
+          (log_dir / "agent_run_backup-smoke.log").write_text("hello from ci\n")
+          PY
+
+      - name: Back it up
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_backup_src
+        run: |
+          mkdir -p /tmp/b
+          ah db backup --to /tmp/b
+
+      - name: Lose the host
+        run: rm -rf ${{ runner.temp }}/agents_hub_backup_src
+
+      - name: Restore onto a fresh root
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_backup_dst
+        run: ah db restore /tmp/b/agents_hub_backup_*.tar.gz
+
+      - name: Check what came back
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_backup_dst
+        run: |
+          ah db status | tee /tmp/status.txt
+          grep -E "^\s*tasks\s+1\s*$" /tmp/status.txt
+          grep -E "^\s*runs\s+1\s*$" /tmp/status.txt
+          test -f "${{ runner.temp }}/agents_hub_backup_dst/run_logs/agent_run_backup-smoke.log"
+
+  # docs/sso.md: single sign-on end to end against a real Keycloak, with the
+  # realm in deploy/keycloak/realm-export.json (alice in hub-admins and devs,
+  # bob in devs). A service container cannot be given `start-dev`, so the
+  # container is started by hand.
+  oidc-keycloak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Keycloak
+        run: |
+          docker run -d --name keycloak -p 8080:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            -v "$GITHUB_WORKSPACE/deploy/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro" \
+            quay.io/keycloak/keycloak:26.0 start-dev --import-realm
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r dashboard/backend/requirements.txt
+          pip install -r requirements-agents.txt
+          pip install requests httpx
+
+      - name: Wait for Keycloak
+        run: |
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:8080/realms/agents-hub/.well-known/openid-configuration >/dev/null; then
+              echo "Keycloak is ready"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs keycloak | tail -50
+          exit 1
+
+      - name: Sign in as alice and bob
+        env:
+          AGENTS_HUB_ROOT: ${{ runner.temp }}/agents_hub_oidc
+        run: python scripts/ci/oidc_keycloak_check.py
+
+      - name: Keycloak logs on failure
+        if: failure()
+        run: docker logs keycloak | tail -100
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)"; then
+            npm run lint
+          else
+            npx eslint .
+          fi
+
+      - name: Test
+        # Workers hung intermittently when files ran in parallel on the CI
+        # runner; one worker at a time is slower but finishes every time.
+        run: npx vitest run --fileParallelism=false
+
+      - name: Build
+        run: npx vite build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: backend
+          build-args: |
+            WITH_RAG=false
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: dashboard/frontend
+          push: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # The REST-only `ah` binary (scripts/build_cli_binary.sh, cli/rest_main.py,
+  # scripts/ah_rest.spec): built with PyInstaller, in its own venv, with none
+  # of the service's own dependencies installed, so a build that accidentally
+  # pulled in the service (docs/cli.md) would fail right here rather than
+  # only showing up as a giant binary nobody noticed.
+  cli-binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build dist/ah
+        run: scripts/build_cli_binary.sh --venv .venv-cli-binary
+
+      - name: --help works with nothing configured
+        run: dist/ah --help
+
+      - name: An unreachable AGENTS_HUB_URL fails clearly, not with a traceback
+        run: |
+          set +e
+          out=$(AGENTS_HUB_URL=http://127.0.0.1:9 dist/ah agent list 2>&1)
+          status=$?
+          echo "$out"
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "expected a non-zero exit for an unreachable backend" >&2
+            exit 1
+          fi
+          if echo "$out" | grep -qi "Traceback (most recent call last)"; then
+            echo "got a traceback instead of a clean error" >&2
+            exit 1
+          fi
+          echo "$out" | grep -qi "cannot reach the backend" || {
+            echo "did not get the expected connection-error message" >&2
+            exit 1
+          }

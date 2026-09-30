@@ -94,6 +94,14 @@ def _file_path(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
     return f"/workspaces/{quote(workspace)}?tab=files&file={quote(entity_id)}"
 
 
+def _workspace_file_label(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
+    """A workspace file (files/service.py) is linked by id; a deleted one
+    has no page left, so it drops out of the list."""
+    from files.service import get_file
+    record = get_file(entity_id)
+    return record["name"] if record else None
+
+
 KindSpec = Dict[str, Any]
 
 KINDS: Dict[str, KindSpec] = {
@@ -140,6 +148,14 @@ KINDS: Dict[str, KindSpec] = {
         "path": _file_path,
         "label": lambda eid, meta: eid,
     },
+    # A workspace file object (docs/files.md), unlike "file" above, which is
+    # a path in the workspace folder.
+    "workspace_file": {
+        "icon": "🗂️",
+        "noun": "Workspace file",
+        "path": lambda eid, meta: f"/files?file={quote(eid)}",
+        "label": _workspace_file_label,
+    },
 }
 
 # Past-tense wording for the text surfaces, per action.
@@ -176,7 +192,7 @@ def _resolve_label(kind_spec: KindSpec, record: Dict[str, Any]) -> Optional[str]
         return record.get("id")
     try:
         return resolver(record.get("id") or "", record.get("meta") or {})
-    except Exception:
+    except Exception:  # noqa: BLE001 - one kind's label resolver must not break the whole link list
         log.debug("entity label lookup failed for %r", record, exc_info=True)
         return None
 
@@ -205,7 +221,7 @@ def entity_payloads(records) -> List[Dict[str, Any]]:
             continue
         try:
             path = kind_spec["path"](entity_id, meta)
-        except Exception:
+        except Exception:  # noqa: BLE001 - one record's path builder must not break the whole link list
             log.debug("entity path build failed for %r", record, exc_info=True)
             continue
         if not path:

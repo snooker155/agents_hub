@@ -1,4 +1,4 @@
-from .models import SharedMemory
+from .models import SharedMemory, MemoryBlock, DEFAULT_BLOCK_LIMIT, default_blocks
 from .store import MemoryStore
 from .tool import (
     read_memory_tool,
@@ -10,15 +10,14 @@ from .tool import (
     JOURNAL_PREFIX,
     create_memory_tools,
 )
-from .injection import inject_memory_into_definition
-from .rag_query import search_rag, is_rag_configured
+from .injection import inject_memory_into_definition, render_blocks
+from .rag_query import search_rag, is_rag_configured, delete_rag_vectors
 from .procedural import (
     Procedure,
     ProcedureStore,
     all_procedures,
     find_procedure,
     find_relevant_procedures,
-    is_skills_inquiry,
     create_skills_tools,
 )
 from .episodic import (
@@ -48,6 +47,9 @@ from .knowledge_extract import (
 
 __all__ = [
     "SharedMemory",
+    "MemoryBlock",
+    "DEFAULT_BLOCK_LIMIT",
+    "default_blocks",
     "MemoryStore",
     "read_memory_tool",
     "write_memory_tool",
@@ -58,14 +60,15 @@ __all__ = [
     "JOURNAL_PREFIX",
     "create_memory_tools",
     "inject_memory_into_definition",
+    "render_blocks",
     "search_rag",
+    "delete_rag_vectors",
     "is_rag_configured",
     "Procedure",
     "ProcedureStore",
     "find_relevant_procedures",
     "all_procedures",
     "find_procedure",
-    "is_skills_inquiry",
     "create_skills_tools",
     "Episode",
     "EpisodeStore",

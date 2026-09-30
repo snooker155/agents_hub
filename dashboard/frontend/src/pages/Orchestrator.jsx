@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useLiveRefetch } from '../components/stream';
 import {
   Zap,
@@ -28,7 +28,8 @@ import {
   getOrchestratorRoutingLog,
   getAgents,
   getProjects,
-  getNodes,
+  getInstances,
+  startInstance,
   getSettings,
   getWorkspace,
 } from '../api';
@@ -36,40 +37,33 @@ import { useWorkspace } from '../components/workspace';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
-const DOMAIN_COLORS = {
-  orchestration: 'bg-indigo-100 text-indigo-700',
-  development:   'bg-blue-100 text-blue-700',
-  management:    'bg-teal-100 text-teal-700',
-  analysis:      'bg-amber-100 text-amber-700',
-  testing:       'bg-green-100 text-green-700',
-  design:        'bg-pink-100 text-pink-700',
-  operations:    'bg-orange-100 text-orange-700',
-  automation:    'bg-purple-100 text-purple-700',
-};
-
+import PageLoader from '../components/PageLoader';
 const Orchestrator = () => {
   const { t } = useI18n();
+  const navigate = useNavigate();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const [settings, setSettings] = useState({ enabled: false, assignment_mode: 'manual' });
   const [agents, setAgents] = useState([]);
   const [routingLog, setRoutingLog] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [nodes, setNodes] = useState([]);
+  // Resident instances of the orchestrator agent, live in this workspace.
+  const [orchestratorInstances, setOrchestratorInstances] = useState([]);
   const [selectedProject, setSelectedProject] = useState('');
   const [agentMode, setAgentMode] = useState('local');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
 
   const fetchData = useCallback(async () => {
     const settingsWorkspace = selectedWorkspace || 'default';
     try {
-      const [settingsResp, agentsResp, routingResp, projectsResp, nodesResp, globalSettingsResp, wsResp] = await Promise.allSettled([
+      const [settingsResp, agentsResp, routingResp, projectsResp, instancesResp, globalSettingsResp, wsResp] = await Promise.allSettled([
         getOrchestratorSettings(settingsWorkspace),
         getAgents(workspaceFilter),
         getOrchestratorRoutingLog(workspaceFilter),
         workspaceFilter ? getProjects(workspaceFilter) : Promise.resolve({ data: [] }),
-        getNodes(workspaceFilter),
+        getInstances({ agent_id: 'orchestrator', workspace: workspaceFilter, live: true, limit: 50 }),
         getSettings(),
         workspaceFilter && workspaceFilter !== 'default' ? getWorkspace(workspaceFilter) : Promise.resolve(null),
       ]);
@@ -77,7 +71,7 @@ const Orchestrator = () => {
       if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
       if (routingResp.status === 'fulfilled') setRoutingLog(routingResp.value.data || []);
       if (projectsResp.status === 'fulfilled') setProjects(projectsResp.value.data || []);
-      if (nodesResp.status === 'fulfilled') setNodes(nodesResp.value.data || []);
+      if (instancesResp.status === 'fulfilled') setOrchestratorInstances(instancesResp.value.data?.items || []);
       // Agent mode: workspace-specific override takes priority over global setting
       const globalMode = globalSettingsResp.status === 'fulfilled' ? (globalSettingsResp.value.data.agent_mode || 'local') : 'local';
       const wsMode = wsResp.status === 'fulfilled' && wsResp.value ? (wsResp.value.data?.metadata?.settings?.agent_mode || null) : null;
@@ -201,22 +195,35 @@ const Orchestrator = () => {
 
   // Agent lookup map
   const agentMap = Object.fromEntries(agents.map(a => [a.id, a]));
-  const runningOrchestratorNodes = nodes.filter(
-    (n) => n.agent_id === 'orchestrator' && (n.status === 'running' || n.status === 'starting')
-  );
-  const hasRunningOrchestratorNode = runningOrchestratorNodes.length > 0;
+  // A resident instance only counts here when it also takes tasks: that is
+  // the flag execution_mode 'node' actually waits on (instances/carrier.py).
+  const runningOrchestratorInstances = orchestratorInstances.filter((i) => i.take_tasks);
+  const hasRunningOrchestratorNode = runningOrchestratorInstances.length > 0;
+
+  const handleStartOrchestratorInstance = async () => {
+    setStarting(true);
+    try {
+      const { data } = await startInstance({
+        agent_id: 'orchestrator',
+        workspace: workspaceFilter || null,
+        take_tasks: true,
+      });
+      navigate(`/instances/${data.instance_id}`);
+    } catch (err) {
+      alert(err.response?.data?.detail || t('orchestrator.errors.startInstance'));
+    } finally {
+      setStarting(false);
+    }
+  };
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-20">
-        <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mb-4" />
-        <p className="text-gray-500">{t('orchestrator.loadingOrchestratorConfiguration')}</p>
-      </div>
+      <PageLoader label={t('orchestrator.loadingOrchestratorConfiguration')} />
     );
   }
 
   return (
-    <PageContainer className="space-y-6">
+    <PageContainer fill className="gap-6">
       <PageHeader
         icon={Shield}
         title={t('orchestrator.centralOrchestrator')}
@@ -250,18 +257,24 @@ const Orchestrator = () => {
               {t('orchestrator.autoOrchestrationCannotRunUntil')}
             </p>
           </div>
-          <Link
-            to="/nodes"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-900 bg-white border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors whitespace-nowrap"
+          <button
+            type="button"
+            onClick={handleStartOrchestratorInstance}
+            disabled={starting}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-900 bg-white border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors whitespace-nowrap disabled:opacity-50"
           >
-            Start New Node
+            {starting ? t('orchestrator.starting') : t('orchestrator.startNewInstance')}
             <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+          </button>
         </div>
       )}
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-8">
+      {/* Two columns: how the orchestrator is set up, and what it has routed.
+          The row takes the height left on the page; the history column fills
+          it and scrolls inside, the set-up column scrolls on its own. */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start flex-1 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)]">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden xl:max-h-full xl:overflow-y-auto">
+        <div className="p-6">
           {/* Execution mode toggle */}
           <div className="flex items-center justify-between mb-8 pb-8 border-b border-gray-50">
             <div className="flex items-center space-x-4">
@@ -502,74 +515,32 @@ const Orchestrator = () => {
             );
           })()}
 
-          {/* Logic + cluster */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-6">
-              <h4 className="font-bold text-gray-800 flex items-center text-sm">
-                <Workflow className="w-4 h-4 mr-2 text-indigo-500" />
-                {t('orchestrator.orchestrationLogic')}
-              </h4>
-              <ul className="space-y-3">
-                {[
-                  t('orchestrator.logic.analyse'),
-                  t('orchestrator.logic.availability'),
-                  t('orchestrator.logic.decomposer'),
-                  t('orchestrator.logic.route'),
-                ].map(text => (
-                  <li key={text} className="flex items-start">
-                    <CheckCircle2 className="w-4 h-4 text-green-500 mr-3 mt-0.5 flex-shrink-0" />
-                    <span className="text-sm text-gray-600">{text}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="bg-indigo-50 rounded-2xl p-6 border border-indigo-100">
-              <h4 className="font-bold text-indigo-900 mb-4 flex items-center text-sm">
-                <Cpu className="w-4 h-4 mr-2" />
-                {t('orchestrator.clusterStatus')}
-              </h4>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-indigo-700">{t('orchestrator.availableAgents')}</span>
-                  <span className="font-bold text-indigo-900">{agents.length}</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-indigo-700">{t('orchestrator.healthyNodes')}</span>
-                  <span className="font-bold text-indigo-900">
-                    {agents.filter(a => a.status !== 'offline').length}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-indigo-700">{t('orchestrator.tasksRouted')}</span>
-                  <span className="font-bold text-indigo-900">{routingEvents.length}</span>
-                </div>
-                <div className="mt-3 pt-3 border-t border-indigo-200">
-                  <div className="text-[10px] uppercase font-bold text-indigo-400 mb-2">{t('orchestrator.connectedAgents')}</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {agents.slice(0, 6).map(a => (
-                      <Link
-                        key={a.id}
-                        to={`/agents/${a.id}`}
-                        className="px-2 py-0.5 bg-white rounded text-[10px] font-bold text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-colors"
-                      >
-                        {a.id}
-                      </Link>
-                    ))}
-                    {agents.length > 6 && (
-                      <span className="text-[10px] text-indigo-400 self-center">{t('orchestrator.moreCount', { count: agents.length - 6 })}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
+          {/* Logic */}
+          <div className="space-y-6">
+            <h4 className="font-bold text-gray-800 flex items-center text-sm">
+              <Workflow className="w-4 h-4 mr-2 text-indigo-500" />
+              {t('orchestrator.orchestrationLogic')}
+            </h4>
+            <ul className="space-y-3">
+              {[
+                t('orchestrator.logic.analyse'),
+                t('orchestrator.logic.availability'),
+                t('orchestrator.logic.decomposer'),
+                t('orchestrator.logic.route'),
+              ].map(text => (
+                <li key={text} className="flex items-start">
+                  <CheckCircle2 className="w-4 h-4 text-green-500 mr-3 mt-0.5 flex-shrink-0" />
+                  <span className="text-sm text-gray-600">{text}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       </div>
 
       {/* Routing History */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden xl:h-full xl:min-h-0 flex flex-col">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
           <h3 className="font-bold text-gray-800 flex items-center text-sm">
             <Network className="w-4 h-4 mr-2 text-indigo-500" />
             Routing History
@@ -595,13 +566,10 @@ const Orchestrator = () => {
             <p className="text-xs text-gray-400 mt-1">{t('orchestrator.createATaskToSee')}</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-gray-50 flex-1 min-h-0 overflow-y-auto max-h-[60vh] xl:max-h-none">
             {routingEvents.map(entry => {
               const agentSpec = agentMap[entry.agent_id];
               const isExpanded = expandedRow === entry.id;
-              const domainColor = agentSpec
-                ? DOMAIN_COLORS[agentSpec.domain] || 'bg-gray-100 text-gray-600'
-                : 'bg-gray-100 text-gray-600';
 
               return (
                 <div key={entry.id}>
@@ -638,11 +606,6 @@ const Orchestrator = () => {
                               {entry.agent_id}
                             </span>
                           </Link>
-                          {agentSpec?.domain && (
-                            <span className={`hidden sm:inline text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${domainColor}`}>
-                              {agentSpec.domain}
-                            </span>
-                          )}
                         </div>
                       </div>
 
@@ -694,13 +657,6 @@ const Orchestrator = () => {
                                 {entry.agent_id}
                               </Link>
                             } />
-                            {agentSpec?.domain && (
-                              <DetailRow label={t('orchestrator.domain')} value={
-                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${domainColor}`}>
-                                  {agentSpec.domain}
-                                </span>
-                              } />
-                            )}
                             {agentSpec?.type && (
                               <DetailRow label={t('orchestrator.agentType')} value={agentSpec.type} />
                             )}
@@ -730,6 +686,7 @@ const Orchestrator = () => {
             })}
           </div>
         )}
+      </div>
       </div>
     </PageContainer>
   );

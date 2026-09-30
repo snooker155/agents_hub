@@ -14,10 +14,15 @@ What the fingerprint covers (a change to any of these rebuilds):
 - the three markdown files (``instructions.md`` / ``capabilities.md`` / ``usage.md``)
 - the registry file ``agents.json`` (tools, model, provider, reasoning, memory
   binding, skills, response format, clarify gate, temperature, max tokens …)
-- the workspace metadata file (workspace instructions, model override, settings)
-- the procedures file (skills catalog, when the agent has skills enabled)
+- the workspace metadata store (workspace instructions, model override, settings)
+- the procedures store (skills catalog, when the agent has skills enabled)
 - the global ``.env`` (default provider/model)
 - the target workspace, the build override params, and project-scope
+
+The key (not only the fingerprint) carries the build overrides, and that is
+where an A/B experiment arm lands: the factory adds ``definition_version`` to
+the overrides of a run routed to an arm (``evals/experiments.py``), so each
+stored version gets its own cache entry and two arms never share a build.
 
 What it deliberately does NOT cover: live memory *contents*. The memory section
 injected into the prompt is only a set of hints ("these slots/notes exist") —
@@ -81,7 +86,8 @@ def compute_fingerprint(
     definitions_dir: Path,
 ) -> str:
     """Hash the definition inputs that determine the built agent."""
-    from common.paths import AGENTS_FILE, WORKSPACES_META_FILE, PROCEDURES_FILE, PROJECT_ROOT
+    from common.docstore import DocStore
+    from common.paths import PROJECT_ROOT
     from common.workspace_context import resolve_active_project
 
     defn = Path(definitions_dir) / agent_id
@@ -94,9 +100,9 @@ def compute_fingerprint(
     ]
     for fname in ("instructions.md", "capabilities.md", "usage.md"):
         parts.append(f"{fname}={_stat_sig(defn / fname)}")
-    parts.append("agents=" + _stat_sig(Path(AGENTS_FILE)))
-    parts.append("ws=" + _stat_sig(Path(WORKSPACES_META_FILE)))
-    parts.append("proc=" + _stat_sig(Path(PROCEDURES_FILE)))
+    parts.append("agents=" + DocStore("agents").signature())
+    parts.append("ws=" + DocStore("workspaces").signature())
+    parts.append("proc=" + DocStore("procedures").signature())
     parts.append("env=" + _stat_sig(Path(PROJECT_ROOT) / ".env"))
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 

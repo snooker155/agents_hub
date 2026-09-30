@@ -1,5 +1,8 @@
 - list_files: Enumerate files in the current workspace.
 - read_file: Retrieve file contents.
+- create_file: Create a new file with the given content.
+- write_file: Write UTF-8 text to a file.
+- delete_file: Delete a regular file under the workspace.
 - run_flow_tool: Execute a predefined agent flow.
 - run_agent_tool: Invoke another agent directly.
 - list_flows_tool: List available flows.
@@ -19,3 +22,4 @@
 - run_scenario_tool / run_team_tool / run_loop_tool: Start one, once the user has approved the cost. Each refuses until then.
 - get_scenario_run_tool / get_team_run_tool / get_loop_run_tool: Report how a run is going, or how it went.
 - stop_scenario_run_tool / stop_team_run_tool / stop_loop_run_tool: End a run that is still going.
+- search_docs / read_doc: Search and read the service's own documentation, including the release history.

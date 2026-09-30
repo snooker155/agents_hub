@@ -12,6 +12,19 @@ from tools.capabilities import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _guard_defaults(monkeypatch):
+    """These tests assume the guard's defaults (block mode, an override that
+    needs a container). The developer's .env may say otherwise, both through
+    the live reader and through the ``settings`` object built from that file
+    at import, so both are pinned here rather than inherited."""
+    from common.config import settings
+    monkeypatch.setattr("common.config.read_dot_env", lambda: {})
+    monkeypatch.setattr(settings, "capability_guard", "block")
+    monkeypatch.setattr(settings, "capability_override_requires_container", True)
+
+
+
 # ── The grant table ───────────────────────────────────────────────────────────
 
 def test_run_shell_alone_is_the_whole_trifecta():

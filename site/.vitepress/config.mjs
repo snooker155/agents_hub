@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitepress';
@@ -17,14 +17,14 @@ const TITLES = new Map(CORPUS.map((e) => [e.id, e.title]));
  * than disappearing from the site.
  */
 const GROUPS = [
-  ['Start here', ['overview', 'installation', 'cli', 'troubleshooting']],
-  ['The work', ['workspaces', 'projects', 'tasks', 'scheduling']],
-  ['Agents', ['agents', 'system-agents', 'imported-agents', 'tools-and-capabilities', 'skills', 'memory']],
-  ['Talking to them', ['chat', 'page-chat', 'telegram']],
+  ['Start here', ['overview', 'installation', 'cli', 'troubleshooting', 'changelog']],
+  ['The work', ['workspaces', 'projects', 'tasks', 'outcomes', 'scheduling', 'deployments']],
+  ['Agents', ['agents', 'agent-loop', 'tool-policy', 'guardrails', 'system-agents', 'imported-agents', 'tools-and-capabilities', 'skills', 'memory']],
+  ['Talking to them', ['chat', 'page-chat', 'steering', 'telegram']],
   ['More than one agent', ['flows', 'loops', 'teams', 'nodes', 'instances']],
   ['What they produce', ['views', 'playground']],
   ['Measurement', ['evals', 'costs', 'web-logs', 'sessions-and-runs']],
-  ['Running the service', ['settings', 'models', 'marketplace', 'containers', 'service-health']],
+  ['Running the service', ['settings', 'models', 'marketplace', 'containers', 'environments', 'service-health']],
 ];
 
 const placed = new Set(GROUPS.flatMap(([, ids]) => ids));
@@ -41,6 +41,37 @@ const sidebar = [
   ...(leftovers.length ? [{ text: 'More', collapsed: false, items: leftovers.map(item) }] : []),
 ];
 
+/**
+ * The recipes sidebar, read from site/recipes/*.md at config time: the title
+ * is each file's first `# ` line (or its frontmatter title), the order is index first and then by title.
+ * A missing or empty folder gives an empty sidebar rather than a failed build.
+ */
+function recipesSidebar() {
+  const dir = join(HERE, '..', 'recipes');
+  if (!existsSync(dir)) return [];
+  const entries = readdirSync(dir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => {
+      const id = f.replace(/\.md$/, '');
+      const src = readFileSync(join(dir, f), 'utf8');
+      // The first `# ` heading, else the frontmatter title, else the file name.
+      const body = src.replace(/^---\n[\s\S]*?\n---\n/, '');
+      const heading = body.match(/^# (.+)$/m);
+      const front = src.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m);
+      return { id, text: (heading?.[1] || front?.[1] || id).trim() };
+    });
+  const index = entries.find((e) => e.id === 'index');
+  const rest = entries.filter((e) => e.id !== 'index').sort((a, b) => a.text.localeCompare(b.text));
+  return [{
+    text: 'Recipes',
+    collapsed: false,
+    items: [
+      ...(index ? [{ text: index.text, link: '/recipes/' }] : []),
+      ...rest.map((e) => ({ text: e.text, link: `/recipes/${e.id}` })),
+    ],
+  }];
+}
+
 export default defineConfig({
   // Published at https://snooker155.github.io/agents_hub/ — every asset and
   // link is resolved against this prefix, so it must match the repository name.
@@ -52,6 +83,9 @@ export default defineConfig({
   cleanUrls: false,     // GitHub Pages serves the .html files this emits.
   lastUpdated: true,
   metaChunk: true,
+  // /demo/ is a separate app copied into public/ by scripts/build-demo.mjs,
+  // not a page, and is absent from a docs only build.
+  ignoreDeadLinks: [/^\/demo\//],
 
   head: [
     ['link', { rel: 'icon', href: '/agents_hub/favicon.svg', type: 'image/svg+xml' }],
@@ -76,10 +110,15 @@ export default defineConfig({
     nav: [
       { text: 'Documentation', link: '/guide/overview', activeMatch: '/guide/' },
       { text: 'Install', link: '/guide/installation' },
+      { text: 'Recipes', link: '/recipes/', activeMatch: '/recipes/' },
+      { text: 'Changelog', link: '/guide/changelog' },
+      // A separate app (the dashboard over recorded data), not a VitePress
+      // page: `target` stops the VitePress router from trying to render it.
+      { text: 'Demo', link: '/demo/index.html', target: '_self' },
       { text: 'GitHub', link: 'https://github.com/snooker155/agents_hub' },
     ],
 
-    sidebar: { '/guide/': sidebar },
+    sidebar: { '/guide/': sidebar, '/recipes/': recipesSidebar() },
 
     socialLinks: [
       { icon: 'github', link: 'https://github.com/snooker155/agents_hub' },
@@ -96,8 +135,14 @@ export default defineConfig({
     editLink: {
       // Pages under /guide/ are copies; the file a reader should edit is the
       // corpus entry they were made from.
-      pattern: ({ filePath }) =>
-        `https://github.com/snooker155/agents_hub/edit/main/${filePath.replace(/^guide\//, 'docs/')}`,
+      // The function is shipped to the browser as source, so it cannot read
+      // the index here: the one entry outside docs/ is named inline.
+      pattern: ({ filePath }) => {
+        const source = filePath === 'guide/changelog.md'
+          ? 'CHANGELOG.md'
+          : filePath.replace(/^guide\//, 'docs/');
+        return `https://github.com/snooker155/agents_hub/edit/main/${source}`;
+      },
       text: 'Edit this page on GitHub',
     },
 

@@ -13,7 +13,7 @@ makes agents disagree, and disagreement is what makes a market.
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from playground.environments import register
 from playground.environments.base import Environment
@@ -68,6 +68,9 @@ class MarketEnvironment(Environment):
 
     OBJECTIVES = ["max_pnl", "max_shares", "max_cash"]
     IDLE_ACTIONS = ("hold",)
+    # A trader reasoning about a limit order benefits from doing arithmetic it
+    # can check, nothing more: no filesystem, no web, no other agent.
+    TOOL_ALLOWLIST = ("calculator",)
 
     def __init__(self, params: Optional[Dict[str, Any]] = None, seed: int = 42):
         super().__init__(params, seed=seed)

@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
-  getProject, updateProject, getProjectTasks,
+  getProject, updateProject, deleteProject, getProjectTasks,
   cloneProjectRepo, getProjectGitStatus, pullProjectRepo,
-  getProjectSwaggerSpec, proxyProjectApiRequest,
   getProjectFiles, getProjectFileContent,
-  getProjectSpecFromCode, syncProjectIssues,
+  syncProjectIssues, publishProjectBranch,
 } from '../api';
 import ImportRepoModal from '../components/ImportRepoModal';
+import DeployPanel from '../components/projects/DeployPanel';
 import ProjectGraph from '../components/flow/ProjectGraph';
 import PlannerChat from '../components/flow/PlannerChat';
 import TaskBoard from '../components/TaskBoard';
@@ -17,12 +17,13 @@ import {
   RefreshCw, Play, Download, ExternalLink, CheckSquare, AlertCircle,
   Edit3, Save, X, Send, Code2, BookOpen, FileText, Tag, Clock,
   ArrowUpDown, Terminal, Folder, FolderOpen, ChevronRight, ChevronDown,
-  Search, ChevronUp, Zap, Link2, PanelRightOpen,
+  Search, ChevronUp, Zap, Link2, PanelRightOpen, Trash2,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
+import PageLoader from '../components/PageLoader';
 const TABS = ['Overview', 'Tasks', 'Architecture', 'Files'];
 
 // ── File tree helpers ──────────────────────────────────────────
@@ -114,48 +115,31 @@ export default function ProjectDetails() {
   const [cloning, setCloning] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [gitMsg, setGitMsg] = useState('');
+  // Publish: commit, push a branch and open a PR/MR. The same refusals the
+  // git_publish tool obeys apply, so the modal only collects the wording.
+  const [showPublish, setShowPublish] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState('');
+  const [prUrl, setPrUrl] = useState('');
+  // Set instead of prUrl when the repo has a remote but no GitHub/GitLab
+  // provider configured: publish still commits and pushes, it just has no
+  // provider API to ask for a pull/merge request afterwards.
+  const [pushResult, setPushResult] = useState(null);
+  const [publishForm, setPublishForm] = useState({ title: '', body: '', branch: '', base: '', draft: true });
   const [showConnect, setShowConnect] = useState(false);
   const [syncingIssues, setSyncingIssues] = useState(false);
 
-  // API tab
-  const [swaggerSpec, setSwaggerSpec] = useState(null);
-  const [swaggerLoading, setSwaggerLoading] = useState(false);
-  const [apiMethod, setApiMethod] = useState('GET');
-  const [apiPath, setApiPath] = useState('/');
-  const [apiBody, setApiBody] = useState('');
-  const [apiHeaders, setApiHeaders] = useState('');
-  const [apiResponse, setApiResponse] = useState(null);
-  const [apiLoading, setApiLoading] = useState(false);
-  const [selectedEndpointSpec, setSelectedEndpointSpec] = useState(null);
-  const [apiPathParams, setApiPathParams] = useState({});
-  const [apiQueryParams, setApiQueryParams] = useState({});
-  const [endpointSearch, setEndpointSearch] = useState('');
-  const [expandedTags, setExpandedTags] = useState(new Set(['default']));
-  const [manualBackendUrl, setManualBackendUrl] = useState('');
-  const [swaggerSource, setSwaggerSource] = useState(null); // 'live' | 'code' | filename
-  const [specFromCodeLoading, setSpecFromCodeLoading] = useState(false);
-  const [specFromCodeError, setSpecFromCodeError] = useState('');
 
   const fetchProject = useCallback(async () => {
     try {
       const resp = await getProject(id);
       setProject(resp.data);
-      const pd = resp.data;
-      const derivedBase = pd.backend?.base_url ||
-        (pd.backend?.port ? `http://localhost:${pd.backend.port}` : '');
-      setManualBackendUrl(prev => prev || derivedBase);
       setEditForm({
         name: resp.data.name,
         description: resp.data.description || '',
         status: resp.data.status,
         type: resp.data.type,
         tags: (resp.data.tags || []).join(', '),
-        frontend_port: resp.data.frontend?.port || '',
-        frontend_dev_command: resp.data.frontend?.dev_command || '',
-        frontend_enabled: resp.data.frontend?.enabled || false,
-        backend_port: resp.data.backend?.port || '',
-        backend_swagger_path: resp.data.backend?.swagger_path || '/docs',
-        backend_enabled: resp.data.backend?.enabled || false,
         repo_url: resp.data.repo?.url || '',
         repo_branch: resp.data.repo?.branch || 'main',
       });
@@ -210,7 +194,6 @@ export default function ProjectDetails() {
     if (activeTab === 'Tasks' || activeTab === 'Overview') loadTasks();
     if (activeTab === 'Files') loadFiles();
     if (activeTab === 'Repository') loadGitStatus();
-    if (activeTab === 'API') loadSwagger(backendBase);
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps -- loaders and backendBase are declared below; naming them here would hit the TDZ
 
   const loadTasks = async () => {
@@ -284,71 +267,57 @@ export default function ProjectDetails() {
     loadGitStatus();
   };
 
-  const isConnectedRepo = ['github', 'gitlab'].includes(project?.repo?.type) && project?.repo?.remote_id;
-
-  const loadSwagger = async (baseOverride) => {
-    if (!project?.backend?.enabled) return;
-    const base = baseOverride !== undefined ? baseOverride : backendBase;
-    if (!base) return;
-    setSwaggerLoading(true);
+  const handlePublish = async (e) => {
+    e.preventDefault();
+    setPublishing(true);
+    setPublishError('');
+    setPrUrl('');
+    setPushResult(null);
     try {
-      const resp = await getProjectSwaggerSpec(id, base);
-      setSwaggerSpec(resp.data);
-      setSwaggerSource('live');
-    } catch {
-      setSwaggerSpec(null);
-      setSwaggerSource(null);
-    } finally { setSwaggerLoading(false); }
-  };
-
-  const loadSpecFromCode = async () => {
-    setSpecFromCodeLoading(true);
-    setSpecFromCodeError('');
-    try {
-      const resp = await getProjectSpecFromCode(id);
-      const { spec, source, detected_port } = resp.data;
-      setSwaggerSpec(spec);
-      setSwaggerSource(source);
-      if (detected_port && !manualBackendUrl) {
-        setManualBackendUrl(`http://localhost:${detected_port}`);
+      const { data } = await publishProjectBranch(id, {
+        title: publishForm.title,
+        body: publishForm.body,
+        branch: publishForm.branch || null,
+        base: publishForm.base || null,
+        draft: publishForm.draft,
+      });
+      if (data.pr_url) {
+        setPrUrl(data.pr_url);
+      } else if (data.pushed) {
+        // Either open_pr was false, or there was no provider to ask for a
+        // pull/merge request at all: either way, show what actually landed.
+        setPushResult({ branch: data.branch, remote: data.remote });
+        setGitMsg(data.message || t('projectDetails.publish.pushed'));
       }
-      setExpandedTags(new Set(
-        spec?.paths
-          ? [...new Set(Object.values(spec.paths).flatMap(methods =>
-              Object.values(methods).map(ep => ep.tags?.[0] || 'default')
-            ))]
-          : ['default']
-      ));
-    } catch (e) {
-      setSpecFromCodeError(e.response?.data?.detail || e.message || t('projectDetails.errors.extractSpec'));
+      loadGitStatus();
+    } catch (e2) {
+      setPublishError(e2.response?.data?.detail || t('projectDetails.errors.publish'));
     } finally {
-      setSpecFromCodeLoading(false);
+      setPublishing(false);
     }
   };
 
-  const handleApiRequest = async () => {
-    setApiLoading(true);
-    setApiResponse(null);
+  const isConnectedRepo = ['github', 'gitlab'].includes(project?.repo?.type) && project?.repo?.remote_id;
+  // A repo attached with a remote but no GitHub/GitLab provider still has
+  // somewhere to push; it just cannot open a pull/merge request, so the
+  // publish modal offers a reduced, push-only path instead of hiding the
+  // button entirely.
+  const hasRepoRemote = !!project?.repo?.url;
+  const canPublishBranch = isConnectedRepo || hasRepoRemote;
+
+  const [deleting, setDeleting] = useState(false);
+  const handleDelete = async () => {
+    if (!window.confirm(t('projectDetails.deleteConfirm', { name: project?.name || '' }))) return;
+    setDeleting(true);
     try {
-      let parsedHeaders = {};
-      if (apiHeaders.trim()) {
-        parsedHeaders = JSON.parse(apiHeaders);
-      }
-      let parsedBody = null;
-      if (apiBody.trim() && !['GET', 'DELETE'].includes(apiMethod)) {
-        parsedBody = JSON.parse(apiBody);
-      }
-      const resp = await proxyProjectApiRequest(id, {
-        method: apiMethod,
-        path: computedApiUrl,
-        headers: parsedHeaders,
-        body: parsedBody,
-        base_url: backendBase || undefined,
-      });
-      setApiResponse(resp.data);
+      await deleteProject(id);
+      toast.success(t('projectDetails.deleted'));
+      navigate('/projects');
     } catch (e) {
-      setApiResponse({ error: e.response?.data?.detail || e.message });
-    } finally { setApiLoading(false); }
+      toast.error(t('projectDetails.deleteFailed'), errorDetail(e));
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleSave = async () => {
@@ -360,16 +329,6 @@ export default function ProjectDetails() {
         status: editForm.status,
         type: editForm.type,
         tags: editForm.tags ? editForm.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
-        frontend: {
-          enabled: editForm.frontend_enabled,
-          port: editForm.frontend_port ? parseInt(editForm.frontend_port) : null,
-          dev_command: editForm.frontend_dev_command || null,
-        },
-        backend: {
-          enabled: editForm.backend_enabled,
-          port: editForm.backend_port ? parseInt(editForm.backend_port) : null,
-          swagger_path: editForm.backend_swagger_path || '/docs',
-        },
         repo: {
           url: editForm.repo_url || null,
           branch: editForm.repo_branch || 'main',
@@ -382,84 +341,6 @@ export default function ProjectDetails() {
     } finally { setSaving(false); }
   };
 
-  const frontendUrl = project?.frontend?.url ||
-    (project?.frontend?.port ? `http://localhost:${project.frontend.port}` : null);
-  const backendBase = project?.backend?.base_url ||
-    (project?.backend?.port ? `http://localhost:${project.backend.port}` : null) ||
-    manualBackendUrl || null;
-  const swaggerUrl = backendBase
-    ? `${backendBase}${project?.backend?.swagger_path || '/docs'}`
-    : null;
-
-  // ── API tab helpers ───────────────────────────────────────────
-  const resolveSchema = useCallback((schema) => {
-    if (!schema || !swaggerSpec) return schema;
-    if (schema.$ref) {
-      const name = schema.$ref.split('/').pop();
-      return swaggerSpec.components?.schemas?.[name] || null;
-    }
-    return schema;
-  }, [swaggerSpec]);
-
-  const generateExample = useCallback((schema, depth = 0) => {
-    if (depth > 4 || !schema) return null;
-    const s = schema.$ref ? resolveSchema(schema) : schema;
-    if (!s) return null;
-    if (s.example !== undefined) return s.example;
-    const type = s.type || (s.properties ? 'object' : s.items ? 'array' : null);
-    switch (type) {
-      case 'object': {
-        const obj = {};
-        Object.entries(s.properties || {}).forEach(([k, v]) => { obj[k] = generateExample(v, depth + 1) ?? ''; });
-        return obj;
-      }
-      case 'array': return [generateExample(s.items, depth + 1)];
-      case 'string': return s.enum?.[0] ?? (s.format === 'date-time' ? '2024-01-01T00:00:00Z' : 'string');
-      case 'integer': case 'number': return s.minimum ?? 0;
-      case 'boolean': return false;
-      default: return null;
-    }
-  }, [resolveSchema]);
-
-  const selectEndpoint = useCallback((path, method, epSpec) => {
-    setSelectedEndpointSpec({ path, method, spec: epSpec });
-    setApiMethod(method.toUpperCase());
-    setApiPath(path);
-    setApiResponse(null);
-    const pathParamNames = (path.match(/\{(\w+)\}/g) || []).map(p => p.slice(1, -1));
-    setApiPathParams(Object.fromEntries(pathParamNames.map(p => [p, ''])));
-    const qParams = (epSpec.parameters || []).filter(p => p.in === 'query');
-    setApiQueryParams(Object.fromEntries(qParams.map(p => [p.name, ''])));
-    const bodySchema = epSpec.requestBody?.content?.['application/json']?.schema;
-    if (bodySchema) {
-      const example = generateExample(bodySchema);
-      setApiBody(example !== null ? JSON.stringify(example, null, 2) : '');
-    } else {
-      setApiBody('');
-    }
-  }, [generateExample]);
-
-  const computedApiUrl = useMemo(() => {
-    let p = apiPath;
-    Object.entries(apiPathParams).forEach(([k, v]) => { p = p.replace(`{${k}}`, v || `{${k}}`); });
-    const qParts = Object.entries(apiQueryParams).filter(([, v]) => v !== '').map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
-    return qParts.length ? `${p}?${qParts.join('&')}` : p;
-  }, [apiPath, apiPathParams, apiQueryParams]);
-
-  const groupedEndpoints = useMemo(() => {
-    if (!swaggerSpec?.paths) return {};
-    const groups = {};
-    const q = endpointSearch.toLowerCase();
-    Object.entries(swaggerSpec.paths).forEach(([path, methods]) => {
-      Object.entries(methods).forEach(([method, spec]) => {
-        if (q && !path.toLowerCase().includes(q) && !(spec.summary || '').toLowerCase().includes(q)) return;
-        const tag = (spec.tags?.[0]) || 'default';
-        if (!groups[tag]) groups[tag] = [];
-        groups[tag].push({ path, method, spec });
-      });
-    });
-    return groups;
-  }, [swaggerSpec, endpointSearch]);
 
   const fileTree = useMemo(() => buildFileTree(files), [files]);
 
@@ -503,12 +384,12 @@ export default function ProjectDetails() {
   });
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64 text-gray-400">{t('projectDetails.loading')}</div>;
+    return <PageLoader size="lg" label={t('projectDetails.loading')} />;
   }
   if (!project) return null;
 
   return (
-    <PageContainer fill={activeTab === 'Tasks'}>
+    <PageContainer fill={activeTab === 'Tasks' || activeTab === 'Files'}>
       <PageHeader
         icon={FolderGit2}
         title={project.name}
@@ -529,18 +410,6 @@ export default function ProjectDetails() {
                   <span className="flex shrink-0 items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                     <GitBranch className="w-3 h-3" /> {project.repo.type}
                     {project.repo.url && <a href={project.repo.url} target="_blank" rel="noreferrer" className="ml-1 underline">{t('projectDetails.repo')}</a>}
-                  </span>
-                )}
-                {project.frontend?.enabled && (
-                  <span className="flex shrink-0 items-center gap-1 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
-                    <Globe className="w-3 h-3" /> Frontend
-                    {frontendUrl && <a href={frontendUrl} target="_blank" rel="noreferrer" className="ml-1"><ExternalLink className="w-2.5 h-2.5" /></a>}
-                  </span>
-                )}
-                {project.backend?.enabled && (
-                  <span className="flex shrink-0 items-center gap-1 text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">
-                    <Server className="w-3 h-3" /> Backend
-                    {swaggerUrl && <a href={swaggerUrl} target="_blank" rel="noreferrer" className="ml-1"><ExternalLink className="w-2.5 h-2.5" /></a>}
                   </span>
                 )}
                 {project.tags?.map(tag => (
@@ -620,58 +489,21 @@ export default function ProjectDetails() {
                 </div>
               </div>
             </div>
-            {/* Frontend */}
-            <div className="border border-gray-100 rounded-xl p-4 space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={editForm.frontend_enabled} onChange={e => setEditForm(f => ({ ...f, frontend_enabled: e.target.checked }))} />
-                <Globe className="w-3.5 h-3.5 text-blue-600" />
-                <span className="text-xs font-semibold text-gray-600">{t('projectDetails.frontend')}</span>
-              </label>
-              {editForm.frontend_enabled && (
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.port')}</label>
-                    <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      value={editForm.frontend_port} onChange={e => setEditForm(f => ({ ...f, frontend_port: e.target.value }))} placeholder="5173" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.devCommand')}</label>
-                    <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      value={editForm.frontend_dev_command} onChange={e => setEditForm(f => ({ ...f, frontend_dev_command: e.target.value }))} placeholder="npm run dev" />
-                  </div>
-                </div>
-              )}
-            </div>
-            {/* Backend */}
-            <div className="border border-gray-100 rounded-xl p-4 space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={editForm.backend_enabled} onChange={e => setEditForm(f => ({ ...f, backend_enabled: e.target.checked }))} />
-                <Server className="w-3.5 h-3.5 text-green-600" />
-                <span className="text-xs font-semibold text-gray-600">{t('projectDetails.backend')}</span>
-              </label>
-              {editForm.backend_enabled && (
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.port')}</label>
-                    <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      value={editForm.backend_port} onChange={e => setEditForm(f => ({ ...f, backend_port: e.target.value }))} placeholder="8000" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.swaggerPath')}</label>
-                    <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      value={editForm.backend_swagger_path} onChange={e => setEditForm(f => ({ ...f, backend_swagger_path: e.target.value }))} placeholder="/docs" />
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <button onClick={handleSave} disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium">
-                <Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}
-              </button>
-              <button onClick={() => setEditing(false)}
-                className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">
-                {t('projectDetails.cancel')}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex gap-2">
+                <button onClick={handleSave} disabled={saving}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium">
+                  <Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => setEditing(false)}
+                  className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">
+                  {t('projectDetails.cancel')}
+                </button>
+              </div>
+              {/* Deleting a project lives here, in its settings, not on the card list. */}
+              <button onClick={handleDelete} disabled={deleting}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50">
+                <Trash2 className="w-3.5 h-3.5" /> {t('projectDetails.deleteProject')}
               </button>
             </div>
           </div>
@@ -684,8 +516,7 @@ export default function ProjectDetails() {
           {[
             ...TABS,
             ...(project.type === 'code' || (project.repo?.type && project.repo.type !== 'none') ? ['Repository'] : []),
-            ...(project.backend?.enabled ? ['API'] : []),
-            ...(project.frontend?.enabled ? ['Preview'] : []),
+            'Deploy',
           ].map(tab => (
             <button
               key={tab}
@@ -820,13 +651,13 @@ export default function ProjectDetails() {
                   <div className="w-full bg-gray-100 rounded-full h-3 mb-6">
                     <div className="bg-green-500 h-3 rounded-full transition-all" style={{ width: `${pct}%` }} />
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+                  <div className="flex flex-wrap items-center gap-2 mb-6">
                     {statusOrder.map(s => {
                       const cnt = byCounts[s] || 0;
                       if (!cnt) return null;
                       const color = statusColors[s] || { badge: 'bg-gray-100 text-gray-500' };
                       return (
-                        <div key={s} className="flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-gray-50">
+                        <div key={s} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-gray-100 bg-gray-50">
                           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${color.badge}`}>
                             {statusLabels[s] || s}
                           </span>
@@ -839,21 +670,22 @@ export default function ProjectDetails() {
                   {/* Task list */}
                   <div className="border-t border-gray-100 pt-4 mb-6">
                     <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{t('projectDetails.tasks')}</h4>
-                    <div className="space-y-2">
+                    {/* Small cards: a task here is its name and where it stands. */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
                       {tasks.map(task => {
                         const color = statusColors[task.status] || { bar: 'bg-gray-300', badge: 'bg-gray-100 text-gray-500' };
                         return (
-                          <div key={task.id} className="flex items-center justify-between gap-3 py-1.5">
-                            <Link
-                              to={`/tasks/${task.id}`}
-                              className="text-sm text-gray-800 hover:text-indigo-600 truncate flex-1"
-                            >
-                              {task.title}
-                            </Link>
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${color.badge}`}>
+                          <Link
+                            key={task.id}
+                            to={`/tasks/${task.id}`}
+                            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:border-indigo-300 hover:shadow-sm transition-all min-w-0"
+                          >
+                            <span className={`w-1 self-stretch rounded-full shrink-0 ${color.bar}`} />
+                            <span className="text-sm text-gray-800 truncate flex-1" title={task.title}>{task.title}</span>
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0 ${color.badge}`}>
                               {statusLabels[task.status] || task.status}
                             </span>
-                          </div>
+                          </Link>
                         );
                       })}
                     </div>
@@ -911,8 +743,10 @@ export default function ProjectDetails() {
       )}
 
       {activeTab === 'Files' && (
-        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
-          <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        /* The whole height of the page: the tree and the file each scroll
+           on their own inside it. */
+        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 flex-1 min-h-0 flex flex-col">
+          <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2 shrink-0">
             <FileText className="w-5 h-5 text-indigo-500" /> {t('projectDetails.projectFiles')}
           </h3>
           {filesLoading ? (
@@ -920,19 +754,19 @@ export default function ProjectDetails() {
           ) : filesError ? (
             <p className="text-sm text-red-500">{filesError}</p>
           ) : files.length ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <div className="lg:col-span-4 border border-gray-200 rounded-lg p-2 max-h-[36rem] overflow-y-auto">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
+              <div className="lg:col-span-4 border border-gray-200 rounded-lg p-2 min-h-0 overflow-y-auto">
                 {renderFileNodes(fileTree)}
               </div>
-              <div className="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-2 border-b bg-gray-50">
+              <div className="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden min-h-0 flex flex-col">
+                <div className="px-4 py-2 border-b bg-gray-50 shrink-0">
                   <div className="text-xs text-gray-500">{t('projectDetails.selectedFile')}</div>
                   <div className="text-sm text-gray-700 truncate">{selectedFilePath || '-'}</div>
                   {selectedFileSize > 0 && (
                     <div className="text-xs text-gray-400 mt-0.5">{t('projectDetails.bytes', { count: selectedFileSize })}</div>
                   )}
                 </div>
-                <div className="p-4 max-h-[32rem] overflow-auto">
+                <div className="p-4 flex-1 min-h-0 overflow-auto">
                   {fileContentLoading ? (
                     <p className="text-sm text-gray-500">{t('projectDetails.loading')}</p>
                   ) : fileContentError ? (
@@ -966,6 +800,14 @@ export default function ProjectDetails() {
                   className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
                 >
                   <Link2 className="w-3.5 h-3.5" /> {t('projectDetails.connectRepository')}
+                </button>
+              )}
+              {canPublishBranch && (
+                <button
+                  onClick={() => { setShowPublish(true); setPublishError(''); setPrUrl(''); setPushResult(null); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
+                >
+                  <Send className="w-3.5 h-3.5" /> {t('projectDetails.publish.button')}
                 </button>
               )}
               {isConnectedRepo && (
@@ -1033,339 +875,119 @@ export default function ProjectDetails() {
         </div>
       )}
 
-      {activeTab === 'Preview' && (
-        <div className="space-y-4">
-          {project.frontend?.enabled && frontendUrl ? (
-            <>
-              <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
-                <Globe className="w-4 h-4 text-blue-500" />
-                <span className="text-sm text-gray-600">{frontendUrl}</span>
-                <a href={frontendUrl} target="_blank" rel="noreferrer"
-                  className="ml-auto flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800">
-                  Open in new tab <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" style={{ height: '70vh' }}>
-                <iframe
-                  src={frontendUrl}
-                  title={t('projectDetails.frontendPreview')}
-                  className="w-full h-full border-0"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                />
-              </div>
-            </>
-          ) : (
-            <div className="text-center py-16 text-gray-400">
-              <Globe className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">{t('projectDetails.noFrontendConfigured')}</p>
-              <p className="text-sm mt-1">{t('projectDetails.enableTheFrontendAndSet')}</p>
-            </div>
-          )}
-        </div>
+      {activeTab === 'Deploy' && (
+        <DeployPanel project={project} />
       )}
 
-      {activeTab === 'API' && (
-        <div className="space-y-4">
-          {!project.backend?.enabled ? (
-            <div className="text-center py-16 text-gray-400">
-              <Server className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">{t('projectDetails.noBackendConfigured')}</p>
-              <p className="text-sm mt-1">{t('projectDetails.enableTheBackendInThe')}</p>
+      {/* Publish branch modal */}
+      {showPublish && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg bg-white rounded-xl shadow-lg border border-gray-200">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                <Send className="w-4 h-4 text-indigo-600" /> {t('projectDetails.publish.title')}
+              </h3>
+              <button onClick={() => setShowPublish(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          ) : (
-            <>
-            {/* Toolbar */}
-            <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
-              <div className="flex items-center gap-3">
-                {/* Load from code */}
-                <button
-                  onClick={loadSpecFromCode}
-                  disabled={specFromCodeLoading}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 shrink-0"
-                >
-                  <Code2 className="w-3.5 h-3.5" />
-                  {specFromCodeLoading ? t('projectDetails.extracting') : t('projectDetails.loadFromCode')}
-                </button>
-                <span className="text-gray-300 text-xs">{t('projectDetails.or')}</span>
-                {/* Live server URL + load */}
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <Server className="w-4 h-4 text-gray-400 shrink-0" />
-                  <input
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-mono min-w-0"
-                    placeholder="http://localhost:8080"
-                    value={manualBackendUrl}
-                    onChange={e => setManualBackendUrl(e.target.value)}
-                  />
-                  <button
-                    onClick={() => loadSwagger(manualBackendUrl)}
-                    disabled={swaggerLoading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50 shrink-0"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" /> {t('projectDetails.loadLiveSpec')}
-                  </button>
-                </div>
+            <form onSubmit={handlePublish} className="p-5 space-y-4">
+              {!isConnectedRepo && (
+                <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2">
+                  {t('projectDetails.publish.noProviderNotice')}
+                </p>
+              )}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  {isConnectedRepo ? t('projectDetails.publish.prTitle') : t('projectDetails.publish.commitMessage')}
+                </label>
+                <input
+                  required
+                  value={publishForm.title}
+                  onChange={e => setPublishForm(f => ({ ...f, title: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
               </div>
-              {/* Status row */}
-              {(swaggerSource || specFromCodeError) && (
-                <div className="flex items-center gap-2 text-xs pl-1">
-                  {specFromCodeError ? (
-                    <span className="text-red-500">{specFromCodeError}</span>
-                  ) : swaggerSource === 'live' ? (
-                    <span className="text-green-600">{t('projectDetails.loadedFromLiveServer')}</span>
-                  ) : swaggerSource === 'dynamic_import' ? (
-                    <span className="text-green-600">{t('projectDetails.extractedViaDynamicImport')}</span>
-                  ) : swaggerSource ? (
-                    <span className="text-green-600">{t('projectDetails.loadedFrom')} <code className="font-mono">{swaggerSource}</code></span>
-                  ) : null}
+              {isConnectedRepo && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.body')}</label>
+                  <textarea
+                    rows={4}
+                    value={publishForm.body}
+                    onChange={e => setPublishForm(f => ({ ...f, body: e.target.value }))}
+                    placeholder={t('projectDetails.publish.bodyPlaceholder')}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
                 </div>
               )}
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
-
-              {/* ── Left: Endpoint Browser ── */}
-              <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 flex flex-col">
-                {/* Header */}
-                <div className="p-3 border-b border-gray-100 flex items-center justify-between gap-2">
+              <div className={isConnectedRepo ? 'grid grid-cols-2 gap-3' : ''}>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.branch')}</label>
+                  <input
+                    value={publishForm.branch}
+                    onChange={e => setPublishForm(f => ({ ...f, branch: e.target.value }))}
+                    placeholder={t('projectDetails.publish.optional')}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                {isConnectedRepo && (
                   <div>
-                    <span className="text-sm font-semibold text-gray-800">
-                      {swaggerSpec?.info?.title || 'Endpoints'}
-                    </span>
-                    {swaggerSpec?.info?.version && (
-                      <span className="ml-2 text-xs text-gray-400">{swaggerSpec.info.version}</span>
-                    )}
-                  </div>
-                  {swaggerUrl && (
-                    <a href={swaggerUrl} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 shrink-0">
-                      Swagger <ExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
-                </div>
-
-                {/* Search */}
-                <div className="px-3 py-2 border-b border-gray-100">
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.base')}</label>
                     <input
-                      className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg"
-                      placeholder={t('projectDetails.searchEndpoints')}
-                      value={endpointSearch}
-                      onChange={e => setEndpointSearch(e.target.value)}
+                      value={publishForm.base}
+                      onChange={e => setPublishForm(f => ({ ...f, base: e.target.value }))}
+                      placeholder={t('projectDetails.publish.optional')}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                     />
-                  </div>
-                </div>
-
-                {/* Endpoint list */}
-                <div className="overflow-y-auto max-h-[32rem]">
-                  {swaggerLoading ? (
-                    <p className="text-xs text-gray-400 p-4 text-center">{t('projectDetails.loadingSpec')}</p>
-                  ) : !swaggerSpec ? (
-                    <div className="p-4 text-center text-xs text-gray-400">
-                      <p>{t('projectDetails.couldNotLoadApiSpec')}</p>
-                      <button onClick={loadSwagger} className="mt-1 text-indigo-500 hover:underline">{t('projectDetails.retry')}</button>
-                    </div>
-                  ) : Object.keys(groupedEndpoints).length === 0 ? (
-                    <p className="text-xs text-gray-400 p-4 text-center">{t('projectDetails.noEndpointsMatch')}</p>
-                  ) : (
-                    Object.entries(groupedEndpoints).map(([tag, endpoints]) => {
-                      const isOpen = expandedTags.has(tag);
-                      return (
-                        <div key={tag}>
-                          <button
-                            onClick={() => setExpandedTags(prev => { const n = new Set(prev); n.has(tag) ? n.delete(tag) : n.add(tag); return n; })}
-                            className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 border-b border-gray-100 text-xs font-semibold text-gray-600 uppercase tracking-wide"
-                          >
-                            {tag}
-                            {isOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                          </button>
-                          {isOpen && endpoints.map(({ path, method, spec: epSpec }) => {
-                            const isSelected = selectedEndpointSpec?.path === path && selectedEndpointSpec?.method === method;
-                            return (
-                              <button
-                                key={`${method}-${path}`}
-                                onClick={() => selectEndpoint(path, method, epSpec)}
-                                className={`w-full flex items-start gap-2 px-3 py-2.5 border-b border-gray-50 text-left hover:bg-indigo-50 transition-colors ${isSelected ? 'bg-indigo-50 border-l-2 border-l-indigo-400' : ''}`}
-                              >
-                                <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 ${METHOD_COLORS[method.toUpperCase()] || 'bg-gray-100 text-gray-600'}`}>
-                                  {method.toUpperCase()}
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="text-xs text-gray-800 font-mono truncate">{path}</div>
-                                  {epSpec.summary && <div className="text-[10px] text-gray-400 mt-0.5 truncate">{epSpec.summary}</div>}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* ── Right: Request Builder ── */}
-              <div className="lg:col-span-3 space-y-3">
-
-                {/* Endpoint description */}
-                {selectedEndpointSpec && (
-                  <div className="bg-white rounded-xl border border-gray-200 p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${METHOD_COLORS[selectedEndpointSpec.method.toUpperCase()] || 'bg-gray-100 text-gray-600'}`}>
-                        {selectedEndpointSpec.method.toUpperCase()}
-                      </span>
-                      <span className="text-sm font-mono text-gray-800">{selectedEndpointSpec.path}</span>
-                    </div>
-                    {selectedEndpointSpec.spec.description && (
-                      <p className="text-xs text-gray-500 mt-1">{selectedEndpointSpec.spec.description}</p>
-                    )}
-                    {/* Parameters table */}
-                    {selectedEndpointSpec.spec.parameters?.length > 0 && (
-                      <div className="mt-3">
-                        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('projectDetails.parameters')}</div>
-                        <div className="space-y-1">
-                          {selectedEndpointSpec.spec.parameters.map(p => (
-                            <div key={p.name} className="flex items-center gap-2 text-xs">
-                              <span className="font-mono text-indigo-700 w-28 shrink-0">{p.name}</span>
-                              <span className="text-gray-400 w-14 shrink-0">{p.in}</span>
-                              <span className="text-gray-400">{p.schema?.type || ''}</span>
-                              {p.required && <span className="text-red-400 text-[10px]">{t('projectDetails.required')}</span>}
-                              {p.description && <span className="text-gray-400 truncate">{p.description}</span>}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Request builder */}
-                <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-                  <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5" /> {t('projectDetails.request')}
-                  </h3>
-
-                  {/* Method + path + send */}
-                  <div className="flex gap-2">
-                    <select
-                      className="border border-gray-200 rounded-lg px-2 py-2 text-sm font-bold text-gray-700 bg-gray-50"
-                      value={apiMethod}
-                      onChange={e => setApiMethod(e.target.value)}
-                    >
-                      {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => <option key={m}>{m}</option>)}
-                    </select>
-                    <input
-                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
-                      value={apiPath}
-                      onChange={e => setApiPath(e.target.value)}
-                      placeholder="/api/endpoint"
-                    />
-                    <button
-                      onClick={handleApiRequest}
-                      disabled={apiLoading}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium shrink-0"
-                    >
-                      <Send className="w-3.5 h-3.5" /> {apiLoading ? 'Sending…' : 'Send'}
-                    </button>
-                  </div>
-
-                  {/* Resolved URL preview */}
-                  {computedApiUrl !== apiPath && (
-                    <div className="text-xs text-gray-400 font-mono bg-gray-50 px-3 py-1.5 rounded-lg">
-                      {backendBase}{computedApiUrl}
-                    </div>
-                  )}
-
-                  {/* Path params */}
-                  {Object.keys(apiPathParams).length > 0 && (
-                    <div>
-                      <div className="text-xs font-medium text-gray-500 mb-1.5">{t('projectDetails.pathParameters')}</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {Object.entries(apiPathParams).map(([k, v]) => (
-                          <div key={k} className="flex items-center gap-1.5">
-                            <span className="text-xs font-mono text-indigo-600 shrink-0 w-24 truncate">{`{${k}}`}</span>
-                            <input
-                              className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs"
-                              placeholder={k}
-                              value={v}
-                              onChange={e => setApiPathParams(prev => ({ ...prev, [k]: e.target.value }))}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Query params */}
-                  {Object.keys(apiQueryParams).length > 0 && (
-                    <div>
-                      <div className="text-xs font-medium text-gray-500 mb-1.5">{t('projectDetails.queryParameters')}</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {Object.entries(apiQueryParams).map(([k, v]) => (
-                          <div key={k} className="flex items-center gap-1.5">
-                            <span className="text-xs font-mono text-gray-600 shrink-0 w-24 truncate">{k}</span>
-                            <input
-                              className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs"
-                              placeholder={t('projectDetails.value')}
-                              value={v}
-                              onChange={e => setApiQueryParams(prev => ({ ...prev, [k]: e.target.value }))}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Headers + Body */}
-                  <div className="grid grid-cols-1 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.headersJson')}</label>
-                      <textarea
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono resize-none"
-                        rows={2}
-                        placeholder={'{"Authorization": "Bearer token"}'}
-                        value={apiHeaders}
-                        onChange={e => setApiHeaders(e.target.value)}
-                      />
-                    </div>
-                    {!['GET', 'DELETE'].includes(apiMethod) && (
-                      <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.bodyJson')}</label>
-                        <textarea
-                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono resize-none"
-                          rows={5}
-                          placeholder={'{"key": "value"}'}
-                          value={apiBody}
-                          onChange={e => setApiBody(e.target.value)}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Response */}
-                {apiResponse && (
-                  <div className="bg-white rounded-xl border border-gray-200 p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{t('projectDetails.response')}</span>
-                      {apiResponse.status_code && (
-                        <span className={`text-xs px-2 py-0.5 rounded font-bold ${
-                          apiResponse.status_code < 300 ? 'bg-green-100 text-green-700' :
-                          apiResponse.status_code < 400 ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-red-100 text-red-700'
-                        }`}>{apiResponse.status_code}</span>
-                      )}
-                    </div>
-                    <pre className="bg-gray-900 rounded-lg p-4 text-xs whitespace-pre-wrap text-green-300 font-mono max-h-80 overflow-y-auto">
-                      {apiResponse.error
-                        ? apiResponse.error
-                        : JSON.stringify(apiResponse.body, null, 2)}
-                    </pre>
                   </div>
                 )}
               </div>
-            </div>
-            </>
-          )}
+              {isConnectedRepo && (
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={publishForm.draft}
+                    onChange={e => setPublishForm(f => ({ ...f, draft: e.target.checked }))}
+                    className="accent-indigo-600"
+                  />
+                  {t('projectDetails.publish.draft')}
+                </label>
+              )}
+
+              {publishError && (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{publishError}</p>
+              )}
+              {prUrl && (
+                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
+                  {t('projectDetails.publish.opened')}{' '}
+                  <a href={prUrl} target="_blank" rel="noreferrer" className="underline font-medium">{prUrl}</a>
+                </p>
+              )}
+              {pushResult && (
+                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
+                  {t('projectDetails.publish.pushedBranch', { branch: pushResult.branch, remote: pushResult.remote })}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPublish(false)}
+                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50"
+                >
+                  {t('common.close')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={publishing || !publishForm.title.trim()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {publishing ? t('projectDetails.publish.publishing') : t('projectDetails.publish.button')}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

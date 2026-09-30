@@ -17,7 +17,8 @@ class ChatHistoryMessage(BaseModel):
 
 
 class ChatAttachment(BaseModel):
-    filename: str
+    # Optional when ``file_id`` is set: the server fills it from the file.
+    filename: str = ""
     content: str = ""
     # Optional base64-encoded binary payload. When set, the materializer writes
     # bytes to disk instead of UTF-8 text — used for Telegram photo/document
@@ -26,6 +27,11 @@ class ChatAttachment(BaseModel):
     mime_type: Optional[str] = None
     store_to_workspace: bool = False
     stored_workspace_path: Optional[str] = None
+    # A workspace file (files/service.py) attached by id: the server loads it
+    # (it must belong to the request's workspace) and treats it like an
+    # uploaded attachment. An upload sent with ``store_to_workspace`` becomes
+    # a workspace file and gets its id back here.
+    file_id: Optional[str] = None
 
 
 class ChatReference(BaseModel):

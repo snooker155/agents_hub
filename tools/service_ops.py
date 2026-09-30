@@ -2,7 +2,7 @@
 Service operations — the tools the Service Agent uses to answer "is this thing
 healthy, and if not, what broke".
 
-Everything the dashboard shows about the running system (containers, nodes,
+Everything the dashboard shows about the running system (containers, resident
 instances, sessions, runs, logs, routing decisions, web calls, spend) is
 reachable here. The routes that serve those pages are thin wrappers over
 in-process modules, so these tools call the same modules directly rather than
@@ -27,15 +27,15 @@ combined with an outbound channel. See ``tools/capabilities.py``.
 """
 from __future__ import annotations
 
-import json
-import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+
+from tools._json import json_err, json_ok
 
 
 # ── output shaping ───────────────────────────────────────────────────────────
@@ -47,27 +47,27 @@ MAX_LOG_CHARS = 12_000
 MAX_LOG_LINES = 400
 
 
+# Shared JSON envelope (tools/_json.py), the ``default=str`` variant: payloads
+# here can carry datetimes (run/session timestamps) that json.dumps cannot
+# serialize on its own.
 def _json_ok(payload: Dict[str, Any]) -> str:
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2, default=str)
+    return json_ok(payload, default=str)
 
 
 def _json_err(message: str, *, code: str = "bad_request",
               extra: Optional[Dict[str, Any]] = None) -> str:
-    body: Dict[str, Any] = {"ok": False, "error": message, "code": code}
-    if extra:
-        body.update(extra)
-    return json.dumps(body, ensure_ascii=False, indent=2, default=str)
+    return json_err(message, code=code, extra=extra, default=str)
 
 
 def _approval_required(action: str, target: str, effect: str) -> str:
-    """Refusal that carries what the user is being asked to approve."""
-    return _json_err(
-        f"{action} needs the user's approval. It would {effect}. Tell the user "
-        f"exactly this, and only call again with user_approved=True once they "
-        f"have agreed.",
-        code="approval_required",
-        extra={"action": action, "target": target, "effect": effect},
-    )
+    """Refusal that carries what the user is being asked to approve.
+
+    The wording lives in ``tools/approval.py`` so this advisory refusal and the
+    enforcing gate (agents/hooks.py) say the same thing to the agent: the gate
+    reuses it verbatim in chat, where there is no task to park a call on.
+    """
+    from tools.approval import approval_required_text
+    return approval_required_text(action, target, effect)
 
 
 def _tail(text: str, lines: int) -> Dict[str, Any]:
@@ -120,6 +120,25 @@ def service_health() -> str:
         return _json_err(f"Failed to read health: {e}", code="internal")
 
 
+@tool("run_diagnostics", args_schema=NoArgs)
+def run_diagnostics() -> str:
+    """Run the doctor: a list of checks, each ok, warn, fail or skip, with a
+    one sentence summary, the numbers behind it and the docs section that says
+    how to fix it (pending migrations, the default provider answering, stale
+    runs and expired leases, the launch queue, the outbox, free disk, the
+    browser service, docker, the frontend build, the system workspace).
+
+    Use it when the question is "what is wrong", not "what is the state":
+    service_health reports the raw snapshot, this judges it. Statuses and
+    numbers only, never log content.
+    """
+    try:
+        from common.doctor import run_doctor
+        return _json_ok({"doctor": run_doctor()})
+    except Exception as e:
+        return _json_err(f"Failed to run the doctor: {e}", code="internal")
+
+
 # ── containers ───────────────────────────────────────────────────────────────
 
 @tool("list_containers", args_schema=NoArgs)
@@ -152,68 +171,35 @@ def container_logs(name: str, tail: int = 200) -> str:
         return _json_err(f"Failed to read container logs: {e}", code="internal")
 
 
-# ── nodes ────────────────────────────────────────────────────────────────────
-
-class ListNodesInput(BaseModel):
-    status: Optional[str] = Field(None, description="Filter by status, e.g. running, stopped, failed")
-
-
-@tool("list_nodes", args_schema=ListNodesInput)
-def list_nodes(status: Optional[str] = None) -> str:
-    """List agent nodes — the worker processes that consume tasks — with their
-    status, agent, workspace and pid. A node in `failed`, or `running` with no
-    live pid, is the usual cause of tasks that never start."""
-    try:
-        from managers import node_manager
-        nodes = node_manager.list_nodes()
-        if status:
-            nodes = [n for n in nodes if (n.get("status") or "") == status]
-        return _json_ok({"nodes": nodes, "count": len(nodes)})
-    except Exception as e:
-        return _json_err(f"Failed to list nodes: {e}", code="internal")
-
-
-class NodeLogsInput(BaseModel):
-    node_id: str = Field(..., description="Node id, from list_nodes")
-    tail: int = Field(200, ge=1, le=MAX_LOG_LINES, description="How many trailing lines to return")
-
-
-@tool("node_logs", args_schema=NodeLogsInput)
-def node_logs(node_id: str, tail: int = 200) -> str:
-    """Return the tail of one node's stdout/stderr log."""
-    try:
-        from managers import node_manager
-        node = node_manager.get_node(node_id)
-        if not node:
-            return _json_err(f"Node '{node_id}' not found", code="not_found")
-        log_file = node.get("log_file")
-        if not log_file or not Path(log_file).exists():
-            return _json_ok({"node_id": node_id, "log": {"text": "", "truncated": False},
-                             "note": "the node has written no log yet"})
-        text = Path(log_file).read_text(encoding="utf-8", errors="replace")
-        return _json_ok({"node_id": node_id, "status": node.get("status"),
-                         "log": _tail(text, tail)})
-    except Exception as e:
-        return _json_err(f"Failed to read node logs: {e}", code="internal")
-
-
 # ── instances ────────────────────────────────────────────────────────────────
+#
+# A resident instance (instances/carrier.py) is what a node used to be: the
+# copy of an agent the agent page's Run started, one process or container of
+# its own that answers its mailbox until stopped. list_instances therefore
+# takes the place list_nodes had, and instance_logs/stop_instance/
+# restart_instance take the place of node_logs/stop_node/restart_node.
 
 class ListInstancesInput(BaseModel):
     state: Optional[str] = Field(None, description="Filter by state, e.g. active, standby, failed")
     agent_id: Optional[str] = Field(None, description="Filter to one agent")
     workspace: Optional[str] = Field(None, description="Filter to one workspace")
+    resident_only: bool = Field(False, description="Only copies started with Run (their own process), "
+                                                   "not chat, task or flow copies")
     limit: int = Field(50, ge=1, le=200)
 
 
 @tool("list_instances", args_schema=ListInstancesInput)
 def list_instances(state: Optional[str] = None, agent_id: Optional[str] = None,
-                   workspace: Optional[str] = None, limit: int = 50) -> str:
-    """List agent instances — the live copies of an agent — with their state and
-    last activity, plus a count per state. Use this to answer "what is running
-    right now" and to spot instances stuck in `active` with nothing happening."""
+                   workspace: Optional[str] = None, resident_only: bool = False,
+                   limit: int = 50) -> str:
+    """List agent instances, the live copies of an agent, with their state and
+    last activity, plus a count per state. Resident ones (started with Run) also
+    carry their carrier: mode, pid or container, carrier status and heartbeat.
+    A resident instance in `failed`, or one whose carrier process is gone, is
+    the usual cause of messages or tasks that are never answered; one stuck in
+    `active` with nothing happening is the other."""
     try:
-        from instances import store
+        from instances import carrier, store
         filters: Dict[str, Any] = {}
         if state:
             filters["state"] = state
@@ -221,14 +207,42 @@ def list_instances(state: Optional[str] = None, agent_id: Optional[str] = None,
             filters["agent_id"] = agent_id
         if workspace:
             filters["workspace"] = workspace
+        if resident_only:
+            filters["kinds"] = store.CARRIER_KINDS
         page = store.list_instances(limit=limit, **filters)
+        items = [carrier.public_view(carrier.sync(i) or i) for i in page.get("items", [])]
         return _json_ok({
-            "instances": page.get("items", []),
+            "instances": items,
             "total": page.get("total"),
             "by_state": store.counts_by_state(workspace=workspace, agent_id=agent_id),
         })
     except Exception as e:
         return _json_err(f"Failed to list instances: {e}", code="internal")
+
+
+class InstanceLogsInput(BaseModel):
+    instance_id: str = Field(..., description="Instance id, from list_instances")
+    tail: int = Field(200, ge=1, le=MAX_LOG_LINES, description="How many trailing lines to return")
+
+
+@tool("instance_logs", args_schema=InstanceLogsInput)
+def instance_logs(instance_id: str, tail: int = 200) -> str:
+    """Return the tail of one resident instance's carrier log (its process's
+    own stdout/stderr, not a run's log)."""
+    try:
+        from instances import store
+        instance = store.get(instance_id)
+        if not instance:
+            return _json_err(f"Instance '{instance_id}' not found", code="not_found")
+        log_file = instance.get("carrier_log_file")
+        if not log_file or not Path(log_file).exists():
+            return _json_ok({"instance_id": instance_id, "log": {"text": "", "truncated": False},
+                             "note": "the instance has written no log yet"})
+        text = Path(log_file).read_text(encoding="utf-8", errors="replace")
+        return _json_ok({"instance_id": instance_id, "state": instance.get("state"),
+                         "log": _tail(text, tail)})
+    except Exception as e:
+        return _json_err(f"Failed to read instance logs: {e}", code="internal")
 
 
 class InstanceTimelineInput(BaseModel):
@@ -528,51 +542,53 @@ def stop_run(run_id: str, user_approved: bool = False) -> str:
         return _json_err(f"Failed to stop the run: {e}", code="internal")
 
 
-class NodeActionInput(BaseModel):
-    node_id: str = Field(..., description="Node id, from list_nodes")
+class InstanceActionInput(BaseModel):
+    instance_id: str = Field(..., description="Instance id, from list_instances")
     user_approved: bool = Field(False, description="Set only after the user has explicitly agreed")
 
 
-@tool("stop_node", args_schema=NodeActionInput)
-def stop_node(node_id: str, user_approved: bool = False) -> str:
-    """Stop a running node. Refuses until the user has approved it.
+@tool("stop_instance", args_schema=InstanceActionInput)
+def stop_instance(instance_id: str, user_approved: bool = False) -> str:
+    """Stop a running resident instance. Refuses until the user has approved it.
 
-    Every session in progress on that node is failed as part of stopping it, so
-    say how many there are before asking — list_instances with the node's agent
-    shows them.
+    Every run in progress on that instance is failed as part of stopping it, so
+    say how many there are before asking — instance_timeline shows what it is
+    doing.
     """
     if not user_approved:
         return _approval_required(
-            "stop_node", node_id,
-            f"stop node {node_id} and fail every session currently running on it")
+            "stop_instance", instance_id,
+            f"stop instance {instance_id} and fail every run currently in progress on it")
     try:
-        from managers import node_manager
-        if not node_manager.get_node(node_id):
-            return _json_err(f"Node '{node_id}' not found", code="not_found")
-        return _json_ok({"node_id": node_id, "stopped": node_manager.stop_node(node_id)})
+        from instances import carrier, store
+        if not store.get(instance_id):
+            return _json_err(f"Instance '{instance_id}' not found", code="not_found")
+        return _json_ok({"instance_id": instance_id, "stopped": carrier.stop(instance_id)})
     except Exception as e:
-        return _json_err(f"Failed to stop the node: {e}", code="internal")
+        return _json_err(f"Failed to stop the instance: {e}", code="internal")
 
 
-@tool("restart_node", args_schema=NodeActionInput)
-def restart_node(node_id: str, user_approved: bool = False) -> str:
-    """Restart a node: stop it, then start it again with the same settings.
-    Refuses until the user has approved it.
+@tool("restart_instance", args_schema=InstanceActionInput)
+def restart_instance(instance_id: str, user_approved: bool = False) -> str:
+    """Restart a resident instance: stop its process, then start a fresh one
+    with the same settings. Refuses until the user has approved it.
 
-    This is the usual fix for a node whose process died but whose record still
-    says running. It fails the node's in-progress sessions on the way through.
+    This is the usual fix for an instance whose carrier process died but whose
+    record still says active or standby. It fails the instance's in-progress
+    runs on the way through.
     """
     if not user_approved:
         return _approval_required(
-            "restart_node", node_id,
-            f"restart node {node_id}, failing every session currently running on it")
+            "restart_instance", instance_id,
+            f"restart instance {instance_id}, failing every run currently in progress on it")
     try:
-        from managers import node_manager
-        if not node_manager.get_node(node_id):
-            return _json_err(f"Node '{node_id}' not found", code="not_found")
-        return _json_ok({"node_id": node_id, "restarted": node_manager.restart_node(node_id)})
+        from instances import carrier, store
+        if not store.get(instance_id):
+            return _json_err(f"Instance '{instance_id}' not found", code="not_found")
+        restarted = carrier.restart(instance_id)
+        return _json_ok({"instance_id": instance_id, "restarted": restarted is not None})
     except Exception as e:
-        return _json_err(f"Failed to restart the node: {e}", code="internal")
+        return _json_err(f"Failed to restart the instance: {e}", code="internal")
 
 
 class StopContainerInput(BaseModel):
@@ -643,24 +659,23 @@ def prune_run_logs(older_than_days: int = 30, user_approved: bool = False) -> st
 
 #: Read-only tools: safe to call on a hunch.
 SERVICE_READ_TOOLS = [
-    service_health,
+    service_health, run_diagnostics,
     list_containers, container_logs,
-    list_nodes, node_logs,
-    list_instances, instance_timeline,
+    list_instances, instance_logs, instance_timeline,
     list_sessions,
     list_runs, run_log, search_errors,
     routing_log, web_log_recent, costs_summary,
 ]
 
 #: Tools that stop or delete something. Each refuses without user_approved.
-SERVICE_ACTION_TOOLS = [stop_run, stop_node, restart_node, stop_container, prune_run_logs]
+SERVICE_ACTION_TOOLS = [stop_run, stop_instance, restart_instance, stop_container, prune_run_logs]
 
 SERVICE_OPS_TOOLS = [*SERVICE_READ_TOOLS, *SERVICE_ACTION_TOOLS]
 
 __all__ = [
-    "service_health", "list_containers", "container_logs", "list_nodes", "node_logs",
-    "list_instances", "instance_timeline", "list_sessions", "list_runs", "run_log",
+    "service_health", "run_diagnostics", "list_containers", "container_logs",
+    "list_instances", "instance_logs", "instance_timeline", "list_sessions", "list_runs", "run_log",
     "search_errors", "routing_log", "web_log_recent", "costs_summary",
-    "stop_run", "stop_node", "restart_node", "stop_container", "prune_run_logs",
+    "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     "SERVICE_READ_TOOLS", "SERVICE_ACTION_TOOLS", "SERVICE_OPS_TOOLS",
 ]

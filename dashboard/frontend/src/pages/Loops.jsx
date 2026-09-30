@@ -1,20 +1,21 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Repeat, Plus, Play, Square, Trash2, Loader, Save, AlertTriangle, X,
-  ChevronDown, ChevronRight, Target, Gauge, DollarSign, ExternalLink,
+  ChevronDown, ChevronRight, Target, Gauge, DollarSign, ExternalLink, FlaskConical,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   getLoops, createLoop, getLoop, updateLoop, deleteLoop, estimateLoop,
-  startLoop, getLoopRuns, getLoopRun, getLoopIterations, stopLoopRun,
+  startLoop, getLoopRuns, getLoopRun, getLoopIterations, stopLoopRun, resumeLoopRun,
   listFlows, getAgents,
   getLoopChat, clearLoopChat, stopLoopChat, loopChatUrl,
 } from '../api';
 import EntityChat from '../components/EntityChat';
+import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import InPanelNote from '../components/pageChat/InPanelNote';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useWorkspace } from '../components/workspace';
-import { useChannel } from '../components/stream';
+import { useChannel, useLiveRefetch, useStream } from '../components/stream';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -59,7 +60,27 @@ const emptyLoop = (workspace) => ({
   exit_criterion: '', max_iterations: 5, min_iterations: 1, target_score: 80,
   patience: 2, cost_ceiling: null, max_wall_seconds: 3600,
   evaluator_mode: 'final_agent', evaluator_agent_id: null,
+  rubric: '', grader: null,
 });
+
+// A loop's rubric grader as the one-line "provider/model" the form edits.
+const graderText = (g) => {
+  if (!g) return '';
+  if (typeof g === 'string') return g;
+  return g.model ? `${g.provider ? `${g.provider}/` : ''}${g.model}` : '';
+};
+
+// An iteration graded against a rubric keeps the whole grading as JSON in
+// evaluator_raw (loops/evaluator.evaluate_with_rubric); null for any other judge.
+const rubricGrading = (raw) => {
+  if (!raw || raw[0] !== '{') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.kind === 'rubric' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
 
 /** The score bar chart. Deliberately the first thing on the run panel. */
 function Trajectory({ iterations }) {
@@ -98,6 +119,7 @@ function Trajectory({ iterations }) {
 function IterationRow({ iteration, flowId }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const grading = useMemo(() => rubricGrading(iteration.evaluator_raw), [iteration.evaluator_raw]);
   const Chevron = open ? ChevronDown : ChevronRight;
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -133,6 +155,25 @@ function IterationRow({ iteration, flowId }) {
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">{t('loops.verdict')}</h4>
               <p className="text-sm text-gray-800 whitespace-pre-wrap">{iteration.reason}</p>
+            </div>
+          )}
+          {(grading?.criteria || []).length > 0 && (
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">
+                {t('outcomes.criteriaHeading')}
+              </h4>
+              <ul className="space-y-1">
+                {grading.criteria.map((c) => (
+                  <li key={c.name} className="flex items-start gap-2 text-sm">
+                    <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${c.passed ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <span className="min-w-0">
+                      <span className="font-medium text-gray-900">{c.name}</span>
+                      <span className="ml-2 text-xs text-gray-500">{Math.round((Number(c.score) || 0) * 100)}/100</span>
+                      {c.feedback && <span className="block text-gray-700 whitespace-pre-wrap">{c.feedback}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           {iteration.feedback && (
@@ -174,6 +215,10 @@ export default function Loops() {
   const [loops, setLoops] = useState([]);
   const [flows, setFlows] = useState([]);
   const [agents, setAgents] = useState([]);
+  // ?loop=<loop_id>&run=<loop_run_id> opens one run in particular: the owner
+  // chip on a view, a run group, a link someone pasted. Written back when the
+  // user picks a loop or a run here, so the address stays shareable.
+  const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState(null);
   const [draft, setDraft] = useState(null);
   const [mode, setMode] = useState('watch');        // 'setup' | 'watch'
@@ -183,10 +228,11 @@ export default function Loops() {
   const [goal, setGoal] = useState('');
   const [estimate, setEstimate] = useState(null);
   const [starting, setStarting] = useState(false);
+  const [resuming, setResuming] = useState(null);
   const [saving, setSaving] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [message, setMessage] = useState('');
-  const pollRef = useRef(null);
+  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -198,34 +244,50 @@ export default function Loops() {
     })();
   }, [selectedWorkspace]);
 
-  const loadLoops = useCallback(async () => {
-    try {
-      const { data } = await getLoops(selectedWorkspace);
-      setLoops(data.loops || []);
-    } catch {
-      setLoops([]);
-    }
-  }, [selectedWorkspace]);
-
-  useEffect(() => { loadLoops(); }, [loadLoops]);
-
-  const loadRun = async (loopRunId) => {
-    try {
-      const { data } = await getLoopRun(loopRunId);
-      setRun(data);
-      setIterations(data.iterations || []);
-    } catch {
-      setMessage(t('loops.loadRunFailed'));
-    }
-  };
-
   // What the form was last synced to, so "has the user edited this?" is a
   // comparison against that version rather than against whatever the chat just
   // wrote.
   const selectedRef = useRef(null);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
-  const selectLoop = async (id) => {
+  // The open loop goes with the catalogue: after a workspace switch (or a
+  // deletion elsewhere) a loop that is no longer listed is closed, form, run
+  // and address included, rather than left open over the new list.
+  const closeMissing = (listed) => {
+    const current = selectedRef.current;
+    if (!current || listed.some((l) => l.loop_id === current.loop_id)) return;
+    setSelected(null); setDraft(null); setRun(null); setIterations([]); setRuns([]);
+    setGoal(''); setEstimate(null); setMessage(''); setMode('watch');
+    setParams({}, { replace: true });
+  };
+
+  const loadLoops = useCallback(async () => {
+    try {
+      const { data } = await getLoops(selectedWorkspace);
+      setLoops(data.loops || []);
+      closeMissing(data.loops || []);
+    } catch {
+      setLoops([]);
+      closeMissing([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWorkspace]);
+
+  useEffect(() => { loadLoops(); }, [loadLoops]);
+
+  const loadRun = async (loopRunId, loopId) => {
+    try {
+      const { data } = await getLoopRun(loopRunId);
+      setRun(data);
+      setIterations(data.iterations || []);
+      const next = { loop: loopId || data.loop_id || selectedRef.current?.loop_id, run: loopRunId };
+      setParams(Object.fromEntries(Object.entries(next).filter(([, v]) => v)), { replace: true });
+    } catch {
+      setMessage(t('loops.loadRunFailed'));
+    }
+  };
+
+  const selectLoop = async (id, preferredRunId) => {
     setMessage(''); setEstimate(null); setRun(null); setIterations([]);
     try {
       const [{ data: loop }, { data: hist }] = await Promise.all([getLoop(id), getLoopRuns(id)]);
@@ -234,11 +296,27 @@ export default function Loops() {
       setGoal(loop.description || '');
       setRuns(hist.runs || []);
       setMode(loop.flow_id ? 'watch' : 'setup');
-      if (hist.runs?.length) loadRun(hist.runs[0].loop_run_id);
+      const history = hist.runs || [];
+      const wanted = preferredRunId && history.some((r) => r.loop_run_id === preferredRunId)
+        ? preferredRunId : history[0]?.loop_run_id;
+      if (wanted) loadRun(wanted, id);
+      else setParams({ loop: id }, { replace: true });
     } catch {
       setMessage(t('loops.loadLoopFailed'));
     }
   };
+
+  // Open the loop (and run) the address names, once the catalogue is here.
+  const openedFromUrl = useRef(false);
+  useEffect(() => {
+    if (openedFromUrl.current) return;
+    const loopId = params.get('loop');
+    if (!loopId || !loops.length) return;
+    if (!loops.some((l) => l.loop_id === loopId)) return;
+    openedFromUrl.current = true;
+    selectLoop(loopId, params.get('run'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loops]);
 
   // Iterations arrive on the loop channel; polling is the fallback so a dropped
   // stream degrades to a slower page rather than a frozen one.
@@ -255,19 +333,34 @@ export default function Loops() {
     }
   });
 
-  useEffect(() => {
-    if (!run?.loop_run_id) return undefined;
-    const live = run.status === 'running' || run.status === 'stopping';
-    if (!live) return undefined;
-    pollRef.current = setInterval(async () => {
-      try {
-        const { data } = await getLoopIterations(run.loop_run_id, 0);
-        setIterations(data.iterations || []);
-        setRun((prev) => ({ ...prev, ...data }));
-      } catch { /* transient */ }
-    }, 4000);
-    return () => clearInterval(pollRef.current);
-  }, [run?.loop_run_id, run?.status]);
+  // Iteration catch-up, replacing what used to be a 4-second poll.
+  //
+  // Iterations arrive on the `loop:<run_id>` channel subscribed above, and
+  // `loop_runs.changed` (loops/store.py `_notify`) fires when a run starts,
+  // records an iteration or ends. `fallbackMs` is the floor under a dropped
+  // channel, not a poll.
+  const catchUpIterations = useCallback(async () => {
+    const runId = run?.loop_run_id;
+    if (!runId) return;
+    try {
+      const { data } = await getLoopIterations(runId, 0);
+      setIterations(data.iterations || []);
+      setRun((prev) => ({ ...prev, ...data }));
+    } catch { /* transient */ }
+  }, [run?.loop_run_id]);
+
+  useLiveRefetch(catchUpIterations, {
+    type: 'loop_runs.changed',
+    enabled: Boolean(run?.loop_run_id)
+      && (run?.status === 'running' || run?.status === 'stopping'),
+    fallbackMs: 30000,
+  });
+
+  // A reconnect that could not resume, or events dropped because this tab fell
+  // behind, leaves the trajectory holding whatever it had.
+  const { onRefetch } = useStream();
+  useEffect(() => onRefetch(() => { catchUpIterations(); loadLoops(); }),
+    [onRefetch, catchUpIterations, loadLoops]);
 
   const handleCreate = async (name, flowId) => {
     try {
@@ -287,7 +380,7 @@ export default function Loops() {
       const { data } = await updateLoop(draft.loop_id, draft);
       setSelected(data); setDraft(data);
       await loadLoops();
-      setMessage('Saved.');
+      setMessage(t('common.saved'));
     } catch (e) {
       setMessage(e.response?.data?.detail || t('loops.saveFailed'));
     } finally {
@@ -320,6 +413,29 @@ export default function Loops() {
       await stopLoopRun(run.loop_run_id);
       setRun((prev) => ({ ...prev, status: 'stopping' }));
     } catch { /* already finished */ }
+  };
+
+  // A loop is a process of its own; when it dies the watchdog relaunches it,
+  // and a person can too. The stored position is what makes picking it up
+  // cheaper than starting over; a
+  // run that never finished an iteration has nothing to resume from. A
+  // completed run has nothing left to do, so only a failed or a deliberately
+  // stopped run is offered.
+  const isResumable = (r) => (r.status === 'failed' || r.status === 'stopped') && !!(r.position?.iterations_done);
+
+  const handleResume = async (loopRunId) => {
+    setResuming(loopRunId);
+    setMessage('');
+    try {
+      const { data } = await resumeLoopRun(loopRunId);
+      setRun(data);
+      const { data: hist } = await getLoopRuns(selected.loop_id);
+      setRuns(hist.runs || []);
+    } catch (e) {
+      setMessage(e.response?.data?.detail || t('loops.resumeFailed'));
+    } finally {
+      setResuming(null);
+    }
   };
 
   const handleEstimate = async () => {
@@ -435,7 +551,11 @@ export default function Loops() {
                     <h2 className="text-lg font-bold text-gray-900 truncate">{selected.name}</h2>
                     <p className="text-xs text-gray-500">
                       {selected.flow_name} ·{' '}
-                      {t('loops.judgedBy', { agent: selected.resolved_evaluator?.agent_id || t('loops.aModelCall') })} ·{' '}
+                      {t('loops.judgedBy', {
+                        agent: selected.resolved_evaluator?.mode === 'rubric'
+                          ? t('outcomes.loopJudgedByRubric')
+                          : (selected.resolved_evaluator?.agent_id || t('loops.aModelCall')),
+                      })} ·{' '}
                       {t('loops.upToIterations', { count: selected.max_iterations })}
                     </p>
                   </div>
@@ -462,6 +582,15 @@ export default function Loops() {
                     >
                       <DollarSign className="w-3.5 h-3.5 mr-1" /> {t('loops.estimate')}
                     </button>
+                    {run?.loop_run_id && !live && (
+                      <button
+                        onClick={() => setCaseDialogOpen(true)}
+                        title={t('messageDetails.toEvalCaseHint')}
+                        className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
+                      >
+                        <FlaskConical className="w-3.5 h-3.5 mr-1" /> {t('messageDetails.toEvalCase')}
+                      </button>
+                    )}
                     {live ? (
                       <button
                         onClick={handleStop}
@@ -570,6 +699,34 @@ export default function Loops() {
                     </p>
                   </div>
 
+                  <div>
+                    <label htmlFor="loop-rubric" className="block text-xs font-semibold text-gray-600 mb-1">
+                      {t('outcomes.loopRubric')}
+                    </label>
+                    <textarea
+                      id="loop-rubric"
+                      value={draft.rubric || ''} onChange={(e) => set({ rubric: e.target.value })}
+                      rows={4}
+                      placeholder={t('outcomes.rubricPlaceholder')}
+                      className="w-full text-sm font-mono border border-gray-300 rounded-lg px-3 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">{t('outcomes.loopRubricHint')}</p>
+                    {(draft.rubric || '').trim() && (
+                      <div className="mt-2 max-w-md">
+                        <label htmlFor="loop-grader" className="block text-xs font-semibold text-gray-600 mb-1">
+                          {t('outcomes.loopGrader')}
+                        </label>
+                        <input
+                          id="loop-grader"
+                          value={graderText(draft.grader)}
+                          onChange={(e) => set({ grader: e.target.value.trim() || null })}
+                          placeholder={t('outcomes.loopGraderPlaceholder')}
+                          className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.whoJudges')}</label>
@@ -675,7 +832,7 @@ export default function Loops() {
                       className="inline-flex items-center px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                     >
                       {saving ? <Loader className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
-                      Save
+                      {t('common.save')}
                     </button>
                   </div>
                 </div>
@@ -686,18 +843,29 @@ export default function Loops() {
                     <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold uppercase tracking-wide text-gray-500 mr-1">{t('loops.runs')}</span>
                       {runs.slice(0, 8).map((r) => (
-                        <button
-                          key={r.loop_run_id}
-                          onClick={() => loadRun(r.loop_run_id)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${
-                            run?.loop_run_id === r.loop_run_id
-                              ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
-                              : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                          }`}
-                        >
-                          {new Date(r.started_at).toLocaleString()} · {r.iterations_done}x
-                          {r.final_score !== null && r.final_score !== undefined ? ` · ${Math.round(r.final_score)}` : ''}
-                        </button>
+                        <span key={r.loop_run_id} className="inline-flex items-center gap-1">
+                          <button
+                            onClick={() => loadRun(r.loop_run_id)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${
+                              run?.loop_run_id === r.loop_run_id
+                                ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                                : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                            }`}
+                          >
+                            {new Date(r.started_at).toLocaleString()} · {r.iterations_done}x
+                            {r.final_score !== null && r.final_score !== undefined ? ` · ${Math.round(r.final_score)}` : ''}
+                          </button>
+                          {isResumable(r) && (
+                            <button
+                              onClick={() => handleResume(r.loop_run_id)}
+                              disabled={resuming === r.loop_run_id}
+                              title={t('loops.resumeHint')}
+                              className="px-2 py-1 rounded-lg text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                            >
+                              {resuming === r.loop_run_id ? t('loops.resuming') : t('loops.resume')}
+                            </button>
+                          )}
+                        </span>
                       ))}
                     </div>
                   )}
@@ -769,6 +937,13 @@ export default function Loops() {
 
       {showNew && (
         <NewLoopModal flows={flows} onClose={() => setShowNew(false)} onCreate={handleCreate} />
+      )}
+      {caseDialogOpen && run?.loop_run_id && (
+        <SaveAsEvalCaseDialog
+          runId={run.loop_run_id}
+          workspace={run.workspace || selectedWorkspace}
+          onClose={() => setCaseDialogOpen(false)}
+        />
       )}
     </PageContainer>
   );

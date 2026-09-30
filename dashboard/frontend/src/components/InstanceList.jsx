@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
-  Activity, Box, ChevronDown, ChevronRight, MessageSquare, RefreshCw,
+  Activity, Box, ChevronDown, ChevronRight, Cpu, Globe, MessageSquare, RefreshCw,
   Search, Server, Square,
 } from 'lucide-react';
 
 import { getInstances, stopInstance } from '../api';
 import { useStreamEvent, useLiveRefetch } from './stream';
-import { KIND_ICONS, STATE_STYLES, formatDuration, relativeTime } from './instanceUtils';
+import { CARRIER_MODE_ICONS, KIND_ICONS, STATE_STYLES, formatDuration, relativeTime } from './instanceUtils';
 import { useI18n } from '../i18n';
 
 /*
@@ -34,18 +34,23 @@ export function StateBadge({ state, t }) {
   );
 }
 
-/** Carrier link: a node and a container have their own pages; say so. */
+/** Carrier cell: a resident instance shows its process kind and, if published,
+ * a small globe marker; a container carrier still points at the Containers page. */
 function CarrierCell({ instance, t }) {
-  if (instance.node_id) {
+  if (instance.resident) {
+    const CarrierIcon = CARRIER_MODE_ICONS[instance.carrier_mode] || Server;
     return (
-      <Link
-        to={`/nodes/${instance.node_id}`}
-        onClick={(e) => e.stopPropagation()}
-        className="text-xs text-indigo-600 hover:underline inline-flex items-center gap-1"
-      >
-        <Server className="w-3 h-3" />
-        {instance.container_name || `${String(instance.node_id).slice(0, 8)}`}
-      </Link>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="text-xs text-gray-600 inline-flex items-center gap-1">
+          <CarrierIcon className="w-3 h-3" />
+          {instance.carrier_mode === 'docker' ? t('instances.carrier.container') : t('instances.carrier.local')}
+        </span>
+        {instance.is_exposed && (
+          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full" title={t('instances.carrier.published')}>
+            <Globe className="w-2.5 h-2.5" />
+          </span>
+        )}
+      </span>
     );
   }
   if (instance.container_name) {
@@ -61,12 +66,28 @@ function CarrierCell({ instance, t }) {
 
 function InstanceRow({ instance, showAgent, onStop, busy, t }) {
   const KindIcon = KIND_ICONS[instance.kind] || Activity;
+  const navigate = useNavigate();
+  const href = `/instances/${instance.instance_id}`;
+  // The whole row opens the instance; the links inside it go where they say
+  // and the stop button stops, so each of those stops the click here.
+  const open = (e) => {
+    if (e.defaultPrevented) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey) { window.open(href, '_blank'); return; }
+    navigate(href);
+  };
   return (
-    <tr className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+    <tr
+      onClick={open}
+      onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) navigate(href); }}
+      tabIndex={0}
+      role="link"
+      aria-label={instance.label || instance.instance_id}
+      className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer focus:outline-none focus-visible:bg-indigo-50"
+    >
       <td className="px-3 py-2">
         <div className="flex items-center gap-2 min-w-0">
           <KindIcon className="w-4 h-4 text-gray-400 shrink-0" />
-          <Link to={`/instances/${instance.instance_id}`}
+          <Link to={href} onClick={(e) => e.stopPropagation()}
                 className="text-sm font-medium text-gray-900 hover:text-indigo-600 truncate">
             {instance.label || instance.instance_id}
           </Link>
@@ -74,11 +95,24 @@ function InstanceRow({ instance, showAgent, onStop, busy, t }) {
         {instance.task_title && (
           <div className="text-[11px] text-gray-400 truncate pl-6">{instance.task_title}</div>
         )}
+        {instance.service_id && (
+          <div className="text-[11px] text-gray-400 truncate pl-6">
+            <Link to={`/services/${instance.service_id}`} onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center gap-1 hover:text-indigo-600">
+              <Cpu className="w-3 h-3" />
+              {t('instances.replicaOf', { service: instance.service_name || instance.service_id })}
+            </Link>
+          </div>
+        )}
       </td>
       {showAgent && (
         <td className="px-3 py-2 whitespace-nowrap">
-          <Link to={`/agents/${instance.agent_id}`}
-                className="text-xs text-gray-600 hover:text-indigo-600">{instance.agent_id}</Link>
+          {instance.agent_id ? (
+            <Link to={`/agents/${instance.agent_id}`} onClick={(e) => e.stopPropagation()}
+                  className="text-xs text-gray-600 hover:text-indigo-600">{instance.agent_id}</Link>
+          ) : (
+            <span className="text-xs text-gray-400">{t('instances.kinds.runner')}</span>
+          )}
         </td>
       )}
       <td className="px-3 py-2 whitespace-nowrap"><StateBadge state={instance.state} t={t} /></td>
@@ -100,13 +134,13 @@ function InstanceRow({ instance, showAgent, onStop, busy, t }) {
       <td className="px-3 py-2 whitespace-nowrap"><CarrierCell instance={instance} t={t} /></td>
       <td className="px-3 py-2 whitespace-nowrap text-right">
         <div className="inline-flex items-center gap-1">
-          <Link to={`/instances/${instance.instance_id}`}
+          <Link to={href} onClick={(e) => e.stopPropagation()}
                 title={t('instances.actions.message')}
                 className="p-1.5 rounded hover:bg-indigo-50 text-indigo-600">
             <MessageSquare className="w-3.5 h-3.5" />
           </Link>
           {['active', 'starting'].includes(instance.state) && (
-            <button type="button" onClick={() => onStop(instance)} disabled={busy}
+            <button type="button" onClick={(e) => { e.stopPropagation(); onStop(instance); }} disabled={busy}
                     title={t('instances.actions.stop')}
                     className="p-1.5 rounded hover:bg-red-50 text-red-600 disabled:opacity-40">
               <Square className="w-3.5 h-3.5" />
@@ -120,6 +154,7 @@ function InstanceRow({ instance, showAgent, onStop, busy, t }) {
 
 export default function InstanceList({
   agentId = null,
+  serviceId = null,
   workspace = undefined,
   liveUpdates = true,
   showFilters = true,
@@ -144,12 +179,13 @@ export default function InstanceList({
   const params = useMemo(() => ({
     workspace,
     agent_id: agentId || undefined,
+    service_id: serviceId || undefined,
     state: filterState || undefined,
     kind: filterKind || undefined,
     live: liveOnly ? true : undefined,
     q: query.trim() || undefined,
     limit: PAGE_SIZE,
-  }), [workspace, agentId, filterState, filterKind, liveOnly, query]);
+  }), [workspace, agentId, serviceId, filterState, filterKind, liveOnly, query]);
 
   const fetchPage = useCallback(async (nextOffset = 0, append = false) => {
     if (!append) setLoading(true);

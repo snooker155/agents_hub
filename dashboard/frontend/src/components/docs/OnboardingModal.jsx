@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Rocket, X, BookOpen } from 'lucide-react';
+import { Rocket, X, BookOpen, Compass } from 'lucide-react';
 import OnboardingChecklist from './OnboardingChecklist';
+import { useWelcomeTour } from './WelcomeTour';
+import { useWorkspace } from '../workspace';
+import { getDemo } from '../../api/demo';
 import { useI18n } from '../../i18n';
 
 // ---------------------------------------------------------------------------
@@ -18,6 +21,8 @@ export const ONBOARDING_SEEN_KEY = 'agents_hub_onboarding_seen_v2';
 export default function OnboardingModal() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const tour = useWelcomeTour();
+  const workspace = useWorkspace();
   // Open on first launch only — derived once from localStorage, so no effect
   // (and therefore no synchronous setState on mount).
   const [open, setOpen] = useState(() => {
@@ -33,6 +38,19 @@ export default function OnboardingModal() {
       localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
     } catch { /* storage unavailable */ }
     setOpen(false);
+  };
+
+  // The tour reads best over data. When the demo workspace is seeded, switch
+  // to it first; an unreachable backend or no demo just tours what is there.
+  const startTour = async () => {
+    dismiss();
+    try {
+      const { data } = await getDemo();
+      if (data?.present && workspace?.setSelectedWorkspace) {
+        workspace.setSelectedWorkspace(data.workspace || 'demo');
+      }
+    } catch { /* no demo endpoint: tour the current workspace */ }
+    tour.start();
   };
 
   if (!open) return null;
@@ -67,12 +85,20 @@ export default function OnboardingModal() {
           <OnboardingChecklist onNavigate={dismiss} />
         </div>
 
-        {/* Footer — one row: the primary action, the docs link, and skip last.
-            No wrapping, so the three controls always read as a single line. */}
+        {/* Footer, one row: the tour first as the primary action, then the
+            guide and the docs link, and skip last. No wrapping, so the
+            controls always read as a single line. */}
         <div className="px-6 py-4 border-t border-gray-200 bg-white flex items-center gap-2">
           <button
-            onClick={() => { dismiss(); navigate('/docs/getting-started'); }}
+            onClick={startTour}
             className="flex items-center gap-1.5 shrink-0 text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+          >
+            <Compass className="w-4 h-4" />
+            {t('onboardingModal.startTour')}
+          </button>
+          <button
+            onClick={() => { dismiss(); navigate('/docs/getting-started'); }}
+            className="flex items-center gap-1.5 shrink-0 text-sm font-semibold px-4 py-2 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition-colors"
           >
             <BookOpen className="w-4 h-4" />
             {t('onboardingModal.openGuide')}

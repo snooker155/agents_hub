@@ -6,7 +6,6 @@ matter: an unpublished skill cannot leave its workspace, installing copies
 rather than shares, and attaching to an agent turns that agent's skills on.
 """
 import asyncio
-import dataclasses
 import sys
 from pathlib import Path
 
@@ -15,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard" / "backend"))
 
 from agents import registry
-from memory.procedural import Procedure, ProcedureStore, all_procedures, find_procedure
+from memory.procedural import ProcedureStore, all_procedures, find_procedure
 from models import SkillCreate, SkillInstall, SkillSharingUpdate, SkillUpdate
 from routes import skills as skills_routes
 
@@ -33,7 +32,6 @@ def store_file(tmp_path, monkeypatch):
 
     path = tmp_path / "procedures.json"
     monkeypatch.setattr(procedural, "_PROCEDURES_FILE", path)
-    monkeypatch.setattr(procedural, "_PROCEDURES_LOCK", tmp_path / "procedures.json.lock")
     monkeypatch.setattr(procedural, "_LEGACY_MIGRATED", True)
     return path
 

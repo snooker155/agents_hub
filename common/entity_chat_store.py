@@ -24,20 +24,19 @@ Three things are stored per (kind, entity_id):
   the live one (epoch included), so the next turn continues it in Messages under
   the conversation id it already had.
 
-Storage is a single JSON object keyed by ``"<kind>:<entity_id>"`` behind an
-OS-level file lock — the same approach as
-:class:`projects.graph_store.ProjectGraphStore`, which is the store this one
-generalises.
+Storage is a :class:`common.docstore.DocStore` collection, one document per
+``"<kind>:<entity_id>"``, so a read-modify-write is atomic across processes and
+hosts under ``store.transaction()`` instead of the OS-level file lock this used
+to take. An existing ``entity_chats.json`` is imported once on first use and
+renamed ``.migrated``.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from filelock import FileLock
-
+from common.docstore import DocStore
 from common.paths import ENTITY_CHATS_FILE
 
 
@@ -46,8 +45,8 @@ def _now() -> str:
 
 
 #: How many finished threads one entity keeps. Every session holds its whole
-#: display trace, and the store is a single JSON file that is rewritten on each
-#: turn, so the history is bounded rather than allowed to grow forever.
+#: display trace, and the store is rewritten on each turn, so the history is
+#: bounded rather than allowed to grow forever.
 MAX_ARCHIVED_SESSIONS = 30
 
 #: How much of the opening message becomes a session's label in the picker.
@@ -55,14 +54,11 @@ TITLE_CHARS = 70
 
 
 class EntityChatStore:
-    """File-based store mapping (kind, entity_id) → one build-chat session."""
+    """Store mapping (kind, entity_id) -> one build-chat session, in the database."""
 
     def __init__(self, path: Path | str | None = None):
-        self.path = Path(path or ENTITY_CHATS_FILE)
-        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self._atomic_write({})
+        self.path = Path(path) if path else ENTITY_CHATS_FILE
+        self.docs = DocStore("entity_chats", legacy_file=self.path)
 
     @staticmethod
     def _key(kind: str, entity_id: str) -> str:
@@ -171,22 +167,19 @@ class EntityChatStore:
     # ── reads ───────────────────────────────────────────────────────────────
 
     def get_messages(self, kind: str, entity_id: str, timeout: float = 10.0) -> List[dict]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            entry = self._load_unlocked().get(self._key(kind, entity_id)) or {}
-            return list(entry.get("messages") or [])
+        entry = self.docs.get(self._key(kind, entity_id)) or {}
+        return list(entry.get("messages") or [])
 
     def get_trace(self, kind: str, entity_id: str, timeout: float = 10.0) -> List[dict]:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            entry = self._load_unlocked().get(self._key(kind, entity_id)) or {}
-            return list(entry.get("trace") or [])
+        entry = self.docs.get(self._key(kind, entity_id)) or {}
+        return list(entry.get("trace") or [])
 
     def get_session_epoch(self, kind: str, entity_id: str, timeout: float = 10.0) -> int:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            entry = self._load_unlocked().get(self._key(kind, entity_id)) or {}
-            try:
-                return int(entry.get("session_epoch") or 0)
-            except (TypeError, ValueError):
-                return 0
+        entry = self.docs.get(self._key(kind, entity_id)) or {}
+        try:
+            return int(entry.get("session_epoch") or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def history(self, kind: str, entity_id: str,
                 timeout: float = 10.0) -> Dict[str, Any]:
@@ -200,8 +193,7 @@ class EntityChatStore:
         of its old threads may have exactly one thread left and still be a chat
         with a past, and that is the moment the control must not disappear.
         """
-        with FileLock(str(self.lock_path), timeout=timeout):
-            entry = self._load_unlocked().get(self._key(kind, entity_id))
+        entry = self.docs.get(self._key(kind, entity_id))
         if not entry:
             return {"sessions": [], "has_history": False}
         archived = sorted(
@@ -220,8 +212,7 @@ class EntityChatStore:
         return self.history(kind, entity_id, timeout=timeout)["sessions"]
 
     def has_chat(self, kind: str, entity_id: str, timeout: float = 10.0) -> bool:
-        with FileLock(str(self.lock_path), timeout=timeout):
-            return self._key(kind, entity_id) in self._load_unlocked()
+        return self.docs.exists(self._key(kind, entity_id))
 
     # ── writes ──────────────────────────────────────────────────────────────
 
@@ -229,14 +220,12 @@ class EntityChatStore:
                        timeout: float = 10.0) -> Dict[str, Any]:
         """Append one chat turn, creating the session if it does not exist yet."""
         msg = {"role": role, "content": content, "at": _now()}
-        with FileLock(str(self.lock_path), timeout=timeout):
-            data = self._load_unlocked()
-            key = self._key(kind, entity_id)
-            entry = data.get(key) or self._blank(kind)
+        key = self._key(kind, entity_id)
+        with self.docs.transaction():
+            entry = self.docs.get(key) or self._blank(kind)
             entry.setdefault("messages", []).append(msg)
             entry["updated_at"] = _now()
-            data[key] = entry
-            self._atomic_write(data)
+            self.docs.put(key, entry)
         return msg
 
     def append_trace(self, kind: str, entity_id: str, items: List[dict],
@@ -246,14 +235,12 @@ class EntityChatStore:
         when the user comes back."""
         if not items:
             return
-        with FileLock(str(self.lock_path), timeout=timeout):
-            data = self._load_unlocked()
-            key = self._key(kind, entity_id)
-            entry = data.get(key) or self._blank(kind)
+        key = self._key(kind, entity_id)
+        with self.docs.transaction():
+            entry = self.docs.get(key) or self._blank(kind)
             entry["trace"] = (entry.get("trace") or []) + list(items)
             entry["updated_at"] = _now()
-            data[key] = entry
-            self._atomic_write(data)
+            self.docs.put(key, entry)
 
     def clear(self, kind: str, entity_id: str, new_session: bool = True,
               timeout: float = 10.0) -> int:
@@ -264,10 +251,9 @@ class EntityChatStore:
         picker can bring this one back. Without it the transcript is genuinely
         dropped, which is what a caller resetting an entity wants.
         """
-        with FileLock(str(self.lock_path), timeout=timeout):
-            data = self._load_unlocked()
-            key = self._key(kind, entity_id)
-            entry = data.get(key)
+        key = self._key(kind, entity_id)
+        with self.docs.transaction():
+            entry = self.docs.get(key)
             if not entry:
                 return 0
             if new_session:
@@ -276,8 +262,7 @@ class EntityChatStore:
             entry["messages"] = []
             entry["trace"] = []
             entry["updated_at"] = _now()
-            data[key] = entry
-            self._atomic_write(data)
+            self.docs.put(key, entry)
             return int(entry.get("session_epoch") or 0)
 
     def activate_session(self, kind: str, entity_id: str, session_id: str,
@@ -291,10 +276,9 @@ class EntityChatStore:
         Returns the restored transcript, or ``None`` when there is no such
         thread.
         """
-        with FileLock(str(self.lock_path), timeout=timeout):
-            data = self._load_unlocked()
-            key = self._key(kind, entity_id)
-            entry = data.get(key)
+        key = self._key(kind, entity_id)
+        with self.docs.transaction():
+            entry = self.docs.get(key)
             if not entry:
                 return None
             current = int(entry.get("session_epoch") or 0)
@@ -314,8 +298,7 @@ class EntityChatStore:
             entry["trace"] = list(chosen.get("trace") or [])
             entry["session_epoch"] = int(chosen.get("epoch") or 0)
             entry["updated_at"] = _now()
-            data[key] = entry
-            self._atomic_write(data)
+            self.docs.put(key, entry)
             return {"messages": list(entry["messages"]),
                     "trace": list(entry["trace"]),
                     "session_epoch": int(entry["session_epoch"])}
@@ -323,10 +306,9 @@ class EntityChatStore:
     def delete_session(self, kind: str, entity_id: str, session_id: str,
                        timeout: float = 10.0) -> bool:
         """Drop one archived thread. The live one is not deletable this way."""
-        with FileLock(str(self.lock_path), timeout=timeout):
-            data = self._load_unlocked()
-            key = self._key(kind, entity_id)
-            entry = data.get(key)
+        key = self._key(kind, entity_id)
+        with self.docs.transaction():
+            entry = self.docs.get(key)
             if not entry or session_id == self.session_id(int(entry.get("session_epoch") or 0)):
                 return False
             sessions = list(entry.get("sessions") or [])
@@ -336,41 +318,15 @@ class EntityChatStore:
                 return False
             entry["sessions"] = kept
             entry["updated_at"] = _now()
-            data[key] = entry
-            self._atomic_write(data)
+            self.docs.put(key, entry)
             return True
 
     def delete(self, kind: str, entity_id: str, timeout: float = 10.0) -> bool:
         """Drop an entity's chat entirely — called when the entity is deleted."""
-        with FileLock(str(self.lock_path), timeout=timeout):
-            data = self._load_unlocked()
-            key = self._key(kind, entity_id)
-            if key in data:
-                del data[key]
-                self._atomic_write(data)
-                return True
-            return False
-
-    # ── file io ─────────────────────────────────────────────────────────────
-
-    def _load_unlocked(self) -> Dict[str, Any]:
-        try:
-            text = self.path.read_text(encoding="utf-8")
-            if not text.strip():
-                return {}
-            data = json.loads(text)
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-
-    def _atomic_write(self, payload: Dict[str, Any]) -> None:
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        text = json.dumps(payload, ensure_ascii=False, indent=2)
-        tmp_path.write_text(text + "\n", encoding="utf-8")
-        tmp_path.replace(self.path)
+        return self.docs.delete(self._key(kind, entity_id))
 
 
-#: The process-wide store. One JSON file, so one instance is enough and the
+#: The process-wide store. One collection, so one instance is enough and the
 #: routes do not each build their own.
 _store: Optional[EntityChatStore] = None
 

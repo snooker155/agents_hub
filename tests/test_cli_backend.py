@@ -24,9 +24,11 @@ OPERATIONS = [
     "stop_task", "delete_task",
     "list_workspaces", "create_workspace", "attach_workspace", "delete_workspace",
     "list_projects", "attach_project", "project_git_status",
-    "list_nodes", "start_node", "stop_node",
+    "list_instances", "start_instance", "stop_instance", "restart_instance",
+    "instance_logs", "send_instance_message", "get_instance_message",
     "get_settings",
     "describe",
+    "request",
 ]
 
 
@@ -171,8 +173,8 @@ class TestDirectBackend:
         with pytest.raises(BackendError, match="Agent not found"):
             hub.assign_task(task["id"], "no_such_agent_at_all")
 
-    def test_nodes_and_settings_are_readable(self, hub):
-        assert isinstance(hub.list_nodes(), list)
+    def test_instances_and_settings_are_readable(self, hub):
+        assert isinstance(hub.list_instances(), list)
         assert isinstance(hub.get_settings(), dict)
 
 

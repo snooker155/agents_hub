@@ -3,6 +3,7 @@ export default {
   title: 'Titel',
   description: 'Beschreibung',
   initialStatus: 'Anfangsstatus',
+  dueDateOptional: 'Fälligkeitsdatum (optional)',
   projectOptional: 'Projekt (optional)',
   noProject: '— Kein Projekt —',
   cancel: 'Abbrechen',

@@ -41,11 +41,13 @@ import {
   Zap,
   Send,
   Workflow,
+  Rocket,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
+import PageLoader from '../components/PageLoader';
 // ---- helpers ----------------------------------------------------------------
 
 const STATUS_STYLES = {
@@ -56,13 +58,26 @@ const STATUS_STYLES = {
   failed:    { bg: 'bg-red-100',    text: 'text-red-700',    icon: XCircle },
 };
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, pausedReason }) {
+  const { t } = useI18n();
   const s = STATUS_STYLES[status] || { bg: 'bg-gray-100', text: 'text-gray-500', icon: AlertCircle };
   const Icon = s.icon;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
-      <Icon className="w-3 h-3" />
-      {status}
+    <span className="inline-flex items-center gap-1">
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
+        <Icon className="w-3 h-3" />
+        {status}
+      </span>
+      {/* A scheduled job (agent task, flow or loop) can pause itself after
+          repeated errors or a missing target, not just at the operator's
+          hand — see plans/service.py. The reason rides right next to the
+          badge rather than in its own column, since it only ever applies
+          while paused. */}
+      {status === 'paused' && pausedReason && (
+        <span className="text-[10px] font-medium text-amber-500 uppercase" title={t(`plan.pausedReason.${pausedReason}`, { defaultValue: pausedReason })}>
+          {t(`plan.pausedReason.${pausedReason}`, { defaultValue: pausedReason })}
+        </span>
+      )}
     </span>
   );
 }
@@ -127,7 +142,15 @@ function isoToLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const RECURRENCE_OPTIONS = ['none', 'hourly', 'daily', 'weekly'];
+const RECURRENCE_OPTIONS = ['none', 'hourly', 'daily', 'weekly', 'cron'];
+
+function browserTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
 
 // ---- create / edit modal ----------------------------------------------------
 
@@ -139,6 +162,8 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
   const [message, setMessage] = useState(job?.message || '');
   const [runAt, setRunAt] = useState(job ? isoToLocalInput(job.run_at) : '');
   const [recurrence, setRecurrence] = useState(job?.recurrence || 'none');
+  const [cron, setCron] = useState(job?.cron || '');
+  const [tz, setTz] = useState(job?.timezone || browserTimezone());
   const [agentId, setAgentId] = useState(job?.agent_id || '');
   const [flowId, setFlowId] = useState(job?.flow_id || '');
   const [seedText, setSeedText] = useState(job?.seed ? JSON.stringify(job.seed, null, 2) : '');
@@ -160,6 +185,7 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
     if (!title.trim()) { setError(t('plan.errors.titleRequired')); return; }
     if (!runAt) { setError(t('plan.errors.timeRequired')); return; }
     if (kind === 'flow' && !flowId) { setError(t('plan.errors.pickFlow')); return; }
+    if (recurrence === 'cron' && !cron.trim()) { setError(t('plan.errors.cronRequired')); return; }
     let seed = null;
     if (kind === 'flow' && seedText.trim()) {
       try {
@@ -172,12 +198,17 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
     setSaving(true);
     setError('');
     try {
+      const cronFields = {
+        cron: recurrence === 'cron' ? cron.trim() : null,
+        timezone: recurrence !== 'none' ? (tz.trim() || null) : null,
+      };
       if (isEdit) {
         await updatePlanJob(job.id, {
           title: title.trim(),
           message,
           run_at: localInputToIso(runAt),
           recurrence,
+          ...cronFields,
           agent_id: kind === 'agent_task' ? (agentId || null) : null,
           channels,
         });
@@ -188,6 +219,7 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
           message,
           run_at: localInputToIso(runAt),
           recurrence,
+          ...cronFields,
           workspace: workspace || null,
           agent_id: kind === 'agent_task' ? (agentId || null) : null,
           flow_id: kind === 'flow' ? (flowId || null) : null,
@@ -283,6 +315,34 @@ function JobModal({ job, agents, flows, onClose, onSaved, workspace, telegram })
             </select>
           </div>
         </div>
+
+        {recurrence !== 'none' && (
+          <div className="flex gap-3">
+            {recurrence === 'cron' && (
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.cronExpression')}</label>
+                <input
+                  type="text"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={cron}
+                  onChange={e => setCron(e.target.value)}
+                  placeholder="0 9 * * 1-5"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">{t('plan.cronHint')}</p>
+              </div>
+            )}
+            <div className={recurrence === 'cron' ? 'w-44' : 'flex-1'}>
+              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.timezone')}</label>
+              <input
+                type="text"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={tz}
+                onChange={e => setTz(e.target.value)}
+                placeholder="Europe/Berlin"
+              />
+            </div>
+          </div>
+        )}
 
         {kind === 'agent_task' && (
           <div>
@@ -476,12 +536,22 @@ export default function Plan() {
   const unread = notifications.filter(n => !n.read).length;
 
   return (
-    <PageContainer className="space-y-6">
+    <PageContainer>
       <PageHeader
         icon={CalendarClock}
         title={t('plan.plan')}
         description={t('plan.scheduledJobsFutureRemindersAnd')}
         actions={<>
+          {/* Scheduled agent tasks, flows and loops now have a page of their
+              own with a firing journal, an environment and a per-run budget
+              (see Deployments.jsx); this page keeps one-off reminders and
+              notifications. */}
+          <Link
+            to="/deployments"
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+          >
+            <Rocket className="w-4 h-4" /> {t('plan.deployments')}
+          </Link>
           <button
             onClick={fetchData}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -543,9 +613,7 @@ export default function Plan() {
       </div>
 
       {loading ? (
-        <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-          <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-        </div>
+        <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
       ) : tab === 'jobs' ? (
         visibleJobs.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
@@ -597,7 +665,10 @@ export default function Plan() {
                     </div>
                     <div className="md:text-center text-sm text-gray-600">
                       {job.recurrence !== 'none' ? (
-                        <span className="inline-flex items-center gap-1"><Repeat className="w-3 h-3" />{job.recurrence}</span>
+                        <span className="inline-flex items-center gap-1" title={job.timezone || 'UTC'}>
+                          <Repeat className="w-3 h-3" />
+                          {job.recurrence === 'cron' ? (job.cron || 'cron') : job.recurrence}
+                        </span>
                       ) : <span className="text-gray-400">{t('plan.once')}</span>}
                     </div>
                     <div className="md:text-center text-sm text-gray-600 truncate">
@@ -607,7 +678,7 @@ export default function Plan() {
                           ? (job.flow_id || '—')
                           : '—'}
                     </div>
-                    <div className="md:text-center"><StatusBadge status={job.status} /></div>
+                    <div className="md:text-center"><StatusBadge status={job.status} pausedReason={job.paused_reason} /></div>
                     <div className="flex md:justify-end items-center gap-1.5">
                       {acting[job.id] ? (
                         <Loader className="w-4 h-4 animate-spin text-gray-400" />

@@ -4,7 +4,7 @@ Architecture
 ------------
             ┌─────────────────────────────┐
             │       Host process           │
-            │   (node_manager /           │
+            │   (instances.carrier /       │
             │    run_manager)             │
             │                             │
             │  ContainerManager           │
@@ -72,18 +72,16 @@ import os
 import shlex
 import socket
 import subprocess
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
 from common.hostnet import to_host_gateway
-from common.paths import AGENTS_HUB_ROOT
+from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
+from common.snapshot import SNAPSHOT_DIR_ENV
 
 logger = logging.getLogger(__name__)
 
-HERE = Path(__file__).resolve().parent
-PROJECT_ROOT = HERE.parent
 DOCKERFILE_DIR = AGENTS_HUB_ROOT / "dockerfiles"
 DOCKERFILE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -91,6 +89,17 @@ NETWORK_NAME = "agents-hub"
 BASE_IMAGE = "agents-hub/base:latest"
 IMAGE_PREFIX = "agents-hub"
 LABEL_MANAGED = "agents-hub.managed=true"
+
+# Mount points inside every agent container (nodes and runs alike).
+CONTAINER_STATE_DIR = "/app/.agents_hub"
+CONTAINER_TASKS_DIR = "/app/tasks"
+CONTAINER_WORKSPACE_DIR = "/workspace"
+
+# Resource limits for one-shot *run* containers only (nodes are unaffected —
+# they keep calling start_container with hardened=False, the default).
+DEFAULT_RUN_MEMORY = "2g"
+DEFAULT_RUN_CPUS = "2"
+DEFAULT_RUN_PIDS_LIMIT = 512
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -163,6 +172,33 @@ def _run(cmd: List[str], timeout: int = 300, capture: bool = True) -> subprocess
     )
 
 
+# How long a read-only listing may wait for the daemon. A Docker Desktop whose
+# engine is stuck accepts the connection and never answers, so without a short
+# limit a listing waits out the five-minute default and the page asking for
+# it spins that long.
+QUERY_TIMEOUT = 15
+
+
+class DockerUnavailable(RuntimeError):
+    """The Docker CLI is missing, or its daemon did not answer a listing."""
+
+
+def _query(cmd: List[str]) -> subprocess.CompletedProcess:
+    """A read-only docker command with a short limit, failing with
+    :class:`DockerUnavailable` when there is no daemon to answer it."""
+    try:
+        result = _run(cmd, timeout=QUERY_TIMEOUT)
+    except FileNotFoundError as exc:
+        raise DockerUnavailable("The docker CLI is not installed on this host") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise DockerUnavailable(
+            f"Docker did not answer within {QUERY_TIMEOUT} s: the daemon is not responding"
+        ) from exc
+    if result.returncode != 0 and "daemon" in (result.stderr or "").lower():
+        raise DockerUnavailable((result.stderr or "").strip().splitlines()[-1])
+    return result
+
+
 # ── Env forwarding ────────────────────────────────────────────────────────────
 
 _PASS_PREFIXES = (
@@ -187,6 +223,38 @@ def _env_flags(env: Optional[Dict[str, str]] = None) -> List[str]:
     return flags
 
 
+# A run container is a different case from a node container: agent_run.py
+# reads most of its own bookkeeping (workspace name, session id, log file,
+# instance id, the relay token) straight out of os.environ the same way for a
+# subprocess or a container, so a run needs close to the full environment a
+# local subprocess would get — not just the provider-key allowlist above.
+# What it must never see is anything that describes *this host* rather than
+# the run: Docker's own control variables, the HOST_PROJECT_ROOT bind-mount
+# translation, the host's SSH agent socket, and interpreter/venv paths that
+# are meaningless inside the image (the image bakes its own Python, HOME and
+# PATH). AGENTS_HUB_API_TOKEN is deliberately kept — the run's relay calls
+# back over HTTP and need it to authenticate.
+_HOST_ONLY_EXACT = {"HOST_PROJECT_ROOT", "SSH_AUTH_SOCK", "HOME", "PATH"}
+_HOST_ONLY_PREFIXES = ("DOCKER_", "npm_", "VIRTUAL_ENV", "CONDA_")
+
+
+def container_env(env: Dict[str, str]) -> Dict[str, str]:
+    """Return ``env`` minus variables that only make sense on the host.
+
+    Denylist, not allowlist: a run container needs almost everything a local
+    subprocess run gets, so this drops the handful of host-only variables
+    instead of re-deriving the whole environment a run needs.
+    """
+    out: Dict[str, str] = {}
+    for key, value in env.items():
+        if key in _HOST_ONLY_EXACT:
+            continue
+        if any(key.startswith(p) for p in _HOST_ONLY_PREFIXES):
+            continue
+        out[key] = value
+    return out
+
+
 # ── Network management ────────────────────────────────────────────────────────
 
 def get_or_create_network() -> str:
@@ -196,6 +264,131 @@ def get_or_create_network() -> str:
         _run(["docker", "network", "create", "--driver", "bridge", NETWORK_NAME])
     _attach_self_to_network()
     return NETWORK_NAME
+
+
+EGRESS_NETWORK_NAME = "agents-hub-egress"
+EGRESS_GATEWAY_NAME = "agents-hub-egress-gateway"
+
+
+def ensure_egress_network() -> str:
+    """The internal, no-route-out network a fenced container joins instead of
+    the ordinary ``agents-hub`` bridge: ``--internal`` means the daemon gives
+    it no default route, so a container on it alone can reach nothing but
+    another container on the same network — the egress gateway. Created on
+    demand, idempotent. See docs/sandboxes.md, "Enforced network policy"."""
+    result = _run(["docker", "network", "ls", "--filter", f"name=^{EGRESS_NETWORK_NAME}$",
+                   "--format", "{{.Name}}"])
+    if EGRESS_NETWORK_NAME not in (result.stdout or "").splitlines():
+        _run(["docker", "network", "create", "--internal", "--driver", "bridge", EGRESS_NETWORK_NAME])
+    return EGRESS_NETWORK_NAME
+
+
+def ensure_egress_gateway() -> Optional[str]:
+    """Start the egress gateway container, if it is not already running: a
+    tiny relay (``socat``, or ``AGENTS_HUB_EGRESS_GATEWAY_IMAGE``) attached to
+    both the ordinary bridge (its route out, to the egress proxy on this
+    host) and :func:`ensure_egress_network` (so a fenced container can reach
+    it, and only it). Returns the gateway's container name — what a fenced
+    container's ``HTTP_PROXY``/``HTTPS_PROXY`` should point at, since the
+    internal network's embedded DNS resolves container names — or ``None``
+    when the egress proxy itself is off or the gateway could not be started
+    (docker unavailable, image missing); a caller gets that as "the enforced
+    fence is unavailable", never as permission to run unfenced instead.
+    """
+    try:
+        from environments import egress
+    except Exception:  # noqa: BLE001 - environments always importable in practice; defensive
+        return None
+    if not egress.enabled():
+        return None
+    if container_running(EGRESS_GATEWAY_NAME):
+        return EGRESS_GATEWAY_NAME
+    proxy_host = egress.public_host("docker")
+    proxy_port = egress.port()
+    bridge = get_or_create_network()
+    ensure_egress_network()
+    # A stopped-but-not-removed container from a previous, failed attempt
+    # would otherwise make `docker run --name` fail forever.
+    _run(["docker", "rm", "-f", EGRESS_GATEWAY_NAME], timeout=15)
+    from common.config import live_setting
+    image = live_setting("AGENTS_HUB_EGRESS_GATEWAY_IMAGE", "alpine/socat:latest")
+    cmd = [
+        "docker", "run", "--detach", "--rm",
+        "--name", EGRESS_GATEWAY_NAME,
+        "--label", LABEL_MANAGED,
+        "--label", "agents-hub.container-type=egress-gateway",
+        "--network", bridge,
+        "--add-host", "host.docker.internal:host-gateway",
+        # --entrypoint overrides whatever the image itself declares (the
+        # default alpine/socat image's own ENTRYPOINT is already ["socat"],
+        # which running "sh -c ..." as its command would fight rather than
+        # use); this way any image with a `socat` binary on PATH works,
+        # matching AGENTS_HUB_EGRESS_GATEWAY_IMAGE's own promise.
+        "--entrypoint", "socat",
+        image,
+        f"TCP-LISTEN:{proxy_port},fork,reuseaddr",
+        f"TCP:{proxy_host}:{proxy_port}",
+    ]
+    result = _run(cmd, timeout=30)
+    if result.returncode != 0:
+        logger.warning("could not start the egress gateway: %s", (result.stderr or "").strip())
+        return None
+    connect = _run(["docker", "network", "connect", EGRESS_NETWORK_NAME, EGRESS_GATEWAY_NAME], timeout=15)
+    if connect.returncode != 0 and "already exists in network" not in (connect.stderr or ""):
+        logger.warning("could not attach the egress gateway to %s: %s",
+                       EGRESS_NETWORK_NAME, (connect.stderr or "").strip())
+        _run(["docker", "rm", "-f", EGRESS_GATEWAY_NAME], timeout=15)
+        return None
+    return EGRESS_GATEWAY_NAME
+
+
+def _rewrite_proxy_url(url: str, gateway_name: str) -> str:
+    """The proxy URL environments/launch.py hands a run points at
+    host.docker.internal (or 127.0.0.1): unreachable once the container is
+    fenced to the internal network alone. Keep the token, swap the host for
+    the gateway's container name."""
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(url)
+    netloc = f"{gateway_name}:{parts.port or 80}"
+    if parts.username:
+        netloc = f"{parts.username}@{netloc}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+_PROXY_ENV_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+
+
+def enforce_network_policy(
+    network: str, env: Optional[Dict[str, str]], extra_env: Optional[Dict[str, str]]
+) -> "tuple[str, Optional[Dict[str, str]], Optional[Dict[str, str]]]":
+    """Fence a container onto the no-route-out egress network when its launch
+    carries a ``none``/``limited`` environment network policy
+    (``AGENTS_HUB_NETWORK``, environments/launch.py) and the egress proxy is
+    enabled; otherwise return the inputs unchanged — today's behaviour, the
+    ordinary ``agents-hub`` bridge, policed only by the proxy and the hub
+    tools' own checks, kept when the proxy is off (see the ``sandbox``
+    doctor check, common/doctor.py, for whether enforcement is active).
+
+    ``AGENTS_HUB_NETWORK`` may arrive in either dict: a run container's own
+    (unfiltered) ``env``, or a node container's ``extra_env`` (its ``env`` is
+    allowlist-filtered before this point and would not carry it). Wherever
+    the proxy variables are set, they are rewritten to point at the gateway
+    instead of the host, since the fenced network has no route to either.
+    """
+    combined = {**(env or {}), **(extra_env or {})}
+    if combined.get("AGENTS_HUB_NETWORK") not in ("none", "limited"):
+        return network, env, extra_env
+    gateway = ensure_egress_gateway()
+    if not gateway:
+        return network, env, extra_env
+    new_env = dict(env) if env else env
+    new_extra = dict(extra_env) if extra_env else extra_env
+    for key in _PROXY_ENV_KEYS:
+        if new_env is not None and key in new_env:
+            new_env[key] = _rewrite_proxy_url(new_env[key], gateway)
+        if new_extra is not None and key in new_extra:
+            new_extra[key] = _rewrite_proxy_url(new_extra[key], gateway)
+    return EGRESS_NETWORK_NAME, new_env, new_extra
 
 
 def _attach_self_to_network() -> None:
@@ -235,7 +428,7 @@ def generate_dockerfile(
     dependencies come from the base image (agents-hub/base:latest).
 
     When http_expose=True an EXPOSE directive is added and the default CMD
-    includes --http-port so the node_run starts the HTTP server.
+    includes --http-port so the carrier starts the HTTP server.
     """
     label_name = agent_name or agent_id
     expose_line = f"\nEXPOSE {http_port}" if http_expose else ""
@@ -262,7 +455,7 @@ LABEL agents-hub.agent-name="{label_name}"
 ENV AGENT_ID="{agent_id}"
 ENV AGENT_EXECUTION_MODE="local"
 {expose_line}
-CMD ["python", "-m", "runtime.node_run", "--agent-id", "{agent_id}"{http_cmd}]
+CMD ["python", "-m", "runtime.instance_run", "--agent-id", "{agent_id}"{http_cmd}]
 """
 
 
@@ -301,7 +494,7 @@ def build_base_image(no_cache: bool = False) -> Dict[str, Any]:
             "error": None if success else log.splitlines()[-1] if log else "build failed",
             "built_at": _utc_now_iso() if success else None,
         }
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return {"success": False, "image": None, "log": "", "error": str(exc), "built_at": None}
 
 
@@ -341,7 +534,7 @@ def build_image(
             "error": None if success else log.splitlines()[-1] if log else "build failed",
             "built_at": _utc_now_iso() if success else None,
         }
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return {
             "success": False, "image": None,
             "dockerfile": str(dockerfile_path),
@@ -350,8 +543,11 @@ def build_image(
 
 
 def list_images() -> List[Dict[str, Any]]:
-    """Return all agents-hub Docker images on the host."""
-    result = _run([
+    """Return all agents-hub Docker images on the host.
+
+    Raises :class:`DockerUnavailable` when the daemon does not answer.
+    """
+    result = _query([
         "docker", "images",
         "--filter", f"label={LABEL_MANAGED}",
         "--format", "{{json .}}",
@@ -370,14 +566,14 @@ def list_images() -> List[Dict[str, Any]]:
                 "size": raw.get("Size", ""),
                 "created": raw.get("CreatedAt", ""),
             })
-        except Exception:
-            pass
+        except ValueError:
+            logger.debug("skipping malformed docker images line: %r", line)
     return images
 
 
 def image_exists(image_tag: str) -> bool:
     """Check whether a specific image tag exists locally."""
-    result = _run(["docker", "images", "-q", image_tag])
+    result = _run(["docker", "images", "-q", image_tag], timeout=QUERY_TIMEOUT)
     return bool((result.stdout or "").strip())
 
 
@@ -394,7 +590,239 @@ def image_tag_for_agent(agent_id: str) -> str:
     return live_setting("AGENT_DOCKER_IMAGE", BASE_IMAGE)
 
 
+# ── Environment images ────────────────────────────────────────────────────────
+#
+# An environment (environments/models.py) may list pip packages to install on
+# top of its image. Rather than installing them at every start (slow, and a
+# run container's root filesystem is read-only anyway), the packages are baked
+# once into a derived image whose tag is a hash of the base image and the
+# sorted package list: the same environment always maps to the same tag, a
+# changed list to a new one, and two environments with the same base and
+# packages share a build.
+
+ENV_IMAGE_REPO = "agents-hub-env"
+
+
+def environment_image_tag(base_image: str, packages: List[str]) -> str:
+    """``agents-hub-env:<12 hex>`` for this base image and package set (order
+    and duplicates do not matter)."""
+    import hashlib
+    key = base_image.strip() + "\n" + "\n".join(sorted({p.strip() for p in packages if p.strip()}))
+    return f"{ENV_IMAGE_REPO}:{hashlib.sha256(key.encode('utf-8')).hexdigest()[:12]}"
+
+
+def environment_dockerfile(base_image: str, packages: List[str]) -> str:
+    """The derived image's Dockerfile. Package names were validated by
+    environments.models (plain requirements, no options or shell syntax) and
+    are quoted here as well."""
+    pkgs = " ".join(shlex.quote(p) for p in sorted({p.strip() for p in packages if p.strip()}))
+    return (
+        "# Auto-generated by agents-hub for an environment's packages\n"
+        f"FROM {base_image}\n"
+        'LABEL agents-hub.managed="true"\n'
+        'LABEL agents-hub.image-kind="environment"\n'
+        f"RUN pip install --no-cache-dir {pkgs}\n"
+    )
+
+
+def environment_base_image(image: Optional[str] = None) -> str:
+    """The image an environment builds on: its own ``image``, else the base
+    image when it exists here, else the configured AGENT_DOCKER_IMAGE."""
+    if image:
+        return image
+    try:
+        if image_exists(BASE_IMAGE):
+            return BASE_IMAGE
+    except (OSError, subprocess.SubprocessError):
+        pass
+    from common.config import live_setting
+    return live_setting("AGENT_DOCKER_IMAGE", BASE_IMAGE)
+
+
+def build_environment_image(base_image: str, packages: List[str], *,
+                            force: bool = False) -> Dict[str, Any]:
+    """Build (or find) the derived image. Returns ``{ok, image, error, cached}``;
+    ``image`` is the derived tag on success and the base image on failure."""
+    tag = environment_image_tag(base_image, packages)
+    try:
+        if not force and image_exists(tag):
+            return {"ok": True, "image": tag, "error": None, "cached": True}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    path = DOCKERFILE_DIR / f"env-{tag.split(':', 1)[1]}.Dockerfile"
+    try:
+        path.write_text(environment_dockerfile(base_image, packages), encoding="utf-8")
+        result = _run(["docker", "build", "-t", tag, "-f", str(path), str(DOCKERFILE_DIR)], timeout=900)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "image": base_image, "error": str(exc), "cached": False}
+    if result.returncode != 0:
+        out = ((result.stdout or "") + (result.stderr or "")).strip()
+        return {"ok": False, "image": base_image,
+                "error": out.splitlines()[-1] if out else "docker build failed", "cached": False}
+    return {"ok": True, "image": tag, "error": None, "cached": False}
+
+
+def ensure_environment_image(base_image: str, packages: List[str]) -> str:
+    """The image to run for ``base_image`` plus ``packages``: the derived
+    image, built on first use and cached by tag. No packages: the base image.
+    A failed build logs and falls back to the base image, so a run still
+    starts (without the packages) rather than not at all."""
+    if not [p for p in packages or [] if str(p).strip()]:
+        return base_image
+    result = build_environment_image(base_image, list(packages))
+    if not result["ok"]:
+        logger.warning("environment image build failed on %s (%s); running on the base image",
+                       base_image, result["error"])
+    return str(result["image"])
+
+
+def options_to_kwargs(agent_id: str, options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Turn an environment's docker options into :func:`start_container`
+    keyword arguments, resolving the image (building the derived image when
+    packages are set). Unknown keys are ignored; an empty dict gives {}."""
+    opts = dict(options or {})
+    kwargs: Dict[str, Any] = {}
+    for key in ("memory", "cpus"):
+        if opts.get(key):
+            kwargs[key] = str(opts[key])
+    if opts.get("pids_limit"):
+        try:
+            kwargs["pids_limit"] = int(opts["pids_limit"])
+        except (TypeError, ValueError):
+            pass
+    image = str(opts.get("image") or "").strip() or None
+    packages = [str(p) for p in (opts.get("packages") or []) if str(p).strip()]
+    if packages:
+        image = ensure_environment_image(image or environment_base_image(None), packages)
+    if image:
+        kwargs["image"] = image
+    return kwargs
+
+
 # ── Container management ──────────────────────────────────────────────────────
+
+def build_run_command(
+    *,
+    container_name: str,
+    agent_id: str,
+    image: str,
+    network: str,
+    translated_cmd: List[str],
+    state_dir: str,
+    tasks_dir: str,
+    workspace: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+    extra_args: Optional[str] = None,
+    memory: Optional[str] = None,
+    cpus: Optional[str] = None,
+    pids_limit: Optional[int] = None,
+    snapshot_dir: Optional[str] = None,
+) -> List[str]:
+    """Build the ``docker run`` argv for a sandboxed, one-shot run container.
+
+    Pure: takes the image tag and network name as plain strings (callers
+    resolve those against the daemon separately) and does no I/O of its own
+    beyond reading the two live-settings memory/cpu defaults, so tests can
+    assert on the produced command line without a Docker daemon.
+
+    Security posture, on top of what a node container already gets (no Docker
+    socket, no --privileged, its own bridge network):
+      --cap-drop ALL / --security-opt no-new-privileges — no Linux
+        capabilities and no privilege escalation via setuid binaries.
+      --read-only + --tmpfs /tmp — the image's own filesystem cannot be
+        written to; only /tmp, the state dir and the workspace are writable.
+      --memory / --cpus / --pids-limit — a single run cannot exhaust the host.
+      ``network`` is the network name to join; "none" gives the container no
+        network at all and drops the host.docker.internal mapping with it
+        (no caller passes it today). A "limited"/"none" environment network
+        policy is enforced one level up, by ``start_container`` calling
+        :func:`enforce_network_policy` before this function ever runs: it
+        substitutes the internal, no-route-out network
+        (:data:`EGRESS_NETWORK_NAME`) for whatever ``network`` this function
+        was given, when the egress proxy is enabled — this function itself
+        stays a pure command builder and does not know the difference.
+      snapshot_dir, when given, is the registry snapshot the launcher wrote
+        for this run (common/snapshot.py: agents.json, custom_providers.json,
+        models.json), re-mounted read-only *inside* the state dir mount and
+        named in AGENTS_HUB_SNAPSHOT_DIR, so the run reads its agent
+        definitions and provider credentials from a frozen copy and cannot
+        edit them, whatever the state dir mount allows. The state dir itself
+        mounts read-write, so a run can still write its own logs and run
+        records there, unless AGENT_RUN_STATE_TRANSPORT is "http" in
+        `env`, in which case the state dir is read-only wholesale (the run
+        reaches the database through the backend's /api/run-state routes
+        instead of opening it directly, see common/state_transport.py) and
+        only run_logs/ is re-mounted read-write on top, for the run's own log
+        file. The default ("db", direct SQLite access) mounts the state dir
+        read-write, unchanged from before this mode existed. See
+        docs/containers.md.
+    """
+    from common.config import live_setting
+    mem = memory or live_setting("AGENT_DOCKER_MEMORY", DEFAULT_RUN_MEMORY)
+    cpu = cpus or live_setting("AGENT_DOCKER_CPUS", DEFAULT_RUN_CPUS)
+    pids = pids_limit or DEFAULT_RUN_PIDS_LIMIT
+    http_transport = (env or {}).get("AGENT_RUN_STATE_TRANSPORT") == "http"
+
+    docker_cmd = [
+        "docker", "run",
+        "--detach",
+        "--rm",
+        "--name", container_name,
+        "--network", network,
+        "--label", LABEL_MANAGED,
+        "--label", f"agents-hub.agent-id={agent_id}",
+        "--label", "agents-hub.container-type=run",
+        "--memory", str(mem),
+        "--cpus", str(cpu),
+        "--pids-limit", str(pids),
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--read-only",
+        "--tmpfs", "/tmp",
+        "-v", f"{_host_path(state_dir)}:{CONTAINER_STATE_DIR}" + (":ro" if http_transport else ""),
+        "-v", f"{_host_path(tasks_dir)}:{CONTAINER_TASKS_DIR}",
+    ]
+
+    if http_transport:
+        # Re-mounted read-write on top of the now read-only state dir: the run
+        # still writes its own log file directly (the log tee in
+        # runtime/agent_run.py has no HTTP equivalent), everything else about
+        # its state goes through /api/run-state.
+        run_logs_dir = str(Path(state_dir) / "run_logs")
+        docker_cmd += ["-v", f"{_host_path(run_logs_dir)}:{CONTAINER_STATE_DIR}/run_logs"]
+
+    snapshot_in_container: Optional[str] = None
+    if snapshot_dir:
+        snapshot_in_container = f"{CONTAINER_STATE_DIR}/run_snapshots/{Path(snapshot_dir).name}"
+        docker_cmd += ["-v", f"{_host_path(snapshot_dir)}:{snapshot_in_container}:ro"]
+
+    docker_cmd += ["-w", "/app"]
+
+    if workspace:
+        docker_cmd.extend(["-v", f"{_host_path(workspace)}:{CONTAINER_WORKSPACE_DIR}"])
+
+    # Same host-service reachability as a node container (Ollama, LM Studio).
+    # Pointless without a network (network "none"), so
+    # left out there rather than handing docker a mapping it cannot use.
+    if network != "none":
+        docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
+
+    merged_env = container_env(dict(env or {}))
+    if snapshot_in_container:
+        merged_env[SNAPSHOT_DIR_ENV] = snapshot_in_container
+    merged_env["AGENT_EXECUTION_MODE"] = "local"
+    merged_env = _point_local_models_at_the_host(merged_env)
+    for key, value in merged_env.items():
+        if value:
+            docker_cmd.extend(["-e", f"{key}={value}"])
+
+    if extra_args:
+        docker_cmd.extend(shlex.split(extra_args))
+
+    docker_cmd.append(image)
+    docker_cmd.extend(translated_cmd)
+    return docker_cmd
+
 
 def container_name_for_node(node_id: str) -> str:
     return f"agents-hub-node-{node_id.replace('-', '')[:12]}"
@@ -413,7 +841,7 @@ def container_running(container_name: str) -> bool:
             "--filter", "status=running",
         ], timeout=10)
         return bool((result.stdout or "").strip())
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -427,6 +855,14 @@ def start_container(
     http_expose: bool = False,
     http_port: int = 8080,
     http_host_port: Optional[int] = None,
+    *,
+    hardened: bool = False,
+    memory: Optional[str] = None,
+    cpus: Optional[str] = None,
+    pids_limit: Optional[int] = None,
+    snapshot_dir: Optional[str] = None,
+    image: Optional[str] = None,
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Start a detached container for an agent.
 
@@ -442,11 +878,32 @@ def start_container(
     When http_expose=True the container port http_port is published to
     http_host_port on the host (defaults to the same port number).
 
+    ``hardened`` (used only by start_run_container, one-shot task runs — nodes
+    keep the default, unchanged shape above) additionally applies: a scrubbed
+    environment (container_env, not the provider-key allowlist), --memory /
+    --cpus / --pids-limit, --cap-drop ALL, --security-opt no-new-privileges,
+    a --read-only root with --tmpfs /tmp, and the registry snapshot
+    (``snapshot_dir``, see common/snapshot.py) mounted read-only inside the
+    (still read-write) state directory. A node container gets the snapshot
+    too, through AGENTS_HUB_SNAPSHOT_DIR, since the registries live in the
+    database and a container has no database of its own. See
+    docs/containers.md for the full mount table.
+
+    An environment (environments/launch.py, docs/environments.md) may shape
+    either kind through the keyword arguments: ``image`` replaces the agent's
+    image (already resolved, including a derived image with extra packages,
+    see :func:`options_to_kwargs`), ``memory`` /
+    ``cpus`` / ``pids_limit`` set limits (a node container only gets the ones
+    given; a run container keeps its defaults for the rest), and
+    ``extra_env`` forwards variables a node container's provider-key
+    allowlist would otherwise drop (the environment's own variables, the
+    allowlist and proxy settings).
+
     Returns: {success, container_id, container_name, image, error,
               http_url (if http_expose)}
     """
     network = get_or_create_network()
-    image = image_tag_for_agent(agent_id)
+    image = image or image_tag_for_agent(agent_id)
 
     # Build path mapping: our path → container path. These are the paths the
     # command line carries, so they are translated as we see them; the bind
@@ -454,56 +911,93 @@ def start_container(
     state_dir = str(AGENTS_HUB_ROOT)
     tasks_dir = str(PROJECT_ROOT / "tasks")
     path_mappings = {
-        state_dir: "/app/.agents_hub",
-        tasks_dir: "/app/tasks",
+        state_dir: CONTAINER_STATE_DIR,
+        tasks_dir: CONTAINER_TASKS_DIR,
     }
     if workspace:
-        path_mappings[str(Path(workspace).resolve())] = "/workspace"
+        path_mappings[str(Path(workspace).resolve())] = CONTAINER_WORKSPACE_DIR
 
     translated_cmd = _translate_paths(cmd, path_mappings)
 
-    docker_cmd = [
-        "docker", "run",
-        "--detach",
-        "--rm",
-        "--name", container_name,
-        "--network", network,
-        "--label", LABEL_MANAGED,
-        "--label", f"agents-hub.agent-id={agent_id}",
-        # Mount only what the agent needs
-        "-v", f"{_host_path(state_dir)}:/app/.agents_hub",
-        "-v", f"{_host_path(tasks_dir)}:/app/tasks",
-        "-w", "/app",
-    ]
-
-    # Mount workspace if provided
-    if workspace:
-        docker_cmd.extend(["-v", f"{_host_path(workspace)}:/workspace"])
-
-    # Publish HTTP port when the agent exposes an HTTP server
-    if http_expose:
-        resolved_host_port = http_host_port if http_host_port is not None else http_port
-        docker_cmd.extend(["-p", f"{resolved_host_port}:{http_port}"])
-
-    # Allow containers to reach host services (e.g. Ollama, LM Studio) via
-    # host.docker.internal.  On Linux the gateway alias must be added explicitly;
-    # on macOS/Windows it is provided by Docker Desktop automatically.
-    docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
-
-    # Forward env vars; force local execution mode inside container
-    merged_env = dict(os.environ if env is None else env)
-    merged_env["AGENT_EXECUTION_MODE"] = "local"
-    merged_env = _point_local_models_at_the_host(merged_env)
-    docker_cmd.extend(_env_flags(merged_env))
-
-    # Extra user-configured docker flags, same live resolution as the image
     from common.config import live_setting
     extra = extra_args or live_setting("AGENT_DOCKER_EXTRA_ARGS")
-    if extra:
-        docker_cmd.extend(shlex.split(extra))
 
-    docker_cmd.append(image)
-    docker_cmd.extend(translated_cmd)
+    if hardened:
+        run_env = {**(env or {}), **(extra_env or {})} if extra_env else env
+        network, run_env, _ = enforce_network_policy(network, run_env, None)
+        docker_cmd = build_run_command(
+            container_name=container_name,
+            agent_id=agent_id,
+            image=image,
+            network=network,
+            translated_cmd=translated_cmd,
+            state_dir=state_dir,
+            tasks_dir=tasks_dir,
+            workspace=workspace,
+            env=run_env,
+            extra_args=extra,
+            memory=memory,
+            cpus=cpus,
+            pids_limit=pids_limit,
+            snapshot_dir=snapshot_dir,
+        )
+    else:
+        network, env, extra_env = enforce_network_policy(network, env, extra_env)
+        docker_cmd = [
+            "docker", "run",
+            "--detach",
+            "--rm",
+            "--name", container_name,
+            "--network", network,
+            "--label", LABEL_MANAGED,
+            "--label", f"agents-hub.agent-id={agent_id}",
+            # Mount only what the agent needs
+            "-v", f"{_host_path(state_dir)}:{CONTAINER_STATE_DIR}",
+            "-v", f"{_host_path(tasks_dir)}:{CONTAINER_TASKS_DIR}",
+            "-w", "/app",
+        ]
+        # Limits only when an environment asks for them: a node container has
+        # none by default, unchanged from before environments existed.
+        if memory:
+            docker_cmd += ["--memory", str(memory)]
+        if cpus:
+            docker_cmd += ["--cpus", str(cpus)]
+        if pids_limit:
+            docker_cmd += ["--pids-limit", str(pids_limit)]
+
+        # Mount workspace if provided
+        if workspace:
+            docker_cmd.extend(["-v", f"{_host_path(workspace)}:{CONTAINER_WORKSPACE_DIR}"])
+
+        # Publish HTTP port when the agent exposes an HTTP server
+        if http_expose:
+            resolved_host_port = http_host_port if http_host_port is not None else http_port
+            docker_cmd.extend(["-p", f"{resolved_host_port}:{http_port}"])
+
+        # Allow containers to reach host services (e.g. Ollama, LM Studio) via
+        # host.docker.internal.  On Linux the gateway alias must be added explicitly;
+        # on macOS/Windows it is provided by Docker Desktop automatically.
+        docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
+
+        # Forward env vars; force local execution mode inside container
+        merged_env = dict(os.environ if env is None else env)
+        merged_env["AGENT_EXECUTION_MODE"] = "local"
+        merged_env = _point_local_models_at_the_host(merged_env)
+        if snapshot_dir:
+            # Inside the state dir mount already; only the pointer is needed.
+            merged_env[SNAPSHOT_DIR_ENV] = (
+                f"{CONTAINER_STATE_DIR}/run_snapshots/{Path(snapshot_dir).name}")
+        docker_cmd.extend(_env_flags(merged_env))
+        for key, value in (extra_env or {}).items():
+            if value and "DOCKER" not in key:
+                docker_cmd.extend(["-e", f"{key}={value}"])
+
+        # Extra user-configured docker flags, same live resolution as the image
+        if extra:
+            docker_cmd.extend(shlex.split(extra))
+
+        docker_cmd.append(image)
+        docker_cmd.extend(translated_cmd)
 
     try:
         result = _run(docker_cmd, timeout=30)
@@ -529,7 +1023,7 @@ def start_container(
             "image": image,
             "error": (result.stderr or result.stdout or "docker run failed").strip(),
         }
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return {
             "success": False,
             "container_id": None,
@@ -548,8 +1042,18 @@ def start_node_container(
     http_expose: bool = False,
     http_port: int = 8080,
     http_host_port: Optional[int] = None,
+    options: Optional[Dict[str, Any]] = None,
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Start a detached container for a persistent agent node."""
+    """Start a detached container for a persistent agent node.
+
+    ``options`` is the docker profile of the node's environment
+    (environments/launch.py: network, limits, image, packages) and
+    ``extra_env`` the variables it adds; both absent keeps the call exactly as
+    it was before environments existed."""
+    kwargs: Dict[str, Any] = options_to_kwargs(agent_id, options) if options else {}
+    if extra_env:
+        kwargs["extra_env"] = dict(extra_env)
     return start_container(
         container_name=container_name_for_node(node_id),
         agent_id=agent_id,
@@ -559,6 +1063,7 @@ def start_node_container(
         http_expose=http_expose,
         http_port=http_port,
         http_host_port=http_host_port,
+        **kwargs,
     )
 
 
@@ -567,7 +1072,7 @@ def stop_container(container_name: str, timeout: int = 15) -> bool:
     try:
         result = _run(["docker", "stop", "--time", str(timeout), container_name], timeout=timeout + 10)
         return result.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -580,7 +1085,7 @@ def restart_container(container_name: str, timeout: int = 15) -> bool:
     try:
         result = _run(["docker", "restart", "--time", str(timeout), container_name], timeout=timeout + 30)
         return result.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -589,7 +1094,7 @@ def remove_container(container_name: str) -> bool:
     try:
         result = _run(["docker", "rm", "-f", container_name], timeout=15)
         return result.returncode == 0
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -598,21 +1103,46 @@ def get_logs(container_name: str, tail: int = 200) -> str:
     try:
         result = _run(["docker", "logs", "--tail", str(tail), container_name], timeout=15)
         return (result.stdout or "") + (result.stderr or "")
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return f"[error fetching logs: {exc}]"
 
 
 def list_containers() -> List[Dict[str, Any]]:
-    """Return all agents-hub containers (running and stopped)."""
+    """Every agents-hub container: this host's daemon's view, plus what other
+    hosts registered in the ``containers`` table (``host`` says where)."""
+    import socket
+    local = _list_local_containers()
+    host = socket.gethostname()
+    for c in local:
+        c["host"] = host
+    seen = {c["name"] for c in local}
+    for rec in registered_containers():
+        name = str(rec.get("name") or "")
+        if not name or name in seen:
+            continue
+        if str(rec.get("host") or "") == host:
+            # Registered by this host but gone from its daemon: stale.
+            continue
+        local.append({
+            "id": "", "name": name, "image": rec.get("image") or "",
+            "status": rec.get("status") or "", "state": rec.get("status") or "",
+            "created": rec.get("started_at") or "", "agent_id": rec.get("agent_id") or "",
+            "host": rec.get("host") or "", "remote": True,
+        })
+    return local
+
+
+def _list_local_containers() -> List[Dict[str, Any]]:
+    """Return all agents-hub containers this host's daemon knows (running and stopped)."""
     # A short timeout, not the five-minute default: this is a read-only listing
     # that callers treat as cheap. An installed CLI with no daemon behind it
     # blocks until the timeout rather than failing, so the default would stall
     # a diagnostic, and the suite, for minutes.
-    result = _run([
+    result = _query([
         "docker", "ps", "-a",
         "--filter", f"label={LABEL_MANAGED}",
         "--format", "{{json .}}",
-    ], timeout=15)
+    ])
     containers: List[Dict[str, Any]] = []
     for line in (result.stdout or "").splitlines():
         line = line.strip()
@@ -639,9 +1169,102 @@ def list_containers() -> List[Dict[str, Any]]:
                 "created": raw.get("CreatedAt", ""),
                 "agent_id": labels.get("agents-hub.agent-id", ""),
             })
-        except Exception:
-            pass
+        except ValueError:
+            logger.debug("skipping malformed docker ps line: %r", line)
     return containers
+
+
+# ── The containers table ──────────────────────────────────────────────────────
+#
+# ``docker ps`` only knows the daemon this process talks to. With workers on
+# several hosts each starting containers, the Containers page needs a record
+# that every host writes to: whoever starts a container registers it here
+# and refreshes its status while it runs (managers/run_watchdog.py sweeps
+# rows whose host stopped reporting). ``list_containers`` merges the local
+# daemon's view with the table, local rows winning.
+
+def register_container(name: str, *, kind: str, agent_id: str = "",
+                       run_id: Optional[str] = None, node_id: Optional[str] = None,
+                       image: Optional[str] = None, status: str = "running",
+                       extra: Optional[Dict[str, Any]] = None) -> None:
+    """Record a container this host started. Never raises."""
+    import socket
+    from common import db
+    try:
+        now = _utc_now_iso()
+        with db.transaction() as conn:
+            conn.execute(
+                db.upsert_sql("containers", ("name", "host", "kind", "agent_id", "run_id", "node_id",
+                                             "image", "status", "started_at", "updated_at", "extra"),
+                              ("name",)),
+                (name, socket.gethostname(), kind, agent_id or "", run_id, node_id, image or "",
+                 status, now, now, db.dumps(extra or {})))
+    except Exception:  # noqa: BLE001 - never raises (see docstring)
+        logger.debug("register_container failed for %s", name, exc_info=True)
+
+
+def update_container_status(name: str, status: str) -> None:
+    from common import db
+    try:
+        with db.transaction() as conn:
+            conn.execute("UPDATE containers SET status = ?, updated_at = ? WHERE name = ?",
+                         (status, _utc_now_iso(), name))
+    except Exception:  # noqa: BLE001 - best-effort cross-host bookkeeping, must not break the caller
+        logger.debug("update_container_status failed for %s", name, exc_info=True)
+
+
+def forget_container(name: str) -> None:
+    from common import db
+    try:
+        with db.transaction() as conn:
+            conn.execute("DELETE FROM containers WHERE name = ?", (name,))
+    except Exception:  # noqa: BLE001 - best-effort cross-host bookkeeping, must not break the caller
+        logger.debug("forget_container failed for %s", name, exc_info=True)
+
+
+def registered_containers() -> List[Dict[str, Any]]:
+    """Every container any host registered, newest first."""
+    from common import db
+    try:
+        rows = db.get_conn().execute(
+            "SELECT * FROM containers ORDER BY started_at DESC LIMIT 500").fetchall()
+    except Exception:  # noqa: BLE001 - falls back to no registered containers rather than breaking the caller
+        logger.debug("registered_containers query failed", exc_info=True)
+        return []
+    out = []
+    for row in rows:
+        rec = dict(row)
+        rec["extra"] = db.loads(rec.get("extra"), {}) or {}
+        out.append(rec)
+    return out
+
+
+def refresh_registered_containers() -> int:
+    """Reconcile this host's rows with its daemon: mark exited ones, drop the
+    ones the daemon no longer has. Returns how many rows changed."""
+    import socket
+    host = socket.gethostname()
+    mine = [c for c in registered_containers() if str(c.get("host") or "") == host]
+    if not mine:
+        return 0
+    try:
+        local = {c["name"]: c for c in _list_local_containers()}
+    except Exception:  # noqa: BLE001 - a daemon that cannot be reached means nothing to reconcile this pass
+        logger.debug("_list_local_containers failed during reconcile", exc_info=True)
+        return 0
+    changed = 0
+    for rec in mine:
+        name = str(rec["name"])
+        seen = local.get(name)
+        if seen is None:
+            forget_container(name)
+            changed += 1
+            continue
+        state = str(seen.get("state") or "").lower() or "running"
+        if state != str(rec.get("status") or ""):
+            update_container_status(name, state)
+            changed += 1
+    return changed
 
 
 # ── Path translation ───────────────────────────────────────────────────────────

@@ -14,6 +14,11 @@ import sys
 from pathlib import Path
 
 # The checkout this package was installed from: <repo>/agents_hub/__init__.py.
+# Computed from __file__, not imported from common.paths: this is the very
+# first code that runs for the ``agents-hub`` console script, before the repo
+# root is on sys.path, so common.paths is not importable yet. ``main()`` below
+# puts the root on sys.path first, so everything downstream imports
+# common.paths.PROJECT_ROOT (the same value) instead of recomputing it.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 __all__ = ["PROJECT_ROOT", "main"]

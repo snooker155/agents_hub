@@ -943,7 +943,6 @@ def test_generation_returns_the_world_the_builder_stored(api_client, monkeypatch
     the stored row — the agent usually keeps editing after creating it."""
     import sys
 
-    from playground.worlds import WorldSpec
 
     backend = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
     if backend not in sys.path:

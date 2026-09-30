@@ -1,13 +1,13 @@
 """Docker execution helpers — thin shim over container_manager.
 
-This module is the public interface used by node_manager and run_manager.
+This module is the public interface used by the run launcher and run_manager.
 All heavy lifting (image resolution, network management, path translation)
 lives in ``managers/container_manager.py``.
 
 Public API
 ----------
 start_node_container(node_id, agent_id, inner_cmd, workspace, env) -> dict
-start_run_container(run_id, agent_id, inner_cmd, cwd, env)         -> dict
+start_run_container(run_id, agent_id, inner_cmd, cwd, env, options) -> dict
 stop_container(name)                                                -> bool
 container_running(name)                                             -> bool
 container_name_for_node(node_id)                                    -> str
@@ -21,6 +21,7 @@ from managers.container_manager import (
     container_name_for_node,
     container_name_for_run,
     container_running,
+    options_to_kwargs,
     start_container,
     stop_container,
 )
@@ -45,7 +46,11 @@ def start_node_container(
     http_port: int = 8080,
     http_host_port: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Start a detached container for a persistent agent node."""
+    """Start a detached container for a persistent agent node.
+
+    The node reads the registries from a snapshot too (common/snapshot.py),
+    written under ``node-<id>``; a registry change reaches it on restart."""
+    from common import snapshot
     name = container_name_for_node(node_id)
     return start_container(
         container_name=name,
@@ -56,6 +61,7 @@ def start_node_container(
         http_expose=http_expose,
         http_port=http_port,
         http_host_port=http_host_port,
+        snapshot_dir=str(snapshot.write_snapshots(f"node-{node_id}")),
     )
 
 
@@ -65,13 +71,35 @@ def start_run_container(
     inner_cmd: List[str],
     cwd: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
+    options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Start a detached container for a one-shot agent run."""
+    """Start a detached, sandboxed container for a one-shot agent run.
+
+    Unlike a node container (long-lived, keeps today's permissive mounts), a
+    run container gets the hardened profile: resource limits, a read-only
+    root filesystem, a scrubbed environment, and the registry snapshot
+    (agents, custom providers, model catalog: common/snapshot.py) mounted
+    read-only. See managers.container_manager.build_run_command and
+    docs/containers.md.
+
+    ``options`` is the docker profile of the run's environment
+    (environments/launch.py, docs/environments.md): ``memory``, ``cpus``,
+    ``pids_limit`` (replacing the
+    run defaults), ``image`` (instead of the agent's image) and ``packages``
+    (baked into a derived image once, see
+    managers.container_manager.ensure_environment_image). None or {} keeps the
+    plain hardened profile.
+    """
+    from common import snapshot
     name = container_name_for_run(run_id)
+    kwargs = options_to_kwargs(agent_id, options) if options else {}
     return start_container(
         container_name=name,
         agent_id=agent_id,
         cmd=inner_cmd,
         workspace=cwd,
         env=env,
+        hardened=True,
+        snapshot_dir=str(snapshot.write_snapshots(run_id)),
+        **kwargs,
     )

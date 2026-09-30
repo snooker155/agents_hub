@@ -86,6 +86,11 @@ class CustomEnvironment(Environment):
     env_name = "Custom World"
     description = "A world defined by its author: locations, items, entities, rules."
     renderer = "custom"
+    # An authored world's own actions are its real action API; the same small
+    # pair as the shipped social world covers a character that needs to do
+    # arithmetic or consult a document in full. Nothing that reaches outside
+    # the world: no shell, no web, no other agent.
+    TOOL_ALLOWLIST = ("calculator", "read_file")
 
     def __init__(self, params: Optional[Dict[str, Any]] = None, seed: int = 42,
                  spec: Optional[WorldSpec] = None):

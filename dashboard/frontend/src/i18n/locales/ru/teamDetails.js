@@ -1,4 +1,11 @@
 export default {
+  newChat: 'Новый чат',
+  newChatHint: 'Начать новый запрос: доска очищается, а запуск уходит в историю',
+  roundsDone_one: '{{count}} раунд',
+  roundsDone_few: '{{count}} раунда',
+  roundsDone_many: '{{count}} раундов',
+  onHost: 'на {{host}}',
+  lastBeat: 'последний сигнал {{age}} назад',
   allTeams: 'Все команды',
   loadingTheTeam: 'Загрузка команды…',
   loadRunFailed: 'Не удалось загрузить этот запуск',
