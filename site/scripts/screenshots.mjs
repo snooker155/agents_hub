@@ -11,10 +11,17 @@
  *
  * It serves dashboard/frontend/dist-demo with `vite preview` on a free port
  * (building it first when it is missing or --build is given), opens each page
- * in headless Chromium at 1440 x 900 and writes:
+ * in headless Chromium at 1440 x 900, once in the light theme and once in
+ * the dark one, and writes:
  *
- *   site/public/screenshots/<id>.png           the six landing page shots
- *   site/public/screenshots/recipes/<id>.png   one per recipe in site/recipes/
+ *   site/public/screenshots/<id>.png                the six landing page shots
+ *   site/public/screenshots/recipes/<id>.png        one per recipe in site/recipes/
+ *   site/public/screenshots/dark/<id>.png           the same pages, dark theme
+ *   site/public/screenshots/dark/recipes/<id>.png
+ *
+ * The site shows whichever set matches the reader's theme (the image rule in
+ * .vitepress/config.mjs swaps /screenshots/ for /screenshots/dark/), and the
+ * README uses the dark set.
  *
  * Needs Playwright's Chromium once: `npx playwright install chromium`.
  */
@@ -29,6 +36,9 @@ const SITE = join(HERE, '..');
 const FRONTEND = join(SITE, '..', 'dashboard', 'frontend');
 const DIST = join(FRONTEND, 'dist-demo');
 const SHOTS_DIR = join(SITE, 'public', 'screenshots');
+const DARK_DIR = join(SHOTS_DIR, 'dark');
+/** The dashboard's theme is `localStorage.theme` (ThemeContext.jsx): light, dark or system. */
+const SCHEMES = ['light', 'dark'];
 const RECIPES_DIR = join(SITE, 'recipes');
 
 const W = 1440;
@@ -36,22 +46,23 @@ const H = 900;
 const PAGE = 'main header';
 
 /**
- * The six shots on the landing page. The captions in site/index.md describe
- * the flow editor, a team's board and a running scenario, so those three are
- * taken on the demo workspace's own flow, team and scenario.
+ * The six shots on the landing page and in the README. The captions in
+ * site/index.md and README.md describe what each one shows, so a shot is
+ * taken on a page of the demo workspace that has recorded content: a
+ * conversation, the flow, the views gallery, the scenario's setup page.
  *
- * `refresh: false` keeps the committed picture: the recording has no
- * finished team run or simulation yet, and the captions describe one. Flip
- * it once the demo seed records them.
+ * `refresh: false` on an entry keeps its committed picture; none needs it
+ * today, the flag is left for a page whose recording lags its caption.
  */
 const LANDING = [
   { id: 'agents', path: '/agents', waitFor: 'main .grid' },
-  { id: 'chat', path: '/chat', waitFor: 'main textarea' },
-  { id: 'flows', path: '/flows/demo_content_pipeline', waitFor: '.react-flow__node' },
-  { id: 'playground', path: '/playground/demo_market', waitFor: 'main', refresh: false },
+  // A recorded conversation of the demo workspace, not the empty composer.
+  { id: 'chat', path: '/chat/demo_chat_2', waitFor: 'main textarea' },
   // The caption describes the list view; the board is the default.
   { id: 'tasks', path: '/tasks', waitFor: PAGE, click: 'main header button:has-text("List")' },
-  { id: 'teams', path: '/teams/demo_editorial_team', waitFor: 'main', refresh: false },
+  { id: 'flows', path: '/flows/demo_content_pipeline', waitFor: '.react-flow__node' },
+  { id: 'views', path: '/views', waitFor: 'main' },
+  { id: 'playground', path: '/playground/demo_market', waitFor: 'main' },
 ];
 
 /**
@@ -96,12 +107,17 @@ function buildShots() {
   }
   const shots = recorded
     ? LANDING.filter((s) => s.refresh !== false || process.argv.includes('--all'))
-      .map((s) => ({ ...s, file: join(SHOTS_DIR, `${s.id}.png`) }))
+      .map((s) => ({ ...s, file: join(SHOTS_DIR, `${s.id}.png`), dark: join(DARK_DIR, `${s.id}.png`) }))
     : [];
   for (const id of recipeIds()) {
     const page = RECIPE_PAGES[id];
     if (!page) console.warn(`[shots] no page mapped for recipe "${id}", using ${DEFAULT_PAGE.path}`);
-    shots.push({ id: `recipes/${id}`, ...(page || DEFAULT_PAGE), file: join(SHOTS_DIR, 'recipes', `${id}.png`) });
+    shots.push({
+      id: `recipes/${id}`,
+      ...(page || DEFAULT_PAGE),
+      file: join(SHOTS_DIR, 'recipes', `${id}.png`),
+      dark: join(DARK_DIR, 'recipes', `${id}.png`),
+    });
   }
   return shots.map((s) => ({ width: W, height: H, ...s }));
 }
@@ -185,6 +201,13 @@ async function main() {
       return;
     }
     const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1, colorScheme: 'light' });
+    // The theme starts as light and is switched per shot in capture(), so a
+    // screenshot never depends on the machine's own colour scheme.
+    await context.addInitScript(() => {
+      try {
+        if (!localStorage.getItem('theme')) localStorage.setItem('theme', 'light');
+      } catch { /* storage unavailable */ }
+    });
     // A first visit would open the onboarding modal over every shot.
     await context.addInitScript(() => {
       try {
@@ -205,9 +228,14 @@ async function main() {
     // recipe shot falls back to the dashboard so the site still has an image.
     let pageFailed = false;
     page.on('pageerror', () => { pageFailed = true; });
-    const capture = async (shot, path) => {
+    const capture = async (shot, path, scheme = 'light') => {
       pageFailed = false;
       await page.setViewportSize({ width: shot.width, height: shot.height });
+      // The dashboard reads its theme from localStorage when it mounts, and
+      // resolves the palette's dark or light ramp from it, so the switch has
+      // to happen before the navigation rather than by toggling a class.
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.evaluate((s) => { try { localStorage.setItem('theme', s); } catch { /* storage unavailable */ } }, scheme);
       await page.goto(`${origin}${base}${path.replace(/^\//, '')}`, { waitUntil: 'networkidle' });
       try {
         await page.waitForSelector(shot.waitFor, { timeout: 8000 });
@@ -227,20 +255,23 @@ async function main() {
     };
 
     for (const shot of shots) {
-      mkdirSync(dirname(shot.file), { recursive: true });
-      let path = shot.path;
-      if (!(await capture(shot, path))) {
-        if (!shot.id.startsWith('recipes/')) {
-          console.warn(`[shots] ${shot.id}: ${path} threw, keeping the existing file`);
-          continue;
+      for (const scheme of SCHEMES) {
+        const file = scheme === 'dark' ? shot.dark : shot.file;
+        mkdirSync(dirname(file), { recursive: true });
+        let path = shot.path;
+        if (!(await capture(shot, path, scheme))) {
+          if (!shot.id.startsWith('recipes/')) {
+            console.warn(`[shots] ${shot.id} (${scheme}): ${path} threw, keeping the existing file`);
+            continue;
+          }
+          console.warn(`[shots] ${shot.id} (${scheme}): ${path} threw, taking ${DEFAULT_PAGE.path} instead`);
+          path = DEFAULT_PAGE.path;
+          await capture({ ...shot, waitFor: DEFAULT_PAGE.waitFor }, path, scheme);
         }
-        console.warn(`[shots] ${shot.id}: ${path} threw, taking ${DEFAULT_PAGE.path} instead`);
-        path = DEFAULT_PAGE.path;
-        await capture({ ...shot, waitFor: DEFAULT_PAGE.waitFor }, path);
+        await page.screenshot({ path: file });
+        made.push(file);
+        console.log(`[shots] ${shot.id} (${scheme}) <- ${path}`);
       }
-      await page.screenshot({ path: shot.file });
-      made.push(shot.file);
-      console.log(`[shots] ${shot.id} <- ${path}`);
     }
   } finally {
     await browser?.close();

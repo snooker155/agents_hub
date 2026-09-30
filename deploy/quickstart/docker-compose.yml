@@ -1,0 +1,71 @@
+# Agents Hub for one person, from the published images. Nothing to clone and
+# nothing to build: two files in an empty folder and one command.
+#
+#   mkdir agents-hub && cd agents-hub
+#   curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
+#   curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
+#   docker compose up -d
+#
+# Then open http://localhost:8080. Provider keys go into .env (see the file)
+# or into Settings once the dashboard is up; both end up in the same file,
+# which is bind mounted into the backend so the keys survive an upgrade.
+#
+# What runs: the backend (the API, with every agent as a subprocess inside
+# it) and the dashboard (nginx, which also proxies /api, so the CLI reaches
+# the service at the same address: AGENTS_HUB_URL=http://localhost:8080).
+# State lives in the named volume `agents_hub_data`.
+#
+#   docker compose pull && docker compose up -d      upgrade to the newest release
+#   docker compose exec backend python -m cli db backup --to /data/backups
+#   docker compose down                              stop (the volume stays)
+#   docker compose down -v                           stop and delete everything
+#
+# This is the single-user shape (docs/installation.md). Agents run as local
+# subprocesses of the backend; the Docker socket is not mounted, so the
+# per-agent containers, the docker sandbox and the browser service need the
+# checkout-based compose file at the repository root instead
+# (docs/deployment.md, "The shapes").
+
+services:
+  # The image runs as an unprivileged user (uid 1000) and a fresh named
+  # volume belongs to root, so this one-shot step hands the state directory
+  # over before the backend starts. Idempotent.
+  init:
+    image: busybox:1.36
+    command: ["sh", "-c", "chown -R 1000:1000 /data"]
+    volumes:
+      - agents_hub_data:/data
+
+  backend:
+    image: ghcr.io/snooker155/agents-hub-backend:${AGENTS_HUB_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      # Every agent runs as a subprocess of this container.
+      AGENT_EXECUTION_MODE: local
+      # The state directory (database, workspaces, run logs, views) on the
+      # named volume rather than inside the image's layer.
+      AGENTS_HUB_ROOT: /data
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - agents_hub_data:/data
+      # The file Settings writes provider keys into. Mounted from the host so
+      # they outlive the container; the env.example next to this file is the
+      # template.
+      - ./.env:/app/.env
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  frontend:
+    image: ghcr.io/snooker155/agents-hub-frontend:${AGENTS_HUB_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  agents_hub_data:

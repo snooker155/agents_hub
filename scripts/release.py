@@ -41,6 +41,10 @@ PACKAGE_JSON = ROOT / "dashboard" / "frontend" / "package.json"
 PACKAGE_LOCK = ROOT / "dashboard" / "frontend" / "package-lock.json"
 CHART = ROOT / "deploy" / "helm" / "agents-hub" / "Chart.yaml"
 CHANGELOG = ROOT / "CHANGELOG.md"
+# The README names the current release between two markers, so the number a
+# visitor reads on GitHub is the one the tag carries.
+README = ROOT / "README.md"
+README_VERSION = re.compile(r"(<!-- version -->)([^<]*)(<!-- /version -->)")
 
 SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?$")
 UNRELEASED = "## [Unreleased]"
@@ -97,6 +101,8 @@ def read_versions() -> Dict[str, str]:
     found["Chart.yaml appVersion"] = m.group(1).strip() if m else ""
     m = re.search(r'(?m)^version:\s*"?([^"\n]+)"?', chart)
     found["Chart.yaml version"] = m.group(1).strip() if m else ""
+    m = README_VERSION.search(README.read_text(encoding="utf-8"))
+    found["README.md"] = m.group(2).strip() if m else ""
     return found
 
 
@@ -127,6 +133,10 @@ def write_versions(version: str) -> List[Path]:
     chart = re.sub(r'(?m)^version:.*$', f'version: {version}', chart, count=1)
     CHART.write_text(chart, encoding="utf-8")
     touched.append(CHART)
+
+    readme = README.read_text(encoding="utf-8")
+    README.write_text(README_VERSION.sub(rf"\g<1>{version}\g<3>", readme, count=1), encoding="utf-8")
+    touched.append(README)
     return touched
 
 

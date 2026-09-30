@@ -65,6 +65,14 @@ six landing page shots) and `public/screenshots/recipes/<id>.png` (one per
 recipe; the page each recipe is taken on is the `RECIPE_PAGES` table in the
 script). Without recorded fixtures it leaves the landing page shots alone.
 
+Every shot is taken twice, in the dashboard's light and dark theme, the
+dark set under `public/screenshots/dark/` with the same paths. A markdown
+image under `/screenshots/` is rendered as both pictures (the image rule in
+`.vitepress/config.mjs`) and `theme/custom.css` shows the one that matches
+the reader's theme, so the site's screenshots follow its appearance switch
+with no markup in the pages. The README at the repository root uses the
+dark set directly.
+
 ## Why the copy
 
 `docs/` is a product asset, not a website: `tests/test_docs_corpus.py` asserts

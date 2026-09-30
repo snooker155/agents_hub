@@ -1,13 +1,13 @@
 # Agents Hub — Initial Setup Guide
 
-This guide walks you through getting Agents Hub running from a fresh clone. Two paths are supported:
+This guide walks you through getting Agents Hub running from a fresh clone, for working on the code. Two paths are supported:
 
-- **Path A — Local development** (run backend + frontend natively on your host)
-- **Path B — Docker Compose** (single command, runs the whole stack)
+- **Path A: local development** (run backend + frontend natively on your host)
+- **Path B: Docker Compose** (single command, runs the whole stack from the checkout)
 
 Pick one. They are equivalent for normal use; local is better when you want to iterate on code, Docker is faster to bootstrap.
 
-For the condensed version of this page, including the one-command installer, see [docs/installation.md](./docs/installation.md), which is also served in the app under **Docs** and readable by agents.
+If you only want to use the service, you do not need a clone at all: the published images run for one person with two files and one command. That path, the one-command installer and every other way of running it are in [docs/installation.md](./docs/installation.md), which is also served in the app under **Docs** and readable by agents. Start there; this page is the long form of paths A and B.
 
 ---
 

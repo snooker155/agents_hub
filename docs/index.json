@@ -19,7 +19,11 @@
         "tools-and-capabilities",
         "agent-loop",
         "tasks",
-        "guardrails"
+        "guardrails",
+        "tool-policy",
+        "handoffs",
+        "secrets",
+        "services"
       ],
       "headings": [
         "What an agent is made of",
@@ -29,6 +33,7 @@
         "Versions",
         "Versions and pinning",
         "Delegation",
+        "The agent page",
         "Gotchas"
       ]
     },
@@ -341,7 +346,7 @@
     {
       "id": "installation",
       "title": "Installing and running the service",
-      "summary": "One command installs everything and puts `ah` on your PATH. The rest of the page is that command taken apart: by hand, in Docker, and what to check when it will not start.",
+      "summary": "Four ways to run the service, Docker first: the published images for one person (nothing to clone or build), Docker Compose from a checkout, the installer, and by hand. Then configuration, where state lives, upgrading, and what to check when it will not start.",
       "surface": null,
       "related": [
         "cli",
@@ -352,13 +357,16 @@
         "troubleshooting",
         "deployment",
         "backup",
-        "demo"
+        "demo",
+        "changelog",
+        "scaling"
       ],
       "headings": [
         "Prerequisites",
-        "Path A: the installer",
-        "Path B: by hand",
-        "Path C: Docker Compose",
+        "Path A: Docker, from the published images",
+        "Path B: Docker Compose from a checkout",
+        "Path C: the installer",
+        "Path D: by hand",
         "Configuration",
         "Checking it worked",
         "Where state lives",
@@ -505,7 +513,7 @@
     {
       "id": "memory",
       "title": "Memory",
-      "summary": "Agents have several complementary memory layers, bound to a pool. Core memory blocks are always in the prompt; the rest are ranked and fetched with tools. The pool is assigned per workspace, so the same agent can carry different knowledge in different workspaces.",
+      "summary": "Agents have several complementary memory layers, bound to a pool. Core memory blocks are always in the prompt; the rest are ranked and fetched with tools. The pool is assigned per workspace, so the same agent can carry different knowledge in different workspaces. Personal memory is one private pool per user and workspace that the agents share, switched per workspace and per agent.",
       "surface": "Memory",
       "related": [
         "skills",
@@ -516,6 +524,7 @@
         "The layers",
         "Core memory blocks",
         "How agents use it",
+        "Personal memory",
         "Ranking",
         "Episodes",
         "Getting knowledge in",
@@ -771,7 +780,11 @@
         "identity",
         "models",
         "service-health",
-        "workspaces"
+        "workspaces",
+        "tools-and-capabilities",
+        "browser",
+        "services",
+        "local-models"
       ],
       "headings": [
         "What is here",
@@ -980,11 +993,13 @@
         "memory",
         "projects",
         "system-workspace",
-        "demo"
+        "demo",
+        "settings"
       ],
       "headings": [
         "What a workspace holds",
         "Per-workspace memory",
+        "The Settings tab",
         "The default workspace",
         "The system workspace",
         "Gotchas"
@@ -1129,7 +1144,7 @@
     {
       "id": "deployment",
       "title": "Deploying for high availability",
-      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store. The Cluster page (GET /api/cluster) and ah deployment show the map: members with their heartbeat, load and leases, the queue, and runs, loops, resident instances and containers by host, with each process's own log. Releases are one semver version across pyproject, the dashboard, the Helm chart, the images and a vX.Y.Z tag: scripts/release.py cuts them, the release workflow publishes images to GHCR, and a rollback over a release with migrations restores the pre-migrate archive a SQLite database takes by itself before it migrates.",
+      "summary": "Every shape the service runs in, smallest first: the single-user quickstart from the published images, compose from a checkout, the postgres, scale and browser profiles, the compose ha profile and the Helm chart. Then the ha profile and the chart in detail: the compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store. The Cluster page (GET /api/cluster) and ah deployment show the map: members with their heartbeat, load and leases, the queue, and runs, loops, resident instances and containers by host, with each process's own log. Releases are one semver version across pyproject, the dashboard, the Helm chart, the images and a vX.Y.Z tag: scripts/release.py cuts them, the release workflow publishes images to GHCR, and a rollback over a release with migrations restores the pre-migrate archive a SQLite database takes by itself before it migrates.",
       "surface": "Installation",
       "related": [
         "scaling",
@@ -1138,9 +1153,14 @@
         "storage",
         "service-health",
         "backup",
-        "services"
+        "services",
+        "local-models",
+        "browser",
+        "project-deployments",
+        "changelog"
       ],
       "headings": [
+        "The shapes",
         "The compose ha profile",
         "The Helm chart",
         "The cluster map",

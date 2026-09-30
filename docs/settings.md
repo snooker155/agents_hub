@@ -8,9 +8,29 @@ lives on the [models](models.md) page, not here.
 - **API keys** per provider, and the base URL when it is not the default.
 - **Custom backends** — any OpenAI-compatible endpoint.
 - **Local models** — Ollama and LM Studio, which need a running local server
-  rather than a key.
+  rather than a key, and the hub's own models runtime
+  ([local-models](local-models.md)).
+- **Agent execution** — the execution mode (in-process or Docker), the
+  capability guard's mode (block, warn, off; `CAPABILITY_GUARD`, read live)
+  and whether a per-agent exemption requires a container
+  (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`), see
+  [tools-and-capabilities](tools-and-capabilities.md); and **Chat
+  execution**, whether chat turns run on service replicas or in the backend
+  (`AGENTS_HUB_CHAT_EXECUTION`, [services](services.md)).
+- **Web search** — the provider behind the `web_search` tool (Brave, Tavily
+  or Exa), its key and the results per call, the `fetch_url` limits and the
+  global domain policy, written to `.env` and read live
+  ([tools-and-capabilities](tools-and-capabilities.md), "Web search
+  provider").
+- **Browser** — the browser service's address and token, local or
+  container mode, start and stop, and a Chromium install job
+  ([browser](browser.md)).
 - **API auth** — a token that protects this service's own API.
 - Environment variables, per workspace.
+
+Anything set here is global. A workspace's own Settings tab overrides the
+parts that make sense per workspace ([workspaces](workspaces.md), "The
+Settings tab").
 
 Connectors are **not** here any more. Telegram, GitHub/GitLab and Blender moved
 to Connect → Connectors ([connectors](connectors.md)), because a connector is

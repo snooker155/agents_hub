@@ -17,14 +17,18 @@ const TITLES = new Map(CORPUS.map((e) => [e.id, e.title]));
  * than disappearing from the site.
  */
 const GROUPS = [
-  ['Start here', ['overview', 'installation', 'cli', 'troubleshooting', 'changelog']],
-  ['The work', ['workspaces', 'projects', 'tasks', 'outcomes', 'scheduling', 'deployments']],
-  ['Agents', ['agents', 'agent-loop', 'tool-policy', 'guardrails', 'system-agents', 'imported-agents', 'tools-and-capabilities', 'skills', 'memory']],
-  ['Talking to them', ['chat', 'page-chat', 'steering', 'telegram']],
-  ['More than one agent', ['flows', 'loops', 'teams', 'nodes', 'instances']],
+  ['Start here', ['overview', 'installation', 'cli', 'troubleshooting', 'changelog', 'demo']],
+  ['The work', ['workspaces', 'projects', 'project-deployments', 'tasks', 'outcomes', 'scheduling', 'deployments', 'files']],
+  ['Agents', ['agents', 'agent-loop', 'tool-policy', 'guardrails', 'system-agents', 'imported-agents', 'tools-and-capabilities', 'skills', 'memory', 'secrets', 'hooks', 'handoffs', 'a2a', 'experiments']],
+  ['Talking to them', ['chat', 'page-chat', 'steering', 'telegram', 'widget', 'browser']],
+  ['More than one agent', ['flows', 'loops', 'teams', 'instances', 'services']],
   ['What they produce', ['views', 'playground']],
-  ['Measurement', ['evals', 'costs', 'web-logs', 'sessions-and-runs']],
-  ['Running the service', ['settings', 'models', 'marketplace', 'containers', 'environments', 'service-health']],
+  ['Measurement', ['evals', 'costs', 'web-logs', 'sessions-and-runs', 'audit']],
+  ['Models', ['models', 'local-models', 'hub-as-provider', 'model-structure']],
+  ['Integrations', ['connections', 'connectors', 'mcp', 'marketplace', 'registry', 'github-app', 'notifications']],
+  ['Running the service', ['settings', 'containers', 'environments', 'sandboxes', 'service-health', 'runbook', 'slo', 'system-workspace']],
+  ['Deploying', ['deployment', 'scaling', 'workers', 'storage', 'backup']],
+  ['Accounts and access', ['identity', 'sso', 'scim', 'api-keys']],
 ];
 
 const placed = new Set(GROUPS.flatMap(([, ids]) => ids));
@@ -101,6 +105,27 @@ export default defineConfig({
   markdown: {
     // The corpus fences .env samples as ```env, which Shiki does not know.
     languageAlias: { env: 'ini' },
+    config(md) {
+      // Screenshots come in two sets, /screenshots/<path> (light) and
+      // /screenshots/dark/<path> (scripts/screenshots.mjs takes both). Every
+      // markdown image under /screenshots/ is emitted twice, once per set,
+      // and theme/custom.css shows the one that matches the reader's theme,
+      // so a picture never contradicts the page around it.
+      const image = md.renderer.rules.image;
+      md.renderer.rules.image = (tokens, idx, options, env, self) => {
+        const token = tokens[idx];
+        const src = token.attrGet('src') || '';
+        if (!src.startsWith('/screenshots/') || src.startsWith('/screenshots/dark/')) {
+          return image(tokens, idx, options, env, self);
+        }
+        token.attrJoin('class', 'shot-light');
+        const light = image(tokens, idx, options, env, self);
+        token.attrSet('src', src.replace('/screenshots/', '/screenshots/dark/'));
+        token.attrSet('class', 'shot-dark');
+        const dark = image(tokens, idx, options, env, self);
+        return light + dark;
+      };
+    },
   },
 
   themeConfig: {

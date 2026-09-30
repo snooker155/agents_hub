@@ -121,6 +121,42 @@ from then on. The targets (`handoffs`) and the history the receiver sees by
 default (`handoff_history`) are set on the agent's Tools tab. See
 [handoffs](handoffs.md).
 
+## The agent page
+
+One page per agent, in tabs:
+
+- **Overview**: the description, the model in use, the memory card (own
+  pool, personal memory or neither) and what is running.
+- **Instructions**: the three layered files, editable, with versions
+  ("Versions" above).
+- **Tools**: each tool as a compact card that toggles on click, up to six to
+  a row, with its permission policy picked inside the card and the default
+  for the other tools in the header ([tool-policy](tool-policy.md)); the
+  delegation allowlist; the handoff card ([handoffs](handoffs.md)); and, as
+  read-only cards, the tools the factory adds at build time on top of the
+  record (`GET /api/agents/{id}/auto-tools`: the handoff tool once targets
+  are set, think and the plan store, skills tools, `ask_user` behind the
+  clarification gate, the memory pool tools), each naming the setting that
+  brings it. The capability guard's per-agent switch, "Lift the block for
+  this agent: warn only", is here too
+  ([tools-and-capabilities](tools-and-capabilities.md), "Lifting the
+  block").
+- **Behavior**: reasoning, the clarification gate and self-delegation, the
+  response format ([agent-loop](agent-loop.md)), and the Secrets card
+  ([secrets](secrets.md)).
+- **Memory**: the pool assigned in this workspace and the personal memory
+  switch ([memory](memory.md)).
+- **Runs** and **Sessions**: the agent's runs from the same paged query as
+  the Messages list, a run started by a resident instance linking to that
+  instance, and the sessions the agent took part in
+  (`GET /api/sessions?agent_id=`).
+- **Docker**: the agent's image and environment
+  ([containers](containers.md)); when Docker is missing or not answering the
+  tab says so instead of calling every image "not built".
+
+**Run** on the page starts a resident [instance](instances.md); **Deploy**
+keeps the agent running as a [service](services.md) with replicas.
+
 ## Gotchas
 
 - Editing a system agent marks it as yours and stops it tracking shipped

@@ -243,6 +243,12 @@ function GettingStarted() {
       />
 
       <H2>{t('docs.installRun')}</H2>
+      <H3>{t('docs.dockerForOne')}</H3>
+      <CodeBlock label={t('docs.terminal')}>{`mkdir agents-hub && cd agents-hub
+curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
+docker compose up -d`}</CodeBlock>
+      <P><Rich>{t('docs.dockerForOneBody')}</Rich></P>
       <P>{t('docs.ifTheBackendIsntOnline')}</P>
       <H3>{t('docs.backendFastapi')}</H3>
       <CodeBlock label={t('docs.terminal')}>{`python -m venv .venv
@@ -1370,10 +1376,28 @@ function Installation() {
         <li><Rich>{t('docs.installDoc.prereqKey')}</Rich></li>
       </ul>
 
-      <H3>{t('docs.installDoc.installerTitle')}</H3>
-      <CodeBlock label={t('docs.terminal')}>{`git clone <repo-url> agents_hub
+      <H3>{t('docs.installDoc.quickstartTitle')}</H3>
+      <P><Rich>{t('docs.installDoc.quickstartLead')}</Rich></P>
+      <CodeBlock label={t('docs.terminal')}>{`mkdir agents-hub && cd agents-hub
+curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
+docker compose up -d`}</CodeBlock>
+      <P><Rich>{t('docs.installDoc.quickstartBody')}</Rich></P>
+      <CodeBlock label={t('docs.terminal')}>{`docker compose pull && docker compose up -d`}</CodeBlock>
+      <P><Rich>{t('docs.installDoc.quickstartLimits')}</Rich></P>
+
+      <H3>{t('docs.installDoc.dockerTitle')}</H3>
+      <CodeBlock label={t('docs.terminal')}>{`git clone https://github.com/snooker155/agents_hub.git
 cd agents_hub
-./install.sh --frontend`}</CodeBlock>
+docker compose up --build`}</CodeBlock>
+      <P><Rich>{t('docs.installDoc.dockerBody')}</Rich></P>
+      <CodeBlock label={t('docs.terminal')}>{`docker compose --profile scale up --build --scale backend=3`}</CodeBlock>
+      <P><Rich>{t('docs.installDoc.dockerProfiles')}</Rich></P>
+
+      <H3>{t('docs.installDoc.installerTitle')}</H3>
+      <CodeBlock label={t('docs.terminal')}>{`git clone https://github.com/snooker155/agents_hub.git
+cd agents_hub
+./install.sh`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.installerBody')}</Rich></P>
       <P><Rich>{t('docs.installDoc.installerFlags')}</Rich></P>
       <CodeBlock label={t('docs.terminal')}>{`ah up`}</CodeBlock>
@@ -1387,11 +1411,6 @@ cd dashboard/frontend && npm install && cd ../..`}</CodeBlock>
       <CodeBlock label={t('docs.terminal')}>{`python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000 --reload
 cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.byHandNoInstall')}</Rich></P>
-
-      <H3>{t('docs.installDoc.dockerTitle')}</H3>
-      <CodeBlock label={t('docs.terminal')}>{`docker compose up --build`}</CodeBlock>
-      <P><Rich>{t('docs.installDoc.dockerBody')}</Rich></P>
-      <CodeBlock label={t('docs.terminal')}>{`docker compose up --build --scale backend=3`}</CodeBlock>
 
       <H3>{t('docs.installDoc.configTitle')}</H3>
       <CodeBlock label=".env">{`DEFAULT_PROVIDER=openai
@@ -1410,8 +1429,9 @@ ah agent list`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.stateBody')}</Rich></P>
 
       <H3>{t('docs.installDoc.upgradeTitle')}</H3>
-      <CodeBlock label={t('docs.terminal')}>{`git pull
-./install.sh`}</CodeBlock>
+      <CodeBlock label={t('docs.terminal')}>{`docker compose pull && docker compose up -d      # the published images
+git pull && docker compose up -d --build           # compose from a checkout
+git pull && ./install.sh                           # the installer`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.upgradeBody')}</Rich></P>
 
       <Callout tone="warn"><Rich>{t('docs.installDoc.troubleCallout')}</Rich></Callout>
