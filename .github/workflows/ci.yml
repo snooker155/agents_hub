@@ -75,6 +75,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Trade the test database's durability for speed
+        # fsync, synchronous_commit and full_page_writes make every commit
+        # wait for the disk. A throwaway database that the suite empties
+        # before each of its thousands of tests has nothing worth that wait.
+        # All three reload without a restart (ALTER SYSTEM + pg_reload_conf);
+        # the service block cannot pass server flags, so they are set here.
+        run: |
+          docker exec ${{ job.services.postgres.id }} psql -U ah -d agents_hub_test -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
+          sleep 2  # the reload is a signal; the settings show the new value once it lands
+          docker exec ${{ job.services.postgres.id }} psql -U ah -d agents_hub_test -c "SHOW fsync" -c "SHOW synchronous_commit"
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
