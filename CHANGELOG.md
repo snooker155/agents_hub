@@ -13,6 +13,34 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Delegation from a run in a container is launched by the backend
+  (`POST /api/run-state/tasks/<id>/delegate`, `tasks/delegate.py`), so the
+  delegate gets its own container, or a place on the run queue in the `api`
+  role, instead of running as a subprocess inside the parent's container; it
+  also works under `AGENT_RUN_STATE_TRANSPORT=http`, where the container
+  could not create the subtask before. A container without network answers
+  `code: unreachable` instead of nesting a process (docs/containers.md,
+  "Delegation from a container").
+
+### Changed
+
+- The backend and agents images leave out the RAG stack (torch,
+  sentence-transformers, chromadb, the remote vector stores) unless built
+  with `WITH_RAG=true`; a release publishes both flavours, `X.Y.Z` and
+  `X.Y.Z-rag` (docs/deployment.md "Releases"). A deployment whose
+  `RAG_VECTOR_DB` is not `none` needs the `-rag` tag, or `WITH_RAG=true` in
+  `.env` for a local compose build.
+- The agents base image is the `agents` target of the one `Dockerfile`
+  (`docker build --target agents -t agents-hub/base:latest .`);
+  `Dockerfile.agents` is gone. Both images share the dependency stages, and
+  the agents image now installs the pinned `requirements.lock` like the
+  backend instead of the unpinned requirement files.
+- The release workflow builds each platform natively on a runner of that
+  architecture and joins the results into one manifest, instead of emulating
+  arm64 under QEMU.
+
 ## [0.7.0] - 2026-09-30
 
 ### Added

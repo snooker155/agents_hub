@@ -493,3 +493,118 @@ def test_finalize_task_route(run_state_client, monkeypatch):
     })
     assert resp.status_code == 200
     assert calls == [("run-1", "completed", 0)]
+
+
+# ── delegation: the four calls a container makes to delegate ────────────────
+
+
+def test_direct_delegation_calls_call_the_module_functions(monkeypatch):
+    from common.state_transport import DirectStateTransport
+    from tasks import delegate as mod
+    from managers import run_manager
+
+    calls = []
+    monkeypatch.setattr(mod, "launch_delegation", lambda task_id, req: calls.append(("launch", task_id, req)) or {"ok": True})
+    monkeypatch.setattr(mod, "delegation_status", lambda task_id, run_id: calls.append(("status", task_id, run_id)) or {"run": None})
+    monkeypatch.setattr(run_manager, "get_run_by_id", lambda run_id: {"run_id": run_id})
+    monkeypatch.setattr(run_manager, "stop_run", lambda task_id, run_id=None: calls.append(("stop", task_id, run_id)) or True)
+
+    direct = DirectStateTransport()
+    assert direct.delegate("t1", {"agent_id": "w"}) == {"ok": True}
+    assert direct.delegation_status("c1", "r1") == {"run": None}
+    assert direct.get_run("r1") == {"run_id": "r1"}
+    assert direct.stop_run("c1", "r1") is True
+    assert calls == [("launch", "t1", {"agent_id": "w"}), ("status", "c1", "r1"), ("stop", "c1", "r1")]
+
+
+def test_http_delegate_posts_the_request_with_a_launch_timeout(not_in_container, captured_requests):
+    from common.state_transport import HttpStateTransport
+    HttpStateTransport().delegate("t1", {"agent_id": "w", "input": "x", "depth": 0})
+    call = captured_requests[-1]
+    assert call["method"] == "POST"
+    assert call["url"] == "http://localhost:8000/api/run-state/tasks/t1/delegate"
+    assert call["json"] == {"agent_id": "w", "input": "x", "depth": 0}
+    assert call["headers"] == {"Authorization": "Bearer tok"}
+
+
+def test_http_delegation_status_and_run_reads_are_gets(not_in_container, captured_requests):
+    from common.state_transport import HttpStateTransport
+    http = HttpStateTransport()
+    http.delegation_status("c1", "r1")
+    http.delegation_status("c1", None)
+    http.get_run("r1")
+    urls = [(c["method"], c["url"].split("/api/run-state")[1]) for c in captured_requests[-3:]]
+    assert urls == [("GET", "/tasks/c1/delegation?run_id=r1"), ("GET", "/tasks/c1/delegation"), ("GET", "/runs/r1")]
+
+
+def test_http_stop_run_posts_the_task_id(not_in_container, captured_requests):
+    from common.state_transport import HttpStateTransport
+    HttpStateTransport().stop_run("c1", "r1")
+    call = captured_requests[-1]
+    assert (call["method"], call["json"]) == ("POST", {"task_id": "c1"})
+    assert call["url"].endswith("/runs/r1/stop")
+
+
+def test_http_delegate_returns_none_when_the_backend_is_unreachable(not_in_container, monkeypatch):
+    import sys as _sys
+
+    class _BoomRequests:
+        @staticmethod
+        def request(*a, **kw):
+            raise ConnectionError("no route")
+
+    monkeypatch.setitem(_sys.modules, "requests", _BoomRequests)
+    from common import auth
+    monkeypatch.setattr(auth, "auth_headers", lambda: {})
+    from common.state_transport import HttpStateTransport
+    assert HttpStateTransport().delegate("t1", {"agent_id": "w"}) is None
+    assert HttpStateTransport().stop_run("c1", "r1") is False
+
+
+def test_delegate_route_runs_launch_delegation_as_the_parents_user(run_state_client, monkeypatch):
+    from tasks import delegate as mod
+    from common import identity
+
+    seen = {}
+
+    def fake_launch(task_id, request):
+        seen["task_id"] = task_id
+        seen["request"] = request
+        seen["user"] = identity.current_user_id()
+        return {"ok": True, "task": {"id": "c1"}, "run": {"run_id": "r1"}}
+
+    monkeypatch.setattr(mod, "launch_delegation", fake_launch)
+    resp = run_state_client.post("/api/run-state/tasks/t1/delegate", json={
+        "agent_id": "worker", "input": "part", "depth": 1, "env": {"AGENTS_HUB_DELEGATION_DEPTH": "2"},
+        "caller_agent_id": "lead", "launched_by": "user-7",
+    })
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "task": {"id": "c1"}, "run": {"run_id": "r1"}}
+    assert seen["task_id"] == "t1"
+    assert seen["request"]["agent_id"] == "worker" and seen["request"]["depth"] == 1
+    assert seen["request"]["env"] == {"AGENTS_HUB_DELEGATION_DEPTH": "2"}
+    assert seen["user"] == "user-7"
+
+
+def test_delegate_route_passes_a_refusal_through(run_state_client, monkeypatch):
+    from tasks import delegate as mod
+    monkeypatch.setattr(mod, "launch_delegation", lambda t, r: {"ok": False, "error": "too deep", "code": "too_deep"})
+    resp = run_state_client.post("/api/run-state/tasks/t1/delegate", json={"agent_id": "w", "input": "x"})
+    assert resp.status_code == 200 and resp.json()["code"] == "too_deep"
+
+
+def test_delegation_status_route(run_state_client, monkeypatch):
+    from tasks import delegate as mod
+    monkeypatch.setattr(mod, "delegation_status", lambda task_id, run_id: {"run": {"run_id": run_id}, "task": {"id": task_id}, "output": "o"})
+    resp = run_state_client.get("/api/run-state/tasks/c1/delegation?run_id=r1")
+    assert resp.json() == {"run": {"run_id": "r1"}, "task": {"id": "c1"}, "output": "o"}
+
+
+def test_get_run_and_stop_run_routes(run_state_client, monkeypatch):
+    from managers import run_manager
+    stops = []
+    monkeypatch.setattr(run_manager, "get_run_by_id", lambda run_id: {"run_id": run_id, "status": "running"})
+    monkeypatch.setattr(run_manager, "stop_run", lambda task_id, run_id=None: stops.append((task_id, run_id)) or True)
+    assert run_state_client.get("/api/run-state/runs/r1").json() == {"run": {"run_id": "r1", "status": "running"}}
+    resp = run_state_client.post("/api/run-state/runs/r1/stop", json={"task_id": "c1"})
+    assert resp.json() == {"ok": True} and stops == [("c1", "r1")]

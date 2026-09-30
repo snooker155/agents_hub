@@ -297,3 +297,173 @@ def test_prepare_run_passes_the_model_as_flags(registry, parent):
     assert args[args.index("--model") + 1] == "claude-haiku-4-5"
     plain = prepare_run(str(parent.id), "worker", {})
     assert "--model" not in plain["cli_args"] and "--provider" not in plain["cli_args"]
+
+
+# ── where the launch happens: in-process on a host, on the backend from a container ──
+
+
+class FakeBackend:
+    """Stands in for the ``requests`` module HttpStateTransport uses: records
+    every call and answers the delegation routes the way the backend would."""
+
+    def __init__(self, monkeypatch, *, answer=None, unreachable=False):
+        import sys as _sys
+        self.calls = []
+        self.answer = answer if answer is not None else {
+            "ok": True,
+            "task": {"id": "child-1", "status": "in_progress", "title": "part"},
+            "run": {"run_id": "run-1", "status": "running"},
+            "requested": {},
+            "agent": {"id": "worker", "name": "Worker"},
+        }
+        self.unreachable = unreachable
+        backend = self
+
+        class _Response:
+            def json(self):
+                return backend.answer
+
+        class _Requests:
+            @staticmethod
+            def request(method, url, json=None, headers=None, timeout=None):
+                backend.calls.append({"method": method, "url": url, "json": json, "timeout": timeout})
+                if backend.unreachable:
+                    raise ConnectionError("no route to host")
+                return _Response()
+
+        monkeypatch.setitem(_sys.modules, "requests", _Requests)
+        from common import auth
+        monkeypatch.setattr(auth, "auth_headers", lambda: {"Authorization": "Bearer tok"})
+
+
+@pytest.fixture
+def in_container(monkeypatch):
+    from common import hostnet
+    monkeypatch.setattr(hostnet, "in_container", lambda: True)
+    monkeypatch.delenv("DASHBOARD_PORT", raising=False)
+
+
+def test_on_a_host_the_launch_stays_in_process(registry, parent, monkeypatch):
+    from common import hostnet
+    monkeypatch.setattr(hostnet, "in_container", lambda: False)
+    from common.state_transport import DirectStateTransport
+    assert isinstance(delegation._transport(), DirectStateTransport)
+
+
+def test_inside_a_container_the_backend_launches(registry, parent, monkeypatch, in_container):
+    """The tool decides what to delegate; the backend creates the subtask and
+    launches, so nothing is spawned inside the container itself."""
+    launcher = FakeLauncher(monkeypatch)
+    backend = FakeBackend(monkeypatch)
+    monkeypatch.setenv(delegation.DEPTH_ENV, "1")
+    monkeypatch.setenv("AGENT_RUN_ID", "parent-run")
+
+    out = _call(agent_id="worker", input="do the part", wait=False)
+
+    assert out["ok"] is True
+    assert out["task_id"] == "child-1" and out["run_id"] == "run-1"
+    assert launcher.calls == []  # no in-process launch
+    assert len(backend.calls) == 1
+    call = backend.calls[0]
+    assert call["method"] == "POST"
+    assert call["url"] == f"http://host.docker.internal:8000/api/run-state/tasks/{parent.id}/delegate"
+    body = call["json"]
+    assert body["agent_id"] == "worker" and body["input"] == "do the part"
+    assert body["caller_agent_id"] == "lead" and body["workspace"] == "default"
+    assert body["depth"] == 1
+    assert body["env"] == {delegation.DEPTH_ENV: "2", delegation.PARENT_RUN_ENV: "parent-run"}
+    assert body["launched_by"]
+
+
+def test_inside_a_container_a_refusal_from_the_backend_is_the_tools_refusal(registry, parent, monkeypatch, in_container):
+    FakeBackend(monkeypatch, answer={"ok": False, "error": "Agent not found", "code": "not_found",
+                                     "agent_id": "ghost"})
+    out = _call(agent_id="ghost", input="x")
+    assert out["ok"] is False and out["code"] == "not_found" and out["agent_id"] == "ghost"
+
+
+def test_inside_a_container_an_unreachable_backend_is_a_refusal_not_a_local_launch(
+        registry, parent, monkeypatch, in_container):
+    launcher = FakeLauncher(monkeypatch)
+    FakeBackend(monkeypatch, unreachable=True)
+    out = _call(agent_id="worker", input="do the part")
+    assert out["ok"] is False and out["code"] == "unreachable"
+    assert launcher.calls == []
+
+
+def test_inside_a_container_the_wait_polls_the_backend(registry, parent, monkeypatch, in_container):
+    backend = FakeBackend(monkeypatch)
+    monkeypatch.setattr(delegation, "POLL_SECONDS", 0.01)
+    states = iter([
+        {"run": {"run_id": "run-1", "status": "running"}, "task": {"id": "child-1", "status": "in_progress"}, "output": ""},
+        {"run": {"run_id": "run-1", "status": "completed", "provider": "openai", "model": "gpt-4o"},
+         "task": {"id": "child-1", "status": "done"}, "output": "the answer"},
+    ])
+    launch_answer = dict(backend.answer)
+
+    class _Router:
+        """Answer the launch, then each poll from the states above."""
+        def json(self):
+            return None
+
+    def request(method, url, json=None, headers=None, timeout=None):
+        backend.calls.append({"method": method, "url": url, "json": json})
+        resp = _Router()
+        if url.endswith("/delegate"):
+            resp.json = lambda: launch_answer
+        elif "/delegation" in url:
+            resp.json = lambda: next(states)
+        else:
+            resp.json = lambda: {"run": {"run_id": "parent-run", "status": "running"}}
+        return resp
+
+    import sys as _sys
+    _sys.modules["requests"].request = staticmethod(request)
+
+    out = _call(agent_id="worker", input="do the part")
+    assert out["ok"] is True and out["finished"] is True
+    assert out["output"] == "the answer" and out["model"] == "gpt-4o"
+    polls = [c for c in backend.calls if "/delegation" in c["url"]]
+    assert len(polls) == 2
+    assert polls[0]["url"] == "http://host.docker.internal:8000/api/run-state/tasks/child-1/delegation?run_id=run-1"
+
+
+def test_the_backend_side_launches_exactly_as_the_tool_did(registry, parent, monkeypatch):
+    """tasks.delegate.launch_delegation is what the route runs: the same
+    subtask, the same launch, the same child environment."""
+    from tasks.delegate import launch_delegation
+    launcher = FakeLauncher(monkeypatch)
+
+    out = launch_delegation(str(parent.id), {
+        "agent_id": "worker", "input": "do the part", "model": "openai/gpt-4o-mini",
+        "workspace": "default", "caller_agent_id": "lead", "depth": 0,
+        "env": {delegation.DEPTH_ENV: "1", delegation.PARENT_RUN_ENV: "parent-run"},
+    })
+
+    assert out["ok"] is True
+    assert out["agent"] == {"id": "worker", "name": "Worker"}
+    assert out["requested"] == {"provider": "openai", "model": "gpt-4o-mini"}
+    assert out["task"]["parent_id"] == str(parent.id)
+    assert out["run"]["run_id"] == launcher.calls[0]["run_id"]
+    assert launcher.calls[0]["env"][delegation.DEPTH_ENV] == "1"
+    assert launcher.calls[0]["env"][delegation.PARENT_RUN_ENV] == "parent-run"
+
+
+def test_the_backend_side_applies_the_callers_allowlist(registry, parent, monkeypatch):
+    from tasks.delegate import launch_delegation
+    launcher = FakeLauncher(monkeypatch)
+    out = launch_delegation(str(parent.id), {
+        "agent_id": "lead", "input": "x", "caller_agent_id": "picky", "depth": 0, "env": {},
+    })
+    assert out["ok"] is False and out["code"] == "forbidden"
+    assert launcher.calls == []
+
+
+def test_delegation_status_reads_the_run_the_task_and_the_result(registry, parent, monkeypatch):
+    from tasks.delegate import delegation_status, launch_delegation
+    FakeLauncher(monkeypatch, output="the answer")
+    launched = launch_delegation(str(parent.id), {"agent_id": "worker", "input": "part", "depth": 0, "env": {}})
+    snap = delegation_status(launched["task"]["id"], launched["run"]["run_id"])
+    assert snap["run"]["status"] == "completed"
+    assert snap["task"]["id"] == launched["task"]["id"]
+    assert snap["output"] == "the answer"

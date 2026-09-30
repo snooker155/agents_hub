@@ -228,7 +228,10 @@ A task can be pinned to a stored agent version via `agent_version`; `null` means
   purpose: tracked work goes through assign and start, or through
   `delegate_task_tool`, which hands one part to another agent as a subtask run
   (optionally on a model picked from the catalog) and returns its output, so
-  the delegation stays visible under the parent task.
+  the delegation stays visible under the parent task. From a run in a
+  container the launch is made by the backend, so the delegate gets its own
+  container rather than a process inside the parent's (docs/containers.md,
+  "Delegation from a container").
 - A task's workspace is fixed at creation and decides where its files land.
 - An agent's `update_task` call is checked against the transition table above;
   a move the table does not grant to `agent` fails with `IllegalTransition`
