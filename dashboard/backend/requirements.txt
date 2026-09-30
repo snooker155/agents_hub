@@ -13,6 +13,9 @@ pypdf>=6.7
 authlib>=1.6
 cryptography>=42
 
+# GET /api/views/{id}/export/pptx builds the file with views/slides_pptx.py.
+python-pptx>=1.0.2
+
 # Optional: only needed when AGENTS_HUB_BROKER_URL is set, for the
 # cross-replica session-broker bridge (common/broker_bridge.py, docs/scaling.md).
 # A plain requirements.txt has no "extra" mechanism, so this stays commented

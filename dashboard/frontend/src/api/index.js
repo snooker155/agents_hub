@@ -958,6 +958,8 @@ export const listViews = (params = {}) => api.get('/views', { params });
 export const getView = (viewId) => api.get(`/views/${viewId}`);
 export const setViewState = (viewId, state) => api.patch(`/views/${viewId}/state`, { state });
 export const deleteView = (viewId) => api.delete(`/views/${viewId}`);
+// A slides view as a .pptx (views/slides_pptx.py), as a Blob through the authenticated client.
+export const exportViewPptx = (viewId) => api.get(`/views/${viewId}/export/pptx`, { responseType: 'blob' });
 export const viewAssetUrl = (viewId, path) =>
   `${api.defaults.baseURL}/views/${viewId}/assets/${String(path).split('/').map(encodeURIComponent).join('/')}`;
 // Visualization Studio: live views built by the visualizer agent via ops.

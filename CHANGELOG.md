@@ -13,6 +13,47 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Slide decks with layouts, themes and PowerPoint export (docs/views.md,
+  "Slides"). A slide has a `layout`: `title`, `section`, `content`,
+  `two_column`, `stats`, `cards`, `timeline`, `quote`, `image_left`,
+  `image_right` or `image_full`, with `subtitle`, an emoji `icon`, `image`
+  (a view asset or a URL), `columns`, `items` (value, title, text, icon),
+  a per-slide `accent` and speaker `notes`. A deck has a `theme` (`light`,
+  `dark`, `corporate`, `ocean`, `sunset`, `forest`, `mono`), an `accent`,
+  a `footer` and slide numbers. The viewer draws a 16:9 stage scaled to the
+  frame, shrinks text that does not fit, and has thumbnails, speaker notes, a
+  full-screen presentation mode and keys (arrows, Home/End, F, N). PDF prints
+  one 16:9 page per slide; PPTX downloads `GET /api/views/{id}/export/pptx`,
+  built by `views/slides_pptx.py` with the same layouts and palette
+  (`views/slide_themes.json`). New agent tools: `slides_style` sets the look,
+  `slides_add` takes the layout fields and replaces a slide by id, and
+  `slides_export` writes the deck into the workspace as .pptx. New dependency
+  `python-pptx` (with Pillow and lxml).
+
+### Fixed
+
+- A slides view accepted slides in any shape and the renderer, which draws a
+  title and a markdown `body` and nothing else, showed a deck written with
+  `bullets` or a structured `body` as bare titles. A slide is now a closed
+  schema checked on `create_view` and on every op batch, with an error that
+  names the slide and says how to write it; `create_view` and the visualizer's instructions say to build a
+  deck with `slides_add`, one slide per call, and to put the caller's material
+  on the slides rather than generic phrasing. The main agent collects the
+  material for a presentation, overview or "what's new" about the service
+  itself with `search_docs` / `read_doc` before delegating, and CHANGELOG.md
+  is in the documentation corpus as `changelog` (an index entry may name a
+  `path` from the repository root). The corpus is reread when a file changes,
+  so a long-lived runner replica sees an edited CHANGELOG.md, and `read_doc`
+  on a listed document whose file cannot be read returns an `unreadable` error
+  instead of empty content, which the agent used to report as an empty page.
+  The documentation site publishes it too, as Changelog in the top navigation
+  and under Start here; its build, which failed on the new entry and on a link
+  to the removed nodes page, passes again. The dashboard's Docs page has a Changelog
+  section under Start here that shows the same file through
+  `GET /api/docs/{id}`, so it needs no copy of its own.
+
 ## [0.6.0] - 2026-09-30
 
 ### Added

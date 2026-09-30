@@ -148,6 +148,55 @@ def test_create_view_tool(tmp_path):
     assert esc["ok"] is False and "escapes workspace" in esc["error"]
 
 
+def test_created_view_becomes_the_runs_target(tmp_path):
+    """A run with no Studio view (a chat, a delegated worker) creates one and
+    builds it: the mutation tools act on the view it made, without its id."""
+    import json
+    from common.agent_context import current_view_binding
+    from tools.views import create_view_tools, view_apply_ops
+
+    create = create_view_tools(workspace=str(tmp_path))[0]
+    # Outside a run there is nothing to bind, and the refusal says what to do.
+    lost = json.loads(view_apply_ops.invoke({"ops": "[]"}))
+    assert lost["ok"] is False and "create_view" in lost["error"]
+
+    binding: dict = {}
+    token = current_view_binding.set(binding)
+    try:
+        made = json.loads(create.invoke({
+            "view_kind": "scene3d", "title": "Cube", "spec": "{}", "summary": "a cube",
+        }))
+        assert made["ok"] and made["active"] is True
+        applied = json.loads(view_apply_ops.invoke({"ops": json.dumps([
+            {"op": "add", "path": "spec.lights.key", "value": {"type": "directional"}},
+        ])}))
+        assert applied["ok"] and applied["view_id"] == made["view_id"]
+        assert binding["created"] == [made["view_id"]]
+    finally:
+        current_view_binding.reset(token)
+    assert get_view(made["view_id"])["spec"]["lights"]["key"]["type"] == "directional"
+
+
+def test_first_named_view_becomes_the_runs_target(tmp_path):
+    """A worker asked to continue view X names it once; later calls follow."""
+    import json
+    from common.agent_context import current_view_binding
+    from tools.views import view_apply_ops
+
+    env = create_view("graph", "G", {"nodes": {}, "edges": {}}, summary="g")
+    token = current_view_binding.set({})
+    try:
+        first = json.loads(view_apply_ops.invoke({"ops": json.dumps([
+            {"op": "add", "path": "spec.nodes.a", "value": {"label": "A"}},
+        ]), "view_id": env.view_id}))
+        then = json.loads(view_apply_ops.invoke({"ops": json.dumps([
+            {"op": "add", "path": "spec.nodes.b", "value": {"label": "B"}},
+        ])}))
+    finally:
+        current_view_binding.reset(token)
+    assert first["ok"] and then["ok"] and then["view_id"] == env.view_id
+
+
 # ── inline publish path (parse → persist → view_ref) ──────────────────────────
 
 def _view_block(view_kind, spec_json, summary="s"):
@@ -625,6 +674,35 @@ def test_slides_and_document_kinds():
     assert {"slides", "document"} <= set(SUPPORTED_KINDS)
     assert validate_spec("document", {"markdown": "# Hi", "title": "T"})["title"] == "T"
     assert "slides" in validate_spec("slides", {"slides": {}})
+
+
+def test_slides_spec_rejects_a_slide_the_renderer_cannot_draw():
+    """The renderer draws title + markdown body and nothing else. A deck
+    written with bullets or a structured body used to validate and then show
+    as bare titles (the "presentation with no content" incident)."""
+    from views.models import ViewValidationError, validate_spec
+    ok = validate_spec("slides", {"slides": [{"title": "T", "body": "- a\n- b"}]})
+    assert ok["slides"][0]["body"] == "- a\n- b"
+    for bad in (
+        {"slides": [{"title": "T", "bullets": ["a", "b"]}]},
+        {"slides": [{"title": "T", "body": {"format": "title_only"}}]},
+        {"slides": {"s1": {"title": "", "body": ""}}},
+    ):
+        with pytest.raises(ViewValidationError) as exc:
+            validate_spec("slides", bad)
+        assert "slides_add" in str(exc.value) or "markdown" in str(exc.value)
+
+
+def test_view_apply_ops_refuses_a_malformed_slide():
+    import json
+    from views.store import create_live_view, get_view
+    from tools.views import view_apply_ops
+    vid = create_live_view("slides", "Deck").view_id
+    _bind_view(vid)
+    res = json.loads(view_apply_ops.invoke({"ops": json.dumps([
+        {"op": "add", "path": "spec.slides.s1", "value": {"title": "T", "bullets": ["a"]}}])}))
+    assert res["ok"] is False and "markdown" in res["error"]
+    assert get_view(vid)["spec"]["slides"] == {}, "a refused batch must not be applied"
 
 
 def test_slides_add_tool_orders():

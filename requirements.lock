@@ -222,6 +222,8 @@ langsmith==0.13.0
     #   langchain
     #   langchain-community
     #   langchain-core
+lxml==6.1.3
+    # via python-pptx
 markdown-it-py==4.2.0
     # via rich
 marshmallow==3.26.2
@@ -256,6 +258,8 @@ packaging==24.2
     #   langfuse
     #   langsmith
     #   marshmallow
+pillow==12.3.0
+    # via python-pptx
 propcache==0.5.4
     # via
     #   aiohttp
@@ -323,6 +327,10 @@ python-multipart==0.0.32
     # via
     #   -r dashboard/backend/requirements.txt
     #   mcp
+python-pptx==1.0.2
+    # via
+    #   -r dashboard/backend/requirements.txt
+    #   -r requirements-agents.txt
 pywin32==312 ; sys_platform == 'win32'
     # via mcp
 pyyaml==6.0.3
@@ -417,6 +425,7 @@ typing-extensions==4.16.0
     #   openai
     #   pydantic
     #   pydantic-core
+    #   python-pptx
     #   referencing
     #   sqlalchemy
     #   starlette
@@ -449,6 +458,8 @@ websockets==17.1
     #   langsmith
 wrapt==1.17.3
     # via langfuse
+xlsxwriter==3.2.9
+    # via python-pptx
 xxhash==4.0.1
     # via langsmith
 yarl==1.25.1

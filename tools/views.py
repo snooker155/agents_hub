@@ -21,7 +21,9 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, model_validator
 from langchain_core.tools import tool
 
-from common.agent_context import current_session_id, current_task_id, current_view_id
+from common.agent_context import (
+    current_session_id, current_task_id, current_view_binding, current_view_id,
+)
 from common.entity_sink import record_entity
 from common.workspace_context import workspace_name_from_path
 from views.models import ViewValidationError, SUPPORTED_KINDS
@@ -128,12 +130,17 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
     @tool("create_view", args_schema=CreateViewInput)
     def create_view(view_kind: str, title: str, spec: str, summary: str = "",
                     data: str = "", files: str = "", complexity: str = "inline") -> str:
-        """Create a rich view (chart, table, diagram, markdown, image, code) from a spec.
+        """Create a rich view (chart, table, diagram, markdown, image, code, slides, document) from a spec.
 
         Use this for a view too large or multi-file for an inline block — a big
         dataset, an image, or a composed scene. Write any asset files first with
         write_file, then list them in ``files``. Returns the new ``view_id`` on
         success, or a validation error to fix and retry.
+
+        Slides: create the deck empty, spec ``{"slides": {}}``, then add every
+        slide with ``slides_add(title, body)`` where ``body`` is the slide's
+        content as markdown. A slide has no other fields: bullets, subtitles
+        and captions go into ``body`` as markdown; anything else is rejected.
         """
         parsed_spec = _loads(spec, None)
         if not isinstance(parsed_spec, dict):
@@ -174,8 +181,14 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
             return json.dumps({"ok": False, "error": f"could not create view: {exc}"}, ensure_ascii=False)
 
         record_entity("view", env.view_id, "created", env.title)
-        return json.dumps({"ok": True, "view_id": env.view_id, "kind": env.kind,
-                           "title": env.title, "assets": env.assets}, ensure_ascii=False)
+        active = _bind_created_view(env.view_id)
+        out = {"ok": True, "view_id": env.view_id, "kind": env.kind,
+               "title": env.title, "assets": env.assets}
+        if active:
+            out["active"] = True
+            out["note"] = ("This is now the active view: the view, scene and mesh "
+                           "tools act on it without a view_id.")
+        return json.dumps(out, ensure_ascii=False)
 
     class AddAssetInput(JsonArgsModel):
         path: str = Field(..., description="Workspace-relative path of a file (image/model) to bind into the view.")
@@ -208,7 +221,70 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
         record_entity("view", vid, "updated")
         return json.dumps({"ok": True, "view_id": vid, "asset": ref}, ensure_ascii=False)
 
-    return [create_view, view_add_asset]
+    class SlidesExportInput(JsonArgsModel):
+        path: str = Field("", description=(
+            "Workspace-relative destination ending in .pptx, e.g. 'presentations/whats-new.pptx'. "
+            "Defaults to presentations/<title>.pptx."))
+        view_id: str = Field("", description="The slides view; defaults to the active view.")
+
+    @tool("slides_export", args_schema=SlidesExportInput)
+    def slides_export(path: str = "", view_id: str = "") -> str:
+        """Write a slides view into the workspace as a PowerPoint (.pptx) file.
+
+        Use it when the user wants a PowerPoint file, or a file to send on. The
+        file carries the same layouts, theme, images and speaker notes as the
+        view; the user can also download it from the view itself.
+        """
+        vid = _resolve_vid(view_id)
+        if not vid:
+            return _no_view()
+        if ws_abs is None:
+            return json.dumps({"ok": False, "error": "this agent has no workspace to export into"})
+        view = _get_view(vid)
+        if not view:
+            return json.dumps({"ok": False, "error": f"view not found: {vid}"})
+        if view.get("kind") != "slides":
+            return json.dumps({"ok": False, "error": f"view {vid} is a {view.get('kind')} view, not slides"})
+        from views.slides_pptx import build_pptx, pptx_filename
+        rel = str(path or "").strip() or f"presentations/{pptx_filename(view.get('title') or 'slides')}"
+        if not rel.lower().endswith(".pptx"):
+            rel += ".pptx"
+        dest = (ws_abs / rel).resolve()
+        if ws_abs != dest and ws_abs not in dest.parents:
+            return json.dumps({"ok": False, "error": f"path escapes workspace: {rel}"})
+        try:
+            data, warnings = build_pptx(view, with_warnings=True)
+        except Exception as exc:  # noqa: BLE001 - reported to the agent, never a crashed turn
+            return json.dumps({"ok": False, "error": f"could not build the .pptx: {exc}"}, ensure_ascii=False)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        _register_workspace_file(workspace, rel)
+        record_entity("file", rel, "created")
+        out = {"ok": True, "view_id": vid, "path": rel, "bytes": len(data),
+               "slides": len((view.get("spec") or {}).get("slides") or {})}
+        if warnings:
+            out["warnings"] = warnings
+        return json.dumps(out, ensure_ascii=False)
+
+    return [create_view, view_add_asset, slides_export]
+
+
+def _register_workspace_file(workspace: Optional[str], rel: str) -> None:
+    """Make an exported file a workspace file, the way the filesystem tools do.
+    Best-effort: the file is written either way."""
+    try:
+        from tools.filesystem_langchain import _registry_target
+        target = _registry_target(workspace)
+        if target is None:
+            return
+        from files import service as files_service
+        from tools.workspace_files import agent_provenance
+        reg_ws, prefix = target
+        meta = agent_provenance()
+        files_service.register_path(reg_ws, f"{prefix}{rel}", source="agent",
+                                    created_by=meta.get("agent_id"), meta=meta)
+    except Exception:  # noqa: BLE001 - bookkeeping only
+        pass
 
 
 # ── live-view mutation tools (Studio) ─────────────────────────────────────────
@@ -221,12 +297,40 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
 # generalized to every view kind).
 
 def _resolve_vid(view_id: str) -> str:
-    return (view_id or "").strip() or (current_view_id.get() or "")
+    explicit = (view_id or "").strip()
+    studio = current_view_id.get()
+    binding = current_view_binding.get()
+    if explicit:
+        # The first view a run names becomes its default target, so a worker
+        # asked to continue view X passes the id once, not on every call.
+        if binding is not None and not binding.get("id") and not studio:
+            binding["id"] = explicit
+        return explicit
+    # The Studio binding first: a conversation bound to a view edits that view.
+    if studio:
+        return studio
+    return str((binding or {}).get("id") or "")
+
+
+def _bind_created_view(view_id: str) -> bool:
+    """Make a view this run just created the default target of the mutation
+    tools, unless the run is bound to a Studio view. Returns whether it did."""
+    binding = current_view_binding.get()
+    if binding is None:
+        return False
+    # Every view the run made, so a delegating caller can be told about them.
+    binding.setdefault("created", []).append(view_id)
+    if current_view_id.get():
+        return False
+    binding["id"] = view_id
+    return True
 
 
 def _no_view() -> str:
     return json.dumps({"ok": False, "error": (
-        "no active view — open a view in the Studio, or pass view_id")})
+        "no active view: create one first with create_view (view_kind 'scene3d' "
+        "for a 3D object or scene, spec {}), then build it; or pass view_id to "
+        "continue a view that already exists")})
 
 
 def _run_id() -> str:
@@ -894,10 +998,34 @@ def view_link(views: str = "", timebase: str = "", selection: bool = True, view_
 
 # ── publishing: slides / document (Phase 4) ───────────────────────────────────
 
+def _layouts_help() -> str:
+    from views.models import SLIDE_LAYOUTS
+    return "; ".join(f"{k}: {v}" for k, v in SLIDE_LAYOUTS.items())
+
+
 class SlidesAddInput(JsonArgsModel):
     title: str = Field(..., description="Slide title.")
-    body: str = Field("", description="Slide body as markdown.")
-    slide_id: str = Field("", description="Optional stable slide id (auto if omitted).")
+    body: str = Field("", description="Slide content as markdown: bullets, **bold**, tables, links.")
+    layout: str = Field("content", description="How the slide is arranged. " + _layouts_help())
+    subtitle: str = Field("", description="Subtitle (title/section/image_full), sub-heading, or a quote's attribution.")
+    icon: str = Field("", description="One emoji shown with the title, e.g. 🚀.")
+    items: str = Field("", description=(
+        "stats/cards/timeline only: a JSON array of {\"icon\": emoji, \"title\": str, "
+        "\"text\": markdown, \"value\": big number or date}."))
+    columns: str = Field("", description="two_column only: a JSON array of exactly two markdown strings.")
+    image: str = Field("", description="image_* layouts: 'asset://name' from view_add_asset, or an https URL.")
+    caption: str = Field("", description="Optional caption under the image.")
+    accent: str = Field("", description="Optional #rrggbb accent for this slide only.")
+    notes: str = Field("", description="Speaker notes (shown in presenter view and in the .pptx notes).")
+    slide_id: str = Field("", description="Stable slide id. An existing id replaces that slide in place.")
+    view_id: str = Field("", description="Target view; defaults to the active Studio view.")
+
+
+class SlidesStyleInput(JsonArgsModel):
+    theme: str = Field("", description="Deck theme: light, dark, corporate, ocean, sunset, forest or mono.")
+    accent: str = Field("", description="Optional #rrggbb replacing the theme's accent colour.")
+    footer: str = Field("", description="Small text at the bottom of every content slide, e.g. the date or team.")
+    numbers: str = Field("", description="'true' or 'false': show slide numbers.")
     view_id: str = Field("", description="Target view; defaults to the active Studio view.")
 
 
@@ -909,23 +1037,91 @@ class DocumentSetInput(JsonArgsModel):
 
 
 @tool("slides_add", args_schema=SlidesAddInput)
-def slides_add(title: str, body: str = "", slide_id: str = "", view_id: str = "") -> str:
-    """Append a slide (title + markdown body) to a live slides view.
+def slides_add(title: str, body: str = "", layout: str = "content", subtitle: str = "",
+               icon: str = "", items: str = "", columns: str = "", image: str = "",
+               caption: str = "", accent: str = "", notes: str = "", slide_id: str = "",
+               view_id: str = "") -> str:
+    """Add one slide to a live slides view, or replace the slide with ``slide_id``.
 
-    Build a deck one slide at a time; slides present in insertion order.
+    Build a deck one slide at a time; slides present in insertion order. Pick a
+    layout per slide so the deck is not a wall of bullets: a ``title`` cover, a
+    ``section`` divider between parts, ``stats`` for numbers, ``cards`` for a set
+    of features, ``timeline`` for steps or releases, ``two_column`` to compare,
+    ``quote`` for a quotation, ``image_*`` around a picture. A slide is refused
+    with the reason when its layout is missing what it draws.
     """
     vid = _resolve_vid(view_id)
     if not vid:
         return _no_view()
     doc = _get_view(vid) or {}
     existing = (doc.get("spec") or {}).get("slides") or {}
-    order = len(existing) if isinstance(existing, (dict, list)) else 0
+    ops: list = []
+    if isinstance(existing, list):
+        # A deck created whole as a list: key it first, or the path op below
+        # would replace the list with a one-slide map.
+        keyed = {}
+        for i, sl in enumerate(existing):
+            if isinstance(sl, dict):
+                keyed[str(sl.get("id") or f"s_{i}")] = {**sl, "order": sl.get("order", i)}
+        ops.append({"op": "update", "path": "spec.slides", "value": keyed})
+        existing = keyed
     sid = str(slide_id).strip()
     if not sid:
         import uuid
         sid = "s_" + uuid.uuid4().hex[:8]
-    return _apply(vid, [{"op": "add", "path": f"spec.slides.{sid}",
-                         "value": {"title": title, "body": body, "order": order}}])
+    prior = existing.get(sid) if isinstance(existing, dict) else None
+    if isinstance(prior, dict):
+        order = prior.get("order", 0)
+    else:
+        orders = [v.get("order", 0) for v in existing.values() if isinstance(v, dict)] if isinstance(existing, dict) else []
+        order = (max(orders) + 1) if orders else 0
+    slide: dict = {"title": title, "body": body, "layout": (layout or "content").strip(), "order": order}
+    for key, val in (("subtitle", subtitle), ("icon", icon), ("image", image), ("caption", caption),
+                     ("accent", accent), ("notes", notes)):
+        if str(val or "").strip():
+            slide[key] = str(val).strip() if key != "notes" else str(val)
+    parsed_items = _loads(items, [])
+    if parsed_items:
+        if not isinstance(parsed_items, list):
+            return json.dumps({"ok": False, "error": "items must be a JSON array of objects"})
+        slide["items"] = parsed_items
+    parsed_cols = _loads(columns, [])
+    if parsed_cols:
+        if not isinstance(parsed_cols, list):
+            return json.dumps({"ok": False, "error": "columns must be a JSON array of two markdown strings"})
+        slide["columns"] = [str(c) for c in parsed_cols]
+    ops.append({"op": "add", "path": f"spec.slides.{sid}", "value": slide})
+    out = json.loads(_apply(vid, ops))
+    if out.get("ok"):
+        out["slide_id"] = sid
+        out["replaced"] = isinstance(prior, dict)
+    return json.dumps(out, ensure_ascii=False)
+
+
+@tool("slides_style", args_schema=SlidesStyleInput)
+def slides_style(theme: str = "", accent: str = "", footer: str = "", numbers: str = "",
+                 view_id: str = "") -> str:
+    """Set the deck's look: theme, accent colour, footer text, slide numbers.
+
+    Set it once, before or after the slides; every slide follows it, in the
+    browser, in the PDF and in the .pptx export.
+    """
+    vid = _resolve_vid(view_id)
+    if not vid:
+        return _no_view()
+    ops = []
+    if theme.strip():
+        ops.append({"op": "update", "path": "spec.theme", "value": theme.strip().lower()})
+    if accent.strip():
+        ops.append({"op": "update", "path": "spec.accent", "value": accent.strip()})
+    if footer.strip():
+        ops.append({"op": "update", "path": "spec.footer", "value": footer.strip()})
+    if str(numbers).strip():
+        ops.append({"op": "update", "path": "spec.numbers",
+                    "value": str(numbers).strip().lower() not in ("false", "0", "no", "off")})
+    if not ops:
+        return json.dumps({"ok": False, "error": "nothing to set: pass theme, accent, footer or numbers"})
+    return _apply(vid, ops)
 
 
 @tool("document_set", args_schema=DocumentSetInput)
@@ -1019,7 +1215,7 @@ VIEW_MUTATION_TOOLS = [
     graph_add_node, graph_add_edge, graph_remove, graph_set_layout,
     scene_camera, scene_light, scene_environment,
     view_set_timeline, sim_configure, math_plot, view_annotate, view_link,
-    slides_add, document_set, view_compute, view_serve, view_serve_stop,
+    slides_add, slides_style, document_set, view_compute, view_serve, view_serve_stop,
     suggest_view,
 ]
 

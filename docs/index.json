@@ -932,7 +932,7 @@
     {
       "id": "views",
       "title": "Views and Studio",
-      "summary": "A view is something an agent built to be looked at: a chart, a graph, a table, a 3D scene, a simulation, a slide deck or a document.",
+      "summary": "A view is something an agent built to be looked at: a chart, a graph, a table, a 3D scene, a simulation, a slide deck (with layouts, themes, PDF and PowerPoint export) or a document.",
       "surface": "Views & Studio",
       "related": [
         "agents",
@@ -942,6 +942,7 @@
         "Getting one",
         "Studio",
         "What views can do",
+        "Slides",
         "Gotchas"
       ]
     },

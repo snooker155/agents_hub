@@ -1,5 +1,16 @@
 export default {
-  emptyDeckTheAgentWill: 'Leeres Deck — der Agent fügt Folien hinzu.',
+  emptyDeckTheAgentWill: 'Leeres Deck. Der Agent fügt Folien hinzu.',
   exportPdf: 'Als PDF exportieren',
   pdf: 'PDF',
+  pptx: 'PPTX',
+  exportPptx: 'Als PowerPoint herunterladen (.pptx)',
+  exporting: 'Wird exportiert…',
+  exportFailed: 'Die .pptx-Datei konnte nicht erstellt werden.',
+  present: 'Vollbild-Präsentation (F)',
+  exitPresent: 'Vollbild beenden',
+  thumbnails: 'Folienübersicht',
+  notes: 'Sprechernotizen (N)',
+  noNotes: 'Keine Notizen zu dieser Folie.',
+  prev: 'Vorherige Folie',
+  next: 'Nächste Folie',
 };

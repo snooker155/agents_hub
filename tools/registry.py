@@ -112,6 +112,8 @@ _CATALOG_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "sim_configure": {"name": "Configure Simulation"},
     "view_annotate": {"name": "Annotate View"},
     "slides_add": {"name": "Slides: Add Slide"},
+    "slides_style": {"name": "Slides: Set Theme"},
+    "slides_export": {"name": "Slides: Export .pptx", "requires_workspace": True},
     "document_set": {"name": "Document: Set Body"},
     "view_compute": {"name": "Compute (precise)"},
     "fetch_url": {"name": "Fetch URL"},

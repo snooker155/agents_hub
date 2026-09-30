@@ -17,9 +17,12 @@ routes for its version, run and save-to-project history.
 """
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 class ViewValidationError(ValueError):
@@ -168,12 +171,151 @@ class ProcessSpec(BaseModel):
     lanes: Union[Dict[str, Any], List[Any]] = {}
 
 
+#: Slide themes: ``views/slide_themes.json`` is the palette the browser renderer
+#: (a copy in dashboard/frontend/src/views/slideThemes.json, kept equal by a
+#: test) and the .pptx export both paint with.
+SLIDE_THEMES: Dict[str, Dict[str, str]] = json.loads(
+    (Path(__file__).with_name("slide_themes.json")).read_text(encoding="utf-8"))
+
+#: What each slide layout draws. The renderer and the .pptx export implement
+#: exactly these; the agent-facing docs (slides_add) list them from here.
+SLIDE_LAYOUTS: Dict[str, str] = {
+    "title": "cover slide: big title, subtitle, optional icon, on the theme's hero background",
+    "section": "section divider: title and subtitle on the accent colour",
+    "content": "title plus a markdown body (the default)",
+    "two_column": "title plus two markdown columns side by side (columns: exactly 2)",
+    "image_left": "image on the left half, title and markdown body on the right (image required)",
+    "image_right": "title and markdown body on the left, image on the right half (image required)",
+    "image_full": "full-bleed image with the title and subtitle over it (image required)",
+    "quote": "a large quotation (body) with the attribution in subtitle",
+    "stats": "big numbers: items with value (the number), title (label) and text (1 to 4 items)",
+    "cards": "a grid of cards: items with icon, title and text (1 to 6 items)",
+    "timeline": "a horizontal timeline: items with value (date or step), title and text (1 to 8 items)",
+}
+_ITEM_LIMITS = {"stats": 4, "cards": 6, "timeline": 8}
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+_LATIN = re.compile(r"[A-Za-z]")
+
+
+def _check_icon(icon: str, where: str) -> None:
+    if icon and (len(icon) > 16 or _LATIN.search(icon)):
+        raise ValueError(f"{where}: icon is a single emoji such as 🚀 or 📊, not a name ({icon!r})")
+
+
+class SlideItem(BaseModel):
+    """One entry of a ``stats``, ``cards`` or ``timeline`` slide."""
+    model_config = ConfigDict(extra="forbid")
+
+    icon: str = Field("", description="An emoji.")
+    title: str = ""
+    text: str = Field("", description="Short markdown text.")
+    value: str = Field("", description="The big number (stats) or the date/step (timeline).")
+
+
+class Slide(BaseModel):
+    """One slide. ``layout`` picks the arrangement (:data:`SLIDE_LAYOUTS`);
+    ``body`` and ``columns`` are markdown; ``items`` feed the stats, cards and
+    timeline layouts. The model is closed: a field the renderer does not draw
+    is rejected at write time instead of silently disappearing on screen."""
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = ""
+    subtitle: str = ""
+    body: str = Field("", description="Slide content as markdown (bullets, bold, tables, links).")
+    layout: str = "content"
+    icon: str = Field("", description="An emoji shown with the title.")
+    image: str = Field("", description="A view asset (asset://name from view_add_asset) or an https URL.")
+    caption: str = ""
+    columns: List[str] = Field(default_factory=list, description="two_column: exactly two markdown columns.")
+    items: List[SlideItem] = Field(default_factory=list)
+    accent: str = Field("", description="Optional #rrggbb accent for this slide.")
+    notes: str = Field("", description="Speaker notes; not shown on the slide.")
+    order: int = 0
+    id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _layout_has_what_it_draws(self) -> "Slide":
+        where = f"slide {self.id or self.title or '?'}"
+        if self.layout not in SLIDE_LAYOUTS:
+            raise ValueError(f"{where}: unknown layout {self.layout!r}; one of {', '.join(SLIDE_LAYOUTS)}")
+        if self.accent and not _HEX.match(self.accent):
+            raise ValueError(f"{where}: accent must be a #rrggbb colour")
+        _check_icon(self.icon, where)
+        for it in self.items:
+            _check_icon(it.icon, where)
+        lay = self.layout
+        if lay in ("title", "section") and not self.title.strip():
+            raise ValueError(f"{where}: a {lay} slide needs a title")
+        if lay == "two_column" and (len(self.columns) != 2 or not any(c.strip() for c in self.columns)):
+            raise ValueError(f"{where}: two_column needs columns with exactly two markdown strings")
+        if lay.startswith("image_") and not self.image.strip():
+            raise ValueError(f"{where}: {lay} needs an image (view_add_asset a workspace file, then image='asset://name')")
+        if lay == "quote" and not self.body.strip():
+            raise ValueError(f"{where}: a quote slide puts the quotation in body")
+        if lay in _ITEM_LIMITS:
+            limit = _ITEM_LIMITS[lay]
+            if not 1 <= len(self.items) <= limit:
+                raise ValueError(f"{where}: {lay} takes 1 to {limit} items, got {len(self.items)}")
+            if any(not (it.title.strip() or it.value.strip()) for it in self.items):
+                raise ValueError(f"{where}: every {lay} item needs a title or a value")
+        if lay == "content" and not (self.title.strip() or self.body.strip()):
+            raise ValueError(
+                f"{where} has neither a title nor a body; "
+                "the deck is built with slides_add(title, body) where body is markdown")
+        return self
+
+
 class SlidesSpec(BaseModel):
-    """A slide deck. ``slides`` is a keyed map ``{id: {title, body(markdown),
-    order}}`` (a list is also accepted) so it can be built incrementally; the
-    renderer presents them in ``order`` with prev/next and a print/PDF path."""
-    slides: Union[Dict[str, Any], List[Any]] = {}
+    """A slide deck. ``slides`` is a keyed map ``{id: Slide}`` (a list is also
+    accepted) so it can be built incrementally; the renderer presents them in
+    ``order`` on a 16:9 stage with the deck's ``theme``, and the deck exports
+    to PDF (browser print) and .pptx (``views/slides_pptx.py``)."""
+    model_config = ConfigDict(extra="forbid")
+
+    slides: Union[Dict[str, Slide], List[Slide]] = {}
     theme: str = "light"
+    accent: str = Field("", description="Optional #rrggbb that replaces the theme's accent.")
+    footer: str = Field("", description="Small text at the bottom of every content slide.")
+    numbers: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _each_slide_is_known_fields(cls, data: Any) -> Any:
+        """Say what is wrong with a slide in words the agent can act on, instead
+        of pydantic's union noise ("dict[str,Slide]: Input should be a valid
+        dictionary; list[Slide].0.bullets: Extra inputs are not permitted")."""
+        if not isinstance(data, dict):
+            return data
+        coll = data.get("slides")
+        items = list(coll.items()) if isinstance(coll, dict) else list(enumerate(coll or []))
+        allowed = set(Slide.model_fields)
+        for key, slide in items:
+            if not isinstance(slide, dict):
+                raise ValueError(f"slide {key} must be an object {{title, body, ...}}")
+            extra = sorted(set(slide) - allowed)
+            if extra or not isinstance(slide.get("body", ""), str):
+                raise ValueError(
+                    f"slide {key}: not {', '.join(extra) or 'a structured body'}. A slide is "
+                    "{title, subtitle, body (markdown string), layout, icon, image, caption, "
+                    "columns, items, accent, notes}. Bullets go into body as markdown; big numbers, "
+                    "cards and timeline steps go into items with the stats, cards or timeline layout. "
+                    "Build the deck with slides_add, one slide per call.")
+            try:
+                Slide.model_validate({"id": str(key), **slide} if "id" not in slide else slide)
+            except ValidationError as exc:
+                first = exc.errors()[0]
+                msg = str(first.get("msg", "invalid")).removeprefix("Value error, ")
+                loc = ".".join(str(p) for p in first.get("loc", ()))
+                raise ValueError(msg if msg.startswith("slide ") else f"slide {key}: {loc + ': ' if loc else ''}{msg}") from None
+        return data
+
+    @model_validator(mode="after")
+    def _deck_style(self) -> "SlidesSpec":
+        if self.theme not in SLIDE_THEMES:
+            raise ValueError(f"unknown theme {self.theme!r}; one of {', '.join(SLIDE_THEMES)}")
+        if self.accent and not _HEX.match(self.accent):
+            raise ValueError("accent must be a #rrggbb colour")
+        return self
 
 
 class DocumentSpec(BaseModel):
@@ -427,7 +569,8 @@ def _short_errors(exc: ValidationError, limit: int = 4) -> str:
     parts: List[str] = []
     for err in exc.errors()[:limit]:
         loc = ".".join(str(p) for p in err.get("loc", ())) or "(root)"
-        parts.append(f"{loc}: {err.get('msg', 'invalid')}")
+        msg = str(err.get("msg", "invalid")).removeprefix("Value error, ")
+        parts.append(msg if loc == "(root)" else f"{loc}: {msg}")
     more = len(exc.errors()) - limit
     if more > 0:
         parts.append(f"(+{more} more)")
@@ -458,7 +601,11 @@ __all__ = [
     "MathSpec",
     "SimulationSpec",
     "ProcessSpec",
+    "Slide",
+    "SlideItem",
     "SlidesSpec",
+    "SLIDE_LAYOUTS",
+    "SLIDE_THEMES",
     "DocumentSpec",
     "CodeSpec",
     "CODE_LANGUAGE_FILENAMES",

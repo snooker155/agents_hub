@@ -263,6 +263,10 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "mesh_merge": frozenset(), "mesh_normals": frozenset(), "mesh_validate": frozenset(),
     "mesh_stats": frozenset(), "mesh_preview": frozenset(), "mesh_history": frozenset(),
     "mesh_revert": frozenset(), "mesh_export": frozenset(),
+    # slides_export writes a .pptx of a slides view the agent authored into the
+    # agent's own workspace, like mesh_export: nothing is read from outside the
+    # system (remote slide images are never fetched) and nothing leaves it.
+    "slides_export": frozenset(),
 }
 
 # Tools that are reachable from an agent tool list but do not appear in
@@ -412,7 +416,7 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     "graph_add_node", "graph_add_edge",
     "graph_remove", "graph_set_layout", "scene_environment", "scene_camera",
     "scene_light", "view_add_asset", "suggest_view", "view_set_timeline",
-    "sim_configure", "math_plot", "view_annotate", "slides_add",
+    "sim_configure", "math_plot", "view_annotate", "slides_add", "slides_style",
     "document_set", "view_compute", "view_serve_stop",
 
     # ── evals: building and running ──────────────────────────────────────────

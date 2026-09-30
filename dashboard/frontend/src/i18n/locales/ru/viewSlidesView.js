@@ -1,5 +1,16 @@
 export default {
-  emptyDeckTheAgentWill: 'Пустая презентация — агент добавит слайды.',
+  emptyDeckTheAgentWill: 'Пустая презентация. Агент добавит слайды.',
   exportPdf: 'Экспорт в PDF',
   pdf: 'PDF',
+  pptx: 'PPTX',
+  exportPptx: 'Скачать как PowerPoint (.pptx)',
+  exporting: 'Экспорт…',
+  exportFailed: 'Не удалось собрать файл .pptx.',
+  present: 'Показ на весь экран (F)',
+  exitPresent: 'Выйти из полноэкранного режима',
+  thumbnails: 'Все слайды',
+  notes: 'Заметки докладчика (N)',
+  noNotes: 'К этому слайду нет заметок.',
+  prev: 'Предыдущий слайд',
+  next: 'Следующий слайд',
 };

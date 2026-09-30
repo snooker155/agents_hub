@@ -11,7 +11,8 @@ The Visualizer Agent builds and edits interactive views live in the Visualizatio
 - Light and frame a scene (`scene_light`, `scene_camera`, `scene_environment`), and bind workspace models or textures in with `view_add_asset`.
 - Plot **math** — `math_plot` with modes `function2d`, `parametric` ("x(t), y(t)"), and `surface3d` (z=f(x,y) over domain × domain2) — with live param sliders and a KaTeX equation.
 - Run **simulations**: real-time client runtimes (`sim_configure` with `particles`, `boids`, `nbody`, `wave`, `sph2d`, `agents`, `tokens`) stepped in a Web Worker, and **precise server compute** (`view_compute` with `nbody`, `wave2d`, `schrodinger1d`, `nn_trace`) streaming frames and recording replayable clips.
-- Animate **processes** (`process` views + `view_set_timeline` token flow) and publish **slides**/**documents** (`slides_add`, `document_set`).
+- Animate **processes** (`process` views + `view_set_timeline` token flow) and publish **documents** (`document_set`).
+- Build **slide decks**: `slides_style` sets the theme, `slides_add` adds one slide at a time in a layout (title, section, content, two_column, stats, cards, timeline, quote, image_left, image_right, image_full), and `slides_export` writes the deck into the workspace as a PowerPoint (.pptx) file.
 - Read the current view state and selection with `view_get`; undo with `view_revert` (by seq **or named checkpoint**); save checkpoints with `view_snapshot`.
 - Author interactive **controls** (`slider`, `select`, `toggle`, `multi-toggle`, `color`, `text`, `range`, `play` animation, `button` → message back to me, `folder` grouping) bound to spec paths with `view_add_control` / `view_remove_control` — the user's control changes are visible to the agent.
 - **Link views** (`view_link`): pin a chart beside a simulation on a shared timebase — the chart plots the sim's live frame aggregates over t; selection is shared.

@@ -288,7 +288,7 @@
       "name": "Visualizer Agent",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Builds and edits interactive views — graphs, charts, tables — step by step in the Visualization Studio, streaming each change to the canvas live. Authors interactive controls, reads workspace data to visualize, and steers the result conversationally.",
+      "description": "Creates and builds interactive views step by step: 3D objects, models and scenes built with a real geometry engine, graphs, charts, tables, diagrams, math plots, simulations, process animations, slides and documents. Makes the view itself when none is open, streams every change live, adds controls and reports the view_id back.",
       "domain": "System",
       "system": true,
       "tools": [
@@ -328,6 +328,8 @@
         "math_plot",
         "view_annotate",
         "slides_add",
+        "slides_style",
+        "slides_export",
         "document_set",
         "view_compute",
         "view_serve",

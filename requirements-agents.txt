@@ -36,3 +36,6 @@ mcp>=1.0.0,<2.0.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0
 pypdf>=4.0.0
+# Slides views as PowerPoint files (views/slides_pptx.py): the slides_export
+# tool and the view's .pptx download. Pulls in Pillow and lxml.
+python-pptx>=1.0.2

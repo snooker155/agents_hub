@@ -385,6 +385,37 @@ async def get_one_view(view_id: str):
     return view
 
 
+@router.get("/{view_id}/export/pptx")
+async def export_view_pptx(view_id: str):
+    """A slides view as a PowerPoint file, drawn with the same layouts and theme
+    as the browser renderer (views/slides_pptx.py). Remote images are not
+    fetched; ``X-Export-Warnings`` counts what the file could not carry."""
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    from views.slides_pptx import build_pptx, pptx_filename
+
+    view = get_view(view_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="View not found")
+    if view.get("kind") != "slides":
+        raise HTTPException(status_code=400, detail="Only a slides view exports to .pptx")
+    try:
+        data, warnings = build_pptx(view, with_warnings=True)
+    except Exception as exc:  # noqa: BLE001 - the export is the whole answer
+        raise HTTPException(status_code=500, detail=f"Could not build the .pptx: {exc}") from exc
+    name = pptx_filename(view.get("title") or "slides")
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"slides.pptx\"; filename*=UTF-8''{quote(name)}",
+            "X-Export-Warnings": str(len(warnings)),
+        },
+    )
+
+
 @router.patch("/{view_id}/state")
 async def patch_view_state(view_id: str, payload: ViewStateUpdate):
     """Persist per-user view state (control values, selection, camera pose)."""

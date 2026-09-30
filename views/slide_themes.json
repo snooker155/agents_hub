@@ -1,0 +1,51 @@
+{
+  "light": {
+    "label": "Light",
+    "bg": "#ffffff", "surface": "#f4f6fb", "border": "#e2e8f0",
+    "text": "#0f172a", "muted": "#64748b",
+    "accent": "#1e3a8a", "accent2": "#3b82f6",
+    "hero": "#0d1526", "hero2": "#1e3a8a", "heroText": "#ffffff", "heroMuted": "#c7d2fe"
+  },
+  "dark": {
+    "label": "Dark",
+    "bg": "#0b1220", "surface": "#141d30", "border": "#24304a",
+    "text": "#e2e8f0", "muted": "#94a3b8",
+    "accent": "#60a5fa", "accent2": "#a78bfa",
+    "hero": "#050a14", "hero2": "#1e293b", "heroText": "#f8fafc", "heroMuted": "#94a3b8"
+  },
+  "corporate": {
+    "label": "Corporate",
+    "bg": "#ffffff", "surface": "#f1f5f9", "border": "#dbe3ec",
+    "text": "#1f2937", "muted": "#6b7280",
+    "accent": "#0f4c81", "accent2": "#f59e0b",
+    "hero": "#0f4c81", "hero2": "#0a3357", "heroText": "#ffffff", "heroMuted": "#bfd4ea"
+  },
+  "ocean": {
+    "label": "Ocean",
+    "bg": "#f5fbff", "surface": "#e3f2fc", "border": "#c8e2f4",
+    "text": "#0c3550", "muted": "#52718a",
+    "accent": "#0284c7", "accent2": "#14b8a6",
+    "hero": "#075985", "hero2": "#0f766e", "heroText": "#ffffff", "heroMuted": "#bae6fd"
+  },
+  "sunset": {
+    "label": "Sunset",
+    "bg": "#fffaf5", "surface": "#fff0e3", "border": "#f6dcc6",
+    "text": "#3b1d12", "muted": "#8a6a5c",
+    "accent": "#ea580c", "accent2": "#db2777",
+    "hero": "#7c2d12", "hero2": "#be185d", "heroText": "#ffffff", "heroMuted": "#fed7aa"
+  },
+  "forest": {
+    "label": "Forest",
+    "bg": "#f8fbf8", "surface": "#e8f3ea", "border": "#cfe3d4",
+    "text": "#14301d", "muted": "#5b7263",
+    "accent": "#15803d", "accent2": "#ca8a04",
+    "hero": "#14532d", "hero2": "#166534", "heroText": "#ffffff", "heroMuted": "#bbf7d0"
+  },
+  "mono": {
+    "label": "Mono",
+    "bg": "#ffffff", "surface": "#f5f5f5", "border": "#e5e5e5",
+    "text": "#111111", "muted": "#666666",
+    "accent": "#111111", "accent2": "#888888",
+    "hero": "#111111", "hero2": "#333333", "heroText": "#ffffff", "heroMuted": "#bbbbbb"
+  }
+}

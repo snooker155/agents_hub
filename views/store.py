@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 from common import blobs, db
 from common.paths import workspace_views_dir
-from views.models import ViewEnvelope, ViewOwner, normalize_envelope, base_spec_for
+from views.models import ViewEnvelope, ViewOwner, ViewValidationError, normalize_envelope, base_spec_for
 from views import ops as vops
 
 
@@ -654,6 +654,15 @@ def append_ops(
         seq = _next_seq(conn, view_id)
         for op in clean:
             vops.apply_op(doc, op)
+        if row.get("kind") == "slides":
+            # A slide written with bullets or a structured body renders as a
+            # bare title; refuse the batch instead (the transaction rolls back).
+            from views.models import validate_spec
+            try:
+                validate_spec("slides", doc.get("spec") or {})
+            except ViewValidationError as exc:
+                raise vops.OpError(str(exc)) from exc
+        for op in clean:
             record = {**op, "seq": seq, "ts": now, "source": source, "run_id": run_id}
             conn.execute(
                 "INSERT INTO view_ops (view_id, seq, ts, run_id, op) VALUES (?, ?, ?, ?, ?)",
