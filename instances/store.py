@@ -12,7 +12,8 @@ State machine::
         └──────────┴────────────┴──► stopped / failed
 
 - ``active``   — an open run is executing right now
-- ``standby``  — the carrier process is alive but idle (a node in its poll loop)
+- ``standby``  — the carrier process is alive but idle (a resident instance
+  waiting on its mailbox)
 - ``finished`` — no process left, context retained; messaging it revives it
 - ``stopped`` / ``failed`` — terminal
 
@@ -35,14 +36,33 @@ INSTANCE_COLUMNS: Tuple[str, ...] = (
     "current_run_id", "task_id", "provider", "model",
     "created_at", "started_at", "last_activity_at", "finished_at",
     "archived_at", "runs_count", "total_tokens", "total_duration_ms",
-    "last_activity", "error",
+    "last_activity", "error", "service_id",
 )
 
 LIVE_STATES = ("starting", "active", "standby")
 TERMINAL_STATES = ("finished", "stopped", "failed")
 ALL_STATES = LIVE_STATES + TERMINAL_STATES
 
-KINDS = ("node", "container", "task", "chat", "flow_node", "team_member")
+KINDS = ("resident", "runner", "task", "chat", "flow_node", "team_member", "node", "container")
+
+#: A copy started on purpose (the agent page's Run, ``POST /api/instances``)
+#: that lives in a process or container of its own until stopped
+#: (instances/carrier.py). "node" and "container" are the kinds such a copy
+#: had while nodes existed; rows migrated from then keep reading as carriers.
+#: A "runner" is the same process bound to no agent: a replica of a runner
+#: service (services/), which answers any agent's chat turn (docs/services.md).
+RESIDENT_KIND = "resident"
+RUNNER_KIND = "runner"
+CARRIER_KINDS = ("resident", "runner", "node", "container")
+
+# Fields an update may set back to None explicitly. Anything else passed as
+# None is ignored, so a partial update never wipes a field by accident.
+CLEARABLE = (
+    "current_run_id", "task_id", "error", "pid", "container_name", "service_id",
+    "expose_token", "exposed_at", "inbound_secret", "http_url",
+    "carrier_error", "carrier_exit_code", "carrier_finished_at",
+    "stop_requested_at", "finished_at",
+)
 
 # How many terminal instances a workspace keeps in its listing before older ones
 # are archived. Archived instances stay in the table and stay reachable by id.
@@ -111,9 +131,14 @@ def _where(
     task_id: Optional[str] = None,
     q: Optional[str] = None,
     include_archived: bool = False,
+    kinds: Optional[Tuple[str, ...]] = None,
+    service_id: Optional[str] = None,
 ) -> Tuple[str, List[Any]]:
     clauses: List[str] = []
     params: List[Any] = []
+    if service_id:
+        clauses.append("service_id = ?")
+        params.append(str(service_id))
     if workspace:
         # Instances with no workspace recorded belong to "default", mirroring
         # how the Messages list treats runs.
@@ -128,6 +153,9 @@ def _where(
     if kind:
         clauses.append("kind = ?")
         params.append(kind)
+    if kinds:
+        clauses.append(f"kind IN ({', '.join('?' * len(kinds))})")
+        params.extend(kinds)
     if state:
         clauses.append("state = ?")
         params.append(state)
@@ -177,10 +205,13 @@ def list_instances(limit: int = 100, offset: int = 0, **filters) -> Dict[str, An
     }
 
 
-def counts_by_state(workspace: Optional[str] = None, agent_id: Optional[str] = None
-                    ) -> Dict[str, int]:
-    """Per-state totals for the header strip — one grouped query, not N."""
-    where, params = _where(workspace=workspace, agent_id=agent_id)
+def counts_by_state(workspace: Optional[str] = None, agent_id: Optional[str] = None,
+                    service_id: Optional[str] = None) -> Dict[str, int]:
+    """Per-state totals for the header strip — one grouped query, not N.
+
+    Narrowed the way the list beside it is: a service page counts that
+    service's replicas, not every copy in the hub."""
+    where, params = _where(workspace=workspace, agent_id=agent_id, service_id=service_id)
     rows = db.get_conn().execute(
         f"SELECT state, COUNT(*) AS n FROM instances{where} GROUP BY state", params
     ).fetchall()
@@ -253,8 +284,9 @@ def update(instance_id: str, **updates) -> Optional[Dict[str, Any]]:
         if row is None:
             return None
         merged = {**_row_to_dict(row), **{k: v for k, v in updates.items() if v is not None}}
-        # Explicit None is meaningful for these — clearing a finished run.
-        for k in ("current_run_id", "task_id", "error"):
+        # Explicit None is meaningful for these: clearing a finished run, a
+        # dead carrier's pid, a withdrawn publication.
+        for k in CLEARABLE:
             if k in updates and updates[k] is None:
                 merged[k] = None
         merged["instance_id"] = str(instance_id)
@@ -286,6 +318,7 @@ def delete(instance_id: str) -> bool:
     with db.transaction() as conn:
         cur = conn.execute("DELETE FROM instances WHERE instance_id = ?", (str(instance_id),))
         conn.execute("DELETE FROM instance_inbox WHERE instance_id = ?", (str(instance_id),))
+        conn.execute("DELETE FROM instance_carriers WHERE instance_id = ?", (str(instance_id),))
         # Runs survive — they are the journal and stay readable in Messages.
         conn.execute("UPDATE runs SET instance_id = NULL WHERE instance_id = ?", (str(instance_id),))
         return cur.rowcount > 0

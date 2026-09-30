@@ -165,6 +165,40 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return "db"
         return v
+    # Where a chat turn runs (docs/services.md, chat/routing.py): "instances"
+    # (default) hands every turn of the chat, /v1, the widget and Telegram to a
+    # replica of a service, a process of its own, so this process never runs
+    # an agent; "inprocess" runs the turn here, the way it always did. Read
+    # live through chat_execution() below, so the Settings page applies it
+    # without a restart.
+    chat_execution: Literal["instances", "inprocess"] = Field(
+        default="instances",
+        validation_alias=AliasChoices("AGENTS_HUB_CHAT_EXECUTION", "chat_execution"),
+        validate_default=False,
+    )
+
+    @field_validator("chat_execution", mode="before")
+    @classmethod
+    def _default_chat_execution(cls, v: object) -> object:
+        if v == "" or v is None:
+            return "instances"
+        return v
+    # The runner service chat turns fall back to when the agent has no service
+    # of its own in the workspace (services/store.py ensure_runner): how many
+    # replicas it keeps warm, how many it may grow to, how many turns each
+    # answers at once, and after how long an idle replica beyond the minimum
+    # is stopped. Stored on the service row when it is created; the Services
+    # page changes a service after that.
+    runner_min: int = Field(default=1, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_MIN", "runner_min"))
+    runner_max: int = Field(default=4, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_MAX", "runner_max"))
+    runner_concurrency: int = Field(
+        default=8, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_CONCURRENCY", "runner_concurrency"))
+    runner_idle_seconds: int = Field(
+        default=600, validation_alias=AliasChoices("AGENTS_HUB_RUNNER_IDLE_SECONDS", "runner_idle_seconds"))
+    # How long a routed chat turn may wait for its replica to pick it up
+    # (a cold start: process boot plus the agent build), in seconds.
+    turn_start_timeout: int = Field(
+        default=180, validation_alias=AliasChoices("AGENTS_HUB_TURN_START_TIMEOUT", "turn_start_timeout"))
     # Docker image to use when agent_mode = "docker"
     agent_docker_image: str = Field(default="")
     # Optional Docker network (e.g. "host" or a named bridge network)
@@ -190,7 +224,8 @@ class Settings(BaseSettings):
         default=0,
         validation_alias=AliasChoices("AGENTS_HUB_RATE_LIMIT_TOKENS_PER_DAY",
                                       "rate_limit_tokens_per_day"))
-    # Requests per minute per client address on POST /api/external/{token}/run,
+    # Requests per minute per client address on the public instance routes
+    # (/api/external/{token}/messages and /run),
     # known and unknown tokens alike, so token guessing is slow. 0 disables.
     external_rate_per_minute: int = Field(
         default=30,
@@ -757,6 +792,16 @@ def agent_execution_mode() -> str:
     """
     mode = live_setting("AGENT_EXECUTION_MODE", settings.agent_mode).lower()
     return mode if mode in ("local", "docker") else "local"
+
+
+def chat_execution() -> str:
+    """Where a chat turn runs: "instances" (a replica of a service, its own
+    process) or "inprocess" (this process). Resolved live like
+    ``agent_execution_mode``; anything unrecognised reads as "instances", the
+    documented default. See chat/routing.py for the two cases that always
+    run in process whatever this says: a worker, and the replica itself."""
+    mode = live_setting("AGENTS_HUB_CHAT_EXECUTION", settings.chat_execution).lower()
+    return mode if mode in ("instances", "inprocess") else "instances"
 
 
 def run_state_transport() -> str:

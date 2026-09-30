@@ -63,8 +63,8 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     # Stopping or restarting something that is running: whatever it was
     # producing is lost.
     "stop_run",
-    "stop_node",
-    "restart_node",
+    "stop_instance",
+    "restart_instance",
     "stop_container",
     "prune_run_logs",
     # Sends workspace content outside the system: a push, plus a PR/MR opened
@@ -176,7 +176,7 @@ def approval_gate_enabled(workspace: Optional[str] = None) -> bool:
 
     Opt-in and off by default, so existing runs are unchanged until an operator
     sets ``require_tool_approval`` in the workspace settings. Read live (the same
-    way ``agent_mode`` is read in managers/node_manager.py) so flipping it
+    way ``agent_mode`` is read in instances/carrier.py) so flipping it
     applies to the next run without a restart.
     """
     try:

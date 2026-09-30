@@ -178,10 +178,10 @@ regardless; the rest are best-effort side channels.
 
 The same scheme protects three inbound webhooks this hub accepts:
 
-- **POST `/api/external/{token}/run`** — the exposed node runner. When the
-  node has an `inbound_secret` configured, the request must be signed; a node
-  with none configured keeps accepting an unsigned request, unchanged from
-  before this feature.
+- **POST `/api/external/{token}/messages`** (and `/run`, `GET .../messages/{id}`)
+  — the public address of a published [instance](instances.md). When the
+  instance has an `inbound_secret` configured, the request must be signed; an
+  instance with none configured accepts the token alone.
 - **POST `/api/flows/{flow_id}/trigger`** — a flow's webhook trigger. Same
   rule: signed when the flow record carries a `webhook_secret`, open
   otherwise.
@@ -243,4 +243,4 @@ action). The response is the created task, in the same shape
   once its window has passed; idempotency here is about a retry or a flaky
   network landing twice, not a permanent id registry.
 
-Related: [connectors](connectors.md), [scheduling](scheduling.md), [costs](costs.md), [tasks](tasks.md), [nodes](nodes.md), [flows](flows.md), [audit](audit.md).
+Related: [connectors](connectors.md), [scheduling](scheduling.md), [costs](costs.md), [tasks](tasks.md), [instances](instances.md), [flows](flows.md), [audit](audit.md).

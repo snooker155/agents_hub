@@ -42,7 +42,8 @@
         "flows",
         "teams",
         "telegram",
-        "costs"
+        "costs",
+        "services"
       ],
       "headings": [
         "What you can point it at",
@@ -68,7 +69,7 @@
         "workspaces",
         "projects",
         "tasks",
-        "nodes",
+        "instances",
         "workers",
         "backup",
         "flows",
@@ -140,7 +141,7 @@
       "summary": "Agents can run in-process or in Docker. Container mode isolates a run: its own filesystem view, its own network posture, its own lifetime.",
       "surface": "Containers",
       "related": [
-        "nodes",
+        "instances",
         "settings",
         "tools-and-capabilities",
         "workers",
@@ -188,8 +189,6 @@
       "summary": "Scheduled agent_task, flow and loop jobs shown as production deployments: a per-run money cap, an environment, and a firing journal that shows whether each firing actually worked.",
       "surface": "Deployments",
       "related": [
-        "scheduling",
-        "environments",
         "costs",
         "tasks"
       ],
@@ -207,7 +206,7 @@
       "surface": "Environments",
       "related": [
         "containers",
-        "nodes",
+        "instances",
         "deployments",
         "scheduling",
         "service-health"
@@ -366,18 +365,52 @@
     {
       "id": "instances",
       "title": "Instances",
-      "summary": "An instance is a live copy of an agent: its own state, its own label, its own history. Where an [agent](agents.md) is a definition and a [node](nodes.md) is a process, an instance is the thing actually doing work.",
+      "summary": "An instance is a live copy of an agent: its own state, its own label, its own history. A resident instance is the one Run on an agent's page starts: a process or container of its own that answers its mailbox in several conversations, can take the agent's tasks, and can be published at a public address through the hub. Nodes were folded into instances.",
       "surface": "Instances",
       "related": [
         "agents",
-        "nodes",
+        "sessions-and-runs",
+        "containers",
+        "environments",
         "service-health",
-        "sessions-and-runs"
+        "steering",
+        "services"
       ],
       "headings": [
         "States",
+        "Resident instances",
+        "Starting one",
+        "The carrier",
+        "Inputs",
+        "Conversations",
+        "Publishing",
+        "Live output",
         "The timeline",
-        "The inbox"
+        "The mailbox",
+        "From nodes to instances"
+      ]
+    },
+    {
+      "id": "services",
+      "title": "Services",
+      "summary": "An agent kept running as replicas: the desired state (agent, workspace, environment, replicas min and max, concurrency, idle stop, budget, version) a supervisor keeps, and the runner every chat, /v1, widget and Telegram turn goes to so the backend runs no agent.",
+      "surface": "Services",
+      "related": [
+        "instances",
+        "chat",
+        "hub-as-provider",
+        "environments",
+        "deployment",
+        "agents"
+      ],
+      "headings": [
+        "Where a chat turn runs",
+        "The desired state",
+        "The supervisor",
+        "Replicas",
+        "Writing to one directly",
+        "Jobs",
+        "API and CLI"
       ]
     },
     {
@@ -508,26 +541,6 @@
       ]
     },
     {
-      "id": "nodes",
-      "title": "Nodes",
-      "summary": "A node is a long-running agent process. It polls for work and executes it, which is what lets a task run without a chat window open.",
-      "surface": "Nodes",
-      "related": [
-        "containers",
-        "instances",
-        "service-health",
-        "sessions-and-runs",
-        "environments"
-      ],
-      "headings": [
-        "Two node types",
-        "Starting and stopping",
-        "Environment",
-        "Reading a node's state",
-        "Exposure"
-      ]
-    },
-    {
       "id": "overview",
       "title": "What this service is",
       "summary": "An agent hub: a place to define AI agents, give them tools and memory, and run them, alone or in groups, against real work in a workspace.",
@@ -630,7 +643,7 @@
       "related": [
         "containers",
         "installation",
-        "nodes",
+        "instances",
         "sessions-and-runs",
         "system-agents",
         "tools-and-capabilities",
@@ -956,7 +969,7 @@
         "scheduling",
         "costs",
         "tasks",
-        "nodes",
+        "instances",
         "flows",
         "evals"
       ],
@@ -1085,7 +1098,7 @@
     {
       "id": "deployment",
       "title": "Deploying for high availability",
-      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store. The Deployment page and ah deployment show the map: members with their heartbeat, load and leases, the queue, and runs, loops, nodes and containers by host, with each process's own log. Releases are one semver version across pyproject, the dashboard, the Helm chart, the images and a vX.Y.Z tag: scripts/release.py cuts them, the release workflow publishes images to GHCR, and a rollback over a release with migrations restores the pre-migrate archive a SQLite database takes by itself before it migrates.",
+      "summary": "The compose ha profile (postgres, redis, a bundled minio, backend-api and worker replicas) and a Helm chart for a real cluster, both wiring up the api/worker split from workers.md and the broker bridge and Postgres from scaling.md into something runnable; the shared .agents_hub/ files are the remaining one-host (or one-ReadWriteMany-volume) limit until AGENTS_HUB_BLOB_URL moves them to an object store. The Cluster page (GET /api/cluster) and ah deployment show the map: members with their heartbeat, load and leases, the queue, and runs, loops, resident instances and containers by host, with each process's own log. Releases are one semver version across pyproject, the dashboard, the Helm chart, the images and a vX.Y.Z tag: scripts/release.py cuts them, the release workflow publishes images to GHCR, and a rollback over a release with migrations restores the pre-migrate archive a SQLite database takes by itself before it migrates.",
       "surface": "Installation",
       "related": [
         "scaling",
@@ -1093,12 +1106,13 @@
         "installation",
         "storage",
         "service-health",
-        "backup"
+        "backup",
+        "services"
       ],
       "headings": [
         "The compose ha profile",
         "The Helm chart",
-        "The deployment map",
+        "The cluster map",
         "The shared-files caveat",
         "Releases",
         "Upgrading",
@@ -1344,7 +1358,8 @@
         "api-keys",
         "models",
         "audit",
-        "local-models"
+        "local-models",
+        "services"
       ],
       "headings": [
         "What it serves",

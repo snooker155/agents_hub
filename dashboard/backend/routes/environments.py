@@ -1,9 +1,9 @@
 """Environments over REST (environments/, docs/environments.md).
 
 An environment is an execution profile (mode, image, packages, network
-policy, limits, plain variables) a task run, a node or a scheduled job runs
-in. These routes are the Environments page's backend and the pickers on the
-Nodes and Deployments pages.
+policy, limits, plain variables) a task run, a resident instance or a
+scheduled job runs in. These routes are the Environments page's backend and
+the pickers on the agent page's Run and the Cluster page.
 
 Who may do what. Reading follows workspace visibility: a list shows the
 global environments plus those of workspaces the caller can see, a single

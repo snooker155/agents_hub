@@ -8,11 +8,9 @@ import {
   Radio,
   Box,
   Shield,
-  Server,
   Trash2,
   RefreshCw,
   FileCode,
-  Activity,
   Wand2,
   ChevronRight,
   ChevronLeft,
@@ -27,36 +25,43 @@ import {
   CheckCircle2,
   Users,
   Share2,
+  Search,
+  Rocket,
 } from 'lucide-react';
 import {
   getAgents,
   getAgentTools,
   getTasks,
-  getNodes,
   assignAgent,
   createCustomAgent,
   disconnectAgent,
-  startNode,
-  getAgentWorkspaceCapacities,
   getAgentModel,
   removeAgentFromWorkspace,
   addAgentToWorkspace,
-  getInstancesSummary,
+  getServices,
+  startInstance,
 } from '../api';
 import ImportAgentModal from '../components/ImportAgentModal';
+import DeployServiceModal from '../components/services/DeployServiceModal';
+import { instancePath } from '../components/instanceUtils';
+import { useToast, errorDetail } from '../components/toast';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const AgentManager = () => {
   const { t } = useI18n();
-  const navigate = useNavigate();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
+  const navigate = useNavigate();
+  const toast = useToast();
   const [agents, setAgents] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [nodes, setNodes] = useState([]);
-  // Live copies per agent — a node is a carrier that *can* run this agent; an
-  // instance is a copy that actually is. The card shows both.
-  const [instanceCounts, setInstanceCounts] = useState({});
+  // The workspace's services: every copy of an agent lives in one, its own
+  // or the workspace's runner, so the cards read their copies and their
+  // limits from here rather than from the agents themselves.
+  const [services, setServices] = useState([]);
+  const [deployAgentId, setDeployAgentId] = useState(null);
+  const [startingAgentId, setStartingAgentId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -74,8 +79,6 @@ const AgentManager = () => {
   });
   const [availableTools, setAvailableTools] = useState([]);
   const [assignData, setAssignData] = useState({ task_id: '', agent_id: '' });
-  const [startingNode, setStartingNode] = useState(null);
-  const [wsCapacitiesPerAgent, setWsCapacitiesPerAgent] = useState({});
   const [agentOrder, setAgentOrder] = useState([]);
   const [dragId, setDragId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
@@ -112,43 +115,33 @@ const AgentManager = () => {
 
   const fetchData = useCallback(async () => {
     try {
-      const [agentsResp, tasksResp, nodesResp] = await Promise.all([getAgents(workspaceFilter), getTasks(workspaceFilter), getNodes(workspaceFilter)]);
+      const [agentsResp, tasksResp] = await Promise.all([getAgents(workspaceFilter), getTasks(workspaceFilter)]);
       // Show all agents including orchestrator and decomposer
       setAgents(agentsResp.data);
       setTasks(tasksResp.data);
-      setNodes(nodesResp.data);
       setLoading(false);
-
-      // Fetch workspace capacities for all agents
-      agentsResp.data.forEach(async (a) => {
-          try {
-            const cap = await getAgentWorkspaceCapacities(a.id);
-            setWsCapacitiesPerAgent(prev => ({ ...prev, [a.id]: cap.data || {} }));
-          } catch {
-            // ignore — will fall back to agent.capacity
-          }
-      });
     } catch (error) {
       console.error('Error fetching data:', error);
       setLoading(false);
     }
   }, [workspaceFilter]);
 
-  const fetchInstanceCounts = useCallback(() => {
-    getInstancesSummary({ workspace: workspaceFilter })
-      .then(r => setInstanceCounts(r.data?.by_agent || {}))
-      .catch(() => setInstanceCounts({}));
+  const fetchServices = useCallback(() => {
+    getServices({ workspace: workspaceFilter || undefined })
+      .then((r) => setServices(r.data?.items || []))
+      .catch(() => setServices([]));
   }, [workspaceFilter]);
 
   useEffect(() => {
     fetchData();
     fetchTools();
-    fetchInstanceCounts();
-  }, [selectedWorkspace, liveUpdates, fetchData, fetchTools, fetchInstanceCounts]);
+    fetchServices();
+  }, [selectedWorkspace, liveUpdates, fetchData, fetchTools, fetchServices]);
   useLiveRefetch(fetchData, { type: 'agents.changed', enabled: liveUpdates });
-  // One grouped count query per change, not one per agent card.
-  useLiveRefetch(fetchInstanceCounts, { type: 'instances.delta', enabled: liveUpdates });
-  useLiveRefetch(fetchInstanceCounts, { type: 'instances.changed', enabled: liveUpdates });
+  // Replica counts ride on the services, so a copy starting or stopping is
+  // a services refetch too.
+  useLiveRefetch(fetchServices, { type: 'services.changed', enabled: liveUpdates });
+  useLiveRefetch(fetchServices, { type: 'instances.changed', enabled: liveUpdates });
 
   // Sync agent order with fetched agents, restoring saved order from localStorage
   useEffect(() => {
@@ -356,10 +349,14 @@ const AgentManager = () => {
       ? agentOrder.map((id) => agents.find((a) => a.id === id)).filter(Boolean)
       : agents
   ), [agentOrder, agents]);
-  const visibleAgents = useMemo(
-    () => (showSystem ? orderedAgents : orderedAgents.filter((a) => !a.system)),
-    [orderedAgents, showSystem],
-  );
+  const [agentQuery, setAgentQuery] = useState('');
+  const visibleAgents = useMemo(() => {
+    const base = showSystem ? orderedAgents : orderedAgents.filter((a) => !a.system);
+    const q = agentQuery.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((a) => `${a.name || ''} ${a.id || ''} ${a.description || ''}`
+      .toLowerCase().includes(q));
+  }, [orderedAgents, showSystem, agentQuery]);
   const systemCount = useMemo(() => agents.filter((a) => a.system).length, [agents]);
 
   const getAgentMetrics = (agent) => {
@@ -380,21 +377,42 @@ const AgentManager = () => {
     };
   };
 
-  const getRunningNodeCount = (agentId) =>
-    nodes.filter(n => n.agent_id === agentId && (n.status === 'running' || n.status === 'starting')).length;
+  // Where an agent's copies live: its own services, else the workspace's
+  // runner (the first turn creates one when there is none yet).
+  const servicesByAgent = useMemo(() => {
+    const map = {};
+    for (const svc of services) {
+      if (svc.kind === 'agent' && svc.agent_id) (map[svc.agent_id] ||= []).push(svc);
+    }
+    return map;
+  }, [services]);
+  const runnerService = useMemo(
+    () => services.find((svc) => svc.kind === 'runner' && svc.is_default) || services.find((svc) => svc.kind === 'runner') || null,
+    [services],
+  );
+  const servingFor = (agentId) => {
+    const own = servicesByAgent[agentId] || [];
+    const serving = own.length ? own : (runnerService ? [runnerService] : []);
+    return {
+      own,
+      serving,
+      live: serving.reduce((n, svc) => n + (svc.replicas?.live || 0), 0),
+      cap: serving.reduce((n, svc) => n + (svc.replicas_max || 0), 0),
+      paused: serving.length > 0 && serving.every((svc) => svc.status !== 'active'),
+    };
+  };
 
-  const getLiveInstanceCount = (agentId) => instanceCounts[agentId]?.live || 0;
-
-  const handleStartNode = async (agentId) => {
-    setStartingNode(agentId);
+  // Run: the agent starts in its service (routes/instances.py) and its
+  // page opens; a runner replica opens with this agent picked.
+  const runAgent = async (agent) => {
+    setStartingAgentId(agent.id);
     try {
-      const ws = selectedWorkspace && selectedWorkspace !== 'default' ? selectedWorkspace : null;
-      await startNode({ agent_id: agentId, workspace: ws });
-      navigate('/nodes');
-    } catch (err) {
-      alert(`${t('agentManager.startNodeError')}: ` + (err.response?.data?.detail || err.message));
+      const { data } = await startInstance({ agent_id: agent.id, workspace: workspaceFilter || null });
+      navigate(instancePath(data, agent.id));
+    } catch (e) {
+      toast.error(t('agentManager.startFailed'), errorDetail(e));
     } finally {
-      setStartingNode(null);
+      setStartingAgentId(null);
     }
   };
 
@@ -404,6 +422,18 @@ const AgentManager = () => {
         icon={Users}
         title={t('agentManager.agents')}
         description={t('agentManager.orchestrateYourFleetOfSpecialized')}
+        badges={(
+          <div className="relative ml-2">
+            <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={agentQuery}
+              onChange={(e) => setAgentQuery(e.target.value)}
+              placeholder={t('agentManager.searchAgents')}
+              aria-label={t('agentManager.searchAgents')}
+              className="pl-8 pr-3 py-1.5 text-sm font-normal rounded-lg border border-gray-200 bg-white w-56 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
+            />
+          </div>
+        )}
         actions={<>
           <label
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 cursor-pointer select-none"
@@ -461,9 +491,10 @@ const AgentManager = () => {
       />
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-gray-200">
-           <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mb-4" />
-           <p className="text-gray-500 font-medium">{t('agentManager.scanningClusterForAgentNodes')}</p>
+        <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('agentManager.scanningClusterForAgentNodes')} /></div>
+      ) : visibleAgents.length === 0 && agentQuery.trim() ? (
+        <div className="py-16 text-center bg-white rounded-xl border border-dashed border-gray-200">
+          <p className="text-sm text-gray-500">{t('agentManager.noAgentsMatch', { query: agentQuery.trim() })}</p>
         </div>
       ) : visibleAgents.length === 0 && orderedAgents.length > 0 ? (
         // Every agent here is a system one and the filter is off: say so, or
@@ -482,12 +513,9 @@ const AgentManager = () => {
           {visibleAgents.map((agent) => {
             const metrics = getAgentMetrics(agent);
             const isHealthy = true;
-            const nodeCount = getRunningNodeCount(agent.id);
-            const liveInstances = getLiveInstanceCount(agent.id);
-            const isDefaultWs = !selectedWorkspace || selectedWorkspace === 'default';
-            const agentWsCaps = wsCapacitiesPerAgent[agent.id] || {};
-            const wsSessionCap = isDefaultWs ? Infinity : (agentWsCaps[selectedWorkspace] ?? 1);
-            const nodesAtCap = !isDefaultWs && nodeCount >= wsSessionCap;
+            const serving = servingFor(agent.id);
+            const liveInstances = serving.live;
+            const instancesAtCap = serving.serving.length > 0 && liveInstances >= serving.cap;
             const isDragging = dragId === agent.id;
             const isDragOver = dragOverId === agent.id && dragId !== agent.id;
 
@@ -538,15 +566,6 @@ const AgentManager = () => {
                         {t('agentManager.systemBadge')}
                       </span>
                     )}
-                    <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded uppercase font-semibold">
-                      {agent.domain}
-                    </span>
-                    <Link to="/nodes" className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${
-                      nodeCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      <Activity className={`w-3 h-3 ${nodeCount > 0 ? 'animate-pulse' : ''}`} />
-                      {nodeCount > 0 ? t('agentManager.runningCount', { count: nodeCount }) : t('agentManager.noNodes')}
-                    </Link>
                     <Link to="/instances" className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${
                       liveInstances > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'
                     }`} title={t('agentManager.instancesHint')}>
@@ -559,43 +578,54 @@ const AgentManager = () => {
                 <ImportedAgentStatus agent={agent} />
 
                 {(() => {
-                  const totalCap = wsSessionCap === Infinity
-                    ? nodeCount * (agent.capacity || 1)
-                    : Math.min(nodeCount * (agent.capacity || 1), wsSessionCap);
+                  const totalCap = liveInstances * (agent.capacity || 1);
                   const sessionLoad = totalCap > 0 ? Math.min(100, Math.round((metrics.used / totalCap) * 100)) : 0;
-                  const atCap = nodeCount > 0 && metrics.used >= totalCap;
+                  const atCap = liveInstances > 0 && metrics.used >= totalCap;
+                  const own = serving.own;
+                  const serviceTone = serving.paused ? 'amber' : own.length ? 'indigo' : 'gray';
+                  const tone = {
+                    amber: ['bg-amber-50 border-amber-200', 'text-amber-500', 'text-amber-900', 'text-amber-700'],
+                    indigo: ['bg-indigo-50 border-indigo-100', 'text-indigo-500', 'text-indigo-900', 'text-indigo-600'],
+                    gray: ['bg-gray-50 border-gray-200', 'text-gray-400', 'text-gray-600', 'text-gray-400'],
+                  }[serviceTone];
                   return (
                     <div className="mb-3">
                       <div className="grid grid-cols-3 gap-2">
-                        {/* Nodes card */}
-                        <div className={`border rounded-lg px-2 py-2 ${nodesAtCap ? 'bg-orange-50 border-orange-300' : nodeCount > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'}`}>
+                        {/* Copies: the replicas of the services the agent runs in, against their limit */}
+                        <div className={`border rounded-lg px-2 py-2 ${instancesAtCap ? 'bg-orange-50 border-orange-300' : liveInstances > 0 ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'}`}>
                           <div className="flex items-center justify-between">
-                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${nodesAtCap ? 'text-orange-500' : nodeCount > 0 ? 'text-indigo-500' : 'text-gray-400'}`}>{t('agentManager.nodes')}</div>
-                            {nodesAtCap && <span className="text-[9px] font-bold text-white bg-orange-500 px-1 py-0.5 rounded leading-none animate-pulse">{t('agentManager.full')}</span>}
+                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${instancesAtCap ? 'text-orange-500' : liveInstances > 0 ? 'text-indigo-500' : 'text-gray-400'}`}>{t('agentManager.instances')}</div>
+                            {instancesAtCap && <span className="text-[9px] font-bold text-white bg-orange-500 px-1 py-0.5 rounded leading-none animate-pulse">{t('agentManager.full')}</span>}
                           </div>
-                          <div className={`text-sm font-semibold ${nodesAtCap ? 'text-orange-900' : nodeCount > 0 ? 'text-indigo-900' : 'text-gray-500'}`}>{nodeCount}/{isDefaultWs ? '∞' : wsSessionCap}</div>
-                          <div className={`text-[10px] mt-0.5 ${nodesAtCap ? 'text-orange-600' : nodeCount > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{t('agentManager.running')}</div>
+                          <div className={`text-sm font-semibold ${instancesAtCap ? 'text-orange-900' : liveInstances > 0 ? 'text-indigo-900' : 'text-gray-500'}`}>
+                            {liveInstances}/{serving.serving.length ? serving.cap : '—'}
+                          </div>
+                          <div className={`text-[10px] mt-0.5 ${instancesAtCap ? 'text-orange-600' : liveInstances > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{t('agentManager.live')}</div>
                         </div>
 
-                        {/* Sessions card */}
+                        {/* Services: the agent's own, or the runner it shares */}
+                        <div className={`border rounded-lg px-2 py-2 min-w-0 ${tone[0]}`}>
+                          <div className={`text-[10px] uppercase tracking-wider font-semibold ${tone[1]}`}>{t('agentManager.services')}</div>
+                          <div className={`text-sm font-semibold truncate ${tone[2]}`}>
+                            {own.length ? t('agentManager.ownServices', { count: own.length }) : runnerService ? t('agentManager.runner') : t('agentManager.noServices')}
+                          </div>
+                          <div className={`text-[10px] mt-0.5 truncate ${tone[3]}`} title={serving.serving.map((svc) => svc.name).join(', ')}>
+                            {serving.paused ? t('agentManager.servicePaused') : serving.serving.map((svc) => svc.name).join(', ') || t('agentManager.runnerOnFirstRun')}
+                          </div>
+                        </div>
+
+                        {/* Sessions: open runs against the slots the live copies give */}
                         <div className={`border rounded-lg px-2 py-2 ${atCap ? 'bg-red-50 border-red-300' : 'bg-green-50 border-green-100'}`}>
                           <div className="flex items-center justify-between">
                             <div className={`text-[10px] uppercase tracking-wider font-semibold ${atCap ? 'text-red-500' : 'text-green-500'}`}>{t('agentManager.sessions')}</div>
                             {atCap && <span className="text-[9px] font-bold text-white bg-red-500 px-1 py-0.5 rounded leading-none animate-pulse">{t('agentManager.full')}</span>}
                           </div>
                           <div className={`text-sm font-semibold ${atCap ? 'text-red-900' : 'text-green-900'}`}>
-                            {metrics.used}/{nodeCount > 0 ? totalCap : '—'}
+                            {metrics.used}/{liveInstances > 0 ? totalCap : '—'}
                           </div>
                           <div className={`text-[10px] mt-0.5 ${atCap ? 'text-red-600 font-semibold' : 'text-green-700'}`}>
-                            {nodeCount === 0 ? t('agentManager.noNodesLower') : atCap ? t('agentManager.atCapacity') : t('agentManager.load', { pct: sessionLoad })}
+                            {liveInstances === 0 ? t('agentManager.noInstancesLower') : atCap ? t('agentManager.atCapacity') : t('agentManager.load', { pct: sessionLoad })}
                           </div>
-                        </div>
-
-                        {/* Running tasks card */}
-                        <div className="bg-amber-50 border border-amber-100 rounded-lg px-2 py-2">
-                          <div className="text-[10px] uppercase tracking-wider text-amber-500 font-semibold">{t('agentManager.tasks')}</div>
-                          <div className="text-sm font-semibold text-amber-900">{metrics.runningTasks}</div>
-                          <div className="text-[10px] text-amber-600 mt-0.5">{t('agentManager.assignedCount', { count: metrics.assignedTasks })}</div>
                         </div>
                       </div>
 
@@ -603,12 +633,11 @@ const AgentManager = () => {
                       <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
                         <div
                           className={`h-1.5 rounded-full ${atCap ? 'bg-red-500' : sessionLoad > 80 ? 'bg-orange-500' : 'bg-indigo-500'}`}
-                          style={{ width: `${nodeCount > 0 ? sessionLoad : 0}%` }}
+                          style={{ width: `${liveInstances > 0 ? sessionLoad : 0}%` }}
                         />
                       </div>
-                      <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
-                        <span>{nodeCount > 0 ? t('agentManager.load', { pct: sessionLoad }) : t('agentManager.noNodesRunning')}</span>
-                        <span>{t('agentManager.runningAssigned', { running: metrics.runningTasks, assigned: metrics.assignedTasks })}</span>
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        {liveInstances > 0 ? t('agentManager.load', { pct: sessionLoad }) : t('agentManager.noInstancesRunning')}
                       </div>
                     </div>
                   );
@@ -627,15 +656,22 @@ const AgentManager = () => {
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => handleStartNode(agent.id)}
-                    disabled={startingNode === agent.id || nodesAtCap}
-                    title={nodesAtCap ? t('agentManager.nodeLimitReached') : undefined}
+                    onClick={() => runAgent(agent)}
+                    disabled={startingAgentId === agent.id || serving.paused}
+                    title={serving.paused ? t('agentManager.servicePausedHint') : t('agentManager.startHint')}
                     className="flex-1 inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {startingNode === agent.id
+                    {startingAgentId === agent.id
                       ? <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin" />
                       : <Play className="w-3.5 h-3.5 mr-1" />}
                     {t('common.start')}
+                  </button>
+                  <button
+                    onClick={() => setDeployAgentId(agent.id)}
+                    className="p-1.5 border border-indigo-200 text-indigo-600 rounded hover:bg-indigo-50 transition-colors"
+                    title={t('agentManager.deployHint')}
+                  >
+                    <Rocket className="w-4 h-4" />
                   </button>
                   {agent.system ? (
                     <span
@@ -668,8 +704,6 @@ const AgentManager = () => {
                                      [t('agentManager.steps.type'), t('agentManager.steps.identity'), t('agentManager.steps.capabilities'), t('agentManager.steps.review')];
         const totalSteps = STEPS.length;
         const isLastStep = wizardStep === totalSteps;
-
-        const domainOptions = ['general', 'development', 'orchestration', 'testing', 'data', 'research', 'devops'];
 
         const toolList = availableTools.filter((t, i, arr) => arr.findIndex(x => x.name === t.name) === i);
 
@@ -851,16 +885,6 @@ const AgentManager = () => {
                         />
                         <p className="text-[10px] text-gray-400 mt-1">{t('agentManager.lowercaseNoSpaces')}</p>
                       </div>
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.domain')}</label>
-                        <select
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                          value={wizardData.domain}
-                          onChange={e => setWizardData(d => ({ ...d, domain: e.target.value }))}
-                        >
-                          {domainOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                        </select>
-                      </div>
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.displayName')} <span className="text-red-500">*</span></label>
@@ -954,7 +978,6 @@ const AgentManager = () => {
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">ID</span><span className=" text-gray-800">{wizardData.id || wizardData.original_id}</span></div>
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.name')}</span><span className="text-gray-800">{wizardData.name}</span></div>
                       {wizardData.description && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.description')}</span><span className="text-gray-700">{wizardData.description}</span></div>}
-                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.domain')}</span><span className="text-gray-800">{wizardData.domain}</span></div>
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.capacity')}</span><span className="text-gray-800">{t('agentManager.slotCount', { count: wizardData.capacity })}</span></div>
                       {wizardType === 'custom' && wizardData.tools.length > 0 && (
                         <div className="flex gap-2">
@@ -1059,6 +1082,13 @@ const AgentManager = () => {
           onDone={() => fetchData()}
         />
       )}
+
+      <DeployServiceModal
+        open={!!deployAgentId}
+        onClose={() => setDeployAgentId(null)}
+        agentId={deployAgentId}
+        defaultWorkspace={selectedWorkspace}
+      />
     </PageContainer>
   );
 };

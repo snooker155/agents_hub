@@ -379,13 +379,14 @@ export const getAgentHistory = (id, workspace) => api.get(`/agents/${id}/history
 export const getAgentLogs = (id, params) => api.get(`/agents/${id}/logs`, { params });
 // Service health, and the Service Agent's chat about it.
 export const getHealth = () => api.get('/health');
-// The deployment map: members (replicas and workers), leases, the launch
-// queue and where runs, nodes and containers live (docs/deployment.md).
-export const getDeployment = () => api.get('/deployment');
+// The cluster map: members (replicas and workers), leases, the launch
+// queue and where runs, instances and containers live (docs/deployment.md).
+// `/api/deployment` still answers the same document as an alias.
+export const getCluster = () => api.get('/cluster');
 export const getMemberLogs = (memberId, tail = 500) =>
-  api.get(`/deployment/members/${encodeURIComponent(memberId)}/logs`, { params: { tail } });
+  api.get(`/cluster/members/${encodeURIComponent(memberId)}/logs`, { params: { tail } });
 export const forgetMember = (memberId) =>
-  api.delete(`/deployment/members/${encodeURIComponent(memberId)}`);
+  api.delete(`/cluster/members/${encodeURIComponent(memberId)}`);
 export const getServiceChat = () => api.get('/health/chat');
 export const clearServiceChat = () => api.delete('/health/chat');
 export const stopServiceChat = () => api.post('/health/chat/stop');
@@ -545,6 +546,8 @@ export const approveTaskCall = (taskId, approved, note = '', budget_usd) =>
   api.post(`/tasks/${taskId}/approve`, { approved, note, ...(budget_usd !== undefined ? { budget_usd } : {}) });
 export const getAgentStatus = (taskId) => api.get(`/tasks/${taskId}/agent-status`);
 export const getAgentWorkspaceCapacities = (agentId) => api.get(`/agents/${encodeURIComponent(agentId)}/workspace-capacities`);
+// Every agent's overrides in one response ({agent_id: {workspace: capacity}}).
+export const getAllWorkspaceCapacities = () => api.get('/agents/workspace-capacities');
 export const setDefaultChatAgent = (agentId, workspace) =>
   api.post(`/agents/${encodeURIComponent(agentId)}/set-default-chat`, null, { params: workspace ? { workspace } : {} });
 export const clearDefaultChatAgent = (agentId, workspace) =>
@@ -772,6 +775,49 @@ export const setNodeInboundSecret = (nodeId, secret) => api.put(`/nodes/${nodeId
 export const clearNodeInboundSecret = (nodeId) => api.delete(`/nodes/${nodeId}/inbound-secret`);
 export const getNodeConnections = (nodeId) => api.get(`/nodes/${nodeId}/connections`);
 export const getNodeRuns = (nodeId, limit = 50) => api.get(`/nodes/${nodeId}/runs`, { params: { limit } });
+// Resident instance actions — starting, stopping and steering the carrier
+// process behind an instance (instances/carrier.py). A resident instance is
+// what the agent page's Run button starts; everything here targets one by id.
+export const startInstance = (data) => api.post('/instances', data);
+export const restartInstance = (instanceId) => api.post(`/instances/${instanceId}/restart`);
+export const interruptInstance = (instanceId) => api.post(`/instances/${instanceId}/interrupt`);
+export const publishInstance = (instanceId) => api.post(`/instances/${instanceId}/publish`);
+export const unpublishInstance = (instanceId) => api.delete(`/instances/${instanceId}/publish`);
+// Inbound signing for a published instance. Write-only: an instance reports
+// only `inbound_secret_configured`, never the value.
+export const setInstanceInboundSecret = (instanceId, secret) => api.put(`/instances/${instanceId}/inbound-secret`, { secret });
+export const clearInstanceInboundSecret = (instanceId) => api.delete(`/instances/${instanceId}/inbound-secret`);
+export const getInstanceConnections = (instanceId) => api.get(`/instances/${instanceId}/connections`);
+export const getInstanceCarriers = (instanceId) => api.get(`/instances/${instanceId}/carriers`);
+export const updateInstanceInputs = (instanceId, data) => api.patch(`/instances/${instanceId}/inputs`, data);
+export const getInstanceConversations = (instanceId) => api.get(`/instances/${instanceId}/conversations`);
+export const getInstanceMessage = (instanceId, msgId) => api.get(`/instances/${instanceId}/messages/${msgId}`);
+
+// Services API — agents kept running as replicas, and the runner every chat
+// turn goes to (docs/services.md). A service is the desired state; its
+// replicas are resident instances carrying its id.
+export const getServices = (params) => api.get('/services', { params });
+// Where a chat turn for the agent (or any agent, without one) in the
+// workspace would run, and whether it can: the warning beside the agent
+// picker and on the Services page.
+export const getChatRoute = (params) => api.get('/services/chat-route', { params });
+export const getService = (serviceId) => api.get(`/services/${serviceId}`);
+export const createService = (data) => api.post('/services', data);
+export const updateService = (serviceId, data) => api.patch(`/services/${serviceId}`, data);
+export const pauseService = (serviceId) => api.post(`/services/${serviceId}/pause`);
+export const resumeService = (serviceId) => api.post(`/services/${serviceId}/resume`);
+export const deleteService = (serviceId) => api.delete(`/services/${serviceId}`);
+export const getServiceReplicas = (serviceId, params) => api.get(`/services/${serviceId}/replicas`, { params });
+export const addServiceReplica = (serviceId) => api.post(`/services/${serviceId}/replicas`);
+export const getServiceEvents = (serviceId, params) => api.get(`/services/${serviceId}/events`, { params });
+export const getServiceConversations = (serviceId) => api.get(`/services/${serviceId}/conversations`);
+export const messageService = (serviceId, data) => api.post(`/services/${serviceId}/message`, data);
+export const getServiceMessage = (serviceId, msgId) => api.get(`/services/${serviceId}/messages/${msgId}`);
+export const publishService = (serviceId) => api.post(`/services/${serviceId}/publish`);
+export const unpublishService = (serviceId) => api.delete(`/services/${serviceId}/publish`);
+export const setServiceInboundSecret = (serviceId, secret) => api.put(`/services/${serviceId}/inbound-secret`, { secret });
+export const clearServiceInboundSecret = (serviceId) => api.delete(`/services/${serviceId}/inbound-secret`);
+export const getServiceConnections = (serviceId) => api.get(`/services/${serviceId}/connections`);
 
 // Environments API (routes/environments.py) — reusable execution profiles (local
 // vs. docker, network policy, resource limits) a task or node can run in.

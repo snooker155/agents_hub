@@ -201,7 +201,7 @@ def prepare_run(
     # via AGENT_SESSION_ID in the env (see _build_env), not as a flag. Built once
     # and shared by both launch modes below — only the interpreter/module
     # prefix differs (a script path locally, "-m runtime.agent_run" in Docker,
-    # the same module form node_manager already uses for node_run).
+    # the same module form instances.carrier already uses for instance_run).
     cli_args = [agent_id]
 
     action = params.get("action") or ""
@@ -247,7 +247,7 @@ def prepare_run(
     if params.get("resume_checkpoint"):
         cli_args.extend(["--resume-checkpoint", str(params["resume_checkpoint"])])
 
-    # Execution mode resolution mirrors node_manager.start_node exactly: a
+    # Execution mode resolution mirrors instances.carrier.start exactly: a
     # workspace's own override (Settings → workspace → agent_mode) wins over
     # the global setting, both read live so a Settings-page change reaches the
     # next run without a restart.
@@ -443,7 +443,7 @@ def _start_run_in_docker(
 ) -> None:
     """Launch a task run in a sandboxed container instead of a subprocess.
 
-    Mirrors node_manager.start_node's Docker branch: the module form
+    Mirrors instances.carrier.start's Docker branch: the module form
     ("-m runtime.agent_run"), not a script path, so container_manager's path
     translation only ever has to deal with arguments, never the interpreter
     line (a bare host script path would not exist inside the container).

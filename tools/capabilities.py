@@ -46,7 +46,7 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow",
     "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
     "schedule_job", "create_view", "view_serve", "delegate",
-    "stop_run", "stop_node", "restart_node", "stop_container", "prune_run_logs",
+    "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     # The system workspace's repository copy (tools/system_ops.py): a commit,
     # a written task result and a branch deletion have each already happened.
     "system_commit", "system_attach_patch", "system_prune_branches",
@@ -178,13 +178,14 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # outbound channel, which is exactly the shape that would turn the service's
     # own diagnostics into an exfiltration path.
     #
-    # The action tools (stop_run, stop_node, restart_node, stop_container,
-    # prune_run_logs) grant nothing: they stop and delete, which the approval
-    # gate governs, rather than moving data, which is what this table is about.
-    # Pure metadata tools (service_health, list_containers, list_nodes,
-    # costs_summary) grant nothing either — counts, statuses and totals.
+    # The action tools (stop_run, stop_instance, restart_instance,
+    # stop_container, prune_run_logs) grant nothing: they stop and delete,
+    # which the approval gate governs, rather than moving data, which is what
+    # this table is about. Pure metadata tools (service_health,
+    # list_containers, costs_summary) grant nothing either — counts, statuses
+    # and totals.
     "container_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
-    "node_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
+    "instance_logs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "run_log": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "list_runs": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
     "search_errors": frozenset({READS_PRIVATE, INGESTS_UNTRUSTED}),
@@ -427,12 +428,12 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     "browser_close",
 
     # ── service ops: pure metadata and destructive actions ───────────────────
-    # service_health, list_containers, list_nodes and costs_summary are counts,
-    # statuses and totals, not content. stop_run, stop_node, restart_node,
+    # service_health, list_containers and costs_summary are counts, statuses
+    # and totals, not content. stop_run, stop_instance, restart_instance,
     # stop_container and prune_run_logs stop and delete, which the approval
     # gate governs, not data.
-    "service_health", "list_containers", "list_nodes", "costs_summary",
-    "stop_run", "stop_node", "restart_node", "stop_container", "prune_run_logs",
+    "service_health", "list_containers", "costs_summary",
+    "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     # run_diagnostics (common/doctor.py) returns check statuses, counts and
     # one sentence summaries, the same class of metadata as service_health.
     "run_diagnostics",

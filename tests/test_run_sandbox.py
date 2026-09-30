@@ -390,7 +390,7 @@ def test_start_container_node_joins_the_egress_network_when_fenced(monkeypatch, 
 
     monkeypatch.setattr(cm, "_run", fake_run)
     result = cm.start_container(
-        container_name="agents-hub-node-x", agent_id="swe_agent", cmd=["python", "-m", "runtime.node_run"],
+        container_name="agents-hub-node-x", agent_id="swe_agent", cmd=["python", "-m", "runtime.instance_run"],
         env={}, extra_env={
             "AGENTS_HUB_NETWORK": "none",
             "HTTP_PROXY": "http://tok@host.docker.internal:8099",
@@ -467,7 +467,7 @@ def test_docker_mode_spawns_no_subprocess_and_records_container(dot_env, no_pope
     assert len(calls) == 1
     inner_cmd = calls[0]["inner_cmd"]
     # Module form, not a script path — a host script path would not resolve
-    # to anything inside the container (see node_manager.start_node).
+    # to anything inside the container (see instances.carrier._spawn).
     assert inner_cmd[1:3] == ["-m", "runtime.agent_run"]
     assert "swe_agent" in inner_cmd
 

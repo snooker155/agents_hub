@@ -240,6 +240,29 @@ async def list_tools():
     }
 
 
+def _workspace_capacity_overrides() -> Dict[str, Dict[str, Any]]:
+    """``{agent_id: {workspace: capacity}}`` over every workspace but default,
+    read in one pass over the workspace metadata."""
+    from workspace import list_workspace_folders
+    result: Dict[str, Dict[str, Any]] = {}
+    for ws_path in list_workspace_folders():
+        ws_name = ws_path.name
+        if ws_name == "default":
+            continue
+        overrides = get_workspace_metadata(ws_name).get("agent_capacity_overrides") or {}
+        for agent_id, capacity in overrides.items():
+            result.setdefault(agent_id, {})[ws_name] = capacity
+    return result
+
+
+@router.get("/workspace-capacities")
+async def get_all_workspace_capacities():
+    """Every agent's workspace capacity overrides at once, for the agents list:
+    one request for the page instead of one per agent card. Declared before
+    the ``/{agent_id}`` routes, which would otherwise take the path."""
+    return _workspace_capacity_overrides()
+
+
 @router.post("/capability-check")
 async def capability_check(data: AgentToolsUpdate):
     """Classify a tool set and report any blocked capability combination.
@@ -572,17 +595,7 @@ async def update_agent_description(agent_id: str, data: AgentDescriptionUpdate):
 @router.get("/{agent_id}/workspace-capacities")
 async def get_agent_workspace_capacities(agent_id: str):
     """Return workspace-specific capacity overrides for this agent (excludes 'default')."""
-    from workspace import list_workspace_folders, get_workspace_metadata
-    result = {}
-    for ws_path in list_workspace_folders():
-        ws_name = ws_path.name
-        if ws_name == "default":
-            continue
-        meta = get_workspace_metadata(ws_name)
-        overrides = meta.get("agent_capacity_overrides", {})
-        if agent_id in overrides:
-            result[ws_name] = overrides[agent_id]
-    return result
+    return _workspace_capacity_overrides().get(agent_id, {})
 
 
 @router.get("/{agent_id}/history")

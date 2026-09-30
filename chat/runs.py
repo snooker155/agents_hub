@@ -5,7 +5,9 @@ Helpers that tie a chat message exchange to the run/session bookkeeping the rest
 of the dashboard reads: each message becomes a row in the ``runs`` table with a
 log file so it appears in the Sessions list, attached to the chat's instance.
 """
+from contextvars import ContextVar
 from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -23,6 +25,38 @@ from common.session_service import get_or_create_chat_session
 
 def utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# The turn a service replica is executing (chat/turns.py): which instance and
+# service the run belongs to, the mailbox message it answers, the service's
+# money cap and version pin. Set for the pipeline's task; ``create_chat_run``
+# writes it onto the run record and ``turn_overrides`` hands the pin to the
+# agent build. Empty in the backend and for an in-process turn.
+_turn_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar("chat_turn_context", default=None)
+
+
+def set_turn_context(ctx: Optional[Dict[str, Any]]):
+    return _turn_context.set(dict(ctx) if ctx else None)
+
+
+def reset_turn_context(token) -> None:
+    _turn_context.reset(token)
+
+
+def turn_context() -> Optional[Dict[str, Any]]:
+    return _turn_context.get()
+
+
+def turn_overrides() -> dict:
+    """Agent build overrides the current turn asks for: the service's version pin."""
+    ctx = _turn_context.get() or {}
+    version = ctx.get("agent_version")
+    if version is None:
+        return {}
+    try:
+        return {"definition_version": int(version)}
+    except (TypeError, ValueError):
+        return {}
 
 
 def get_pool_id(agent_id: str, workspace: str | None = None) -> str | None:
@@ -227,27 +261,49 @@ def create_chat_run(request: ChatRequest, **run_extra):
 
     # One chat instance per conversation: the same live copy answers every
     # message in the thread, so its instance page carries the whole exchange.
+    # A turn executed by a service replica (chat/turns.py) belongs to that
+    # replica instead: the run is a carrier run of it, in the conversation the
+    # mailbox message named, and carries the service so the conversation has
+    # one history across replicas.
     instance_id = None
-    try:
-        from instances import registry as instance_registry
-        instance = instance_registry.ensure_instance(
-            request.agent_id,
-            # An explicit id means this message was addressed to one live copy
-            # (from its instance page); the run joins that copy's journal
-            # instead of opening a second one for the same conversation.
-            instance_id=request.instance_id,
-            kind="chat",
-            workspace=request.workspace,
-            session_id=session_id,
-            task_id=conv_id,
-            project_id=request.project_id,
-            hint=run_title,
-            state="active",
-            reuse_session=not request.instance_id,
-        )
-        instance_id = instance["instance_id"]
-    except Exception:
-        pass
+    turn = _turn_context.get()
+    if turn and turn.get("instance_id"):
+        instance_id = str(turn["instance_id"])
+        run_extra = {
+            "carrier_run": True,
+            "conversation_id": turn.get("conversation_id"),
+            "inbox_msg_id": turn.get("msg_id"),
+            **({"service_id": turn["service_id"]} if turn.get("service_id") else {}),
+            **({"budget_usd": turn["budget_usd"]} if turn.get("budget_usd") is not None else {}),
+            **({"agent_version_pin": int(turn["agent_version"])}
+               if turn.get("agent_version") is not None else {}),
+            **run_extra,
+        }
+        # The copy the message was addressed to, when it was not the replica
+        # itself (a finished copy written to from its page and answered here).
+        if request.instance_id and str(request.instance_id) != instance_id:
+            run_extra.setdefault("addressed_instance_id", str(request.instance_id))
+    else:
+        try:
+            from instances import registry as instance_registry
+            instance = instance_registry.ensure_instance(
+                request.agent_id,
+                # An explicit id means this message was addressed to one live copy
+                # (from its instance page); the run joins that copy's journal
+                # instead of opening a second one for the same conversation.
+                instance_id=request.instance_id,
+                kind="chat",
+                workspace=request.workspace,
+                session_id=session_id,
+                task_id=conv_id,
+                project_id=request.project_id,
+                hint=run_title,
+                state="active",
+                reuse_session=not request.instance_id,
+            )
+            instance_id = instance["instance_id"]
+        except Exception:
+            pass
 
     register_run(
         run_id,

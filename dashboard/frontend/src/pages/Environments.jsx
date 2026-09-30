@@ -33,6 +33,7 @@ import {
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -352,7 +353,11 @@ function EnvironmentModal({ env, workspace, onClose, onSaved }) {
             onChange={(e) => setIsDefault(e.target.checked)}
             className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
           />
-          {t('environments.setAsDefault')}
+          {/* The default is per scope: name the workspace, or say global, so the
+              label matches what the switch above selected. */}
+          {scope === 'workspace' && workspace
+            ? t('environments.setAsDefaultWorkspace', { workspace })
+            : t('environments.setAsDefaultGlobal')}
         </label>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
@@ -386,7 +391,7 @@ function UsageDrawer({ env, onClose }) {
     let cancelled = false;
     getEnvironmentUsage(env.id)
       .then(({ data }) => { if (!cancelled) setUsage(data); })
-      .catch(() => { if (!cancelled) setUsage({ nodes: [], jobs: [], runs: [] }); })
+      .catch(() => { if (!cancelled) setUsage({ instances: [], jobs: [], runs: [] }); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [env.id]);
@@ -401,19 +406,20 @@ function UsageDrawer({ env, onClose }) {
           </button>
         </div>
         {loading ? (
-          <div className="flex justify-center py-10"><Loader className="w-5 h-5 animate-spin text-indigo-500" /></div>
+          <PageLoader size="sm" />
         ) : (
           <>
             <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">{t('environments.usageNodes')}</h3>
-              {(usage?.nodes || []).length === 0 ? (
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">{t('environments.usageInstances')}</h3>
+              {(usage?.instances || []).length === 0 ? (
                 <p className="text-sm text-gray-400">{t('environments.usageNone')}</p>
               ) : (
                 <ul className="space-y-1.5">
-                  {usage.nodes.map((n) => (
-                    <li key={n.node_id}>
-                      <Link to={`/nodes/${n.node_id}`} className="text-sm text-indigo-600 hover:underline">
-                        {n.agent_name || n.agent_id} · {n.node_id.slice(0, 8)}…
+                  {usage.instances.map((i) => (
+                    <li key={i.instance_id}>
+                      <Link to={`/instances/${i.instance_id}`} className="text-sm text-indigo-600 hover:underline">
+                        {i.label || i.agent_id} · {i.instance_id.slice(0, 8)}… · {i.state}
+                        {i.carrier_mode ? ` · ${i.carrier_mode}` : ''}
                       </Link>
                     </li>
                   ))}
@@ -541,9 +547,7 @@ export default function Environments() {
       />
 
       {loading ? (
-        <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-          <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-        </div>
+        <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
       ) : environments.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
           <Container className="w-10 h-10 text-gray-300 mx-auto mb-3" />
@@ -566,7 +570,7 @@ export default function Environments() {
             <tbody className="divide-y divide-gray-50">
               {environments.map((env) => {
                 const busy = acting[env.id];
-                const inUse = (env.usage_counts?.nodes || 0) > 0 || (env.usage_counts?.jobs || 0) > 0;
+                const inUse = (env.usage_counts?.instances || 0) > 0 || (env.usage_counts?.jobs || 0) > 0;
                 const archived = !!env.archived_at;
                 const build = buildResult[env.id];
                 return (
@@ -603,7 +607,7 @@ export default function Environments() {
                         .filter(Boolean).join(' · ') || <span className="text-gray-400">—</span>}
                     </td>
                     <td className="px-4 py-3 text-gray-600 text-xs">
-                      {t('environments.usageCounts', { nodes: env.usage_counts?.nodes || 0, jobs: env.usage_counts?.jobs || 0 })}
+                      {t('environments.usageCounts', { instances: env.usage_counts?.instances || 0, jobs: env.usage_counts?.jobs || 0 })}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">

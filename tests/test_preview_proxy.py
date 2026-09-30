@@ -118,8 +118,8 @@ def _member(client, admin_headers, username="bob") -> dict:
 def _fake_running_container(monkeypatch, *, name="demo", workspace=None,
                             http_url="http://localhost:5055"):
     import managers.container_manager as container_manager
-    import managers.node_manager as node_manager
-    monkeypatch.setattr(node_manager, "list_nodes", lambda: [
+    from instances import carrier
+    monkeypatch.setattr(carrier, "list_resident", lambda: [
         {"container_name": name, "http_url": http_url, "workspace": workspace},
     ])
     monkeypatch.setattr(container_manager, "list_containers", lambda: [
@@ -129,8 +129,8 @@ def _fake_running_container(monkeypatch, *, name="demo", workspace=None,
 
 def _fake_stopped_container(monkeypatch, *, name="demo"):
     import managers.container_manager as container_manager
-    import managers.node_manager as node_manager
-    monkeypatch.setattr(node_manager, "list_nodes", lambda: [])
+    from instances import carrier
+    monkeypatch.setattr(carrier, "list_resident", lambda: [])
     monkeypatch.setattr(container_manager, "list_containers", lambda: [
         {"name": name, "state": "exited"},
     ])
@@ -154,8 +154,8 @@ def test_a_stopped_container_is_404(single, client, monkeypatch):
 
 def test_an_unknown_container_is_404(single, client, monkeypatch):
     import managers.container_manager as container_manager
-    import managers.node_manager as node_manager
-    monkeypatch.setattr(node_manager, "list_nodes", lambda: [])
+    from instances import carrier
+    monkeypatch.setattr(carrier, "list_resident", lambda: [])
     monkeypatch.setattr(container_manager, "list_containers", lambda: [])
     resp = client.post("/api/preview/tickets", json={"kind": "container", "name": "nope"})
     assert resp.status_code == 404

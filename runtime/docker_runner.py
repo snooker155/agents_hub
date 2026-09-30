@@ -1,6 +1,6 @@
 """Docker execution helpers — thin shim over container_manager.
 
-This module is the public interface used by node_manager and run_manager.
+This module is the public interface used by the run launcher and run_manager.
 All heavy lifting (image resolution, network management, path translation)
 lives in ``managers/container_manager.py``.
 

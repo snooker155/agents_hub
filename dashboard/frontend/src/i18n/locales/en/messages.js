@@ -34,6 +34,7 @@ export default {
   bulkDeletePartial: 'Some deletions failed ({{count}}). Example: {{id}} ({{reason}})',
   channels: {
     local: 'Local',
+    instance: 'Instance',
     node: 'Node',
     continuation: 'Continuation',
     chat: 'Chat',

@@ -129,6 +129,11 @@ def test_the_map_groups_everything_by_host(client, monkeypatch):
     resp = client.get("/api/deployment")
     assert resp.status_code == 200
     body = resp.json()
+    # The cluster map moved to /api/cluster; /api/deployment stays as a
+    # working alias, and both must answer the same map.
+    cluster_resp = client.get("/api/cluster")
+    assert cluster_resp.status_code == 200
+    assert cluster_resp.json()["hosts"] == body["hosts"]
     by_id = {m["member_id"]: m for m in body["members"]}
     assert by_id["replica-a"]["leases"] == ["scheduler"]
     assert by_id["worker-b"]["leases"] == ["watchdog"]

@@ -106,7 +106,7 @@ def test_single_mode_every_list_route_answers_with_everything(single, client):
     client.post("/api/tasks", json={"title": "solo task"})
 
     for path in ("/api/chats", "/api/tasks", "/api/sessions", "/api/messages",
-                 "/api/shared-memory", "/api/instances", "/api/nodes",
+                 "/api/shared-memory", "/api/instances",
                  "/api/runs/groups"):
         resp = client.get(path)
         assert resp.status_code == 200, f"{path}: {resp.text}"

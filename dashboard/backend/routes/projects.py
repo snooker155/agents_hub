@@ -1066,6 +1066,8 @@ async def _run_turn_guarded(run_turn, queue: asyncio.Queue):
 # projects/planner_service.py; this section is the SSE/run-record plumbing
 # around one turn, shared in shape with the graph chat above.
 
+from chat import remote_agent as _remote_agent  # noqa: E402
+
 _PLANNER_AGENT_ID = planner_service.PLANNER_AGENT_ID
 # Store key for the planner chat (its trace/messages/session live on the Tasks
 # tab, decoupled from the architecture/process graph views).
@@ -1199,9 +1201,40 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
         # once the task has captured it (mirrors the graph_sink handler pattern).
         ws_token = _workspace_ctx.set(project.workspace)
         pj_token = _project_ctx.set(normalize_project_id(project_id))
+        # The agent part on a runner replica (chat/remote_agent.py): what it
+        # reported, when the turn ran there rather than in this process.
+        remote = None
         if not planner_service.ensure_planner_agent():
             status, err = "failed", "planner agent unavailable"
             await emit(_error_event("registry", err))
+        elif _remote_agent.enabled():
+            task = asyncio.create_task(_remote_agent.stream_agent_turn(
+                queue, agent_id=_PLANNER_AGENT_ID, run_id=run_id, prompt=prompt,
+                workspace=project.workspace, workspace_path=agent_workspace_path(project, root),
+                project_id=normalize_project_id(project_id), session_id=session_id,
+                log_file=str(log_file), log_lines=log_lines,
+                build={"max_tool_repeats": 0, "max_iterations": 400},
+                user_message=user_message))
+            _register_run(project_id, "__plan__", task)
+            try:
+                remote = await task
+            except asyncio.CancelledError:
+                status = "stopped"
+                await emit({"type": "stopped"})
+            except Exception as e:  # noqa: BLE001
+                status, err = "failed", str(e)
+                await emit(_error_event("agent", err))
+            if remote is not None:
+                provider, model = remote.provider, remote.model
+                _update_run(run_id, {"provider": provider, "model": model, **remote.run_fields()})
+                if remote.status == "stopped":
+                    status = "stopped"
+                    await emit({"type": "stopped"})
+                elif remote.ok:
+                    reply = _clean_agent_reply(remote.agent_output)
+                else:
+                    status, err = "failed", (remote.error or "agent returned no output")
+                    await emit(_error_event("agent", err))
         else:
             try:
                 from agents.callbacks import ChatStreamCallback
@@ -1269,19 +1302,27 @@ async def generate_project_tasks(project_id: str, payload: Optional[ProjectTasks
             "artifacts": getattr(callback, "artifact_history", []) if callback else [],
             "token_usage": usage,
         }
+        if remote is not None:
+            usage = {**usage, **remote.usage}
+            process_payload = {**process_payload, **remote.process, "token_usage": usage}
+            process_payload["llm_input_context"] = {
+                **(process_payload.get("llm_input_context") or {}),
+                "user_message": user_message, "response": reply}
         finished = _iso()
         duration_ms = int((_time.perf_counter() - message_started) * 1000)
-        summary_line = (
-            f"[message_summary] id={msg_id} "
-            f"inbound_tokens={usage['inbound_tokens']} "
-            f"outbound_tokens={usage['outbound_tokens']} "
-            f"total_tokens={usage['total_tokens']} "
-            f"tool_calls={getattr(callback, 'tool_calls', 0) if callback else 0} "
-            f"duration_ms={duration_ms}"
-        )
-        _append_log(log_lines, reply, log_file)
-        _append_log(log_lines, summary_line, log_file)
-        _write_log(log_file, log_lines + ["", f"Finished: {finished}", f"Status  : {status}"])
+        if remote is None:
+            # The runner closes the log itself when the turn ran there.
+            summary_line = (
+                f"[message_summary] id={msg_id} "
+                f"inbound_tokens={usage['inbound_tokens']} "
+                f"outbound_tokens={usage['outbound_tokens']} "
+                f"total_tokens={usage['total_tokens']} "
+                f"tool_calls={getattr(callback, 'tool_calls', 0) if callback else 0} "
+                f"duration_ms={duration_ms}"
+            )
+            _append_log(log_lines, reply, log_file)
+            _append_log(log_lines, summary_line, log_file)
+            _write_log(log_file, log_lines + ["", f"Finished: {finished}", f"Status  : {status}"])
 
         _update_run(run_id, {
             "status": status, "finished_at": finished,

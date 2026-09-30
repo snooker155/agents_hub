@@ -46,7 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
-from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, nodes, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
+from routes import agent_import, agents, chats, connections as connections_router, ingest as ingest_router, context_refs, entity_chats, page_chat, tasks, flows, stats, memory, workspaces, tools, sessions, chat, external, projects, containers, messages, telegram, flow_entities, git, blender, marketplace, plan, stream, health, costs, replay, views, evals, playground, skills, weblogs, loops, teams, instances, mcp as mcp_router, notify as notify_router
 from routes import a2a as a2a_router
 from routes import auth as auth_router
 from routes import oidc as oidc_router
@@ -83,8 +83,9 @@ async def lifespan(app: FastAPI):
     stops them again. Each is started inside its own try: a connector that
     will not come up must not take the API down with it.
 
-    The orchestrator node is intentionally NOT started here: orchestration runs
-    only when the user starts an orchestrator node (Nodes UI / POST /api/nodes).
+    The orchestrator is intentionally NOT started here: orchestration runs only
+    when the user starts an orchestrator instance that takes tasks (the
+    Orchestrator page, or POST /api/instances with take_tasks).
     """
     import asyncio
     from common.session_broker import broker
@@ -192,7 +193,42 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning(f"⚠ Could not start the egress proxy: {e}")
 
+    # The service supervisor (services/supervisor.py): keeps every service's
+    # replicas at its desired state, and the default runner warm, so a chat
+    # turn never waits for a process to boot. A worker serves no chat and
+    # starts no replicas.
+    if hub_role() != "worker":
+        try:
+            from services.supervisor import supervisor as _service_supervisor
+            await _service_supervisor.start()
+            log.info("✓ Service supervisor started")
+        except Exception as e:
+            log.warning(f"⚠ Could not start the service supervisor: {e}")
+
+    # The deployment supervisor (deployments/supervisor.py): keeps a project's
+    # deployed services alive and pauses a crash loop. See
+    # docs/project-deployments.md.
+    if hub_role() != "worker":
+        try:
+            from deployments.supervisor import supervisor as _deployment_supervisor
+            await _deployment_supervisor.start()
+            log.info("✓ Deployment supervisor started")
+        except Exception as e:
+            log.warning(f"⚠ Could not start the deployment supervisor: {e}")
+
     yield
+
+    try:
+        from deployments.supervisor import supervisor as _deployment_supervisor
+        await _deployment_supervisor.stop()
+    except Exception:
+        pass
+
+    try:
+        from services.supervisor import supervisor as _service_supervisor
+        await _service_supervisor.stop()
+    except Exception:
+        pass
 
     try:
         from environments import egress as _egress
@@ -585,6 +621,10 @@ app.include_router(messages.runs_router)
 
 # Live agent copies: what is running right now, and how to write to one.
 app.include_router(instances.router)
+# Services: agents kept running as replicas, and the runner every chat turn
+# goes to (docs/services.md).
+from routes import services as services_router  # noqa: E402
+app.include_router(services_router.router)
 
 # Chat domain: direct in-process agent conversation
 app.include_router(chat.router)
@@ -601,10 +641,7 @@ app.include_router(page_chat.router)
 # Session history shared by every entity build chat: list past threads, reopen one
 app.include_router(entity_chats.router)
 
-# Nodes domain: long-running agent node management
-app.include_router(nodes.router)
-
-# Environments: execution profiles for runs, nodes and scheduled jobs
+# Environments: execution profiles for runs, instances and scheduled jobs
 from routes import environments as environments_router
 app.include_router(environments_router.router)
 
@@ -675,9 +712,11 @@ app.include_router(health.router)
 # /metrics, unprefixed and open in every AUTH_MODE (see routes/ops.py).
 app.include_router(ops_router.router)
 
-# Deployment domain: the map of members, leases, queue and where everything
-# runs (docs/deployment.md, "The deployment map").
+# Cluster domain: the map of members, leases, queue and where everything runs
+# (docs/deployment.md, "The cluster map"), under /api/cluster; /api/deployment
+# stays live as an alias for anything still calling the old path.
 app.include_router(deployment_router.router)
+app.include_router(deployment_router.deployment_alias_router)
 
 # System workspace domain: the repository copy, the maintenance loop and its
 # branches (docs/system-workspace.md).
@@ -748,4 +787,7 @@ def uvicorn_options(argv: Optional[List[str]] = None) -> Dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", **uvicorn_options())
+    options = uvicorn_options()
+    # The reloader needs an import string. Without it, hand over the app this
+    # run has already built: "main:app" would execute this file a second time.
+    uvicorn.run("main:app" if options["reload"] else app, **options)

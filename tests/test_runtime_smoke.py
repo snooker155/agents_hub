@@ -1,6 +1,7 @@
 """
-Smoke tests for the three subprocess entry points that previously had none:
-``runtime/flow_run.py``, ``runtime/node_run.py`` and ``runtime/agent_run.py``.
+Smoke tests for subprocess entry points that previously had none:
+``runtime/flow_run.py`` and ``runtime/agent_run.py``. (A resident instance's
+carrier process, ``runtime/instance_run.py``, is covered by its own owner.)
 
 No LLM or network call happens in any of these tests. The seam is always the
 same shape: ``agents.agent_lifecycle.create_agent`` / ``.invoke_agent`` (the
@@ -171,78 +172,12 @@ def test_flow_run_main_single_node_flow_completes(monkeypatch, tmp_path):
 
 # ── runtime/node_run.py ──────────────────────────────────────────────────────
 #
-# run_orchestrator_loop / run_worker_loop are `while True` polling loops that
-# re-import half a dozen service modules (tasks.service, workspace,
-# agents.agent_factory, projects.storage, common.session_service...) on every
-# sweep and only exit via KeyboardInterrupt/process death. Driving even one
-# iteration hermetically would mean monkeypatching all of those plus
-# time.sleep, well past the ~40-line budget for a smoke test, and would mostly
-# re-test the same create_agent/invoke_agent seam already covered above and in
-# test_agent_run_main_success below. So instead this covers the two loops'
-# extracted, already-testable pieces: the instance-inbox drain (both loops
-# check it before anything else on each sweep) and the status setter.
-
-def test_drain_instance_inbox_empty_returns_false():
-    import runtime.node_run as nr
-
-    # No instance registered for this node id -> instance_store.get_by_node
-    # returns None -> the function bails out before touching anything else.
-    assert nr._drain_instance_inbox("no-such-node", "swe_agent", None) is False
-
-
-def test_set_status_running_then_terminal(monkeypatch):
-    import runtime.node_run as nr
-    import managers.node_manager as node_manager
-
-    calls = []
-    monkeypatch.setattr(
-        node_manager, "update_node",
-        lambda node_id, updates: calls.append((node_id, dict(updates))),
-    )
-
-    nr._set_status("node-1", "running")
-    node_id, updates = calls[-1]
-    assert node_id == "node-1"
-    assert updates["status"] == "running"
-    assert "finished_at" not in updates  # only the terminal branch sets it
-
-    nr._set_status("node-1", "completed", exit_code=0)
-    node_id, updates = calls[-1]
-    assert updates["status"] == "completed"
-    assert updates["exit_code"] == 0
-    assert "finished_at" in updates
-
-
-def test_session_publisher_without_session_id_is_noop():
-    import runtime.node_run as nr
-
-    assert nr._session_publisher(None, "run-1", "agent-1") == []
-
-
-def test_session_publisher_with_session_id_returns_one_callback():
-    import runtime.node_run as nr
-    from agents.callbacks import SessionPublishCallback
-
-    cbs = nr._session_publisher("sess-1", "run-1", "agent-1")
-    assert len(cbs) == 1
-    assert isinstance(cbs[0], SessionPublishCallback)
-
-
-def test_log_reaches_stdout_through_the_marker_logger(capsys):
-    """log() builds its own "[timestamp] msg" line and used to print() it
-    directly; it now goes through common.logging_config.marker_logger, whose
-    job is to reach stdout with the message unchanged (no logging-added prefix
-    of its own) regardless of ORCH_LOG_LEVEL — this is what a Docker node's
-    --write-stdout-to-log mirrors into the node's log file."""
-    import re
-
-    import runtime.node_run as nr
-
-    nr.log("orchestrator node ready")
-
-    out = capsys.readouterr().out
-    assert re.fullmatch(r"\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\] orchestrator node ready\n", out)
-
+# node_run.py is gone: a resident instance's carrier process is now
+# runtime/instance_run.py (instances/carrier.py), a core file the lead owns
+# tests for. Nothing of this smoke suite's shape (a status setter, an inbox
+# drain, the marker-logger smoke check) is retested here to avoid duplicating
+# that ownership; runtime/http_server.py's own logger check below still
+# covers the shared marker-logger seam.
 
 # ── runtime/http_server.py ───────────────────────────────────────────────────
 

@@ -10,11 +10,12 @@ its workspace's default, else the global default, else none at all (the
 workspace's execution mode, no fence), see :func:`resolve_for`.
 
 Archive, not edit in place. Archiving freezes a profile: it cannot be edited,
-made default or picked for a new task, node or job, but whatever already runs
-in it keeps running, and a task that already names it still launches with its
-fence (dropping the fence of a profile that says ``network: none`` because
-someone archived it would be the wrong way to fail). Deletion is only for a
-profile nothing references: no active node and no pending scheduled job.
+made default or picked for a new task, resident instance or job, but whatever
+already runs in it keeps running, and a task that already names it still
+launches with its fence (dropping the fence of a profile that says
+``network: none`` because someone archived it would be the wrong way to fail).
+Deletion is only for a profile nothing references: no active resident instance
+and no pending scheduled job.
 """
 from __future__ import annotations
 
@@ -45,9 +46,9 @@ class EnvironmentInvalid(EnvironmentServiceError):
     status = 400
 
 
-# Node statuses that still hold an environment: a stopped or failed node
-# record is history and does not block deleting the profile it ran in.
-_ACTIVE_NODE_STATUSES = {"starting", "running", "stopping"}
+# Instance states that still hold an environment: a stopped or failed
+# instance record is history and does not block deleting the profile it ran in.
+_ACTIVE_INSTANCE_STATES = {"starting", "active", "standby"}
 # Scheduled job statuses that will still fire and create work.
 _PENDING_JOB_STATUSES = {"scheduled", "paused"}
 
@@ -204,9 +205,9 @@ def delete_environment(env_id: str) -> bool:
     """Remove an environment nothing references (409 otherwise)."""
     env = require_environment(env_id)
     counts = usage_counts(env.id)
-    if counts["nodes"] or counts["jobs"]:
+    if counts["instances"] or counts["jobs"]:
         raise EnvironmentConflict(
-            f"Environment '{env.name}' is in use by {counts['nodes']} node(s) and "
+            f"Environment '{env.name}' is in use by {counts['instances']} instance(s) and "
             f"{counts['jobs']} scheduled job(s); stop or change them first, or archive it")
     return store.delete(env.id)
 
@@ -230,7 +231,7 @@ def default_for(workspace: Optional[str]) -> Optional[Environment]:
 
 def resolve_for(workspace: Optional[str], environment_id: Optional[str] = None, *,
                 allow_archived: bool = False) -> Optional[Environment]:
-    """The environment a new run, node or job in ``workspace`` gets.
+    """The environment a new run, resident instance or job in ``workspace`` gets.
 
     An explicit id wins; it must exist, be usable from the workspace (its own
     or global) and, unless ``allow_archived``, not be archived. Without one,
@@ -252,12 +253,12 @@ def resolve_for(workspace: Optional[str], environment_id: Optional[str] = None, 
 
 # ── usage ────────────────────────────────────────────────────────────────────
 
-def _nodes_using(env_id: str) -> List[Dict[str, Any]]:
+def _instances_using(env_id: str) -> List[Dict[str, Any]]:
     try:
-        from managers import node_manager
-        return [n for n in node_manager._load_nodes() if n.get("environment_id") == env_id]
+        from instances import carrier
+        return [i for i in carrier.list_resident() if i.get("environment_id") == env_id]
     except Exception:  # noqa: BLE001 - usage is informational; an unreadable table counts as none
-        log.debug("could not list nodes for environment %s", env_id, exc_info=True)
+        log.debug("could not list instances for environment %s", env_id, exc_info=True)
         return []
 
 
@@ -265,7 +266,7 @@ def _jobs_using(env_id: str) -> List[Any]:
     try:
         from plans import service as plans_service
         return [j for j in plans_service.list_jobs() if getattr(j, "environment_id", None) == env_id]
-    except Exception:  # noqa: BLE001 - same as _nodes_using
+    except Exception:  # noqa: BLE001 - same as _instances_using
         log.debug("could not list jobs for environment %s", env_id, exc_info=True)
         return []
 
@@ -287,26 +288,27 @@ def _runs_using(env_id: str, limit: int = 50) -> List[Dict[str, Any]]:
             (env_id, int(limit)),
         ).fetchall()
         return [_list_row_to_record(r) for r in rows]
-    except Exception:  # noqa: BLE001 - same as _nodes_using
+    except Exception:  # noqa: BLE001 - same as _instances_using
         log.debug("could not list runs for environment %s", env_id, exc_info=True)
         return []
 
 
 def usage_counts(env_id: str) -> Dict[str, int]:
-    """What blocks a delete: active nodes and pending scheduled jobs."""
-    nodes = [n for n in _nodes_using(env_id) if n.get("status") in _ACTIVE_NODE_STATUSES]
+    """What blocks a delete: live resident instances and pending scheduled jobs."""
+    instances = [i for i in _instances_using(env_id) if i.get("state") in _ACTIVE_INSTANCE_STATES]
     jobs = [j for j in _jobs_using(env_id) if _status(getattr(j, "status", "")) in _PENDING_JOB_STATUSES]
-    return {"nodes": len(nodes), "jobs": len(jobs)}
+    return {"instances": len(instances), "jobs": len(jobs)}
 
 
 def usage(env_id: str) -> Dict[str, Any]:
-    """Every node record, scheduled job and recent run (50) tied to ``env_id``."""
+    """Every resident instance, scheduled job and recent run (50) tied to
+    ``env_id``."""
     require_environment(env_id)
-    nodes = [{
-        "node_id": n.get("node_id"), "agent_id": n.get("agent_id"), "label": n.get("label"),
-        "workspace": n.get("workspace"), "status": n.get("status"),
-        "execution_mode": n.get("execution_mode"), "started_at": n.get("started_at"),
-    } for n in _nodes_using(env_id)]
+    instances = [{
+        "instance_id": i.get("instance_id"), "agent_id": i.get("agent_id"), "label": i.get("label"),
+        "workspace": i.get("workspace"), "state": i.get("state"),
+        "carrier_mode": i.get("carrier_mode"), "started_at": i.get("started_at"),
+    } for i in _instances_using(env_id)]
     jobs = [{
         "id": str(getattr(j, "id", "")), "title": getattr(j, "title", ""),
         "kind": _status(getattr(j, "kind", "")), "status": _status(getattr(j, "status", "")),
@@ -318,7 +320,7 @@ def usage(env_id: str) -> Dict[str, Any]:
         "execution_mode": r.get("execution_mode"), "started_at": r.get("started_at"),
         "finished_at": r.get("finished_at"), "session_id": r.get("session_id"),
     } for r in _runs_using(env_id)]
-    return {"nodes": nodes, "jobs": jobs, "runs": runs}
+    return {"instances": instances, "jobs": jobs, "runs": runs}
 
 
 def to_dict(env: Environment, *, with_usage: bool = False) -> Dict[str, Any]:

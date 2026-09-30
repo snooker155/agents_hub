@@ -2,7 +2,7 @@
 Task context helpers shared by the agent entry points.
 
 Two concerns live here, both previously inlined in ``agent_run.py`` and
-imported back out of it by ``runtime.node_run`` and ``runtime.flow_run``:
+imported back out of it by ``runtime.flow_run`` and the other entry points:
 
 - :func:`collect_changed_files` — list workspace/project files a run touched.
 - :func:`build_task_instruction` — enrich a base instruction with parent-task,

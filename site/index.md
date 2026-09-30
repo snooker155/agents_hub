@@ -214,7 +214,7 @@ invocation, a session is the runs that belong together, and an
 3. Create [tasks](/guide/tasks) and assign them to an agent, or let the
    orchestrator route them.
 4. Use [chat](/guide/chat), a [flow](/guide/flows), a [loop](/guide/loops), a
-   [team](/guide/teams) or a [node](/guide/nodes), depending on the work.
+   [team](/guide/teams) or an [instance](/guide/instances), depending on the work.
 5. Read the run logs, messages, results, [views](/guide/views) and generated files.
 6. Iterate on the agent's layered instructions, its model and its tools, and
    curate its [memory](/guide/memory) from the Memory Manager.

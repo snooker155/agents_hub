@@ -91,21 +91,34 @@ def test_run_transitions_move_the_instance_and_fold_in_stats():
     assert (done["runs_count"], done["total_tokens"], done["total_duration_ms"]) == (1, 321, 1000)
 
 
-def test_a_node_returns_to_standby_instead_of_finishing():
+def test_a_resident_copy_returns_to_standby_instead_of_finishing():
+    inst = registry.ensure_instance("swe_agent", kind="resident")
+    iid = inst["instance_id"]
+    _finish_run(iid, carrier_run=True)
+    assert store.get(iid)["state"] == "standby"
+
+
+def test_a_one_shot_container_run_finishes_its_copy():
+    inst = registry.ensure_instance("swe_agent", kind="task")
+    _finish_run(inst["instance_id"], container_name="agents-hub-run-abc")
+    assert store.get(inst["instance_id"])["state"] == "finished"
+
+
+def test_a_migrated_node_run_still_returns_its_copy_to_standby():
     inst = registry.ensure_instance("swe_agent", kind="node", node_id="node-1")
     iid = inst["instance_id"]
     _finish_run(iid, node_id="node-1")
     assert store.get(iid)["state"] == "standby"
 
 
-def test_a_failed_run_fails_its_own_copy_but_not_a_node():
+def test_a_failed_run_fails_its_own_copy_but_not_a_resident_one():
     solo = registry.ensure_instance("swe_agent", kind="task")
     _finish_run(solo["instance_id"], status="failed")
     assert store.get(solo["instance_id"])["state"] == "failed"
 
-    node = registry.ensure_instance("swe_agent", kind="node", node_id="node-2")
-    _finish_run(node["instance_id"], status="failed", node_id="node-2")
-    assert store.get(node["instance_id"])["state"] == "standby"
+    resident = registry.ensure_instance("swe_agent", kind="resident")
+    _finish_run(resident["instance_id"], status="failed", carrier_run=True)
+    assert store.get(resident["instance_id"])["state"] == "standby"
 
 
 # ── Querying at scale ────────────────────────────────────────────────────────
@@ -224,7 +237,9 @@ def test_messages_are_claimed_oldest_first():
     ("task", "finished", True),     # revive it here
     ("task", "stopped", True),
     ("task", "active", False),      # busy — wait for it to go idle
-    ("node", "standby", False),     # its own loop answers, in its own process
+    ("resident", "standby", False),  # its own process answers its mailbox
+    ("resident", "stopped", False),  # started again, never answered here
+    ("node", "standby", False),     # a migrated node reads as resident
     ("container", "standby", False),
 ])
 def test_delivery_route_depends_on_the_carrier_and_state(kind, state, direct):
@@ -269,11 +284,12 @@ def test_reconcile_leaves_a_live_process_alone(monkeypatch):
     assert store.get(inst["instance_id"])["state"] == "active"
 
 
-def test_reconcile_stops_a_copy_whose_node_died(monkeypatch):
-    inst = registry.ensure_instance("swe_agent", kind="node", node_id="node-9",
-                                    state="standby")
-    from managers import node_manager
-    monkeypatch.setattr(node_manager, "get_node", lambda node_id: None)
+def test_reconcile_stops_a_copy_whose_carrier_died(monkeypatch):
+    from instances import carrier
+
+    inst = registry.ensure_instance("swe_agent", kind="resident", state="standby")
+    store.update(inst["instance_id"], carrier_status="running", carrier_mode="local", pid=4321)
+    monkeypatch.setattr(carrier, "_pid_exists", lambda pid: False)
     assert registry.reconcile() == 1
     assert store.get(inst["instance_id"])["state"] == "stopped"
 
@@ -346,6 +362,36 @@ def test_route_message_to_a_finished_copy_revives_it(client, monkeypatch):
     assert inbox.pending(iid) == []
 
 
+def test_route_message_carries_its_attachments_in_the_text(client):
+    """A file attached in the composer travels inside the message: a copy's
+    mailbox only carries text, so the block the chat would have put under the
+    prompt is rendered into it here (routes/instances.py _compose_message)."""
+    inst = registry.ensure_instance("swe_agent", workspace="ws", state="active")
+    iid = inst["instance_id"]
+
+    body = client.post(f"/api/instances/{iid}/message", json={
+        "message": "read this",
+        "attachments": [{"filename": "notes.txt", "content": "line one\nline two"}],
+    }).json()
+    assert body["mode"] == "queued"
+    [queued] = inbox.pending(iid)
+    assert queued["body"].startswith("read this")
+    assert "=== Attached files ===" in queued["body"]
+    assert "notes.txt" in queued["body"]
+    assert "line two" in queued["body"]
+
+
+def test_route_takes_a_message_that_is_only_an_attachment(client):
+    inst = registry.ensure_instance("swe_agent", workspace="ws", state="active")
+    iid = inst["instance_id"]
+    r = client.post(f"/api/instances/{iid}/message", json={
+        "message": "", "attachments": [{"filename": "a.txt", "content": "x"}],
+    })
+    assert r.status_code == 200
+    [queued] = inbox.pending(iid)
+    assert "a.txt" in queued["body"]
+
+
 def test_route_rejects_an_empty_message(client):
     inst = registry.ensure_instance("swe_agent", workspace="ws")
     r = client.post(f"/api/instances/{inst['instance_id']}/message", json={"message": "   "})
@@ -357,10 +403,14 @@ def test_route_refuses_to_delete_a_working_copy(client):
     assert client.delete(f"/api/instances/{inst['instance_id']}").status_code == 400
 
 
-def test_route_stop_parks_a_node_and_ends_a_one_shot_copy(client):
-    node = registry.ensure_instance("swe_agent", kind="node", node_id="node-1", state="active")
-    client.post(f"/api/instances/{node['instance_id']}/stop")
-    assert store.get(node["instance_id"])["state"] == "standby"
+def test_route_stop_stops_a_resident_process_and_ends_a_one_shot_copy(client, monkeypatch):
+    from instances import carrier
+
+    stopped = []
+    monkeypatch.setattr(carrier, "stop", lambda iid, **kw: stopped.append(iid) or True)
+    resident = registry.ensure_instance("swe_agent", kind="resident", state="active")
+    client.post(f"/api/instances/{resident['instance_id']}/stop")
+    assert stopped == [resident["instance_id"]]
 
     solo = registry.ensure_instance("swe_agent", kind="task", state="active")
     client.post(f"/api/instances/{solo['instance_id']}/stop")

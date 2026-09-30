@@ -28,9 +28,10 @@ Both shapes are closed via ``finalize_task_from_run`` so task blocking,
 activity logging, and continuation triggering reuse the one tested path.
 The task itself is only touched when it still points at the dead run.
 
-Node-queued runs (status ``assigned``, or a ``node_id`` on the record) are
-exempt: waiting long in a node queue is legitimate, and node liveness is
-handled by ``fail_in_progress_runs_for_node``.
+Runs inside a resident instance's carrier (``carrier_run`` on the record, or
+a ``node_id`` from before nodes were folded into instances) are exempt: the
+carrier owns them, and when it dies ``instances.carrier.sync`` closes them
+through ``fail_in_progress_runs_for_instance``.
 
 The same tick also sweeps one level up, over instances: it reconciles copies
 whose carrier process died, trims archived history past the per-workspace
@@ -388,7 +389,7 @@ def _sweep(counter: list) -> None:
 
     for rec in rm.load_runs():
         status = str(rec.get("status") or "")
-        if rec.get("node_id"):
+        if rec.get("carrier_run") or rec.get("node_id"):
             continue
 
         if status == "pending":

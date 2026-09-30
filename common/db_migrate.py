@@ -13,7 +13,7 @@ Runs automatically from ``common.db`` when the database has no
 - ``routing_logs/routing_log.json``    → ``routing_log``
 - ``session_contexts.json``            → ``sessions``
 - ``pending_continuations.json``       → ``continuations``
-- ``nodes.json``                       → ``nodes``
+- ``nodes.json``                       → ``instances`` (resident copies, see 0029)
 - ``flow_runs.json``                   → ``flow_runs`` (own marker, see
   :func:`migrate_flow_runs`: it shipped after the import above, so a
   database that already set ``json_migrated`` still owes this one)
@@ -47,6 +47,7 @@ RUN_COLUMNS = (
     "provider", "model", "status", "message_origin", "pid", "exit_code",
     "error", "created_at", "started_at", "finished_at", "log_file",
     "input", "output", "instance_id", "heartbeat_at", "parent_run_id",
+    "conversation_id", "service_id",
 )
 
 TASK_COLUMNS = ("id", "key", "parent_id", "status", "workspace", "project_id",
@@ -259,15 +260,34 @@ def _import_sessions(conn: Any) -> int:
 
 
 def _import_nodes(conn: Any) -> int:
+    """Fold a legacy ``nodes.json`` into the database.
+
+    Nodes became resident instances (migration 0029, instances/carrier.py),
+    and the schema migrations run before this import, so the ``nodes`` table
+    is already gone by the time a fresh database imports its legacy files:
+    each record goes straight to the instance it would have become, through
+    the same mapping the migration applies to a ``nodes`` table.
+    """
     data = _read_json(AGENTS_HUB_ROOT / "nodes.json")
     if not isinstance(data, list):
         return 0
+    from importlib import import_module
+
+    from common.db import dialect
+    from common.migrations import table_exists
+
+    move_node = import_module("common.migrations.0029_instances_carriers")._move_node
+    into_nodes_table = table_exists(conn, dialect(), "nodes")
     n = 0
     for node in data:
         if not isinstance(node, dict) or not node.get("node_id"):
             continue
-        conn.execute(upsert_sql("nodes", ("node_id", "doc"), ("node_id",)),
-                     (str(node["node_id"]), _dumps(node)))
+        if into_nodes_table:
+            # A database still short of 0029: the migration moves it later.
+            conn.execute(upsert_sql("nodes", ("node_id", "doc"), ("node_id",)),
+                         (str(node["node_id"]), _dumps(node)))
+        else:
+            move_node(conn, dialect(), node)
         n += 1
     return n
 

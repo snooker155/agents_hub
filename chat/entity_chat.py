@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from chat.errors import error_event
+from chat import remote_agent
 
 SSE_HEADERS = {
     "Cache-Control": "no-cache",
@@ -356,8 +357,49 @@ async def run_entity_chat_turn(
 
     reply, status, err = "", "completed", None
     callback = None
+    # The agent part on a runner replica (chat/remote_agent.py): what it
+    # reported, when the turn ran there rather than in this process.
+    remote = None
 
-    if ensure_system_agent(spec.agent_id):
+    def _stopped_reply() -> str:
+        return (summarize() if summarize else "") or "Stopped."
+
+    if not ensure_system_agent(spec.agent_id):
+        status, err = "failed", f"{spec.agent_id} is not available"
+        await emit(error_event("registry", err))
+    elif remote_agent.enabled():
+        from common.workspace_context import _project_ctx
+        task = asyncio.create_task(remote_agent.stream_agent_turn(
+            queue, agent_id=spec.agent_id, run_id=run_id, prompt=prompt,
+            workspace=spec.workspace, workspace_path=spec.workspace_path,
+            project_id=_project_ctx.get(), session_id=session_id,
+            log_file=str(log_file), log_lines=log_lines,
+            build={"max_tool_repeats": spec.max_tool_repeats,
+                   "max_iterations": spec.max_iterations,
+                   **dict(spec.agent_overrides or {})},
+            user_message=user_message))
+        register_entity_run(spec.kind, entity_id, task)
+        try:
+            remote = await task
+        except asyncio.CancelledError:
+            status, reply = "stopped", _stopped_reply()
+            await emit({"type": "stopped"})
+        except Exception as e:  # noqa: BLE001
+            status, err = "failed", str(e)
+            await emit(error_event("agent", err))
+        if remote is not None:
+            _update_run(run_id, {"provider": remote.provider, "model": remote.model,
+                                 **remote.run_fields()})
+            if remote.status == "stopped":
+                status, reply = "stopped", _stopped_reply()
+                await emit({"type": "stopped"})
+            elif remote.ok:
+                reply = clean_agent_reply(remote.agent_output)
+            else:
+                status = "failed"
+                err = remote.error or "agent returned no output"
+                await emit(error_event("agent", err))
+    else:
         try:
             from agents.agent_factory import create_agent
 
@@ -371,9 +413,13 @@ async def run_entity_chat_turn(
             from common import secrets as _secrets
             from common.identity import current_user_id
             with _secrets.activate(spec.workspace or "", spec.agent_id, current_user_id()):
+                # The workspace's model choice (the header's pick) applies
+                # through the path, so a chat with only a name gets its folder.
+                from common.workspace_context import workspace_operating_path
                 agent = await asyncio.to_thread(
                     create_agent, spec.agent_id,
-                    workspace=spec.workspace_path, streaming=True,
+                    workspace=workspace_operating_path(spec.workspace, spec.workspace_path),
+                    streaming=True,
                     max_tool_repeats=spec.max_tool_repeats,
                     max_iterations=spec.max_iterations,
                     **dict(spec.agent_overrides or {}),
@@ -395,22 +441,27 @@ async def run_entity_chat_turn(
                 # Stop button: keep whatever the agent already wrote and close
                 # the run cleanly (the worker itself is not cancelled).
                 status = "stopped"
-                reply = (summarize() if summarize else "") or "Stopped."
+                reply = _stopped_reply()
                 await emit({"type": "stopped"})
                 res = None
             if res is not None:
-                if getattr(res, "ok", False):
+                from chat.streaming import budget_pause
+                capped = budget_pause(res)
+                if capped is not None:
+                    status = "failed"
+                    err = str(capped.get("reason") or "The turn reached its money cap")
+                    await emit(error_event("agent", err))
+                elif getattr(res, "ok", False):
                     reply = clean_agent_reply(str(res.agent_output))
                 else:
                     status = "failed"
                     err = getattr(res, "error", None) or "agent returned no output"
                     await emit(error_event("agent", err))
         except Exception as e:  # noqa: BLE001
-            status, err = "failed", str(e)
+            from agents.callbacks.chat_stream import describe_llm_error
+            status, err = "failed", describe_llm_error(
+                e, getattr(callback, "bound_provider", ""), getattr(callback, "bound_model", ""))
             await emit(error_event("agent", err))
-    else:
-        status, err = "failed", f"{spec.agent_id} is not available"
-        await emit(error_event("registry", err))
 
     # Always produce a result: the agent's words if it has any, otherwise what
     # it changed — a run that only renamed something should not read as silent.
@@ -442,20 +493,28 @@ async def run_entity_chat_turn(
         "artifacts": getattr(callback, "artifact_history", []) if callback else [],
         "token_usage": usage,
     }
+    if remote is not None:
+        usage = {**usage, **remote.usage}
+        process_payload = {**process_payload, **remote.process, "token_usage": usage}
+        process_payload.setdefault("llm_input_context", {})
+        process_payload["llm_input_context"] = {
+            **process_payload["llm_input_context"], "user_message": user_message, "response": reply}
 
     finished = _iso()
     duration_ms = int((time.perf_counter() - message_started) * 1000)
-    summary_line = (
-        f"[message_summary] id={msg_id} "
-        f"inbound_tokens={usage['inbound_tokens']} "
-        f"outbound_tokens={usage['outbound_tokens']} "
-        f"total_tokens={usage['total_tokens']} "
-        f"tool_calls={getattr(callback, 'tool_calls', 0) if callback else 0} "
-        f"duration_ms={duration_ms}"
-    )
-    _append_log(log_lines, reply, log_file)
-    _append_log(log_lines, summary_line, log_file)
-    _write_log(log_file, log_lines + ["", f"Finished: {finished}", f"Status  : {status}"])
+    if remote is None:
+        # The runner closes the log itself when the turn ran there.
+        summary_line = (
+            f"[message_summary] id={msg_id} "
+            f"inbound_tokens={usage['inbound_tokens']} "
+            f"outbound_tokens={usage['outbound_tokens']} "
+            f"total_tokens={usage['total_tokens']} "
+            f"tool_calls={getattr(callback, 'tool_calls', 0) if callback else 0} "
+            f"duration_ms={duration_ms}"
+        )
+        _append_log(log_lines, reply, log_file)
+        _append_log(log_lines, summary_line, log_file)
+        _write_log(log_file, log_lines + ["", f"Finished: {finished}", f"Status  : {status}"])
 
     _update_run(run_id, {
         "status": status, "finished_at": finished,

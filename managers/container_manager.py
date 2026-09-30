@@ -4,7 +4,7 @@ Architecture
 ------------
             ┌─────────────────────────────┐
             │       Host process           │
-            │   (node_manager /           │
+            │   (instances.carrier /       │
             │    run_manager)             │
             │                             │
             │  ContainerManager           │
@@ -170,6 +170,33 @@ def _run(cmd: List[str], timeout: int = 300, capture: bool = True) -> subprocess
         timeout=timeout,
         cwd=str(PROJECT_ROOT),
     )
+
+
+# How long a read-only listing may wait for the daemon. A Docker Desktop whose
+# engine is stuck accepts the connection and never answers, so without a short
+# limit a listing waits out the five-minute default and the page asking for
+# it spins that long.
+QUERY_TIMEOUT = 15
+
+
+class DockerUnavailable(RuntimeError):
+    """The Docker CLI is missing, or its daemon did not answer a listing."""
+
+
+def _query(cmd: List[str]) -> subprocess.CompletedProcess:
+    """A read-only docker command with a short limit, failing with
+    :class:`DockerUnavailable` when there is no daemon to answer it."""
+    try:
+        result = _run(cmd, timeout=QUERY_TIMEOUT)
+    except FileNotFoundError as exc:
+        raise DockerUnavailable("The docker CLI is not installed on this host") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise DockerUnavailable(
+            f"Docker did not answer within {QUERY_TIMEOUT} s: the daemon is not responding"
+        ) from exc
+    if result.returncode != 0 and "daemon" in (result.stderr or "").lower():
+        raise DockerUnavailable((result.stderr or "").strip().splitlines()[-1])
+    return result
 
 
 # ── Env forwarding ────────────────────────────────────────────────────────────
@@ -401,7 +428,7 @@ def generate_dockerfile(
     dependencies come from the base image (agents-hub/base:latest).
 
     When http_expose=True an EXPOSE directive is added and the default CMD
-    includes --http-port so the node_run starts the HTTP server.
+    includes --http-port so the carrier starts the HTTP server.
     """
     label_name = agent_name or agent_id
     expose_line = f"\nEXPOSE {http_port}" if http_expose else ""
@@ -428,7 +455,7 @@ LABEL agents-hub.agent-name="{label_name}"
 ENV AGENT_ID="{agent_id}"
 ENV AGENT_EXECUTION_MODE="local"
 {expose_line}
-CMD ["python", "-m", "runtime.node_run", "--agent-id", "{agent_id}"{http_cmd}]
+CMD ["python", "-m", "runtime.instance_run", "--agent-id", "{agent_id}"{http_cmd}]
 """
 
 
@@ -516,8 +543,11 @@ def build_image(
 
 
 def list_images() -> List[Dict[str, Any]]:
-    """Return all agents-hub Docker images on the host."""
-    result = _run([
+    """Return all agents-hub Docker images on the host.
+
+    Raises :class:`DockerUnavailable` when the daemon does not answer.
+    """
+    result = _query([
         "docker", "images",
         "--filter", f"label={LABEL_MANAGED}",
         "--format", "{{json .}}",
@@ -543,7 +573,7 @@ def list_images() -> List[Dict[str, Any]]:
 
 def image_exists(image_tag: str) -> bool:
     """Check whether a specific image tag exists locally."""
-    result = _run(["docker", "images", "-q", image_tag])
+    result = _run(["docker", "images", "-q", image_tag], timeout=QUERY_TIMEOUT)
     return bool((result.stdout or "").strip())
 
 
@@ -1108,11 +1138,11 @@ def _list_local_containers() -> List[Dict[str, Any]]:
     # that callers treat as cheap. An installed CLI with no daemon behind it
     # blocks until the timeout rather than failing, so the default would stall
     # a diagnostic, and the suite, for minutes.
-    result = _run([
+    result = _query([
         "docker", "ps", "-a",
         "--filter", f"label={LABEL_MANAGED}",
         "--format", "{{json .}}",
-    ], timeout=15)
+    ])
     containers: List[Dict[str, Any]] = []
     for line in (result.stdout or "").splitlines():
         line = line.strip()

@@ -387,27 +387,19 @@ def get_run_by_id(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
     return _row_to_record(row) if row is not None else None
 
 
-def get_all_runs_for_node(node_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-    """Return all runs for a node, newest first."""
-    conn = db.get_conn()
-    rows = conn.execute("SELECT * FROM runs WHERE node_id = ?", (str(node_id),)).fetchall()
-    runs = [_row_to_record(r) for r in rows]
-    runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-    return runs[:limit]
-
-
-def get_in_progress_runs_for_node(node_id: str) -> List[Dict[str, Any]]:
-    """Return node-bound runs that are currently in progress."""
+def get_in_progress_runs_for_instance(instance_id: str) -> List[Dict[str, Any]]:
+    """Runs a resident instance's carrier has open right now."""
     conn = db.get_conn()
     rows = conn.execute(
-        "SELECT * FROM runs WHERE node_id = ? AND status IN ('running', 'stop')",
-        (str(node_id),)).fetchall()
+        "SELECT * FROM runs WHERE instance_id = ? AND status IN ('running', 'stop')",
+        (str(instance_id),)).fetchall()
     return [_row_to_record(r) for r in rows]
 
 
-def fail_in_progress_runs_for_node(node_id: str, reason: str) -> int:
-    """Mark all in-progress runs on a node as failed and return count."""
-    runs = get_in_progress_runs_for_node(node_id)
+def fail_in_progress_runs_for_instance(instance_id: str, reason: str) -> int:
+    """Mark every run a stopped or dead carrier left open as failed; returns
+    how many."""
+    runs = get_in_progress_runs_for_instance(instance_id)
     if not runs:
         return 0
 
@@ -545,8 +537,11 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
         return True
 
     if pid <= 0:
-        # Node-managed run: mark stop request and let node_run finalize.
-        if rec.get("node_id"):
+        # A run inside a resident instance's carrier (runtime/instance_run.py,
+        # or a node before nodes were folded into instances): mark the stop
+        # and let its RunStopCallback end it. Signalling a pid here would take
+        # the whole carrier down with every other conversation it is serving.
+        if rec.get("carrier_run") or rec.get("node_id"):
             _update_run(run_id, {"status": "stop", "finished_at": _utc_now_iso(), "error": "stop requested by user"})
             log_file_path = rec.get("log_file")
             if log_file_path:

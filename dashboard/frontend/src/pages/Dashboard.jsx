@@ -11,6 +11,7 @@ import {
   Brain,
   GitBranch,
   Server,
+  Radio,
   MessageSquare,
   Settings as SettingsIcon,
   Network,
@@ -30,13 +31,14 @@ import {
   getAgents,
   getRuns,
   getSharedMemories,
-  getNodes,
+  getInstancesSummary,
   listFlows,
   getSystemHealth,
   listConnections,
 } from '../api';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
+import { poolName } from '../components/memoryManager/helpers';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
@@ -47,7 +49,7 @@ const Dashboard = () => {
   const [agents, setAgents] = useState([]);
   const [runs, setRuns] = useState([]);
   const [memories, setMemories] = useState([]);
-  const [nodes, setNodes] = useState([]);
+  const [instanceCounts, setInstanceCounts] = useState({ live: 0, total: 0 });
   const [flows, setFlows] = useState([]);
   const [health, setHealth] = useState(null);
   const [connections, setConnections] = useState([]);
@@ -58,19 +60,21 @@ const Dashboard = () => {
       getAgents(workspaceFilter),
       getRuns(workspaceFilter),
       getSharedMemories(workspaceFilter),
-      getNodes(workspaceFilter),
+      getInstancesSummary({ workspace: workspaceFilter }),
       listFlows(workspaceFilter),
       getSystemHealth(),
       listConnections(workspaceFilter),
     ])
-      .then(([statsResp, agentsResp, runsResp, memResp, nodesResp, flowsResp, healthResp,
+      .then(([statsResp, agentsResp, runsResp, memResp, instSummaryResp, flowsResp, healthResp,
               connectionsResp]) => {
         // Each panel stands on its own: one failed endpoint must not blank the page.
         if (statsResp.status === 'fulfilled') setStats(statsResp.value.data);
         if (agentsResp.status === 'fulfilled') setAgents(agentsResp.value.data);
         if (runsResp.status === 'fulfilled') setRuns(runsResp.value.data);
         if (memResp.status === 'fulfilled') setMemories(memResp.value.data);
-        if (nodesResp.status === 'fulfilled') setNodes(nodesResp.value.data);
+        if (instSummaryResp.status === 'fulfilled') {
+          setInstanceCounts(instSummaryResp.value.data?.counts || { live: 0, total: 0 });
+        }
         if (flowsResp.status === 'fulfilled') setFlows(flowsResp.value.data);
         if (healthResp.status === 'fulfilled') setHealth(healthResp.value.data);
         if (connectionsResp.status === 'fulfilled') {
@@ -96,7 +100,6 @@ const Dashboard = () => {
   }
 
   const activePods = runs.filter(r => r.status === 'running');
-  const activeNodes = nodes.filter(n => n.status === 'running');
   const ragIndexedFiles = memories.reduce((acc, m) => {
     return acc + (m.files || []).filter(f => f.rag_status === 'indexed').length;
   }, 0);
@@ -186,13 +189,13 @@ const Dashboard = () => {
           />
         )}
         <StatCard
-          title={t('dashboard.stats.nodes')}
-          value={`${activeNodes.length}/${nodes.length}`}
-          icon={Server}
+          title={t('dashboard.stats.instances')}
+          value={`${instanceCounts.live || 0}/${instanceCounts.total || 0}`}
+          icon={Radio}
           color="bg-gray-500"
-          subtext={activeNodes.length > 0 ? t('dashboard.stats.nodesRunning', { count: activeNodes.length }) : t('dashboard.stats.noneRunning')}
-          to="/nodes"
-          pulse={activeNodes.length > 0}
+          subtext={instanceCounts.live > 0 ? t('dashboard.stats.instancesLive', { count: instanceCounts.live }) : t('dashboard.stats.noneRunning')}
+          to="/instances"
+          pulse={instanceCounts.live > 0}
         />
       </div>
 
@@ -351,7 +354,7 @@ const Dashboard = () => {
                   <div key={mem.id} className="flex items-center justify-between py-1.5 px-3 rounded-lg bg-gray-50">
                     <div className="flex items-center space-x-2">
                       <Database className="w-3.5 h-3.5 text-purple-400" />
-                      <span className="text-sm font-medium text-gray-700">{mem.name}</span>
+                      <span className="text-sm font-medium text-gray-700">{poolName(mem, t)}</span>
                     </div>
                     <div className="flex items-center space-x-2 text-xs text-gray-400">
                       <span>{t('dashboard.memory.fileCount', { count: fileCount })}</span>

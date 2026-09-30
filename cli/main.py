@@ -50,7 +50,7 @@ from cli.backend import get_backend, BackendError  # noqa: E402
 
 app = typer.Typer(
     name="agents-hub",
-    help="Agents Hub CLI — manage agents, tasks, workspaces, and nodes.",
+    help="Agents Hub CLI: manage agents, tasks, workspaces, and instances.",
     no_args_is_help=True,
 )
 
@@ -67,7 +67,7 @@ app.add_typer(server_app, name="server")
 app.add_typer(auth_app, name="auth")
 app.add_typer(db_app, name="db")
 
-# agent/task/workspace/project/node (cli/commands/), flow/loop/team/eval/mcp/user
+# agent/task/workspace/project/instance (cli/commands/), flow/loop/team/eval/mcp/user
 # (also cli/commands/), the `api` escape hatch and the OpenAPI-generated groups
 # (cli/openapi.py) are registered at the bottom of this file, once every helper
 # they import from here (hub, call, console, the selection functions) exists.
@@ -297,12 +297,13 @@ _TASK_STATUS_COLORS = {
     "done": "green",
 }
 
-_NODE_STATUS_COLORS = {
-    "running": "green",
+_INSTANCE_STATE_COLORS = {
+    "starting": "yellow",
+    "active": "green",
+    "standby": "cyan",
+    "finished": "blue",
     "stopped": "dim",
-    "completed": "blue",
     "failed": "red",
-    "error": "red",
 }
 
 
@@ -310,8 +311,8 @@ def _task_color(status: str) -> str:
     return _TASK_STATUS_COLORS.get(status, "white")
 
 
-def _node_color(status: str) -> str:
-    return _NODE_STATUS_COLORS.get(status, "white")
+def _instance_color(state: str) -> str:
+    return _INSTANCE_STATE_COLORS.get(state, "white")
 
 
 def _short(val: str | None, n: int = 38) -> str:
@@ -357,10 +358,10 @@ def _resolve_task_id(task_id: str) -> str:
     return _expand_id(task_id, [str(t.get("id", "")) for t in tasks], "task")
 
 
-def _resolve_node_id(node_id: str) -> str:
-    """Full UUID for a node ID given in full or as the prefix `node list` shows."""
-    nodes = call(hub().list_nodes)
-    return _expand_id(node_id, [str(n.get("node_id", "")) for n in nodes], "node")
+def _resolve_instance_id(instance_id: str) -> str:
+    """Full id for an instance ID given in full or as the prefix `instance list` shows."""
+    instances = call(hub().list_instances)
+    return _expand_id(instance_id, [str(i.get("instance_id", "")) for i in instances], "instance")
 
 
 # ---------------------------------------------------------------------------
@@ -419,9 +420,9 @@ def deployment(
     logs: Optional[str] = typer.Option(None, "--logs", help="Print the last lines of this member's log instead of the map."),
     tail: int = typer.Option(200, help="Lines to print with --logs."),
 ):
-    """The deployment map: members (replicas and workers), the roles each
-    holds, the launch queue, and where runs, nodes and containers live
-    (docs/deployment.md)."""
+    """The cluster map: members (replicas and workers), the roles each
+    holds, the launch queue, and where runs, resident instances and
+    containers live (docs/deployment.md)."""
     _require_direct_mode("ah deployment")
     from dashboard.backend.routes.deployment import build_map
     from common import members as _members
@@ -455,11 +456,11 @@ def deployment(
                   f"{q.get('running', 0)}, failed {q.get('failed', 0)}; outbox pending "
                   f"{(m.get('outbox') or {}).get('pending', 0)}")
     hosts = Table(box=box.SIMPLE, show_header=True, title="by host")
-    for col in ("host", "members", "runs", "flow runs", "nodes", "containers"):
+    for col in ("host", "members", "runs", "flow runs", "instances", "containers"):
         hosts.add_column(col)
     for h in m["hosts"]:
         hosts.add_row(h["host"], str(len(h["members"])), str(h["runs"]), str(h["flow_runs"]),
-                      str(h["nodes"]), str(h["containers"]))
+                      str(h["instances"]), str(h["containers"]))
     console.print(hosts)
     for run in m["runs"]:
         age = run.get("heartbeat_age_seconds")
@@ -861,10 +862,10 @@ def up(
 
 
 # ---------------------------------------------------------------------------
-# agent / task / workspace / project / node commands
+# agent / task / workspace / project / instance commands
 # ---------------------------------------------------------------------------
-# Moved to cli/commands/{agent,task,workspace,project,node}.py, registered at
-# the bottom of this file. _require_workspace stays here: it is a helper the
+# Moved to cli/commands/{agent,task,workspace,project,instance}.py, registered
+# at the bottom of this file. _require_workspace stays here: it is a helper the
 # selection model owns, not a command, and cli/commands/project.py imports it
 # the same way it imports hub()/call()/console.
 
@@ -893,7 +894,8 @@ def chat(
 ):
     """Start an interactive chat session with an agent (REPL mode)."""
     # Each turn is one /api/chat/message call, which runs the agent in the
-    # server process — no node to start, and history is carried in the body.
+    # server process: no resident instance to start, and history is carried
+    # in the body.
     workspace = _active_workspace(workspace)
     project_id = _active_project(project_id)
     console.print(Panel(
@@ -1391,7 +1393,8 @@ from cli.commands.agent import agent_app  # noqa: E402
 from cli.commands.task import task_app  # noqa: E402
 from cli.commands.workspace import workspace_app  # noqa: E402
 from cli.commands.project import project_app  # noqa: E402
-from cli.commands.node import node_app  # noqa: E402
+from cli.commands.instance import instance_app  # noqa: E402
+from cli.commands.service import service_app  # noqa: E402
 from cli.commands.flow import flow_app  # noqa: E402
 from cli.commands.loop import loop_app  # noqa: E402
 from cli.commands.team import team_app  # noqa: E402
@@ -1406,7 +1409,8 @@ app.add_typer(agent_app, name="agent")
 app.add_typer(task_app, name="task")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(project_app, name="project")
-app.add_typer(node_app, name="node")
+app.add_typer(instance_app, name="instance")
+app.add_typer(service_app, name="service")
 app.add_typer(flow_app, name="flow")
 app.add_typer(loop_app, name="loop")
 app.add_typer(team_app, name="team")
@@ -1422,8 +1426,8 @@ app.command("api")(api_command)
 # Used only to decide whether a generic, schema-driven group needs building
 # below: not a permission list, just a fast "have we already got this one".
 _KNOWN_TOP_LEVEL = {
-    "agent", "task", "workspace", "project", "node", "flow", "loop", "team",
-    "eval", "mcp", "user", "api", "server", "auth", "db", "secrets",
+    "agent", "task", "workspace", "project", "instance", "flow", "loop", "team",
+    "eval", "mcp", "user", "api", "server", "auth", "db", "secrets", "costs",
     "worker", "deployment", "up", "chat", "config", "shell-init", "shell-export",
 }
 

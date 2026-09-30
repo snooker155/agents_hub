@@ -247,13 +247,18 @@ def build_chat_model(
         streaming=streaming,
         timeout=req_timeout,
     )
-    # `stream_usage` is deliberately not forced here. A streamed completion only
-    # carries a usage block when `stream_options.include_usage` is requested, and
-    # langchain-openai already turns that on by itself — but only when the model
-    # points at the real OpenAI API, because a custom base_url means a gateway
-    # that may reject the option. Overriding that would trade exact token counts
-    # on OpenAI (already handled) for broken requests elsewhere; where usage is
-    # missing, StatsCollectorCallback falls back to its own estimate.
+    # A streamed completion only carries a usage block when
+    # `stream_options.include_usage` is requested. langchain-openai turns that
+    # on by itself for the real OpenAI API, but its check is whether the name
+    # ``OPENAI_BASE_URL`` exists in the environment at all: the backend seeds
+    # every .env key into os.environ, an empty one included, and every process
+    # it spawns inherits it, so streamed runs came back without usage and the
+    # money cap (agents/callbacks/guards.py) priced them as free. Asked for
+    # explicitly whenever no gateway is configured; a custom base_url is left
+    # alone, since a gateway may reject the option, and StatsCollectorCallback
+    # falls back to its own estimate there.
+    if not common["base_url"]:
+        common["stream_usage"] = True
     if effort and (mdl or "").lower().startswith(_OPENAI_REASONING_PREFIXES):
         # Reasoning models accept reasoning_effort but reject a custom
         # temperature, so omit it.

@@ -244,20 +244,96 @@ class DirectBackend:
         from dashboard.backend.routes.projects import git_status as _git_status
         return _run_coroutine(_git_status(project_id))
 
-    # ---- nodes ----
+    # ---- instances ----
+    # A resident instance (instances/carrier.py) is what a node used to be:
+    # the copy of an agent the agent page's Run started. The route functions
+    # are called directly, request=None, the same way decompose_task and
+    # attach_project are above; identity.request_principal(None) and
+    # _enrich's request=None both read as the local operator with no
+    # external_url, which is exactly right for a call with no HTTP request.
 
-    def list_nodes(self, workspace: Optional[str] = None) -> List[dict]:
-        from dashboard.backend.routes.nodes import list_nodes as _list
-        return _run_coroutine(_list(workspace))
+    def list_instances(self, workspace: Optional[str] = None) -> List[dict]:
+        from dashboard.backend.routes.instances import list_instances as _list
+        page = _run_coroutine(_list(None, workspace=workspace, kind="resident"))
+        return page["items"]
 
-    def start_node(self, body: dict) -> dict:
-        from dashboard.backend.routes.nodes import start_node as _start
-        from dashboard.backend.routes.nodes import NodeCreate
-        return _run_coroutine(_start(NodeCreate(**body)))
+    def start_instance(self, body: dict) -> dict:
+        from dashboard.backend.routes.instances import InstanceStart
+        from dashboard.backend.routes.instances import start_instance as _start
+        return _run_coroutine(_start(InstanceStart(**body), None))
 
-    def stop_node(self, node_id: str) -> dict:
-        from dashboard.backend.routes.nodes import stop_node as _stop
-        return _run_coroutine(_stop(node_id))
+    def stop_instance(self, instance_id: str) -> dict:
+        from dashboard.backend.routes.instances import stop_instance as _stop
+        return _run_coroutine(_stop(instance_id))
+
+    def restart_instance(self, instance_id: str) -> dict:
+        from dashboard.backend.routes.instances import restart_instance as _restart
+        return _run_coroutine(_restart(instance_id, None))
+
+    def instance_logs(self, instance_id: str) -> dict:
+        from dashboard.backend.routes.instances import get_instance_logs as _logs
+        return _run_coroutine(_logs(instance_id))
+
+    def send_instance_message(self, instance_id: str, message: str,
+                              conversation_id: Optional[str] = None) -> dict:
+        from dashboard.backend.routes.instances import InstanceMessage
+        from dashboard.backend.routes.instances import message_instance as _msg
+        body = InstanceMessage(message=message, conversation_id=conversation_id)
+        return _run_coroutine(_msg(instance_id, body, None))
+
+    def get_instance_message(self, instance_id: str, msg_id: str) -> dict:
+        from dashboard.backend.routes.instances import get_instance_message as _get
+        return _run_coroutine(_get(instance_id, msg_id))
+
+    # ---- services ----
+    # Agents kept running as replicas (docs/services.md); same direct-call
+    # shape as the instances above.
+
+    def list_services(self, workspace: Optional[str] = None) -> List[dict]:
+        from dashboard.backend.routes.services import list_services as _list
+        return _run_coroutine(_list(None, workspace=workspace))["items"]
+
+    def get_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import get_service as _get
+        return _run_coroutine(_get(service_id, None))
+
+    def create_service(self, body: dict) -> dict:
+        from dashboard.backend.routes.services import ServiceCreate
+        from dashboard.backend.routes.services import create_service as _create
+        return _run_coroutine(_create(ServiceCreate(**body), None))
+
+    def update_service(self, service_id: str, body: dict) -> dict:
+        from dashboard.backend.routes.services import ServiceUpdate
+        from dashboard.backend.routes.services import update_service as _update
+        return _run_coroutine(_update(service_id, ServiceUpdate(**body), None))
+
+    def pause_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import pause_service as _pause
+        return _run_coroutine(_pause(service_id, None))
+
+    def resume_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import resume_service as _resume
+        return _run_coroutine(_resume(service_id, None))
+
+    def delete_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import delete_service as _delete
+        return _run_coroutine(_delete(service_id))
+
+    def publish_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import publish_service as _publish
+        return _run_coroutine(_publish(service_id, None))
+
+    def unpublish_service(self, service_id: str) -> dict:
+        from dashboard.backend.routes.services import unpublish_service as _unpublish
+        return _run_coroutine(_unpublish(service_id, None))
+
+    def list_service_replicas(self, service_id: str) -> List[dict]:
+        from dashboard.backend.routes.services import list_replicas as _replicas
+        return _run_coroutine(_replicas(service_id))["items"]
+
+    def service_events(self, service_id: str) -> List[dict]:
+        from dashboard.backend.routes.services import service_events as _events
+        return _run_coroutine(_events(service_id))["items"]
 
     # ---- settings ----
 
@@ -530,16 +606,74 @@ class HttpBackend:
     def project_git_status(self, project_id):
         return self._request("GET", f"/api/projects/{project_id}/git-status")
 
-    # ---- nodes ----
+    # ---- instances ----
 
-    def list_nodes(self, workspace=None):
-        return self._request("GET", "/api/nodes", params={"workspace": workspace} if workspace else None)
+    def list_instances(self, workspace=None):
+        params = {"kind": "resident"}
+        if workspace:
+            params["workspace"] = workspace
+        result = self._request("GET", "/api/instances", params=params)
+        return result.get("items", []) if isinstance(result, dict) else result
 
-    def start_node(self, body):
-        return self._request("POST", "/api/nodes", json=body)
+    def start_instance(self, body):
+        return self._request("POST", "/api/instances", json=body)
 
-    def stop_node(self, node_id):
-        return self._request("POST", f"/api/nodes/{node_id}/stop", json={})
+    def stop_instance(self, instance_id):
+        return self._request("POST", f"/api/instances/{instance_id}/stop", json={})
+
+    def restart_instance(self, instance_id):
+        return self._request("POST", f"/api/instances/{instance_id}/restart", json={})
+
+    def instance_logs(self, instance_id):
+        return self._request("GET", f"/api/instances/{instance_id}/logs")
+
+    def send_instance_message(self, instance_id, message, conversation_id=None):
+        payload = {"message": message}
+        if conversation_id:
+            payload["conversation_id"] = conversation_id
+        return self._request("POST", f"/api/instances/{instance_id}/message", json=payload)
+
+    def get_instance_message(self, instance_id, msg_id):
+        return self._request("GET", f"/api/instances/{instance_id}/messages/{msg_id}")
+
+    # ---- services ----
+
+    def list_services(self, workspace=None):
+        params = {"workspace": workspace} if workspace else {}
+        result = self._request("GET", "/api/services", params=params)
+        return result.get("items", []) if isinstance(result, dict) else result
+
+    def get_service(self, service_id):
+        return self._request("GET", f"/api/services/{service_id}")
+
+    def create_service(self, body):
+        return self._request("POST", "/api/services", json=body)
+
+    def update_service(self, service_id, body):
+        return self._request("PATCH", f"/api/services/{service_id}", json=body)
+
+    def pause_service(self, service_id):
+        return self._request("POST", f"/api/services/{service_id}/pause", json={})
+
+    def resume_service(self, service_id):
+        return self._request("POST", f"/api/services/{service_id}/resume", json={})
+
+    def delete_service(self, service_id):
+        return self._request("DELETE", f"/api/services/{service_id}")
+
+    def publish_service(self, service_id):
+        return self._request("POST", f"/api/services/{service_id}/publish", json={})
+
+    def unpublish_service(self, service_id):
+        return self._request("DELETE", f"/api/services/{service_id}/publish")
+
+    def list_service_replicas(self, service_id):
+        result = self._request("GET", f"/api/services/{service_id}/replicas")
+        return result.get("items", []) if isinstance(result, dict) else result
+
+    def service_events(self, service_id):
+        result = self._request("GET", f"/api/services/{service_id}/events")
+        return result.get("items", []) if isinstance(result, dict) else result
 
     # ---- settings ----
 

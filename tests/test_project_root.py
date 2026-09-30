@@ -31,9 +31,9 @@ def test_rag_query_matches():
     assert rag_query._PROJECT_ROOT == PROJECT_ROOT
 
 
-def test_node_manager_matches():
-    import managers.node_manager as node_manager
-    assert node_manager.PROJECT_ROOT == PROJECT_ROOT
+def test_carrier_matches():
+    import instances.carrier as carrier
+    assert carrier.PROJECT_ROOT == PROJECT_ROOT
 
 
 def test_container_manager_matches():
@@ -53,9 +53,9 @@ def test_run_manager_facade_still_reexports_the_same_root():
     assert run_manager.PROJECT_ROOT == PROJECT_ROOT
 
 
-def test_node_run_matches():
-    import runtime.node_run as node_run
-    assert node_run.PROJECT_ROOT == PROJECT_ROOT
+def test_instance_run_matches():
+    import runtime.instance_run as instance_run
+    assert instance_run.PROJECT_ROOT == PROJECT_ROOT
 
 
 def test_agent_launcher_matches():

@@ -1,7 +1,7 @@
 """
 The single place every execution channel registers a live agent copy.
 
-Chat, task subprocesses, node workers, containers and flow nodes all used to
+Chat, task subprocesses, resident carriers and flow nodes all used to
 report their existence in mutually incompatible ways — a node row here, a run
 record there, a session document somewhere else. They now all call
 :func:`ensure_instance`, so one query answers "what is running right now".
@@ -29,7 +29,7 @@ DELTA_FIELDS = (
     "instance_id", "agent_id", "workspace", "kind", "state", "label",
     "current_run_id", "task_id", "node_id", "container_name", "session_id",
     "last_activity", "last_activity_at", "finished_at", "runs_count",
-    "total_tokens", "total_duration_ms", "error",
+    "total_tokens", "total_duration_ms", "error", "service_id",
 )
 
 # Environment variable carrying the instance id into a spawned agent process.
@@ -102,10 +102,11 @@ def ensure_instance(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     reuse_session: bool = False,
+    service_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return the instance for this execution context, creating it if new.
 
-    Resolution order: explicit ``instance_id`` → the node's instance →
+    Resolution order: explicit ``instance_id`` → the carrier's instance →
     (``reuse_session``) the session's instance → a new row. ``hint`` seeds the
     label (task title, first chat message) and is ignored once a label exists.
 
@@ -120,6 +121,7 @@ def ensure_instance(
         "session_id": session_id, "node_id": node_id,
         "container_name": container_name, "pid": pid, "task_id": task_id,
         "project_id": project_id, "provider": provider, "model": model,
+        "service_id": service_id,
     }
     fields = {k: v for k, v in fields.items() if v is not None}
 
@@ -170,7 +172,7 @@ def mark_active(instance_id: str, run_id: Optional[str] = None,
 
 
 def mark_standby(instance_id: str, activity: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """The carrier is alive but idle — a node back in its poll loop."""
+    """The carrier is alive but idle: a resident copy waiting on its mailbox."""
     inst = store.update(instance_id, state="standby", last_activity_at=store.utc_iso(),
                         current_run_id=None,
                         **({"last_activity": activity[:300]} if activity else {}))
@@ -237,38 +239,23 @@ def reconcile() -> int:
     A crash, a kill or a reboot between ``mark_active`` and ``mark_finished``
     leaves a row claiming to be alive forever. Returns how many were corrected.
     """
+    from instances import carrier
     from managers import run_manager as rm
 
     fixed = 0
     page = store.list_instances(limit=1000, live=True, include_archived=True)
     for inst in page["items"]:
         iid = inst["instance_id"]
-        kind = inst.get("kind")
-        if kind in ("node", "container"):
-            if _node_alive(inst):
-                continue
-            mark_stopped(iid, "carrier node stopped")
-            fixed += 1
+        if inst.get("kind") in store.CARRIER_KINDS:
+            after = carrier.sync(inst) or inst
+            if after.get("state") not in store.LIVE_STATES:
+                fixed += 1
             continue
         pid = int(inst.get("pid") or 0)
         if pid > 0 and not rm._pid_exists(pid):
             mark_finished(iid, "process exited")
             fixed += 1
     return fixed
-
-
-def _node_alive(inst: Dict[str, Any]) -> bool:
-    node_id = inst.get("node_id")
-    if not node_id:
-        return True  # nothing to check against; leave it alone
-    try:
-        from managers import node_manager
-        node = node_manager.get_node(str(node_id))
-    except Exception:
-        return True
-    if not node:
-        return False
-    return str(node.get("status") or "") in ("running", "starting", "stopping")
 
 
 def live_ids_for_agent(agent_id: str, workspace: Optional[str] = None) -> List[str]:

@@ -2,22 +2,22 @@
 
 Agents can run in-process or in Docker. Container mode isolates a run: its own
 filesystem view, its own network posture, its own lifetime. Both surfaces that
-run agents use it: persistent **nodes** (`managers/node_manager.py`) and
+run agents use it: **resident instances** (`instances/carrier.py`, the agent page's Run) and
 one-shot **task runs** (`agents/agent_launcher.py`).
 
 ## Execution modes
 
 Set per workspace, falling back to the global `AGENT_EXECUTION_MODE` setting,
-resolved live on every node start and every task run. `local` runs agents as a
+resolved live on every instance start and every task run. `local` runs agents as a
 subprocess of the backend; `docker` runs each in its own container.
 
 ## Two container profiles
 
-Nodes and runs share the same images and the same base mounts, but a run
-container is additionally sandboxed — it is unattended and one-shot, where a
-node is something an operator is actively watching:
+Resident instances and runs share the same images and the same base mounts,
+but a run container is additionally sandboxed — it is unattended and one-shot,
+where a resident instance is something an operator is actively watching:
 
-| | Node container | Run container |
+| | Instance container | Run container |
 |---|---|---|
 | Mounts | state dir, tasks dir, workspace (all read-write) | same, plus the registry snapshot (`run_snapshots/<run_id>/`: `agents.json`, `custom_providers.json`, `models.json`) mounted `:ro` inside the state dir and named in `AGENTS_HUB_SNAPSHOT_DIR` (and, with `AGENT_RUN_STATE_TRANSPORT=http`, the whole state dir `:ro` with `run_logs/` re-mounted `:rw`, see below) |
 | Env | provider-key allowlist (`OPENAI_*`, `ANTHROPIC_*`, …) | full env minus a host-only denylist (`container_env`) — a run needs its session id, workspace name and relay token too |
@@ -44,8 +44,8 @@ into `<state>/run_snapshots/<run_id>/` (`common/snapshot.py`,
 `AGENTS_HUB_SNAPSHOT_DIR` at it. Inside the container every registry
 serves the snapshot and refuses writes, so a run reads a frozen copy of its
 own definition and cannot change what the capability guard will allow it.
-A node container gets the same under `run_snapshots/node-<id>/`; a registry
-edit reaches a running node on its next restart. Snapshots of finished runs
+A resident instance's container gets the same under its own snapshot
+directory; a registry edit reaches a running instance on its next restart. Snapshots of finished runs
 are removed by the maintenance sweep.
 
 Setting `AGENT_RUN_STATE_TRANSPORT=http` (env var, or `run_state_transport` in
@@ -140,7 +140,9 @@ works when the operator's browser can reach the container's host directly.
 The **Preview** button on the Containers page instead opens the page inside
 the hub, through an authenticated proxy: `POST /api/preview/tickets` mints a
 short-lived, signed ticket (`common/preview_tickets.py`) for `{kind:
-"container", name}`, and the page loads in an iframe pointed at
+"container", name}` (a project's frontend and a [project
+deployment](project-deployments.md)'s service use the same proxy with kinds
+`project` and `deployment`), and the page loads in an iframe pointed at
 `/preview/<ticket>/`, a path outside `/api` where the ticket itself is the
 credential (`dashboard/backend/routes/preview.py`).
 
@@ -198,4 +200,4 @@ refused combination survivable.
   not `execution_mode`; `managers/run_manager.py` and `managers/run_watchdog.py`
   key off it for that reason.
 
-Related: [nodes](nodes.md), [tools-and-capabilities](tools-and-capabilities.md), [settings](settings.md), [environments](environments.md).
+Related: [instances](instances.md), [tools-and-capabilities](tools-and-capabilities.md), [settings](settings.md), [environments](environments.md).

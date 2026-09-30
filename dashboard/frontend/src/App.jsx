@@ -1,6 +1,6 @@
-import React, { Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { Loader } from 'lucide-react';
+import React, { Suspense, lazy, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import PageLoader from './components/PageLoader';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import { PageChatProvider } from './components/pageChat/PageChatContext';
@@ -8,7 +8,7 @@ import { FeaturesProvider } from './components/FeaturesContext';
 import { useFeatures } from './components/features';
 import { AuthProvider } from './components/AuthContext';
 import { isAdmin, isMultiUser, needsLogin, useAuth } from './components/auth';
-import { useI18n } from './i18n';
+import { getInstances } from './api';
 
 // ---------------------------------------------------------------------------
 // Pages are loaded on demand.
@@ -45,13 +45,13 @@ const SessionDetails = lazy(() => import('./pages/SessionDetails'));
 const Messages = lazy(() => import('./pages/Messages'));
 const Instances = lazy(() => import('./pages/Instances'));
 const InstanceDetail = lazy(() => import('./pages/InstanceDetail'));
+const Services = lazy(() => import('./pages/Services'));
+const ServiceDetail = lazy(() => import('./pages/ServiceDetail'));
 const MessageDetails = lazy(() => import('./pages/MessageDetails'));
 const Chat = lazy(() => import('./pages/Chat'));
-const Nodes = lazy(() => import('./pages/Nodes'));
-const NodeDetail = lazy(() => import('./pages/NodeDetail'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
-const Deployment = lazy(() => import('./pages/Deployment'));
+const Cluster = lazy(() => import('./pages/Cluster'));
 const Environments = lazy(() => import('./pages/Environments'));
 const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
@@ -94,11 +94,9 @@ const OidcCallback = lazy(() => import('./pages/OidcCallback'));
 
 /** Centred spinner shown while a page's chunk is on the wire. */
 function RouteFallback() {
-  const { t } = useI18n();
   return (
-    <div className="h-full w-full flex items-center justify-center text-gray-400">
-      <Loader className="w-6 h-6 animate-spin mr-2" />
-      <span className="text-sm">{t('errorBoundary.loading')}</span>
+    <div className="h-full min-h-[70vh] w-full flex flex-col items-center justify-center">
+      <PageLoader size="lg" />
     </div>
   );
 }
@@ -106,18 +104,44 @@ function RouteFallback() {
 /**
  * One error boundary per route element.
  *
- * Keyed on the pathname, so the boundary is a fresh instance on every
- * navigation: a caught error is state, and without the key a page that threw
- * once would keep showing its fallback after the user had already walked away
- * to a route that works.
+ * A caught error is state, so the boundary clears it when the pathname
+ * changes: without that, a page that threw once would keep showing its
+ * fallback after the user had already walked away to a route that works. Not
+ * a `key`: that remounts the page on every navigation, including a page that
+ * changes its own URL mid-work (Chat's first message moves /chat to
+ * /chat/<id> while the reply is streaming).
  */
 function RouteBoundary({ children }) {
   const { pathname } = useLocation();
-  return <ErrorBoundary key={pathname}>{children}</ErrorBoundary>;
+  return <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>;
 }
 
 /** `<Route element={guard(<Page />)} />` — every route gets the same wrapper. */
 const guard = (element) => <RouteBoundary>{element}</RouteBoundary>;
+
+/**
+ * `/nodes/:nodeId` used to be a node's own page. Nodes are gone: a migration
+ * folded every node into the instance it became (`common/migrations/0029_...`)
+ * and `GET /api/instances?node_id=` finds it. A stale bookmark or external
+ * link lands here and is bounced straight to that instance, or to the plain
+ * Instances list if the id no longer resolves to anything.
+ */
+function NodeRedirect() {
+  const { nodeId } = useParams();
+  const navigate = useNavigate();
+  useEffect(() => {
+    let cancelled = false;
+    getInstances({ node_id: nodeId, include_archived: true })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const first = data?.items?.[0];
+        navigate(first ? `/instances/${first.instance_id}` : '/instances', { replace: true });
+      })
+      .catch(() => { if (!cancelled) navigate('/instances', { replace: true }); });
+    return () => { cancelled = true; };
+  }, [nodeId, navigate]);
+  return <RouteFallback />;
+}
 
 function AppRoutes() {
   const { playground } = useFeatures();
@@ -164,14 +188,17 @@ function AppRoutes() {
         <Route path="/mcp" element={guard(<Mcp />)} />
         <Route path="/instances" element={guard(<Instances />)} />
         <Route path="/instances/:instanceId" element={guard(<InstanceDetail />)} />
-        <Route path="/nodes" element={guard(<Nodes />)} />
-        <Route path="/nodes/:nodeId" element={guard(<NodeDetail />)} />
+        <Route path="/services" element={guard(<Services />)} />
+        <Route path="/services/:serviceId" element={guard(<ServiceDetail />)} />
+        <Route path="/nodes" element={<Navigate to="/instances" replace />} />
+        <Route path="/nodes/:nodeId" element={guard(<NodeRedirect />)} />
         <Route path="/environments" element={guard(<Environments />)} />
         <Route path="/guardrails" element={guard(<Guardrails />)} />
         <Route path="/containers" element={guard(<Containers />)} />
         <Route path="/browser" element={guard(<Browser />)} />
         <Route path="/health" element={guard(<Health />)} />
-        <Route path="/deployment" element={guard(<Deployment />)} />
+        <Route path="/cluster" element={guard(<Cluster />)} />
+        <Route path="/deployment" element={<Navigate to="/cluster" replace />} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
         <Route path="/projects/:id" element={guard(<ProjectDetails />)} />
         <Route path="/views" element={guard(<Views />)} />

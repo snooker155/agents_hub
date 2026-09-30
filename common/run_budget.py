@@ -42,7 +42,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional
 
 from common.pricing import EVALUATION_CHANNELS
 
@@ -175,6 +176,35 @@ def _workspace_fail_closed(ws_name: str | None) -> bool:
         return bool(get_budget(ws_name).get("fail_closed"))
     except Exception:  # noqa: BLE001 - fails open to False (see docstring)
         return False
+
+
+@contextmanager
+def turn_cap(limit_usd: Optional[float], ws_name: Optional[str]) -> Iterator[None]:
+    """Cap the LLM spend of one turn run in this process, for the ``with``
+    block: a service's ``budget_usd`` applied to a chat turn or a job on a
+    replica (docs/services.md). The cap is bound to the current context
+    (``agents.callbacks.guards.set_turn_cap``), so several turns in one
+    process each keep their own ledger; ``fail_closed`` follows the
+    workspace's budget block. No cap (None or 0) binds nothing."""
+    try:
+        limit = float(limit_usd or 0.0)
+    except (TypeError, ValueError):
+        limit = 0.0
+    if limit <= 0:
+        yield
+        return
+    from agents.callbacks.guards import reset_turn_cap, set_turn_cap
+    try:
+        from common.pricing import load_price_map
+        prices = dict(load_price_map())
+    except Exception:  # noqa: BLE001 - no catalog: every call prices as free (the documented default)
+        log.debug("turn_cap: price catalog unavailable", exc_info=True)
+        prices = {}
+    token = set_turn_cap(limit, prices, fail_closed=_workspace_fail_closed(ws_name))
+    try:
+        yield
+    finally:
+        reset_turn_cap(token)
 
 
 def launch_env(task: Any, ws_name: str | None) -> Dict[str, str]:

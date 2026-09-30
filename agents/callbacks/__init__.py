@@ -34,6 +34,10 @@ from agents.callbacks.guards import (
     ContextWindowGuard,
     ContextWindowExceededError,
     RunBudgetGuard,
+    set_turn_cap,
+    reset_turn_cap,
+    turn_cap,
+    turn_spend_usd,
     RunBudgetExceeded,
 )
 from agents.callbacks.streaming import SessionPublishCallback
@@ -64,6 +68,10 @@ __all__ = [
     "ContextWindowGuard",
     "ContextWindowExceededError",
     "RunBudgetGuard",
+    "set_turn_cap",
+    "reset_turn_cap",
+    "turn_cap",
+    "turn_spend_usd",
     "RunBudgetExceeded",
     "RunStopCallback",
     "NodeFileCallback",

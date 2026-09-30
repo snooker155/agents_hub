@@ -129,14 +129,14 @@ The same corpus is published as a website: **https://snooker155.github.io/agents
 
 | | |
 | --- | --- |
-| [Workspaces](./docs/workspaces.md) · [Projects](./docs/projects.md) · [Tasks](./docs/tasks.md) | The unit of isolation, the codebase inside it, the tracked work |
+| [Workspaces](./docs/workspaces.md) · [Projects](./docs/projects.md) · [Project deployments](./docs/project-deployments.md) · [Tasks](./docs/tasks.md) | The unit of isolation, the codebase inside it, that codebase running from inside the hub, the tracked work |
 | [Agents](./docs/agents.md) · [System agents](./docs/system-agents.md) · [Imported agents](./docs/imported-agents.md) | What an agent is made of, and where agents come from |
 | [Tools and capabilities](./docs/tools-and-capabilities.md) · [Skills](./docs/skills.md) · [Memory](./docs/memory.md) | What an agent can do, and what it can know |
 | [Chat](./docs/chat.md) · [Page chat](./docs/page-chat.md) | Talking to an agent, and to the page you are on |
 | [Flows](./docs/flows.md) · [Loops](./docs/loops.md) · [Teams](./docs/teams.md) | More than one agent, or more than one pass |
 | [Views and Studio](./docs/views.md) · [Playground](./docs/playground.md) | What an agent builds to be looked at, and simulated worlds |
 | [Evals](./docs/evals.md) · [Costs](./docs/costs.md) · [Web requests](./docs/web-logs.md) | Measurement: quality, money, and what came in from outside |
-| [Sessions and runs](./docs/sessions-and-runs.md) · [Instances](./docs/instances.md) · [Nodes](./docs/nodes.md) · [Containers](./docs/containers.md) | Records of work, live copies, and the processes carrying them |
+| [Sessions and runs](./docs/sessions-and-runs.md) · [Instances](./docs/instances.md) · [Services](./docs/services.md) · [Containers](./docs/containers.md) | Records of work, live copies, agents kept running as replicas, and the processes carrying them |
 | [Settings](./docs/settings.md) · [Models](./docs/models.md) · [Marketplace](./docs/marketplace.md) · [Telegram](./docs/telegram.md) | Credentials, the catalog, sharing, the phone |
 | [Scheduling](./docs/scheduling.md) · [Service health](./docs/service-health.md) | Future work, and whether the moving parts are alive |
 
@@ -159,7 +159,7 @@ documentation rather than from inference.
    to use on the Models page.
 2. Create a workspace, or `ah workspace init` in a repository you already have.
 3. Create tasks and assign them to an agent, or let the orchestrator route them.
-4. Use chat, a flow, a loop, a team or a node, depending on the work.
+4. Use chat, a flow, a loop, a team or a running instance, depending on the work.
 5. Read the run logs, messages, results, views and generated files.
 6. Iterate on the agent's layered instructions, its model and its tools, and
    curate its memory from the Memory Manager.

@@ -2,8 +2,8 @@
 Shared agent-invocation core.
 
 Every place that runs an agent — the task subprocess (``run_agent``), the flow
-engine (``flow.dispatch``), the node worker (``runtime.node_run``) and the
-in-container HTTP server (``runtime.http_server``) — repeats the same inner
+engine (``flow.dispatch``), a resident instance (``runtime.instance_run``) and
+its direct HTTP port (``runtime.http_server``) — repeats the same inner
 idiom: attach a stats callback, time the call, run ``agent.run(prompt, ...)``,
 turn the result (or an unhandled exception) into a ``process`` dict.
 

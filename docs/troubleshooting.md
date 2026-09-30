@@ -43,9 +43,10 @@ The built-in `visualizer` ships with the set already bound. See
 
 **A message written to an agent copy is never answered.** Open the copy on the
 Instances page and read its state. A message to a **busy** instance waits in its
-mailbox until the copy goes idle. A copy carried by a node or a container
-answers in its own process, so nothing happens if that process is gone; the
-watchdog reconciles instances whose carrier died. See [instances](instances.md).
+mailbox until the copy goes idle. A resident copy (started with Run) answers
+in its own process: if that process is gone the watchdog marks the instance
+stopped, and the next message starts it again. The Process tab of the
+instance shows the carrier's status and log. See [instances](instances.md).
 
 **A loop, team or scenario run was stopped and needs to resume.** `POST
 /api/loops/runs/{id}/resume`, `POST /api/teams/runs/{id}/resume` or `POST

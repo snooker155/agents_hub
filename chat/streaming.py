@@ -45,6 +45,23 @@ class StreamDriveResult:
     # Sources the answer may cite as [n] (common/citation_sink.py): passages a
     # retrieval tool showed the model during the turn. Empty when none did.
     citations: list = field(default_factory=list)
+    # ``{spent_usd, limit_usd}`` when the turn stopped at its money cap
+    # (agents.callbacks.guards.RunBudgetGuard): a chat turn has no task to
+    # park, so the cap ends it as a failure the reply names.
+    budget: dict | None = None
+
+
+def budget_pause(agent_result) -> dict | None:
+    """The ``kind: "budget"`` pending record of a result parked at its money
+    cap (agents.standard_agent._budget_paused_result), or None."""
+    if not getattr(agent_result, "ok", False):
+        return None
+    if getattr(agent_result, "status", "") != "awaiting_approval":
+        return None
+    pending = getattr(agent_result, "pending_approval", None)
+    if isinstance(pending, dict) and pending.get("kind") == "budget":
+        return pending
+    return None
 
 
 def _without_steering(user_message: str, history: list, full_prompt: str) -> tuple:
@@ -135,7 +152,12 @@ async def drive_streaming_run(
         loop_summary = getattr(agent_result, "loop", None)
         if isinstance(loop_summary, dict):
             result.loop = dict(loop_summary)
-        if agent_result.ok:
+        budget_pending = budget_pause(agent_result)
+        if budget_pending is not None:
+            final_error = str(budget_pending.get("reason") or "The turn reached its money cap")
+            result.budget = {"spent_usd": budget_pending.get("spent_usd"),
+                             "limit_usd": budget_pending.get("limit_usd")}
+        elif agent_result.ok:
             final_response = str(agent_result.agent_output)
             response_obj = getattr(agent_result, "response", None)
             final_ok = True

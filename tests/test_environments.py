@@ -1,12 +1,13 @@
-"""Environments: execution profiles for runs, nodes and scheduled jobs.
+"""Environments: execution profiles for runs, resident instances and
+scheduled jobs.
 
 Covers the model's validation, the service rules (unique names per scope,
 one default per scope, archive, delete refused while in use, resolution
 precedence), what a launch gets (launch_fields for each network type), the
 docker side (build_run_command with network none and custom limits, the
 derived image tag, options reaching start_container), the hub tools' own
-allowlist check, the egress proxy against a real local server, a node started
-in an environment, and the REST routes.
+allowlist check, the egress proxy against a real local server, a resident
+instance started in an environment, and the REST routes.
 """
 from __future__ import annotations
 
@@ -180,12 +181,12 @@ def test_sandbox_provider_is_editable_and_round_trips():
 
 def test_delete_refused_while_in_use(monkeypatch):
     env = service.create_environment({"name": "x"})
-    monkeypatch.setattr(service, "_nodes_using",
-                        lambda env_id: [{"node_id": "n1", "status": "running", "environment_id": env_id}])
+    monkeypatch.setattr(service, "_instances_using",
+                        lambda env_id: [{"instance_id": "i1", "state": "active", "environment_id": env_id}])
     with pytest.raises(service.EnvironmentConflict):
         service.delete_environment(env.id)
-    monkeypatch.setattr(service, "_nodes_using",
-                        lambda env_id: [{"node_id": "n1", "status": "stopped", "environment_id": env_id}])
+    monkeypatch.setattr(service, "_instances_using",
+                        lambda env_id: [{"instance_id": "i1", "state": "stopped", "environment_id": env_id}])
     job = SimpleNamespace(id="j1", title="nightly", kind="agent_task", status="scheduled",
                           workspace=None, environment_id=env.id)
     monkeypatch.setattr(service, "_jobs_using", lambda env_id: [job])
@@ -406,7 +407,7 @@ def test_node_container_honours_options(monkeypatch, no_host_translation):
         return _Done(stdout="cid\n")
 
     monkeypatch.setattr(cm, "_run", fake_run)
-    result = cm.start_node_container("n1", "a", ["python", "-m", "runtime.node_run"], env={},
+    result = cm.start_node_container("n1", "a", ["python", "-m", "runtime.instance_run"], env={},
                                      options={"network": "none", "memory": "256m", "image": "img:1"},
                                      extra_env={"AGENTS_HUB_NETWORK": "none", "FOO": "bar"})
     argv = captured["cmd"]
@@ -543,11 +544,12 @@ def test_tokens_survive_a_fresh_process_through_the_docstore():
     assert egress.lookup(token)["hosts"] == ["a.com"]
 
 
-# ── a node in an environment ─────────────────────────────────────────────────
+# ── a resident instance in an environment ────────────────────────────────────
 
 @pytest.fixture
 def launched(monkeypatch):
-    from managers import node_manager
+    from agents import registry as agent_registry
+    from instances import carrier
     calls = {"container": [], "subprocess": []}
 
     class _Spec:
@@ -555,12 +557,12 @@ def launched(monkeypatch):
         node_type = "worker"
         http_expose = False
 
-    monkeypatch.setattr(node_manager, "get_agent", lambda agent_id: _Spec())
+    monkeypatch.setattr(agent_registry, "get_agent", lambda agent_id: _Spec())
 
-    def _fake_start_node_container(node_id, agent_id, inner_cmd, workspace=None, env=None, **kwargs):
+    def _fake_start_node_container(instance_id, agent_id, inner_cmd, workspace=None, env=None, **kwargs):
         calls["container"].append({"env": env, **kwargs})
         return {"success": True, "container_id": "deadbeef",
-                "container_name": f"agents-hub-node-{node_id[:12]}",
+                "container_name": f"agents-hub-node-{instance_id[:12]}",
                 "image": "agents-hub/base:latest", "error": None}
 
     class _FakeProc:
@@ -571,50 +573,49 @@ def launched(monkeypatch):
         return _FakeProc()
 
     monkeypatch.setattr(cm, "start_node_container", _fake_start_node_container)
-    monkeypatch.setattr(node_manager.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(carrier.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(cm, "container_running", lambda name: False)
     return calls
 
 
-def test_node_starts_in_its_environment(dot_env, launched):
-    from managers import node_manager
+def test_instance_starts_in_its_environment(dot_env, launched):
+    from instances import carrier
     dot_env["AGENT_EXECUTION_MODE"] = "local"
     env = service.create_environment({"name": "box", "mode": "docker", "env": {"FOO": "bar"},
                                       "network": {"type": "none"}, "limits": {"cpus": "1"}})
-    node_id = node_manager.start_node("code_reviewer", environment_id=env.id)
-    node = node_manager.get_node(node_id)
-    assert node["execution_mode"] == "docker"
-    assert node["environment_id"] == env.id and node["environment_name"] == "box"
+    instance = carrier.start("code_reviewer", environment_id=env.id)
+    assert instance["carrier_mode"] == "docker"
+    assert instance["environment_id"] == env.id and instance["environment_name"] == "box"
     call = launched["container"][0]
     assert call["options"] == {"cpus": "1"}
     assert call["extra_env"]["FOO"] == "bar" and call["extra_env"]["AGENTS_HUB_NETWORK"] == "none"
 
 
-def test_node_local_environment_reaches_the_subprocess(dot_env, launched):
-    from managers import node_manager
+def test_instance_local_environment_reaches_the_subprocess(dot_env, launched):
+    from instances import carrier
     dot_env["AGENT_EXECUTION_MODE"] = "local"
     env = service.create_environment({"name": "fenced", "network": {
         "type": "limited", "allowed_hosts": ["example.com"]}})
-    node_manager.start_node("code_reviewer", environment_id=env.id)
+    carrier.start("code_reviewer", environment_id=env.id)
     child_env = launched["subprocess"][0]["env"]
     assert child_env["AGENTS_HUB_ALLOWED_HOSTS"] == "example.com"
     assert child_env["AGENTS_HUB_ENVIRONMENT_ID"] == env.id
 
 
-def test_node_without_environment_is_unchanged(dot_env, launched):
-    from managers import node_manager
+def test_instance_without_environment_is_unchanged(dot_env, launched):
+    from instances import carrier
     dot_env["AGENT_EXECUTION_MODE"] = "docker"
-    node_id = node_manager.start_node("code_reviewer")
+    instance = carrier.start("code_reviewer")
     assert "options" not in launched["container"][0] and "extra_env" not in launched["container"][0]
-    assert node_manager.get_node(node_id)["environment_id"] is None
+    assert instance.get("environment_id") is None
 
 
-def test_node_refuses_an_archived_environment(dot_env, launched):
-    from managers import node_manager
+def test_instance_refuses_an_archived_environment(dot_env, launched):
+    from instances import carrier
     env = service.create_environment({"name": "old"})
     service.archive_environment(env.id)
     with pytest.raises(ValueError, match="archived"):
-        node_manager.start_node("code_reviewer", environment_id=env.id)
+        carrier.start("code_reviewer", environment_id=env.id)
 
 
 # ── routes ───────────────────────────────────────────────────────────────────
@@ -637,7 +638,7 @@ def test_routes_crud(client):
         "limits": {"memory": "1g"}, "env": {"FOO": "1"}})
     assert r.status_code == 200, r.text
     env = r.json()
-    assert env["usage_counts"] == {"nodes": 0, "jobs": 0}
+    assert env["usage_counts"] == {"instances": 0, "jobs": 0}
     assert env["network"] == {"type": "limited", "allowed_hosts": ["example.com"],
                               "allow_package_managers": False}
     assert env["limits"] == {"memory": "1g", "cpus": None, "pids_limit": None}
@@ -663,7 +664,7 @@ def test_routes_crud(client):
     assert resolved["id"] == env["id"]
 
     usage = client.get(f"/api/environments/{env['id']}/usage").json()
-    assert usage == {"nodes": [], "jobs": [], "runs": []}
+    assert usage == {"instances": [], "jobs": [], "runs": []}
 
     r = client.post(f"/api/environments/{env['id']}/archive")
     assert r.json()["archived_at"]
@@ -709,22 +710,22 @@ def test_build_route(client, monkeypatch):
         "ok": True, "image": "built:python:3.12", "error": None}
 
 
-def test_nodes_route_accepts_environment(launched, dot_env, monkeypatch):
+def test_instances_route_accepts_environment(launched, dot_env, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from routes import nodes as node_routes
+    from routes import instances as instance_routes
 
     monkeypatch.setattr("agents.registry.get_agent",
                         lambda agent_id: SimpleNamespace(name="Reviewer", domain=""))
     app = FastAPI()
-    app.include_router(node_routes.router)
-    nodes = TestClient(app)
+    app.include_router(instance_routes.router)
+    instances_client = TestClient(app)
     env = service.create_environment({"name": "box"})
-    r = nodes.post("/api/nodes", json={"agent_id": "a", "environment_id": env.id})
-    assert r.status_code == 200, r.text
+    r = instances_client.post("/api/instances", json={"agent_id": "a", "environment_id": env.id})
+    assert r.status_code == 201, r.text
     assert r.json()["environment_id"] == env.id and r.json()["environment_name"] == "box"
     service.archive_environment(env.id)
-    r = nodes.post("/api/nodes", json={"agent_id": "a", "environment_id": env.id})
+    r = instances_client.post("/api/instances", json={"agent_id": "a", "environment_id": env.id})
     assert r.status_code == 400
 
 

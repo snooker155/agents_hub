@@ -23,7 +23,6 @@ import {
   MessageCircle,
   MessageSquare,
   ScrollText,
-  Server,
   Settings,
   Sun,
   Moon,
@@ -71,6 +70,8 @@ import { routeTitleKey } from './routeTitles';
 import PageChatPanel from './pageChat/PageChatPanel';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
+// The project mark, also the browser tab icon (index.html); served from public/.
+const LOGO_URL = `${import.meta.env.BASE_URL}logo.svg`;
 
 const PROVIDER_CONFIG = {
   openai:    { label: 'OpenAI',    color: 'text-green-700 bg-green-50 border-green-200' },
@@ -341,13 +342,16 @@ const Layout = ({ children }) => {
       label: t('nav.groups.infrastructure'),
       items: [
         { name: t('nav.agents'), path: '/agents', icon: Users },
-        // Live copies of agents, across every carrier. Nodes and Containers
-        // below show the carriers themselves.
+        // Live copies of agents, across every carrier. Containers below shows
+        // the carriers themselves; a resident instance's own carrier is on
+        // its own page.
         { name: t('nav.instances'), path: '/instances', icon: Activity },
+        // Agents kept running as replicas, and the runner every chat turn goes
+        // to (docs/services.md).
+        { name: t('nav.services'), path: '/services', icon: Cpu },
         { name: t('nav.marketplace'), path: '/marketplace', icon: Store },
         { name: t('nav.orchestrator'), path: '/orchestrator', icon: Network },
         { name: t('nav.teams'), path: '/teams', icon: UsersRound },
-        { name: t('nav.nodes'), path: '/nodes', icon: Server },
         { name: t('nav.environments'), path: '/environments', icon: Container },
         { name: t('nav.guardrails'), path: '/guardrails', icon: ShieldCheck },
         { name: t('nav.containers'), path: '/containers', icon: Box },
@@ -376,8 +380,8 @@ const Layout = ({ children }) => {
         // follow a symptom down from it.
         { name: t('nav.health'), path: '/health', icon: Activity },
         // Where everything runs once there is more than one process: members,
-        // leases, the launch queue, runs and nodes by host.
-        { name: t('nav.deployment'), path: '/deployment', icon: Waypoints },
+        // leases, the launch queue, runs and instances by host.
+        { name: t('nav.cluster'), path: '/cluster', icon: Waypoints },
         { name: t('nav.models'), path: '/models', icon: Brain },
         { name: t('nav.costs'), path: '/costs', icon: DollarSign },
         // Who owns each agent and MCP server, and whether it is approved.
@@ -422,16 +426,13 @@ const Layout = ({ children }) => {
           sidebarCollapsed ? 'w-16' : 'w-64'
         } bg-white shadow-md border-r border-gray-200 h-screen overflow-y-auto overflow-x-hidden flex flex-col transition-[width] duration-200`}
       >
-        <div className={`flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-6'} py-6`}>
-          {!sidebarCollapsed && <h1 className="text-2xl font-bold text-indigo-600 truncate">{t('layout.serviceName')}</h1>}
-          <button
-            onClick={toggleSidebar}
-            title={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
-            aria-label={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
-            className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors shrink-0"
-          >
-            {sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
-          </button>
+        {/* The mark and the name, centred; folded, the mark alone. The fold
+            button itself is in the top bar, left of the workspace. */}
+        <div className={`flex items-center gap-2 py-6 ${sidebarCollapsed ? 'justify-center px-2' : 'px-6'}`}>
+          <img src={LOGO_URL} alt={sidebarCollapsed ? t('layout.serviceName') : ''} className={`${sidebarCollapsed ? 'w-9 h-9' : 'w-8 h-8'} shrink-0`} />
+          {!sidebarCollapsed && (
+            <h1 className="text-2xl font-bold leading-none text-indigo-600 truncate min-w-0">{t('layout.serviceName')}</h1>
+          )}
         </div>
         <nav className="mt-2 flex-1 pb-6">
           {menuGroups.map((group, gi) => (
@@ -493,6 +494,14 @@ const Layout = ({ children }) => {
         {/* Top Navbar */}
         <header className="bg-white shadow-sm border-b border-gray-200 h-16 shrink-0 flex items-center justify-between px-6 z-10">
           <div className="flex items-center space-x-4">
+            <button
+              onClick={toggleSidebar}
+              title={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
+              aria-label={sidebarCollapsed ? t('layout.expandSidebar') : t('layout.collapseSidebar')}
+              className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors shrink-0"
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
+            </button>
             <span className="text-sm font-bold text-gray-400 uppercase tracking-widest">{t('layout.workspaceLabel')}</span>
             <select
               className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-semibold text-gray-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none"

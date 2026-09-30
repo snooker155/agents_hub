@@ -127,7 +127,7 @@ The gate holds a tool call until a person decides. It is opt-in per workspace:
 With it off (the default), only a hook's `ask` decision can require approval.
 With it on, these tools need a yes every time: `run_shell`, `delete_file`,
 `apply_unified_diff`, the `delete_*` entity tools, `remove_eval_case_tool`,
-`stop_run`, `stop_node`, `restart_node`, `stop_container` and `prune_run_logs`.
+`stop_run`, `stop_instance`, `restart_instance`, `stop_container` and `prune_run_logs`.
 Every one of them ends something, drops something, or writes over something a
 person may not get back.
 

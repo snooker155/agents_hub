@@ -3,7 +3,7 @@
 An environment is a named execution profile: where a run happens (in-process
 or in Docker), what image and packages it gets, what network it can reach,
 what resource limits apply, and a few plain environment variables. Set one up
-once, then point a task, a node or a scheduled job at it instead of repeating
+once, then point a task, a resident instance or a scheduled job at it instead of repeating
 the same settings everywhere.
 
 ## Scope and defaults
@@ -123,12 +123,12 @@ never override what carries the fence.
 ## Archiving and deletion
 
 Archiving freezes a profile: it can no longer be edited, made the default, or
-picked for a new task, node or job, but whatever is already running in it
+picked for a new task, instance or job, but whatever is already running in it
 keeps running, and a task that already names it still launches with its
 fence. Dropping the fence of a profile someone archived would be the wrong
 way to fail.
 
-Deleting is refused (409) while any active node or pending scheduled job
+Deleting is refused (409) while any live resident instance or pending scheduled job
 still references the environment; archive it, or point those at something
 else first, then delete.
 
@@ -139,8 +139,10 @@ else first, then delete.
   and, in docker mode, container options (`runtime/docker_runner.py`,
   `managers/container_manager.py`). An id that no longer exists falls back to
   the workspace's default with a warning, rather than refusing the run.
-- **A node**: `POST /api/nodes` accepts `environment_id`; node records carry
-  it and its name (`managers/node_manager.start_node`).
+- **A resident instance**: `POST /api/instances` (the agent page's Run)
+  accepts `environment_id`; the instance record carries it and its name, and a
+  restart starts the new process in the same environment
+  (`instances/carrier.start`).
 - **A scheduled job**: an `environment_id` on the job is copied onto every
   task the job creates, whatever kind of job it is (see
   [deployments](deployments.md) and [scheduling](scheduling.md)).
@@ -151,7 +153,7 @@ else first, then delete.
 current workspace (name, scope, mode, network type, limits, default and
 archived badges, usage counts), a create/edit form, and row actions: make
 default, archive, delete (disabled with a tooltip while something uses it),
-build the derived image, and a usage drawer listing the nodes, scheduled jobs
+build the derived image, and a usage drawer listing the instances, scheduled jobs
 and recent runs tied to it, each linking back to its own page.
 
 ## Gotchas
@@ -169,4 +171,4 @@ and recent runs tied to it, each linking back to its own page.
   worker mode) that launched the run, since the URL a run is handed names
   `127.0.0.1` or `host.docker.internal`, not a shared address.
 
-Related: [sandboxes](sandboxes.md), [containers](containers.md), [nodes](nodes.md), [deployments](deployments.md), [scheduling](scheduling.md), [service-health](service-health.md).
+Related: [sandboxes](sandboxes.md), [containers](containers.md), [instances](instances.md), [deployments](deployments.md), [scheduling](scheduling.md), [service-health](service-health.md).

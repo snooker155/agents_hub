@@ -132,8 +132,8 @@ export function useLiveRefetch(
 }
 
 /**
- * Subscribe to a dynamic per-resource channel (e.g. `nodes`, `containers`,
- * `logs:node:<id>`, or a chat session id) while mounted. Optional `handler`
+ * Subscribe to a dynamic per-resource channel (e.g. `containers`,
+ * `logs:instance:<id>`, or a chat session id) while mounted. Optional `handler`
  * receives that channel's events.
  */
 export function useChannel(channel, handler) {

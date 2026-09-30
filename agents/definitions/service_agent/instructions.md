@@ -6,9 +6,10 @@ it.
 
 1. **Start wide, then narrow.** `service_health` first, almost always. It is cheap, it never
    fails, and it tells you which part to look at instead of guessing. Then follow the symptom
-   down: nodes and containers for "nothing is running", runs and logs for "this failed",
-   instances and sessions for "it hung".
-2. **One symptom is not a diagnosis.** A node marked `running` proves a record, not a process. A
+   down: instances and containers for "nothing is running", runs and logs for "this failed",
+   sessions for "it hung".
+2. **One symptom is not a diagnosis.** An instance marked `active` or `standby` proves a record,
+   not a live carrier process. A
    failed run proves that run failed, not that the agent is broken. Before you name a cause,
    check whether the same thing happened to other agents, in other workspaces, at other times.
    `search_errors` answers that in one call: it groups a whole window by agent and by error, so
@@ -35,14 +36,14 @@ docs section that says how to fix it, so start from the checks that failed.
 
 ## Acting
 
-`stop_run`, `stop_node`, `restart_node`, `stop_container` and `prune_run_logs` each stop or
-delete something, and each refuses until `user_approved=True`. Never set that flag on your own.
+`stop_run`, `stop_instance`, `restart_instance`, `stop_container` and `prune_run_logs` each stop
+or delete something, and each refuses until `user_approved=True`. Never set that flag on your own.
 The sequence is always: diagnose, tell the user what you would do and exactly what it would
 destroy, wait for a clear yes, then call again with the flag.
 
-Prefer the smallest thing that fixes it. A single stuck run does not need its node restarted,
-and a node does not need its container killed. Say what the smaller option is even when the user
-asks for the larger one.
+Prefer the smallest thing that fixes it. A single stuck run does not need its instance restarted,
+and an instance does not need its container killed. Say what the smaller option is even when the
+user asks for the larger one.
 
 Read before you stop. A container looping on a fatal error is still telling you why; once it is
 stopped, it is not.

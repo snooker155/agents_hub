@@ -32,6 +32,18 @@ def _mgr():
     return cm
 
 
+def _docker_error(exc: Exception) -> HTTPException:
+    """503 when there is no Docker to ask, 500 for anything else."""
+    if isinstance(exc, _mgr().DockerUnavailable):
+        return HTTPException(status_code=503, detail=str(exc))
+    return HTTPException(status_code=500, detail=str(exc))
+
+
+# The read-only routes below are plain ``def``: FastAPI runs them in its
+# thread pool. As ``async def`` a docker CLI call blocked the event loop, so a
+# daemon that did not answer froze every other request for as long as it hung.
+
+
 # ── Request models ─────────────────────────────────────────────────────────────
 
 class BuildRequest(BaseModel):
@@ -41,17 +53,17 @@ class BuildRequest(BaseModel):
 # ── Images ────────────────────────────────────────────────────────────────────
 
 @router.get("/images")
-async def list_images():
+def list_images():
     """Return all agents-hub Docker images currently present on the host."""
     try:
         images = _mgr().list_images()
         return {"images": images}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _docker_error(exc)
 
 
 @router.get("/dockerfile/{agent_id}", response_class=PlainTextResponse)
-async def get_dockerfile(agent_id: str):
+def get_dockerfile(agent_id: str):
     """Return the generated Dockerfile for an agent (preview only, not persisted)."""
     spec = get_agent(agent_id)
     if not spec:
@@ -116,37 +128,37 @@ async def build_agent_image(agent_id: str, body: BuildRequest):
 # ── Containers ────────────────────────────────────────────────────────────────
 
 @router.get("")
-async def list_containers():
+def list_containers():
     """Return all agents-hub managed containers (running and stopped).
 
-    Enriches each container entry with HTTP URL info from the node record
-    when the container is a managed node container.
+    Enriches each container entry with HTTP URL info from the resident
+    instance record when the container is a managed instance's carrier.
     """
     try:
         containers = _mgr().list_containers()
-        # Enrich with HTTP URL from node manager state
+        # Enrich with HTTP URL from the resident instance's carrier state
         try:
-            from managers.node_manager import list_nodes
-            nodes_by_container = {
-                n["container_name"]: n
-                for n in list_nodes()
-                if n.get("container_name")
+            from instances.carrier import list_resident
+            instances_by_container = {
+                i["container_name"]: i
+                for i in list_resident()
+                if i.get("container_name")
             }
             for c in containers:
-                node = nodes_by_container.get(c.get("name", ""))
-                if node:
-                    c["http_expose"] = node.get("http_expose", False)
-                    c["http_url"] = node.get("http_url")
-                    c["http_host_port"] = node.get("http_host_port")
+                instance = instances_by_container.get(c.get("name", ""))
+                if instance:
+                    c["http_expose"] = bool(instance.get("http_port"))
+                    c["http_url"] = instance.get("http_url")
+                    c["http_host_port"] = instance.get("http_host_port")
         except Exception:
             pass
         return {"containers": containers}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _docker_error(exc)
 
 
 @router.get("/{name}/logs", response_class=PlainTextResponse)
-async def get_container_logs(name: str, tail: int = 200):
+def get_container_logs(name: str, tail: int = 200):
     """Return the last *tail* lines of a container's stdout/stderr."""
     try:
         logs = _mgr().get_logs(name, tail=tail)
@@ -156,7 +168,7 @@ async def get_container_logs(name: str, tail: int = 200):
 
 
 @router.post("/{name}/stop")
-async def stop_container(name: str):
+def stop_container(name: str):
     """Stop a running container gracefully (docker stop)."""
     try:
         ok = _mgr().stop_container(name)
@@ -170,7 +182,7 @@ async def stop_container(name: str):
 
 
 @router.delete("/{name}")
-async def remove_container(name: str):
+def remove_container(name: str):
     """Force-remove a container (docker rm -f)."""
     try:
         ok = _mgr().remove_container(name)
@@ -186,7 +198,7 @@ async def remove_container(name: str):
 # ── Network ───────────────────────────────────────────────────────────────────
 
 @router.post("/network/ensure")
-async def ensure_network():
+def ensure_network():
     """Ensure the agents-hub Docker network exists."""
     try:
         network = _mgr().get_or_create_network()
@@ -198,9 +210,18 @@ async def ensure_network():
 # ── Agents summary ─────────────────────────────────────────────────────────────
 
 @router.get("/agents-status")
-async def agents_build_status():
-    """Return build status (image exists?) for every registered agent."""
+def agents_build_status():
+    """Return build status (image exists?) for every registered agent.
+
+    One ``docker images`` listing for all of them: asking the daemon twice per
+    agent made this page's load grow with the registry.
+    """
     cm = _mgr()
+    try:
+        tags = {f"{i.get('repository')}:{i.get('tag')}" for i in cm.list_images()}
+    except Exception as exc:
+        raise _docker_error(exc)
+    base_exists = cm.BASE_IMAGE in tags
     agents = list_agents()
     result = []
     for spec in agents:
@@ -209,8 +230,8 @@ async def agents_build_status():
             "agent_id": spec.id,
             "agent_name": spec.name,
             "image_tag": per_agent_tag,
-            "image_exists": cm.image_exists(per_agent_tag),
-            "base_exists": cm.image_exists(cm.BASE_IMAGE),
+            "image_exists": per_agent_tag in tags,
+            "base_exists": base_exists,
             "dockerfile_path": str(cm.DOCKERFILE_DIR / f"{spec.id}.Dockerfile"),
             "http_expose": getattr(spec, "http_expose", False),
             "http_port": getattr(spec, "http_port", 8080),

@@ -1,7 +1,7 @@
 import { ChatColumn, FILL_COLUMN } from '../ChatColumn';
 import EntityChat from '../EntityChat';
 import SystemAgentWarning from './SystemAgentWarning';
-import { fmtNodeDate } from './nodeStatus';
+import { fmtNodeDate } from './dateFormat';
 import { BookOpen, FileCode, History, Loader, Save, Terminal, Zap } from 'lucide-react';
 import { useAgentPage } from './context';
 
@@ -222,7 +222,7 @@ export default function ConfigTab() {
 
           {defChat.open && definitionChat && (
             <ChatColumn>
-              <EntityChat {...definitionChat} {...FILL_COLUMN} />
+              <EntityChat {...definitionChat} {...FILL_COLUMN} onHide={() => defChat.setOpen(false)} />
             </ChatColumn>
           )}
         </div>

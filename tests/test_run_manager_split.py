@@ -107,7 +107,7 @@ def test_each_concern_lives_in_its_own_module():
         "lifecycle": ["preopen_run", "open_run", "close_run", "close_run_from_result",
                       "new_unique_run_id", "utc_now_iso", "run_log_path",
                       "get_run_by_id", "stop_run", "stop_run_by_id", "_stop_run_record",
-                      "get_status", "_pid_exists", "get_in_progress_runs_for_node"],
+                      "get_status", "_pid_exists", "get_in_progress_runs_for_instance"],
         "task_finalize": ["finalize_task_from_run", "finalize_flow_task",
                           "park_task_awaiting_input", "_auto_start_review",
                           "_maybe_retry_failed_run", "_trigger_session_continuation",

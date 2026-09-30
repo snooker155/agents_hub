@@ -17,7 +17,7 @@ Modules:
 - ``service``: create, update, archive, delete, defaults, resolution, usage.
 - ``launch``: what a launch gets from an environment (environment variables,
   the docker options, the execution mode); called by agents/agent_launcher.py
-  and managers/node_manager.py.
+  and instances/carrier.py.
 - ``egress``: the optional egress proxy that holds a ``limited`` network to
   its allowlist for clients that honour the proxy variables.
 """

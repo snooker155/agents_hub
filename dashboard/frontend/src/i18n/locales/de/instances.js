@@ -9,7 +9,7 @@ export default {
   loadMore_other: '{{count}} weitere laden',
   empty: {
     title: 'Noch keine Instanzen',
-    hint: 'Eine Kopie erscheint hier, sobald ein Agent zu arbeiten beginnt — aus einer Aufgabe, einem Chat, einer Node oder einem Flow.',
+    hint: 'Eine Kopie erscheint hier, sobald ein Agent zu arbeiten beginnt, aus einer Aufgabe, einem Chat, einer residenten Instanz oder einem Flow.',
   },
   states: {
     starting: 'startet',
@@ -27,13 +27,16 @@ export default {
     failed: 'fehlgeschlagen',
   },
   kinds: {
-    node: 'Node',
+    runner: 'Runner',
+    resident: 'Residente Instanz',
+    node: 'Knoten (migriert)',
     container: 'Container',
     task: 'Aufgabe',
     chat: 'Chat',
     flow_node: 'Flow-Knoten',
     team_member: 'Teamplatz',
   },
+  replicaOf: 'Replikat von {{service}}',
   columns: {
     instance: 'Instanz',
     agent: 'Agent',
@@ -56,6 +59,8 @@ export default {
   },
   carrier: {
     local: 'lokaler Prozess',
+    container: 'Container',
+    published: 'Veröffentlicht',
   },
   time: {
     justNow: 'gerade eben',

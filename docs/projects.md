@@ -37,6 +37,14 @@ hub is what makes a project preview usable from anywhere the dashboard itself
 is reachable, not only from a browser that can also reach the frontend's
 host directly.
 
+## Deploy
+
+The Deploy tab runs the project's frontend and backend from inside the hub:
+services proposed from the folder, one button to deploy, logs, a journal, a
+supervisor that restarts what dies, the app shown inside the hub, a share
+link that works from outside, and the same address for the agent's own
+browser. See [project deployments](project-deployments.md).
+
 ## Gotchas
 
 - The architect reads what is there. A project pointed at an empty folder
@@ -45,4 +53,5 @@ host directly.
   assigned and started.
 - Deleting a project does not delete its folder.
 
-Related: [workspaces](workspaces.md), [tasks](tasks.md), [agents](agents.md).
+Related: [workspaces](workspaces.md), [tasks](tasks.md), [agents](agents.md),
+[project deployments](project-deployments.md).

@@ -2,8 +2,8 @@
 
 Two callers, one shape. agents/agent_launcher.py calls :func:`launch_fields`
 for a task run while it prepares the launch (``_launch_extras``);
-managers/node_manager.py calls :func:`fields_for` when it starts a node. Both
-get::
+instances/carrier.py calls :func:`fields_for` when it starts a resident
+instance. Both get::
 
     {
       "env": {...},                 # variables for the child process
@@ -60,7 +60,7 @@ NO_PROXY = "localhost,127.0.0.1,host.docker.internal"
 def _workspace_mode(ws_name: Optional[str]) -> str:
     """The execution mode a run in ``ws_name`` gets without an environment:
     the workspace's own setting, else the global one (same order as the
-    launcher and node_manager)."""
+    launcher and instances.carrier)."""
     mode: Optional[str] = None
     if ws_name:
         try:

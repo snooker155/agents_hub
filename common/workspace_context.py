@@ -32,6 +32,26 @@ def normalize_workspace_name(value: Optional[str]) -> Optional[str]:
     return Path(raw).name
 
 
+def workspace_operating_path(workspace: Optional[str], path: Optional[str] = None) -> Optional[str]:
+    """What ``create_agent`` gets as ``workspace``: the operating path when
+    the caller has one (a project folder), else the workspace's own folder.
+
+    The factory resolves the model from that path (``workspace_name_from_path``
+    on the way to the workspace's model choice, then the workspace settings,
+    then the global default) and roots the filesystem tools there. A chat that
+    knows only the workspace's name (an agent's definition chat, the page
+    chat) used to pass nothing, so the workspace's model was skipped for the
+    global one; the folder path gives it the same cascade a task run has.
+    """
+    if path:
+        return str(path)
+    name = normalize_workspace_name(workspace)
+    if not name:
+        return None
+    from common.paths import WORKSPACES_ROOT
+    return str(Path(WORKSPACES_ROOT) / name)
+
+
 def workspace_name_from_path(value: Optional[str]) -> Optional[str]:
     """Extract the bare workspace name from an agent's operating path.
 

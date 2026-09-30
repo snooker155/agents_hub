@@ -4,9 +4,10 @@ with it (docs/api-keys.md "Rate limits", docs/nodes.md, docs/hub-as-provider.md)
 
 Three callers share one implementation:
 
-* the token-in-path external route (``POST /api/external/{token}/run``),
-  throttled per client address so a leaked or guessed token cannot flood a
-  node and token guessing is slow;
+* the token-in-path public routes of a published instance
+  (``/api/external/{token}/messages`` and ``/run``), throttled per client
+  address so a leaked or guessed token cannot flood an instance and token
+  guessing is slow;
 * the guard in ``dashboard/backend/main.py``, which limits ``/api`` and
   ``/v1`` requests per minute per principal (a personal key, a person, the
   shared token);

@@ -127,7 +127,11 @@ only theirs; a header naming a workspace outside the scope is a `403` with
 A completion with an agent model runs the agent through the web chat's own
 pipeline (`chat.pipelines.run_chat_pipeline`), so its tools, memory,
 guardrails, budget and model settings apply exactly as in the chat, and the
-turn is a run on the Messages page with `message_origin="api"`. The
+turn is a run on the Messages page with `message_origin="api"`. Like a chat
+turn it runs on a replica of a [service](services.md), the agent's own or
+the workspace's runner, never in the backend process; the key's owner and
+the key itself travel with the turn, so the run is stamped and charged as
+before. The
 workspace is, in order: the `X-Agents-Hub-Workspace` header, the key's one
 workspace when it is scoped to exactly one, the agent's owner workspace,
 `default`. Refused before anything runs: a workspace outside the key's scope

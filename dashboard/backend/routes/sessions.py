@@ -280,6 +280,7 @@ async def list_sessions(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     conversation_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
 ):
@@ -311,6 +312,7 @@ async def list_sessions(
     page = _session_service_query(
         workspace=workspace,
         conversation_id=conversation_id,
+        agent_id=agent_id,
         is_flow=is_flow,
         from_date=from_date,
         to_date=to_date,

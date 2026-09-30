@@ -65,7 +65,7 @@ const ENV = {
   archived_at: null,
   created_at: '2026-09-20T10:00:00Z',
   updated_at: '2026-09-20T10:00:00Z',
-  usage_counts: { nodes: 2, jobs: 1 },
+  usage_counts: { instances: 2, jobs: 1 },
 };
 
 beforeEach(() => {
@@ -95,7 +95,7 @@ describe('Environments — the list', () => {
     await waitFor(() => expect(screen.getByText('sandboxed-python')).toBeInTheDocument());
     expect(screen.getByText(/docker container/i)).toBeInTheDocument();
     expect(screen.getByText(/limited/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 nodes/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 instances/i)).toBeInTheDocument();
     expect(screen.getByText(/default/i)).toBeInTheDocument();
   });
 

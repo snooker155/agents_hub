@@ -1,12 +1,12 @@
 /**
  * The Agent Details page's own context.
  *
- * The page has thirteen tabs over one agent, and the tabs share most of what
- * the page loaded: the agent itself, its nodes, its tools, a dozen save
- * handlers. Handing that down as props would be a hundred-name argument list
- * repeated thirteen times, so the page publishes its state once here and each
- * tab takes the few names it needs. Nothing else reads this: it is scoped to
- * one page, not to the app.
+ * The page has a dozen tabs over one agent, and the tabs share most of what
+ * the page loaded: the agent itself, its live resident instances, its tools, a
+ * dozen save handlers. Handing that down as props would be a hundred-name
+ * argument list repeated across every tab, so the page publishes its state
+ * once here and each tab takes the few names it needs. Nothing else reads
+ * this: it is scoped to one page, not to the app.
  */
 import { createContext, useContext } from 'react';
 

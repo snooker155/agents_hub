@@ -29,6 +29,36 @@ turns that section into the next release.
   `memory_pool` (the Memory page, a deployment's task pools) still replaces
   both. The agent card, the overview and the Memory page's agent list show
   the two pools together. Personal pools are visible to their owner only.
+- Services: an agent kept running as replicas (the Services page, `Deploy`
+  on an agent's page, `/api/services`, `ah service`). A service is the
+  desired state, replicas min and max, concurrency, take tasks, idle stop, a
+  money cap per turn and a version pin, that a supervisor keeps; its
+  replicas are resident instances, a service conversation keeps one history
+  across them, and a service can be published on a public address any
+  replica answers. A service with no agent is a runner (docs/services.md).
+- Chat turns run on service replicas, not in the backend. Every turn of the
+  Chat page, `/v1` agent models, the widget and Telegram goes to the agent's
+  service in the workspace or to the workspace's runner, a process kept
+  warm (`AGENTS_HUB_RUNNER_MIN`), and streams back through the backend;
+  `AGENTS_HUB_CHAT_EXECUTION=inprocess` (Settings, "Chat execution") keeps
+  the old in-process behaviour. The cluster map lists services.
+- Every other agent execution the backend did itself goes to a runner too:
+  eval cases, replays, task decomposition, project graphs, playground worlds
+  and scenarios, and the agent part of every entity chat, as jobs in a
+  runner's mailbox (docs/services.md, "Jobs").
+- A service's `budget_usd` is a money cap enforced per turn: a chat turn or
+  job that reaches it ends as a failure that names the cap. A runner answers
+  on its page and on its public address for the agent the message names
+  (`agent_id`).
+- The agent page gains Runs and Sessions tabs: the agent's runs from the
+  same paged query as the Messages list, with a run started by a resident
+  instance linking to that instance, and the sessions the agent took part in
+  (`GET /api/sessions?agent_id=`). The agents list reads every agent's
+  workspace capacity overrides in one request.
+- The instance page reads like a chat: the instance's conversations, a
+  message box fixed to the bottom of the screen with the page scrolling
+  behind it, and Process and Access tabs for the carrier with its journal and
+  for the inputs, the public address and its inbound secret.
 
 ### Changed
 
@@ -43,6 +73,18 @@ turns that section into the next release.
 - Every process keeps langchain_core from importing transformers and torch
   when it only needs a tokenizer check (common/import_guards.py), which cut
   the backend's and every runner's start time.
+- Nodes are folded into instances. Run on an agent's page starts a resident
+  instance (`POST /api/instances`, `ah instance start`): a process or
+  container of its own that answers its mailbox in several conversations at
+  once, wakes the moment a message is written, can take the agent's tasks, and
+  can be published at a public address through the hub
+  (`POST /api/external/{token}/messages`, answering in one call, with a poll
+  URL or as a stream). `/api/nodes`, `ah node` and the Nodes page are removed;
+  the deployment map is the Cluster page (`/api/cluster`, `/api/deployment`
+  still answers). The service agent's node tools are now `list_instances`,
+  `instance_logs`, `stop_instance` and `restart_instance`.
+- The orchestrator page lost its cluster status card (the Cluster page holds
+  that) and the routing history scrolls inside its card.
 
 ### Fixed
 
@@ -56,6 +98,20 @@ turns that section into the next release.
   that reach the personal pool through the workspace's personal memory switch
   (on, with no pool of their own) and shows them as connected (personal).
   Pool usage reads "1 agent", not "1 agents".
+- An entity chat that knows only its workspace's name (an agent's definition
+  chat, the page chat) ran its agent on the global default model, skipping the
+  model picked for the workspace in the header. The agent is now built in the
+  workspace's folder (`workspace_operating_path`), so the workspace's model
+  applies when one is set and the global default otherwise, in this process
+  and on a runner replica alike.
+
+### Upgrade notes
+
+- Migration 0029 moves every node into the instance it carried and drops
+  the `nodes` table; a node process that is running keeps running and is
+  stopped from its instance page. Take `ah db backup` first on Postgres; a
+  SQLite database is archived automatically before it migrates.
+- Migrations 0030 and 0031 add the `services` and `service_events` tables, `service_id` on `instances` and `runs`, and `kind`, `payload`, `result` and `finished_at` on `instance_inbox`.
 
 ## [0.2.0] - 2026-09-30
 

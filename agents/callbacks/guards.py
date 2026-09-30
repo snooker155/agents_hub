@@ -25,6 +25,8 @@ import os
 import threading
 from typing import Any, Dict, Optional, Set, Tuple
 
+from contextvars import ContextVar
+
 from langchain_core.callbacks import BaseCallbackHandler
 
 from agents.callbacks.run_statistics import (
@@ -428,6 +430,61 @@ class RunBudgetUnpriced(RunBudgetExceeded):
 _SPEND_LOCK = threading.Lock()
 _PROCESS_SPEND: Dict[str, Any] = {"usd": 0.0, "seen": set()}
 
+# A cap bound to the current *context* rather than to the process: what a
+# service replica answering several turns at once needs (chat/turns.py,
+# runtime/jobs.py), since one process there serves many runs with caps of
+# their own. ``set_turn_cap`` binds the cap and a ledger of its own to the
+# context; every guard built inside it (the turn's agent and the agents it
+# delegates to, which run in copies of the context) charges that ledger, and
+# ``from_env`` prefers it over the process environment. The process-wide
+# ledger above stays what a task's own process uses.
+_TURN_CAP: ContextVar[Optional[Dict[str, Any]]] = ContextVar("run_budget_turn_cap", default=None)
+
+
+def set_turn_cap(limit_usd: float, prices: Optional[Dict[Tuple[str, str], Tuple[float, float, float]]] = None,
+                 *, fail_closed: bool = False, prior_usd: float = 0.0):
+    """Bind a money cap to the current context. Returns the token for
+    :func:`reset_turn_cap`."""
+    cap = {
+        "limit_usd": float(limit_usd),
+        "prices": dict(prices or {}),
+        "fail_closed": bool(fail_closed),
+        "prior_usd": max(0.0, float(prior_usd or 0.0)),
+        # ``calls`` and ``last`` are the ledger's own trace: how many model
+        # calls it priced and what the last one looked like, for the run
+        # record (chat/turns.py) when a cap does not behave as expected.
+        "ledger": {"usd": 0.0, "seen": set(), "calls": 0, "last": {}},
+    }
+    return _TURN_CAP.set(cap)
+
+
+def reset_turn_cap(token) -> None:
+    _TURN_CAP.reset(token)
+
+
+def turn_cap() -> Optional[Dict[str, Any]]:
+    """The cap bound to the current context, or None."""
+    return _TURN_CAP.get()
+
+
+def turn_spend_usd() -> float:
+    """What the current context's cap has seen spent so far (0 without one)."""
+    cap = _TURN_CAP.get()
+    if not cap:
+        return 0.0
+    with _SPEND_LOCK:
+        return float(cap["ledger"]["usd"])
+
+
+def turn_ledger_trace() -> Dict[str, Any]:
+    """``{calls, last}`` of the current context's cap: how many model calls it
+    priced and the model, tokens and cost of the last one. Empty without a cap."""
+    cap = _TURN_CAP.get()
+    if not cap:
+        return {}
+    with _SPEND_LOCK:
+        return {"calls": int(cap["ledger"].get("calls") or 0), "last": dict(cap["ledger"].get("last") or {})}
+
 
 def reset_run_budget_spend() -> None:
     """Forget what this process has spent (tests, and a process reused for a
@@ -494,8 +551,9 @@ def charge_aux_spend(provider: str, model: str, prompt: int, completion: int,
         + cached / 1_000_000 * cached_price
         + int(completion or 0) / 1_000_000 * out_price
     )
+    ledger = guard._ledger if guard._ledger is not None else _PROCESS_SPEND
     with _SPEND_LOCK:
-        _PROCESS_SPEND["usd"] = float(_PROCESS_SPEND["usd"]) + cost
+        ledger["usd"] = float(ledger["usd"]) + cost
     return cost
 
 
@@ -532,6 +590,7 @@ class RunBudgetGuard(BaseCallbackHandler):
         provider: str = "",
         model: str = "",
         fail_closed: bool = False,
+        ledger: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
         self.raise_error = True
@@ -541,10 +600,24 @@ class RunBudgetGuard(BaseCallbackHandler):
         self.provider = provider or ""
         self.model = model or ""
         self.fail_closed = bool(fail_closed)
+        # The spend this guard charges and reads: a turn's own ledger
+        # (set_turn_cap) or, without one, the process-wide total.
+        self._ledger = ledger
 
     @classmethod
     def from_env(cls, provider: str = "", model: str = "") -> Optional["RunBudgetGuard"]:
-        """A guard for this process's run, or None when the run has no cap."""
+        """A guard for this process's run, or None when the run has no cap.
+
+        A cap bound to the current context (:func:`set_turn_cap`) wins over
+        the process environment: it is how one process serves several capped
+        turns at once."""
+        cap = _TURN_CAP.get()
+        if cap is not None:
+            if float(cap.get("limit_usd") or 0.0) <= 0:
+                return None
+            return cls(cap["limit_usd"], cap.get("prior_usd", 0.0), cap.get("prices"),
+                       provider=provider, model=model, fail_closed=bool(cap.get("fail_closed")),
+                       ledger=cap["ledger"])
         try:
             limit = float(os.environ.get(RUN_BUDGET_ENV_LIMIT) or 0.0)
         except ValueError:
@@ -561,9 +634,11 @@ class RunBudgetGuard(BaseCallbackHandler):
 
     @property
     def spent_usd(self) -> float:
-        """What the task has spent: earlier runs plus this process so far."""
+        """What the task has spent: earlier runs plus this process (or this
+        turn, under a context cap) so far."""
+        ledger = self._ledger if self._ledger is not None else _PROCESS_SPEND
         with _SPEND_LOCK:
-            return self.prior_usd + float(_PROCESS_SPEND["usd"])
+            return self.prior_usd + float(ledger["usd"])
 
     def _price(self, model: str) -> Tuple[float, float, float]:
         for key in ((self.provider, model), (self.provider, self.model)):
@@ -630,17 +705,26 @@ class RunBudgetGuard(BaseCallbackHandler):
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         call_id = str(kwargs.get("run_id") or "")
         model = ""
+        usage_seen: Dict[str, Any] = {}
         try:
             model = _response_model(response)
             cost = self.cost_of(response)
+            usage_seen = extract_token_usage(response) or {}
         except Exception:  # noqa: BLE001 - an unreadable response counts as free (fail open)
             cost = 0.0
+        ledger = self._ledger if self._ledger is not None else _PROCESS_SPEND
         with _SPEND_LOCK:
-            seen: Set[str] = _PROCESS_SPEND["seen"]
+            seen: Set[str] = ledger["seen"]
             if not call_id or call_id not in seen:
                 if call_id:
                     seen.add(call_id)
-                _PROCESS_SPEND["usd"] = float(_PROCESS_SPEND["usd"]) + cost
+                ledger["usd"] = float(ledger["usd"]) + cost
+            if "calls" in ledger:
+                ledger["calls"] = int(ledger.get("calls") or 0) + 1
+                prompt, completion, _total = normalize_usage(usage_seen) if usage_seen else (0, 0, 0)
+                ledger["last"] = {"model": model or self.model, "prompt": prompt,
+                                  "completion": completion, "cost": round(cost, 6),
+                                  "priced": self._has_price(model or self.model)}
         # The response can report a model this guard never saw before the call
         # (a gateway or dated alias _price/_has_price still cannot match): the
         # call already happened, but fail_closed still blocks the next one

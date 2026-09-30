@@ -1064,6 +1064,18 @@ def generate_graph_via_llm(project, view: str, root: Optional[Path],
     text = None
     if _ensure_architect_agent():
         try:
+            from services import jobs as _jobs
+            if _jobs.enabled():
+                # On a runner replica (docs/services.md), same agent, same prompt.
+                res = _jobs.InvokeResult(_jobs.invoke_sync(getattr(project, "workspace", None), {
+                    "agent_id": _ARCHITECT_AGENT_ID,
+                    "workspace": agent_workspace_path(project, root),
+                    "workspace_name": getattr(project, "workspace", None),
+                    "project_id": str(getattr(project, "id", "") or "") or None,
+                    "build": {"max_tool_repeats": 0}, "prompt": prompt,
+                }))
+                return finalize_generated_output(res.agent_output if res.ok else None,
+                                                 project, view, root, tasks)
             from agents.agent_factory import create_agent
             from agents.agent_invoke import invoke_agent
 

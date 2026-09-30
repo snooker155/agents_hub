@@ -225,8 +225,9 @@ the [runbook](runbook.md#support-bundle) for the full field list.
 ## The Service Agent
 
 The [system agent](system-agents.md) that owns this. It reads health,
-containers, nodes, instances, sessions, runs, logs, the routing log, web calls
-and spend, and can stop a run, a node or a container, and prune old logs.
+containers, instances, sessions, runs, logs, the routing log, web calls
+and spend, and can stop a run, stop or restart a resident instance or a
+container, and prune old logs.
 
 Every one of those actions refuses until you approve it, and the refusal names
 what would be destroyed. It proposes the smallest thing that would fix the
@@ -238,4 +239,4 @@ hold whatever the service handled, so giving it a way out would turn the
 service's own diagnostics into an exfiltration path. See
 [tools-and-capabilities](tools-and-capabilities.md).
 
-Related: [nodes](nodes.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md), [system-workspace](system-workspace.md), [runbook](runbook.md), [slo](slo.md).
+Related: [instances](instances.md), [sessions-and-runs](sessions-and-runs.md), [containers](containers.md), [web-logs](web-logs.md), [system-workspace](system-workspace.md), [runbook](runbook.md), [slo](slo.md).

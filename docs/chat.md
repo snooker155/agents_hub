@@ -12,6 +12,19 @@ no setup.
 The picker defaults to the workspace's default chat agent, which is the Main
 Agent unless you changed it.
 
+## Where a turn runs
+
+The backend does not run the agent itself. A turn is handed to a replica of a
+[service](services.md): the agent's own service in the workspace when it has
+one, else the workspace's runner, a process kept warm for exactly this. The
+replica runs the whole pipeline (prompt, attachments, compaction, tools,
+handoffs, the run record) and streams its events back; the page sees what it
+always saw. The first turn in a workspace that has no runner yet waits for
+one to boot, up to `AGENTS_HUB_TURN_START_TIMEOUT` seconds; after that the
+runner stays up (`AGENTS_HUB_RUNNER_MIN`, default 1). Set
+`AGENTS_HUB_CHAT_EXECUTION=inprocess` (Settings, "Chat execution") to run
+turns inside the backend instead.
+
 ## What the agent sees
 
 The conversation so far, plus its own system prompt. It does **not** see other

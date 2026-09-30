@@ -79,44 +79,66 @@ def replay_run(
     if model:
         overrides["model"] = model
 
-    from agents.agent_factory import create_agent
-    agent = create_agent(agent_id, workspace, **overrides)
+    from services import jobs
+    if jobs.enabled():
+        # The replay runs on a runner replica (docs/services.md), recorded
+        # there as the replay run; the diff is built here from its result.
+        res = jobs.InvokeResult(jobs.invoke_sync(workspace, {
+            "agent_id": agent_id, "workspace": workspace, "workspace_name": workspace,
+            "overrides": overrides, "prompt": user_message,
+            "run": {"workspace": workspace, "title": f"Replay of {run_id}",
+                    "channel": REPLAY_CHANNEL, "execution_mode": REPLAY_CHANNEL,
+                    "session_type": REPLAY_CHANNEL, "message_origin": REPLAY_CHANNEL,
+                    "extra": {"replay_of": run_id}, "link_to_session": False},
+        }))
+        replay_run_id = str(res.run_id or "")
+        resolved_provider, resolved_model = res.provider, res.model
+        replay_ok = res.ok
+        replay_text = res.agent_output if replay_ok else ""
+        replay_error = None if replay_ok else str(res.error or "agent error")
+        rep_inbound = int(res.token_usage.get("inbound_tokens") or 0)
+        rep_outbound = int(res.token_usage.get("outbound_tokens") or 0)
+        replay_duration_ms = res.duration_ms
+    else:
+        from agents.agent_factory import create_agent
+        agent = create_agent(agent_id, workspace, **overrides)
 
-    resolved_provider = getattr(agent, "provider", "") or ""
-    resolved_model = getattr(agent, "model", "") or ""
+        resolved_provider = getattr(agent, "provider", "") or ""
+        resolved_model = getattr(agent, "model", "") or ""
 
-    # Record the replay as its own run, clearly tagged so it never counts as
-    # production spend. link_to_session=False keeps it out of the source session.
-    replay_run_id = rm.new_unique_run_id()
-    rm.open_run(
-        replay_run_id,
-        agent_id,
-        workspace=workspace,
-        title=f"Replay of {run_id}",
-        channel=REPLAY_CHANNEL,
-        execution_mode=REPLAY_CHANNEL,
-        session_type=REPLAY_CHANNEL,
-        message_origin=REPLAY_CHANNEL,
-        provider=resolved_provider,
-        model=resolved_model,
-        input=user_message,
-        replay_of=run_id,
-        link_to_session=False,
-    )
-    rm.seed_run_input_context(replay_run_id, getattr(agent, "system_prompt", "") or "", user_message)
+        # Record the replay as its own run, clearly tagged so it never counts as
+        # production spend. link_to_session=False keeps it out of the source session.
+        replay_run_id = rm.new_unique_run_id()
+        rm.open_run(
+            replay_run_id,
+            agent_id,
+            workspace=workspace,
+            title=f"Replay of {run_id}",
+            channel=REPLAY_CHANNEL,
+            execution_mode=REPLAY_CHANNEL,
+            session_type=REPLAY_CHANNEL,
+            message_origin=REPLAY_CHANNEL,
+            provider=resolved_provider,
+            model=resolved_model,
+            input=user_message,
+            replay_of=run_id,
+            link_to_session=False,
+        )
+        rm.seed_run_input_context(replay_run_id, getattr(agent, "system_prompt", "") or "", user_message)
 
-    from agents.agent_invoke import invoke_agent
-    invocation = invoke_agent(agent, user_message, run_id=replay_run_id)
-    result = invocation.result
-    rm.close_run_from_result(replay_run_id, result, process=invocation.process)
+        from agents.agent_invoke import invoke_agent
+        invocation = invoke_agent(agent, user_message, run_id=replay_run_id)
+        result = invocation.result
+        rm.close_run_from_result(replay_run_id, result, process=invocation.process)
 
-    replay_ok = bool(getattr(result, "ok", False))
-    replay_text = str(getattr(result, "agent_output", "") or "") if replay_ok else ""
-    replay_error = None if replay_ok else str(getattr(result, "error", "") or "agent error")
+        replay_ok = bool(getattr(result, "ok", False))
+        replay_text = str(getattr(result, "agent_output", "") or "") if replay_ok else ""
+        replay_error = None if replay_ok else str(getattr(result, "error", "") or "agent error")
 
-    tu = (invocation.process or {}).get("token_usage") or {}
-    rep_inbound = int(tu.get("inbound_tokens") or 0)
-    rep_outbound = int(tu.get("outbound_tokens") or 0)
+        tu = (invocation.process or {}).get("token_usage") or {}
+        rep_inbound = int(tu.get("inbound_tokens") or 0)
+        rep_outbound = int(tu.get("outbound_tokens") or 0)
+        replay_duration_ms = invocation.duration_ms
 
     diff = "".join(difflib.unified_diff(
         original_text.splitlines(keepends=True),
@@ -147,7 +169,7 @@ def replay_run(
             "text": replay_text,
             "inbound_tokens": rep_inbound,
             "outbound_tokens": rep_outbound,
-            "duration_ms": invocation.duration_ms,
+            "duration_ms": replay_duration_ms,
             "cost": _run_cost(resolved_provider, resolved_model, rep_inbound, rep_outbound),
         },
         "diff": diff,

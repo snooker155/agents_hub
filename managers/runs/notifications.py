@@ -7,7 +7,7 @@ every one of these is best-effort — a failed notification must never break the
 recording of the run that triggered it — and because the store must stay
 readable as pure persistence. The store calls into here at its single
 read-modify-write chokepoint, so every execution channel (chat, subprocess,
-node worker, container, flow node) gets the same fan-out for free.
+resident instance, container, flow node) gets the same fan-out for free.
 
 This module deliberately imports nothing from its siblings: it is the bottom of
 the package's import order, so the store can depend on it without a cycle.
@@ -59,9 +59,12 @@ def _sync_instance(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> None:
             tokens=int(usage.get("total_tokens") or 0),
             duration_ms=int((proc or {}).get("duration_ms") or 0),
         )
-        # A node or container outlives the run it just executed: it goes back to
-        # standby, not away. Only a one-shot carrier actually finishes.
-        if new.get("node_id") or new.get("container_name"):
+        # A resident instance's carrier (and a node before it) outlives the run
+        # it just executed: it goes back to standby, not away. A one-shot
+        # carrier, a task run's own process or container, actually finishes.
+        # A carrier running several conversations marks itself active again if
+        # another run is still going.
+        if new.get("carrier_run") or new.get("node_id"):
             ireg.mark_standby(instance_id, "idle — waiting for work")
         elif new_status in ("failed", "error"):
             ireg.mark_failed(instance_id, str(new.get("error") or "run failed"))

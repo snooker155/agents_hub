@@ -1,6 +1,6 @@
 """The per-address throttle on POST /api/external/{token}/run
 (dashboard/backend/routes/external.py, common/rate_limit.py), and the
-constant-time token lookup behind it (managers.node_manager.get_node_by_token).
+constant-time token lookup behind it (instances.carrier.get_by_token).
 """
 from __future__ import annotations
 
@@ -46,34 +46,32 @@ def client(monkeypatch, no_launch, clock):
 
 @pytest.fixture
 def node():
-    from managers import node_manager
-    node_id = f"node-{uuid4()}"
-    token = "tok-" + uuid4().hex
-    node_manager._upsert_node({
-        "node_id": node_id, "agent_id": "swe_agent", "status": "running",
-        "is_exposed": True, "expose_token": token, "workspace": "default",
-    })
-    return node_id, token
+    from instances import carrier, store
+    instance = store.create("swe_agent", kind="resident", workspace="default", state="standby")
+    instance_id = instance["instance_id"]
+    carrier.publish_instance(instance_id)
+    token = store.get(instance_id)["expose_token"]
+    return instance_id, token
 
 
 def _run(client, token):
     return client.post(f"/api/external/{token}/run", json={"prompt": "do the thing"})
 
 
-def _log_statuses(node_id):
-    from managers import node_manager
-    return [c.get("response_status") for c in node_manager.get_connections(node_id)]
+def _log_statuses(instance_id):
+    from instances import carrier
+    return [c.get("response_status") for c in carrier.get_connections(instance_id)]
 
 
 def test_over_the_limit_is_429_with_retry_after_and_recovers(client, clock, node):
-    node_id, token = node
+    instance_id, token = node
     for _ in range(3):
         assert _run(client, token).status_code == 202
     refused = _run(client, token)
     assert refused.status_code == 429
     assert int(refused.headers["Retry-After"]) == 60
     assert refused.json()["retry_after"] == 60
-    assert 429 in _log_statuses(node_id)
+    assert 429 in _log_statuses(instance_id)
 
     clock.now += 30
     assert int(_run(client, token).headers["Retry-After"]) == 30
@@ -87,26 +85,26 @@ def test_unknown_tokens_are_throttled_too_and_not_logged(client, clock, node):
     guessed = _run(client, "nope-" + uuid4().hex)
     assert guessed.status_code == 429
     assert "Retry-After" in guessed.headers
-    # The real node shares the address's window, and nothing was logged for it.
-    node_id, token = node
+    # The real instance shares the address's window, and nothing was logged for it.
+    instance_id, token = node
     assert _run(client, token).status_code == 429
-    assert _log_statuses(node_id) == [429]
+    assert _log_statuses(instance_id) == [429]
 
 
 def test_zero_disables_the_throttle(client, monkeypatch, node):
     from common.config import settings
     monkeypatch.setattr(settings, "external_rate_per_minute", 0, raising=False)
-    _node_id, token = node
+    _instance_id, token = node
     for _ in range(6):
         assert _run(client, token).status_code == 202
 
 
 def test_token_lookup_ignores_unexposed_and_empty_tokens(node):
-    from managers import node_manager
-    node_id, token = node
-    assert node_manager.get_node_by_token(token)["node_id"] == node_id
-    assert node_manager.get_node_by_token(token + "x") is None
-    assert node_manager.get_node_by_token("") is None
-    assert node_manager.get_node_by_token(None) is None  # type: ignore[arg-type]
-    node_manager.update_node(node_id, {"is_exposed": False})
-    assert node_manager.get_node_by_token(token) is None
+    from instances import carrier
+    instance_id, token = node
+    assert carrier.get_by_token(token)["instance_id"] == instance_id
+    assert carrier.get_by_token(token + "x") is None
+    assert carrier.get_by_token("") is None
+    assert carrier.get_by_token(None) is None  # type: ignore[arg-type]
+    carrier.unpublish_instance(instance_id)
+    assert carrier.get_by_token(token) is None

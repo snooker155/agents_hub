@@ -1,17 +1,17 @@
 """
-/api/deployment: the map of a deployment.
+/api/cluster: the cluster map (formerly /api/deployment, kept as an alias).
 
 One answer to "where is everything running, how busy is it, and is it
 alive": the members (backend replicas and workers, from ``common/members.py``),
 which of them holds which singleton role (``common/leases.py``), the launch
 queue and the outbox, and the working entities grouped by the host they run
 on: agent runs (with the age of their heartbeat), flow runs, loops (with the
-replica executing them), nodes and containers. ``/api/health`` stays the
-"is this process healthy" snapshot; this is the whole deployment.
+replica executing them), resident instances and containers. ``/api/health``
+stays the "is this process healthy" snapshot; this is the whole cluster map.
 
 A member's own log is served here too, from its host's file or the
 object-store mirror, and tailed live over the stream on
-``logs:member:<member id>`` (common/live_state.py) like a node's.
+``logs:member:<member id>`` (common/live_state.py) like a resident instance's.
 
 ``entity_runs`` in the map is the one flow/loop/team/scenario query
 (``common.entity_runs.list_runs(active=True)``), kind-agnostic: counts by kind
@@ -29,7 +29,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 
-router = APIRouter(prefix="/api/deployment", tags=["deployment"])
+# Every route below is registered on both of these: /api/cluster is the
+# page's real name, /api/deployment stays live as an alias for anything, in or
+# outside this repo, still calling the old path. main.py includes both.
+# (Stacking two router decorators on one function is the FastAPI-supported way
+# to expose one endpoint under two routers — a route decorator just registers
+# the function and hands it back unchanged, so a second decorator on top adds
+# a second registration rather than replacing the first.)
+router = APIRouter(prefix="/api/cluster", tags=["cluster"])
+deployment_alias_router = APIRouter(prefix="/api/deployment", tags=["deployment"])
 
 ACTIVE_RUN_STATUSES = ("running", "stop", "pending", "queued")
 
@@ -145,19 +153,31 @@ def _active_loops(entity_active: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def _nodes() -> List[Dict[str, Any]]:
+def _instances() -> List[Dict[str, Any]]:
     try:
-        from managers import node_manager
-        nodes = node_manager.list_nodes()
+        from instances import carrier
+        items = carrier.list_resident(live=True)
     except Exception:
         return []
     return [{
-        "node_id": n.get("node_id"), "agent_id": n.get("agent_id"), "label": n.get("label"),
-        "workspace": n.get("workspace"), "status": n.get("status"),
-        "host": n.get("host") or "", "pid": n.get("pid"),
-        "container_name": n.get("container_name"), "execution_mode": n.get("execution_mode"),
-        "started_at": n.get("started_at"), "http_url": n.get("http_url"),
-    } for n in nodes if str(n.get("status") or "") in ("running", "starting", "stopping")]
+        "instance_id": i.get("instance_id"), "agent_id": i.get("agent_id"), "label": i.get("label"),
+        "workspace": i.get("workspace"), "state": i.get("state"),
+        "kind": i.get("kind"), "service_id": i.get("service_id"),
+        "carrier_mode": i.get("carrier_mode"), "carrier_host": i.get("carrier_host") or "",
+        "carrier_status": i.get("carrier_status"), "pid": i.get("pid"),
+        "container_name": i.get("container_name"),
+        "heartbeat_at": i.get("heartbeat_at"),
+        "heartbeat_age_seconds": _age(i.get("heartbeat_at")),
+        "started_at": i.get("started_at"),
+    } for i in items]
+
+
+def _services() -> List[Dict[str, Any]]:
+    try:
+        from routes.services import services_map
+        return services_map()
+    except Exception:
+        return []
 
 
 def _containers() -> List[Dict[str, Any]]:
@@ -168,10 +188,10 @@ def _containers() -> List[Dict[str, Any]]:
         return []
 
 
-def _by_host(items: List[Dict[str, Any]]) -> Dict[str, int]:
+def _by_host(items: List[Dict[str, Any]], key: str = "host") -> Dict[str, int]:
     counts: Dict[str, int] = defaultdict(int)
     for it in items:
-        counts[str(it.get("host") or "")] += 1
+        counts[str(it.get(key) or "")] += 1
     return dict(counts)
 
 
@@ -202,8 +222,9 @@ def build_map() -> Dict[str, Any]:
     flows = _active_flow_runs(entity_active)
     loops = _active_loops(entity_active)
     entity_section = _entity_runs_section(entity_active)
-    nodes = _nodes()
+    instances = _instances()
     containers = _containers()
+    services = _services()
 
     try:
         queue = run_queue.stats()
@@ -218,7 +239,8 @@ def build_map() -> Dict[str, Any]:
         outbox = {}
 
     hosts = sorted({str(m.get("host") or "") for m in member_rows}
-                   | set(_by_host(runs)) | set(_by_host(nodes)) | set(_by_host(containers)))
+                   | set(_by_host(runs)) | set(_by_host(instances, "carrier_host"))
+                   | set(_by_host(containers)))
     hosts = [h for h in hosts if h]
 
     return {
@@ -238,7 +260,8 @@ def build_map() -> Dict[str, Any]:
         "flow_runs": flows,
         "loops": loops,
         "entity_runs": entity_section,
-        "nodes": nodes,
+        "instances": instances,
+        "services": services,
         "containers": containers,
         "hosts": [{
             "host": h,
@@ -246,13 +269,14 @@ def build_map() -> Dict[str, Any]:
                         and m.get("status") != "stopped"],
             "runs": _by_host(runs).get(h, 0),
             "flow_runs": _by_host(flows).get(h, 0),
-            "nodes": _by_host(nodes).get(h, 0),
+            "instances": _by_host(instances, "carrier_host").get(h, 0),
             "containers": _by_host(containers).get(h, 0),
         } for h in hosts],
     }
 
 
 @router.get("")
+@deployment_alias_router.get("")
 async def deployment_map():
     """The map: members, leases, queue, and the working entities by host."""
     import asyncio
@@ -260,12 +284,14 @@ async def deployment_map():
 
 
 @router.get("/members")
+@deployment_alias_router.get("/members")
 async def members_list():
     from common import members
     return {"members": members.list_members()}
 
 
 @router.get("/members/{member_id}/logs", response_class=PlainTextResponse)
+@deployment_alias_router.get("/members/{member_id}/logs", response_class=PlainTextResponse)
 async def member_logs(member_id: str, tail: int = 500):
     """The last lines of a member's own log (its host's file, or the
     object-store mirror when the member runs elsewhere)."""
@@ -279,6 +305,7 @@ async def member_logs(member_id: str, tail: int = 500):
 
 
 @router.delete("/members/{member_id}")
+@deployment_alias_router.delete("/members/{member_id}")
 async def forget_member(member_id: str):
     """Drop a row a process left behind. Refused for a live one: the map
     must never lose a process that is still beating."""

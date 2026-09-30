@@ -1,8 +1,9 @@
 """Inbound signature verification, replay rejection, and the task webhook.
 
 Exercises :mod:`notify.inbound` directly, then the same checks wired into
-POST /api/external/{token}/run (an exposed node with an inbound secret
-configured) and POST /api/webhooks/tasks (a workspace's inbound secret).
+POST /api/external/{token}/run (a published resident instance with an
+inbound secret configured) and POST /api/webhooks/tasks (a workspace's
+inbound secret).
 """
 from __future__ import annotations
 
@@ -90,38 +91,24 @@ def external_client(no_launch):
 
 @pytest.fixture
 def exposed_node():
-    """An exposed worker node, with an inbound secret configured."""
-    from managers import node_manager
+    """A published resident instance, with an inbound secret configured."""
+    from instances import carrier, store
 
-    node_id = f"node-{uuid4()}"
-    token = "tok-" + uuid4().hex
-    node_manager._upsert_node({
-        "node_id": node_id,
-        "agent_id": "swe_agent",
-        "status": "running",
-        "is_exposed": True,
-        "expose_token": token,
-        "inbound_secret": SECRET,
-        "workspace": "default",
-    })
-    return node_id, token
+    instance = store.create("swe_agent", kind="resident", workspace="default", state="standby")
+    instance_id = instance["instance_id"]
+    carrier.publish_instance(instance_id)
+    carrier.set_inbound_secret(instance_id, SECRET)
+    return instance_id, store.get(instance_id)["expose_token"]
 
 
 @pytest.fixture
 def exposed_node_no_secret():
-    from managers import node_manager
+    from instances import carrier, store
 
-    node_id = f"node-{uuid4()}"
-    token = "tok-" + uuid4().hex
-    node_manager._upsert_node({
-        "node_id": node_id,
-        "agent_id": "swe_agent",
-        "status": "running",
-        "is_exposed": True,
-        "expose_token": token,
-        "workspace": "default",
-    })
-    return node_id, token
+    instance = store.create("swe_agent", kind="resident", workspace="default", state="standby")
+    instance_id = instance["instance_id"]
+    carrier.publish_instance(instance_id)
+    return instance_id, store.get(instance_id)["expose_token"]
 
 
 def _post_run(client, token, payload, headers=None):

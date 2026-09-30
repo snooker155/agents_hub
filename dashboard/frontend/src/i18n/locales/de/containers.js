@@ -33,7 +33,7 @@ export default {
   runningStoppedContainers: 'Laufende & gestoppte Container',
   allContainersWithLabel: 'Alle Container mit dem Label',
   noManagedContainersFound: 'Keine verwalteten Container gefunden.',
-  startANodeOrTask: 'Starten Sie einen Knoten oder eine Aufgabe im Docker-Modus, um hier Container zu sehen.',
+  startANodeOrTask: 'Starten Sie eine Instanz oder eine Aufgabe im Docker-Modus, um hier Container zu sehen.',
   agentLabel: 'Agent',
   viewLogs: 'Logs ansehen',
   stopContainer: 'Container stoppen',

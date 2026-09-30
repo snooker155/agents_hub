@@ -14,7 +14,7 @@ A task moves through twelve statuses: `todo`, `ready`, `pending`,
 `resolved`, `reviewing`, `reviewed`, `done`.
 
 - **todo** — not started.
-- **ready** — queued for the orchestrator or a worker node to pick up.
+- **ready** — queued for the orchestrator or an instance that takes tasks to pick up.
 - **pending** — assigned but waiting on a manual "start" approval.
 - **in_progress** — an agent is running.
 - **blocked** — work cannot proceed; `blocked_reason` says why.
@@ -186,7 +186,7 @@ deadline, timezone aware or assumed UTC; a task past its deadline reports
 terminal-for-scheduling status (`done`, `reviewed`, `resolved`, `stopped`).
 
 Both feed `tasks.service.order_for_dispatch`, the one helper the orchestrator
-and worker polling loops (`runtime/node_run.py`) use to pick which of several
+and the task input of resident instances (`runtime/instance_run.py`) use to pick which of several
 runnable tasks goes next: priority descending (critical first), then `due_at`
 ascending with no-deadline tasks sorted last, then `created_at` ascending as
 the final tie-breaker.

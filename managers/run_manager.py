@@ -33,7 +33,7 @@ Public API (state):
 
 Public API (lifecycle):
 - get_status(task_id, run_id) / stop_run(task_id, run_id) / stop_run_by_id(run_id)
-- get_in_progress_runs_for_node(node_id) / fail_in_progress_runs_for_node(...)
+- get_in_progress_runs_for_instance(instance_id) / fail_in_progress_runs_for_instance(...)
 - run_log_path(run_id)
 
 Where the code lives
@@ -69,9 +69,8 @@ from .runs.lifecycle import (  # noqa: F401
     _stop_run_record,
     close_run,
     close_run_from_result,
-    fail_in_progress_runs_for_node,
-    get_all_runs_for_node,
-    get_in_progress_runs_for_node,
+    fail_in_progress_runs_for_instance,
+    get_in_progress_runs_for_instance,
     get_run_by_id,
     get_status,
     new_unique_run_id,

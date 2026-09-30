@@ -230,6 +230,17 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
         overrides["model"] = cfg.model
 
     agent_id = cfg.target_id
+    title = f"Eval {evalset.name or evalset.eval_set_id}: {case.case_id}"
+    if attempt > 1:
+        title += f" (attempt {attempt})"
+
+    from services import jobs
+    if jobs.enabled():
+        # The agent runs on a runner replica (docs/services.md), recorded as
+        # the same eval run; only the invocation leaves this process.
+        return _run_agent_target_remote(agent_id, workspace, overrides, prompt=prompt,
+                                        work_dir=work_dir, title=title)
+
     try:
         from agents.agent_factory import create_agent
         agent = create_agent(agent_id, work_dir or workspace, **overrides)
@@ -241,9 +252,6 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
     model = getattr(agent, "model", "") or ""
 
     run_id = rm.new_unique_run_id()
-    title = f"Eval {evalset.name or evalset.eval_set_id}: {case.case_id}"
-    if attempt > 1:
-        title += f" (attempt {attempt})"
     rm.open_run(
         run_id,
         agent_id,
@@ -280,6 +288,35 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
     outcome.outbound_tokens = int(tu.get("outbound_tokens") or 0)
     outcome.cost = _run_cost(provider, model, outcome.inbound_tokens, outcome.outbound_tokens)
     outcome.trajectory = [{"run_id": run_id, "kind": "run", "summary": agent_id}]
+    return outcome
+
+
+def _run_agent_target_remote(agent_id: str, workspace: Optional[str], overrides: Dict[str, Any],
+                             *, prompt: str, work_dir: Optional[str], title: str) -> Outcome:
+    """One agent run on the case, executed by a runner replica as an
+    ``invoke`` job (services/jobs.py) and recorded as the eval run there."""
+    from services import jobs
+
+    try:
+        data = jobs.invoke_sync(workspace, {
+            "agent_id": agent_id, "workspace": work_dir or workspace,
+            "workspace_name": workspace, "overrides": overrides, "prompt": prompt,
+            "run": {"workspace": workspace, "title": title, "channel": EVAL_CHANNEL,
+                    "execution_mode": EVAL_CHANNEL, "session_type": EVAL_CHANNEL,
+                    "message_origin": EVAL_CHANNEL, "link_to_session": False},
+        })
+    except jobs.JobError as e:
+        return Outcome(ok=False, error=f"runner: {e}")
+    res = jobs.InvokeResult(data)
+    outcome = Outcome(run_id=res.run_id)
+    outcome.ok = res.ok
+    outcome.output = res.agent_output if res.ok else ""
+    outcome.error = None if res.ok else str(res.error or "agent error")
+    outcome.duration_ms = res.duration_ms
+    outcome.inbound_tokens = int(res.token_usage.get("inbound_tokens") or 0)
+    outcome.outbound_tokens = int(res.token_usage.get("outbound_tokens") or 0)
+    outcome.cost = _run_cost(res.provider, res.model, outcome.inbound_tokens, outcome.outbound_tokens)
+    outcome.trajectory = [{"run_id": res.run_id, "kind": "run", "summary": agent_id}]
     return outcome
 
 

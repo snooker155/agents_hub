@@ -366,6 +366,33 @@ def test_the_prompt_builder_sees_the_users_message_already_recorded(turn_env):
     assert turn_env["agent"].prompts == ["PROMPT"]
 
 
+def test_the_agent_is_built_in_the_chats_workspace_folder(turn_env, monkeypatch):
+    """A chat that knows only the workspace's name still hands the factory a
+    path under it, which is how the workspace's model choice (the header's
+    pick) reaches the agent instead of the global default."""
+    import agents.agent_factory as agent_factory
+    from common.paths import WORKSPACES_ROOT
+    seen = {}
+
+    def fake_create(agent_id, workspace=None, **kw):
+        seen["workspace"] = workspace
+        return turn_env["agent"]
+    monkeypatch.setattr(agent_factory, "create_agent", fake_create)
+
+    spec = EntityChatSpec(kind="agentdef", agent_id="agent_creator", title="Main · definition", workspace="acme")
+    _run(turn_env, spec, "main-agent", "sharpen the instructions", lambda h: "PROMPT")
+    assert seen["workspace"] == str(WORKSPACES_ROOT / "acme")
+
+    spec = EntityChatSpec(kind="scenario", agent_id="scenario_creator", title="Tavern",
+                          workspace="acme", workspace_path="/tmp/acme/proj")
+    _run(turn_env, spec, "s1", "add a bard", lambda h: "PROMPT")
+    assert seen["workspace"] == "/tmp/acme/proj"
+
+    spec = EntityChatSpec(kind="scenario", agent_id="scenario_creator", title="Tavern")
+    _run(turn_env, spec, "s2", "add a bard", lambda h: "PROMPT")
+    assert seen["workspace"] is None
+
+
 def test_the_turn_ends_with_a_message_and_a_done_marker(turn_env):
     spec = EntityChatSpec(kind="loop", agent_id="loop_creator", title="Polish")
     _, events = _run(turn_env, spec, "l1", "raise the cap", lambda h: "PROMPT")

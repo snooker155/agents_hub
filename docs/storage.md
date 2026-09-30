@@ -2,7 +2,7 @@
 
 The database now runs on Postgres across hosts ([scaling](scaling.md)), and a
 run's process can already spawn on any worker host ([workers](workers.md)).
-Both of those took the *records* off one host; the *files* a run, a node, a
+Both of those took the *records* off one host; the *files* a run, an instance, a
 flow or a view writes alongside its record did not move with them. This page
 is about those files: what still lives under `AGENTS_HUB_ROOT`, how
 `common/blobs.py` mirrors it into an object store so a replica that did not
@@ -14,7 +14,7 @@ host for now.
 | Files | Path | Written by |
 |---|---|---|
 | Agent run logs | `run_logs/agent_run_<run_id>.log` | the run's own process (`runtime/agent_run.py`), or the launcher for a Docker run |
-| Node logs | `node_logs/node_<node_id>.log` | the node process (`managers/node_manager.py`) |
+| Instance carrier logs | `instance_logs/instance_<instance_id>.log` | a resident instance's process (`instances/carrier.py`, `runtime/instance_run.py`) |
 | Flow run logs | `flow_logs/<flow_id>/<run_group>.json` | the flow orchestrator (`flow/run_store.py`) |
 | View assets | `<workspace>/.views/<view_id>/` (workspace-scoped) or `views/<view_id>/` (global) | `views/store.py`: `view.json`, `base.json`, copied assets, snapshots, clips, checkpoints |
 | Generated Dockerfiles | `dockerfiles/` | `managers/container_manager.py`, read back on the same host that builds the image |
@@ -77,7 +77,7 @@ follows:
   object store after it is gone from disk.
 
 Reading falls back to the store wherever the corresponding writer mirrors:
-the `/api/logs/{run_id}` and `/api/nodes/{node_id}/logs` routes, view asset
+the `/api/logs/{run_id}` and `/api/instances/{instance_id}/logs` routes, view asset
 serving (`view_asset_path`, `get_view`) and `flow/run_store.read_flow_logs`
 (which lists the store by the `flow_logs/<flow_id>/` prefix to pick up a
 per-run file this host never wrote) all try the local file first and only
@@ -87,11 +87,12 @@ behaves as "not there" instead of raising.
 
 ## What still needs a shared mount
 
-- **Node logs are read with the same local-then-store fallback as run logs,
-  but nothing currently mirrors a node's log file as it runs.** A node is a
-  long-lived process, not a one-shot run with a clear finish line to mirror
-  at, so this is left for a later pass; today a node's log is only fully
-  available on the host running it.
+- **Instance carrier logs are read with the same local-then-store fallback
+  as run logs, but nothing currently mirrors a carrier's log file as it runs.**
+  A resident instance is a long-lived process, not a one-shot run with a clear
+  finish line to mirror at, so this is left for a later pass; today a
+  carrier's log is only fully available on the host running it. Each run the
+  instance answers keeps its own run log, which is mirrored as usual.
 - **Generated Dockerfiles** are not mirrored: a Dockerfile is read back only
   by the Docker build on the same host that generated it, in the same
   request, so there is no cross-host read to serve.

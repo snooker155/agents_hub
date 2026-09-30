@@ -1,15 +1,19 @@
-"""HTTP server for agents running in Docker containers.
+"""Direct HTTP port of a resident instance.
 
-When a node is started with http_expose=True (via AgentSpec settings), the
-node_run starts this server in a background thread so the agent can be
-reached via HTTP from outside the container.
+The hub's public address (``/api/external/{token}/messages``) is how a
+published instance is normally reached. When the agent asks for its own port
+(``http_expose`` or a ``service`` node type on the agent) or the instance is
+started with ``direct_port``, ``runtime/instance_run.py`` also starts this
+server in a background thread, so the instance can be called on its container
+port without going through the hub. A message sent here lands in the same
+mailbox and is answered by the same process.
 
 Endpoints
 ---------
 GET  /health          basic liveness probe
-GET  /status          node status record
-POST /run             submit a prompt and receive the agent's response
-GET  /logs?tail=100   last N lines of the node log file
+GET  /status          the instance record, without secrets
+POST /run             send a message, wait for the answer
+GET  /logs?tail=100   last N lines of the carrier log
 """
 from __future__ import annotations
 
@@ -28,7 +32,7 @@ from common.logging_config import marker_logger
 # This service's own timestamped lines (``[timestamp] ...``) go through a
 # logger configured to emit the message only (the ``[timestamp]`` prefix below
 # is added by ``_make_logger``'s ``_log`` itself), on stdout, at INFO
-# regardless of ORCH_LOG_LEVEL — mirrors runtime/node_run.py's ``log()``.
+# regardless of ORCH_LOG_LEVEL — mirrors runtime/instance_run.py's ``log()``.
 _marker_log = marker_logger(__name__)
 
 
@@ -36,6 +40,8 @@ _marker_log = marker_logger(__name__)
 
 class RunRequest(BaseModel):
     prompt: str
+    conversation_id: Optional[str] = None
+    wait_seconds: float = 300.0
 
 
 # ── Stdout tee ────────────────────────────────────────────────────────────────
@@ -44,7 +50,7 @@ class _TeeStream(io.TextIOBase):
     """Write to two text streams simultaneously, flushing after every write.
 
     Installed as sys.stdout/sys.stderr so that plain print() calls in request
-    handlers appear in the node log file even when the process stdout is a
+    handlers appear in the carrier log file even when the process stdout is a
     non-TTY pipe (which is fully buffered by default).
     """
 
@@ -113,32 +119,47 @@ def _make_logger(log_file: Optional[str]) -> Callable[[str], None]:
 
 # ── App factory ───────────────────────────────────────────────────────────────
 
-def create_app(node_id: str, agent_id: str, workspace: Optional[str] = None, log_file: Optional[str] = None) -> FastAPI:
+def create_app(instance_id: str, agent_id: str, workspace: Optional[str] = None,
+               log_file: Optional[str] = None) -> FastAPI:
     app = FastAPI(
         title=f"Agent HTTP — {agent_id}",
-        description="HTTP interface for an agents-hub node running inside a container.",
-        version="1.0.0",
+        description="Direct HTTP port of an agents-hub resident instance.",
+        version="2.0.0",
     )
+
+    def _instance() -> dict:
+        from instances import store
+        return store.get(instance_id) or {}
+
+    def _check_token(authorization: Optional[str]) -> None:
+        """A published instance requires its token here too, in constant time."""
+        token = _instance().get("expose_token") if _instance().get("is_exposed") else None
+        if not token:
+            return
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Authorization: Bearer <token> header required")
+        import hmac
+        if not hmac.compare_digest(authorization[7:].encode("utf-8"), str(token).encode("utf-8")):
+            raise HTTPException(status_code=403, detail="Invalid access token")
 
     # ── Health ────────────────────────────────────────────────────────────────
 
     @app.get("/health", tags=["system"])
     def health():
         """Liveness probe."""
-        return {"status": "ok", "node_id": node_id, "agent_id": agent_id}
+        return {"status": "ok", "instance_id": instance_id, "agent_id": agent_id}
 
     # ── Status ────────────────────────────────────────────────────────────────
 
     @app.get("/status", tags=["system"])
     def status():
-        """Return the node's status record from nodes.json."""
+        """The instance record, without its token or inbound secret."""
         try:
-            from managers.node_manager import get_node
-            node = get_node(node_id)
-            if node is None:
-                return {"node_id": node_id, "agent_id": agent_id, "status": "unknown"}
-            safe = {k: v for k, v in node.items() if k not in ("expose_token",)}
-            return safe
+            from instances import carrier
+            inst = _instance()
+            if not inst:
+                return {"instance_id": instance_id, "agent_id": agent_id, "state": "unknown"}
+            return {k: v for k, v in carrier.public_view(inst).items() if k != "expose_token"}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
@@ -146,114 +167,36 @@ def create_app(node_id: str, agent_id: str, workspace: Optional[str] = None, log
 
     @app.post("/run", tags=["agent"])
     def run(req: RunRequest, authorization: Optional[str] = Header(None)):
-        """Run the agent with the given prompt and return the result.
+        """Send a message and wait for the answer.
 
-        Synchronous blocking call — the HTTP request stays open until the agent
-        finishes.  If the node has an expose_token set, a matching
-        Authorization: Bearer <token> header is required.
+        The message goes into the instance's own mailbox, in the conversation
+        named by ``conversation_id`` (the main one when left out), and is
+        answered by this process like any other; the request stays open until
+        the answer (or ``wait_seconds``, at most 300) and returns where the
+        message stands either way.
         """
-        run_id: Optional[str] = None
-        try:
-            from managers.node_manager import get_node as _get_node
-            _node = _get_node(node_id)
-            _token = _node.get("expose_token") if _node else None
-            if _token:
-                if not authorization or not authorization.startswith("Bearer "):
-                    raise HTTPException(status_code=401, detail="Authorization: Bearer <token> header required")
-                # Constant time, so the response time leaks nothing about
-                # how much of a guessed token matched.
-                import hmac
-                if not hmac.compare_digest(authorization[7:].encode("utf-8"),
-                                           str(_token).encode("utf-8")):
-                    raise HTTPException(status_code=403, detail="Invalid access token")
-
-            from managers.run_manager import new_unique_run_id, open_run, close_run_from_result
-            run_id = new_unique_run_id()
-            ws_name = (_node or {}).get("workspace") or workspace
-            open_run(
-                run_id, agent_id,
-                node_id=node_id,
-                session_type="http",
-                channel="http",
-                title=req.prompt[:80],
-                input=req.prompt,
-                workspace=ws_name,
-                link_to_session=False,
-            )
-
-            from agents.agent_factory import create_agent
-            from agents.agent_invoke import invoke_agent
-            from agents.callbacks import RunStopCallback
-            agent = create_agent(agent_id, workspace=workspace)
-            # Without this the run is uninterruptible: the dashboard's Stop flips
-            # the record to "stop", but nothing inside the service node reads it,
-            # so the request blocks until the agent finishes on its own and the
-            # only remedy is stopping the whole container (killing every other
-            # in-flight request with it). The callback polls the shared run store
-            # — the same .agents_hub the container mounts — and aborts at the next
-            # LLM/tool boundary, or at the next token when streaming is on.
-            stop_cb = RunStopCallback(run_id)
-            invocation = invoke_agent(agent, req.prompt, extra_callbacks=[stop_cb])
-            result = invocation.result
-            process = invocation.process
-
-            if stop_cb.cancelled:
-                from managers.run_manager import close_run as _close_run
-                _close_run(run_id, status="stopped", exit_code=0,
-                           error="stopped by user", process=process)
-                return {
-                    "ok": False,
-                    "error": "stopped by user",
-                    "stopped": True,
-                    "run_id": run_id,
-                    "node_id": node_id,
-                    "agent_id": agent_id,
-                }
-
-            close_run_from_result(run_id, result, process=process)
-            if result.ok:
-                output = str(result.agent_output or "")
-                return {
-                    "ok": True,
-                    "output": output,
-                    "run_id": run_id,
-                    "node_id": node_id,
-                    "agent_id": agent_id,
-                }
-            error_str = str(result.error or "agent error")
-            return {
-                "ok": False,
-                "error": error_str,
-                "run_id": run_id,
-                "node_id": node_id,
-                "agent_id": agent_id,
-            }
-        except HTTPException:
-            raise
-        except Exception as exc:
-            if run_id:
-                try:
-                    from managers.run_manager import close_run as _close
-                    _close(run_id, status="failed", exit_code=1, error=str(exc))
-                except Exception:
-                    pass
-            raise HTTPException(status_code=500, detail=str(exc))
+        _check_token(authorization)
+        from instances import inbox, replies
+        msg_id = inbox.enqueue(instance_id, req.prompt, origin="http",
+                               conversation_id=req.conversation_id)
+        reply = replies.wait_sync(msg_id, min(max(req.wait_seconds, 0.0), 300.0)) or {
+            "msg_id": msg_id, "status": "queued"}
+        out = {**reply, "instance_id": instance_id, "agent_id": agent_id,
+               "ok": reply.get("status") == "completed"}
+        return out
 
     # ── Logs ──────────────────────────────────────────────────────────────────
 
     @app.get("/logs", tags=["system"])
-    def logs(tail: int = 100):
-        """Return the last *tail* lines of the node's log file."""
+    def logs(tail: int = 100, authorization: Optional[str] = Header(None)):
+        """Return the last *tail* lines of the instance's carrier log."""
+        _check_token(authorization)
         try:
-            from managers.node_manager import get_node
-            node = get_node(node_id)
-            if not node or not node.get("log_file"):
-                return {"node_id": node_id, "lines": []}
-            log_path = Path(node["log_file"])
-            if not log_path.exists():
-                return {"node_id": node_id, "lines": []}
-            all_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            return {"node_id": node_id, "lines": all_lines[-tail:]}
+            path = _instance().get("carrier_log_file")
+            if not path or not Path(path).exists():
+                return {"instance_id": instance_id, "lines": []}
+            all_lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+            return {"instance_id": instance_id, "lines": all_lines[-tail:]}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
@@ -263,7 +206,7 @@ def create_app(node_id: str, agent_id: str, workspace: Optional[str] = None, log
 # ── Server helpers ────────────────────────────────────────────────────────────
 
 def start_http_server(
-    node_id: str,
+    instance_id: str,
     agent_id: str,
     port: int,
     workspace: Optional[str] = None,
@@ -282,7 +225,7 @@ def start_http_server(
         except Exception:
             pass
 
-    app = create_app(node_id, agent_id, workspace=workspace, log_file=log_file)
+    app = create_app(instance_id, agent_id, workspace=workspace, log_file=log_file)
     uvicorn.run(
         app,
         host="0.0.0.0",
@@ -292,7 +235,7 @@ def start_http_server(
 
 
 def start_http_server_thread(
-    node_id: str,
+    instance_id: str,
     agent_id: str,
     port: int,
     workspace: Optional[str] = None,
@@ -301,7 +244,7 @@ def start_http_server_thread(
     """Start the HTTP server in a daemon background thread."""
     t = threading.Thread(
         target=start_http_server,
-        args=(node_id, agent_id, port, workspace, log_file),
+        args=(instance_id, agent_id, port, workspace, log_file),
         daemon=True,
         name=f"agent-http-{port}",
     )

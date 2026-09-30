@@ -33,7 +33,7 @@ export default {
   runningStoppedContainers: 'Запущенные и остановленные контейнеры',
   allContainersWithLabel: 'Все контейнеры с меткой',
   noManagedContainersFound: 'Управляемые контейнеры не найдены.',
-  startANodeOrTask: 'Запустите узел или задачу в режиме Docker, чтобы увидеть здесь контейнеры.',
+  startANodeOrTask: 'Запустите инстанс или задачу в режиме Docker, чтобы увидеть здесь контейнеры.',
   agentLabel: 'агент',
   viewLogs: 'Смотреть логи',
   stopContainer: 'Остановить контейнер',

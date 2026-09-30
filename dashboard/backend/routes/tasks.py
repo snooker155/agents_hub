@@ -1064,6 +1064,38 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
     except Exception:
         pass
 
+    prompt = (
+        "Decompose the following high-level task into concrete, small, and verifiable subtasks. "
+        f"Create subtasks ONLY using the add_subtask tool with parent_id={task_id}. "
+        "Do not create other high-level tasks. When a subtask must wait for others, "
+        "pass their IDs in the depends parameter of add_subtask so execution order is enforced.\n\n"
+        f"Task Data:\nID: {task_id}\nTITLE: {t.title}\nDESCRIPTION: {t.description or ''}\n\n"
+        "Provide a brief summary of the created subtasks at the end."
+    )
+    build_overrides = {k: v for k, v in (
+        ("model", payload.model if payload and payload.model else None),
+        ("temperature", payload.temperature if payload and payload.temperature is not None else None),
+        ("max_tokens", payload.max_tokens if payload and payload.max_tokens else None),
+        ("verbose", payload.verbose if payload and payload.verbose is not None else True),
+    ) if v is not None}
+
+    # The decomposer runs on a runner replica (docs/services.md): an
+    # ``invoke`` job, not waited for, writing its log where the thread below
+    # would have.
+    from services import jobs as _jobs
+    if _jobs.enabled():
+        try:
+            with log_file.open("w", encoding="utf-8") as fh:
+                fh.write("[decomposer] start\n")
+            _jobs.submit(t.workspace or root.name, "invoke", {
+                "agent_id": "decomposer", "workspace": str(root),
+                "workspace_name": t.workspace or root.name, "overrides": build_overrides,
+                "prompt": prompt, "run_id": run_id, "log_file": str(log_file),
+            }, label=f"decompose {task_id}")
+        except _jobs.JobError as e:
+            raise HTTPException(status_code=e.status, detail=str(e))
+        return {"run_id": run_id}
+
     # The worker is a plain thread, which inherits no context: the secret
     # scope (and who asked) are captured here and re-entered inside it.
     from common import secrets as _secrets
@@ -1089,15 +1121,6 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
                         temperature=(payload.temperature if payload and payload.temperature is not None else None),
                         max_tokens=(payload.max_tokens if payload and payload.max_tokens else None),
                         verbose=(payload.verbose if payload and payload.verbose is not None else True)
-                    )
-
-                    prompt = (
-                        "Decompose the following high-level task into concrete, small, and verifiable subtasks. "
-                        f"Create subtasks ONLY using the add_subtask tool with parent_id={task_id}. "
-                        "Do not create other high-level tasks. When a subtask must wait for others, "
-                        "pass their IDs in the depends parameter of add_subtask so execution order is enforced.\n\n"
-                        f"Task Data:\nID: {task_id}\nTITLE: {t.title}\nDESCRIPTION: {t.description or ''}\n\n"
-                        "Provide a brief summary of the created subtasks at the end."
                     )
 
                     result = agent.run(prompt, run_id)

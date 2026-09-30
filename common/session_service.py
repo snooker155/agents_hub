@@ -69,6 +69,7 @@ def query_contexts(
     is_flow: Optional[bool] = None,
     task_id: Optional[str] = None,
     session_ids: Optional[List[str]] = None,
+    agent_id: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     limit: int = 100,
@@ -83,6 +84,8 @@ def query_contexts(
 
     ``session_ids`` narrows to a pre-computed set — used by the status filter,
     which is derived from a session's runs and so cannot live in this table.
+    ``agent_id`` keeps the sessions that agent ran in, through a subquery on
+    the runs table (``idx_runs_agent``) rather than a list of ids.
     """
     clauses: List[str] = []
     params: List[Any] = []
@@ -98,6 +101,9 @@ def query_contexts(
     if task_id:
         clauses.append("task_id = ?")
         params.append(str(task_id))
+    if agent_id:
+        clauses.append("session_id IN (SELECT session_id FROM runs WHERE agent_id = ? AND session_id IS NOT NULL)")
+        params.append(str(agent_id))
     if is_flow is not None:
         clauses.append("COALESCE(is_flow, 0) = ?")
         params.append(1 if is_flow else 0)

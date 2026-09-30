@@ -1,10 +1,11 @@
-"""Inbound secrets for a node and a flow, set from the dashboard.
+"""Inbound secrets for a resident instance and a flow, set from the dashboard.
 
-``routes/external.py`` has required a signature on an exposed node with an
-``inbound_secret`` since inbound signing shipped, and ``routes/flows.py``'s
-trigger does the same for a flow's ``webhook_secret`` — but neither value could
-be set from anywhere. These tests cover the two routes that set them, and the
-one property that matters for both: the value goes in and never comes back out.
+``routes/external.py`` has required a signature on a published resident
+instance with an ``inbound_secret`` since inbound signing shipped, and
+``routes/flows.py``'s trigger does the same for a flow's ``webhook_secret`` —
+but neither value could be set from anywhere. These tests cover the two
+routes that set them, and the one property that matters for both: the value
+goes in and never comes back out.
 """
 from __future__ import annotations
 
@@ -29,12 +30,12 @@ def _sign(body: bytes, secret: str = SECRET) -> str:
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
-# ── PUT/DELETE /api/nodes/{node_id}/inbound-secret ───────────────────────────
+# ── PUT/DELETE /api/instances/{instance_id}/inbound-secret ───────────────────
 
 @pytest.fixture(autouse=True)
 def stub_registry(monkeypatch):
-    """The suite runs against an empty state root with no agents.json; the node
-    routes only ask the registry for a display name."""
+    """The suite runs against an empty state root with no agents.json; the
+    instance routes only ask the registry for a display name."""
     from agents.registry import AgentSpec
 
     monkeypatch.setattr(
@@ -48,10 +49,10 @@ def stub_registry(monkeypatch):
 def nodes_client():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from routes import nodes as node_routes
+    from routes import instances as instance_routes
 
     app = FastAPI()
-    app.include_router(node_routes.router)
+    app.include_router(instance_routes.router)
     return TestClient(app)
 
 
@@ -68,59 +69,53 @@ def external_client(no_launch):
 
 @pytest.fixture
 def exposed_node():
-    """An exposed worker node with no secret configured yet."""
-    from managers import node_manager
+    """A published resident instance with no secret configured yet."""
+    from instances import carrier, store
 
-    node_id = f"node-{uuid4()}"
-    token = "tok-" + uuid4().hex
-    node_manager._upsert_node({
-        "node_id": node_id,
-        "agent_id": "swe_agent",
-        "status": "running",
-        "is_exposed": True,
-        "expose_token": token,
-        "workspace": "default",
-    })
-    return node_id, token
+    instance = store.create("swe_agent", kind="resident", workspace="default", state="standby")
+    instance_id = instance["instance_id"]
+    carrier.publish_instance(instance_id)
+    token = store.get(instance_id)["expose_token"]
+    return instance_id, token
 
 
 def test_node_secret_is_set_reported_and_cleared(nodes_client, exposed_node):
-    node_id, _token = exposed_node
+    instance_id, _token = exposed_node
 
-    before = nodes_client.get(f"/api/nodes/{node_id}").json()
+    before = nodes_client.get(f"/api/instances/{instance_id}").json()
     assert before["inbound_secret_configured"] is False
 
-    resp = nodes_client.put(f"/api/nodes/{node_id}/inbound-secret", json={"secret": SECRET})
+    resp = nodes_client.put(f"/api/instances/{instance_id}/inbound-secret", json={"secret": SECRET})
     assert resp.status_code == 200, resp.text
     assert resp.json()["inbound_secret_configured"] is True
 
-    after = nodes_client.get(f"/api/nodes/{node_id}").json()
+    after = nodes_client.get(f"/api/instances/{instance_id}").json()
     assert after["inbound_secret_configured"] is True
 
-    cleared = nodes_client.delete(f"/api/nodes/{node_id}/inbound-secret")
+    cleared = nodes_client.delete(f"/api/instances/{instance_id}/inbound-secret")
     assert cleared.status_code == 200
     assert cleared.json()["inbound_secret_configured"] is False
-    assert nodes_client.get(f"/api/nodes/{node_id}").json()["inbound_secret_configured"] is False
+    assert nodes_client.get(f"/api/instances/{instance_id}").json()["inbound_secret_configured"] is False
 
 
 def test_node_secret_is_never_returned(nodes_client, exposed_node):
-    node_id, _token = exposed_node
-    nodes_client.put(f"/api/nodes/{node_id}/inbound-secret", json={"secret": SECRET})
+    instance_id, _token = exposed_node
+    nodes_client.put(f"/api/instances/{instance_id}/inbound-secret", json={"secret": SECRET})
 
-    detail = nodes_client.get(f"/api/nodes/{node_id}").text
-    listing = nodes_client.get("/api/nodes").text
+    detail = nodes_client.get(f"/api/instances/{instance_id}").text
+    listing = nodes_client.get("/api/instances").text
     assert SECRET not in detail
     assert SECRET not in listing
 
 
 def test_empty_node_secret_is_rejected(nodes_client, exposed_node):
-    node_id, _token = exposed_node
-    resp = nodes_client.put(f"/api/nodes/{node_id}/inbound-secret", json={"secret": "   "})
+    instance_id, _token = exposed_node
+    resp = nodes_client.put(f"/api/instances/{instance_id}/inbound-secret", json={"secret": "   "})
     assert resp.status_code == 400
 
 
 def test_node_secret_on_a_missing_node_is_404(nodes_client):
-    resp = nodes_client.put("/api/nodes/nope/inbound-secret", json={"secret": SECRET})
+    resp = nodes_client.put("/api/instances/nope/inbound-secret", json={"secret": SECRET})
     assert resp.status_code == 404
 
 
@@ -128,7 +123,7 @@ def test_external_route_honours_a_secret_set_through_the_route(
     nodes_client, external_client, exposed_node,
 ):
     """The end the operator sets it from and the end that checks it agree."""
-    node_id, token = exposed_node
+    instance_id, token = exposed_node
     payload = {"prompt": "do the thing"}
     body = json.dumps(payload).encode("utf-8")
 
@@ -139,7 +134,7 @@ def test_external_route_honours_a_secret_set_through_the_route(
     )
     assert unsigned.status_code == 202
 
-    nodes_client.put(f"/api/nodes/{node_id}/inbound-secret", json={"secret": SECRET})
+    nodes_client.put(f"/api/instances/{instance_id}/inbound-secret", json={"secret": SECRET})
 
     # Now an unsigned call is refused ...
     refused = external_client.post(
@@ -160,8 +155,8 @@ def test_external_route_honours_a_secret_set_through_the_route(
     )
     assert signed.status_code == 202
 
-    # Clearing it puts the node back to token-only.
-    nodes_client.delete(f"/api/nodes/{node_id}/inbound-secret")
+    # Clearing it puts the instance back to token-only.
+    nodes_client.delete(f"/api/instances/{instance_id}/inbound-secret")
     reopened = external_client.post(
         f"/api/external/{token}/run", content=body,
         headers={"Content-Type": "application/json"},

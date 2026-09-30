@@ -57,7 +57,7 @@ def _guard(workspace="acme", spec=None):
 def test_the_default_list_holds_the_destructive_tools():
     assert approval.needs_approval("run_shell")
     assert approval.needs_approval("delete_file")
-    assert approval.needs_approval("stop_node")
+    assert approval.needs_approval("stop_instance")
     assert not approval.needs_approval("read_file")
 
 

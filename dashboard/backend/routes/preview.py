@@ -67,28 +67,29 @@ def _container_target(name: str) -> Optional[Tuple[str, Optional[str]]]:
     or ``None`` when the name is unknown, stopped, or has nothing exposed.
 
     Mirrors the enrichment ``GET /api/containers`` already does (merging the
-    node record's ``http_url``/``workspace`` onto the container's own
+    resident instance's ``http_url``/``workspace`` onto the container's own
     running/stopped state), rather than importing that route: the two only
     share a shape, not code, so a container test can monkeypatch the manager
     functions directly.
     """
-    from managers import container_manager, node_manager
-    nodes_by_container = {
-        n.get("container_name"): n
-        for n in node_manager.list_nodes()
-        if n.get("container_name")
+    from instances import carrier
+    from managers import container_manager
+    instances_by_container = {
+        i.get("container_name"): i
+        for i in carrier.list_resident()
+        if i.get("container_name")
     }
     for c in container_manager.list_containers():
         if c.get("name") != name:
             continue
-        node = nodes_by_container.get(name) or {}
+        instance = instances_by_container.get(name) or {}
         state = str(c.get("state") or c.get("status") or "").lower()
         if state != "running":
             return None
-        http_url = node.get("http_url") or c.get("http_url")
+        http_url = instance.get("http_url") or c.get("http_url")
         if not http_url:
             return None
-        return http_url, node.get("workspace")
+        return http_url, instance.get("workspace")
     return None
 
 

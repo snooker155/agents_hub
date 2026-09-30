@@ -51,6 +51,7 @@ from .runs import (
     get_pool_id,
     auto_journal,
     agent_overrides,
+    turn_overrides,
     validate_chat_request,
     load_flow_definition,
     create_chat_run,
@@ -186,7 +187,7 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
     message_started = time.perf_counter()
 
     async def _run_agent_async():
-        overrides = agent_overrides(request.agent_id)
+        overrides = {**agent_overrides(request.agent_id), **turn_overrides()}
         # Build off the event loop — create_agent is synchronous and heavyweight
         # (see chat.flow_driver), so running it inline blocks every concurrent
         # request until the agent is ready.
@@ -259,7 +260,12 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
     citations = citation_sink_mod.CitationSink()
     _citation_token = citation_sink_mod.set_sink(citations)
     _handoff_token = handoff_mod.set_sink(handoff_sink)
+    # A view the agent creates becomes the default target of its view tools
+    # (tools/views.py), for this run only.
+    from common.agent_context import current_view_binding
+    _view_binding_token = current_view_binding.set({})
     task = asyncio.create_task(_run_agent_async())
+    current_view_binding.reset(_view_binding_token)
     artifact_sink.reset_recorder(_artifact_token)
     stream_sink.reset_emitter(_stream_token)
     entity_sink_mod.reset_sink(_entity_token)
@@ -425,6 +431,9 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
             code = error_code(err)
             if code:
                 done_event["error_code"] = code
+            if drive.budget:
+                done_event["error_code"] = "budget"
+                done_event["budget"] = drive.budget
             if undelivered:
                 done_event["undelivered"] = undelivered
             outcome.done = done_event
@@ -945,19 +954,61 @@ async def _run_chat_team_pipeline(request: ChatRequest):
 # with that conversation open. The wrapper only passes events along on their way
 # out (see chat.broadcast); the generators above are unchanged by it.
 
+#
+# Where the turn runs (chat/routing.py, docs/services.md): with chat execution
+# on ``instances`` (the default) the three public pipelines hand the turn to a
+# service replica and relay its events; ``execute_locally`` is the turn in
+# this process, what the replica itself runs (chat/turns.py), and what every
+# process runs with chat execution on ``inprocess``.
+
+def _local_pipeline(request: ChatRequest, kind: str):
+    if kind == "team":
+        return _run_chat_team_pipeline(request)
+    if kind == "flow":
+        return _run_chat_flow_pipeline(request)
+    return _run_chat_pipeline(request)
+
+
+def kind_of(request: ChatRequest) -> str:
+    """Which pipeline a request is for: ``team``, ``flow`` or ``agent``."""
+    if request.team_id:
+        return "team"
+    if request.flow_id:
+        return "flow"
+    return "agent"
+
+
+async def execute_locally(request: ChatRequest, kind: Optional[str] = None):
+    """The turn in this process, whatever chat execution says, published to
+    the conversation's channel like any other."""
+    kind = kind or kind_of(request)
+    async for event in broadcast_turn(request, _local_pipeline(request, kind)):
+        yield event
+
+
+async def _run(request: ChatRequest, kind: str):
+    from chat import routing
+    if routing.enabled():
+        async for event in routing.relay(request, kind):
+            yield event
+        return
+    async for event in execute_locally(request, kind):
+        yield event
+
+
 async def run_chat_pipeline(request: ChatRequest):
     """One agent, streamed to its caller and to the conversation's channel."""
-    async for event in broadcast_turn(request, _run_chat_pipeline(request)):
+    async for event in _run(request, "agent"):
         yield event
 
 
 async def run_chat_flow_pipeline(request: ChatRequest):
     """A flow's DAG, same treatment: one bubble per node, seen by every viewer."""
-    async for event in broadcast_turn(request, _run_chat_flow_pipeline(request)):
+    async for event in _run(request, "flow"):
         yield event
 
 
 async def run_chat_team_pipeline(request: ChatRequest):
     """A team's conversation, streamed as it is said."""
-    async for event in broadcast_turn(request, _run_chat_team_pipeline(request)):
+    async for event in _run(request, "team"):
         yield event

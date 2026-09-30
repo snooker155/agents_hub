@@ -111,11 +111,11 @@ differs from the compose profile:
   Once `AGENTS_HUB_BLOB_URL` is set, the PVC stops being load-bearing for
   correctness (see the next section) and can shrink or be turned off.
 
-## The deployment map
+## The cluster map
 
 Once processes run on several hosts, one page has to say where everything
-is. `GET /api/deployment` (the Deployment page in the dashboard, `ah
-deployment` in a terminal) is that page:
+is. `GET /api/cluster` (also served as `/api/deployment`; the Cluster page
+in the dashboard, `ah deployment` in a terminal) is that page:
 
 - **Members.** Every backend replica and worker registers itself in the
   `members` table on start and refreshes a heartbeat every 15 seconds with
@@ -128,13 +128,17 @@ deployment` in a terminal) is that page:
   and how many webhook deliveries are pending.
 - **Entity runs by host.** Active agent runs with the age of their heartbeat
   and their checkpoint step; entity runs (flows, loops, teams, scenarios) with
-  kind, host, heartbeat age and resume attempts. Nodes and containers are
-  listed separately, each with the host it lives on.
+  kind, host, heartbeat age and resume attempts. Resident instances (with
+  their carrier status and heartbeat) and containers are listed separately,
+  each with the host it lives on.
+- **Services.** Every [service](services.md) with its agent (or runner),
+  workspace, status and live replicas against its minimum and maximum; the
+  `services` lease names the replica of the backend that supervises them.
 - **Logs.** Each member writes its own log to `service_logs/<member>.log`
   under the state root (rotating, 5 MB by 3), mirrored to the object store
   when one is configured, and served as
-  `GET /api/deployment/members/<id>/logs` with a live tail over the stream on
-  `logs:member:<id>`, the same way a node's log is.
+  `GET /api/cluster/members/<id>/logs` with a live tail over the stream on
+  `logs:member:<id>`, the same way an instance's carrier log is.
 
 Stale rows older than a day are pruned by the maintenance sweep; a stale
 or stopped row can also be dropped from the page. `AGENTS_HUB_INSTANCE_ID`
