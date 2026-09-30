@@ -224,7 +224,7 @@ def execute_turn(instance_id: str, workspace_abs: Optional[str], message: Dict[s
                 state["spent"] = _guards.turn_spend_usd()
                 state["trace"] = _guards.turn_ledger_trace()
             except Exception:  # noqa: BLE001 - an extra, never the turn
-                pass
+                log.debug("turn %s: could not read the spend guard", msg_id[:12], exc_info=True)
             for which, token in reversed(tokens):
                 try:
                     if which == "user":
@@ -232,7 +232,7 @@ def execute_turn(instance_id: str, workspace_abs: Optional[str], message: Dict[s
                     else:
                         api_keys.reset_current_key_id(token)
                 except Exception:  # noqa: BLE001 - a reset that cannot apply changes nothing
-                    pass
+                    log.debug("turn %s: could not reset the %s context", msg_id[:12], which, exc_info=True)
             chat_runs.reset_turn_context(ctx_token)
 
     def _scoped_run() -> None:
@@ -269,8 +269,8 @@ def execute_turn(instance_id: str, workspace_abs: Optional[str], message: Dict[s
         log.warning("turn %s failed: %s", msg_id[:12], detail)
         try:
             instance_inbox.mark_error(msg_id, str(detail)[:2000])
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:  # noqa: BLE001 - the failure is already logged and posted below
+            log.debug("turn %s: could not mark the message failed", msg_id[:12], exc_info=True)
         if not state["done"]:
             forwarder.post({**stamp, "type": "done", "ok": False, "error": str(detail),
                             "status": status, "run_id": state["run_id"],

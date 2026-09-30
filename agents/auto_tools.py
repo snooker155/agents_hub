@@ -117,8 +117,8 @@ def auto_injected_tools(spec: Any, workspace: Optional[str] = None) -> List[Dict
             ws = normalize_workspace_name(workspace)
             if ws and any(p.resources for p in ProcedureStore(ws).load() if p.agent_id == spec.id):
                 add("read_skill_file", "skills")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:  # noqa: BLE001 - no procedure store: the tool is simply not granted
+            log.debug("auto_tools: could not read the procedures of %s", spec.id, exc_info=True)
 
     # Clarification gate grants ask_user.
     if getattr(spec, "clarify_gate", False):

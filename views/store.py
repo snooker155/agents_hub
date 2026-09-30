@@ -448,7 +448,7 @@ def set_snapshot(view_id: str, png_bytes: bytes) -> Optional[str]:
     view_file = view_dir / "view.json"
     try:
         doc = json.loads(view_file.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         doc = {}
     doc.setdefault("fallback", {})
     doc["fallback"]["image"] = "snapshot.png"
@@ -862,7 +862,7 @@ def add_code_version(view_id: str, body: str, *, author: str, note: str = "") ->
     view_file = _view_dir(workspace, view_id) / "view.json"
     try:
         doc = json.loads(view_file.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         doc = {}
     spec = doc.setdefault("spec", {})
     spec["body"] = body
@@ -898,7 +898,7 @@ def replace_code_body(view_id: str, body: str, *, author: str = "user") -> Optio
     view_file = _view_dir(workspace, view_id) / "view.json"
     try:
         doc = json.loads(view_file.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
         doc = {}
     spec = doc.setdefault("spec", {})
     spec["body"] = body

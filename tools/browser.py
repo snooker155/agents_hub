@@ -158,7 +158,7 @@ def session_policy() -> Dict[str, Any]:
         from common.hub_urls import browser_policy_fields
         policy.update(browser_policy_fields())
     except Exception:  # noqa: BLE001 - without the fields the service simply blocks the hub
-        pass
+        log.debug("browser: could not read the hub URL policy fields", exc_info=True)
     return policy
 
 

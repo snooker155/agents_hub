@@ -14,6 +14,7 @@ Every listing is filtered, ordered and paginated in SQL: a workspace running a
 thousand copies must not cost a full table scan per refresh.
 """
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,8 @@ from instances import history as instance_history
 from instances import registry as instance_registry
 from managers import run_manager
 from tasks import service as tasks_service
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/instances", tags=["instances"])
 
@@ -311,7 +314,7 @@ async def start_instance(body: InstanceStart, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     out = _enrich(replica, request=request)
     out["for_agent"] = agent_id
     out["service"] = {"service_id": service.get("service_id"), "name": service.get("name"),
@@ -547,7 +550,8 @@ async def interrupt_instance(instance_id: str):
         try:
             if run_id and run_manager.stop_run_by_id(run_id):
                 stopped.append(run_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 - one run that will not stop does not keep the others running
+            log.warning("could not stop run %s of instance %s", run_id, instance_id, exc_info=True)
             continue
     return {"ok": True, "stopped_runs": stopped, "instance": store.get(instance_id)}
 
@@ -562,7 +566,7 @@ async def restart_instance(instance_id: str, request: Request):
     try:
         instance = await asyncio.to_thread(carrier.restart, instance_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     if instance is None:
         raise HTTPException(status_code=409,
                             detail="The process runs on another host; restart it from there")

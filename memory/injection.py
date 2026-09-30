@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 # Marker appended to a block rendered past its character limit, so the agent can
 # tell a block it is seeing in full from one it is seeing the head of.
@@ -174,7 +177,7 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
         elif personal_extra:
             lines.insert(2, personal.PROMPT_NOTE_EXTRA)
     except Exception:  # noqa: BLE001 - the note is guidance; the tools work without it
-        pass
+        log.debug("could not add the personal memory note for %s", pool_id, exc_info=True)
 
     # Per-pool snapshots: structured slots + journal index, episode stats, and
     # graph stats — so the agent knows what exists without a blind recall.

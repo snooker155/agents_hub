@@ -180,7 +180,7 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
                             from managers.run_manager import stop_run_by_id
                             await asyncio.to_thread(stop_run_by_id, run_id)
                         except Exception:  # noqa: BLE001 - the stop is a courtesy; the timeout stands
-                            pass
+                            log.debug("could not stop run %s after the timeout", run_id, exc_info=True)
                     yield _failure(request, error, status=504, run_id=run_id)
                 return
     finally:

@@ -25,11 +25,14 @@ answer one message twice.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
 from common import db
 from instances.store import utc_iso
+
+log = logging.getLogger(__name__)
 
 #: How the API spells the conversation stored as NULL.
 MAIN_CONVERSATION = "main"
@@ -84,7 +87,7 @@ def enqueue(instance_id: str, body: str, *, origin: str = "web",
         from instances import wake
         wake.signal(str(instance_id))
     except Exception:  # noqa: BLE001 - a lost wake-up only costs the poll interval
-        pass
+        log.debug("could not wake %s", instance_id, exc_info=True)
     return msg_id
 
 

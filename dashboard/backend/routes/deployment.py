@@ -22,12 +22,15 @@ keeps working unchanged.
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
+
+log = logging.getLogger(__name__)
 
 # Every route below is registered on both of these: /api/cluster is the
 # page's real name, /api/deployment stays live as an alias for anything, in or
@@ -176,7 +179,8 @@ def _services() -> List[Dict[str, Any]]:
     try:
         from routes.services import services_map
         return services_map()
-    except Exception:
+    except Exception:  # noqa: BLE001 - the page shows no services rather than failing
+        log.debug("deployment: could not list services", exc_info=True)
         return []
 
 

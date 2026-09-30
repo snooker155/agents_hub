@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -39,6 +40,8 @@ from views.store import (
     checkpoint_seq as _checkpoint_seq,
     list_checkpoints as _list_checkpoints,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _deep_merge(base: Any, patch: Any) -> Any:
@@ -284,7 +287,7 @@ def _register_workspace_file(workspace: Optional[str], rel: str) -> None:
         files_service.register_path(reg_ws, f"{prefix}{rel}", source="agent",
                                     created_by=meta.get("agent_id"), meta=meta)
     except Exception:  # noqa: BLE001 - bookkeeping only
-        pass
+        log.debug("views: could not register %s as a workspace file", rel, exc_info=True)
 
 
 # ── live-view mutation tools (Studio) ─────────────────────────────────────────

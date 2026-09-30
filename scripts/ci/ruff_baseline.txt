@@ -122,7 +122,6 @@ dashboard/backend/routes/messages.py:S110 1
 dashboard/backend/routes/model_structure.py:BLE001 1
 dashboard/backend/routes/models.py:BLE001 5
 dashboard/backend/routes/models.py:S110 1
-dashboard/backend/routes/nodes.py:BLE001 3
 dashboard/backend/routes/oidc.py:BLE001 2
 dashboard/backend/routes/ops.py:BLE001 9
 dashboard/backend/routes/ops.py:S110 2
@@ -173,7 +172,7 @@ flow/task_driver.py:BLE001 3
 flow/task_driver.py:S110 3
 instances/delivery.py:BLE001 1
 instances/history.py:BLE001 2
-instances/registry.py:BLE001 2
+instances/registry.py:BLE001 1
 instances/registry.py:S110 1
 loops/evaluator.py:BLE001 5
 loops/launcher.py:S110 2
@@ -236,10 +235,8 @@ reasoning/think_gate.py:BLE001 1
 runtime/agent_run.py:BLE001 10
 runtime/agent_run.py:S110 7
 runtime/flow_run.py:BLE001 1
-runtime/http_server.py:BLE001 10
-runtime/http_server.py:S110 7
-runtime/node_run.py:BLE001 25
-runtime/node_run.py:S110 11
+runtime/http_server.py:BLE001 8
+runtime/http_server.py:S110 6
 runtime/worker.py:BLE001 8
 runtime/worker.py:S110 4
 tasks/assign.py:BLE001 2
@@ -289,7 +286,7 @@ tools/project_graph.py:BLE001 3
 tools/project_management.py:BLE001 1
 tools/project_management.py:S110 1
 tools/schedule_management.py:BLE001 7
-tools/service_ops.py:BLE001 21
+tools/service_ops.py:BLE001 20
 tools/shell.py:BLE001 8
 tools/shell.py:S110 3
 tools/task_management.py:BLE001 14
@@ -304,5 +301,5 @@ views/compute/runner.py:S110 1
 views/owner.py:BLE001 1
 views/serve.py:BLE001 4
 views/serve.py:S110 2
-views/store.py:BLE001 19
+views/store.py:BLE001 17
 views/store.py:S110 5

@@ -202,7 +202,7 @@ async def lifespan(app: FastAPI):
             from services.supervisor import supervisor as _service_supervisor
             await _service_supervisor.start()
             log.info("✓ Service supervisor started")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the hub starts without it; services stay down
             log.warning(f"⚠ Could not start the service supervisor: {e}")
 
     # The deployment supervisor (deployments/supervisor.py): keeps a project's
@@ -213,7 +213,7 @@ async def lifespan(app: FastAPI):
             from deployments.supervisor import supervisor as _deployment_supervisor
             await _deployment_supervisor.start()
             log.info("✓ Deployment supervisor started")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the hub starts without it; deployments stay down
             log.warning(f"⚠ Could not start the deployment supervisor: {e}")
 
     yield
@@ -221,14 +221,14 @@ async def lifespan(app: FastAPI):
     try:
         from deployments.supervisor import supervisor as _deployment_supervisor
         await _deployment_supervisor.stop()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - shutting down anyway
+        log.debug("could not stop the deployment supervisor", exc_info=True)
 
     try:
         from services.supervisor import supervisor as _service_supervisor
         await _service_supervisor.stop()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - shutting down anyway
+        log.debug("could not stop the service supervisor", exc_info=True)
 
     try:
         from environments import egress as _egress

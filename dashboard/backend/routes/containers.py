@@ -220,7 +220,7 @@ def agents_build_status():
     try:
         tags = {f"{i.get('repository')}:{i.get('tag')}" for i in cm.list_images()}
     except Exception as exc:
-        raise _docker_error(exc)
+        raise _docker_error(exc) from exc
     base_exists = cm.BASE_IMAGE in tags
     agents = list_agents()
     result = []

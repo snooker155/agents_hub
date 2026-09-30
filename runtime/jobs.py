@@ -96,7 +96,7 @@ def _scopes(payload: Dict[str, Any], args: Dict[str, Any], instance: Dict[str, A
                 else:
                     _project_ctx.reset(token)
             except Exception:  # noqa: BLE001 - a reset that cannot apply changes nothing
-                pass
+                log.debug("could not reset the %s context", which, exc_info=True)
 
 
 # ── invoke ───────────────────────────────────────────────────────────────────
@@ -363,8 +363,8 @@ def execute_job(instance_id: str, workspace_abs: Optional[str], message: Dict[st
             from instances import registry
             if not run_id:
                 registry.mark_standby(instance_id, "idle — waiting for work")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:  # noqa: BLE001 - the state label is cosmetic; the next claim fixes it
+            log.debug("could not mark %s standby", instance_id, exc_info=True)
     return run_id
 
 

@@ -14,11 +14,14 @@ keeps the import graph acyclic).
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 from pathlib import Path
 
 from langchain_core.callbacks import BaseCallbackHandler
+
+log = logging.getLogger(__name__)
 
 #: Exception class names that mean the provider was never reached (the OpenAI
 #: and httpx clients every provider adapter here builds on).
@@ -934,7 +937,8 @@ class DelegationStreamCallback(BaseCallbackHandler):
         )
         try:
             reasoning = extract_reasoning_from_llm_result(response)
-        except Exception:
+        except Exception:  # noqa: BLE001 - an odd provider payload loses the reasoning, not the turn
+            log.debug("chat_stream: could not extract reasoning", exc_info=True)
             reasoning = ""
         if reasoning:
             self._step += 1
@@ -946,7 +950,8 @@ class DelegationStreamCallback(BaseCallbackHandler):
                     message = getattr(g, "message", None)
                     text = _message_text(getattr(message, "content", None)) if message is not None else ""
                     parts.append(text or getattr(g, "text", "") or "")
-        except Exception:
+        except Exception:  # noqa: BLE001 - an odd provider payload loses the text, not the turn
+            log.debug("chat_stream: could not read the generations", exc_info=True)
             parts = []
         text = strip_think_tags("".join(parts)).strip()
         if text:

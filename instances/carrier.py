@@ -688,7 +688,7 @@ def remove(instance_id: str) -> bool:
         try:
             _connections.delete(instance_id)
         except Exception:  # noqa: BLE001 - the history is orphaned, not harmful
-            pass
+            log.debug("could not delete the connections of %s", instance_id, exc_info=True)
     return removed
 
 
@@ -712,7 +712,7 @@ def set_inputs(instance_id: str, *, take_tasks: Optional[bool] = None,
             from instances import wake
             wake.signal(instance_id)
         except Exception:  # noqa: BLE001 - applied on the next loop anyway
-            pass
+            log.debug("could not wake %s", instance_id, exc_info=True)
     return inst
 
 

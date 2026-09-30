@@ -43,6 +43,7 @@ cannot signal this one.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import sys
@@ -66,6 +67,8 @@ from common.logging_config import marker_logger
 # ``--write-stdout-to-log`` mirrors into the carrier log, so they go through a
 # logger that emits the message only, on stdout, at INFO.
 _marker_log = marker_logger(__name__)
+# Diagnostics that stay out of the carrier log.
+_logger = logging.getLogger(__name__ + ".debug")
 
 HEARTBEAT_SECONDS = 15.0
 TASK_SWEEP_SECONDS = 10.0
@@ -86,7 +89,7 @@ def log(msg: str) -> None:
         try:
             _log_fh.write(line + "\n")
             _log_fh.flush()
-        except Exception:
+        except (OSError, ValueError):
             pass
 
 
@@ -102,7 +105,7 @@ def _set_status(instance_id: str, status: str, exit_code: int | None = None,
     try:
         from instances import carrier
         carrier.update_from_process(instance_id, status, exit_code=exit_code, error=error)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the carrier row is best effort; the process keeps running
         log(f"[warn] Could not update the carrier status: {exc}")
 
 
@@ -224,26 +227,26 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
                       process=invocation.process)
         else:
             close_run_from_result(run_id, result, process=invocation.process)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the message is marked failed below; the loop keeps serving
         log(f"Message {msg_id[:12]} failed: {exc}")
         try:
             instance_inbox.mark_error(msg_id, str(exc))
             _update_run(run_id, {"status": "failed", "finished_at": _utc_now_iso(),
                                  "exit_code": 1, "error": str(exc)})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - already failing; the message stays as delivered
+            _logger.debug("could not mark message %s failed", msg_id, exc_info=True)
         for pub in pub_cbs:
             try:
                 pub._post({"type": "done", "ok": False, "error": str(exc), "run_id": run_id})
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a viewer that went away
+                _logger.debug("could not post the failure of run %s", run_id, exc_info=True)
     finally:
         for pub in pub_cbs:
             try:
                 pub._post({"type": "instance_stream_end", "run_id": run_id, "msg_id": msg_id,
                            "conversation_id": public_cid})
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - a viewer that went away
+                _logger.debug("could not post the stream end of run %s", run_id, exc_info=True)
     return run_id
 
 
@@ -263,11 +266,11 @@ def _task_workspace_path(task, workspace: Optional[str]) -> Optional[str]:
                         _obj = _PS(PROJECTS_FILE).get(str(pid))
                         if _obj:
                             proj = project_folder_name(_obj.name)
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: BLE001 - no project folder: the workspace root is used
+                        _logger.debug("could not resolve the project folder", exc_info=True)
             abs_ws = str(resolve_project_root(task.workspace, proj))
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - the workspace root is used
+            _logger.debug("could not resolve the task workspace", exc_info=True)
     return abs_ws
 
 
@@ -285,7 +288,8 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
     try:
         from workspace import get_workspace_metadata as _get_ws_meta
         mode = _get_ws_meta(scope).get("orchestrator", {}).get("execution_mode", "subprocess")
-    except Exception:
+    except Exception:  # noqa: BLE001 - no workspace metadata: the default mode applies
+        _logger.debug("could not read the orchestrator mode of %s", scope, exc_info=True)
         mode = "subprocess"
     if mode != "node":
         return 0
@@ -332,8 +336,8 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
                     tasks_service.update_task(task.id, session_id=session_id)
                     _update_run(run_id, {"session_id": session_id})
                 add_run_to_session(session_id, run_id)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - the run executes without a session link
+                _logger.debug("could not link run %s to its session", run_id, exc_info=True)
             stop_cb = RunStopCallback(run_id)
             pub_cbs = _channel_publisher(instance_id, run_id, agent_id,
                                          {"task_id": str(task.id)})
@@ -395,15 +399,15 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
                                      "error": str(result.error or "worker error"), "process": process})
                 log(f"Task {str(task.id)[:8]} failed: {result.error}")
                 finalize_task_from_run(run_id, "failed", 1)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the task is marked failed below; the sweep continues
             log(f"Error on task {str(task.id)[:8]}: {exc}")
             try:
                 from managers.run_manager import _update_run, _utc_now_iso, finalize_task_from_run
                 _update_run(run_id, {"status": "failed", "finished_at": _utc_now_iso(),
                                      "exit_code": 1, "error": str(exc)})
                 finalize_task_from_run(run_id, "failed", 1)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - already failing; the next sweep sees the task
+                _logger.debug("could not mark run %s failed", run_id, exc_info=True)
     return picked
 
 
@@ -424,7 +428,8 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
         orch_cfg = _get_ws_meta(scope).get("orchestrator", {})
         followup_mode = orch_cfg.get("followup_mode", "continuous")
         enabled = orch_cfg.get("enabled", True)
-    except Exception:
+    except Exception:  # noqa: BLE001 - no workspace metadata: the defaults apply
+        _logger.debug("could not read the orchestrator settings of %s", scope, exc_info=True)
         followup_mode, enabled = "continuous", True
 
     # A task that has subtasks is a container: never routed to a worker
@@ -452,7 +457,7 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
                 if promoted:
                     log(f"[container] task {str(t.id)[:8]}: {promoted} subtask(s) became runnable")
                     touched = True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - one task's container handling does not stop the sweep
             log(f"[warn] container handling failed for {str(t.id)[:8]}: {exc}")
     if touched:
         tasks = tasks_service.list_tasks()
@@ -497,14 +502,15 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
                     session_id = get_or_create_task_session(
                         title=task.title, workspace=task.workspace, task_id=str(task.id))
                     tasks_service.update_task(task.id, session_id=session_id)
-                except Exception:
+                except Exception:  # noqa: BLE001 - the run executes without a session
+                    _logger.debug("could not create a session for task %s", task.id, exc_info=True)
                     session_id = None
             try:
                 from common.session_service import add_run_to_session
                 if session_id:
                     add_run_to_session(session_id, run_id)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - the run executes without a session link
+                _logger.debug("could not link run %s to its session", run_id, exc_info=True)
             if is_followup:
                 prompt = (f"[MONITOR] Task ID: {task.id}\nTitle: {task.title}\nStatus: {task.status}\n\n"
                           "A previously started agent has finished working on this task. "
@@ -601,19 +607,19 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
                 if latest and latest.assigned_agent_type == "orchestrator":
                     tasks_service.clear_agent(task.id)
                 tasks_service.block_task(task.id, reason=result.error or "orchestrator error")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the task is blocked below; the sweep continues
             log(f"Error on task {str(task.id)[:8]}: {exc}")
             try:
                 _update_run(run_id, {"status": "failed", "finished_at": _utc_now_iso(),
                                      "exit_code": 1, "error": str(exc)})
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - already failing; the next sweep sees the task
+                _logger.debug("could not mark run %s failed", run_id, exc_info=True)
             try:
                 latest = tasks_service.get_task(task.id)
                 if latest and latest.assigned_agent_type == "orchestrator":
                     tasks_service.clear_agent(task.id)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - already failing; the task keeps its agent
+                _logger.debug("could not clear the agent of task %s", task.id, exc_info=True)
     return len(pending)
 
 
@@ -660,16 +666,16 @@ class InstanceLoop:
             exc = future.exception()
             if exc:
                 log(f"run thread failed: {exc}")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - reporting only
+            _logger.debug("could not read the result of a run thread", exc_info=True)
         # The finished run moved the instance to standby; another run of a
         # different conversation may still be going.
         if others or (self.task_thread and self.task_thread.is_alive()):
             try:
                 from instances import registry as instance_registry
                 instance_registry.mark_active(self.instance_id, None, None)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - the state label is cosmetic; the next run fixes it
+                _logger.debug("could not mark %s active", self.instance_id, exc_info=True)
 
     def claim_messages(self, concurrency: int) -> int:
         from instances import inbox as instance_inbox
@@ -706,7 +712,7 @@ class InstanceLoop:
                     sweep_orchestrator_tasks(self.instance_id, self.workspace, self.scope)
                 else:
                     sweep_worker_tasks(self.instance_id, self.agent_id, self.workspace, self.scope)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - the sweep retries on the next tick
                 log(f"Task sweep error: {exc}\n{traceback.format_exc()}")
 
         self.task_thread = threading.Thread(target=_sweep, name="instance-tasks", daemon=True)
@@ -734,7 +740,7 @@ class InstanceLoop:
                     time.sleep(min(timeout, wake.poll_seconds()))
                 else:
                     wake.wait(self.instance_id, timeout)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - the loop survives one bad iteration
                 log(f"Loop error: {exc}\n{traceback.format_exc()}")
                 time.sleep(1.0)
 
@@ -744,7 +750,8 @@ class InstanceLoop:
             carrier.heartbeat(self.instance_id)
             try:
                 inst = store.get(self.instance_id) or {}
-            except Exception:
+            except Exception:  # noqa: BLE001 - a transient read; the next heartbeat retries
+                _logger.debug("could not read instance %s", self.instance_id, exc_info=True)
                 continue
             if inst.get("stop_requested_at"):
                 # Stop asked from a host that cannot signal this one.
@@ -765,8 +772,8 @@ def _on_sigterm(instance_id: str):
         try:
             from instances import store
             store.update(instance_id, stop_requested_at=None)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - exiting anyway
+            _logger.debug("could not clear the stop request of %s", instance_id, exc_info=True)
         os._exit(0)
     return handler
 
@@ -800,7 +807,7 @@ def main() -> None:
             start_http_server_thread(args.instance_id, args.agent_id, args.http_port,
                                      workspace=args.workspace, log_file=args.log_file)
             log(f"Direct HTTP port {args.http_port} open")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - the instance serves its inbox without the direct port
             log(f"[warn] Could not start the HTTP server: {exc}")
 
     try:
@@ -808,7 +815,7 @@ def main() -> None:
     except KeyboardInterrupt:
         log("Interrupted")
         _set_status(args.instance_id, "stopped", exit_code=0)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - reported below as the carrier's failure
         log(f"Fatal: {exc}\n{traceback.format_exc()}")
         _set_status(args.instance_id, "failed", exit_code=1, error=str(exc))
         sys.exit(1)
