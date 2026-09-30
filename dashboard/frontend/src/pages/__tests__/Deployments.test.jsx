@@ -27,6 +27,8 @@ const getLoops = vi.fn(() => ok([{ id: 'loop-1', name: 'Retry loop' }]));
 const getEnvironments = vi.fn(() => ok([{ id: 'env-1', name: 'sandboxed-python' }]));
 
 vi.mock('../../api', () => ({
+  // Project deployments (the apps table on top of the page): none in these tests.
+  listDeployedApps: () => Promise.resolve({ data: { items: [] } }),
   getPlanJobs: (...args) => getPlanJobs(...args),
   createPlanJob: (...args) => createPlanJob(...args),
   updatePlanJob: (...args) => updatePlanJob(...args),
@@ -40,6 +42,9 @@ vi.mock('../../api', () => ({
   listFlows: (...args) => listFlows(...args),
   getLoops: (...args) => getLoops(...args),
   getEnvironments: (...args) => getEnvironments(...args),
+  getProjects: vi.fn(() => Promise.resolve({ data: [] })),
+  getSharedMemories: vi.fn(() => Promise.resolve({ data: [] })),
+  getWorkspaceSecrets: vi.fn(() => Promise.resolve({ data: [] })),
 }));
 
 // Own module (src/api/agentVersions.js), not part of the ../../api contract
@@ -47,6 +52,10 @@ vi.mock('../../api', () => ({
 // resolves, so an empty list here keeps every existing case exactly as it
 // was before the field existed.
 const getAgentVersions = vi.fn(() => ok({ agent_id: 'agent-1', versions: [] }));
+vi.mock('../../api/files', () => ({
+  listWorkspaceFiles: vi.fn(() => Promise.resolve({ data: { files: [] } })),
+  uploadWorkspaceFileObject: vi.fn(() => Promise.resolve({ data: { id: 'file_new', filename: 'new.txt' } })),
+}));
 vi.mock('../../api/agentVersions', () => ({
   getAgentVersions: (...args) => getAgentVersions(...args),
 }));

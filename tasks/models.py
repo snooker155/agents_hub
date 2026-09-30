@@ -406,6 +406,15 @@ class Task(BaseModel):
     # inherits them like it inherits the money cap.
     file_ids: List[str] = Field(default_factory=list, description="Workspace file ids attached to the task")
 
+    # Resources a deployment (plans/) attaches to the runs of this task only:
+    # secret names handed to the run on top of the agent's own allowlist, and
+    # shared memory pools bound for these runs instead of the agent's own
+    # binding. Neither changes the agent record; a chat or another task of
+    # the same agent sees neither (docs/deployments.md, "Resources").
+    secrets: List[str] = Field(default_factory=list, description="Extra secret names for this task's runs")
+    memory_pool_ids: List[str] = Field(default_factory=list, description="Memory pools bound for this task's runs only")
+    memory_access: str = Field(default="write", description="'read' builds the runs without the memory write tools; 'write' keeps them")
+
     @field_validator("priority", mode="before")
     @classmethod
     def _coerce_priority(cls, v):

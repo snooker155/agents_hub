@@ -15,8 +15,12 @@ import {
   listFlows,
   getLoops,
   getEnvironments,
+  getProjects,
+  getSharedMemories,
+  getWorkspaceSecrets,
 } from '../api';
 import { getAgentVersions } from '../api/agentVersions';
+import { listWorkspaceFiles, uploadWorkspaceFileObject } from '../api/files';
 import {
   Rocket,
   Plus,
@@ -38,11 +42,13 @@ import {
   RotateCw,
   History,
   AlertTriangle,
+  Upload,
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
+import PageLoader from '../components/PageLoader';
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -128,7 +134,7 @@ function targetLabel(job, agents, flows, loops) {
 
 // ---- create / edit modal ----------------------------------------------------
 
-function DeploymentModal({ job, agents, flows, loops, environments, workspace, onClose, onSaved }) {
+function DeploymentModal({ job, agents, flows, loops, environments, resources, workspace, onClose, onSaved }) {
   const { t } = useI18n();
   const isEdit = !!job;
   const [kind, setKind] = useState(job?.kind || 'agent_task');
@@ -147,6 +153,20 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
   const [agentVersion, setAgentVersion] = useState(job?.agent_version ?? '');
   const [agentVersions, setAgentVersions] = useState([]);
   const [autoPauseAfter, setAutoPauseAfter] = useState(job?.auto_pause_after ?? 3);
+  // The deployment's resources (agent_task only, docs/deployments.md
+  // "Resources"): copied onto every task the job creates, never onto the
+  // agent record.
+  const [projectId, setProjectId] = useState(job?.project_id || '');
+  const [fileIds, setFileIds] = useState(job?.file_ids || []);
+  const [secretNames, setSecretNames] = useState(job?.secrets || []);
+  const [newSecret, setNewSecret] = useState('');
+  const [memoryPoolIds, setMemoryPoolIds] = useState(job?.memory_pool_ids || []);
+  const [memoryAccess, setMemoryAccess] = useState(job?.memory_access || 'read');
+  const [fileQuery, setFileQuery] = useState('');
+  // Files uploaded from this form, on top of the workspace list the page
+  // loaded, so a fresh upload is selectable at once.
+  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -189,6 +209,13 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
         // Only meaningful together with an agent_id, on an agent_task job.
         agent_version: kind === 'agent_task' && agentVersion !== '' ? Number(agentVersion) : null,
         auto_pause_after: Number(autoPauseAfter) || 0,
+        // Resources apply to agent task jobs only; a flow or loop job sends
+        // them empty so the server has nothing to refuse.
+        project_id: kind === 'agent_task' ? (projectId || null) : null,
+        file_ids: kind === 'agent_task' ? fileIds : [],
+        secrets: kind === 'agent_task' ? secretNames : [],
+        memory_pool_ids: kind === 'agent_task' ? memoryPoolIds : [],
+        memory_access: kind === 'agent_task' ? memoryAccess : null,
       };
       if (isEdit) {
         await updatePlanJob(job.id, shared);
@@ -364,8 +391,10 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
           </label>
         )}
 
-        <div className="flex gap-3">
-          <div className="flex-1">
+        {/* items-end keeps the three inputs on one baseline when a label
+            wraps to two lines, instead of the wrapped one dropping lower. */}
+        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_9rem_9rem] gap-3 items-end">
+          <div className="min-w-0">
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.environment')}</label>
             <select
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -376,8 +405,8 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
               {(environments || []).map((env) => <option key={env.id} value={env.id}>{env.name}</option>)}
             </select>
           </div>
-          <div className="w-32">
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.budgetUsd')}</label>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider leading-tight">{t('deployments.budgetUsd')}</label>
             <input
               type="number" min="0" step="0.01"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -386,8 +415,8 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
               placeholder={t('deployments.uncapped')}
             />
           </div>
-          <div className="w-32">
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.autoPauseAfter')}</label>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider leading-tight">{t('deployments.autoPauseAfter')}</label>
             <input
               type="number" min="0"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -396,6 +425,140 @@ function DeploymentModal({ job, agents, flows, loops, environments, workspace, o
             />
           </div>
         </div>
+
+        {kind === 'agent_task' && (() => {
+          const toggleIn = (list, setList, id) => setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+          const SECRET_RE = /^[A-Z][A-Z0-9_]*$/;
+          const addSecret = () => {
+            const name = newSecret.trim().toUpperCase();
+            if (!SECRET_RE.test(name)) { setError(t('deployments.errors.badSecretName')); return; }
+            setError('');
+            if (!secretNames.includes(name)) setSecretNames([...secretNames, name]);
+            setNewSecret('');
+          };
+          const knownSecrets = [...new Set([...(resources?.secrets || []), ...secretNames])];
+          const q = fileQuery.trim().toLowerCase();
+          const known = new Set((resources?.files || []).map((f) => f.id));
+          const allFiles = [...uploadedFiles.filter((f) => !known.has(f.id)), ...(resources?.files || [])];
+          const files = allFiles.filter((f) => !q || (f.filename || f.name || f.id || '').toLowerCase().includes(q) || fileIds.includes(f.id));
+          const onUpload = async (e) => {
+            const picked = Array.from(e.target.files || []);
+            e.target.value = '';
+            if (!picked.length) return;
+            setUploading(true);
+            setError('');
+            try {
+              for (const file of picked) {
+                const { data } = await uploadWorkspaceFileObject(workspace || 'default', file, { source: 'deployment' });
+                if (data?.id) {
+                  setUploadedFiles((prev) => (prev.some((f) => f.id === data.id) ? prev : [data, ...prev]));
+                  setFileIds((prev) => (prev.includes(data.id) ? prev : [...prev, data.id]));
+                }
+              }
+            } catch (err) {
+              setError(err?.response?.data?.detail || t('deployments.errors.uploadFailed'));
+            } finally {
+              setUploading(false);
+            }
+          };
+          const chipCls = (on) => `px-2.5 py-1 rounded-full text-xs font-semibold border ${on ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`;
+          return (
+            <div className="rounded-lg border border-gray-200 p-3 space-y-3" data-testid="deployment-resources">
+              <div>
+                <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">{t('deployments.resources')}</div>
+                <p className="text-xs text-gray-500 mt-0.5">{t('deployments.resourcesHint')}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.project')}</label>
+                <select
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  aria-label={t('deployments.project')}
+                >
+                  <option value="">{t('deployments.noProject')}</option>
+                  {(resources?.projects || []).map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">{t('deployments.files')} {fileIds.length ? `(${fileIds.length})` : ''}</label>
+                  <div className="flex items-center gap-2">
+                    {allFiles.length > 8 && (
+                      <input type="search" value={fileQuery} onChange={(e) => setFileQuery(e.target.value)} placeholder={t('deployments.filesSearch')}
+                        className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    )}
+                    {/* Upload straight from the form: the file lands in the
+                        workspace's file store and is selected here at once. */}
+                    <label className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-gray-50'} border-gray-200 text-gray-700`}>
+                      {uploading ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                      {t('deployments.uploadFile')}
+                      <input type="file" multiple className="sr-only" onChange={onUpload} disabled={uploading} aria-label={t('deployments.uploadFile')} />
+                    </label>
+                  </div>
+                </div>
+                {files.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">{t('deployments.noFiles')}</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                    {files.slice(0, 60).map((f) => (
+                      <button key={f.id} type="button" onClick={() => toggleIn(fileIds, setFileIds, f.id)} className={chipCls(fileIds.includes(f.id))} title={f.id}>
+                        {f.filename || f.name || f.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.secrets')} {secretNames.length ? `(${secretNames.length})` : ''}</label>
+                <p className="text-xs text-gray-500 mb-1.5">{t('deployments.secretsHint')}</p>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {knownSecrets.map((name) => (
+                    <button key={name} type="button" onClick={() => toggleIn(secretNames, setSecretNames, name)} className={`${chipCls(secretNames.includes(name))} font-mono`}>
+                      {name}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input type="text" value={newSecret} onChange={(e) => setNewSecret(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSecret(); } }}
+                    placeholder={t('deployments.addSecretPlaceholder')} aria-label={t('deployments.addSecretPlaceholder')}
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <button type="button" onClick={addSecret} className="px-3 py-1.5 text-xs font-semibold border border-gray-200 rounded-lg hover:bg-gray-50">{t('deployments.addSecret')}</button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.memoryPools')} {memoryPoolIds.length ? `(${memoryPoolIds.length})` : ''}</label>
+                <p className="text-xs text-gray-500 mb-1.5">{t('deployments.memoryPoolsHint')}</p>
+                {(resources?.pools || []).length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">{t('deployments.noPools')}</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(resources?.pools || []).map((m) => (
+                      <button key={m.id} type="button" onClick={() => toggleIn(memoryPoolIds, setMemoryPoolIds, m.id)} className={chipCls(memoryPoolIds.includes(m.id))} title={m.id}>
+                        {m.name || m.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {memoryPoolIds.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-4" role="radiogroup" aria-label={t('deployments.memoryAccess')}>
+                    {[
+                      { value: 'read', label: t('deployments.memoryAccessRead'), hint: t('deployments.memoryAccessReadHint') },
+                      { value: 'write', label: t('deployments.memoryAccessWrite'), hint: t('deployments.memoryAccessWriteHint') },
+                    ].map((opt) => (
+                      <label key={opt.value} className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                        <input type="radio" name="memory_access" value={opt.value} checked={memoryAccess === opt.value}
+                          onChange={() => setMemoryAccess(opt.value)} className="mt-0.5 accent-indigo-600" />
+                        <span><span className="font-medium">{opt.label}</span><span className="block text-gray-500">{opt.hint}</span></span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {kind === 'agent_task' && pinnedAgentId && agentVersions.length > 0 && (
           <div>
@@ -482,7 +645,7 @@ function JournalDrawer({ job, onClose }) {
           {t('deployments.onlyFailures')}
         </label>
         {loading ? (
-          <div className="flex justify-center py-10"><Loader className="w-5 h-5 animate-spin text-indigo-500" /></div>
+          <PageLoader size="sm" />
         ) : fires.length === 0 ? (
           <p className="text-sm text-gray-400 py-6 text-center">{t('deployments.noFires')}</p>
         ) : (
@@ -528,6 +691,10 @@ export default function Deployments() {
   const [flows, setFlows] = useState([]);
   const [loops, setLoops] = useState([]);
   const [environments, setEnvironments] = useState([]);
+  // What a deployment may attach: the workspace's projects, files, secret
+  // names and memory pools. Any list that cannot be loaded (no access, no
+  // store) is simply empty; the form still saves ids typed elsewhere.
+  const [resources, setResources] = useState({ projects: [], files: [], secrets: [], pools: [] });
   const [loading, setLoading] = useState(true);
   const [showFinished, setShowFinished] = useState(false);
   const [modalJob, setModalJob] = useState(undefined); // undefined = closed, null = create, object = edit
@@ -552,6 +719,19 @@ export default function Deployments() {
     listFlows(workspaceFilter).then((r) => setFlows(r.data || [])).catch(() => {});
     getLoops(workspaceFilter).then((r) => setLoops(r.data || [])).catch(() => {});
     getEnvironments(workspaceFilter).then((r) => setEnvironments(r.data || [])).catch(() => {});
+    const ws = workspaceFilter || 'default';
+    const quiet = (p) => Promise.resolve().then(() => p).catch(() => ({ data: null }));
+    Promise.all([
+      quiet(getProjects(workspaceFilter)),
+      quiet(listWorkspaceFiles(ws, { limit: 200 })),
+      quiet(getWorkspaceSecrets(ws)),
+      quiet(getSharedMemories(workspaceFilter)),
+    ]).then(([pr, fr, sr, mr]) => setResources({
+      projects: Array.isArray(pr.data) ? pr.data : [],
+      files: Array.isArray(fr.data?.files) ? fr.data.files : [],
+      secrets: [...new Set((Array.isArray(sr.data) ? sr.data : []).map((row) => row.name).filter(Boolean))],
+      pools: Array.isArray(mr.data) ? mr.data : [],
+    }));
   }, [workspaceFilter]);
 
   const act = async (id, fn) => {
@@ -577,6 +757,15 @@ export default function Deployments() {
         title={t('deployments.deployments')}
         description={t('deployments.pageDescription')}
         actions={<>
+          <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none mr-1">
+            <input
+              type="checkbox"
+              checked={showFinished}
+              onChange={(e) => setShowFinished(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            {t('deployments.showFinished')}
+          </label>
           <button
             onClick={fetchData}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -592,20 +781,8 @@ export default function Deployments() {
         </>}
       />
 
-      <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={showFinished}
-          onChange={(e) => setShowFinished(e.target.checked)}
-          className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-        />
-        {t('deployments.showFinished')}
-      </label>
-
       {loading ? (
-        <div className="bg-white rounded-xl border border-gray-200 flex justify-center py-16">
-          <Loader className="w-6 h-6 animate-spin text-indigo-500" />
-        </div>
+        <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
       ) : visibleJobs.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
           <Rocket className="w-10 h-10 text-gray-300 mx-auto mb-3" />
@@ -740,6 +917,7 @@ export default function Deployments() {
           flows={flows}
           loops={loops}
           environments={environments}
+          resources={resources}
           workspace={workspaceFilter}
           onClose={() => setModalJob(undefined)}
           onSaved={() => { setModalJob(undefined); fetchData(); }}

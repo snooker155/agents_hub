@@ -37,6 +37,46 @@ its task through that launcher's own path, so the two fields are applied to
 the resulting task afterward, best-effort: a failure there never turns an
 otherwise successful firing into a failed one.
 
+## Resources
+
+An `agent_task` deployment can carry what its runs need, the way a session
+of a hosted agent platform carries a repository, files and memory. All of it
+is copied onto every task the job creates and reaches only that task's runs;
+the agent record is never changed, so another task or a chat of the same
+agent sees none of it.
+
+- **Project** (`project_id`): the task belongs to the project, with its
+  folder and repository binding, and the run gets the project's structure
+  graph tool as any project-scoped run does.
+- **Files** (`file_ids`): workspace files the run finds in its working
+  directory (docs/files.md).
+- **Extra secrets** (`secrets`): names handed to the run on top of the
+  agent's own allowlist (docs/secrets.md), through the run's environment or,
+  for a run inside a runner, the in-process secret scope. Whether a value
+  exists is decided at run time as for the agent's own names. Because a
+  secret is a private-data grant, the capability guard checks the agent's
+  tools with these names added when the deployment is saved, and refuses the
+  combination it would refuse on the agent page.
+- **Memory pools** (`memory_pool_ids`) with an access mode
+  (`memory_access`, `read` by default or `write`): shared pools bound for
+  these runs instead of the agent's own binding. Read only builds the run
+  without the memory write tools (`memory.binding.MEMORY_WRITE_TOOLS`:
+  remember, forget, link, record_episode, block and journal writes) and
+  tells the agent so in its prompt; read and write leaves them in. The
+  agent's page, its chats and its other tasks keep the agent's usual
+  binding either way.
+
+Files can be uploaded from the form itself: the file lands in the workspace's
+file store (docs/files.md, source `deployment`) and is selected at once.
+
+Every id must exist in the job's workspace (a pool may also be global). A
+flow or loop job cannot carry resources: its task is created by that launcher,
+not by the job. The run side is `runtime/agent_run.py` (`--memory-pool`, `--memory-access`,
+`--extra-secret`, set by `agents/agent_launcher.py` from the task) and the
+task path of `runtime/instance_run.py`; both pass the pools as the
+`memory_pool` build override and the names as `extra_secrets`, which the
+build-time capability check folds in.
+
 ## The firing journal
 
 Every attempt to fire a job, not just the successful ones, writes one record:

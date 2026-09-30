@@ -471,17 +471,32 @@ def _with_github_app(out: Dict[str, str], allowed: Iterable[str], workspace: str
     return out
 
 
+def _allowed_names(agent_id: str, extra_names: Optional[Iterable[str]]) -> List[str]:
+    """The agent's allowlist plus the names a deployment attached to this one
+    task (``Task.secrets``, docs/deployments.md "Resources"). Extras widen
+    one task's runs, never the agent record: the capability guard checked
+    them when the deployment was saved (plans.service._validate_resources)."""
+    allowed = list(allowed_for_agent(agent_id))
+    for name in (extra_names or ()):
+        n = str(name or "").strip()
+        if n and n not in allowed:
+            allowed.append(n)
+    return allowed
+
+
 def env_for_run(workspace: str, agent_id: Optional[str],
-                user_id: Optional[str] = None) -> Dict[str, str]:
+                user_id: Optional[str] = None,
+                extra_names: Optional[Iterable[str]] = None) -> Dict[str, str]:
     """The environment entries one agent run receives. Never raises.
 
     Any failure hands out nothing: a secrets problem must not crash a launch,
-    and it must never fall back to handing out everything.
+    and it must never fall back to handing out everything. ``extra_names``
+    are the task's own secrets on top of the agent's allowlist.
     """
     if not agent_id or not workspace:
         return {}
     try:
-        allowed = allowed_for_agent(agent_id)
+        allowed = _allowed_names(agent_id, extra_names)
         if not allowed:
             return {}
         return _with_github_app(resolve_for_run(workspace, agent_id, user_id, allowed),
@@ -536,9 +551,12 @@ _ACTIVE: ContextVar[Optional[Tuple[str, str, str]]] = ContextVar("agents_hub_sec
 
 
 @contextmanager
-def activate(workspace: str, agent_id: str, user_id: Optional[str] = None) -> Iterator[None]:
-    """Bind the secret scope of one in-process run for the ``with`` block."""
-    token = _ACTIVE.set((str(workspace or ""), str(agent_id or ""), str(user_id or "")))
+def activate(workspace: str, agent_id: str, user_id: Optional[str] = None,
+             extra_names: Optional[Iterable[str]] = None) -> Iterator[None]:
+    """Bind the secret scope of one in-process run for the ``with`` block.
+    ``extra_names`` are a task's own secrets (see ``env_for_run``)."""
+    extras = tuple(str(n).strip() for n in (extra_names or ()) if str(n or "").strip())
+    token = _ACTIVE.set((str(workspace or ""), str(agent_id or ""), str(user_id or ""), extras))
     try:
         yield
     finally:
@@ -546,7 +564,8 @@ def activate(workspace: str, agent_id: str, user_id: Optional[str] = None) -> It
 
 
 def active_scope() -> Optional[Tuple[str, str, str]]:
-    return _ACTIVE.get()
+    scope = _ACTIVE.get()
+    return None if scope is None else (scope[0], scope[1], scope[2])
 
 
 def get(name: str) -> Optional[str]:
@@ -558,9 +577,10 @@ def get(name: str) -> Optional[str]:
     scope = _ACTIVE.get()
     if scope is None:
         return None
-    workspace, agent_id, user_id = scope
+    workspace, agent_id, user_id = scope[0], scope[1], scope[2]
+    extras = scope[3] if len(scope) > 3 else ()
     try:
-        if name not in allowed_for_agent(agent_id):
+        if name not in _allowed_names(agent_id, extras):
             return None
         return _with_github_app(resolve_for_run(workspace, agent_id, user_id, [name]),
                                 [name], workspace, agent_id, user_id).get(name)

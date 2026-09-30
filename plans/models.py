@@ -105,6 +105,22 @@ class ScheduledJob(BaseModel):
     # against agent_id at create/update time (plans.service).
     agent_version: Optional[int] = None
 
+    # agent_task only: the resources of a deployment, copied onto every task
+    # it creates (docs/deployments.md, "Resources"). The project the task
+    # belongs to, the workspace files it gets, secret names handed to its
+    # runs on top of the agent's own allowlist, and memory pools bound for
+    # its runs only: the agent record keeps its own binding, so no chat or
+    # other task of the agent sees these pools.
+    project_id: Optional[str] = None
+    file_ids: List[str] = Field(default_factory=list)
+    secrets: List[str] = Field(default_factory=list)
+    memory_pool_ids: List[str] = Field(default_factory=list)
+    # How the runs may use those pools: "read" (the default for a deployment's
+    # pools, reference material) builds the run without the memory write
+    # tools; "write" lets it remember, forget and link like the agent's own
+    # binding would.
+    memory_access: str = "read"
+
     last_fired_at: Optional[datetime] = None
     last_error: Optional[str] = None
     # Task IDs created by firings of this job (newest last).

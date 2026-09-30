@@ -287,6 +287,9 @@ class TaskStore:
         agent_version: Optional[int] = None,
         outcome: Optional[dict] = None,
         file_ids: Optional[Sequence[str]] = None,
+        secrets: Optional[Sequence[str]] = None,
+        memory_pool_ids: Optional[Sequence[str]] = None,
+        memory_access: str = "write",
         timeout: float = 10.0,
     ) -> Task:
         # Key computation and insert happen in the same transaction so two
@@ -323,6 +326,9 @@ class TaskStore:
                 agent_version=agent_version,
                 outcome=outcome,
                 file_ids=list(file_ids or []),
+                secrets=list(secrets or []),
+                memory_pool_ids=list(memory_pool_ids or []),
+                memory_access=memory_access or "write",
             )
             _write_task_row(conn, task)
         return task

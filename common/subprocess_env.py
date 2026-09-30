@@ -14,7 +14,7 @@ Compose from the base outward::
 from __future__ import annotations
 
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Iterable
 
 
 def base_subprocess_env(
@@ -24,6 +24,7 @@ def base_subprocess_env(
     user_id: Optional[str] = None,
     flow_id: Optional[str] = None,
     key_id: Optional[str] = None,
+    extra_secret_names: Optional[Iterable[str]] = None,
 ) -> Dict[str, str]:
     """Base environment every agent-running subprocess needs.
 
@@ -71,7 +72,8 @@ def base_subprocess_env(
     if agent_id or flow_id:
         from common import secrets as _secrets
         if agent_id:
-            env.update(_secrets.env_for_run(workspace_name, agent_id, user_id))
+            env.update(_secrets.env_for_run(workspace_name, agent_id, user_id,
+                                            extra_names=extra_secret_names))
         else:
             env.update(_secrets.env_for_flow(workspace_name, flow_id, user_id))
     return env

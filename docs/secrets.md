@@ -85,6 +85,10 @@ it, the same way its tools do. See [tools and capabilities](tools-and-capabiliti
 
 ## How a run receives them
 
+A task may carry extra names of its own (`Task.secrets`), set by a
+deployment (docs/deployments.md, "Resources"): they are handed to that
+task's runs on top of the agent's allowlist and nowhere else.
+
 The launcher builds the run's environment (`common/subprocess_env.py`) and,
 last, merges in the declared names resolved for this agent and this user. A
 declared secret therefore wins over a variable of the same name inherited

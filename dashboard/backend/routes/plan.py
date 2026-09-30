@@ -57,6 +57,12 @@ class JobCreate(BaseModel):
     # plans.service.create_job).
     agent_version: Optional[int] = None
     auto_pause_after: int = 3
+    # agent_task only: the deployment's resources (plans.service._validate_resources).
+    project_id: Optional[str] = None
+    file_ids: Optional[List[str]] = None
+    secrets: Optional[List[str]] = None
+    memory_pool_ids: Optional[List[str]] = None
+    memory_access: Optional[str] = None
 
     @model_validator(mode="after")
     def _check_when(self):
@@ -86,6 +92,11 @@ class JobUpdate(BaseModel):
     budget_usd: Optional[float] = None
     agent_version: Optional[int] = None
     auto_pause_after: Optional[int] = None
+    project_id: Optional[str] = None
+    file_ids: Optional[List[str]] = None
+    secrets: Optional[List[str]] = None
+    memory_pool_ids: Optional[List[str]] = None
+    memory_access: Optional[str] = None
 
 
 # -------------------- jobs --------------------
@@ -131,6 +142,11 @@ async def create_job(payload: JobCreate):
             budget_usd=payload.budget_usd,
             agent_version=payload.agent_version,
             auto_pause_after=payload.auto_pause_after,
+            project_id=payload.project_id,
+            file_ids=payload.file_ids,
+            secrets=payload.secrets,
+            memory_pool_ids=payload.memory_pool_ids,
+            memory_access=payload.memory_access,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

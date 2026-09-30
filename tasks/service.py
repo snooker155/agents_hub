@@ -103,6 +103,9 @@ def create_task(
     agent_version: Optional[int] = None,
     outcome: Optional[Dict[str, Any]] = None,
     file_ids: Optional[Sequence[str]] = None,
+    secrets: Optional[Sequence[str]] = None,
+    memory_pool_ids: Optional[Sequence[str]] = None,
+    memory_access: str = "write",
     store: TaskStore = default_store,
 ) -> Task:
     """Create a new task and persist it in the store.
@@ -150,6 +153,9 @@ def create_task(
         agent_version=agent_version,
         outcome=outcome,
         file_ids=file_ids,
+        secrets=secrets,
+        memory_pool_ids=memory_pool_ids,
+        memory_access=memory_access,
     )
     append_task_activity_log(task.id, "created", "Task created")
     if task.status == TaskStatus.blocked and (task.blocked_reason or "").startswith(DEPENDENCY_BLOCK_PREFIX):

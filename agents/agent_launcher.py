@@ -38,7 +38,7 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Sequence
 from uuid import uuid4
 
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
@@ -232,6 +232,18 @@ def prepare_run(
     if agent_version_pin is not None:
         cli_args.extend(["--definition-version", str(agent_version_pin)])
 
+    # A deployment's resources for this task's runs only (docs/deployments.md,
+    # "Resources"): the memory pools bound instead of the agent's own, and
+    # the extra secret names, passed as flags like the version pin so the
+    # child builds from them without reading the task back.
+    _task_pools = [str(p).strip() for p in (getattr(task, "memory_pool_ids", None) or []) if str(p or "").strip()]
+    if _task_pools:
+        cli_args.extend(["--memory-pool", ",".join(_task_pools)])
+        cli_args.extend(["--memory-access", str(getattr(task, "memory_access", None) or "write")])
+    for _name in (getattr(task, "secrets", None) or []):
+        if str(_name or "").strip():
+            cli_args.extend(["--extra-secret", str(_name).strip()])
+
     # Continuing a paused run rather than starting one. Passed as flags like
     # everything else the subprocess needs to know, so nothing has to be read
     # back out of the task record on the other side.
@@ -376,6 +388,8 @@ def launch_prepared(spec: Dict[str, Any]) -> None:
     from instances import registry as instance_registry
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
+    # The extra secret names travel in the spec's args as --extra-secret flags
+    # (see the launcher above), so the environment needs none here.
     env = _build_env(ws_name, session_id, str(log_file), instance_id,
                      agent_id=agent_id, user_id=str(spec.get("launched_by") or "") or None,
                      key_id=str(spec.get("key_id") or "") or None)
@@ -602,7 +616,8 @@ def _launch_extras(task: Any, ws_name: Optional[str]) -> Tuple[Dict[str, str], O
 
 def _build_env(ws_name: str, session_id: str, log_file: str,
                instance_id: Optional[str] = None, *, agent_id: Optional[str] = None,
-               user_id: Optional[str] = None, key_id: Optional[str] = None) -> Dict[str, str]:
+               user_id: Optional[str] = None, key_id: Optional[str] = None,
+               extra_secret_names: Optional[Sequence[str]] = None) -> Dict[str, str]:
     # base env + run metadata only. No model override is injected: agent_run.py
     # resolves the model via create_agent's cascade (agent definition → workspace
     # override → workspace settings → global), so a single run honours the agent's
@@ -610,7 +625,8 @@ def _build_env(ws_name: str, session_id: str, log_file: str,
     # one model — that's the deliberate difference between the two launchers.
     from common.subprocess_env import base_subprocess_env, add_run_env
     from instances.registry import ENV_INSTANCE_ID
-    env = base_subprocess_env(ws_name, agent_id=agent_id, user_id=user_id, key_id=key_id)
+    env = base_subprocess_env(ws_name, agent_id=agent_id, user_id=user_id, key_id=key_id,
+                              extra_secret_names=extra_secret_names)
     add_run_env(env, session_id=session_id, log_file=log_file)
     if instance_id:
         env[ENV_INSTANCE_ID] = str(instance_id)

@@ -1050,6 +1050,21 @@ class AgentFactory:
                     + HANDOFF_PROMPT
                 )
 
+        if _memory_access == "read":
+            from memory.binding import MEMORY_WRITE_TOOLS
+            _before = len(tools)
+            tools = [t for t in tools
+                     if getattr(t, "name", getattr(t, "__name__", "")) not in MEMORY_WRITE_TOOLS]
+            if len(tools) != _before:
+                config["system_prompt"] = (
+                    config.get("system_prompt", "")
+                    + "\n\n---\n\n## Memory is read-only in this run\n"
+                    "The memory pools of this run are reference material: recall and read "
+                    "from them, but the tools that write to memory (remember, forget, link, "
+                    "record_episode, block writes) are not available here. Do not claim to "
+                    "have saved anything."
+                )
+
         # Capability guard, defence in depth. The record was already checked at
         # save time, but everything above this point may have *appended* tools
         # (memory pools, skills, clarify-gate ask_user, the project graph reader,
@@ -1062,7 +1077,7 @@ class AgentFactory:
             [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
             # A declared secret is a grant of private data, checked with the
             # tools it would be handed to (docs/secrets.md).
-            + secret_grant_ids(getattr(_spec, "secrets", None) or [] if _spec else []),
+            + secret_grant_ids(list(getattr(_spec, "secrets", None) or []) + _extra_secrets if _spec else _extra_secrets),
             override=bool(_spec.capability_override) if _spec else False,
             delegates=list(_spec.delegates or []) if _spec else [],
         )

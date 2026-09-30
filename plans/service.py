@@ -123,6 +123,88 @@ def _validate_environment_id(environment_id: Optional[str], workspace: Optional[
 
 # -------------------- Job CRUD --------------------
 
+_RESOURCE_FIELDS = ("project_id", "file_ids", "secrets", "memory_pool_ids", "memory_access")
+
+
+def _validate_resources(kind: JobKind, workspace: Optional[str], agent_id: Optional[str], *,
+                        project_id: Optional[str] = None, file_ids: Optional[List[str]] = None,
+                        secrets: Optional[List[str]] = None,
+                        memory_pool_ids: Optional[List[str]] = None,
+                        memory_access: Optional[str] = None) -> Dict[str, Any]:
+    """The deployment's resources, cleaned, or ``ValueError``.
+
+    Only an ``agent_task`` job creates a task of its own, so only it can carry
+    resources. Each id must exist in the job's workspace: a project of that
+    workspace, a live workspace file, a shared memory pool of that workspace
+    (or a global one). Secret names are checked for shape; whether a value
+    exists is decided at run time, like the agent's own allowlist. Extra
+    secrets widen what the agent can read, so the capability guard is asked
+    the same question the agent editor asks: with these names on top of its
+    tools, does the agent form a blocked combination.
+    """
+    out: Dict[str, Any] = {
+        "project_id": (str(project_id).strip() or None) if project_id else None,
+        "file_ids": [str(f).strip() for f in (file_ids or []) if str(f or "").strip()],
+        "secrets": [],
+        "memory_pool_ids": [str(m).strip() for m in (memory_pool_ids or []) if str(m or "").strip()],
+        "memory_access": (str(memory_access or "read").strip().lower() or "read"),
+    }
+    from memory.binding import MEMORY_ACCESS_MODES
+    if out["memory_access"] not in MEMORY_ACCESS_MODES:
+        raise ValueError(f"memory_access must be one of {', '.join(MEMORY_ACCESS_MODES)}")
+    for name in (secrets or []):
+        n = str(name or "").strip()
+        if not n:
+            continue
+        from common.secrets import validate_name
+        validate_name(n)
+        if n not in out["secrets"]:
+            out["secrets"].append(n)
+    out["file_ids"] = list(dict.fromkeys(out["file_ids"]))
+    out["memory_pool_ids"] = list(dict.fromkeys(out["memory_pool_ids"]))
+    if not any([out["project_id"], out["file_ids"], out["secrets"], out["memory_pool_ids"]]):
+        return out
+    if kind != JobKind.agent_task:
+        raise ValueError("resources (project, files, secrets, memory pools) apply to agent task jobs only")
+    ws = (workspace or "").strip() or None
+    if out["project_id"]:
+        from projects.storage import ProjectStore
+        from common.paths import PROJECTS_FILE
+        project = ProjectStore(path=PROJECTS_FILE).get(out["project_id"])
+        if project is None or (ws and (project.workspace or "") != ws):
+            raise ValueError(f"project '{out['project_id']}' does not exist in workspace '{ws or 'default'}'")
+    if out["file_ids"]:
+        from files.service import get_files
+        found = {str(f.get("id")): f for f in get_files(out["file_ids"])}
+        for fid in out["file_ids"]:
+            rec = found.get(fid)
+            if rec is None or (ws and (rec.get("workspace") or "") != ws):
+                raise ValueError(f"file '{fid}' does not exist in workspace '{ws or 'default'}'")
+    if out["memory_pool_ids"]:
+        from memory.store import MemoryStore
+        pools = {str(m.id): m for m in MemoryStore().load()}
+        for pid in out["memory_pool_ids"]:
+            pool = pools.get(pid)
+            if pool is None or (pool.workspace and ws and pool.workspace != ws):
+                raise ValueError(f"memory pool '{pid}' does not exist in workspace '{ws or 'default'}'")
+    if out["secrets"] and agent_id:
+        from agents.registry import get_agent
+        from agents.capability_guard import check_agent_tools, guard_mode
+        from tools.capabilities import secret_grant_ids
+        spec = get_agent(agent_id)
+        if spec is not None:
+            names = list(spec.secrets or []) + [n for n in out["secrets"] if n not in (spec.secrets or [])]
+            violation = check_agent_tools(
+                agent_id, list(spec.tools or []) + secret_grant_ids(names),
+                previous_tools=list(spec.tools or []) + secret_grant_ids(spec.secrets or []),
+                override=bool(spec.capability_override), delegates=list(spec.delegates or []),
+                workspace=getattr(spec, "owner_workspace", None),
+            )
+            if violation is not None and violation.blocking and guard_mode() == "block":
+                raise ValueError(f"secrets refused by the capability guard: {violation.message}")
+    return out
+
+
 def create_job(
     *,
     kind: JobKind,
@@ -144,11 +226,19 @@ def create_job(
     budget_usd: Optional[float] = None,
     agent_version: Optional[int] = None,
     auto_pause_after: int = 3,
+    project_id: Optional[str] = None,
+    file_ids: Optional[List[str]] = None,
+    secrets: Optional[List[str]] = None,
+    memory_pool_ids: Optional[List[str]] = None,
+    memory_access: Optional[str] = None,
 ) -> ScheduledJob:
     tz_name = _validate_timezone(timezone)
     cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
     _validate_environment_id(environment_id, workspace)
     _validate_agent_version(agent_version, agent_id)
+    resources = _validate_resources(kind, workspace, agent_id, project_id=project_id, file_ids=file_ids,
+                                    secrets=secrets, memory_pool_ids=memory_pool_ids,
+                                    memory_access=memory_access)
     job = ScheduledJob(
         kind=kind,
         title=title,
@@ -169,6 +259,7 @@ def create_job(
         budget_usd=budget_usd,
         agent_version=agent_version,
         auto_pause_after=auto_pause_after,
+        **resources,
     )
     saved = plan_store.add(job)
     _notify_plan_changed()
@@ -214,6 +305,12 @@ def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
         agent_id = fields.get("agent_id", existing.agent_id if existing else None)
         agent_version = fields.get("agent_version", existing.agent_version if existing else None)
         _validate_agent_version(agent_version, agent_id)
+    if any(k in fields for k in _RESOURCE_FIELDS) or "agent_id" in fields:
+        existing = plan_store.get(job_id)
+        if existing is not None:
+            merged = {k: fields.get(k, getattr(existing, k)) for k in _RESOURCE_FIELDS}
+            agent_id = fields.get("agent_id", existing.agent_id)
+            fields.update(_validate_resources(existing.kind, existing.workspace, agent_id, **merged))
     updated = plan_store.update(job_id, **fields)
     if updated:
         _notify_plan_changed()
@@ -788,6 +885,14 @@ def _fire_agent_task(job: ScheduledJob) -> str:
         workspace=ws_name,
         budget_usd=job.budget_usd,
         environment_id=job.environment_id,
+        # The deployment's resources (docs/deployments.md, "Resources"): the
+        # project and files become the task's, the extra secrets and the
+        # pools reach only this task's runs.
+        project_id=job.project_id or None,
+        file_ids=list(job.file_ids or []),
+        secrets=list(job.secrets or []),
+        memory_pool_ids=list(job.memory_pool_ids or []),
+        memory_access=(job.memory_access or "read") if job.memory_pool_ids else "write",
         # Only meaningful once job.agent_id names the agent it pins a version
         # of (validated together at create/update time); a task this job
         # creates unassigned carries the pin with no agent yet to check it

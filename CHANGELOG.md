@@ -34,6 +34,20 @@ turns that section into the next release.
   The list and the panel take the height left on the screen and scroll on
   their own, the panel a third of the width.
 
+### Changed
+
+- Deployments carry resources (docs/deployments.md, "Resources"): a project,
+  workspace files, extra secret names and memory pools on an agent task job,
+  validated on save (the guard checks the secrets like the agent's own),
+  copied onto every task the job creates and reaching only that task's runs.
+  A task carries `secrets`, `memory_pool_ids` and `memory_access`; the run
+  gets the pools as a build override, read only (the default, no memory
+  write tools) or read and write, and the names through its environment or
+  secret scope. Files can be uploaded from the deployment form.
+- Deployments: the "show cancelled and failed" switch sits with the buttons
+  in the page header, and the environment, budget and auto-pause fields of
+  the form stay on one line.
+
 ## [0.4.0] - 2026-09-30
 
 ### Added
