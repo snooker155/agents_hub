@@ -13,6 +13,8 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-30
+
 ### Added
 
 - Files agents write into the workspace folder are workspace files. The
