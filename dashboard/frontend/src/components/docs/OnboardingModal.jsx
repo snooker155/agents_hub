@@ -85,33 +85,27 @@ export default function OnboardingModal() {
           <OnboardingChecklist onNavigate={dismiss} />
         </div>
 
-        {/* Footer, one row: the tour first as the primary action, then the
-            guide and the docs link, and skip last. No wrapping, so the
-            controls always read as a single line. */}
-        <div className="px-6 py-4 border-t border-gray-200 bg-white flex items-center gap-2">
+        {/* Footer: the tour first as the primary action, then the guide, and
+            skip last. Three controls fit one row; the row still wraps on a
+            very narrow screen instead of spilling past the modal edge. */}
+        <div className="px-6 py-4 border-t border-gray-200 bg-white flex flex-wrap items-center gap-2">
           <button
             onClick={startTour}
-            className="flex items-center gap-1.5 shrink-0 text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            className="flex items-center gap-1.5 whitespace-nowrap text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
           >
             <Compass className="w-4 h-4" />
             {t('onboardingModal.startTour')}
           </button>
           <button
             onClick={() => { dismiss(); navigate('/docs/getting-started'); }}
-            className="flex items-center gap-1.5 shrink-0 text-sm font-semibold px-4 py-2 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition-colors"
+            className="flex items-center gap-1.5 whitespace-nowrap text-sm font-semibold px-4 py-2 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition-colors"
           >
             <BookOpen className="w-4 h-4" />
             {t('onboardingModal.openGuide')}
           </button>
           <button
-            onClick={() => { dismiss(); navigate('/docs'); }}
-            className="text-sm font-medium text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg hover:bg-indigo-50 whitespace-nowrap"
-          >
-            {t('onboardingModal.browseFullDocumentation')}
-          </button>
-          <button
             onClick={dismiss}
-            className="ml-auto shrink-0 text-sm font-medium text-gray-500 hover:text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-100"
+            className="ml-auto whitespace-nowrap text-sm font-medium text-gray-500 hover:text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-100"
           >
             {t('onboardingModal.skipForNow')}
           </button>

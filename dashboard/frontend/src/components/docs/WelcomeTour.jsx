@@ -40,12 +40,18 @@ export function useWelcomeTour() {
     const d = driver({
       animate: true,
       allowClose: true,
-      overlayOpacity: 0.45,
+      // A click outside the popover is ignored: the tour ends only through
+      // the close button, the last step's Done, or Escape. driver.js takes a
+      // function here and then does nothing else with the click.
+      overlayClickBehavior: () => {},
+      // The page stays fully visible. The current stop is marked with a ring
+      // (see tour.css) instead of a dimmed cutout.
+      overlayOpacity: 0,
       stagePadding: 6,
       stageRadius: 10,
       popoverClass: 'agents-hub-tour',
-      // Closing with Escape or the overlay goes through the runner, so the
-      // tour is marked done either way.
+      // Closing with Escape or the close button goes through the runner, so
+      // the tour is marked done either way.
       onDestroyStarted: () => runnerRef.current?.close(),
     });
     driverRef.current = d;
