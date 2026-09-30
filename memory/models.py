@@ -56,6 +56,10 @@ class SharedMemory(BaseModel):
     type: str = "text"
     description: str = ""
     workspace: Optional[str] = None
+    # "personal" for a user's own pool (memory/personal.py), else "shared".
+    kind: str = "shared"
+    # The user a personal pool belongs to; None for a shared pool.
+    owner_user: Optional[str] = None
     blocks: List[MemoryBlock] = Field(default_factory=default_blocks)  # always-in-context core memory
     notes: List[Dict[str, Any]] = Field(default_factory=list)   # [{id, title, content, created_at}]
     kv_pairs: List[Dict[str, Any]] = Field(default_factory=list) # legacy — migrated on load

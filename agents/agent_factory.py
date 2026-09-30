@@ -405,7 +405,7 @@ class AgentFactory:
 
         return resolved_provider, resolved_model, resolved_base_url, ws_api_key
 
-    def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None, agent_id: Optional[str] = None, episodic_write: bool = True, pool_override: Optional[str] = None) -> List[Any]:
+    def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None, agent_id: Optional[str] = None, episodic_write: bool = True, pool_override: Optional[str] = None, personal_pool: Optional[str] = None) -> List[Any]:
         """Create tool instances based on tool ids.
 
         Also supports legacy group aliases:
@@ -555,7 +555,7 @@ class AgentFactory:
             from agents.registry import get_agent as _reg_get_pool
             from memory.binding import effective_memory_pools
             _spec_pool = _reg_get_pool(agent_id)
-            _mem_pools = (effective_memory_pools(_spec_pool, workspace, pool_override)
+            _mem_pools = (effective_memory_pools(_spec_pool, workspace, pool_override, personal_pool)
                           if _spec_pool else [])
             if _mem_pools:
                 _pool_id = _mem_pools[0]
@@ -564,7 +564,8 @@ class AgentFactory:
         if _pool_id:
             from memory.knowledge_extract import create_extraction_tools
             memory_tools = [
-                *create_memory_tools(_pool_id, _extra_pool_ids, include_episodic_write=episodic_write),
+                *create_memory_tools(_pool_id, _extra_pool_ids, include_episodic_write=episodic_write,
+                                     personal_pool_id=personal_pool),
                 *create_extraction_tools(_pool_id),
                 *skills_tools,
             ]
@@ -635,6 +636,22 @@ class AgentFactory:
             if pin is not None:
                 override_params = {**override_params, "definition_version": int(pin["version"])}
                 _record_experiment_assignment(pin)
+
+        # Personal memory (memory/personal.py): the user's own pool, attached
+        # next to the agent's own pools (or alone when it has none). Passed as
+        # ``personal_pool`` so it is part of the cache key: two users never
+        # share a build bound to one pool. A pinned ``memory_pool`` (the
+        # Memory page, a deployment's task pools) replaces both.
+        if "memory_pool" not in override_params and "personal_pool" not in override_params:
+            try:
+                from agents.registry import get_agent as _reg_get_personal
+                from memory import personal as _personal
+                _personal_pool = _personal.resolve(_reg_get_personal(agent_id), workspace)
+            except Exception:  # noqa: BLE001 - a memory hiccup must not stop the agent from building
+                log.warning("personal memory: could not resolve a pool for %s", agent_id, exc_info=True)
+                _personal_pool = None
+            if _personal_pool:
+                override_params = {**override_params, "personal_pool": _personal_pool}
 
         return agent_cache.get_or_build(
             agent_id,
@@ -721,6 +738,19 @@ class AgentFactory:
         # which is computed from the overrides before this runs, so two pools
         # are two cache entries rather than one stale agent.
         _pool_override = override_params.pop("memory_pool", None)
+        # The user's personal pool (create_agent), attached after the agent's
+        # own. Popped like memory_pool; it reached the cache key already.
+        _personal_pool = override_params.pop("personal_pool", None)
+        # Secret names a deployment attached to this task's runs, on top of
+        # the agent's own allowlist (Task.secrets). Not a definition field:
+        # popped here and folded into the build-time capability check below,
+        # since the run's environment already carries their values.
+        _extra_secrets = [str(n).strip() for n in (override_params.pop("extra_secrets", None) or []) if str(n or "").strip()]
+        # How a task may use the pools it binds (Task.memory_access, set by a
+        # deployment): "read" drops the memory write tools below, after every
+        # memory tool has been added, so the run can recall but never change
+        # the pool. Popped like memory_pool; it reached the cache key already.
+        _memory_access = str(override_params.pop("memory_access", None) or "write").strip().lower()
 
         # Imported agents run outside this process: there is no prompt to
         # assemble, no tool set to grant and no model to build here, because all
@@ -757,7 +787,7 @@ class AgentFactory:
         from memory.injection import inject_memory_into_definition
         definition = inject_memory_into_definition(
             agent_id, definition, workspace=workspace, episodic_write=_episodic_write,
-            pool_override=_pool_override,
+            pool_override=_pool_override, personal_pool=_personal_pool,
         )
 
         # Auto-add skills tools when skills_enabled=True in registry.
@@ -817,7 +847,8 @@ class AgentFactory:
         tool_list = config.get("tools", [])
         tools = self._create_tools(tool_list, workspace=workspace, agent_id=agent_id,
                                    episodic_write=_episodic_write,
-                                   pool_override=_pool_override)
+                                   pool_override=_pool_override,
+                                   personal_pool=_personal_pool)
 
         # Clarification gate also grants the ask_user tool so the agent can pause
         # and ask for missing requirements (in a task, this parks the task in the

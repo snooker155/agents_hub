@@ -1,5 +1,5 @@
 import ImportedAgentPanel from '../ImportedAgentPanel';
-import { Activity, Check, Clock, Copy, Database, Globe, Lock, MessageSquare, Share2, Wrench } from 'lucide-react';
+import { Activity, Check, Clock, Copy, Database, Globe, Lock, MessageSquare, Share2, UserRound, Wrench } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { API_ORIGIN } from '../../api';
@@ -50,16 +50,40 @@ function A2ACardLink({ agentId, t }) {
   );
 }
 
+/** Personal memory in use: switched on here, alone or next to a pool of the agent's own. */
+const personalActive = (c) => !!(c && c.effective);
+
+/**
+ * The personal memory line of the overview's memory card: in use (alone, or
+ * together with the agent's own pool), off for this agent, or off for the
+ * whole workspace. Hidden until the setting is known.
+ */
+function PersonalMemoryLine({ config, t }) {
+  if (!config) return null;
+  let state = 'off';
+  if (!config.workspace_enabled) state = 'workspaceOff';
+  else if (personalActive(config)) state = config.has_own_pool ? 'ownPool' : 'active';
+  const tone = state === 'active' || state === 'ownPool' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500';
+  return (
+    <div className="flex items-start gap-2" data-testid="overview-personal-memory" data-state={state}>
+      <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 ${tone}`}>
+        <UserRound className="w-3.5 h-3.5" /> {t('agentDetails.personalMemory.title')}: {t(`agentDetails.personalMemory.overview.${state}`)}
+      </span>
+    </div>
+  );
+}
+
 /** Everything this agent is, at a glance: readiness, description, sharing, and what it can reach. */
 export default function OverviewTab() {
   const {
-    activeTask, agent, availableTools, defaultChatMessage, defaultChatSaving, descDraft,
+    activeRun, agent, availableTools, defaultChatMessage, defaultChatSaving, descDraft,
     descSaving, fetchData, handleSaveDescription, handleSaveWsCapacity,
     handleToggleDefaultChat, handleToggleShared, isDefaultChat, memoryData, memoryPools,
-    memoryType, selectedTools, selectedWorkspace, setActiveTab, setDescDraft,
+    memoryType, personalMemory, selectedTools, selectedWorkspace, setActiveTab, setDescDraft,
     setWsCapacityEdits, shared, sharingMessage, sharingSaving, t, wsCapacities,
     wsCapacityEdits, wsCapacitySaving,
   } = useAgentPage();
+  const personalOn = personalActive(personalMemory);
   return (
         <div className="space-y-6">
 
@@ -111,13 +135,9 @@ export default function OverviewTab() {
                 <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">ID</span>
                 <span className=" text-gray-700 text-xs break-all">{agent.id}</span>
               </div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentDetails.domain')}</span>
-                <span className=" text-gray-700 text-xs">{agent.domain || 'general'}</span>
-              </div>
               {selectedWorkspace && selectedWorkspace !== 'default' && (
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentDetails.workspaceCapacity')}</span>
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentDetails.workspaceServiceLimit')}</span>
                   {(() => {
                     const effectiveCapacity = wsCapacities[selectedWorkspace] ?? 1;
                     const editVal = wsCapacityEdits[selectedWorkspace];
@@ -138,7 +158,7 @@ export default function OverviewTab() {
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{t('agentDetails.concurrentRuns', { count: effectiveCapacity })}</span>
+                        <span className="text-sm font-medium">{t('agentDetails.servicesAllowed', { count: effectiveCapacity })}</span>
                         <button onClick={() => setWsCapacityEdits(prev => ({ ...prev, [selectedWorkspace]: String(effectiveCapacity) }))}
                           className="text-xs text-indigo-600 hover:text-indigo-800">{t('agentDetails.edit')}</button>
                       </div>
@@ -246,17 +266,19 @@ export default function OverviewTab() {
                 </button>
               </div>
               <div className="space-y-3">
-                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
-                  memoryType === 'none'   ? 'bg-gray-100 text-gray-500' :
-                  memoryType === 'local'  ? 'bg-blue-100 text-blue-700' :
-                                            'bg-amber-100 text-amber-700'
-                }`}>
-                  <span className={`w-2 h-2 rounded-full ${
-                    memoryType === 'none'  ? 'bg-gray-400' :
-                    memoryType === 'local' ? 'bg-blue-500' : 'bg-amber-500 animate-pulse'
-                  }`} />
-                  {memoryType === 'none' ? t('agentDetails.noMemory') : memoryType === 'local' ? t('agentDetails.localAgentSpecific') : t('agentDetails.sharedPool')}
-                </span>
+                {!(memoryType === 'none' && personalOn) && (
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
+                    memoryType === 'none'   ? 'bg-gray-100 text-gray-500' :
+                    memoryType === 'local'  ? 'bg-blue-100 text-blue-700' :
+                                              'bg-amber-100 text-amber-700'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${
+                      memoryType === 'none'  ? 'bg-gray-400' :
+                      memoryType === 'local' ? 'bg-blue-500' : 'bg-amber-500 animate-pulse'
+                    }`} />
+                    {memoryType === 'none' ? t('agentDetails.noMemory') : memoryType === 'local' ? t('agentDetails.localAgentSpecific') : t('agentDetails.sharedPool')}
+                  </span>
+                )}
                 {memoryType === 'shared' && memoryPools.length > 0 && (
                   <div className="text-xs text-gray-500 truncate">
                     {memoryPools.length === 1
@@ -267,21 +289,26 @@ export default function OverviewTab() {
                 {memoryType === 'local' && memoryData && (
                   <div className="text-xs text-gray-500 italic line-clamp-2">{memoryData.slice(0, 120)}{memoryData.length > 120 ? '…' : ''}</div>
                 )}
-                {memoryType === 'none' && (
+                {/* With no memory of its own the card says one thing: personal
+                    memory when it is in use, "No memory" when it is not. */}
+                {(memoryType !== 'none' || personalOn) && <PersonalMemoryLine config={personalMemory} t={t} />}
+                {memoryType === 'none' && !personalOn && (
                   <p className="text-xs text-gray-400">{t('agentDetails.noMemoryPersistenceBetweenSessions')}</p>
                 )}
               </div>
             </div>
           </div>
 
-          {activeTask && (
+          {activeRun && (
             <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
               <h3 className="text-indigo-800 font-bold flex items-center mb-2">
                 <Clock className="w-4 h-4 mr-2" /> {t('agentDetails.currentlyActive')}
               </h3>
-              <p className="text-sm text-indigo-900 font-medium truncate mb-2">{t('agentDetails.taskId')}: {activeTask.task_id}</p>
-              <Link to={`/tasks/${activeTask.task_id}`} className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 inline-block">
-                {t('agentDetails.viewTaskDetails')}
+              <p className="text-sm text-indigo-900 font-medium truncate mb-2">
+                {activeRun.task_title || t('agentDetails.runsTab.untitled')}
+              </p>
+              <Link to={`/messages/${activeRun.run_id}`} className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 inline-block">
+                {t('agentDetails.runsTab.openRun')}
               </Link>
             </div>
           )}

@@ -74,3 +74,10 @@ export function colorForType(type, allTypes) {
   const palette = graphTypePalette();
   return palette[(idx >= 0 ? idx : 0) % palette.length];
 }
+
+// A personal pool (memory/personal.py) is stored with an English name and
+// description for the agent's tools; the UI shows them in the viewer's
+// language. Only its owner ever sees one, so "your" is always right.
+export const isPersonalPool = (m) => m?.kind === 'personal';
+export const poolName = (m, t) => (isPersonalPool(m) ? t('memoryManager.personalTitle') : m?.name);
+export const poolDescription = (m, t) => (isPersonalPool(m) ? t('memoryManager.personalHint') : m?.description);

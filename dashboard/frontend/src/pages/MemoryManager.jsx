@@ -58,7 +58,7 @@ export default function MemoryManager() {
   usePageChat(activeTab === 'pools' ? memoryChat : null);
 
   return (
-    <PageContainer className="space-y-6">
+    <PageContainer>
       <PageHeader
         icon={Database}
         title={t('memoryManager.sharedMemory')}
@@ -75,7 +75,7 @@ export default function MemoryManager() {
       />
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-3">
         {TABS.map(tab => {
           const Icon = tab.icon;
           return (
@@ -106,7 +106,7 @@ export default function MemoryManager() {
 
         {chatVisible && (
           <ChatColumn>
-            <EntityChat {...memoryChat} {...FILL_COLUMN} />
+            <EntityChat {...memoryChat} {...FILL_COLUMN} onHide={() => chat.setOpen(false)} />
           </ChatColumn>
         )}
       </div>

@@ -1,6 +1,8 @@
 import { updateAgentEpisodicConfig, updateAgentTools } from '../../api';
 import { errorDetail } from '../toast';
 import { MemoryPoolDetails } from './memoryPool';
+import PersonalMemoryCard from './PersonalMemoryCard';
+import { poolName } from '../memoryManager/helpers';
 import { AlertCircle, Database, Loader, Save, Trash2, Wrench, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAgentPage } from './context';
@@ -13,7 +15,7 @@ export default function MemoryTab() {
     markMemoryDraftDirty, memoryData, memoryPools, memoryType, removePool, selectedTools,
     selectedWorkspace, setConnectedPool, setEpisodicEffective, setEpisodicMode,
     setEpisodicSaving, setMemoryData, setMemoryType, setPrimaryPool, setSelectedTools,
-    setToolsSaving, sharedMemories, t, toast,
+    setPersonalMemory, setToolsSaving, sharedMemories, t, toast,
   } = useAgentPage();
   return (
         <div className="space-y-5">
@@ -23,9 +25,10 @@ export default function MemoryTab() {
               <Database className="w-5 h-5 text-amber-500" /> {t('agentDetails.memoryConfiguration')}
             </h3>
             <p className="text-xs text-gray-400 mb-4">
-              Memory is assigned per workspace — this configuration applies in <span className="font-semibold text-gray-500">{selectedWorkspace || 'default'}</span> {t('agentDetails.only')}
+              {t('agentDetails.memoryScope')} <span className="font-semibold text-gray-500">{selectedWorkspace || 'default'}</span> {t('agentDetails.memoryScopeAfter')}
             </p>
             <div className="space-y-4">
+              <PersonalMemoryCard agentId={id} workspace={selectedWorkspace} t={t} toast={toast} onChange={setPersonalMemory} />
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.memoryType')}</label>
                 <select
@@ -40,7 +43,7 @@ export default function MemoryTab() {
               </div>
 
               {memoryType === 'shared' && (() => {
-                const poolNameById = Object.fromEntries(sharedMemories.map(m => [m.id, m.name]));
+                const poolNameById = Object.fromEntries(sharedMemories.map(m => [m.id, poolName(m, t)]));
                 const primary = memoryPools[0] || '';
                 const extras = memoryPools.slice(1);
                 const unattached = sharedMemories.filter(m => !memoryPools.includes(m.id));
@@ -58,7 +61,7 @@ export default function MemoryTab() {
                           <option value="">{t('agentDetails.selectAMemoryPool')}</option>
                           {sharedMemories.map(m => (
                             <option key={m.id} value={m.id}>
-                              {m.name}  ({t('agentDetails.fileCount', { count: (m.files || []).length })})
+                              {poolName(m, t)}  ({t('agentDetails.fileCount', { count: (m.files || []).length })})
                             </option>
                           ))}
                         </select>
@@ -106,7 +109,7 @@ export default function MemoryTab() {
                         >
                           <option value="">{t('agentDetails.attachAnotherPool')}</option>
                           {unattached.map(m => (
-                            <option key={m.id} value={m.id}>{m.name}</option>
+                            <option key={m.id} value={m.id}>{poolName(m, t)}</option>
                           ))}
                         </select>
                       ) : extras.length === 0 ? (
@@ -137,7 +140,7 @@ export default function MemoryTab() {
                   className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {isUpdatingMemory ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {isUpdatingMemory ? 'Saving…' : 'Save'}
+                  {isUpdatingMemory ? t('common.saving') : t('common.save')}
                 </button>
                 <button
                   onClick={handleEraseMemory}
@@ -190,7 +193,7 @@ export default function MemoryTab() {
                           enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {enabled ? 'On' : 'Off'}
+                        {enabled ? t('common.on') : t('common.off')}
                       </button>
                     </div>
                   );
@@ -256,7 +259,7 @@ export default function MemoryTab() {
             ) : memoryPools[0] ? (
               <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                Pool not found. Check the ID or create a pool in <strong>{t('agentDetails.sharedMemory')}</strong>.
+                {t('agentDetails.poolNotFound')} <strong>{t('agentDetails.sharedMemory')}</strong>.
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center bg-white rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-400">

@@ -1,5 +1,7 @@
 export default {
-  sharedMemory: 'Shared Memory',
+  personalMemory: 'Personal memory',
+  viaPersonal: 'personal',
+  sharedMemory: 'Memory',
   manageAgentMemoryPoolsRag: 'Manage agent memory pools, RAG indexing pipeline, and data access.',
   tabs: {
     pools: 'Memory Pools',
@@ -17,6 +19,10 @@ export default {
   },
   blocks: {
     intro: 'Blocks are always in the agent\'s prompt: every run starts with this text already read.',
+    defaults: {
+      persona: 'Who you are in this pool: your role, your tone, the standing instructions you have accepted. Keep it short and current.',
+      user: 'Facts about the user you are working with: name, role, preferences, what they are working on.',
+    },
     addBlock: 'Add block',
     newBlock: 'New block',
     name: 'Name',
@@ -146,6 +152,8 @@ export default {
   noAgentsRegistered: 'No agents registered.',
   agent: 'Agent',
   agentCount: '{{count}} agents',
+  agentCount_one: '{{count}} agent',
+  agentCount_other: '{{count}} agents',
   notesAndSlots: '{{notes}} notes · {{slots}} slots',
   memoryPool: 'Memory Pool',
   status: 'Status',
@@ -157,7 +165,7 @@ export default {
   appliesInWorkspace: 'Applies in workspace “{{workspace}}” only',
   primaryPool: 'Primary Pool',
   allMemoryWritesGoTo: 'All memory writes go to this pool.',
-  noneNoSharedMemory: '— None (no shared memory) —',
+  noneNoSharedMemory: '— None (no memory) —',
   additionalPools: 'Additional Pools (read-only)',
   additionalPoolsHint: 'Also searched by recall, episodes, and graph traversal; never written to.',
   vectorDbStatus: 'Vector DB Status',
@@ -221,4 +229,7 @@ export default {
   chatSuggestSearch: 'Search memory for the pricing decision',
   chatSuggestExtract: 'Extract what is worth remembering from this text',
   askChatPickPool: 'Pick a pool on the left and ask about it. With none open it answers from the pool the agent is assigned in this workspace.',
+  personal: 'personal',
+  personalTitle: 'My personal memory',
+  personalHint: 'What agents have learned about you in this workspace. Only you see it. Every agent with personal memory on reads and adds to this one pool, by default that is the main agent of the workspace.',
 };

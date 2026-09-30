@@ -259,6 +259,12 @@ def main():
     ap.add_argument("--definition-version", type=int,
                      help="Build this stored version of the agent's definition instead of the live one")
 
+    ap.add_argument("--memory-pool", metavar="POOL_IDS",
+                    help="Comma list of memory pool ids bound for this run only (a deployment's pools)")
+    ap.add_argument("--memory-access", choices=["read", "write"], default=None,
+                    help="How this run may use the pools of --memory-pool: read builds it without the write tools")
+    ap.add_argument("--extra-secret", action="append", default=[], metavar="NAME",
+                    help="A secret name a deployment attached to this task, on top of the agent's own")
     args = ap.parse_args()
 
     # Docker task runs only (the launcher appends this flag to the inner command
@@ -371,6 +377,16 @@ def main():
     # AgentFactory.create_agent) — a task/launch pin always wins.
     if args.definition_version is not None:
         agent_overrides["definition_version"] = int(args.definition_version)
+    # A deployment's resources for this task's runs only (--memory-pool,
+    # --extra-secret; agents/agent_launcher.py). The pool override binds the
+    # memory tools to these pools instead of the agent's own; the extra
+    # secret names reach the build-time capability guard, since the run's
+    # environment already holds their values.
+    if args.memory_pool:
+        agent_overrides["memory_pool"] = [p.strip() for p in str(args.memory_pool).split(",") if p.strip()]
+        agent_overrides["memory_access"] = (args.memory_access or "write").strip().lower()
+    if args.extra_secret:
+        agent_overrides["extra_secrets"] = [n.strip() for n in args.extra_secret if str(n or "").strip()]
 
     # Session continuation: forward tokens/tool events to the SSE broker.
     _extra_callbacks = []

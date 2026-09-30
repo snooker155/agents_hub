@@ -13,6 +13,50 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Personal memory (memory/personal.py): what the agents learn about the
+  person they work with, in one private pool per user and workspace that
+  every agent with it on shares. It is set per workspace: a switch for the
+  whole workspace (Workspace settings, "Personal memory"; off hides and
+  refuses the chat's "save formula" and locks the agents' switches) and a
+  switch per agent on its Memory tab. The workspace's main agent starts on,
+  every other agent off, and a new main agent is switched on when it takes
+  over. An agent with a memory pool of its own uses both: its own pool stays
+  the primary one, `recall` searches both, writes go to its own pool, and
+  `remember`/`forget` take `personal=true` to write about the user into the
+  personal pool. The build override is `personal_pool`; a pinned
+  `memory_pool` (the Memory page, a deployment's task pools) still replaces
+  both. The agent card, the overview and the Memory page's agent list show
+  the two pools together. Personal pools are visible to their owner only.
+
+### Changed
+
+- The memory section is called Memory instead of Shared Memory (Память,
+  Speicher) in the navigation, the page, the dashboard card and the agent's
+  memory tab, in all three languages.
+- The two seeded memory blocks, persona and user, show their captions in the
+  person's language; a block someone added keeps the caption it was given.
+- The memory page's pool list and pool card end on the same line as the chat
+  column beside them (one measurement, `useColumnHeight`), and the graph's
+  visual view fills the card instead of growing past the screen.
+- Every process keeps langchain_core from importing transformers and torch
+  when it only needs a tokenizer check (common/import_guards.py), which cut
+  the backend's and every runner's start time.
+
+### Fixed
+
+- The memory card of an agent's overview says whether personal memory is in
+  use: on and remembering the user, on but replaced by the agent's own pool,
+  off, or off for the whole workspace. Before, an agent with personal memory
+  and no pool of its own read "No memory". Switching it on the Memory tab
+  updates the overview at once.
+- Agent Connections on the Memory page counted nobody on the personal pool,
+  since it only counted pools assigned to agents. It now counts the agents
+  that reach the personal pool through the workspace's personal memory switch
+  (on, with no pool of their own) and shows them as connected (personal).
+  Pool usage reads "1 agent", not "1 agents".
+
 ## [0.2.0] - 2026-09-30
 
 ### Added

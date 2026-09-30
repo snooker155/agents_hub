@@ -119,6 +119,42 @@ const authFetchHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+// Identical GETs already on the wire share one request. StrictMode mounts
+// every effect twice in development, and several components load the same
+// list at the same moment, so without this each page load fires its reads
+// in pairs. The key includes the credential, so a login mid-flight never
+// hands one person's answer to another. A call with an AbortSignal is left
+// alone: aborting a shared request would cancel it for everybody. Each
+// joiner gets its own copy of `data`, so a caller that sorts or edits its
+// result in place cannot change what another caller sees.
+const inflightGets = new Map();
+const sendGet = api.get.bind(api);
+
+const copyResponse = (response) => {
+  try {
+    return { ...response, data: structuredClone(response.data) };
+  } catch {
+    return response;
+  }
+};
+
+api.get = (url, config = {}) => {
+  if (config.signal) return sendGet(url, config);
+  let key;
+  try {
+    key = JSON.stringify([
+      url, config.params ?? null, config.headers ?? null, config.responseType ?? null, activeToken(),
+    ]);
+  } catch {
+    return sendGet(url, config);
+  }
+  const shared = inflightGets.get(key);
+  if (shared) return shared.then(copyResponse);
+  const request = sendGet(url, config).finally(() => inflightGets.delete(key));
+  inflightGets.set(key, request);
+  return request;
+};
+
 api.interceptors.request.use((config) => {
   const token = activeToken();
   if (token) {
@@ -385,6 +421,11 @@ export const getAgentDelegates = (id) => api.get(`/agents/${id}/delegates`);
 export const updateAgentDelegates = (id, delegates) => api.post(`/agents/${id}/delegates`, { delegates });
 export const getAgentEpisodicConfig = (id) => api.get(`/agents/${id}/episodic-config`);
 export const updateAgentEpisodicConfig = (id, episodic_write_enabled) => api.post(`/agents/${id}/episodic-config`, { episodic_write_enabled });
+export const getAgentPersonalMemory = (id, workspace) => api.get(`/agents/${id}/personal-memory`, { params: workspace ? { workspace } : {} });
+export const updateAgentPersonalMemory = (id, enabled, workspace) => api.post(`/agents/${id}/personal-memory`, { enabled }, { params: workspace ? { workspace } : {} });
+// Personal memory in a workspace: its switch and each agent's (memory/personal.py).
+export const getWorkspacePersonalMemory = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/personal-memory`);
+export const updateWorkspacePersonalMemory = (name, enabled) => api.put(`/workspaces/${encodeURIComponent(name)}/personal-memory`, { enabled });
 export const getAgentReasoning = (id) => api.get(`/agents/${id}/reasoning`);
 export const updateAgentReasoning = (id, data) => api.post(`/agents/${id}/reasoning`, data);
 export const updateAgentResponseFormat = (id, response_format) => api.post(`/agents/${id}/response-format`, { response_format });
@@ -634,6 +675,8 @@ export const upsertMemoryBlock = (id, name, data) =>
 export const deleteMemoryBlock = (id, name) =>
   api.delete(`/shared-memory/${id}/blocks/${encodeURIComponent(name)}`);
 export const addMemoryNote = (id, data) => api.post(`/shared-memory/${id}/notes`, data);
+// A note in the caller's own personal pool, created on first use.
+export const addPersonalMemoryNote = (data) => api.post('/shared-memory/personal/notes', data);
 export const updateMemoryNote = (id, noteId, data) => api.put(`/shared-memory/${id}/notes/${noteId}`, data);
 export const deleteMemoryNote = (id, noteId) => api.delete(`/shared-memory/${id}/notes/${noteId}`);
 export const upsertMemoryStructuredSlot = (id, slot, data) => api.put(`/shared-memory/${id}/structured/${encodeURIComponent(slot)}`, data);

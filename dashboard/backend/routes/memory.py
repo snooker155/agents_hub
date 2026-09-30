@@ -12,6 +12,7 @@ from uuid import UUID
 
 from memory.store import MemoryStore
 from memory.models import SharedMemory
+from memory import personal
 from models import (
     MemoryCreate,
     MemoryNoteAdd, MemoryNoteUpdate,
@@ -36,8 +37,18 @@ def _require_pool_visible(request: Request, mem: SharedMemory) -> None:
     common/access.py gives a workspace-less record generally.
     """
     principal = identity.request_principal(request)
-    if not access.can_see_workspace(principal, mem.workspace):
+    if not _pool_visible(principal, mem):
         raise HTTPException(status_code=403, detail="Memory pool not visible to this account")
+
+
+def _pool_visible(principal, mem: SharedMemory) -> bool:
+    """The workspace rule, plus: a personal pool (memory/personal.py) is its
+    owner's, and an admin's, and nobody else's."""
+    if not access.can_see_workspace(principal, mem.workspace):
+        return False
+    if mem.kind == personal.PERSONAL_KIND and mem.owner_user:
+        return access.owner_or_admin(principal, mem.owner_user)
+    return True
 
 
 def _persist_mem(store: MemoryStore, mem: SharedMemory) -> SharedMemory:
@@ -82,7 +93,7 @@ async def list_shared_memory(request: Request, workspace: Optional[str] = None):
     if workspace:
         memories = [m for m in memories if (m.workspace or "") == workspace]
     principal = identity.request_principal(request)
-    memories = [m for m in memories if access.can_see_workspace(principal, m.workspace)]
+    memories = [m for m in memories if _pool_visible(principal, m)]
     return [_mem_dump(m) for m in memories]
 
 
@@ -92,6 +103,40 @@ async def create_shared_memory(data: MemoryCreate):
     mem = SharedMemory(name=data.name, description=data.description, type=data.type, workspace=data.workspace)
     store.add(mem)
     return _mem_dump(mem)
+
+
+class PersonalNoteAdd(BaseModel):
+    title: str
+    content: str
+    workspace: Optional[str] = None
+
+
+@router.post("/personal/notes")
+async def add_personal_note(data: PersonalNoteAdd, request: Request):
+    """A note in the caller's own personal pool (memory/personal.py), created
+    on first use: "save to memory" on a formula or a reply in the chat. Declared
+    before the ``/{memory_id}`` routes, which would otherwise take ``personal``
+    for a pool id."""
+    title = (data.title or "").strip()
+    if not title or not (data.content or "").strip():
+        raise HTTPException(status_code=422, detail="A note needs a title and content")
+    if title.startswith("journal:"):
+        raise HTTPException(status_code=403, detail="Journal entries are read-only and cannot be created manually")
+    workspace = (data.workspace or "default").strip() or "default"
+    access.require_visible(identity.request_principal(request), workspace)
+    if not personal.workspace_enabled(workspace):
+        raise HTTPException(status_code=409, detail=f"Personal memory is off in workspace '{workspace}'")
+    mem = personal.ensure_pool(identity.current_user_id(), workspace)
+    from uuid import uuid4
+    note = {
+        "id": str(uuid4()),
+        "title": title,
+        "content": data.content,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    mem.notes.append(note)
+    _persist_mem(MemoryStore(), mem)
+    return {"memory_id": str(mem.id), "note": note}
 
 
 @router.get("/rag-config")

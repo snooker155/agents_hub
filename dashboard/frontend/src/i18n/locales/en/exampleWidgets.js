@@ -17,7 +17,7 @@ export default {
     remember: {
       q: 'Remember our deploy target is staging-eu.',
       tool: 'remember',
-      a: 'Saved to shared memory under the slot **deploy = { target: "staging-eu" }**. I’ll recall it on future tasks in this workspace.',
+      a: 'Saved to memory under the slot **deploy = { target: "staging-eu" }**. I’ll recall it on future tasks in this workspace.',
     },
   },
   howWorkspacesNest: 'how workspaces nest',

@@ -5,10 +5,11 @@ import { useState, useEffect } from 'react';
 import {
   Database, Save, X, Users, RefreshCw, CheckCircle, Link2, BarChart2,
 } from 'lucide-react';
-import { getAgents, updateAgentMemory } from '../../api';
+import { getAgents, getWorkspacePersonalMemory, updateAgentMemory } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
 import { agentPools } from './helpers';
+import PageLoader from '../PageLoader';
 
 function AgentsTab({ memories, workspaceFilter }) {
   const { t } = useI18n();
@@ -19,6 +20,8 @@ function AgentsTab({ memories, workspaceFilter }) {
   const [selectedPoolId, setSelectedPoolId] = useState('');   // primary (write) pool
   const [selectedExtraIds, setSelectedExtraIds] = useState([]); // read-only pools
   const [saving, setSaving] = useState(false);
+  // The workspace's personal memory settings: {enabled, agents: {id: bool}}.
+  const [personal, setPersonal] = useState(null);
 
   useEffect(() => {
     const load = async () => {
@@ -31,6 +34,15 @@ function AgentsTab({ memories, workspaceFilter }) {
     };
     load();
   }, [workspaceFilter, t, toast]);
+
+  const ws = workspaceFilter || 'default';
+  useEffect(() => {
+    let alive = true;
+    getWorkspacePersonalMemory(ws)
+      .then(({ data }) => { if (alive) setPersonal(data || null); })
+      .catch(() => { if (alive) setPersonal(null); });
+    return () => { alive = false; };
+  }, [ws]);
 
   const poolById = Object.fromEntries(memories.map(m => [m.id, m]));
 
@@ -53,18 +65,23 @@ function AgentsTab({ memories, workspaceFilter }) {
     } finally { setSaving(false); }
   };
 
-  const agentsWithMemory = agents.filter(a => agentPools(a).length > 0);
+  // The personal pool is not assigned to agents: an agent reaches it through
+  // the workspace's personal memory switch, next to any pool of its own
+  // (memory/personal.py resolve). Count those agents as its users.
+  const personalPool = memories.find(m => m.kind === 'personal' && (m.workspace || 'default') === ws) || null;
+  const personalName = personalPool ? personalPool.name : t('memoryManager.personalMemory');
+  const usesPersonal = (a) => !!(personal?.enabled && personal.agents?.[a.id]);
+  const agentsWithMemory = agents.filter(a => agentPools(a).length > 0 || usesPersonal(a));
   const poolUsage = {};
   agentsWithMemory.forEach(a => {
     agentPools(a).forEach(pid => {
       poolUsage[pid] = (poolUsage[pid] || 0) + 1;
     });
+    if (usesPersonal(a) && personalPool) poolUsage[personalPool.id] = (poolUsage[personalPool.id] || 0) + 1;
   });
 
   if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
-    </div>
+    <PageLoader size="sm" />
   );
 
   return (
@@ -131,13 +148,14 @@ function AgentsTab({ memories, workspaceFilter }) {
             <tbody className="divide-y divide-gray-100">
               {agents.map(a => {
                 const pools = agentPools(a);
+                const viaPersonal = usesPersonal(a);
                 const primaryPool = pools[0] ? poolById[pools[0]] : null;
                 const extraPools = pools.slice(1);
+                const connected = pools.length + (viaPersonal ? 1 : 0);
                 return (
                   <tr key={a.id} className="hover:bg-gray-50">
                     <td className="px-5 py-3">
                       <p className="font-medium text-gray-900">{a.name || a.id}</p>
-                      <p className="text-xs text-gray-400">{a.domain || '—'}</p>
                     </td>
                     <td className="px-5 py-3">
                       {pools.length > 0 ? (
@@ -153,15 +171,20 @@ function AgentsTab({ memories, workspaceFilter }) {
                               + {extraPools.map(pid => poolById[pid]?.name || pid).join(', ')} (read-only)
                             </p>
                           )}
+                          {viaPersonal && (
+                            <p className="text-xs text-indigo-500 mt-0.5">+ {personalName} ({t('memoryManager.viaPersonal')})</p>
+                          )}
                         </div>
+                      ) : viaPersonal ? (
+                        <p className="font-medium text-indigo-700">{personalName}</p>
                       ) : (
                         <span className="text-gray-400 text-xs italic">{t('memoryManager.none')}</span>
                       )}
                     </td>
                     <td className="px-5 py-3">
-                      {pools.length > 0 ? (
+                      {pools.length > 0 || viaPersonal ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium">
-                          <CheckCircle className="w-3 h-3" /> Connected{pools.length > 1 ? ` ×${pools.length}` : ''}
+                          <CheckCircle className="w-3 h-3" /> Connected{connected > 1 ? ` ×${connected}` : ''}{viaPersonal ? ` (${t('memoryManager.viaPersonal')})` : ''}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">

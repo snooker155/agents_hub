@@ -28,3 +28,11 @@ current_agent_id: ContextVar[Optional[str]] = ContextVar("current_agent_id", def
 # id, and the pipeline injects a compact scene-context note so the agent knows
 # what it is editing.
 current_view_id: ContextVar[Optional[str]] = ContextVar("current_view_id", default=None)
+
+# The view a run made for itself. A mutable holder ({"id": ...}) installed per
+# agent run (chat pipeline, run_agent_tool) rather than a plain value: tools run
+# in copies of the run's context, so a value set inside ``create_view`` would be
+# gone by the next tool call, while a change to the shared dict is not. Lets an
+# agent with no Studio binding create a view and then build it with the mutation
+# tools without passing its id to every call. None outside such a run.
+current_view_binding: ContextVar[Optional[dict]] = ContextVar("current_view_binding", default=None)

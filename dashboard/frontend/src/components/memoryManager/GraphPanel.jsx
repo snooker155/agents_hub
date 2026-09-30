@@ -174,8 +174,10 @@ function GraphPanel({ poolId, stats, onChange }) {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-3">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+    // The visual view scales its canvas to the room left under the toolbar
+    // rather than scrolling; the list view scrolls.
+    <div className={`flex-1 min-h-0 flex flex-col p-4 gap-3 ${view === 'visual' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className="flex items-center justify-between gap-3 flex-wrap shrink-0">
         <div className="text-xs text-gray-500">
           {t('memoryManager.nodesAndEdges', { nodes: nodes.length, edges: edges.length })}
           {stats?.node_cap && ` · ${t('memoryManager.capPair', { nodes: stats.node_cap, edges: stats.edge_cap })}`}
@@ -449,8 +451,10 @@ function GraphVisual({ nodes, edges, allTypes }) {
   }, [nodes, edges]);
 
   return (
-    <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minHeight: 360 }}>
+    <div className="flex-1 min-h-0 border border-gray-200 rounded-lg bg-white overflow-hidden" style={{ minHeight: 280 }}>
+      {/* Fills the room the card leaves under the toolbar, whatever its width:
+          the drawing keeps its proportions inside that box. */}
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="block w-full h-full">
         <defs>
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />

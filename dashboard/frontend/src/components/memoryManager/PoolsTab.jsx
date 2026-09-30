@@ -18,9 +18,11 @@ import { SlotValue } from '../SlotValue';
 import { coerceSlotValue, isSlotContainer } from '../slotUtils';
 import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
+import { isPersonalPool, poolDescription, poolName } from './helpers';
 import { DEFAULT_BLOCK_NAMES, fmt } from './helpers';
 import { EpisodesPanel } from './EpisodesPanel';
 import { GraphPanel } from './GraphPanel';
+import { useColumnHeight } from '../ChatColumn';
 import { MemoryHistoryPanel } from './MemoryHistoryPanel';
 
 function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
@@ -128,7 +130,18 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   // rather than a formality: the counter turns red before the save is refused.
   const blocks = selected?.blocks || [];
   const blockValue = (b) => (blockDrafts[b.name] !== undefined ? blockDrafts[b.name] : (b.value || ''));
+  // Both columns of this tab measure the screen the way the chat column does,
+  // so all three end on one line; a custom property keeps the small-screen
+  // layout (no cap) untouched.
+  const { ref: listRef, height: listHeight } = useColumnHeight();
+  const { ref: cardRef, height: cardHeight } = useColumnHeight();
+  const columnStyle = (h) => (h ? { '--column-height': `${h}px` } : undefined);
   const isDefaultBlock = (name) => DEFAULT_BLOCK_NAMES.includes(name);
+  // The captions memory/models.py seeds the two default blocks with, verbatim.
+  const SEEDED_CAPTIONS = {
+    persona: 'Who you are in this pool: your role, your tone, the standing instructions you have accepted. Keep it short and current.',
+    user: 'Facts about the user you are working with: name, role, preferences, what they are working on.',
+  };
 
   const setBlockDraft = (name, value) => setBlockDrafts(prev => ({ ...prev, [name]: value }));
 
@@ -360,7 +373,8 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
        Fractional columns would have resized both every time. */
     <div className="grid grid-cols-1 lg:grid-cols-[16rem_minmax(0,1fr)] gap-6 items-start">
       {/* Pool List */}
-      <div className="self-start lg:max-h-[calc(100vh-12rem)] bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+      <div ref={listRef} style={columnStyle(listHeight)}
+           className="self-start lg:max-h-[var(--column-height)] bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50">
           <h3 className="font-semibold text-gray-700 flex items-center gap-2">
             <Database className="w-4 h-4 text-indigo-500" /> Memory Pools
@@ -380,8 +394,15 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
               className={`p-3 cursor-pointer hover:bg-indigo-50 transition-colors flex items-center justify-between ${selected?.id === m.id ? 'bg-indigo-50 border-l-4 border-indigo-500' : ''}`}
             >
               <div className="min-w-0 flex-1">
-                <p className="font-medium text-gray-900 text-sm truncate">{m.name}</p>
-                <p className="text-xs text-gray-500 truncate">{m.description || t('memoryManager.noDescription')}</p>
+                <p className="font-medium text-gray-900 text-sm truncate flex items-center gap-1.5">
+                  <span className="truncate">{poolName(m, t)}</span>
+                  {isPersonalPool(m) && (
+                    <span className="shrink-0 text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium" title={t('memoryManager.personalHint')}>
+                      {t('memoryManager.personal')}
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs text-gray-500 truncate">{poolDescription(m, t) || t('memoryManager.noDescription')}</p>
                 {(() => {
                   const all = m.notes || [];
                   const journalCount = all.filter(n => n.title?.startsWith('journal:')).length;
@@ -407,15 +428,19 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
       </div>
 
       {/* Pool Detail */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col min-h-[500px] min-w-0">
+      {/* Ends on the same line as the pool list and the chat column beside it
+          (the same measurement, useColumnHeight), so a tab's content, the
+          graph's canvas above all, fits the screen and scrolls or scales inside. */}
+      <div ref={cardRef} style={columnStyle(cardHeight)}
+           className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col min-h-[500px] lg:max-h-[var(--column-height)] min-w-0">
         {selected ? (
           <>
             {/* Pool header */}
             <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">{selected.name}</h2>
+                <h2 className="text-lg font-bold text-gray-900">{poolName(selected, t)}</h2>
                 <p className="text-xs text-gray-400 mt-0.5">{selected.id}</p>
-                {selected.description && <p className="text-sm text-gray-600 mt-1">{selected.description}</p>}
+                {poolDescription(selected, t) && <p className="text-sm text-gray-600 mt-1">{poolDescription(selected, t)}</p>}
               </div>
               <div className="flex gap-2">
                 <button
@@ -518,7 +543,17 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                               <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">{t('memoryManager.readOnly')}</span>
                             )}
                           </p>
-                          {block.description && <p className="text-xs text-gray-500 mt-0.5">{block.description}</p>}
+                          {/* The two seeded blocks carry an English caption from the
+                              backend (memory/models.py); while it is the seeded
+                              text the person reads it in their language. A caption
+                              someone changed, or a block someone added, is shown as is. */}
+                          {(isDefaultBlock(block.name) || block.description) && (
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {isDefaultBlock(block.name) && (!block.description || block.description === SEEDED_CAPTIONS[block.name])
+                                ? t(`memoryManager.blocks.defaults.${block.name}`)
+                                : block.description}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button

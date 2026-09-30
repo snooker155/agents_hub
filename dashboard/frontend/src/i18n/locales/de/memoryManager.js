@@ -1,5 +1,7 @@
 export default {
-  sharedMemory: 'Gemeinsamer Speicher',
+  personalMemory: 'Persönlicher Speicher',
+  viaPersonal: 'persönlich',
+  sharedMemory: 'Speicher',
   manageAgentMemoryPoolsRag: 'Speicher-Pools der Agenten, RAG-Indexierung und Datenzugriff verwalten.',
   tabs: {
     pools: 'Speicher-Pools',
@@ -17,6 +19,10 @@ export default {
   },
   blocks: {
     intro: 'Blöcke stehen immer im Prompt des Agenten: jeder Lauf beginnt mit diesem bereits gelesenen Text.',
+    defaults: {
+      persona: 'Wer Sie in diesem Pool sind: Ihre Rolle, Ihr Ton, die ständigen Anweisungen, die Sie angenommen haben. Kurz und aktuell.',
+      user: 'Fakten über die Person, mit der Sie arbeiten: Name, Rolle, Vorlieben, woran sie arbeitet.',
+    },
     addBlock: 'Block hinzufügen',
     newBlock: 'Neuer Block',
     name: 'Name',
@@ -146,6 +152,8 @@ export default {
   noAgentsRegistered: 'Keine Agenten registriert.',
   agent: 'Agent',
   agentCount: '{{count}} Agenten',
+  agentCount_one: '{{count}} Agent',
+  agentCount_other: '{{count}} Agenten',
   notesAndSlots: '{{notes}} Notizen · {{slots}} Slots',
   memoryPool: 'Speicher-Pool',
   status: 'Status',
@@ -157,7 +165,7 @@ export default {
   appliesInWorkspace: 'Gilt nur im Workspace „{{workspace}}“',
   primaryPool: 'Primärer Pool',
   allMemoryWritesGoTo: 'Alle Schreibvorgänge gehen in diesen Pool.',
-  noneNoSharedMemory: '— Keiner (kein gemeinsamer Speicher) —',
+  noneNoSharedMemory: '— Keiner (kein Speicher) —',
   additionalPools: 'Zusätzliche Pools (nur Lesen)',
   additionalPoolsHint: 'Werden bei Recall, Episoden und Graph-Traversal mitdurchsucht, aber nie beschrieben.',
   vectorDbStatus: 'Status der Vektor-DB',
@@ -210,7 +218,7 @@ export default {
     indexFile: 'Datei konnte nicht indexiert werden',
     deindexFile: 'Datei konnte nicht aus dem Index entfernt werden',
     deleteFile: 'Datei konnte nicht gelöscht werden',
-    loadMemories: 'Gemeinsamer Speicher konnte nicht geladen werden',
+    loadMemories: 'Speicher konnte nicht geladen werden',
     deleteEpisode: 'Episode konnte nicht gelöscht werden',
     deleteNode: 'Knoten konnte nicht gelöscht werden',
     deleteEdge: 'Kante konnte nicht gelöscht werden',
@@ -221,4 +229,7 @@ export default {
   chatSuggestSearch: 'Suche im Gedächtnis nach der Preisentscheidung',
   chatSuggestExtract: 'Extrahiere aus diesem Text, was erinnernswert ist',
   askChatPickPool: 'Wählen Sie links einen Pool und fragen Sie danach. Ist keiner offen, antwortet er aus dem Pool, der dem Agenten in diesem Workspace zugewiesen ist.',
+  personal: 'persönlich',
+  personalTitle: 'Mein persönlicher Speicher',
+  personalHint: 'Was Agenten in diesem Workspace über Sie erfahren haben. Nur Sie sehen ihn. Alle Agenten mit eingeschaltetem persönlichem Speicher lesen und ergänzen diesen einen Pool, standardmäßig ist das der Hauptagent des Workspace.',
 };

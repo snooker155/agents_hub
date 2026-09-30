@@ -1,6 +1,7 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { MessagesSquare } from 'lucide-react';
 import { usePageChatPanel } from './pageChat/pageChat';
+import { DOCK_RESIZE_EVENT, currentDockHeight } from './composerDockState';
 
 /**
  * The side-column chat layout: the page keeps working on the left, the agent
@@ -126,10 +127,21 @@ const MIN_HEIGHT = 320;
  * measuring that would grow the column a little further on every recalculation.
  * The parent row never sticks, so its top is stable.
  *
+ * A page with a composer dock (ComposerDock.jsx) keeps that dock at the
+ * bottom of the screen; the column ends above it, so the chat's own send
+ * button is never under the page's.
+ *
  * Below `lg` none of this applies: there is no column, so it takes a slice of
  * the viewport and sits in the normal flow under the page content.
  */
-export function ChatColumn({ children }) {
+/**
+ * The height left on the screen from the top of the element's parent row down
+ * to the floor (the window's bottom, or a composer dock), as a number of
+ * pixels or null before the first measurement. The column uses it, and so can
+ * a card that should end on the same line as the column beside it.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- see the note above `useChatColumn`.
+export function useColumnHeight() {
   const ref = useRef(null);
   const [height, setHeight] = useState(null);
 
@@ -141,16 +153,18 @@ export function ChatColumn({ children }) {
       const row = el.parentElement;
       if (!row) return;
       const top = row.getBoundingClientRect().top;
-      const available = window.innerHeight - Math.max(top, 0) - BOTTOM_GAP;
+      const floor = window.innerHeight - currentDockHeight();
+      const available = floor - Math.max(top, 0) - BOTTOM_GAP;
       // Capped as well as floored: if a recalculation lands while the page is
       // scrolled, the row's top is above the fold and `available` overshoots
       // the screen.
-      const capped = Math.min(available, window.innerHeight - BOTTOM_GAP * 2);
+      const capped = Math.min(available, floor - BOTTOM_GAP * 2);
       setHeight(Math.max(MIN_HEIGHT, capped));
     };
 
     measure();
     window.addEventListener('resize', measure);
+    window.addEventListener(DOCK_RESIZE_EVENT, measure);
     // What sits above the column can change height on its own — a banner
     // appears, a filter row wraps — and the column has to follow it.
     const observer = typeof ResizeObserver === 'undefined'
@@ -159,10 +173,16 @@ export function ChatColumn({ children }) {
     observer?.observe(document.body);
     return () => {
       window.removeEventListener('resize', measure);
+      window.removeEventListener(DOCK_RESIZE_EVENT, measure);
       observer?.disconnect();
     };
   }, []);
 
+  return { ref, height };
+}
+
+export function ChatColumn({ children }) {
+  const { ref, height } = useColumnHeight();
   return (
     <aside
       ref={ref}

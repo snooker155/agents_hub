@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp, Database, FileSearch, FileText, Hash, Layers, Loader, Zap } from 'lucide-react';
 import { fmtBytes } from './formatBytes';
 import { useI18n } from '../../i18n';
+import { poolDescription, poolName } from '../memoryManager/helpers';
 
 // ── Memory pool helpers ───────────────────────────────────────────────────────
 
@@ -141,12 +142,12 @@ function MemoryPoolDetails({ pool }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <Link2 className="w-4 h-4 text-indigo-500 shrink-0" />
-              <h3 className="font-bold text-gray-900">{pool.name}</h3>
+              <h3 className="font-bold text-gray-900">{poolName(pool, t)}</h3>
               <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
                 <CheckCircle className="w-3 h-3" /> {t('agentDetails.connected')}
               </span>
             </div>
-            {pool.description && <p className="text-sm text-gray-500 mt-1 ml-6">{pool.description}</p>}
+            {poolDescription(pool, t) && <p className="text-sm text-gray-500 mt-1 ml-6">{poolDescription(pool, t)}</p>}
             <p className="text-xs text-gray-400 mt-1 ml-6">{pool.id}</p>
           </div>
           <a href="/memory" className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-50 whitespace-nowrap flex items-center gap-1">

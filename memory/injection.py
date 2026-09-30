@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # Marker appended to a block rendered past its character limit, so the agent can
 # tell a block it is seeing in full from one it is seeing the head of.
@@ -42,7 +42,7 @@ def render_blocks(mem, *, header: str = "### Core memory blocks") -> List[str]:
     return lines
 
 
-def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], workspace: str | None = None, episodic_write: bool = True, pool_override: Any = None) -> Dict[str, Any]:
+def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], workspace: str | None = None, episodic_write: bool = True, pool_override: Any = None, personal_pool: Optional[str] = None) -> Dict[str, Any]:
     """Wire memory tools into an agent definition and append a capability hint to its system prompt.
 
     No pool data is included in the prompt — the agent discovers contents at runtime via tools.
@@ -50,7 +50,9 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
 
     The pool assignment is resolved for ``workspace`` — agent records shared
     across workspaces carry a separate assignment per workspace. ``pool_override``
-    pins it for this build instead (see ``memory.binding``).
+    pins it for this build instead (see ``memory.binding``). ``personal_pool``
+    is the user's personal pool, attached after the agent's own
+    (memory/personal.py).
 
     Returns the (possibly mutated) definition dict.
     """
@@ -71,7 +73,7 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
         t for t in tool_list if t not in _EXTRACTION_TOOLS
     ]
 
-    pools = effective_memory_pools(spec, workspace, pool_override)
+    pools = effective_memory_pools(spec, workspace, pool_override, personal_pool)
     if not pools:
         # An extraction agent without a pool gets an explicit notice instead of
         # a silent degradation — its instructions promise tools that won't bind.
@@ -82,6 +84,9 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
     # Primary pool first — writes go there; the rest are read-only context.
     pool_id = pools[0]
     extra_pools = pools[1:]
+    # The personal pool next to the agent's own is the one extra pool that
+    # takes writes, on request (remember/forget with personal=true).
+    personal_extra = str(personal_pool) if personal_pool and str(personal_pool) in extra_pools else None
 
     # Extraction agents declare the extraction tools explicitly: they get the
     # dedicated two-step pipeline (extract_from_text → save_extraction). A PURE
@@ -128,7 +133,10 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
         if not extra_pools else
         f"You have access to {len(pools)} shared memory pools. The first one is the PRIMARY pool — "
         f"all writes ({_write_list}) go there. The other pools are read-only "
-        "context that `recall`, `recall_episodes`, and `traverse` also search. Use these tools in order:"
+        "context that `recall`, `recall_episodes`, and `traverse` also search"
+        + (", except the user's personal memory, which `remember` and `forget` reach with `personal=true`"
+           if personal_extra else "")
+        + ". Use these tools in order:"
     )
     lines = [
         "\n\n## Shared Memory",
@@ -158,6 +166,16 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
     if not has_rag:
         lines.append("(RAG search is not configured — recall searches plain data only.)")
 
+    try:
+        from memory import personal
+        from memory.store import MemoryStore
+        if personal.is_personal(MemoryStore().get(pool_id)):
+            lines.insert(2, personal.PROMPT_NOTE)
+        elif personal_extra:
+            lines.insert(2, personal.PROMPT_NOTE_EXTRA)
+    except Exception:  # noqa: BLE001 - the note is guidance; the tools work without it
+        pass
+
     # Per-pool snapshots: structured slots + journal index, episode stats, and
     # graph stats — so the agent knows what exists without a blind recall.
     # Capability explanations (episodic/graph) are emitted once, with the
@@ -171,7 +189,9 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
                 _pname = _pmem.name if _pmem else pid
             except Exception:
                 _pname = pid
-            role = "PRIMARY — writes go here" if is_primary else "read-only context"
+            role = ("PRIMARY — writes go here" if is_primary
+                    else "the user's personal memory — write with personal=true" if pid == personal_extra
+                    else "read-only context")
             lines.append(f"\n### Pool: {_pname} ({role})")
 
         # Structured slots + journal index — inject names so agent knows what exists

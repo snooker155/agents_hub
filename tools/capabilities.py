@@ -113,6 +113,8 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # A memory block is pool content the agent reads back in full.
     "memory_block_read": frozenset({READS_PRIVATE}),
     "recall_episodes": frozenset({READS_PRIVATE}),
+    # Walks the pool's knowledge graph and returns what it finds.
+    "traverse": frozenset({READS_PRIVATE}),
 
     # ── task / db reads ──────────────────────────────────────────────────────
     "get_task": frozenset({READS_PRIVATE}),
@@ -264,6 +266,8 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # memory writers — write into pools, never out of the system
     "write_structured_memory", "append_journal", "remember", "record_episode",
     "memory_block_append", "memory_block_replace",
+    # and their counterparts: forget deletes from the pool, link adds a graph edge
+    "forget", "link",
     # skills. read_skill_file reads only the files listed in one attached
     # skill's own folder (.claude/skills/<name>/), material the workspace
     # published as part of that skill, the same way get_skill returns its
