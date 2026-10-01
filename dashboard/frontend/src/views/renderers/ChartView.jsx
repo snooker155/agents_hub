@@ -92,9 +92,28 @@ export default function ChartView({ view, theme }) {
     // chart into a skyscraper. Landscape is the readable default for a plot.
     const boxHeight = Math.min(ref.current.clientHeight - 4, Math.round(ref.current.clientWidth * 0.6));
     const fitHeight = !composed && spec.height == null && boxHeight >= 200;
-    const embedSpec = fitHeight
-      ? { ...spec, autosize: spec.autosize || { type: 'fit', contains: 'padding' } }
-      : spec;
+    // The chart sits on its card: no slab of its own under the plot. A spec
+    // that names a background (a model often writes "white") is overridden
+    // too, since on a dark card that slab is exactly the thing to avoid; the
+    // dark vega theme recolours axes, labels and legend for the dark card.
+    //
+    // Width is the spec's business, not the embed's: vega-embed hands its
+    // `width` option to `view.width()`, which takes a number, so 'container'
+    // there is ignored and a bar chart with a discrete axis falls back to
+    // Vega-Lite's 20px step per bar, a sliver at the left of the card. On the
+    // spec, 'container' is how Vega-Lite itself fills the element (single and
+    // layered views; concat, facet and repeat size their children instead).
+    //
+    // The measured height goes on the spec for the same reason: a discrete
+    // axis (bars by category) sizes that dimension by band step, and only a
+    // number in the spec makes the bands fill the number instead.
+    const fillsWidth = !['vconcat', 'hconcat', 'concat', 'facet', 'repeat'].some((k) => k in spec);
+    const embedSpec = {
+      ...spec,
+      background: 'transparent',
+      ...(fillsWidth && spec.width == null ? { width: 'container' } : {}),
+      ...(fitHeight ? { height: boxHeight, autosize: spec.autosize || { type: 'fit', contains: 'padding' } } : {}),
+    };
 
     (async () => {
       try {
@@ -103,9 +122,10 @@ export default function ChartView({ view, theme }) {
         result = await embed(ref.current, embedSpec, {
           actions: { export: true, source: false, compiled: false, editor: false },
           theme: theme === 'dark' ? 'dark' : undefined,
+          // vega-themes' dark sets its own #333 background; the spec's
+          // transparent background above wins over config, so the card shows.
+          config: { background: 'transparent' },
           renderer: 'canvas',
-          width: 'container',
-          ...(fitHeight ? { height: boxHeight } : {}),
         });
         if (timebase) {
           vegaViewRef.current = result.view;

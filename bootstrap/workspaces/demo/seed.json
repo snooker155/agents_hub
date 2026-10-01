@@ -113,10 +113,15 @@
               {"category": "Maps", "revenue": 645.0}
             ]
           },
-          "mark": "bar",
+          "mark": {"type": "bar", "cornerRadiusEnd": 4, "height": {"band": 0.7}},
           "encoding": {
-            "x": {"field": "category", "type": "nominal"},
-            "y": {"field": "revenue", "type": "quantitative", "aggregate": "sum"}
+            "y": {"field": "category", "type": "nominal", "sort": "-x", "title": null},
+            "x": {"field": "revenue", "type": "quantitative", "aggregate": "sum", "title": "Revenue, USD", "axis": {"grid": true, "tickCount": 5}},
+            "color": {"field": "category", "type": "nominal", "legend": null},
+            "tooltip": [
+              {"field": "category", "type": "nominal", "title": "Category"},
+              {"field": "revenue", "type": "quantitative", "aggregate": "sum", "title": "Revenue, USD", "format": ",.0f"}
+            ]
           }
         }
       },

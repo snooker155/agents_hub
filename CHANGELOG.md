@@ -44,6 +44,19 @@ turns that section into the next release.
   seed merges, never revokes) and receives the handoff and delegate lists on
   its next start: `handoffs` is now a seed-owned field of system agents.
 
+### Fixed
+
+- A chart view follows the theme: it is drawn on its card with no slab of its
+  own (a spec that names a background is overridden), the dark vega theme
+  recolours axes, labels and legend, and a theme toggle re-embeds every view
+  instead of leaving it in the palette it mounted with
+  (`lib/themeColors.js: useAppliedMode`).
+- A chart fills its card. The renderer put `width: 'container'` and the
+  measured height on vega-embed's options, which hands them to the Vega view
+  as numbers, so a chart with a category axis fell back to Vega-Lite's 20px
+  band step: a sliver at the corner of the card. Both now go on the spec,
+  where Vega-Lite sizes the bands to them. The demo's sales chart is a sorted
+  horizontal bar chart with a titled axis and tooltips.
 
 ## [0.8.0] - 2026-09-30
 
