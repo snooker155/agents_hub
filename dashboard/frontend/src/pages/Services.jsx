@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Cpu, Globe, Loader, Pause, Play, RefreshCw, Rocket, Trash2, AlertTriangle } from 'lucide-react';
+import { Cpu, Globe, Pause, Play, RefreshCw, Rocket, Trash2, AlertTriangle } from 'lucide-react';
 
 import { deleteService, getServices, pauseService, resumeService } from '../api';
 import DeployServiceModal from '../components/services/DeployServiceModal';
@@ -9,6 +9,7 @@ import { useLiveRefetch } from '../components/stream';
 import { getChatRoute } from '../api';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 /*
  * Services: agents kept running as replicas (docs/services.md).
@@ -154,9 +155,7 @@ export default function Services() {
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {loading && !items.length ? (
-          <div className="p-8 text-center text-sm text-gray-400 inline-flex items-center gap-2 w-full justify-center">
-            <Loader className="w-4 h-4 animate-spin" />{t('services.loading')}
-          </div>
+          <PageLoader label={t('services.loading')} />
         ) : !items.length ? (
           <div className="p-8 text-center">
             <Cpu className="w-8 h-8 text-gray-300 mx-auto mb-2" />

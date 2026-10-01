@@ -22,6 +22,7 @@ import {
   inputClass, BASE_ACTIONS, VALUE_TYPES, ARG_TYPES, blankAction, worldPayload,
   problemText, apiMessage, genericRole, genericGrants,
 } from './playground/world-spec';
+import PageLoader from '../components/PageLoader';
 
 /**
  * The world editor.
@@ -194,9 +195,7 @@ export default function PlaygroundWorld() {
   if (loading) {
     return (
       <PageContainer>
-        <div className="flex items-center gap-2 text-sm text-gray-500 py-10">
-          <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-        </div>
+        <PageLoader size="lg" />
       </PageContainer>
     );
   }

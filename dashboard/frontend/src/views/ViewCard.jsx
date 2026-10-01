@@ -92,8 +92,12 @@ function Modal({ children, onClose, title, fill = false }) {
 
 // `actions` — extra header buttons (rendered before snapshot/expand) so hosts
 // like the Views gallery don't have to overlay their own controls on the card.
-// `compact` — a fixed body height for dense grid layouts, so cards line up.
-// `className` — extra classes on the root (a grid cell passes `flex-1 min-h-0`).
+// `compact` — a fixed card height (420px, header included) for dense grid
+// layouts (the Views gallery): every card is the same height whatever the
+// window width, a
+// text kind (document, markdown, table) scrolls inside its body, a fill kind
+// (chart, scene, html) scales to the body.
+// `className` — extra classes on the root.
 export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, className = '' }) {
   const { t } = useI18n();
   const viewId = viewRef?.view_id;
@@ -129,7 +133,7 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
   }, [t, viewId]);
 
   return (
-    <div className={`${embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''} ${className}`}>
+    <div className={`${embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''} ${compact ? 'flex flex-col h-[420px]' : ''} ${className}`}>
       <div className="flex items-start justify-between gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-start gap-2 min-w-0">
           <KindIcon kind={kind} className="w-4 h-4 mt-0.5 text-indigo-600 flex-shrink-0" />
@@ -179,15 +183,16 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
         </div>
       </div>
 
-      {/* No padding: the preview is the card. A fill kind (html, a scene, a
-          chart) takes the whole body, however tall the row stretched it, so
-          nothing sits under the frame; a content kind scrolls inside the
-          fixed body a compact card has. */}
+      {/* No padding: the preview is the card. In a compact card the body is
+          whatever the fixed card height leaves under the header: a fill kind
+          (html, a scene, a chart) scales to it, a content kind scrolls inside
+          it. Elsewhere a fill kind takes the whole body the host gives it and
+          a content kind sizes to its content. */}
       <div
         ref={bodyRef}
-        className={`view-card-body ${fillBody
-          ? `flex-1 min-h-0 flex flex-col overflow-hidden ${compact ? 'min-h-[360px]' : ''}`
-          : (compact ? 'h-72 overflow-auto flex-1' : '')}`}
+        className={`view-card-body ${compact
+          ? `flex-1 min-h-0 ${fillBody ? 'flex flex-col overflow-hidden' : 'overflow-auto'}`
+          : (fillBody ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : '')}`}
       >
         {loading && <div className="text-sm text-gray-400 py-4 text-center">{t('viewViewCard.loadingView')}</div>}
         {error && (

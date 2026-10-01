@@ -16,6 +16,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { CopyButton, SetupSnippet } from '../components/ConnectionSetup';
 import { useI18n } from '../i18n';
 import { useWorkspace } from '../components/workspace';
+import PageLoader from '../components/PageLoader';
 
 /**
  * Connections: agents that run somewhere else, on their own trigger, and report
@@ -312,7 +313,7 @@ export default function Connections() {
       {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
 
       {loading ? (
-        <p className="text-sm text-gray-400">{t('connections.loading')}</p>
+        <PageLoader label={t('connections.loading')} />
       ) : connections.length === 0 ? (
         <EmptyState onCreate={() => setCreating(true)} />
       ) : (

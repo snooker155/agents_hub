@@ -18,6 +18,7 @@ import { KindIcon } from '../views/ViewCard';
 
 import { AppBar } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 // The dedicated page for a single view — the whole content at full size, not a
 // preview. The Studio is where a view is *edited* (outliner, chat, op history);
 // this is where it is *read*: the renderer gets the entire viewport, the view's
@@ -254,7 +255,7 @@ export default function ViewDetail() {
             padding: text run to the edge of a card is unreadable. */}
         <div ref={viewportRef}
              className={`flex-1 min-w-0 overflow-auto bg-gray-50 dark:bg-gray-950 ${flush ? '' : 'p-4'}`}>
-          {loading && <div className="h-full grid place-items-center text-gray-400">{t('viewDetail.loadingView')}</div>}
+          {loading && <div className="h-full grid place-items-center"><PageLoader size="sm" label={t('viewDetail.loadingView')} /></div>}
           {error && !loading && (
             <div className="h-full grid place-items-center">
               <div className="text-center">

@@ -15,6 +15,7 @@ import { useLiveRefetch } from '../components/stream';
 import { useWorkspace } from '../components/workspace';
 import { ReplicasCell, StatusPill } from './Services';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 /*
  * One service: its desired state, the replicas realising it, its public
@@ -219,7 +220,7 @@ export default function ServiceDetail() {
   };
 
   if (loading) {
-    return <PageContainer><div className="p-8 text-center text-sm text-gray-400">{t('services.loading')}</div></PageContainer>;
+    return <PageContainer><PageLoader size="lg" label={t('services.loading')} /></PageContainer>;
   }
   if (!service) {
     return (

@@ -41,7 +41,6 @@ import {
   ShieldCheck,
   Compass,
   ScrollText,
-  Loader2,
   FileText,
   ClipboardCheck,
   Gauge,
@@ -80,6 +79,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getDoc } from '../api';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 // ---------------------------------------------------------------------------
 // Docs — an in-app documentation hub with its own left-hand section nav.
 // Content is authored as JSX (rather than markdown files) so interactive
@@ -618,10 +618,7 @@ function ChangelogDoc() {
   if (error) return <Callout tone="warn">{t('docs.changelogError', { error })}</Callout>;
   if (!doc) {
     return (
-      <p className="flex items-center gap-2 text-sm text-gray-500">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        {t('docs.changelogLoading')}
-      </p>
+      <PageLoader size="sm" label={t('docs.changelogLoading')} />
     );
   }
   return (
@@ -654,10 +651,7 @@ function CorpusRef({ id }) {
       <div className="px-4 pb-4">
         {error && <Callout tone="warn">{t('docs.fullReferenceError', { error })}</Callout>}
         {!error && !doc && (
-          <p className="flex items-center gap-2 text-sm text-gray-500">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            {t('docs.fullReferenceLoading')}
-          </p>
+          <PageLoader size="sm" label={t('docs.fullReferenceLoading')} />
         )}
         {doc && <Markdown remarkPlugins={[remarkGfm]} components={CORPUS_COMPONENTS}>{doc.content}</Markdown>}
       </div>

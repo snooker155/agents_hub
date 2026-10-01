@@ -6,6 +6,7 @@ import { useWorkspace } from '../components/workspace';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const PROVIDERS = [
   { value: '', labelKey: 'agentFlows.providers.inherit' },
   { value: 'openai', label: 'OpenAI' },
@@ -365,8 +366,8 @@ const AgentFlows = () => {
         <div>
 
           {loading ? (
-            <div className="flex min-h-[280px] items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-              {t('agentFlows.loadingFlows')}
+            <div className="flex min-h-[280px] items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50">
+              <PageLoader size="sm" label={t('agentFlows.loadingFlows')} />
             </div>
           ) : visibleFlows.length === 0 ? (
             <div className="flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">

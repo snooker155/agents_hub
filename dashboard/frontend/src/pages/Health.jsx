@@ -18,6 +18,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
+import PageLoader from '../components/PageLoader';
 
 /**
  * Health — the service looking at itself.
@@ -225,7 +226,7 @@ function DiagnosticsSection() {
         </button>
       </div>
       {loading ? (
-        <p className="text-sm text-gray-500">{t('health.diagnostics.running')}</p>
+        <PageLoader size="sm" label={t('health.diagnostics.running')} />
       ) : checks.length === 0 ? (
         <p className="text-sm text-gray-400 italic">{t('health.diagnostics.noChecks')}</p>
       ) : (
@@ -427,9 +428,7 @@ function SystemWorkspaceCard() {
   if (loading) {
     return (
       <Card icon={GitBranch} title={t('health.system.title')}>
-        <p className="text-sm text-gray-500 flex items-center gap-2">
-          <Loader className="w-4 h-4 animate-spin" /> {t('health.loading')}
-        </p>
+        <PageLoader size="sm" label={t('health.loading')} />
       </Card>
     );
   }
@@ -671,9 +670,7 @@ export default function Health() {
         <SystemWorkspaceCard />
       </div>
       {loading ? (
-        <div className="p-6 text-sm text-gray-500 flex items-center gap-2">
-          <Loader className="w-4 h-4 animate-spin" /> {t('health.loading')}
-        </div>
+        <PageLoader label={t('health.loading')} />
       ) : (
         <div className={`grid grid-cols-1 gap-4 ${chat.open ? 'xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
           <Card icon={Database} title={t('health.database')} tone={db.reachable ? 'default' : 'bad'}>

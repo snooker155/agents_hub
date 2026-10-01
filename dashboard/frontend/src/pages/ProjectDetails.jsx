@@ -636,7 +636,7 @@ export default function ProjectDetails() {
                 {t('projectDetails.projectProgress')}
               </h3>
               {tasksLoading ? (
-                <div className="text-center py-8 text-gray-400">{t('projectDetails.loading')}</div>
+                <PageLoader size="sm" label={t('projectDetails.loading')} />
               ) : total === 0 ? (
                 <div className="text-center py-8 text-gray-400">
                   <CheckSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -847,7 +847,7 @@ export default function ProjectDetails() {
           </div>
 
           {gitLoading ? (
-            <div className="text-center py-8 text-gray-400">{t('projectDetails.loadingGitStatus')}</div>
+            <PageLoader size="sm" label={t('projectDetails.loadingGitStatus')} />
           ) : gitStatus ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white rounded-xl border border-gray-200 p-5">

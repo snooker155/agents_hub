@@ -20,6 +20,7 @@ import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../component
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 /**
  * Evals — batch replay across cases x configs, scored by graders.
  *
@@ -366,9 +367,7 @@ export default function Evals() {
         <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm h-fit">
           <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">{t('evals.evalSets')}</h2>
           {loading ? (
-            <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
-              <Loader className="w-4 h-4 animate-spin" /> {t('evals.loading')}
-            </div>
+            <PageLoader size="sm" label={t('evals.loading')} />
           ) : sets.length === 0 ? (
             <p className="text-sm text-gray-500 italic py-4">
               No eval sets yet. Create one, then seed it with cases from real runs

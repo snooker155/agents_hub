@@ -7,12 +7,16 @@ import ViewCard from '../views/ViewCard';
 
 const PER_ROW_KEY = 'agents_hub_views_per_row';
 const PER_ROW_OPTIONS = [1, 2, 3, 4, 5, 6];
-// The narrowest a card may get before a row holds fewer of them.
+// The narrowest a card may get before a row holds fewer of them: below this
+// the cards wrap onto a new row instead of squeezing, in every per-row mode.
 const MIN_CARD_PX = 280;
+// What "auto" asks for on a wide window.
+const AUTO_PER_ROW = 4;
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
+import PageLoader from '../components/PageLoader';
 // Views gallery — every rich view an agent produced, searchable and filterable
 // by kind, each rendered live. Live-buildable kinds link back into the Studio.
 
@@ -53,8 +57,10 @@ export default function Views() {
   };
 
   // How many cards a row holds: a wish, not a rule. A card never goes under
-  // MIN_CARD_PX, so a narrow window shows fewer per row than asked and a wide
-  // one never more; "auto" is the breakpoint grid.
+  // MIN_CARD_PX, so a narrow window shows fewer per row than asked (the rest
+  // wrap onto the next row) and a wide one never more; "auto" wishes for
+  // AUTO_PER_ROW. The inner min() keeps a window narrower than one card from
+  // overflowing sideways.
   const [perRow, setPerRow] = useState(() => {
     try { return localStorage.getItem(PER_ROW_KEY) || 'auto'; } catch { return 'auto'; }
   });
@@ -62,8 +68,9 @@ export default function Views() {
     setPerRow(value);
     try { localStorage.setItem(PER_ROW_KEY, value); } catch { /* per-viewer convenience only */ }
   };
-  const gridStyle = perRow === 'auto' ? undefined : {
-    gridTemplateColumns: `repeat(auto-fill, minmax(max(${MIN_CARD_PX}px, calc((100% - ${Number(perRow) - 1} * 1rem) / ${perRow})), 1fr))`,
+  const wish = perRow === 'auto' ? AUTO_PER_ROW : Number(perRow);
+  const gridStyle = {
+    gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, max(${MIN_CARD_PX}px, calc((100% - ${wish - 1} * 1rem) / ${wish}))), 1fr))`,
   };
 
   const kinds = useMemo(() => ['all', ...Array.from(new Set(rows.map((r) => r.kind))).sort()], [rows]);
@@ -109,7 +116,7 @@ export default function Views() {
         </>}
       />
 
-      {loading && <div className="text-gray-400 py-12 text-center">{t('views.loading')}</div>}
+      {loading && <PageLoader label={t('views.loading')} />}
       {error && <div className="text-red-600 py-4">{error}</div>}
 
       {!loading && !error && filtered.length === 0 && (
@@ -120,19 +127,19 @@ export default function Views() {
         </div>
       )}
 
-      {/* Stretched rows: every card in a row is as tall as the tallest. Who
+      {/* Every card has the same fixed height (ViewCard compact), so a row
+          lines up and a long document scrolls instead of stretching it. Who
           made a view is on its page, not under every card. */}
       <div
-        className={`grid gap-4 items-stretch ${perRow === 'auto' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4' : ''}`}
+        className="grid gap-4"
         style={gridStyle}
         data-testid="views-grid"
       >
         {filtered.map((row) => {
           return (
-            <div key={row.view_id} className="flex flex-col min-h-0">
+            <div key={row.view_id} className="min-w-0">
               <ViewCard
                 compact
-                className="flex-1 min-h-0 flex flex-col"
                 viewRef={{ view_id: row.view_id, view_kind: row.kind, title: row.title, summary: row.summary }}
                 actions={(
                   <>

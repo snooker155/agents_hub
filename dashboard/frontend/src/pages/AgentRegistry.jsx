@@ -23,6 +23,7 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { isAdmin, isMultiUser, useAuth } from '../components/auth';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 /**
  * Agents and MCP servers across every workspace, with who made them and
@@ -511,7 +512,7 @@ export default function AgentRegistry() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-gray-400">{t('agentRegistry.loading')}</p>
+        <PageLoader label={t('agentRegistry.loading')} />
       ) : tab === 'agents' ? (
         <ReviewableTab
           items={data.agents}

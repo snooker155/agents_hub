@@ -42,6 +42,7 @@ import { poolName } from '../components/memoryManager/helpers';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
+import PageLoader from '../components/PageLoader';
 const Dashboard = () => {
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const { t } = useI18n();
@@ -92,11 +93,7 @@ const Dashboard = () => {
   useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   if (loading || !stats) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
+    return <PageLoader size="lg" />;
   }
 
   const activePods = runs.filter(r => r.status === 'running');

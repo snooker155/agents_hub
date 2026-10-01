@@ -31,6 +31,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import InlineEdit from '../components/InlineEdit';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
+import PageLoader from '../components/PageLoader';
 
 // ─── Executor display (agent / flow / team / loop) ──────────────────────────
 // task.executor (tasks.models.Executor) is the source of truth for what is
@@ -1097,11 +1098,7 @@ const TaskDetails = () => {
   };
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  if (loading) return (
-    <div className="flex items-center justify-center py-16 text-gray-400">
-      <Loader className="w-6 h-6 animate-spin mr-2" /> {t('taskDetails.loadingTask')}
-    </div>
-  );
+  if (loading) return <PageLoader size="lg" label={t('taskDetails.loadingTask')} />;
   if (!task) return <div className="text-center py-10 text-gray-500">{t('taskDetails.taskNotFound')}</div>;
 
   const subtasks = (task.subtasks || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -1562,9 +1559,7 @@ const TaskDetails = () => {
               )}
             </div>
             {flowLoading ? (
-              <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
-                <Loader className="w-4 h-4 animate-spin" /> {t('taskDetails.loadingExecutionFlow')}
-              </div>
+              <PageLoader size="sm" label={t('taskDetails.loadingExecutionFlow')} />
             ) : flowRuns.length > 0 ? (
               <div
                 ref={flowScrollRef}
@@ -1716,7 +1711,7 @@ const TaskDetails = () => {
                 </div>
                 <div className={`${selectedFileIsPdf && pdfViewMode === 'render' ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
                   {fileContentLoading ? (
-                    <p className="text-sm text-gray-500 p-4">{t('taskDetails.loadingFileContent')}</p>
+                    <PageLoader size="sm" label={t('taskDetails.loadingFileContent')} />
                   ) : fileContentError ? (
                     <p className="text-sm text-red-600 p-4">{fileContentError}</p>
                   ) : selectedFilePath && selectedFileIsPdf && pdfViewMode === 'render' ? (

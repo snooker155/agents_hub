@@ -20,6 +20,7 @@ import MarkdownRenderer from '../components/MarkdownRenderer';
 import ProcessTab from '../components/instances/ProcessTab';
 import AccessTab from '../components/instances/AccessTab';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 
 /*
  * One live agent copy.
@@ -401,7 +402,7 @@ export default function InstanceDetail() {
   if (loading) {
     return (
       <PageContainer>
-        <div className="p-8 text-center text-sm text-gray-400">{t('instanceDetail.loading')}</div>
+        <PageLoader size="lg" label={t('instanceDetail.loading')} />
       </PageContainer>
     );
   }

@@ -253,57 +253,156 @@ html.dark .react-flow__minimap-mask {
 }
 
 /* ── PageLoader (src/components/PageLoader.jsx) ─────────────────────────────
-   A soft ring, two dots orbiting at different speeds, a breathing core. */
+ * The loading indicator starts as the project mark (public/logo.svg: a core,
+ * three satellites on one radius 120° apart, a spoke to each) and unfolds
+ * into three orbits: the mark holds for --ah-hold, then the spokes fade,
+ * the ring appears and every satellite glides from the mark's radius
+ * (--ah-r0) to its own orbit (--ah-r) while the orbits start turning.
+ * The mark is drawn at the size the icon has elsewhere, 64px wide (core
+ * r≈10.4px, satellites r≈6.7px at 28px from the centre), inside a 96px box.
+ * The middle satellite moves a little out from the mark's radius, shrinks
+ * a little and starts to turn; the outer one rides the ring outside the mark, the inner
+ * one shrinks more and tucks in near the core.
+ */
 .ah-loader {
   position: relative;
   display: inline-block;
+  --ah-hold: 0.3s;
+  --ah-unfold: 1s;
 }
 .ah-loader__ring {
   position: absolute;
   inset: 0;
   border-radius: 9999px;
   border: 2px solid var(--brand-100, #dbe6ff);
+  opacity: 0;
+  animation: ah-fade-in var(--ah-unfold) var(--ah-hold) ease-in-out forwards;
 }
 .ah-loader__orbit {
   position: absolute;
   inset: 0;
-  border-radius: 9999px;
-  animation: ah-orbit 1.4s linear infinite;
+  --ah-a0: 0deg;
+  --ah-r0: 28px;
+  --ah-r: 47px;
+  --ah-scale: 1;
+  --ah-bg: var(--brand-500, #3f66d8);
+  --ah-glow: 0 0 0 3px color-mix(in srgb, var(--brand-500, #3f66d8) 18%, transparent);
+  transform: rotate(var(--ah-a0));
+  animation: ah-orbit 2.8s var(--ah-hold) linear infinite;
+  animation-direction: reverse;
 }
 .ah-loader__orbit--2 {
-  animation-duration: 2.1s;
-  animation-direction: reverse;
-  inset: 18%;
+  --ah-a0: 120deg;
+  --ah-r: 32px;
+  --ah-scale: 0.85;
+  --ah-bg: var(--brand-300, #93b0f5);
+  --ah-glow: 0 0 0 0 transparent;
+  animation-direction: normal;
 }
+.ah-loader__orbit--3 {
+  --ah-a0: 240deg;
+  --ah-r: 19px;
+  --ah-scale: 0.7;
+  --ah-bg: var(--brand-400, #6389ea);
+  --ah-glow: 0 0 0 0 transparent;
+}
+/* The two inner orbits draw a thin track of their own, appearing with the
+   outer ring; the track is round, so the orbit's rotation does not show. */
+.ah-loader__orbit--2::before,
+.ah-loader__orbit--3::before {
+  content: '';
+  position: absolute;
+  inset: calc(50% - var(--ah-r));
+  border-radius: 9999px;
+  border: 1px solid var(--brand-100, #dbe6ff);
+  opacity: 0;
+  animation: ah-fade-in var(--ah-unfold) var(--ah-hold) ease-in-out forwards;
+}
+/* The satellite: an anchor at the centre, pushed out along the orbit's
+   "up" axis so the orbit's rotation carries it round; the dot itself is
+   the pseudo-element inside, which changes size and colour on its own
+   clock, faster than the anchor moves. */
 .ah-loader__orbit > i {
   position: absolute;
-  top: calc(var(--ah-dot, 8px) / -2 + 1px);
-  left: calc(50% - var(--ah-dot, 8px) / 2);
+  top: 50%;
+  left: 50%;
   width: var(--ah-dot, 8px);
   height: var(--ah-dot, 8px);
-  border-radius: 9999px;
-  background: var(--brand-500, #3f66d8);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500, #3f66d8) 18%, transparent);
+  margin: calc(var(--ah-dot, 8px) / -2);
+  transform: translateY(calc(-1 * var(--ah-r)));
+  animation: ah-unfold var(--ah-unfold) var(--ah-hold) cubic-bezier(0.6, 0, 0.25, 1) both;
 }
-.ah-loader__orbit--2 > i {
-  background: var(--brand-300, #93b0f5);
-  box-shadow: none;
-  transform: scale(0.8);
+.ah-loader__orbit > i::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--ah-bg);
+  box-shadow: var(--ah-glow);
+  transform: scale(var(--ah-scale));
+  animation: ah-resize calc(var(--ah-unfold) / 1.5) var(--ah-hold) cubic-bezier(0.6, 0, 0.25, 1) both;
+}
+/* The spoke of the mark, from under the core to just under the satellite's
+   edge (1px, no more: the satellite is translucent); square ends, so the
+   joins are tight. It fades as the satellite leaves. */
+.ah-loader__orbit > b {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3.5px;
+  height: 18.5px;
+  margin-left: -1.75px;
+  background: var(--brand-500, #3f66d8);
+  opacity: 0.55;
+  transform: translateY(-22.5px);
+  animation: ah-spoke calc(var(--ah-unfold) * 0.4) var(--ah-hold) ease-out forwards;
 }
 .ah-loader__core {
   position: absolute;
-  inset: 38%;
+  inset: 39.2%;
   border-radius: 9999px;
   background: var(--brand-600, #2a4fbd);
-  animation: ah-core 1.4s ease-in-out infinite;
+  animation:
+    ah-core-in var(--ah-unfold) var(--ah-hold) ease-in-out both,
+    ah-core 1.4s calc(var(--ah-hold) + var(--ah-unfold)) ease-in-out infinite;
 }
 @keyframes ah-orbit {
-  to { transform: rotate(360deg); }
+  from { transform: rotate(var(--ah-a0)); }
+  to { transform: rotate(calc(var(--ah-a0) + 360deg)); }
+}
+@keyframes ah-unfold {
+  from { transform: translateY(calc(-1 * var(--ah-r0))); }
+  to { transform: translateY(calc(-1 * var(--ah-r))); }
+}
+@keyframes ah-resize {
+  from {
+    transform: scale(1);
+    background: var(--brand-500, #3f66d8);
+    opacity: 0.75;
+    box-shadow: 0 0 0 3px transparent;
+  }
+  to {
+    transform: scale(var(--ah-scale));
+    background: var(--ah-bg);
+    opacity: 1;
+    box-shadow: var(--ah-glow);
+  }
+}
+@keyframes ah-spoke {
+  to { opacity: 0; }
+}
+@keyframes ah-fade-in {
+  to { opacity: 1; }
+}
+@keyframes ah-core-in {
+  from { transform: scale(1); opacity: 1; }
+  to { transform: scale(0.92); opacity: 0.8; }
 }
 @keyframes ah-core {
-  0%, 100% { transform: scale(0.8); opacity: 0.55; }
-  50% { transform: scale(1.1); opacity: 1; }
+  0%, 100% { transform: scale(0.92); opacity: 0.8; }
+  50% { transform: scale(1.04); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ah-loader__orbit, .ah-loader__core { animation-duration: 4s; }
+  .ah-loader__orbit { animation-duration: 4s; }
+  .ah-loader__core { animation-duration: var(--ah-unfold), 4s; }
 }

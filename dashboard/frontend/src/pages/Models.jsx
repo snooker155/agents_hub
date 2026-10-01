@@ -15,6 +15,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import LocalTab from '../components/models/LocalTab';
+import PageLoader from '../components/PageLoader';
 const BUILTIN_PROVIDERS = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
 
 const PROVIDER_CONFIG = {
@@ -212,7 +213,7 @@ function CatalogTab() {
   };
 
   if (!catalog) {
-    return <div className="flex items-center gap-2 text-gray-500 p-8"><Loader className="w-4 h-4 animate-spin" /> {t('models.loadingCatalog')}</div>;
+    return <PageLoader size="lg" label={t('models.loadingCatalog')} />;
   }
 
   return (

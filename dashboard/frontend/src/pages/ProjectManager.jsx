@@ -29,6 +29,7 @@ import {
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import PageLoader from '../components/PageLoader';
 const TYPE_CONFIG = {
   general:       { label: 'General',       icon: FolderGit2, color: 'bg-gray-100 text-gray-700' },
   code:          { label: 'Code',          icon: Code2,       color: 'bg-blue-100 text-blue-700' },
@@ -249,7 +250,7 @@ export default function ProjectManager() {
       <div className={chat.gridClass}>
         <div className={`space-y-6 ${chat.mainClass}`}>
       {loading ? (
-        <div className="text-center py-16 text-gray-400">{t('projectManager.loading')}</div>
+        <PageLoader label={t('projectManager.loading')} />
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <FolderGit2 className="w-12 h-12 mx-auto mb-3 opacity-30" />
