@@ -30,10 +30,19 @@ turns that section into the next release.
   (`web_view_builder`), which owns `html` and `code` views and can write a
   page's files and serve a backend behind it. The Studio and a view's own chat
   open those kinds with the specialist (`routes/views.py: view_agent_for`).
-- An **Artifacts** page (`/artifacts`) with two tabs, Views and Files, in
-  place of the two menu items: what the agents produced and work with, under
-  one name. `/views` and `/files` redirect into it with their query, so
-  `/files?file=<id>` links keep working. Memory stays its own page.
+- An **Artifacts** page (`/artifacts`) in place of the Views and Files menu
+  items: what the agents produced and work with, in one browser. The views
+  sit in a virtual Views folder next to the workspace's folders, and the
+  same list shows as cards (folder, file and live view cards with a
+  breadcrumb, the open folder in `?folder=`), as a tree or as a flat list.
+  `/views` and `/files` redirect into it with their query, so
+  `/files?file=<id>` links keep working. A view opens in a panel like a file
+  does (`?view=<id>`): the live card as a column, what made it, Studio, its
+  page, delete. The list is the drop target: files and folders dropped on it
+  land in the open folder of the workspace with their structure
+  (`POST /api/files` takes a `path`); the Views folder refuses the drop.
+  The Studio lost its menu item: it opens from this page. Memory stays its
+  own page.
 
 ### Changed
 

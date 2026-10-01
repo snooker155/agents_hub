@@ -94,11 +94,14 @@ function Modal({ children, onClose, title, fill = false }) {
 // like the Views gallery don't have to overlay their own controls on the card.
 // `compact` — a fixed card height (420px, header included) for dense grid
 // layouts (the Views gallery): every card is the same height whatever the
-// window width, a
-// text kind (document, markdown, table) scrolls inside its body, a fill kind
-// (chart, scene, html) scales to the body.
+// window width, a text kind (document, markdown, table) scrolls inside its
+// body, a fill kind (chart, scene, html) scales to the body.
+// `fill` — the same body behaviour, but the card takes the height its host
+// gives it (a flex column with a definite height: the Artifacts panel), down
+// to the bottom of the page; where the host has no height to give it keeps
+// the compact card's 420px as a floor.
 // `className` — extra classes on the root.
-export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, className = '' }) {
+export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, fill = false, className = '' }) {
   const { t } = useI18n();
   const viewId = viewRef?.view_id;
   const { view, error, loading, setView } = useView(viewId);
@@ -133,7 +136,8 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
   }, [t, viewId]);
 
   return (
-    <div className={`${embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''} ${compact ? 'flex flex-col h-[420px]' : ''} ${className}`}>
+    <div className={`${embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''} ${
+      compact ? 'flex flex-col h-[420px]' : fill ? 'flex flex-col flex-1 min-h-[420px]' : ''} ${className}`}>
       <div className="flex items-start justify-between gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-start gap-2 min-w-0">
           <KindIcon kind={kind} className="w-4 h-4 mt-0.5 text-indigo-600 flex-shrink-0" />
@@ -190,7 +194,7 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
           a content kind sizes to its content. */}
       <div
         ref={bodyRef}
-        className={`view-card-body ${compact
+        className={`view-card-body ${compact || fill
           ? `flex-1 min-h-0 ${fillBody ? 'flex flex-col overflow-hidden' : 'overflow-auto'}`
           : (fillBody ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : '')}`}
       >

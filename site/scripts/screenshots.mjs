@@ -61,8 +61,8 @@ const LANDING = [
   // The caption describes the list view; the board is the default.
   { id: 'tasks', path: '/tasks', waitFor: PAGE, click: 'main header button:has-text("List")' },
   { id: 'flows', path: '/flows/demo_content_pipeline', waitFor: '.react-flow__node' },
-  // The Views tab of the Artifacts page (the caption still says gallery).
-  { id: 'views', path: '/artifacts', waitFor: 'main' },
+  // The Views folder of the Artifacts page (the caption still says gallery).
+  { id: 'views', path: '/artifacts?folder=__views__', waitFor: 'main' },
   { id: 'playground', path: '/playground/demo_market', waitFor: 'main' },
 ];
 
@@ -81,7 +81,7 @@ const RECIPE_PAGES = {
   'local-models': { path: '/settings/local', waitFor: 'main section' },
   thinking: { path: '/agents', waitFor: 'main .grid' },
   palette: { path: '/workspaces/demo', waitFor: PAGE },
-  'code-panel': { path: '/artifacts', waitFor: PAGE },
+  'code-panel': { path: '/artifacts?folder=__views__', waitFor: PAGE },
   doctor: { path: '/health', waitFor: PAGE },
   demo: { path: '/chat', waitFor: 'main textarea' },
   lab: { path: '/playground', waitFor: PAGE },

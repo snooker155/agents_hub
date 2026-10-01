@@ -241,6 +241,31 @@ def test_upload_download_and_delete_over_http():
     assert actions == {"file.upload", "file.delete"}
 
 
+def test_an_upload_with_a_path_lands_in_the_workspace_folder():
+    """A drop into a folder on the Artifacts page (or a dropped folder) names
+    a path: the file goes into the workspace folder, where the agents' file
+    tools see it, and is registered as a folder file; the same path again
+    replaces it in place."""
+    api = _client()
+    resp = api.post("/api/files", params={"workspace": "acme"}, data={"path": "proj/docs/plan.md"},
+                    files={"file": ("plan.md", b"# Plan\n", "text/markdown")})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["meta"]["path"] == "proj/docs/plan.md" and body["name"] == "plan.md"
+    on_disk = service.AGENTS_HUB_ROOT / service.WORKSPACES_DIR / "acme" / "proj" / "docs" / "plan.md"
+    assert on_disk.read_bytes() == b"# Plan\n"
+
+    again = api.post("/api/files", params={"workspace": "acme"}, data={"path": "proj/docs/plan.md"},
+                     files={"file": ("plan.md", b"# Plan v2\n", "text/markdown")})
+    assert again.json()["file_id"] == body["file_id"]
+    assert on_disk.read_bytes() == b"# Plan v2\n"
+    assert api.get(f"/api/files/{body['file_id']}/text").json()["text"] == "# Plan v2\n"
+
+    outside = api.post("/api/files", params={"workspace": "acme"}, data={"path": "../etc/passwd"},
+                       files={"file": ("passwd", b"x", "text/plain")})
+    assert outside.status_code == 400
+
+
 def test_an_active_document_type_is_served_as_plain_text():
     rec = service.create_file("acme", "page.html", b"<script>alert(1)</script>")
     down = _client().get(f"/api/files/{rec['file_id']}/content")

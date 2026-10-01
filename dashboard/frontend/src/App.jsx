@@ -159,7 +159,7 @@ function AppRoutes() {
         <Route path="/plan" element={guard(<Plan />)} />
         <Route path="/deployments" element={guard(<Deployments />)} />
         {/* Files and Views live under Artifacts; the old addresses redirect with their query. */}
-        <Route path="/files" element={<ArtifactsRedirect tab="files" />} />
+        <Route path="/files" element={<ArtifactsRedirect />} />
         <Route path="/widgets" element={guard(<Widgets />)} />
         <Route path="/agent-registry" element={guard(<AgentRegistry />)} />
         <Route path="/agents" element={guard(<AgentManager />)} />
@@ -202,9 +202,9 @@ function AppRoutes() {
         <Route path="/deployment" element={<Navigate to="/cluster" replace />} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
         <Route path="/projects/:id" element={guard(<ProjectDetails />)} />
-        <Route path="/artifacts" element={guard(<Artifacts tab="views" />)} />
-        <Route path="/artifacts/files" element={guard(<Artifacts tab="files" />)} />
-        <Route path="/views" element={<ArtifactsRedirect tab="views" />} />
+        <Route path="/artifacts" element={guard(<Artifacts />)} />
+        <Route path="/artifacts/files" element={<ArtifactsRedirect />} />
+        <Route path="/views" element={<ArtifactsRedirect folder="__views__" />} />
         <Route path="/views/:viewId" element={guard(<ViewDetail />)} />
         <Route path="/studio" element={guard(<Studio />)} />
         <Route path="/studio/:viewId" element={guard(<Studio />)} />

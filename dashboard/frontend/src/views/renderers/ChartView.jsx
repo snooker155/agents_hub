@@ -120,7 +120,10 @@ export default function ChartView({ view, theme }) {
         const { default: embed } = await import('vega-embed');
         if (cancelled || !ref.current) return;
         result = await embed(ref.current, embedSpec, {
-          actions: { export: true, source: false, compiled: false, editor: false },
+          // No vega-embed actions menu (the "…" over the plot's corner): the
+          // card and the view page carry the actions, and the menu read as a
+          // stray ellipsis on a small card.
+          actions: false,
           theme: theme === 'dark' ? 'dark' : undefined,
           // vega-themes' dark sets its own #333 background; the spec's
           // transparent background above wins over config, so the card shows.

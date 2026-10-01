@@ -22,7 +22,6 @@ export default {
   messages: 'Runs',
   views: 'Views',
   artifacts: 'Artifacts',
-  studio: 'Studio',
   agents: 'Agents',
   services: 'Services',
   instances: 'Instances',

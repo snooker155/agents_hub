@@ -1,8 +1,23 @@
 export default {
   title: 'Artifacts',
+  pageDescription: 'What the agents produced and work with: the views they built as answers and the files of this workspace, side by side. Upload a file once, then attach it by its id in the chat, add it to a memory pool, give it to a task or an eval case; open a view to keep editing it in conversation.',
   loading: 'Loading…',
-  tabs: {
-    views: 'Views',
-    files: 'Files',
+  viewsFolder: 'Views',
+  viewCount_one: '{{count}} view',
+  viewCount_other: '{{count}} views',
+  allItems: 'Artifacts',
+  breadcrumb: 'Folder',
+  folderGone: 'This folder is gone.',
+  empty: 'Nothing here yet. Upload a file, or ask an agent for something to look at.',
+  openPage: 'Open page',
+  details: 'Details',
+  kind: 'Kind',
+  summary: 'Summary',
+  madeBy: 'Made by',
+  dropInto: 'Drop to upload into {{folder}}',
+  dropRoot: 'Drop to upload into this workspace',
+  dropRefused: 'Views are built by agents. Drop files into a folder instead.',
+  kinds: {
+    view: 'View',
   },
 };

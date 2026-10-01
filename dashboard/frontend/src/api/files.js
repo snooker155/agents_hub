@@ -10,11 +10,15 @@ export const listWorkspaceFiles = (workspace, { q, source, limit } = {}) =>
 
 // Record plus `deduplicated` (true when these bytes were already a file of
 // the workspace, which is then what comes back).
-export const uploadWorkspaceFileObject = (workspace, file, { source, filename } = {}) => {
+// `path` (workspace-relative, `proj/docs/plan.md`) puts the file into the
+// workspace folder at that path instead of the file store, where the agents'
+// file tools see it; a file already there is replaced.
+export const uploadWorkspaceFileObject = (workspace, file, { source, filename, path } = {}) => {
   const form = new FormData();
   if (filename) form.append('file', file, filename);
   else form.append('file', file);
   if (source) form.append('source', source);
+  if (path) form.append('path', path);
   return api.post('/files', form, {
     params: { workspace },
     headers: { 'Content-Type': 'multipart/form-data' },

@@ -35,7 +35,6 @@ import {
   FolderGit2,
   Box,
   Boxes,
-  Shapes,
   WifiOff,
   PanelLeftClose,
   PanelLeftOpen,
@@ -317,8 +316,10 @@ const Layout = ({ children }) => {
         // files the workspace keeps by id (chat, memory, tasks and evals reuse
         // them), two tabs of one page. Memory stays under Tools on purpose: it
         // is what the agents know about the user, not something they made.
-        { name: t('nav.artifacts'), path: '/artifacts', icon: Images },
-        { name: t('nav.studio'), path: '/studio', icon: Shapes },
+        // The Studio and a view's page are reached from here (the Studio
+        // button, a card's actions), so they light this item up and have no
+        // menu item of their own.
+        { name: t('nav.artifacts'), path: '/artifacts', icon: Images, also: ['/studio', '/views'] },
       ],
     },
     {
@@ -452,10 +453,11 @@ const Layout = ({ children }) => {
               {sidebarCollapsed && gi === 0 && <div className="pt-3" />}
               {group.items.map((item) => {
                 const Icon = item.icon;
+                const under = (path) => location.pathname === path || location.pathname.startsWith(path + '/');
                 const isActive = !group.disabled && (
                   item.path === '/dashboard'
                     ? location.pathname === item.path
-                    : location.pathname === item.path || location.pathname.startsWith(item.path + '/')
+                    : under(item.path) || (item.also || []).some(under)
                 );
                 if (group.disabled) {
                   return (

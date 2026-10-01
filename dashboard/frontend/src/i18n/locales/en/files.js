@@ -10,7 +10,7 @@ export default {
   syncSkipped_one: '{{count}} file was skipped (over a limit)',
   syncSkipped_other: '{{count}} files were skipped (over a limit)',
   path: 'Path in the workspace',
-  view: { label: 'View', tree: 'Tree', list: 'List' },
+  view: { label: 'View', cards: 'Cards', tree: 'Tree', list: 'List' },
   tree: {
     count_one: '{{count}} file',
     count_other: '{{count}} files',
@@ -32,6 +32,7 @@ export default {
     task: 'Task',
     eval: 'Eval',
     api: 'API',
+    view: 'Views',
   },
   columns: {
     name: 'Name',

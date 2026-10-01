@@ -8,14 +8,27 @@ run finds in its working directory. This is the Files API shape of the
 Anthropic and OpenAI platforms, with the file belonging to a workspace
 rather than to an account.
 
-The Files tab of the Artifacts page (`/artifacts/files`; the old `/files`
-redirects there with its query) lists the files of the selected workspace, as
-a tree by their paths in the workspace folder (folders closed until opened; a
-search opens every folder with a match) or as a flat table; the choice is
-remembered per browser. Open a file there with `/files?file=<id>`: that is
-where a chat attachment, a citation or a "where used" link lands. The page's
-other tab is the views gallery (docs/views.md): a view's exports land here as
-files, and an html view is built from them, so the two sit together.
+The Artifacts page (`/artifacts`; the old `/files` and `/artifacts/files`
+redirect there with their query) lists the files of the selected workspace
+next to the views its agents built (docs/views.md), which sit in a virtual
+**Views** folder at the root. Three ways to look at the same list, remembered
+per browser: cards (a card per folder, file and view, with a breadcrumb; the
+open folder is `?folder=<path>`), a tree by path (folders closed until opened;
+a search opens every folder with a match) and a flat table. Open a file with
+`/files?file=<id>`: that is where a chat attachment, a citation or a "where
+used" link lands; a view row, or the details button of its card, opens the
+view's panel the same way (`?view=<id>`): the live card as a column, what
+made it, Studio, its page, delete. A view's exports land here as files, and
+an html view is built from them, so the two sit together.
+
+The list is the drop target. Dragging files or folders over it turns it into
+a drop field for the open folder (the root in the tree and the list): a
+dropped folder keeps its structure, and everything lands in the workspace
+folder at that path (`POST /api/files` with a `path` form field writes the
+file there and registers it, replacing a file already at the path), where the
+agents' file tools see it. A loose file dropped at the root goes to the file
+store as before. The Views folder takes no files: views are built by agents,
+so over it the field says so and the drop does nothing.
 
 ## The object
 

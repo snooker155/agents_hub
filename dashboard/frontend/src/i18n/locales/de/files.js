@@ -10,7 +10,7 @@ export default {
   syncSkipped_one: '{{count}} Datei übersprungen (über einem Limit)',
   syncSkipped_other: '{{count}} Dateien übersprungen (über einem Limit)',
   path: 'Pfad im Arbeitsbereich',
-  view: { label: 'Ansicht', tree: 'Baum', list: 'Liste' },
+  view: { label: 'Ansicht', cards: 'Karten', tree: 'Baum', list: 'Liste' },
   tree: {
     count_one: '{{count}} Datei',
     count_other: '{{count}} Dateien',
@@ -32,6 +32,7 @@ export default {
     task: 'Aufgabe',
     eval: 'Evaluation',
     api: 'API',
+    view: 'Ansichten',
   },
   columns: {
     name: 'Name',

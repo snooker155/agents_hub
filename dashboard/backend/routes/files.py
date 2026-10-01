@@ -109,11 +109,18 @@ async def upload_file(
     file: UploadFile = File(...),
     workspace: Optional[str] = Form(None),
     source: Optional[str] = Form(None),
+    path: Optional[str] = Form(None),
     workspace_q: Optional[str] = Query(None, alias="workspace"),
 ):
     """Upload one file (multipart ``file``) into a workspace, named by the
     ``workspace`` query parameter or form field. The same bytes already in
-    the workspace return the existing record with ``deduplicated: true``."""
+    the workspace return the existing record with ``deduplicated: true``.
+
+    With ``path`` (workspace-relative, e.g. ``proj/docs/plan.md``) the file
+    is written into the workspace folder at that path and registered as a
+    folder file (``service.write_folder_file``): a drop into a folder on the
+    Artifacts page, or a dropped folder with its structure. A file already at
+    the path is replaced, so nothing is deduplicated on this branch."""
     ws = _workspace_or_400(workspace_q or workspace)
     principal = _principal(request)
     access.require_visible(principal, ws)
@@ -133,6 +140,18 @@ async def upload_file(
                 detail=f"'{file.filename}' is larger than the limit of {limit} bytes per file")
         chunks.append(chunk)
     data = b"".join(chunks)
+
+    rel_path = (path or "").strip()
+    if rel_path:
+        created_by = getattr(principal, "id", None) or identity.current_user_id()
+        try:
+            record = service.write_folder_file(
+                ws, rel_path, data, source=(source or "upload").strip() or "upload",
+                created_by=created_by)
+        except service.FileError as exc:
+            _raise(exc)
+        _audit(request, "file.upload", record, {"source": record["source"], "path": record["meta"].get("path")})
+        return {**record, "deduplicated": False}
 
     existing = service.find_duplicate(ws, hashlib.sha256(data).hexdigest())
     if existing is not None:

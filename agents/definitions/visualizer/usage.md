@@ -1,6 +1,6 @@
 # Usage
 
-The Visualizer Agent powers the **Visualization Studio** (the Views → Studio page) for every view kind except 3D scenes and web views, which open with their own specialist: a live render space paired with a chat. Open a new view, then ask in plain language:
+The Visualizer Agent powers the **Visualization Studio** (opened from the Artifacts page: its Studio button, or a view card's Studio action) for every view kind except 3D scenes and web views, which open with their own specialist: a live render space paired with a chat. Open a new view, then ask in plain language:
 
 - "Map the dependencies between the services in this project."
 - "Chart task throughput per agent this week."

@@ -563,6 +563,43 @@ def register_path(workspace: str, rel_path: str, *, source: str = "agent",
     return record
 
 
+def write_folder_file(workspace: str, rel_path: str, data: bytes, *, source: str = "upload",
+                      created_by: Optional[str] = None) -> Dict[str, Any]:
+    """Put ``data`` at ``<workspace folder>/rel_path`` and register it.
+
+    An upload that names a path lands in the folder, where the agents' file
+    tools see it, instead of the file store; the record is the one
+    :func:`register_path` keeps for folder files, so an existing file at the
+    path is replaced and its record updated in place. The limits are checked
+    before anything is written, so a refused upload leaves the folder as it
+    was. Raises :class:`FileError` for a path that leaves the workspace.
+    """
+    ws = _workspace_name(workspace)
+    rel = workspace_rel_path(rel_path)
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    data = bytes(data)
+    size = len(data)
+    per_file = max_file_bytes()
+    if size > per_file:
+        raise FileTooLarge(
+            f"'{rel}' is {size} bytes; the limit is {per_file} bytes per file ({MAX_FILE_MB_ENV})")
+    path = AGENTS_HUB_ROOT / _path_key(ws, rel)
+    previous = int(path.stat().st_size) if path.is_file() and not path.is_symlink() else 0
+    quota = max_workspace_bytes()
+    used = workspace_usage(ws)
+    if used - previous + size > quota:
+        raise WorkspaceQuotaExceeded(
+            f"workspace '{ws}' holds {used} bytes of files; adding {size} would pass its "
+            f"limit of {quota} bytes ({MAX_WORKSPACE_MB_ENV})")
+    if path.is_symlink() or path.is_dir():
+        raise FileError(f"'{rel}' is not a regular file of workspace '{ws}'")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    record, _status = _register_path(ws, rel, source=source, created_by=created_by, meta=None)
+    return record
+
+
 def unregister_path(workspace: str, rel_path: str) -> bool:
     """Tombstone the record of a workspace file deleted from the folder. The
     content is gone already, so only the row changes. False when the path
