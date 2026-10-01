@@ -30,6 +30,10 @@ turns that section into the next release.
   (`web_view_builder`), which owns `html` and `code` views and can write a
   page's files and serve a backend behind it. The Studio and a view's own chat
   open those kinds with the specialist (`routes/views.py: view_agent_for`).
+- An **Artifacts** page (`/artifacts`) with two tabs, Views and Files, in
+  place of the two menu items: what the agents produced and work with, under
+  one name. `/views` and `/files` redirect into it with their query, so
+  `/files?file=<id>` links keep working. Memory stays its own page.
 
 ### Changed
 

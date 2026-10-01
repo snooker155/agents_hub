@@ -305,7 +305,7 @@ export default function Studio() {
       <AppBar
         icon={Shapes}
         title={doc?.title || 'Studio'}
-        backTo="/views"
+        backTo="/artifacts"
         backLabel={t('studio.views')}
         badges={doc?.kind && (
           <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500">{doc.kind}</span>

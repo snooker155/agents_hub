@@ -14,7 +14,10 @@ owner from its environment.
 Ask for it. An agent with `create_view` builds the view instead of describing it
 in prose, and the view appears as its own object you can open, share and edit.
 `GET /api/views` accepts `owner_kind` and `owner_id`; responses carry `owner` and
-`owner_entity_id`. The Views list shows an owner chip linking to the run's page.
+`owner_entity_id`. The views gallery (the Views tab of the Artifacts page,
+`/artifacts`; the old `/views` redirects there) shows an owner chip linking to
+the run's page. Its other tab is the workspace's files (docs/files.md), since a
+view's exports become files and an html view is built from them.
 
 ## Studio
 

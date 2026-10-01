@@ -27,11 +27,11 @@ function mountEl(selector) {
 describe('welcome tour steps', () => {
   it('visits the pages in the documented order', () => {
     expect(TOUR_STOPS.map((s) => s.id)).toEqual([
-      'chat', 'agents', 'tasks', 'flows', 'teams', 'playground', 'views', 'health', 'docs',
+      'chat', 'agents', 'tasks', 'flows', 'teams', 'playground', 'artifacts', 'health', 'docs',
     ]);
     const steps = buildSteps(t, { playground: true });
     expect(steps.map((s) => s.path)).toEqual([
-      '/chat', '/agents', '/tasks', '/flows', '/teams', '/playground', '/views', '/health', '/docs',
+      '/chat', '/agents', '/tasks', '/flows', '/teams', '/playground', '/artifacts', '/health', '/docs',
     ]);
     expect(steps[0].title).toBe('tour.steps.chat.title');
   });

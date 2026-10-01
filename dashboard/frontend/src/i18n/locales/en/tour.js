@@ -28,9 +28,9 @@ export default {
       title: 'Playground',
       description: 'Agents acting in a simulated world, tick by tick, with the thought behind each move and the state it changed.',
     },
-    views: {
-      title: 'Views',
-      description: 'Charts, graphs, 3D scenes, tables and documents that agents built as answers. Open one to keep editing it in conversation.',
+    artifacts: {
+      title: 'Artifacts',
+      description: 'What the agents made: the views they built as answers (charts, graphs, 3D scenes, decks, documents) and the workspace\'s files, as two tabs of one page. Open a view to keep editing it in conversation.',
     },
     health: {
       title: 'Health',

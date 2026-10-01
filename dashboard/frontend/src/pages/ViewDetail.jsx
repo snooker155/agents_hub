@@ -198,7 +198,7 @@ export default function ViewDetail() {
 
   const onDelete = useCallback(async () => {
     if (!window.confirm(t('viewDetail.confirmDelete'))) return;
-    try { await deleteView(viewId); navigate('/views'); } catch { flash(t('viewDetail.deleteFailed')); }
+    try { await deleteView(viewId); navigate('/artifacts'); } catch { flash(t('viewDetail.deleteFailed')); }
   }, [t, viewId, navigate, flash]);
 
   const hasControls = !!(view?.controls
@@ -220,7 +220,7 @@ export default function ViewDetail() {
         icon={(props) => <KindIcon kind={view?.kind} {...props} />}
         title={view?.title || 'View'}
         subtitle={view?.summary}
-        backTo="/views"
+        backTo="/artifacts"
         backLabel={t('viewDetail.views')}
         badges={view?.kind && (
           <span className="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 flex-shrink-0">{view.kind}</span>
@@ -261,7 +261,7 @@ export default function ViewDetail() {
               <div className="text-center">
                 <AlertCircle className="w-8 h-8 mx-auto mb-2 text-amber-500" />
                 <p className="text-gray-500">{error}</p>
-                <Link to="/views" className="text-sm text-indigo-600 hover:underline">{t('viewDetail.backToViews')}</Link>
+                <Link to="/artifacts" className="text-sm text-indigo-600 hover:underline">{t('viewDetail.backToViews')}</Link>
               </div>
             </div>
           )}

@@ -55,7 +55,6 @@ const Cluster = lazy(() => import('./pages/Cluster'));
 const Environments = lazy(() => import('./pages/Environments'));
 const Guardrails = lazy(() => import('./pages/Guardrails'));
 const Deployments = lazy(() => import('./pages/Deployments'));
-const Files = lazy(() => import('./pages/Files'));
 const Widgets = lazy(() => import('./pages/Widgets'));
 const AgentRegistry = lazy(() => import('./pages/AgentRegistry'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -80,7 +79,8 @@ const Marketplace = lazy(() => import('./pages/Marketplace'));
 const SkillsCatalog = lazy(() => import('./pages/SkillsCatalog'));
 const WebLogs = lazy(() => import('./pages/WebLogs'));
 const MarketplaceAgent = lazy(() => import('./pages/MarketplaceAgent'));
-const Views = lazy(() => import('./pages/Views'));
+const Artifacts = lazy(() => import('./pages/Artifacts'));
+const ArtifactsRedirect = lazy(() => import('./pages/Artifacts').then((m) => ({ default: m.ArtifactsRedirect })));
 const ViewDetail = lazy(() => import('./pages/ViewDetail'));
 const Studio = lazy(() => import('./pages/Studio'));
 const Docs = lazy(() => import('./pages/Docs'));
@@ -158,7 +158,8 @@ function AppRoutes() {
         <Route path="/tasks/:id" element={guard(<TaskDetails />)} />
         <Route path="/plan" element={guard(<Plan />)} />
         <Route path="/deployments" element={guard(<Deployments />)} />
-        <Route path="/files" element={guard(<Files />)} />
+        {/* Files and Views live under Artifacts; the old addresses redirect with their query. */}
+        <Route path="/files" element={<ArtifactsRedirect tab="files" />} />
         <Route path="/widgets" element={guard(<Widgets />)} />
         <Route path="/agent-registry" element={guard(<AgentRegistry />)} />
         <Route path="/agents" element={guard(<AgentManager />)} />
@@ -201,7 +202,9 @@ function AppRoutes() {
         <Route path="/deployment" element={<Navigate to="/cluster" replace />} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
         <Route path="/projects/:id" element={guard(<ProjectDetails />)} />
-        <Route path="/views" element={guard(<Views />)} />
+        <Route path="/artifacts" element={guard(<Artifacts tab="views" />)} />
+        <Route path="/artifacts/files" element={guard(<Artifacts tab="files" />)} />
+        <Route path="/views" element={<ArtifactsRedirect tab="views" />} />
         <Route path="/views/:viewId" element={guard(<ViewDetail />)} />
         <Route path="/studio" element={guard(<Studio />)} />
         <Route path="/studio/:viewId" element={guard(<Studio />)} />

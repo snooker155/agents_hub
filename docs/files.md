@@ -8,11 +8,14 @@ run finds in its working directory. This is the Files API shape of the
 Anthropic and OpenAI platforms, with the file belonging to a workspace
 rather than to an account.
 
-The Files page (`/files`) lists the files of the selected workspace, as a
-tree by their paths in the workspace folder (folders closed until opened; a
+The Files tab of the Artifacts page (`/artifacts/files`; the old `/files`
+redirects there with its query) lists the files of the selected workspace, as
+a tree by their paths in the workspace folder (folders closed until opened; a
 search opens every folder with a match) or as a flat table; the choice is
 remembered per browser. Open a file there with `/files?file=<id>`: that is
-where a chat attachment, a citation or a "where used" link lands.
+where a chat attachment, a citation or a "where used" link lands. The page's
+other tab is the views gallery (docs/views.md): a view's exports land here as
+files, and an html view is built from them, so the two sit together.
 
 ## The object
 

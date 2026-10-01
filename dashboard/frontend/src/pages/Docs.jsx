@@ -286,7 +286,7 @@ AGENT_EXECUTION_MODE=local`}</CodeBlock>
         <FeatureCard icon={Radio} title={t('docs.instancesDoc.title')} to="/instances">
           {t('docs.start.nextInstances')}
         </FeatureCard>
-        <FeatureCard icon={Images} title={t('docs.viewsStudio')} to="/views">
+        <FeatureCard icon={Images} title={t('docs.viewsStudio')} to="/artifacts">
           {t('docs.start.nextViews')}
         </FeatureCard>
         <FeatureCard icon={CalendarClock} title={t('docs.nav.plan')} to="/plan">
@@ -405,7 +405,7 @@ function Features() {
         <FeatureCard icon={Network} title={t('docs.orchestrator')} to="/orchestrator">
           {t('docs.configureRoutingSoTasksAre')}
         </FeatureCard>
-        <FeatureCard icon={Images} title={t('docs.viewsStudio')} to="/views">
+        <FeatureCard icon={Images} title={t('docs.viewsStudio')} to="/artifacts">
           {t('docs.chartsGraphs3dScenesAnd')}
         </FeatureCard>
         <FeatureCard icon={CalendarClock} title={t('docs.plan')} to="/plan">
@@ -511,7 +511,7 @@ function Tutorials() {
         steps={[
           <>{t('docs.bindTheVisualizationTools')} <code className="bg-gray-100 px-1 rounded">{t('docs.createView')}</code>{t('docs.toTheAgentOnIts')} <Link className="text-indigo-600 underline" to="/agents">{t('docs.agents')}</Link> {t('docs.page')}</>,
           <>{t('docs.askItSomethingWorthDrawing')} <Link className="text-indigo-600 underline" to="/chat">{t('docs.chat')}</Link> {t('docs.theViewRendersInlineIn')}</>,
-          <>{t('docs.openItFromThe')} <Link className="text-indigo-600 underline" to="/views">{t('docs.views')}</Link> {t('docs.galleryOrPress')} <strong>{t('docs.studio')}</strong> {t('docs.toKeepEditingItBy')}</>,
+          <>{t('docs.openItFromThe')} <Link className="text-indigo-600 underline" to="/artifacts">{t('docs.views')}</Link> {t('docs.galleryOrPress')} <strong>{t('docs.studio')}</strong> {t('docs.toKeepEditingItBy')}</>,
           <>{t('docs.in')} <Link className="text-indigo-600 underline" to="/studio">{t('docs.studio')}</Link>{t('docs.selectAnObjectInThe')}</>,
         ]}
       />

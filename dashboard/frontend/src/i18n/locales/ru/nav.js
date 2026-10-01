@@ -21,6 +21,7 @@ export default {
   runGroups: 'Группы запусков',
   messages: 'Запуски',
   views: 'Представления',
+  artifacts: 'Артефакты',
   studio: 'Студия',
   agents: 'Агенты',
   services: 'Сервисы',

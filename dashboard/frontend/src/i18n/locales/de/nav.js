@@ -21,6 +21,7 @@ export default {
   runGroups: 'Laufgruppen',
   messages: 'Läufe',
   views: 'Ansichten',
+  artifacts: 'Artefakte',
   studio: 'Studio',
   agents: 'Agenten',
   services: 'Dienste',

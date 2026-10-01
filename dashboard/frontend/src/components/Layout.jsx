@@ -60,7 +60,6 @@ import {
   ShieldCheck,
   BadgeCheck,
   MessageSquareCode,
-  FileStack,
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -311,12 +310,14 @@ const Layout = ({ children }) => {
         { name: t('nav.deployments'), path: '/deployments', icon: Rocket },
         // An agent embedded on another site through one script tag.
         { name: t('nav.widgets'), path: '/widgets', icon: MessageSquareCode },
-        // Files the workspace keeps by id: chat, memory, tasks and evals reuse them.
-        { name: t('nav.files'), path: '/files', icon: FileStack },
         { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle },
         { name: t('nav.runGroups'), path: '/run-groups', icon: Layers },
         { name: t('nav.messages'), path: '/messages', icon: ScrollText },
-        { name: t('nav.views'), path: '/views', icon: Images },
+        // What the agents produced and work with: the views they built and the
+        // files the workspace keeps by id (chat, memory, tasks and evals reuse
+        // them), two tabs of one page. Memory stays under Tools on purpose: it
+        // is what the agents know about the user, not something they made.
+        { name: t('nav.artifacts'), path: '/artifacts', icon: Images },
         { name: t('nav.studio'), path: '/studio', icon: Shapes },
       ],
     },
