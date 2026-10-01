@@ -4,7 +4,8 @@
       "id": "demo_writer",
       "name": "Demo Writer",
       "description": "Writes and edits the pages of the sample Demo site project. demo: true",
-      "tools": ["read_file", "list_files", "create_file", "write_file", "search_docs", "read_doc"]
+      "tools": ["read_file", "list_files", "create_file", "write_file", "search_docs", "read_doc"],
+      "shared": true
     },
     {
       "id": "demo_analyst",
@@ -17,6 +18,12 @@
       "name": "Demo Reviewer",
       "description": "Reviews the Demo site content pipeline's output and leads the demo editorial team. demo: true",
       "tools": ["get_task", "update_task", "read_file", "list_files", "search_docs", "read_doc"]
+    },
+    {
+      "id": "demo_support",
+      "name": "Demo Support",
+      "description": "Answers customer questions about the sample shop from what the project files say, and never promises what they do not. demo: true",
+      "tools": ["read_file", "list_files", "search_docs", "read_doc"]
     }
   ],
 
@@ -35,6 +42,7 @@
   "flow": {
     "id": "demo_content_pipeline",
     "name": "Demo content pipeline",
+    "shared": true,
     "nodes": [
       {
         "id": "demo_flow_writer",
@@ -98,6 +106,13 @@
       "summary": "Bar chart of Fernweh & Co.'s sample August sales, by category.",
       "spec": {
         "vega_lite": {
+          "data": {
+            "values": [
+              {"category": "Backpacks", "revenue": 1780.0},
+              {"category": "Bottles", "revenue": 1200.0},
+              {"category": "Maps", "revenue": 645.0}
+            ]
+          },
           "mark": "bar",
           "encoding": {
             "x": {"field": "category", "type": "nominal"},
@@ -192,16 +207,235 @@
       "id": "demo_chat_1",
       "title": "What's in the sample shop?",
       "agent_id": "demo_writer",
-      "user_message": "What does the Fernweh & Co. sample shop actually sell?",
-      "agent_message": "It sells three things: the Trailpack 32L backpack, the Summit Bottle and the Ridge Map Pack. Here's the storefront's product list:\n\n```python\nPRODUCTS = [\n    {\"slug\": \"trailpack-32\", \"name\": \"Trailpack 32L\", \"price\": 89.00, \"category\": \"Backpacks\"},\n    {\"slug\": \"summit-bottle\", \"name\": \"Summit Bottle 1L\", \"price\": 24.00, \"category\": \"Bottles\"},\n    {\"slug\": \"ridge-map-pack\", \"name\": \"Ridge Map Pack\", \"price\": 15.00, \"category\": \"Maps\"},\n]\n```\n\nBackpacks bring in the most revenue this month even though Bottles sell in higher volume, since the Trailpack costs more per unit."
+      "instance_id_hint": "demo_instance_writer",
+      "turns": [
+        {
+          "user": "What does the Fernweh & Co. sample shop actually sell?",
+          "agent": "It sells three things: the Trailpack 32L backpack, the Summit Bottle and the Ridge Map Pack. Here's the storefront's product list:\n\n```python\nPRODUCTS = [\n    {\"slug\": \"trailpack-32\", \"name\": \"Trailpack 32L\", \"price\": 89.00, \"category\": \"Backpacks\"},\n    {\"slug\": \"summit-bottle\", \"name\": \"Summit Bottle 1L\", \"price\": 24.00, \"category\": \"Bottles\"},\n    {\"slug\": \"ridge-map-pack\", \"name\": \"Ridge Map Pack\", \"price\": 15.00, \"category\": \"Maps\"},\n]\n```\n\nBackpacks bring in the most revenue this month even though Bottles sell in higher volume, since the Trailpack costs more per unit.",
+          "log": [
+            "read_file src/app.py",
+            "read_file data/sales.csv"
+          ]
+        }
+      ]
     },
     {
       "id": "demo_chat_2",
       "title": "August sales by category",
       "agent_id": "demo_analyst",
-      "user_message": "How did August sales break down by category?",
-      "agent_message": "Backpacks led at $1,780, ahead of Bottles at $1,200 and Maps at $645. I put together a chart of it.",
-      "view_id_hint": "demo_view_chart"
+      "turns": [
+        {
+          "user": "How did August sales break down by category?",
+          "agent": "Backpacks led at $1,780, ahead of Bottles at $1,200 and Maps at $645. I put together a chart of it.",
+          "view_id_hint": "demo_view_chart",
+          "log": [
+            "read_file data/sales.csv",
+            "calculator sum(revenue) by category",
+            "create_view chart \"Sales by category\""
+          ]
+        }
+      ]
+    },
+    {
+      "id": "demo_chat_3",
+      "title": "Catalog blurbs",
+      "agent_id": "demo_writer",
+      "instance_id_hint": "demo_instance_writer",
+      "turns": [
+        {
+          "user": "Write a one-line blurb for each of the three products. Plain, no adjectives stacked on top of each other.",
+          "agent": "Here are three, one line each:\n\n- **Trailpack 32L**: a 32-litre pack with a padded hip belt and a rain cover in the lid pocket.\n- **Summit Bottle 1L**: a single-wall steel bottle that fits a standard cage and takes a beating.\n- **Ridge Map Pack**: three waterproof trail maps of the Ridge range, folded to pocket size.\n\nDraft ready for review. I have not written them into src/app.py yet; say the word and I will.",
+          "log": [
+            "read_file src/app.py",
+            "read_file docs/notes.md"
+          ]
+        },
+        {
+          "user": "The bottle one is the weakest. Make it about what it is for, not what it is made of.",
+          "agent": "Better:\n\n- **Summit Bottle 1L**: enough water for a half-day climb, and it does not dent when you drop it.\n\nThe other two stand. Still a draft: nothing in the project has changed.",
+          "log": []
+        }
+      ]
+    },
+    {
+      "id": "demo_chat_4",
+      "title": "Units versus revenue",
+      "agent_id": "demo_analyst",
+      "turns": [
+        {
+          "user": "Which product sells the most units, and is that also the one that makes the most money?",
+          "agent": "No. Bottles sell the most units, but Backpacks make the most money.\n\n| Category | Units | Revenue |\n|---|---|---|\n| Bottles | 50 | $1,200 |\n| Maps | 43 | $645 |\n| Backpacks | 20 | $1,780 |\n\nTwenty Trailpacks at $89 outearn fifty bottles at $24. The raw rows are in the August sales table.",
+          "view_id_hint": "demo_view_table",
+          "log": [
+            "read_file data/sales.csv",
+            "calculator sum(units), sum(revenue) by category",
+            "view_get \"August sales\""
+          ]
+        }
+      ]
+    },
+    {
+      "id": "demo_chat_5",
+      "title": "What is blocking the report?",
+      "agent_id": "demo_reviewer",
+      "turns": [
+        {
+          "user": "What is still open on the August report, and what is blocking?",
+          "agent": "Three things are open:\n\n1. **DS-3, explain the Trailpack's price**: blocked. We are waiting on the supplier's spec sheet for the fabric, so the materials note cannot be written yet.\n2. **DS-2, the sales chart**: in progress with the Demo Analyst. The chart itself already exists as a view.\n3. **DS-1, the catalog copy**: not started. The Demo Writer has blurbs drafted in chat, so this is a short task once someone picks it up.\n\nThe three closed tasks are signed off; nothing done is waiting on me.",
+          "log": [
+            "get_task DS-1",
+            "get_task DS-2",
+            "get_task DS-3",
+            "read_file docs/notes.md"
+          ]
+        },
+        {
+          "user": "Chase the spec sheet and unblock DS-3 once it arrives.",
+          "agent": "I cannot email the supplier from here, so I left a note on DS-3 saying exactly what is missing. When the spec sheet lands in the project folder, reply here and I will move the task back to todo.",
+          "log": [
+            "update_task DS-3 (note: waiting on the fabric spec sheet)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "demo_chat_6",
+      "title": "A customer question",
+      "agent_id": "demo_support",
+      "file_id_hint": "demo_file_supplier_questions",
+      "turns": [
+        {
+          "user": "A customer asks whether the Trailpack fits a 15-inch laptop. What do we tell them?",
+          "agent": "We do not know yet, so do not promise it. Neither src/app.py nor docs/notes.md says anything about a laptop sleeve, and the supplier's spec sheet has not arrived; the question is already on the list in supplier-questions.md.\n\nA safe answer: the Trailpack 32L is a hiking pack with no padded laptop sleeve, and we will confirm the internal dimensions as soon as the spec sheet is in. I have not sent anything.",
+          "log": [
+            "read_file src/app.py",
+            "read_file docs/notes.md",
+            "read_file supplier-questions.md"
+          ]
+        }
+      ]
+    }
+  ],
+
+  "runs": [
+    {
+      "id": "demo_task_run_rename",
+      "agent_id": "demo_writer",
+      "task_title": "Rename Rucksack 32 to Trailpack 32L",
+      "instance_id_hint": "demo_instance_writer",
+      "title": "Rename Rucksack 32 to Trailpack 32L",
+      "input": "Rename the product everywhere it appears.",
+      "output": "Renamed across src/app.py, docs/notes.md and data/sales.csv.",
+      "log": [
+        "demo_writer renaming Rucksack 32 -> Trailpack 32L",
+        "updated src/app.py, docs/notes.md, data/sales.csv",
+        "done"
+      ]
+    },
+    {
+      "id": "demo_task_run_categories",
+      "agent_id": "demo_reviewer",
+      "task_title": "Confirm the three product categories match the sales data",
+      "instance_id_hint": "demo_instance_reviewer",
+      "title": "Confirm the three product categories match the sales data",
+      "input": "Check that Backpacks, Bottles and Maps are the only categories used, in both the storefront code and data/sales.csv.",
+      "output": "Confirmed: all twenty rows in data/sales.csv use exactly these three categories, matching src/app.py.",
+      "log": [
+        "read_file src/app.py",
+        "read_file data/sales.csv",
+        "20 rows, categories: Backpacks, Bottles, Maps",
+        "update_task DS-6 -> done"
+      ]
+    },
+    {
+      "id": "demo_task_run_about",
+      "agent_id": "demo_reviewer",
+      "task_title": "Review the about page tone",
+      "title": "Review the about page tone",
+      "input": "Check whether the one-line about page needs to say more about what makes the gear different.",
+      "output": "Left as is for now: one sentence reads fine for a shop this size. Noted in docs/notes.md as an open item to revisit if the catalog grows.",
+      "log": [
+        "read_file src/app.py",
+        "read_file docs/notes.md",
+        "update_task DS-5 -> done"
+      ]
+    }
+  ],
+
+  "instances": [
+    {
+      "id_hint": "demo_instance_writer",
+      "agent_id": "demo_writer",
+      "kind": "resident",
+      "label": "Demo Writer #1",
+      "state": "finished",
+      "last_activity": "run finished"
+    },
+    {
+      "id_hint": "demo_instance_reviewer",
+      "agent_id": "demo_reviewer",
+      "kind": "task",
+      "label": "Demo Reviewer #1",
+      "task_title": "Confirm the three product categories match the sales data",
+      "state": "finished",
+      "last_activity": "run finished"
+    },
+    {
+      "id_hint": "demo_instance_replica",
+      "agent_id": "demo_writer",
+      "kind": "resident",
+      "label": "Demo Writer service, replica 1",
+      "service_id_hint": "demo_service_writer",
+      "state": "stopped",
+      "last_activity": "stopped with the service"
+    }
+  ],
+
+  "services": [
+    {
+      "id_hint": "demo_service_writer",
+      "name": "Demo Writer service",
+      "agent_id": "demo_writer",
+      "replicas_min": 1,
+      "replicas_max": 2,
+      "concurrency": 2,
+      "idle_stop_seconds": 600,
+      "paused_reason": "Paused by the operator: the recorded demo runs nothing.",
+      "events": [
+        {
+          "kind": "created",
+          "detail": "Service created for demo_writer, 1 to 2 replicas."
+        },
+        {
+          "kind": "replica_started",
+          "detail": "Replica 1 started.",
+          "instance_id_hint": "demo_instance_replica"
+        },
+        {
+          "kind": "replica_stopped",
+          "detail": "Replica 1 stopped: idle for 600 s.",
+          "instance_id_hint": "demo_instance_replica"
+        },
+        {
+          "kind": "paused",
+          "detail": "Paused by the operator."
+        }
+      ]
+    }
+  ],
+
+  "files": [
+    {
+      "id_hint": "demo_file_supplier_questions",
+      "name": "supplier-questions.md",
+      "mime_type": "text/markdown",
+      "content": "# Questions for the Trailpack supplier\n\nOpen questions for the Trailpack 32L, collected from customer mail and the\ncontent review. Answers go into the product page once the spec sheet is in.\n\n1. Fabric: what is the shell material and its weight per square metre?\n2. Rain cover: is it included, and does it cover the hip belt pockets?\n3. Laptop: does a 15-inch laptop fit flat against the back panel?\n4. Weight: empty pack weight, with and without the frame sheet.\n5. Warranty: how many years, and does it cover zips?\n"
+    },
+    {
+      "id_hint": "demo_file_august_report",
+      "name": "august-report.md",
+      "mime_type": "text/markdown",
+      "content": "# August content report\n\n## Content\n\nThe catalog, product and about pages were reviewed this month. The Trailpack\n32L was renamed from \"Rucksack 32\" everywhere, including the sample sales\ndata, so the name is consistent end to end.\n\n## Sales\n\nBackpacks were the top revenue category in August ($1,780), ahead of Bottles\n($1,200) and Maps ($645), even though Bottles sold in higher volume.\n\n| Category | Units | Revenue |\n|---|---|---|\n| Backpacks | 20 | $1,780 |\n| Bottles | 50 | $1,200 |\n| Maps | 43 | $645 |\n\n## Next\n\nAdd a one-line description per product on the catalog page, and a short note\non materials to explain the Trailpack's price.\n"
     }
   ]
 }

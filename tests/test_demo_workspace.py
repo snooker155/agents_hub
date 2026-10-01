@@ -120,11 +120,52 @@ def test_ensure_demo_workspace_seeds_everything():
     assert len(done_results) == 3
 
     chats = chat_store.list_chats(workspace="demo", limit=10)["items"]
-    assert len(chats) == 2
+    assert len(chats) == 6
+    # Two of the chats run over more than one turn: one run per turn, every
+    # turn of a chat on the same session.
+    transcripts = {c["id"]: chat_store.get_chat(c["id"]) for c in chats}
+    assert len(transcripts["demo_chat_3"]["messages"]) == 4
+    assert len(transcripts["demo_chat_5"]["messages"]) == 4
+    assert transcripts["demo_chat_4"]["messages"][1]["response_obj"]["view_kind"] == "table"
 
-    runs = query_runs(workspace="demo", limit=10)["items"]
-    assert len(runs) == 3
+    runs = query_runs(workspace="demo", limit=20)["items"]
+    assert len(runs) == 11  # 8 chat turns + 3 task runs
     assert all(r["status"] == "completed" for r in runs)
+    by_id = {r["run_id"]: r for r in runs}
+    assert {"demo_chat_3_run", "demo_chat_3_run_2", "demo_task_run_categories"} <= set(by_id)
+    # The task runs are tied to the tasks they closed.
+    done_ids = {str(t.id) for t in done_results}
+    assert by_id["demo_task_run_categories"]["task_id"] in done_ids
+    assert by_id["demo_task_run_rename"]["task_id"] in done_ids
+
+    # One agent and the flow are published, so the marketplace has a card.
+    assert get_agent("demo_writer").shared is True
+    assert get_flow(DEMO_FLOW_ID).get("shared") is True
+
+    from instances import store as istore
+    instances = istore.list_instances(limit=10, workspace="demo")["items"]
+    assert {i["kind"] for i in instances} == {"resident", "task"}
+    assert {i["state"] for i in instances} == {"finished", "stopped"}
+    writer = next(i for i in instances if i["label"] == "Demo Writer #1")
+    assert writer["runs_count"] == 4  # the rename run + three writer chat turns
+
+    from services import store as sstore
+    services = sstore.list_services(workspace="demo")
+    assert len(services) == 1
+    assert services[0]["status"] == "paused"
+    replica = next(i for i in instances if i.get("service_id") == services[0]["service_id"])
+    assert replica["state"] == "stopped"
+    assert {e["kind"] for e in sstore.events(services[0]["service_id"])} >= {"created", "paused"}
+
+    from files import service as files_service
+    files = files_service.list_files("demo", limit=50)
+    assert {f["name"] for f in files} == {
+        "README.md", "app.py", "notes.md", "sales.csv",
+        "supplier-questions.md", "august-report.md",
+    }
+    uploaded = next(f for f in files if f["name"] == "supplier-questions.md")
+    assert uploaded["source"] == "upload"
+    assert [u["ref_id"] for u in files_service.list_uses(uploaded["file_id"], "chat")] == ["demo_chat_6"]
 
 
 def test_ensure_demo_workspace_is_idempotent():
@@ -171,15 +212,18 @@ def test_remove_demo_workspace_removes_everything_and_only_that():
     )
 
     counts = remove_demo_workspace()
-    assert counts["agents"] == 3
+    assert counts["agents"] == 4
     assert counts["project"] == 1
     assert counts["flow"] == 1
     assert counts["team"] == 1
     assert counts["scenario"] == 1
     assert counts["views"] == 4
     assert counts["tasks"] == 6
-    assert counts["chats"] == 2
-    assert counts["runs"] == 3
+    assert counts["chats"] == 6
+    assert counts["runs"] == 11
+    assert counts["instances"] == 3
+    assert counts["services"] == 1
+    assert counts["files"] == 6
     assert counts["workspace"] == 1
 
     assert get_workspace_folder("demo") is None
@@ -215,9 +259,9 @@ def test_demo_toggle_route_seeds_and_removes(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["present"] is True
-    assert body["counts"]["agents"] == 3
+    assert body["counts"]["agents"] == 4
     assert body["counts"]["tasks"] == 6
-    assert body["counts"]["chats"] == 2
+    assert body["counts"]["chats"] == 6
 
     assert client.get("/api/demo").json()["present"] is True
 
@@ -259,14 +303,30 @@ def test_export_script_produces_both_files(tmp_path):
     assert "GET /api/agents" in responses
     assert "GET /api/agents?workspace=demo" in responses
     assert "GET /api/playground/environments" in responses
+    assert "GET /api/projects/demo_project_site/tasks" in responses
+    assert "GET /api/instances?workspace=demo" in responses
+    assert "GET /api/services?workspace=demo" in responses
+    assert "GET /api/files?limit=500&workspace=demo" in responses
+    assert "GET /api/marketplace/agents?workspace=demo" in responses
     assert summary["request_keys"] == len(responses)
     assert summary["request_keys"] > 15
+    assert summary["instances"] == 3
+    assert summary["services"] == 1
+    assert summary["files"] == 6
+
+    # The published demo hides the playground's quest designer from every
+    # agent list, and lists the one published demo agent on the marketplace.
+    for key in ("GET /api/agents", "GET /api/agents?workspace=demo",
+                "GET /api/marketplace/agents?workspace=demo"):
+        assert all(a["id"] != "plot-manager" for a in responses[key]), key
+    assert [a["id"] for a in responses["GET /api/marketplace/agents?workspace=demo"]] == ["demo_writer"]
+    assert any(a["id"] == "demo_support" for a in responses["GET /api/agents?workspace=demo"])
 
     # Flat {run_id: [frames]}, no wrapper: the frontend's resolver
     # (src/demo/resolver.js) reads this object's own keys as the set of
     # recorded run ids, so a metadata key here would read as a bogus one.
     streams = json.loads(streams_path.read_text(encoding="utf-8"))
-    assert len(streams) == summary["stream_runs"] == 3
+    assert len(streams) == summary["stream_runs"] == 11
     for frames in streams.values():
         events = [f["event"] for f in frames]
         assert events[0] == "tool_start"

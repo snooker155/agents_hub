@@ -92,7 +92,15 @@ def _record(client, responses: Dict[str, Any], method: str, path: str,
         if required:
             print(f"  [skip] {method} {path} ({resp.status_code})", file=sys.stderr)
         return
-    responses[_key(method, path, params)] = resp.json()
+    body = resp.json()
+    responses[_key(method, path, params)] = body
+    # The frontend's resolver falls back to the bare path when a request's
+    # exact query has no recording (a page that adds limit/offset or a
+    # filter). The first recording of a path is that fallback; the demo
+    # workspace is the only one recorded, so it is the right answer for any
+    # parameter combination a visitor can produce.
+    if params:
+        responses.setdefault(_key(method, path), body)
 
 
 # Doctor checks that describe the machine the recording was made on, not the
@@ -103,6 +111,20 @@ def _record(client, responses: Dict[str, Any], method: str, path: str,
 # recomputed over what remains.
 _MACHINE_CHECKS = {"provider", "frontend_build", "system_workspace", "browser", "docker"}
 _STATUS_ORDER = {"ok": 0, "warn": 1, "fail": 2}
+
+# System agents left out of the recorded agent lists. They exist in every
+# install, but the published demo is a small content shop, and a quest
+# designer for the playground's game worlds reads as noise on its Agents page.
+HIDDEN_AGENT_IDS = frozenset({"plot-manager"})
+
+
+def _hide_agents(responses: Dict[str, Any]) -> None:
+    for key, body in responses.items():
+        if not (key.startswith("GET /api/agents") or key.startswith("GET /api/marketplace/agents")):
+            continue
+        if isinstance(body, list):
+            responses[key] = [a for a in body
+                              if not (isinstance(a, dict) and a.get("id") in HIDDEN_AGENT_IDS)]
 
 
 def _neutralise_machine_checks(responses: Dict[str, Any]) -> None:
@@ -136,6 +158,7 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
     from common.demo_workspace import (
         DEMO_AGENT_IDS,
         DEMO_FLOW_ID,
+        DEMO_PROJECT_ID,
         DEMO_SCENARIO_ID,
         DEMO_TEAM_ID,
         DEMO_WORKSPACE_NAME,
@@ -161,6 +184,15 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
     _record(client, responses, "GET", "/api/agents", {"workspace": DEMO_WORKSPACE_NAME})
     for agent_id in DEMO_AGENT_IDS:
         _record(client, responses, "GET", f"/api/agents/{agent_id}")
+        _record(client, responses, "GET", f"/api/agents/{agent_id}/definition", required=False)
+
+    # The Marketplace page lists what the demo published: one agent and the
+    # flow, both annotated for the demo workspace.
+    for ws in (DEMO_WORKSPACE_NAME, "default"):
+        _record(client, responses, "GET", "/api/marketplace/agents", {"workspace": ws}, required=False)
+        _record(client, responses, "GET", "/api/marketplace/flows", {"workspace": ws}, required=False)
+        _record(client, responses, "GET", "/api/marketplace/agents/demo_writer", {"workspace": ws},
+                required=False)
 
     from tasks.service import list_tasks
     demo_tasks = [t for t in list_tasks() if t.workspace == DEMO_WORKSPACE_NAME]
@@ -168,8 +200,19 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
     for task in demo_tasks:
         _record(client, responses, "GET", f"/api/tasks/{task.id}")
         _record(client, responses, "GET", f"/api/tasks/{task.id}/result", required=False)
+        _record(client, responses, "GET", f"/api/tasks/{task.id}/activity-log", required=False)
 
+    # The project page: its record, the tasks tab, the files tab (with every
+    # file's content) and the git strip.
     _record(client, responses, "GET", "/api/projects", {"workspace": DEMO_WORKSPACE_NAME})
+    _record(client, responses, "GET", f"/api/projects/{DEMO_PROJECT_ID}")
+    _record(client, responses, "GET", f"/api/projects/{DEMO_PROJECT_ID}/tasks")
+    _record(client, responses, "GET", f"/api/projects/{DEMO_PROJECT_ID}/files")
+    project_files = responses.get(f"GET /api/projects/{DEMO_PROJECT_ID}/files") or {}
+    for rel in project_files.get("files") or []:
+        _record(client, responses, "GET", f"/api/projects/{DEMO_PROJECT_ID}/file-content",
+                {"path": rel})
+    _record(client, responses, "GET", f"/api/projects/{DEMO_PROJECT_ID}/git-status", required=False)
 
     _record(client, responses, "GET", "/api/flows", {"workspace": DEMO_WORKSPACE_NAME})
     _record(client, responses, "GET", f"/api/flows/{DEMO_FLOW_ID}")
@@ -204,9 +247,58 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
 
     from common.session_service import query_contexts
     demo_sessions = query_contexts(workspace=DEMO_WORKSPACE_NAME, limit=500)["items"]
+    for ctx in demo_sessions:
+        _record(client, responses, "GET", f"/api/sessions/{ctx['session_id']}")
+        _record(client, responses, "GET", f"/api/sessions/{ctx['session_id']}/messages")
 
     from managers.run_manager import query_runs
     demo_runs = query_runs(workspace=DEMO_WORKSPACE_NAME, limit=500)["items"]
+    for run in demo_runs:
+        _record(client, responses, "GET", f"/api/messages/{run['run_id']}")
+        _record(client, responses, "GET", f"/api/messages/{run['run_id']}/logs", required=False)
+        _record(client, responses, "GET", f"/api/messages/{run['run_id']}/insights", required=False)
+
+    # Instances and services: the list pages (the bare path is what any
+    # filter combination falls back to in src/demo/resolver.js), the badge
+    # summary, and every record's own tabs.
+    from instances import store as istore
+    _record(client, responses, "GET", "/api/instances")
+    _record(client, responses, "GET", "/api/instances", {"workspace": DEMO_WORKSPACE_NAME})
+    _record(client, responses, "GET", "/api/instances/summary")
+    _record(client, responses, "GET", "/api/instances/summary", {"workspace": DEMO_WORKSPACE_NAME})
+    demo_instances = istore.list_instances(limit=500, workspace=DEMO_WORKSPACE_NAME)["items"]
+    for inst in demo_instances:
+        iid = inst["instance_id"]
+        _record(client, responses, "GET", f"/api/instances/{iid}")
+        for tab in ("runs", "timeline", "context", "conversations", "inbox", "logs"):
+            _record(client, responses, "GET", f"/api/instances/{iid}/{tab}", required=False)
+
+    from services import store as sstore
+    _record(client, responses, "GET", "/api/services")
+    _record(client, responses, "GET", "/api/services", {"workspace": DEMO_WORKSPACE_NAME})
+    _record(client, responses, "GET", "/api/services/chat-route", required=False)
+    _record(client, responses, "GET", "/api/services/chat-route", {"workspace": DEMO_WORKSPACE_NAME},
+            required=False)
+    demo_services = sstore.list_services(workspace=DEMO_WORKSPACE_NAME)
+    for svc in demo_services:
+        sid = svc["service_id"]
+        _record(client, responses, "GET", f"/api/services/{sid}")
+        for tab in ("replicas", "events", "conversations", "connections", "timeline"):
+            _record(client, responses, "GET", f"/api/services/{sid}/{tab}", required=False)
+
+    # Workspace files: the Files page asks with limit=500; the bare path
+    # covers a search or a source filter.
+    from files import service as files_service
+    _record(client, responses, "GET", "/api/files", {"workspace": DEMO_WORKSPACE_NAME})
+    _record(client, responses, "GET", "/api/files", {"workspace": DEMO_WORKSPACE_NAME, "limit": 500})
+    demo_files = files_service.list_files(DEMO_WORKSPACE_NAME, limit=500)
+    for rec in demo_files:
+        fid = rec["file_id"]
+        _record(client, responses, "GET", f"/api/files/{fid}")
+        _record(client, responses, "GET", f"/api/files/{fid}/text", required=False)
+        _record(client, responses, "GET", f"/api/files/{fid}/usage", required=False)
+
+    _hide_agents(responses)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     fixtures_path = out_dir / "fixtures.json"
@@ -256,6 +348,9 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
         "views": len(demo_views),
         "tasks": len(demo_tasks),
         "chats": len(demo_chats),
+        "instances": len(demo_instances),
+        "services": len(demo_services),
+        "files": len(demo_files),
         "fixtures_path": str(fixtures_path),
         "streams_path": str(streams_path),
     }
@@ -273,7 +368,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"Recorded {summary['request_keys']} request(s) into {summary['fixtures_path']}")
     print(f"Recorded {summary['stream_runs']} stream(s) into {summary['streams_path']}")
     print(f"  tasks={summary['tasks']} views={summary['views']} "
-          f"chats={summary['chats']} sessions={summary['sessions']}")
+          f"chats={summary['chats']} sessions={summary['sessions']} "
+          f"instances={summary['instances']} services={summary['services']} files={summary['files']}")
     return 0
 
 

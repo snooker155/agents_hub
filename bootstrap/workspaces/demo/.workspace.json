@@ -3,7 +3,8 @@
   "allowed_agents": [
     "demo_writer",
     "demo_analyst",
-    "demo_reviewer"
+    "demo_reviewer",
+    "demo_support"
   ],
   "orchestrator": {
     "enabled": false,
