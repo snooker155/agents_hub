@@ -13,6 +13,34 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- View focus in the agent loop (`agents/loop_ext/view_focus.py`): a view
+  agent sees the tools of the view kind it is on and not the other kinds',
+  so a visualizer with fifty tools binds the slide tools while it builds a
+  deck and the mesh tools while it models. Off with the loop setting
+  `view_focus` (docs/agent-loop.md, "View focus").
+- One guide per view kind (`views/guides/<kind>.md`), handed to the agent
+  when a view of that kind becomes its target (`create_view`, the first
+  `view_get`, the Studio's active-view note), once per run. The visualizer's
+  instructions are the general part only (docs/views.md, "Kind guides and
+  specialists").
+- Two system agents: the **3D Modeler** (`modeler_3d`), which owns `scene3d`
+  views and the geometry tools, and the **Web View Builder**
+  (`web_view_builder`), which owns `html` and `code` views and can write a
+  page's files and serve a backend behind it. The Studio and a view's own chat
+  open those kinds with the specialist (`routes/views.py: view_agent_for`).
+
+### Changed
+
+- The visualizer no longer holds the mesh, scene and `view_serve` tools; it
+  hands 3D and web requests to the specialists (conversation handoff when the
+  user talks to it, `run_agent_tool` or `delegate_task_tool` when another agent
+  does). An install that already has the visualizer keeps its old tools (the
+  seed merges, never revokes) and receives the handoff and delegate lists on
+  its next start: `handoffs` is now a seed-owned field of system agents.
+
+
 ## [0.8.0] - 2026-09-30
 
 ### Added

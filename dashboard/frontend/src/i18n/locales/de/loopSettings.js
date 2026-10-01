@@ -30,6 +30,10 @@ export default {
       label: 'Strenge Werkzeugschemata',
       hint: 'OpenAI bitten, das Schema eines Werkzeugs genau durchzusetzen, wenn jedes gebundene Werkzeug dafür geeignet ist.',
     },
+    viewFocus: {
+      label: 'Fokus auf die Ansichtsart',
+      hint: 'Einem Ansichts-Agenten die Werkzeuge der Ansichtsart zeigen, an der er arbeitet, und die der anderen Arten ausblenden.',
+    },
   },
   source: {
     workspace: 'dieser Workspace',

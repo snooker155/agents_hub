@@ -346,11 +346,14 @@ class LoopExtension:
 #: Extension modules, in the order their hooks run. Each exposes
 #: ``extension_for(agent) -> Optional[LoopExtension]``. Steering runs before
 #: compaction so a folded context still carries the user's latest words;
-#: tool search selects before structured decides on strict schemas; fallback
-#: wraps last, around everything the others bound.
+#: view focus resolves the active view's kind and marks its tools loaded
+#: before tool search selects, and tool search selects before structured
+#: decides on strict schemas; fallback wraps last, around everything the
+#: others bound.
 EXTENSION_MODULES: Sequence[str] = (
     "agents.loop_ext.steering",
     "agents.loop_ext.compaction",
+    "agents.loop_ext.view_focus",
     "agents.loop_ext.tool_search",
     "agents.loop_ext.structured",
     "agents.loop_ext.fallback",

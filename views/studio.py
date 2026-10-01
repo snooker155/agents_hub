@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from views.focus import kind_guide
 from views.owner import current_owner
 from views.store import get_view, create_live_view
 
@@ -75,6 +76,11 @@ def scene_context_note(view_id: str) -> str:
     selection = (doc.get("state") or {}).get("selection")
     if selection:
         lines.append(f"- current selection: {selection}  (\"it\"/\"this\" ⇒ the selection)")
+    # The kind's guide (views/guides/<kind>.md) rides with the note, so the
+    # agent editing a deck reads the slide rules and not the mesh rules.
+    guide = kind_guide(kind)
+    if guide:
+        lines += ["", guide]
     return "\n".join(lines)
 
 

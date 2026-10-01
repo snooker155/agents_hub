@@ -167,7 +167,7 @@ def ensure_system_agent(agent_id: str) -> bool:
 # declare it. Everything else (provider, model, temperature, capacity, memory
 # assignment, workspace ownership) is the operator's and is never touched.
 # Tools are handled separately, and are merged rather than replaced (see below).
-_SEED_OWNED_FIELDS = ("description", "system", "delegates")
+_SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs")
 
 
 def _is_system_seed(ad: dict) -> bool:

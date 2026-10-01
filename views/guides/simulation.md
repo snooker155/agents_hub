@@ -1,0 +1,8 @@
+## Building a simulation view
+
+A `simulation` view is a time-stepped world driven either by a real-time client runtime (an approximation the user can tune mid-run) or by a precise server-side solver that streams frames and records a replayable clip. Offer both when precision matters, and say which one is showing.
+
+- **Real-time**: `sim_configure(runtime, params, entities)` then `view_set_timeline` to enable play, pause, scrub and step. Runtimes: `particles`, `boids` (flocking, crowds), `nbody` (2D orbits), `wave` (2D field), `sph2d` (fluid), `agents` (goal-seeking entities; give obstacles and goals via `entities`: `{"count":100,"obstacles":[{"x":50,"y":50,"r":8}],"goals":[{"x":5,"y":5}]}`), `tokens`. Params are tunable while it runs.
+- **Precise**: `view_compute(runtime, params, steps, dt)` runs a numerical solver server-side (`nbody`, `wave2d`, `schrodinger1d`, `nn_trace` for per-layer activations of a forward pass), streams frames to the canvas and marks the view fidelity `precise`.
+- **Linked dashboards**: `view_link(views=[chart_id], timebase="sim1")` pins other views beside this one. A linked `chart` (create it empty) plots this view's live frame aggregates over t automatically: simulation plus throughput chart, NN trace plus saturation curve.
+- Expose the parameters worth tweaking as controls bound to `spec.params.<name>` (`slider`, `toggle`, a `play` control that sweeps a param), and interpret with `view_annotate`: a live `equation` annotation whose symbols bind to spec paths (`{"type":"equation","latex":"v=v_0+at","values":{"a":"spec.params.accel"}}`) tracks the controls as they move.

@@ -29,6 +29,10 @@ export default {
       label: 'Strict tool schemas',
       hint: 'Ask OpenAI to enforce a tool\'s schema exactly, when every bound tool qualifies.',
     },
+    viewFocus: {
+      label: 'View focus',
+      hint: 'Show a view agent the tools of the view kind it is on, and hide the other kinds\' tools.',
+    },
   },
   source: {
     workspace: 'this workspace',

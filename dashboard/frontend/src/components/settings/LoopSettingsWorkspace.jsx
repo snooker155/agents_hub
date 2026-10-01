@@ -15,6 +15,7 @@ const FIELDS = [
   { key: 'tool_search_threshold', i18n: 'toolSearchThreshold', kind: 'number', step: 1, min: 1 },
   { key: 'native', i18n: 'native', kind: 'bool' },
   { key: 'strict_tools', i18n: 'strictTools', kind: 'bool' },
+  { key: 'view_focus', i18n: 'viewFocus', kind: 'bool' },
 ];
 
 // The value shown for *key* once the stored block, the environment and the

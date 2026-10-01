@@ -1,6 +1,6 @@
 # Agent loop
 
-The agent loop is what happens between a run's model calls: the tool trail is turned into messages, the model is called with the agent's tools, its tool calls run, and the loop goes round again until the model answers. A set of policies sits inside that loop, each applied per agent: steering, compaction, tool search, structured output and fallback models. Guardrails check what goes in and what comes out, and the tool policy decides each tool call. An agent that uses none of them runs exactly as before.
+The agent loop is what happens between a run's model calls: the tool trail is turned into messages, the model is called with the agent's tools, its tool calls run, and the loop goes round again until the model answers. A set of policies sits inside that loop, each applied per agent: steering, compaction, view focus, tool search, structured output and fallback models. Guardrails check what goes in and what comes out, and the tool policy decides each tool call. An agent that uses none of them runs exactly as before.
 
 ## Where the settings live
 
@@ -20,6 +20,7 @@ For the workspace, in the `settings.loop` block (Settings, Agent loop card), eac
 | `tool_search_threshold` | `AGENTS_HUB_TOOL_SEARCH_THRESHOLD` | 30 |
 | `native` | `AGENTS_HUB_LOOP_NATIVE` | on |
 | `strict_tools` | `AGENTS_HUB_LOOP_STRICT_TOOLS` | off |
+| `view_focus` | `AGENTS_HUB_LOOP_VIEW_FOCUS` | on |
 
 Settings are read when the agent is built. A task run builds its agent fresh, so a change applies to the next run; a chat agent the backend keeps built picks it up when it is rebuilt (an edit to the agent record rebuilds it).
 
@@ -37,6 +38,10 @@ Long runs compact their own context. When the estimated prompt (system prompt, t
 4. As a last resort, a kept result that is still too large is cut to its head and tail.
 
 On Claude 4 and later models (with `native` on), old tool results are cleared by Anthropic's server instead, through context editing, and the summary fold stays the last resort. A model whose context window is unknown is never compacted. The context window guard gives compaction two forced tries before it stops a run that no longer fits.
+
+## View focus
+
+A view agent holds the tools of every view kind: four for graphs, twenty for 3D geometry, three for slides. On one turn it works on one view, so the loop shows it the tools of that view's kind and hides the other kinds'. Before a view exists it sees the common view tools (`create_view`, `view_get`, `view_apply_ops`, controls, snapshots, assets) and its other tools; once the run has an active view (the Studio's, or the one it created or named first), that kind's tools appear, as loaded tools for tool search, and the rest step aside. The kind is read from the view store once per view per run. A hidden tool the model calls by name still runs, so a run that builds a simulation and a linked chart can still address both. The map of kinds to tools and the written guide per kind live in `views/focus.py` and `views/guides/`, see [views](views.md#kind-guides-and-specialists). Off with `view_focus`.
 
 ## Tool search
 

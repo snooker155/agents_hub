@@ -27,6 +27,7 @@ from common.agent_context import (
 )
 from common.entity_sink import record_entity
 from common.workspace_context import workspace_name_from_path
+from views import focus as _focus
 from views.models import ViewValidationError, SUPPORTED_KINDS
 from views.owner import current_owner
 from views.ops import OpError, get_at
@@ -189,8 +190,14 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
                "title": env.title, "assets": env.assets}
         if active:
             out["active"] = True
-            out["note"] = ("This is now the active view: the view, scene and mesh "
-                           "tools act on it without a view_id.")
+            out["note"] = ("This is now the active view: the view tools act on it "
+                           "without a view_id, and the tools of its kind are shown "
+                           "to you from your next step on.")
+        # The kind's guide travels with the view that needs it, once per run
+        # (views/focus.py): the system prompt stays general.
+        guide = _focus.guide_on_bind(env.kind)
+        if guide:
+            out["guide"] = guide
         return json.dumps(out, ensure_ascii=False)
 
     class AddAssetInput(JsonArgsModel):
@@ -331,9 +338,9 @@ def _bind_created_view(view_id: str) -> bool:
 
 def _no_view() -> str:
     return json.dumps({"ok": False, "error": (
-        "no active view: create one first with create_view (view_kind 'scene3d' "
-        "for a 3D object or scene, spec {}), then build it; or pass view_id to "
-        "continue a view that already exists")})
+        "no active view: create one first with create_view (the kind that fits, "
+        "e.g. 'scene3d' with spec {} for a 3D object or scene), then build it; "
+        "or pass view_id to continue a view that already exists")})
 
 
 def _run_id() -> str:
@@ -454,13 +461,18 @@ def view_get(path: str = "", view_id: str = "") -> str:
         return json.dumps({"ok": False, "error": f"view not found: {vid}"})
     record_entity("view", vid, "viewed")
     sub = get_at(doc, path)
-    payload = json.dumps({"ok": True, "view_id": vid, "path": path or "(root)", "value": sub}, ensure_ascii=False)
-    if len(payload) > 6000:
+    out = {"ok": True, "view_id": vid, "path": path or "(root)", "value": sub}
+    if len(json.dumps(out, ensure_ascii=False)) > 6000:
         # Too big to dump — summarize keyed collections by id lists + counts.
-        summary = _summarize(sub)
-        payload = json.dumps({"ok": True, "view_id": vid, "path": path or "(root)",
-                              "summary": summary, "truncated": True}, ensure_ascii=False)
-    return payload
+        out = {"ok": True, "view_id": vid, "path": path or "(root)",
+               "summary": _summarize(sub), "truncated": True}
+    # A run that continues an existing view meets its kind here first: the
+    # kind's guide comes with the first read, once per run (views/focus.py).
+    guide = _focus.guide_on_bind(doc.get("kind"))
+    if guide:
+        out["kind"] = doc.get("kind")
+        out["guide"] = guide
+    return json.dumps(out, ensure_ascii=False)
 
 
 def _summarize(value):

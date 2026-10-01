@@ -16,6 +16,8 @@ The loop's policies are switched and tuned in one place per workspace,
 - ``native`` (bool): use Anthropic's own context editing and deferred tool
   loading where the model supports them. Env ``AGENTS_HUB_LOOP_NATIVE``, on.
 - ``strict_tools`` (bool): read by the structured-output extension.
+- ``view_focus`` (bool): a view agent sees the tools of the view kind it is on
+  (agents/loop_ext/view_focus.py). Env ``AGENTS_HUB_LOOP_VIEW_FOCUS``, on.
 
 Any other key resolves the same way, with ``AGENTS_HUB_LOOP_<KEY>`` as its
 environment default. The workspace block is read once per agent build: a built
@@ -166,6 +168,7 @@ LOOP_SETTINGS: Dict[str, Dict[str, Any]] = {
     "tool_search_threshold": {"default": 30, "min": 1},
     "native": {"default": True},
     "strict_tools": {"default": False},
+    "view_focus": {"default": True},
 }
 
 

@@ -36,7 +36,12 @@ That is the escape hatch, and it is one-way.
   has its own chat on that entity's page.
 - **Architect Agent** — builds a project's structure graph from real source.
 - **Planner** — turns that graph into a task tree.
-- **Visualizer** — builds and edits views.
+- **Visualizer** — builds and edits views, and is the entry point for every
+  "show me" request; 3D and web requests go on to the two below.
+- **3D Modeler** — models objects and scenes with the geometry engine, in
+  `scene3d` views.
+- **Web View Builder** — builds live web pages as `html` views and snippets as
+  `code` views.
 - **Memory Extractor** — distils documents into a memory pool.
 
 **Measuring**
