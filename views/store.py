@@ -767,19 +767,26 @@ def revert_to(view_id: str, seq: int) -> bool:
 
 
 def _broadcast(view_id: str, ops: List[Dict[str, Any]]) -> None:
-    """Publish applied ops on the view channel (best-effort; no-op without a loop)."""
+    """Publish applied ops on the view channel, best effort.
+
+    Goes through ``publish_event`` rather than the broker directly: the agent
+    that applies an op runs on a service replica or in a subprocess as often
+    as in the backend, and only the backend has the loop the Studio's stream
+    hangs off. Without the relay the op lands in ``view_ops`` but the open
+    Studio sees nothing until it is reloaded.
+    """
     try:
-        from common.session_broker import broker
+        from common.session_broker import publish_event
         for op in ops:
-            broker.publish_threadsafe(f"view:{view_id}", {"type": "view_op", "view_id": view_id, "op": op})
+            publish_event(f"view:{view_id}", {"type": "view_op", "view_id": view_id, "op": op})
     except Exception:
         pass
 
 
 def _broadcast_reset(view_id: str, doc: Dict[str, Any], seq: int) -> None:
     try:
-        from common.session_broker import broker
-        broker.publish_threadsafe(f"view:{view_id}", {"type": "view_reset", "view_id": view_id, "doc": doc, "seq": seq})
+        from common.session_broker import publish_event
+        publish_event(f"view:{view_id}", {"type": "view_reset", "view_id": view_id, "doc": doc, "seq": seq})
     except Exception:
         pass
 

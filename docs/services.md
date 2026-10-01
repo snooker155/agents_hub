@@ -50,6 +50,11 @@ receives is what it always received (`meta`, tokens, tool calls, `handoff`,
 the same events, because the replica posts them to the backend
 (`POST /api/instances/{id}/events`), which fans them out on the
 conversation's channel and the instance's.
+What a tool on the replica changes for a page that follows it live is
+relayed the same way: a view op or a compute frame the agent produces in the
+Studio (docs/views.md) goes to `POST /api/stream/publish` and from there to
+the view's channel, so the scene builds up step by step in an open Studio
+exactly as it did when the agent ran inside the backend.
 
 The run record carries the replica (`instance_id`), the service
 (`service_id`) and the conversation, and is a carrier run: if the replica

@@ -202,6 +202,7 @@ def fresh_db(tmp_path, monkeypatch):
     # caller regardless of how it imported notify_change.
     import common.session_broker as sb
     monkeypatch.setattr(sb, "_relay_notify", lambda *a, **k: None)
+    monkeypatch.setattr(sb, "_relay_publish", lambda *a, **k: None)
 
     yield
 
