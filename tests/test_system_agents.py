@@ -318,6 +318,26 @@ def test_sync_never_revokes_a_tool(seeded_system_agent):
     assert "calculator" in _read_registry()[seeded_system_agent["id"]]["tools"]
 
 
+def test_sync_drops_a_tool_that_no_longer_exists(seeded_system_agent, caplog):
+    """A renamed or retired tool id (`node_logs` after nodes became instances)
+    grants nothing and only makes the guard warn on every build, so the sync
+    drops it; a real extra grant beside it is still kept."""
+    from common.bootstrap import _sync_system_agents
+
+    live = _read_registry()[seeded_system_agent["id"]]
+    live["tools"] = list(live["tools"]) + ["node_logs", "calculator"]
+    _write_registry([live])
+
+    with caplog.at_level("WARNING"):
+        changed = _sync_system_agents()
+
+    assert seeded_system_agent["id"] in changed
+    after = _read_registry()[seeded_system_agent["id"]]["tools"]
+    assert "node_logs" not in after
+    assert "calculator" in after
+    assert "node_logs" in caplog.text and "no such tool" in caplog.text
+
+
 def test_sync_skips_user_modified_records(seeded_system_agent):
     from common.bootstrap import _sync_system_agents
 

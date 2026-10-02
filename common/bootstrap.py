@@ -220,9 +220,12 @@ def _sync_system_agents() -> list[str]:
         return []
 
     try:
-        from tools.capabilities import check_combination
+        from tools.capabilities import check_combination, is_recognised_tool_id as _recognised
     except ImportError:
         check_combination = None  # type: ignore[assignment]
+
+        def _recognised(_tool_id: str) -> bool:  # without the model, nothing can be called retired
+            return True
 
     changed: list[str] = []
     for ad in (live_raw.get("agents") or []):
@@ -242,9 +245,23 @@ def _sync_system_agents() -> list[str]:
         # from a stale list, and silently revoking a tool the operator relies on
         # is far worse than carrying one they no longer need. Seed order first,
         # so the record still reads like the shipped one.
+        #
+        # The one exception is an id the capability model no longer recognises
+        # at all: a tool that was renamed or retired (nodes became instances,
+        # so `node_logs` became `instance_logs`). It grants nothing, resolves
+        # to nothing at build time and only makes the guard log an unknown id
+        # on every build, so carrying it is not preservation, just noise.
         live_tools = list(ad.get("tools") or [])
         seed_tools = list(seed.get("tools") or [])
-        effective = seed_tools + [t for t in live_tools if t not in seed_tools]
+        extra = [t for t in live_tools if t not in seed_tools]
+        retired = [t for t in extra if not _recognised(t)]
+        if retired:
+            log.warning(
+                "system agent sync: %r drops %s — no such tool exists any more.",
+                ad.get("id"), retired,
+            )
+            extra = [t for t in extra if t not in retired]
+        effective = seed_tools + extra
 
         # The merged set is checked even when it is identical to what is already
         # on disk: a record can already hold a blocked combination (the guard
