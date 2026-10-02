@@ -53,11 +53,18 @@ A write from the CLI reaches an open dashboard the way a write from an agent
 subprocess does: the change goes to the shared database and a `<resource>.changed`
 event is relayed, so open tabs refetch instead of showing stale rows.
 
+`ah setup` (its remote shape, or "point this ah at it" after a Docker setup)
+saves the address and a personal key in the CLI's state file, and every
+command that reaches the service then uses them as if `AGENTS_HUB_URL` and
+`AGENTS_HUB_API_KEY` were set; variables in the environment still win, and
+`ah setup --disconnect` forgets the saved hub.
+
 ## Getting the command
 
 `./install.sh` installs it. See [installation](installation.md). Without an
 install, `python -m cli` from the checkout is the same program, and `ah` below
-stands for either.
+stands for either. `ah setup` is the guided install and configuration
+([installation](installation.md), "Guided setup").
 
 ## The commands
 

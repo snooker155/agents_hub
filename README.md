@@ -75,7 +75,9 @@ cd agents_hub
 ./install.sh                    # venv, service, dashboard, the `ah` command, the shell hook
 ```
 
-Put a provider key in the `.env` the installer created, then, in a new terminal:
+On a first install it ends in `ah setup`, which asks for the database, the
+accounts, the providers and their default models, then offers to start the
+hub. Otherwise, in a new terminal:
 
 ```bash
 ah up                           # API on :8000, dashboard on :5173

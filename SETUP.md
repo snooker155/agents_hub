@@ -147,7 +147,7 @@ exec $SHELL                  # pick up the shell integration
 ah up                        # backend on :8000 and built dashboard on :5173
 ```
 
-Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--no-frontend` (skip the npm install), `--cli-only`, `--with-rag`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
+On a first install from a terminal it finishes with `ah setup`, the guided configuration (database, accounts, providers and default models; [docs/installation.md](./docs/installation.md), "Guided setup"), which writes `.env` for you. Re-running it is safe: an existing `.env` is kept, and the shell block is rewritten in place rather than appended again. Flags: `--no-frontend` (skip the npm install), `--cli-only`, `--with-rag`, `--setup` / `--no-setup`, `--no-venv`, `--no-shell`, `--venv PATH`, `--python BIN`. The steps below are the same thing by hand.
 
 ### A.1 Install Python dependencies
 

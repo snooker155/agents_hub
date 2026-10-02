@@ -257,10 +257,30 @@ def _workspace_source(explicit: Optional[str] = None) -> str:
 _backend = None
 
 
+def _apply_saved_remote() -> None:
+    """Use the hub `ah setup` saved (its remote shape, or "point this ah at
+    it" after a Docker setup), unless AGENTS_HUB_URL already names one.
+
+    Applied only on the way to the service handle, so commands that start
+    servers (`ah up`) never hand the saved address to the processes they spawn.
+    """
+    if os.environ.get("AGENTS_HUB_URL", "").strip():
+        return
+    remote = _read_state().get("remote")
+    if not isinstance(remote, dict) or not remote.get("url"):
+        return
+    os.environ["AGENTS_HUB_URL"] = str(remote["url"])
+    if remote.get("api_key"):
+        os.environ.setdefault("AGENTS_HUB_API_KEY", str(remote["api_key"]))
+    if remote.get("api_token"):
+        os.environ.setdefault("AGENTS_HUB_API_TOKEN", str(remote["api_token"]))
+
+
 def hub():
     """The service handle — direct calls, or HTTP when AGENTS_HUB_URL is set."""
     global _backend
     if _backend is None:
+        _apply_saved_remote()
         try:
             _backend = get_backend()
         except Exception as e:
@@ -1405,6 +1425,7 @@ from cli.commands.api import api_command  # noqa: E402
 from cli.commands.costs import costs_app  # noqa: E402
 from cli.commands.files import files_app  # noqa: E402
 from cli.commands.support import support_bundle  # noqa: E402
+from cli.onboard import setup_command  # noqa: E402
 
 app.add_typer(agent_app, name="agent")
 app.add_typer(task_app, name="task")
@@ -1421,6 +1442,9 @@ app.add_typer(user_app, name="user")
 app.add_typer(costs_app, name="costs")
 app.add_typer(files_app, name="files")
 app.command("support-bundle")(support_bundle)
+app.command("setup")(setup_command)
+# OpenClaw's name for the same first-run flow, for hands that type it.
+app.command("onboard", hidden=True)(setup_command)
 app.command("api")(api_command)
 
 # Every name `ah` already answers to without touching the OpenAPI schema: the
@@ -1431,6 +1455,7 @@ _KNOWN_TOP_LEVEL = {
     "agent", "task", "workspace", "project", "instance", "flow", "loop", "team",
     "eval", "mcp", "user", "api", "server", "auth", "db", "secrets", "files", "costs",
     "worker", "deployment", "up", "chat", "config", "shell-init", "shell-export",
+    "setup", "onboard", "support-bundle", "version", "doctor",
 }
 
 
