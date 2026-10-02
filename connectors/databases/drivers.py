@@ -22,6 +22,7 @@ at import time, so the other three kinds stay usable without it.
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import time
 from datetime import date, datetime
 from decimal import Decimal
@@ -29,6 +30,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from urllib.parse import quote, urlsplit
 
 from .guard import DatabaseError, check_read_only, clean_statement
+
+log = logging.getLogger("connectors.databases")
 
 _SCHEMA_TABLE_LIMIT = 300
 
@@ -226,7 +229,7 @@ def _ch_run_query(connection: Dict[str, Any], sql: str, params: Optional[Sequenc
             try:
                 client.close()
             except Exception:  # noqa: BLE001 - best-effort cleanup
-                pass
+                log.debug("ClickHouse client close failed", exc_info=True)
         truncated = len(all_rows) > row_limit
         rows = all_rows[:row_limit]
         return {
@@ -269,7 +272,7 @@ def _ch_list_schema(connection: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 client.close()
             except Exception:  # noqa: BLE001 - best-effort cleanup
-                pass
+                log.debug("ClickHouse client close failed", exc_info=True)
         return _rows_to_schema(rows)
 
     return _run_with_timeout(_do, timeout_s)

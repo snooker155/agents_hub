@@ -72,8 +72,8 @@ class SmtpClient:
             return
         try:
             self._conn.quit()
-        except Exception:  # noqa: BLE001 - best effort on the way out
-            pass
+        except (smtplib.SMTPException, OSError):
+            pass  # best effort on the way out
         self._conn = None
 
     def __enter__(self) -> "SmtpClient":

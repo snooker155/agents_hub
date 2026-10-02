@@ -67,8 +67,8 @@ class NotionClient:
             detail = ""
             try:
                 detail = str((resp.json() or {}).get("message") or "")
-            except Exception:
-                pass
+            except (ValueError, AttributeError, TypeError):
+                pass  # not a JSON error body
             suffix = f": {detail}" if detail else ""
             raise NotionError(f"Notion API error {resp.status_code}{suffix}")
         try:

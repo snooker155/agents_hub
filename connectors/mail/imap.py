@@ -67,11 +67,11 @@ class ImapClient:
             return
         try:
             self._conn.close()
-        except Exception:  # noqa: BLE001 - best effort on the way out
-            pass
+        except (imaplib.IMAP4.error, OSError):
+            pass  # best effort on the way out: no mailbox selected, or the link is gone
         try:
             self._conn.logout()
-        except Exception:  # noqa: BLE001
+        except (imaplib.IMAP4.error, OSError):
             pass
         self._conn = None
 

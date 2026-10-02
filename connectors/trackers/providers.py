@@ -178,8 +178,8 @@ class JiraProvider(TrackerProvider):
                 data = resp.json()
                 msgs = data.get("errorMessages") or []
                 detail = "; ".join(msgs) if msgs else str(data.get("errors") or "")
-            except Exception:
-                pass
+            except (ValueError, AttributeError, TypeError):
+                pass  # not a JSON error body
             suffix = f": {detail}" if detail else ""
             raise TrackerError(f"Jira API error {resp.status_code}{suffix}")
         return resp

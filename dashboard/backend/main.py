@@ -180,7 +180,7 @@ async def lifespan(app: FastAPI):
         from watchers.runner import runner as _watcher_runner
         await _watcher_runner.start()
         log.info("✓ Watcher runner started")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - watchers are optional, the app still serves
         log.warning(f"⚠ Could not start the watcher runner: {e}")
 
     # Start the periodic external-state publisher (containers, node heartbeats,
@@ -272,8 +272,8 @@ async def lifespan(app: FastAPI):
     try:
         from watchers.runner import runner as _watcher_runner
         await _watcher_runner.stop()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - shutdown goes on whatever the runner says
+        log.debug("watcher runner stop failed", exc_info=True)
     try:
         from plans.scheduler import scheduler as _plan_scheduler
         await _plan_scheduler.stop()

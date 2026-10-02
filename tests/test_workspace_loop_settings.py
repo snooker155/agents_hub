@@ -53,6 +53,7 @@ DEFAULTS = {
     "tool_search_threshold": 30,
     "native": True,
     "strict_tools": False,
+    "view_focus": True,
 }
 
 ENV_NAMES = {
@@ -62,6 +63,7 @@ ENV_NAMES = {
     "tool_search_threshold": "AGENTS_HUB_TOOL_SEARCH_THRESHOLD",
     "native": "AGENTS_HUB_LOOP_NATIVE",
     "strict_tools": "AGENTS_HUB_LOOP_STRICT_TOOLS",
+    "view_focus": "AGENTS_HUB_LOOP_VIEW_FOCUS",
 }
 
 

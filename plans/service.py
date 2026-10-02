@@ -401,7 +401,7 @@ def _push_channel(channel: str, workspace: Optional[str], title: str, body: str)
     try:
         from connectors.channels.notify import notify_workspace
         notify_workspace(channel, workspace, title, body)
-    except Exception:
+    except Exception:  # noqa: BLE001 - delivery is best effort, the tick goes on
         log.debug("%s notification delivery failed", channel, exc_info=True)
 
 

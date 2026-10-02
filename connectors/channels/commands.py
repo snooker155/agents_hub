@@ -13,6 +13,7 @@ themselves a workspace (this file).
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Optional
 
@@ -20,6 +21,8 @@ from agents import registry
 from common.session_broker import notify_change
 
 from .store import ChannelStore
+
+log = logging.getLogger("channels.commands")
 
 HELP_TEXT = (
     "Agents Hub bot\n"
@@ -66,8 +69,8 @@ def allowed_agent_ids_for(workspace: str) -> Optional[list[str]]:
         allowed = meta.get("allowed_agents")
         if isinstance(allowed, list) and allowed:
             return [str(a) for a in allowed]
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001 - no metadata reads as no restriction
+        log.debug("workspace %s metadata unreadable", workspace, exc_info=True)
     return None
 
 

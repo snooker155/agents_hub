@@ -147,7 +147,7 @@ class SlackService(ChannelService):
                     try:
                         await ws.send(json.dumps({"envelope_id": envelope_id}))
                     except Exception:  # noqa: BLE001 - best-effort ack
-                        pass
+                        log.debug("slack envelope ack failed", exc_info=True)
 
                 etype = envelope.get("type")
                 self._touch()

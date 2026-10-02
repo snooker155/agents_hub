@@ -56,8 +56,8 @@ class GoogleClient:
                 data = resp.json()
                 err = data.get("error")
                 detail = str((err or {}).get("message") or "") if isinstance(err, dict) else str(err or "")
-            except Exception:
-                pass
+            except (ValueError, AttributeError, TypeError):
+                pass  # not a JSON error body
             suffix = f": {detail}" if detail else ""
             raise GoogleError(f"Google API error {resp.status_code}{suffix}")
         return resp

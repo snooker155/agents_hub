@@ -139,6 +139,14 @@ _PINNED_ENV = {
     "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", True),
 }
 
+# Keys a guard resolves live (common.config.agent_execution_mode and
+# capability_guard._container_isolated) with the ``settings`` field as the
+# fallback. Hidden from ``read_dot_env`` so a test that monkeypatches
+# ``settings.agent_mode`` or ``settings.agent_docker_network`` is answered by
+# its patch, not by the developer's AGENT_EXECUTION_MODE=docker, and dropped
+# from os.environ even when the shell exported them before the session.
+_SETTINGS_BACKED_ENV = frozenset({"AGENT_EXECUTION_MODE", "AGENT_DOCKER_NETWORK"})
+
 
 # The environment as the session started, before any test imported
 # dashboard/backend/main.py and its load_dotenv exported the developer's .env
@@ -160,9 +168,9 @@ def _dot_env_keys() -> set:
 def guard_defaults(monkeypatch):
     """Keep the developer's .env out of the tests: every key the file exports
     into os.environ (load_dotenv on the backend import) is dropped again, the
-    capability guard keys are dropped from what ``read_dot_env`` returns, and
-    the guard's ``settings`` fields (built from the same file at import) are
-    reset to their defaults. A test that wants another mode sets it on
+    capability guard and execution mode keys are dropped from what
+    ``read_dot_env`` returns, and the guard's ``settings`` fields (built from
+    the same file at import) are reset to their defaults. A test that wants another mode sets it on
     ``settings`` or patches ``common.config.read_dot_env`` itself, as before."""
     import common.config as _cfg
     for key in _dot_env_keys() - _BASE_ENV_KEYS:
@@ -171,7 +179,10 @@ def guard_defaults(monkeypatch):
     for key, (field, default) in _PINNED_ENV.items():
         monkeypatch.delenv(key, raising=False)
         monkeypatch.setattr(_cfg.settings, field, default, raising=False)
-    monkeypatch.setattr(_cfg, "read_dot_env", lambda: {k: v for k, v in real().items() if k not in _PINNED_ENV})
+    hidden = _SETTINGS_BACKED_ENV | set(_PINNED_ENV)
+    for key in _SETTINGS_BACKED_ENV:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(_cfg, "read_dot_env", lambda: {k: v for k, v in real().items() if k not in hidden})
     # memory/rag_query.py reads the .env file through its own parser, not
     # through os.environ or common.config, so stripping the keys above does
     # not reach it: a developer's RAG_VECTOR_DB=chroma made every recall in

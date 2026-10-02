@@ -404,13 +404,13 @@ def _existing_users(plan: Plan) -> Optional[int]:
             return identity.user_count()
         except Exception:  # noqa: BLE001 - unknown is a fine answer here
             return None
+    import requests
     try:
-        import requests
         r = requests.get(f"{plan.base_url}/api/auth/mode", timeout=2)
         if r.ok and r.json().get("mode") == "multi":
             return 0 if r.json().get("bootstrap_required") else 1
-    except Exception:  # noqa: BLE001 - the stack is simply not up yet
-        pass
+    except (requests.RequestException, ValueError, AttributeError):
+        pass  # the stack is simply not up yet, or answers something else
     return None
 
 

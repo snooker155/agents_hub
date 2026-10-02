@@ -154,7 +154,7 @@ async def run_turn(
         try:
             await on_typing()
         except Exception:  # noqa: BLE001 - a typing indicator is cosmetic
-            pass
+            log.debug("channel %s typing indicator failed", store.name, exc_info=True)
 
     try:
         pipeline = run_chat_flow_pipeline(request) if is_flow else run_chat_pipeline(request)
@@ -171,8 +171,8 @@ async def run_turn(
                 if on_typing is not None:
                     try:
                         await on_typing()
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception:  # noqa: BLE001 - a typing indicator is cosmetic
+                        log.debug("channel %s typing indicator failed", store.name, exc_info=True)
             elif etype == "done":
                 if event.get("handoff") and event.get("agent_id") and not is_flow:
                     # The chat stays with the agent that answered.

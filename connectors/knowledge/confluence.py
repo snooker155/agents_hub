@@ -81,8 +81,8 @@ class ConfluenceClient:
             detail = ""
             try:
                 detail = str((resp.json() or {}).get("message") or "")
-            except Exception:
-                pass
+            except (ValueError, AttributeError, TypeError):
+                pass  # not a JSON error body
             suffix = f": {detail}" if detail else ""
             raise ConfluenceError(f"Confluence API error {resp.status_code}{suffix}")
         try:

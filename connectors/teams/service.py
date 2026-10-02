@@ -221,7 +221,7 @@ class TeamsService(ChannelService):
         try:
             await self._post_activity(chat_key, {"type": "typing"})
         except Exception:  # noqa: BLE001 - a typing indicator is cosmetic
-            pass
+            log.debug("teams typing indicator failed", exc_info=True)
 
     async def send_result(self, chat_key: str, result: TurnResult, *,
                           reply_to: Optional[str] = None, **kwargs: Any) -> None:

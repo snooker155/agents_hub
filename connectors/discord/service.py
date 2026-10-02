@@ -282,7 +282,7 @@ class DiscordService(ChannelService):
                     json_body={"type": 6},  # DEFERRED_UPDATE_MESSAGE
                 )
             except Exception:  # noqa: BLE001 - the turn reply still goes out
-                pass
+                log.debug("discord interaction ack failed", exc_info=True)
 
         data = interaction.get("data") or {}
         custom_id = str(data.get("custom_id") or "")
@@ -322,7 +322,7 @@ class DiscordService(ChannelService):
         try:
             await _discord_request(token, "POST", f"/channels/{chat_key}/typing")
         except Exception:  # noqa: BLE001 - a typing indicator is cosmetic
-            pass
+            log.debug("discord typing indicator failed", exc_info=True)
 
     async def send_result(self, chat_key: str, result: TurnResult, *,
                           reply_to: Optional[str] = None, **kwargs: Any) -> None:

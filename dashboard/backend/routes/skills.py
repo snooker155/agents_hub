@@ -26,6 +26,7 @@ in through ``/sync`` (memory/skill_import.py) and are changed in the
 repository, not here; a SKILL.md can also be imported as text and any skill
 exported as one.
 """
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -40,6 +41,8 @@ from models import (
     SkillSourceAdd, SkillSync, SkillUpdate,
 )
 from workspace import get_workspace_metadata, is_system_agent
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -130,7 +133,7 @@ def rescan(p: Procedure) -> None:
         p.safety = review_skill(description=p.description, body=p.body, resources=p.resources,
                                 skill_dir=skill_dir_for(p), declared_license=p.license)
     except Exception:  # noqa: BLE001 - a failed review keeps the previous one
-        pass
+        log.warning("skill %s review failed, the previous one stays", p.id, exc_info=True)
 
 
 def _refuse_repo_edit(p: Procedure) -> None:

@@ -105,8 +105,8 @@ class ChannelService:
                 await asyncio.wait_for(self._task, timeout=5.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                log.debug("channel task ended with an error on stop", exc_info=True)
         self._task = None
         self._stop_event = None
         self._status["running"] = False
